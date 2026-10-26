@@ -414,7 +414,7 @@ enum SessionRestoreSelfTest {
                      + "got \(shell.debugConsole.tabs.map(\.name))"
             }
 
-            shell.restoreTabs(from: SessionRestoreState(consoleTabs: [
+            shell.workspace.navigator.restoreTabs(from: SessionRestoreState(consoleTabs: [
                 .init(name: "prod tail", hasUserChosenName: true),
                 .init(name: "Shell 3", hasUserChosenName: false),
             ]))
@@ -536,7 +536,7 @@ enum SessionRestoreSelfTest {
             let host = Host(label: "Bastion", address: "198.51.100.7")
             // The real connect path, with `navigate: false` - exactly what
             // restoration does for a host that was open but not showing.
-            shell.connectHost(host, args: host.sshArguments(allHosts: [host]), navigate: false)
+            shell.workspace.hosts.connectHost(host, args: host.sshArguments(allHosts: [host]), navigate: false)
 
             guard let console = shell.debugHostConsole(id: host.id) else {
                 return "the host page was not created"
@@ -567,15 +567,15 @@ enum SessionRestoreSelfTest {
             // "connected" for it was reporting something the same case had
             // just proved false. F9's picker read that predicate and typed
             // into a terminal with no process on the other end.
-            guard shell.sessions.isLive(host.id) else {
+            guard shell.workspace.hosts.sessions.isLive(host.id) else {
                 return "the restored page is not registered as a session, so it would be "
                     + "unreachable from the strip, the ⌘⌃ shortcuts and ⌘K"
             }
-            guard !shell.isHostConnected(host) else {
+            guard !shell.workspace.hosts.isHostConnected(host) else {
                 return "a restored page with no started tab reports as connected - F9 would "
                     + "take its immediate-send branch and silently lose the command"
             }
-            guard shell.captureSessionState().openHostIDs == [host.id.uuidString] else {
+            guard shell.workspace.navigator.captureSessionState().openHostIDs == [host.id.uuidString] else {
                 return "the restored page was not captured as open"
             }
             return nil
@@ -615,15 +615,15 @@ enum SessionRestoreSelfTest {
             let (window, shell) = makeShell()
             defer { window.contentViewController = nil }
             let turns = ManualTurns()
-            shell.restoreTurnScheduler = turns.schedule
+            shell.workspace.hosts.restoreTurnScheduler = turns.schedule
             let queued = hosts(["one", "two", "three", "four", "five"])
 
-            shell.queueRestoredHostConsoles(queued)
+            shell.workspace.hosts.queueRestoredHostConsoles(queued)
             let built = { queued.filter { shell.debugHostConsole(id: $0.host.id) != nil }.count }
             guard built() == 0 else {
                 return "queueing five restored hosts built \(built()) page(s) in the same turn"
             }
-            guard shell.sessions.sessions.map(\.hostID) == queued.map(\.host.id) else {
+            guard shell.workspace.hosts.sessions.sessions.map(\.hostID) == queued.map(\.host.id) else {
                 return "the strip's pills are not the queued hosts in plan order"
             }
             for expected in 1...5 {
@@ -653,17 +653,17 @@ enum SessionRestoreSelfTest {
             let (window, shell) = makeShell()
             defer { window.contentViewController = nil }
             let turns = ManualTurns()
-            shell.restoreTurnScheduler = turns.schedule
+            shell.workspace.hosts.restoreTurnScheduler = turns.schedule
             let queued = hosts(["alpha", "bravo", "charlie"])
-            shell.queueRestoredHostConsoles(queued)
+            shell.workspace.hosts.queueRestoredHostConsoles(queued)
 
             let last = queued[2].host.id
-            shell.switchToSession(hostID: last)
+            shell.workspace.hosts.switchToSession(hostID: last)
             guard shell.debugHostConsole(id: last) != nil else {
                 return "switching to a queued host did not build its page"
             }
-            guard shell.pendingRestoredHostIDsForTests == [queued[0].host.id, queued[1].host.id] else {
-                return "the switched-to host is still queued: \(shell.pendingRestoredHostIDsForTests)"
+            guard shell.workspace.hosts.pendingRestoredHostIDsForTests == [queued[0].host.id, queued[1].host.id] else {
+                return "the switched-to host is still queued: \(shell.workspace.hosts.pendingRestoredHostIDsForTests)"
             }
             let page = shell.debugHostConsole(id: last)
             while !turns.pending.isEmpty { turns.runOne() }
@@ -685,17 +685,17 @@ enum SessionRestoreSelfTest {
             let (window, shell) = makeShell()
             defer { window.contentViewController = nil }
             let turns = ManualTurns()
-            shell.restoreTurnScheduler = turns.schedule
+            shell.workspace.hosts.restoreTurnScheduler = turns.schedule
             let queued = hosts(["kept", "deleted"])
-            shell.queueRestoredHostConsoles(queued)
+            shell.workspace.hosts.queueRestoredHostConsoles(queued)
 
             let expected = queued.map(\.host.id.uuidString).sorted()
-            guard shell.captureSessionState().openHostIDs == expected else {
-                return "queued pages were not captured as open: \(shell.captureSessionState().openHostIDs)"
+            guard shell.workspace.navigator.captureSessionState().openHostIDs == expected else {
+                return "queued pages were not captured as open: \(shell.workspace.navigator.captureSessionState().openHostIDs)"
             }
             let deleted = queued[1].host.id
-            shell.removeHostConsole(id: deleted)
-            guard !shell.sessions.isLive(deleted) else {
+            shell.workspace.hosts.removeHostConsole(id: deleted)
+            guard !shell.workspace.hosts.sessions.isLive(deleted) else {
                 return "a host removed before its turn kept its strip pill"
             }
             while !turns.pending.isEmpty { turns.runOne() }
@@ -722,19 +722,19 @@ enum SessionRestoreSelfTest {
 
             // Discriminating power first: the shell is on a page that is not
             // Home, so "it stayed on Home" cannot pass by never moving.
-            shell.show(.vault)
-            guard shell.captureSessionState().destination == RailDestination.vault.rawValue else {
+            shell.workspace.navigator.show(.vault)
+            guard shell.workspace.navigator.captureSessionState().destination == RailDestination.vault.rawValue else {
                 return "fixture: the shell did not move to the Vault before the restore"
             }
             guard RailDestination(rawValue: "dailyOverview") == nil else {
                 return "the Today page's destination still decodes - this build has it back"
             }
 
-            let restored = shell.restoreDestination(from: SessionRestoreState(destination: "dailyOverview"))
+            let restored = shell.workspace.navigator.restoreDestination(from: SessionRestoreState(destination: "dailyOverview"))
             guard restored else {
                 return "a saved Today page was treated as a host page and left to the app delegate"
             }
-            let landed = shell.captureSessionState().destination
+            let landed = shell.workspace.navigator.captureSessionState().destination
             guard landed == RailDestination.homeCanvas.rawValue else {
                 return "a saved Today page landed on \(landed ?? "nothing"), expected Home"
             }
@@ -749,8 +749,8 @@ enum SessionRestoreSelfTest {
             let (window, shell) = makeShell()
             defer { window.contentViewController = nil }
 
-            shell.show(.vault)
-            let captured = shell.captureSessionState()
+            shell.workspace.navigator.show(.vault)
+            let captured = shell.workspace.navigator.captureSessionState()
             guard captured.destination == RailDestination.vault.rawValue else {
                 return "capture did not record the showing destination, got \(String(describing: captured.destination))"
             }
@@ -758,8 +758,8 @@ enum SessionRestoreSelfTest {
 
             // A different destination is picked up on the next capture - i.e.
             // capture reads live state rather than a stale cache.
-            shell.show(.dictation)
-            guard shell.captureSessionState().destination == RailDestination.dictation.rawValue else {
+            shell.workspace.navigator.show(.dictation)
+            guard shell.workspace.navigator.captureSessionState().destination == RailDestination.dictation.rawValue else {
                 return "capture did not follow a second navigation"
             }
             return nil
@@ -814,7 +814,7 @@ enum SessionRestoreSelfTest {
             defer { window.contentViewController = nil }
 
             let host = Host(label: "Prod Bastion", address: "198.51.100.9")
-            shell.connectHost(host, args: host.sshArguments(allHosts: [host]), navigate: false)
+            shell.workspace.hosts.connectHost(host, args: host.sshArguments(allHosts: [host]), navigate: false)
             guard let console = shell.debugHostConsole(id: host.id) else {
                 return "the host page was not restored"
             }

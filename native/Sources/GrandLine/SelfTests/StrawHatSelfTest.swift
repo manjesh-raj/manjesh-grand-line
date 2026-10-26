@@ -963,7 +963,7 @@ enum StrawHatSelfTest {
         let main = (try? String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)) ?? ""
         check(shell.contains("strawHat.shutdown()"),
               "the workspace must forward the quit teardown to the crew page", &ok)
-        check(main.contains("appShell.shutdownStrawHatCrew()"),
+        check(main.contains("appShell.workspace.shutdownStrawHatCrew()"),
               "applicationWillTerminate must call that forward - an unwired shutdown is invisible", &ok)
     }
 

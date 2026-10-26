@@ -472,7 +472,7 @@ enum BarNavigationModernizationSelfTest {
         withScratchEnv {
             let (window, shell) = makeMountedShell()
             defer { window.orderOut(nil) }
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
 
@@ -542,18 +542,18 @@ enum BarNavigationModernizationSelfTest {
         return withScratchEnv {
             let (window, shell) = makeMountedShell()
             defer { window.orderOut(nil) }
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
 
             // Drill in: a real navigation to a different destination.
-            shell.show(.review)
-            guard let drill = shell.lastTransitionForTests else { return "no transition was recorded for a real navigation" }
+            shell.workspace.navigator.show(.review)
+            guard let drill = shell.workspace.content.lastTransitionForTests else { return "no transition was recorded for a real navigation" }
             guard !drill.skipped else { return "navigating from the canvas to Review was skipped as a no-op" }
             guard case .drillIn = drill.direction else { return "going to a drill page reported \(drill.direction), expected .drillIn" }
 
-            guard abs(drill.entryOffset - AppShellController.destinationTransitionOffset) < 0.01 else {
+            guard abs(drill.entryOffset - WorkspaceContent.destinationTransitionOffset) < 0.01 else {
                 return "the incoming page entered at dx=\(drill.entryOffset), "
-                    + "expected +\(AppShellController.destinationTransitionOffset)"
+                    + "expected +\(WorkspaceContent.destinationTransitionOffset)"
             }
 
             // And the animation genuinely exists on the layer, rather than the
@@ -576,8 +576,8 @@ enum BarNavigationModernizationSelfTest {
             }
 
             // Now the finding's own explicit requirement.
-            shell.show(.review)
-            guard let repeated = shell.lastTransitionForTests, repeated.skipped else {
+            shell.workspace.navigator.show(.review)
+            guard let repeated = shell.workspace.content.lastTransitionForTests, repeated.skipped else {
                 return "navigating to the destination already showing animated again - B4 asks for it to be "
                     + "\"skipped when the destination is already visible\""
             }
@@ -591,9 +591,9 @@ enum BarNavigationModernizationSelfTest {
             }
 
             // Back out to the hub is the mirror image.
-            shell.show(.homeCanvas)
-            guard let back = shell.lastTransitionForTests, case .back = back.direction else {
-                return "returning to the canvas reported \(String(describing: shell.lastTransitionForTests?.direction)), expected .back"
+            shell.workspace.navigator.show(.homeCanvas)
+            guard let back = shell.workspace.content.lastTransitionForTests, case .back = back.direction else {
+                return "returning to the canvas reported \(String(describing: shell.workspace.content.lastTransitionForTests?.direction)), expected .back"
             }
             guard back.entryOffset < 0 else {
                 return "the back navigation entered at dx=\(back.entryOffset) - it slides the same way as a "
@@ -611,8 +611,8 @@ enum BarNavigationModernizationSelfTest {
         return withScratchEnv {
             let (window, shell) = makeMountedShell()
             defer { window.orderOut(nil) }
-            shell.show(.homeCanvas)
-            shell.show(.review)
+            shell.workspace.navigator.show(.homeCanvas)
+            shell.workspace.navigator.show(.review)
             guard let view = shell.destinationViewIfMountedForTests(RailDestination.review.slot) else {
                 return "Review did not mount"
             }
@@ -624,10 +624,10 @@ enum BarNavigationModernizationSelfTest {
             guard abs(view.layer?.transform.m41 ?? 0) < 0.01 else {
                 return "Reduce Motion still slid the page in (dx \(view.layer?.transform.m41 ?? 0))"
             }
-            guard let recorded = shell.lastTransitionForTests, recorded.reducedMotion,
+            guard let recorded = shell.workspace.content.lastTransitionForTests, recorded.reducedMotion,
                   abs(recorded.entryOffset) < 0.01 else {
                 return "Reduce Motion still applied an entry offset "
-                    + "(\(shell.lastTransitionForTests?.entryOffset ?? -1)) - a halved motion is still motion"
+                    + "(\(shell.workspace.content.lastTransitionForTests?.entryOffset ?? -1)) - a halved motion is still motion"
             }
             guard (view.layer?.animationKeys() ?? []).isEmpty else {
                 return "Reduce Motion still added a layer animation - `HelmMotion`'s rule is the end state instantly"

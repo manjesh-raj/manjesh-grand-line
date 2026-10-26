@@ -1006,7 +1006,7 @@ final class AppShellController: WorkspaceShellController {
             bar.setSelectedSpace(space)
         } else if dest == .homeCanvas {
             // M1: `space(forDestination:)` returns nil for the canvas itself,
-            // and both the drill-header back button and `showHomeCanvas()`
+            // and both the drill-header back button and `show(.homeCanvas)`
             // reach it through `show(_:)` rather than `selectSpace`. Without
             // this the pill kept asserting the drill page's space while the
             // canvas rendered the space the captain last chose - B5's own

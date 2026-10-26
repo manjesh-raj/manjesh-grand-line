@@ -246,7 +246,7 @@ enum Audit2FeatureEnhancementsSelfTest {
                 return "the seeded page started its tab, so the not-connected state this case "
                     + "exists to measure never happens"
             }
-            guard !shell.isHostConnected(host) else {
+            guard !shell.workspace.hosts.isHostConnected(host) else {
                 return "isHostConnected reported a restored page as connected - F9 would take "
                     + "its immediate-send branch and type into a terminal with no process"
             }
@@ -262,7 +262,7 @@ enum Audit2FeatureEnhancementsSelfTest {
             // pointlessly delay every send to an already-open host.
             page.runAppearanceWorkIfUnlocked()
             guard page.hasLiveSession else { return "the page's tab never started" }
-            guard shell.isHostConnected(host) else {
+            guard shell.workspace.hosts.isHostConnected(host) else {
                 return "isHostConnected stayed false for a page with a live process"
             }
             guard shell.debugConnectedHostIDs() == [host.id] else {
@@ -322,16 +322,16 @@ enum Audit2FeatureEnhancementsSelfTest {
 
     private static func test_codePreviewShutdownIsWired() -> String? {
         guard let main = readCode(named: "main.swift") else { return "could not read main.swift" }
-        // Stage 3 of the modular-shell migration moved the shell's forwards to
-        // `WorkspaceShellController`, which both window layouts extend.
-        guard let shell = readCode(named: "WorkspaceShellController.swift") else {
-            return "could not read WorkspaceShellController.swift"
+        // R2-ARCH-05: the shell forwards nothing now, so the app delegate
+        // reaches the workspace, which owns the (private) destination.
+        guard let workspace = readCode(named: "Workspace.swift") else {
+            return "could not read Workspace.swift"
         }
-        guard shell.contains("func shutdownCodePreview(") else {
-            return "the shell has no shutdownCodePreview() forward, so the app delegate "
+        guard workspace.contains("func shutdownCodePreview(") else {
+            return "the workspace has no shutdownCodePreview(), so the app delegate "
                 + "cannot reach the (private) destination"
         }
-        guard main.contains("shutdownCodePreview(") else {
+        guard main.contains("appShell.workspace.shutdownCodePreview(") else {
             return "nothing calls Code Preview's shutdown - it had zero callers for its whole "
                 + "life (§2.8), so ⌘Q inside the page's 500ms edit debounce loses those "
                 + "keystrokes and the final commit+push never runs"

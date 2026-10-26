@@ -340,10 +340,10 @@ enum LaunchPathSelfTest {
         }
         let rest = main[start.upperBound...]
         let body = String(rest.prefix(upTo: rest.range(of: "\n    }\n")?.lowerBound ?? rest.endIndex))
-        guard body.contains("appShell.queueRestoredHostConsoles(") else {
+        guard body.contains("appShell.workspace.hosts.queueRestoredHostConsoles(") else {
             return "restoreSessionIfNeeded no longer queues the background host pages"
         }
-        guard !body.contains("appShell.connectHost(") else {
+        guard !body.contains("appShell.workspace.hosts.connectHost(") else {
             return "restoreSessionIfNeeded connects background host pages directly again"
         }
         return nil

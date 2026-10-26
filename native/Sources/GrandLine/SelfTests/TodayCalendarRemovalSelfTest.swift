@@ -113,12 +113,12 @@ enum TodayCalendarRemovalSelfTest {
         }
         // Discriminating power: the scan really reads code, and the comment
         // stripping really leaves it.
-        // The shell's API lives in `WorkspaceShellController` since stage 3 of
-        // the modular-shell migration.
-        let shell = files.first { $0.lastPathComponent == "WorkspaceShellController.swift" }
-        let shellCode = shell.flatMap { try? String(contentsOf: $0, encoding: .utf8) }.map(stripComments) ?? ""
-        check(shellCode.contains("func restoreDestination"),
-              "fixture: the scan should see the shell's code", &ok)
+        // The navigation API lives on `Navigator` since R2-ARCH-05 (the shell
+        // forwarded it before), so that is the code the sentinel reads.
+        let navigator = files.first { $0.lastPathComponent == "Navigator.swift" }
+        let navigatorCode = navigator.flatMap { try? String(contentsOf: $0, encoding: .utf8) }.map(stripComments) ?? ""
+        check(navigatorCode.contains("func restoreDestination"),
+              "fixture: the scan should see the navigator's code", &ok)
 
         var offenders: [String] = []
         for file in files where file.lastPathComponent != cleanupFile {

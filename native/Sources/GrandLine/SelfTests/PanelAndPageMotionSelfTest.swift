@@ -164,17 +164,17 @@ enum PanelAndPageMotionSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { window.orderOut(nil) }
         window.orderFront(nil)
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
 
         // A shell with none installed - every suite's - cuts, as before.
-        shell.show(.updates)
+        shell.workspace.navigator.show(.updates)
         check(overlays(in: shell.view).isEmpty, "a shell with no PageCrossfade installed drew a snapshot", &ok)
 
         let crossfade = PageCrossfade()
-        shell.pageCrossfade = crossfade
+        shell.workspace.content.pageCrossfade = crossfade
         shell.view.layoutSubtreeIfNeeded()
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         guard let overlay = crossfade.debugLiveOverlay else {
             fail("navigating away from Updates left no picture of it to fade", &ok)
             return
@@ -186,11 +186,11 @@ enum PanelAndPageMotionSelfTest {
         pump { crossfade.debugLiveOverlay == nil && overlays(in: shell.view).isEmpty }
         check(overlays(in: shell.view).isEmpty, "the picture of the outgoing page was never removed", &ok)
 
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         check(crossfade.debugLiveOverlay == nil, "a navigation to the page already showing drew a snapshot", &ok)
 
         HelmMotion.reducedOverrideForTests = true
-        shell.show(.updates)
+        shell.workspace.navigator.show(.updates)
         check(crossfade.debugLiveOverlay == nil, "Reduce Motion still crossfaded the outgoing page", &ok)
         HelmMotion.reducedOverrideForTests = nil
         if ok { print("  OK   a hit-transparent picture fades and goes; skipped when repeated, under Reduce Motion, and uninstalled") }
@@ -216,7 +216,7 @@ enum PanelAndPageMotionSelfTest {
         frame.size = NSSize(width: 1100, height: 420)
         window.setFrame(frame, display: false)
         window.orderFront(nil)
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
         guard let page = shell.destinationViewIfMountedForTests(RailDestination.settings.slot),
               let scroll = pageScroll(in: page), let document = scroll.documentView else {
@@ -231,9 +231,9 @@ enum PanelAndPageMotionSelfTest {
         scroll.contentView.scroll(to: target)
         scroll.reflectScrolledClipView(scroll.contentView)
 
-        shell.show(.updates)
+        shell.workspace.navigator.show(.updates)
         shell.view.layoutSubtreeIfNeeded()
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
         check(abs(scroll.contentView.bounds.origin.y - target.y) < 0.5,
               "back on Settings the page is at y \(scroll.contentView.bounds.origin.y), expected the \(target.y) it was left at", &ok)

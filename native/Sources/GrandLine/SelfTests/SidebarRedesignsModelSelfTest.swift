@@ -141,7 +141,7 @@ enum SidebarRedesignsModelSelfTest {
               "the shell draws Quick Connect as one button again", &ok)
         check(shell.contains("toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))"),
               "the shell no longer shows Quick Connect on every module (U-02)", &ok)
-        check(shell.contains("toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }"),
+        check(shell.contains("toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }"),
               "the Hosts icon no longer opens the quick-connect host picker", &ok)
         let consoleBody = shell.range(of: "private func quickConnectConsole()").map {
             FeatureInventorySelfTest.braceBody(shell, from: shell.index(after: shell[$0.upperBound...].firstIndex(of: "{")!))

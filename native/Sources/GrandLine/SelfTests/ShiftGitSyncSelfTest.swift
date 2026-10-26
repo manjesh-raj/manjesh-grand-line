@@ -661,14 +661,14 @@ enum ShiftGitSyncSelfTest {
            let start = main.range(of: "func applicationWillTerminate(") {
             let body = String(main[start.lowerBound...].prefix(9000))
             let deadlineAt = body.range(of: "let gitFlushDeadline")?.lowerBound
-            let firstFlushAt = body.range(of: "appShell.shutdownStickyBoard(")?.lowerBound
+            let firstFlushAt = body.range(of: "appShell.workspace.shutdownStickyBoard(")?.lowerBound
             check(deadlineAt != nil && firstFlushAt != nil && deadlineAt! < firstFlushAt!,
                   "R2-BUG-04: applicationWillTerminate computes one git flush deadline before the first flush")
-            for call in ["appShell.shutdownStickyBoard(deadline: gitFlushDeadline)",
-                         "appShell.shutdownCodePreview(deadline: gitFlushDeadline)",
-                         "appShell.shutdownNotebook(deadline: gitFlushDeadline)",
-                         "appShell.shutdownCredentialVault(deadline: gitFlushDeadline)",
-                         "appShell.shutdownReadingList(deadline: gitFlushDeadline)",
+            for call in ["appShell.workspace.shutdownStickyBoard(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownCodePreview(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownNotebook(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownCredentialVault(deadline: gitFlushDeadline)",
+                         "appShell.workspace.shutdownReadingList(deadline: gitFlushDeadline)",
                          "ShiftGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)",
                          "DocsRunbookGitSync.shared.flushForTerminationNow(deadline: gitFlushDeadline)"] {
                 check(body.contains(call), "R2-BUG-04: the quit path passes the shared deadline: \(call)")

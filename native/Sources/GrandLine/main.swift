@@ -11,6 +11,16 @@
 import AppKit
 import SwiftTerm
 
+/// R2-ARCH-05: the two objects the main menu's items target - the showing
+/// shell, for the verbs that differ by layout, and the workspace's navigator,
+/// for every navigation verb. `buildMenu` derives both from `appShell` when
+/// it installs the menu; a suite hands in stand-ins to check every item's
+/// action reaches an object that answers it, without building the shell.
+struct MenuTargets {
+    let shell: AnyObject?
+    let navigator: AnyObject?
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
     /// Fills the menu-bar strip macOS reserves above a full-screen window, so
@@ -100,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// a captain who never presses ⌘⇧D never builds twenty-six tiles.
     lazy var allDestinations: AllDestinationsOverlayController = {
         let overlay = AllDestinationsOverlayController()
-        overlay.onSelect = { [weak self] destination in self?.appShell.show(destination) }
+        overlay.onSelect = { [weak self] destination in self?.appShell.workspace.navigator.show(destination) }
         overlay.onTogglePin = { [weak self] destination in
             self?.appShell.toggleQuickAccessPin(destination)
         }
@@ -120,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// where every one of the five writes lives (see
     /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
     lazy var shiftQuickCapture: ShiftQuickCaptureController = {
-        let capture = ShiftQuickCaptureController(filer: appShell.makeCaptureFiler())
+        let capture = ShiftQuickCaptureController(filer: appShell.workspace.makeCaptureFiler())
         return capture
     }()
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
@@ -130,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `lazy`: `appShell` has to exist first.
     lazy var widgetPublisher = WidgetSnapshotPublisher(
         shiftStore: shiftStore,
-        stickyStore: appShell.stickyBoardStore
+        stickyStore: appShell.workspace.stickyBoardStore
     )
     /// F2's capture chord. Configurable since
     /// `fm/grandline-capture-global-hotkey-configurable`, so the live
@@ -174,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// a menu is not an option here. Owned alongside the app's other two
     /// monitor-backed shortcuts.
     lazy var tabShortcuts = TabKeyboardShortcuts(
-        target: { [weak self] in self?.appShell.activeTabShortcutTarget() },
+        target: { [weak self] in self?.appShell.workspace.navigator.activeTabShortcutTarget() },
         mainWindow: { [weak self] in self?.window }
     )
     // fm/grandline-dictation-mvp (phase 1): one `DictationEngine` for the
@@ -284,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.connectToHost(host)
             } else {
                 self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID)
-                self.appShell.show(.console)
+                self.appShell.workspace.navigator.show(.console)
             }
         }
         // The pinned "Firstmate" entry (Fix 4) - the same Shell tab
@@ -294,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.onConnectPinned = { [weak self] in
             guard let self else { return }
             self.console.openFirstmateHost()
-            self.appShell.show(.console)
+            self.appShell.workspace.navigator.show(.console)
         }
         // The Hosts page's own quick-actions panel names ⌘K; this is what
         // makes the button do what its label says. Forwarded rather than
@@ -304,9 +314,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // something that really exists - see `HostsController.onOpenActivity`
         // for why a nav row with nothing behind it is absent here rather than
         // drawn inert.
-        panel.onOpenActivity = { [weak self] in self?.appShell.openFleetLog() }
-        panel.onOpenCommands = { [weak self] in self?.appShell.show(.commandLibrary) }
-        panel.onOpenSettings = { [weak self] in self?.appShell.show(.settings) }
+        panel.onOpenActivity = { [weak self] in self?.appShell.workspace.navigator.openFleetLog() }
+        panel.onOpenCommands = { [weak self] in self?.appShell.workspace.navigator.show(.commandLibrary) }
+        panel.onOpenSettings = { [weak self] in self?.appShell.workspace.navigator.show(.settings) }
         panel.onLogout = { [weak self] in self?.appShell.requestLogout() }
         panel.snippetExpansionState = { [weak self] in
             guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
@@ -346,7 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // and AGENTS.md is explicit that anything reaching the vault from
         // outside the vault page goes through the vault's own unlock.
         settings.onNavigate = { [weak self] destination in
-            self?.appShell.show(destination)
+            self?.appShell.workspace.navigator.show(destination)
         }
         // Settings' three toggles. One callback for all three - see
         // `SettingsController.compactModeToggled`.
@@ -369,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Nav-redesign task, item 3: Add/Edit Host is a dedicated full-page
         // window, not a sheet on this ~240pt-wide panel.
-        appShell.onPresentHostEditor = { [weak self] host in
+        appShell.workspace.onPresentHostEditor = { [weak self] host in
             self?.presentHostEditor(for: host)
         }
         // F9 (v1) - multi-host command execution. Here rather than in
@@ -377,7 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // store, and `connectToHost`'s own argv resolution
         // (`Host.sshArguments(allHosts:)`) needs the full host list to resolve
         // a jump chain.
-        appShell.onSendCommandToHosts = { [weak self] command, values, generated in
+        appShell.workspace.onSendCommandToHosts = { [weak self] command, values, generated in
             self?.presentMultiHostSend(command: command, values: values, generatedText: generated)
         }
         // Fix 3 (fixes4) pinned a rail icon per saved host here. Daylight
@@ -434,7 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // same `connectToHost` every other reconnect in the app uses. Returns
         // false only when the host is no longer saved at all, which is what
         // tells the shell to drop the row.
-        appShell.onReconnectHost = { [weak self] hostID in
+        appShell.workspace.navigator.onReconnectHost = { [weak self] hostID in
             guard let self, let host = self.hostStore.hosts.first(where: { $0.id == hostID }) else { return false }
             self.connectToHost(host)
             return true
@@ -446,19 +456,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // deleted - tear down its dedicated page so the rail (which just
             // lost that host's icon) can't leave it stranded.
             for removedID in self.knownHostIDs.subtracting(currentIDs) {
-                self.appShell.removeHostConsole(id: removedID)
+                self.appShell.workspace.hosts.removeHostConsole(id: removedID)
                 // Finding 4.3: a deleted host's page is the one Recents row
                 // that is genuinely unreachable - it can neither switch to a
                 // live session nor reconnect - so it stops being listed here
                 // rather than waiting to be clicked and found dead. A host
                 // page merely *closed* is untouched: that one reconnects.
-                self.appShell.forgetRecentHost(id: removedID)
+                self.appShell.workspace.navigator.forgetRecentHost(id: removedID)
             }
             self.knownHostIDs = currentIDs
         }
         // The Snippets tab's "Run" (Phase 3, B2) sends straight to the
         // console's active tab.
-        appShell.onRunSnippet = { [weak self] snippet in
+        appShell.workspace.onRunSnippet = { [weak self] snippet in
             self?.console.runSnippetInActiveTab(snippet)
         }
 
@@ -479,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // (`fm/grandline-notification-center`) must stay current whether or
         // not the captain wants OS banners too.
         FleetNotifier.shared.setEnabled(AppSettings.shared.notifyOnNeedsDecision)
-        FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.show(.overview) }
+        FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.workspace.navigator.show(.overview) }
         // E3: the shared "has the captain actually been away for a while?"
         // answer the gated pollers below consult. Registered before any of
         // them start.
@@ -496,9 +506,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Registered here (not later) because the delegate must be set before
         // `applicationDidFinishLaunching` returns, or an action tap that
         // cold-launched the app is dropped by the system.
-        notificationRouter.onShow = { [weak self] destination in self?.appShell.show(destination) }
-        notificationRouter.onOpenShiftTask = { [weak self] id in self?.appShell.openShiftTask(id: id) }
-        notificationRouter.onOpenShiftFollowUp = { [weak self] id in self?.appShell.openShiftFollowUp(id: id) }
+        notificationRouter.onShow = { [weak self] destination in self?.appShell.workspace.navigator.show(destination) }
+        notificationRouter.onOpenShiftTask = { [weak self] id in self?.appShell.workspace.navigator.openShiftTask(id: id) }
+        notificationRouter.onOpenShiftFollowUp = { [weak self] id in self?.appShell.workspace.navigator.openShiftFollowUp(id: id) }
         notificationRouter.onSnoozeFollowUp = { [weak self] id, date in
             self?.shiftStore.snoozeFollowUp(id: id, to: date)
         }
@@ -509,18 +519,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // (tool updates, GitHub Sync drift, Vault attention, Bootstrap
         // setup drift) - see `BackgroundSignalsPoller.swift`'s header for
         // the cadence tradeoff.
-        BackgroundSignalsPoller.shared.onNavigateToUpdates = { [weak self] in self?.appShell.show(.updates) }
-        BackgroundSignalsPoller.shared.onNavigateToGitHubSync = { [weak self] in self?.appShell.show(.githubSync) }
+        BackgroundSignalsPoller.shared.onNavigateToUpdates = { [weak self] in self?.appShell.workspace.navigator.show(.updates) }
+        BackgroundSignalsPoller.shared.onNavigateToGitHubSync = { [weak self] in self?.appShell.workspace.navigator.show(.githubSync) }
         // The per-tool / per-repo halves of the two above, for the
         // notification popover's expanded child rows.
         BackgroundSignalsPoller.shared.onUpdateTool = { [weak self] id in
-            self?.appShell.updateToolFromNotification(id)
+            self?.appShell.workspace.navigator.updateToolFromNotification(id)
         }
         BackgroundSignalsPoller.shared.onSyncFork = { [weak self] id in
-            self?.appShell.syncForkFromNotification(id)
+            self?.appShell.workspace.navigator.syncForkFromNotification(id)
         }
-        BackgroundSignalsPoller.shared.onNavigateToVault = { [weak self] in self?.appShell.show(.vault) }
-        BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
+        BackgroundSignalsPoller.shared.onNavigateToVault = { [weak self] in self?.appShell.workspace.navigator.show(.vault) }
+        BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.workspace.navigator.show(.bootstrap) }
         BackgroundSignalsPoller.shared.start()
 
         // fm/grandline-herdr-selection-color-sync: keep herdr's own
@@ -570,7 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // below, so the freshly-seeded schedule is in `store.schedules` by the
         // time the runner's first tick can see it.
         scheduleStore.seedDailyUpdatesScheduleIfNeeded()
-        ScheduleRunner.shared.onNavigateToSchedules = { [weak self] in self?.appShell.show(.schedules) }
+        ScheduleRunner.shared.onNavigateToSchedules = { [weak self] in self?.appShell.workspace.navigator.show(.schedules) }
         ScheduleRunner.shared.start(store: scheduleStore,
                                     hostStore: hostStore,
                                     keyStore: keyStore,
@@ -595,7 +605,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // later, once `window.contentViewController = appShell` is assigned
         // below) wires that control to call back through this property, and
         // would silently clobber a direct assignment made before that point.
-        appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
+        appShell.workspace.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
         // ⌘K's own "All Destinations…" verb, forwarded the same way the
         // Search pill's click is - and for the same reason the line above
         // gives: `loadView()` has not run yet, so this has to be the shell's
@@ -647,7 +657,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         shiftNotifications.onDueCountsChanged = { [weak self] taskCount, followUpCount, overdueCount in
             NotificationSources.setShiftDue(taskCount: taskCount, followUpCount: followUpCount,
                                             overdueCount: overdueCount) {
-                self?.appShell.showShiftDestination()
+                self?.appShell.workspace.navigator.showShiftDestination()
             }
         }
         shiftNotifications.start()
@@ -664,7 +674,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // registering them is free and has nothing to do with whether the
         // grant exists yet.
         dictationEngine.onStatusChanged = { [weak self] status, isCeilingTimeout in
-            self?.appShell.setDictationEngineStatus(status)
+            self?.appShell.workspace.setDictationEngineStatus(status)
             self?.dictationHUD.handle(status, isCeilingTimeout: isCeilingTimeout)
         }
         // Phase 2: bias recognition toward the captain's personal vocabulary,
@@ -688,14 +698,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // so the *live* hotkey instance actually picks it up - a plain
         // settings write with no restart would leave the old monitor
         // installed (see `DictationHotkey.updateShortcut`'s own header).
-        appShell.onKeyChordChanged = { [weak self] shortcut in
+        appShell.workspace.onKeyChordChanged = { [weak self] shortcut in
             self?.dictationHotkey.updateShortcut(shortcut)
         }
         // Settings > Terminal Shortcuts writes `AppSettings.terminalShortcuts`
         // itself and reports the change here so the *live* monitor picks it
         // up on the very next keystroke - the same reason Dictation's
         // recorder reports rather than relying on a settings read per event.
-        appShell.onTerminalShortcutsChanged = { [weak self] shortcuts in
+        appShell.workspace.onTerminalShortcutsChanged = { [weak self] shortcuts in
             self?.tabShortcuts.updateTerminalShortcuts(shortcuts)
         }
         // Settings > Capture's recorder, forwarded the same way and for the
@@ -703,14 +713,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // it is the no-Accessibility fallback for this exact chord, and a menu
         // still advertising ⌥Space after the captain recorded ⌃⌘C would be a
         // page stating a shortcut the app no longer listens for.
-        appShell.onQuickCaptureShortcutChanged = { [weak self] chord in
+        appShell.workspace.onQuickCaptureShortcutChanged = { [weak self] chord in
             self?.shiftHotkey.updateShortcut(chord)
             self?.applyQuickCaptureMenuChord(chord)
         }
         // E2: turning the toggle off releases any engine that is still
         // resident, so the captain's "off" takes effect now rather than at the
         // next idle expiry.
-        appShell.onDictationLocalWhisperChanged = { [weak self] enabled in
+        appShell.workspace.onDictationLocalWhisperChanged = { [weak self] enabled in
             guard !enabled else { return }
             self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
         }
@@ -721,7 +731,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // question), the store's own change signal, and the page's card (in
         // `wireHostsPanel`, since PERF-01 builds that page on first use).
         snippetExpander.isConsoleFocusedProvider = { [weak self] in
-            self?.appShell.isTerminalDestinationShowing ?? false
+            self?.appShell.workspace.navigator.isTerminalDestinationShowing ?? false
         }
         snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
         // Off by default, so on a fresh install this installs nothing at all.
@@ -739,21 +749,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // conversation. `onOpenFullChat` is the popover's persistent
         // "Open Straw Hat Pirates" affordance.
         strawHatMenuBar.onAsk = { [weak self] text, completion in
-            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+            self?.appShell.workspace.askCrewFromMenuBar(text, completion: completion)
         }
-        strawHatMenuBar.onOpenFullChat = { [weak self] in self?.appShell.show(.strawHat) }
+        strawHatMenuBar.onOpenFullChat = { [weak self] in self?.appShell.workspace.navigator.show(.strawHat) }
         _ = strawHatMenuBar
 
         // F16: same pattern, same reason for forcing the `lazy` property.
         // Every closure forwards into `AppShellController`, which forwards
         // into the one `CredentialVaultController` and its one store.
-        poneglyphMenuBar.codesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
-        poneglyphMenuBar.vaultIsUnlocked = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
-        poneglyphMenuBar.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        poneglyphMenuBar.codesProvider = { [weak self] in self?.appShell.workspace.poneglyphQuickCodes ?? [] }
+        poneglyphMenuBar.vaultIsUnlocked = { [weak self] in self?.appShell.workspace.poneglyphIsUnlocked ?? false }
+        poneglyphMenuBar.onCopy = { [weak self] id in self?.appShell.workspace.copyPoneglyphCodeFromMenuBar(id: id) }
         poneglyphMenuBar.onOpenVault = { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
             self?.window.makeKeyAndOrderFront(nil)
-            self?.appShell.show(.poneglyph)
+            self?.appShell.workspace.navigator.show(.poneglyph)
         }
         _ = poneglyphMenuBar
 
@@ -778,12 +788,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `overlayHidden=true` immediately after `showLock` had already run
         // and correctly disabled the menu). Locking after the window/
         // contentViewController assignment below closes that race.
-        appLock.onLock = { [weak self] reason in self?.appShell.showLock(reason: reason) }
+        appLock.onLock = { [weak self] reason in self?.appShell.workspace.lock.showLock(reason: reason) }
         // R2-UX-01: the lock is off, so the launch opens the app instead.
-        appLock.onOpenWithoutLock = { [weak self] in self?.appShell.openWithoutLock() }
-        appShell.onUnlocked = { [weak self] in self?.appLock.recordUnlock() }
+        appLock.onOpenWithoutLock = { [weak self] in self?.appShell.workspace.lock.openWithoutLock() }
+        appShell.workspace.lock.onUnlocked = { [weak self] in self?.appLock.recordUnlock() }
         appShell.onLogoutRequested = { [weak self] in self?.appLock.lock(reason: .manualLogout) }
-        appShell.onLockStateChanged = { [weak self] locked in self?.setContentMenusEnabled(!locked) }
+        appShell.workspace.lock.onLockStateChanged = { [weak self] locked in self?.setContentMenusEnabled(!locked) }
         appLock.start()
 
         // The window opens filling the screen's usable area, not a hardcoded
@@ -821,7 +831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Still set, and still worth setting, even though `titleVisibility`
         // hides it: the Window menu, Mission Control and the window's own
         // proxy menu all read it.
-        window.title = Self.windowTitle(context: appShell.currentContextTitle)
+        window.title = Self.windowTitle(context: appShell.workspace.navigator.currentContextTitle)
         // **Review bug B8.** `isReleasedWhenClosed` defaults to `true` for a
         // window created with `init(contentRect:...)`, and this one is
         // referenced for the app's whole life - `AppDelegate.window`, the
@@ -857,7 +867,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // before `contentViewController`, which is what first lays the shell
         // out - a `show(_:)` during that pass then already finds a handler.
         if !appShell.namesThePageInTheTitleBar {
-            appShell.onCurrentDestinationChanged = { [weak window] context in
+            appShell.workspace.navigator.onCurrentDestinationChanged = { [weak window] context in
                 window?.title = Self.windowTitle(context: context)
             }
         }
@@ -881,11 +891,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
         // P3 of the polish report: the outgoing page fades too. Installed here
         // and nowhere else, for the same reason (`PageCrossfade`'s header).
-        appShell.pageCrossfade = PageCrossfade()
+        appShell.workspace.content.pageCrossfade = PageCrossfade()
         // Armed here for the same reason: a window-backed suite sets frames
         // wider than CI's 1024pt display on purpose, and an armed guard would
         // put them back (`WindowOverflowGuard`'s header).
-        appShell.windowOverflowGuard.arm(for: window)
+        appShell.workspace.windowOverflowGuard.arm(for: window)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -928,7 +938,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // F2: keep the saved session current on every navigation, so a crash
         // or a force-quit loses at most whatever changed since the last one.
-        appShell.onSessionStateChanged = { [weak self] in self?.saveSessionState() }
+        appShell.workspace.navigator.onSessionStateChanged = { [weak self] in self?.saveSessionState() }
 
         // F2 (audit §2 item 1). After `loadView` (which is what makes GL-31's
         // own first-run landing decision) and behind the lock screen, so
@@ -1004,7 +1014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let interval = LaunchSignposts.begin("restoreSessionIfNeeded")
         defer { LaunchSignposts.end("restoreSessionIfNeeded", interval) }
 
-        appShell.restoreTabs(from: state)
+        appShell.workspace.navigator.restoreTabs(from: state)
 
         // Every host that had a page, reconnected with `navigate: false` - so
         // each page exists but stays hidden, and (per `ConsoleController.
@@ -1023,7 +1033,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // five restored hosts are five short turns rather than one long one
         // right after the first frame. Each still gets its strip pill now, in
         // this order, so the showing host below still registers last.
-        appShell.queueRestoredHostConsoles(plan.background.compactMap { id in
+        appShell.workspace.hosts.queueRestoredHostConsoles(plan.background.compactMap { id in
             byID[id].map { ($0, $0.sshArguments(allHosts: hostStore.hosts)) }
         })
 
@@ -1035,7 +1045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let showing = plan.showing, let host = byID[showing] {
             connectToHost(host)
         } else {
-            appShell.restoreDestination(from: state)
+            appShell.workspace.navigator.restoreDestination(from: state)
         }
     }
 
@@ -1048,7 +1058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// navigations change nothing.
     func saveSessionState() {
         guard appShell.isViewLoaded else { return }
-        let state = appShell.captureSessionState()
+        let state = appShell.workspace.navigator.captureSessionState()
         guard state != AppSettings.shared.sessionRestoreState else { return }
         AppSettings.shared.sessionRestoreState = state
     }
@@ -1168,40 +1178,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Sticky Board destination owns.
         popover.notesProvider = { [weak self] in
             guard let self else { return [] }
-            return CompactModeDigest.notes(self.appShell.stickyBoardStore.activeNotes)
+            return CompactModeDigest.notes(self.appShell.workspace.stickyBoardStore.activeNotes)
         }
         popover.onRevealNote = { [weak self] id in
             guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
             self.window?.makeKeyAndOrderFront(nil)
-            self.appShell.openStickyNote(id: id)
+            self.appShell.workspace.navigator.openStickyNote(id: id)
         }
         popover.onOpenStickyBoard = { [weak self] in self?.revealInFullWindow(.stickyBoard) }
 
         // Vault - the same three forwards `poneglyphMenuBar` uses above, into
         // the one `CredentialVaultController` and its one store.
-        popover.vaultCodesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
-        popover.vaultUnlockedProvider = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
-        popover.vaultPane.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        popover.vaultCodesProvider = { [weak self] in self?.appShell.workspace.poneglyphQuickCodes ?? [] }
+        popover.vaultUnlockedProvider = { [weak self] in self?.appShell.workspace.poneglyphIsUnlocked ?? false }
+        popover.vaultPane.onCopy = { [weak self] id in self?.appShell.workspace.copyPoneglyphCodeFromMenuBar(id: id) }
         popover.vaultPane.onOpenVault = { [weak self] in self?.revealInFullWindow(.poneglyph) }
 
         // Crew - the crew page's own real runner and transcript, never a
         // second conversation. Identical to `strawHatMenuBar`'s own wiring.
         popover.crewPane.onAsk = { [weak self] text, completion in
-            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+            self?.appShell.workspace.askCrewFromMenuBar(text, completion: completion)
         }
         popover.crewPane.onOpenFullChat = { [weak self] in self?.revealInFullWindow(.strawHat) }
 
         // The footer capture line goes through the same filer ⌥Space does, so
         // a task captured from the menu bar and one captured from the overlay
         // are one code path with one set of refusals (F2).
-        popover.captureFiler = appShell.makeCaptureFiler()
+        popover.captureFiler = appShell.workspace.makeCaptureFiler()
 
         // The popover's own escape hatch while the app is locked: the exact
         // password check and unlock transition the real lock screen uses,
         // never a second one - see `AppShellController.attemptUnlockFromCompactMode`.
         popover.onAttemptUnlock = { [weak self] password, completion in
-            self?.appShell.attemptUnlockFromCompactMode(password: password, completion: completion)
+            self?.appShell.workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
         }
 
         compactMode.overdueCountProvider = { [weak self] in
@@ -1247,7 +1257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func revealInFullWindow(_ destination: RailDestination) {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
-        appShell.show(destination)
+        appShell.workspace.navigator.show(destination)
     }
 
     /// The popover's "Open full window", and the one clean way out of the
@@ -1303,7 +1313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // exactly the case `crashReportsSinceLastLaunch()` then explains.
         DiagnosticsLog.shared.lifecycle("lifecycle", "quitting")
         console.shutdown()
-        appShell.shutdownAllHostConsoles()
+        appShell.workspace.hosts.shutdownAllHostConsoles()
         // Findings 3.3/4.6: the Sticky Board's text/title writes are debounced
         // now, so quitting is one of the three points anything still queued
         // has to reach disk (the other two are leaving the destination and a
@@ -1317,38 +1327,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // main-thread block. Now the whole set waits at most this long, and
         // a store with nothing pending does not join the queue at all.
         let gitFlushDeadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
-        appShell.shutdownStickyBoard(deadline: gitFlushDeadline)
+        appShell.workspace.shutdownStickyBoard(deadline: gitFlushDeadline)
         // F9: the same class again, one page over. The Scratchpad pad's write
         // is debounced at 500ms, so ⌘Q straight after typing would otherwise
         // lose the last line of a pad whose whole promise is that it is still
         // there next launch.
-        appShell.shutdownScratchpads()
+        appShell.workspace.shutdownScratchpads()
         // Audit 2 §6.8 / §2.8: the same class one destination over, and the
         // call site `CodePreviewController.shutdown()`'s own doc comment had
         // promised since it shipped while having none. Without it, ⌘Q inside
         // the page's 500ms edit debounce loses those keystrokes and the final
         // commit+push never runs.
-        appShell.shutdownCodePreview(deadline: gitFlushDeadline)
+        appShell.workspace.shutdownCodePreview(deadline: gitFlushDeadline)
         // B7: the Notebook's own 500ms edit debounce plus its git commit.
         // `NotebookController.shutdown()` documented itself as called on quit
         // and had no caller, so ⌘Q inside that window lost the last
         // keystrokes - the same class as the four flushes around it.
-        appShell.shutdownNotebook(deadline: gitFlushDeadline)
+        appShell.workspace.shutdownNotebook(deadline: gitFlushDeadline)
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's git backup is debounced the same way, so ⌘Q within that
         // window would leave a just-added credential committed locally but not
         // pushed - i.e. absent from the next machine, which is the one property
         // this feature exists to guarantee.
-        appShell.shutdownCredentialVault(deadline: gitFlushDeadline)
+        appShell.workspace.shutdownCredentialVault(deadline: gitFlushDeadline)
         // F4: the reading list's commit+push is debounced at 3s like the
         // Sticky Board's, so ⌘Q within that window would leave a link saved
         // locally but never pushed - i.e. absent from the next machine, which
         // is the whole reason the list is git-synced.
-        appShell.shutdownReadingList(deadline: gitFlushDeadline)
+        appShell.workspace.shutdownReadingList(deadline: gitFlushDeadline)
         // Straw Hat Pirates phase 1: nothing to flush (no on-disk history yet
         // by explicit scope) - this stops an in-flight `claude -p` child from
         // outliving the app by up to its 300s bound.
-        appShell.shutdownStrawHatCrew()
+        appShell.workspace.shutdownStrawHatCrew()
         // PF2: the clipboard history's seal-and-write is off the main thread
         // now, so ⌘Q inside its own write latency would lose the last copy -
         // the same class as the five flushes above it.
@@ -1440,7 +1450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// resolving the host's full `ssh` argv, which needs `hostStore.hosts`
     /// for jump-chain resolution (`Host.sshArguments(allHosts:)`).
     private func connectToHost(_ host: Host) {
-        appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
+        appShell.workspace.hosts.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
     }
 
     // MARK: Multi-host command execution (F9, v1)
@@ -1459,7 +1469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             command: command,
             generatedText: generatedText,
             hosts: hostStore.hosts,
-            isConnected: { [weak self] host in self?.appShell.isHostConnected(host) ?? false }
+            isConnected: { [weak self] host in self?.appShell.workspace.hosts.isHostConnected(host) ?? false }
         )
         picker.onSend = { [weak self] hosts in
             guard let self else { return }
@@ -1475,7 +1485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 },
                 deliver: { [weak self] host, text in
                     guard let self else { return }
-                    self.appShell.sendCommandToHost(
+                    self.appShell.workspace.hosts.sendCommandToHost(
                         host, args: host.sshArguments(allHosts: self.hostStore.hosts), text: text)
                 }
             )
@@ -1492,7 +1502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // captain sees a real result rather than whichever page was
                 // connected last.
                 if let first = hosts.first(where: { outcome.sent.contains($0.id) }) {
-                    self.appShell.revealHost(first, args: first.sshArguments(allHosts: self.hostStore.hosts))
+                    self.appShell.workspace.hosts.revealHost(first, args: first.sshArguments(allHosts: self.hostStore.hosts))
                 }
             }
             self.appShell.showToast(MultiHostSend.resultMessage(outcome))
@@ -1707,9 +1717,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // provider only for readability - the palette's own ordering comes
         // from `UnifiedSearchKind.groupOrder`, not from registration order.
         index.register(UnifiedSearchSessionProvider(
-            registry: appShell.sessions,
+            registry: appShell.workspace.hosts.sessions,
             store: hostStore,
-            onSwitch: { [weak self] hostID in self?.appShell.switchToSession(hostID: hostID) }
+            onSwitch: { [weak self] hostID in self?.appShell.workspace.hosts.switchToSession(hostID: hostID) }
         ))
 
         // Hosts -> the one place a saved host is connected to, shared with
@@ -1719,7 +1729,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         index.register(UnifiedSearchHostProvider(
             store: hostStore,
             onConnect: { [weak self] host in self?.connectToHost(host) },
-            isLive: { [weak self] hostID in self?.appShell.sessions.isLive(hostID) ?? false }
+            isLive: { [weak self] hostID in self?.appShell.workspace.hosts.sessions.isLive(hostID) ?? false }
         ))
 
         // Saved commands -> the Command Library's own Send-to-terminal path,
@@ -1739,20 +1749,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 CommandRiskConfirmation.confirm(command: command, generatedText: generated,
                                                 actionVerb: "send to the terminal") {
                     self.commandLibraryStore.recordUsage(command.id)
-                    self.appShell.sendCommandToConsole(generated)
+                    self.appShell.workspace.navigator.sendCommandToConsole(generated)
                     self.appShell.showToast("Sent to terminal")
                 }
             },
-            onOpen: { [weak self] id in self?.appShell.openCommandLibraryCommand(id: id) }
+            onOpen: { [weak self] id in self?.appShell.workspace.navigator.openCommandLibraryCommand(id: id) }
         ))
 
         // Tasks / follow-ups / projects - what ⌘⇧P used to search, on the same
         // shared `shiftStore`, opening the same editor sheets a row click does.
         index.register(UnifiedSearchShiftProvider(
             store: shiftStore,
-            onOpenTask: { [weak self] id in self?.appShell.openShiftTask(id: id) },
-            onOpenFollowUp: { [weak self] id in self?.appShell.openShiftFollowUp(id: id) },
-            onOpenProject: { [weak self] id in self?.appShell.openShiftProject(id: id) }
+            onOpenTask: { [weak self] id in self?.appShell.workspace.navigator.openShiftTask(id: id) },
+            onOpenFollowUp: { [weak self] id in self?.appShell.workspace.navigator.openShiftFollowUp(id: id) },
+            onOpenProject: { [weak self] id in self?.appShell.workspace.navigator.openShiftProject(id: id) }
         ))
 
         // Runbooks + postmortems - the pre-F5 palette, unchanged behaviour.
@@ -1762,8 +1772,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // stopped being Docs tabs and became their own destinations.
         index.register(UnifiedSearchDocsProvider(
             store: docsRunbookStore,
-            onOpenRunbook: { [weak self] id in self?.appShell.openRunbook(id: id) },
-            onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
+            onOpenRunbook: { [weak self] id in self?.appShell.workspace.navigator.openRunbook(id: id) },
+            onOpenPostmortem: { [weak self] id in self?.appShell.workspace.navigator.openPostmortem(id: id) }
         ))
 
         // F1's notebook. Reads the **live** store instance the page and the
@@ -1771,13 +1781,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // F4's reading list. Reads the **live** store instance the page, the
         // canvas card and ⌥Space's filer share (GL-23).
         index.register(UnifiedSearchReadingListProvider(
-            store: appShell.readingListStore,
-            onOpen: { [weak self] id in self?.appShell.openReadingListLink(id: id) }
+            store: appShell.workspace.readingListStore,
+            onOpen: { [weak self] id in self?.appShell.workspace.navigator.openReadingListLink(id: id) }
         ))
 
         index.register(UnifiedSearchNotebookProvider(
-            store: appShell.notebookStore,
-            onOpen: { [weak self] id in self?.appShell.openNotebookPage(id: id) }
+            store: appShell.workspace.notebookStore,
+            onOpen: { [weak self] id in self?.appShell.workspace.navigator.openNotebookPage(id: id) }
         ))
 
         // The two newest stores (audit §6.5b / §6.6b). Both read the *live*
@@ -1785,12 +1795,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // writes, so a second one would serve stale rows and become a second
         // writer to one file (GL-23).
         index.register(UnifiedSearchStickyNoteProvider(
-            store: appShell.stickyBoardStore,
-            onOpen: { [weak self] id in self?.appShell.openStickyNote(id: id) }
+            store: appShell.workspace.stickyBoardStore,
+            onOpen: { [weak self] id in self?.appShell.workspace.navigator.openStickyNote(id: id) }
         ))
         index.register(UnifiedSearchSnippetProvider(
-            store: appShell.codePreviewStore,
-            onOpen: { [weak self] name in self?.appShell.openCodeSnippet(named: name) }
+            store: appShell.workspace.codePreviewStore,
+            onOpen: { [weak self] name in self?.appShell.workspace.navigator.openCodeSnippet(named: name) }
         ))
 
         // App actions + destinations - every entry an existing menu action.
@@ -1828,7 +1838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// same read of `contextualNewAction`.
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu.title == "File", let contextualNewItem else { return }
-        contextualNewItem.title = appShell.contextualNewAction.menuTitle
+        contextualNewItem.title = appShell.workspace.navigator.contextualNewAction.menuTitle
         snippetListItem?.title = CodePreviewSidebarPreferences.isVisible()
             ? "Hide Snippet List" : "Show Snippet List"
     }
@@ -1851,11 +1861,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// false` there is no shell to point at, and every assertion that suite
     /// makes is about titles, chords and structure.
     @discardableResult
-    func buildMenu(installing: Bool = true) -> NSMenu {
+    func buildMenu(installing: Bool = true, targets: MenuTargets? = nil) -> NSMenu {
         let mainMenu = NSMenu()
         // `appShell` is lazy and builds the app's real controllers, so a
         // non-installing build must not touch it.
-        let menuTarget: AnyObject? = installing ? appShell : nil
+        let menuTarget: AnyObject? = targets?.shell ?? (installing ? appShell : nil)
+        // R2-ARCH-05: the navigation verbs' own object. The menu used to
+        // target the shell for them too, and the shell forwarded every one;
+        // `menuTarget` is now only for the verbs that differ by layout.
+        let navigatorTarget: AnyObject? = targets?.navigator ?? (installing ? appShell.workspace.navigator : nil)
 
         // App menu
         let appMenuItem = NSMenuItem()
@@ -1867,8 +1881,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(NSMenuItem.separator())
         // Nav-redesign task, item 5: Settings is a rail destination in the
         // main window now, not a separate window.
-        appMenu.addItem(withTitle: "Settings…", symbol: "gearshape", action: #selector(WorkspaceShellController.selectSettings), keyEquivalent: ",")
-            .target = menuTarget
+        appMenu.addItem(withTitle: "Settings…", symbol: "gearshape", action: #selector(Navigator.selectSettings), keyEquivalent: ",")
+            .target = navigatorTarget
         appMenu.addItem(NSMenuItem.separator())
         // GL-17: Services, plus the standard Hide Others / Show All trio a Mac
         // user expects to find here. `NSApp.servicesMenu` is what makes the
@@ -1909,9 +1923,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenuItem.submenu = fileMenu
         fileMenu.delegate = self
         contextualNewItem = NSMenuItem(title: ContextualNewAction.task.menuTitle,
-                                       action: #selector(WorkspaceShellController.newContextualItem),
+                                       action: #selector(Navigator.newContextualItem),
                                        keyEquivalent: "n").withSymbol("plus.circle")
-        contextualNewItem?.target = menuTarget
+        contextualNewItem?.target = navigatorTarget
         if let contextualNewItem { fileMenu.addItem(contextualNewItem) }
         // F11's ⌘R. Checked free against this file's own chords before it was
         // taken - nothing else in `NSApp.mainMenu` claims "r" with any
@@ -1924,9 +1938,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // this app's convention is that a page action reachable from a chord
         // gets a real menu item so the chord is discoverable.
         let runSnippetItem = NSMenuItem(title: "Run Snippet",
-                                        action: #selector(WorkspaceShellController.runCodeSnippetFromMenu),
+                                        action: #selector(Navigator.runCodeSnippetFromMenu),
                                         keyEquivalent: "r").withSymbol("play.fill")
-        runSnippetItem.target = menuTarget
+        runSnippetItem.target = navigatorTarget
         fileMenu.addItem(runSnippetItem)
         // Code Preview's snippet list, on VS Code's own ⌘B for its sidebar.
         // Checked free against this file's own chords before it was taken -
@@ -1936,9 +1950,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Code *workbench* binding, which `monaco-editor` does not ship).
         // Same page-verb shape as Run Snippet: a no-op off its own page.
         let snippetListItem = NSMenuItem(title: "Hide Snippet List",
-                                         action: #selector(WorkspaceShellController.toggleCodePreviewSidebarFromMenu),
+                                         action: #selector(Navigator.toggleCodePreviewSidebarFromMenu),
                                          keyEquivalent: "b").withSymbol("sidebar.left")
-        snippetListItem.target = menuTarget
+        snippetListItem.target = navigatorTarget
         fileMenu.addItem(snippetListItem)
         self.snippetListItem = snippetListItem
         // F15's capture, beside F11's Run Snippet and for the same reason: a
@@ -1955,19 +1969,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // own chords (⌘⌃S is Show Hosts; nothing claims ⇧⌘S), which is what
         // `NavigationCoherenceSelfTest` enforces.
         let captureRegionItem = NSMenuItem(title: "Capture Screen Region\u{2026}",
-                                           action: #selector(WorkspaceShellController.captureScreenRegionFromMenu),
+                                           action: #selector(Navigator.captureScreenRegionFromMenu),
                                            keyEquivalent: "s").withSymbol("camera.viewfinder")
         captureRegionItem.keyEquivalentModifierMask = [.command, .shift]
-        captureRegionItem.target = menuTarget
+        captureRegionItem.target = navigatorTarget
         fileMenu.addItem(captureRegionItem)
         // No chord: the board's own header button is the discoverable copy
         // action, and every free ⌘⇧ letter that reads as "copy" is taken
         // (⌘⇧C is the Log Analyzer's Copy Analysis). Same "menu item only, no
         // keyEquivalent" convention as Quick Connect and Find in Terminal.
         let copyBoardItem = NSMenuItem(title: "Copy Board as Image",
-                                       action: #selector(WorkspaceShellController.copyWhiteboardImageFromMenu),
+                                       action: #selector(Navigator.copyWhiteboardImageFromMenu),
                                        keyEquivalent: "").withSymbol("doc.on.doc")
-        copyBoardItem.target = menuTarget
+        copyBoardItem.target = navigatorTarget
         fileMenu.addItem(copyBoardItem)
 
         // Edit menu - Cut/Copy/Paste/Select All + Find.
@@ -2000,8 +2014,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // magnifying-glass icon already triggers the identical action
         // independently of any menu shortcut, and ⌘F ("Find…" above) covers
         // the common case too.
-        let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(WorkspaceShellController.activateConsoleFind), keyEquivalent: "").withSymbol("text.magnifyingglass")
-        findInTerminalItem.target = menuTarget
+        let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(Navigator.activateConsoleFind), keyEquivalent: "").withSymbol("text.magnifyingglass")
+        findInTerminalItem.target = navigatorTarget
         editMenu.addItem(findInTerminalItem)
         // ⌘K opens the app's one command palette, matching the topbar Search
         // pill's own ⌘K badge. F5 expanded what it searches from Runbooks +
@@ -2033,19 +2047,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // could never fire. ⌘N stays with New Task, which is the far more
         // frequent action and the one AGENTS.md documents; New Host takes ⌘⌃N,
         // matching this menu's own "Show Hosts" (⌘⌃S).
-        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(WorkspaceShellController.newHostFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
+        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(Navigator.newHostFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
         newHostItem.keyEquivalentModifierMask = [.command, .control]
-        newHostItem.target = menuTarget
+        newHostItem.target = navigatorTarget
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
         // reachable via this menu item or by clicking the Hosts rail icon.
-        let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(WorkspaceShellController.revealHostsQuickConnect), keyEquivalent: "").withSymbol("bolt.horizontal.circle")
-        quickConnectItem.target = menuTarget
+        let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(Navigator.revealHostsQuickConnect), keyEquivalent: "").withSymbol("bolt.horizontal.circle")
+        quickConnectItem.target = navigatorTarget
         hostsMenu.addItem(quickConnectItem)
         hostsMenu.addItem(NSMenuItem.separator())
-        let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(WorkspaceShellController.selectHosts), keyEquivalent: "s").withSymbol("server.rack")
+        let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(Navigator.selectHosts), keyEquivalent: "s").withSymbol("server.rack")
         showHostsItem.keyEquivalentModifierMask = [.command, .control]
-        showHostsItem.target = menuTarget
+        showHostsItem.target = navigatorTarget
         hostsMenu.addItem(showHostsItem)
 
         // UX3: SSH Keys and Snippets used to be two *top-level* menus of two
@@ -2064,21 +2078,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // under Hosts is where it belonged: the Keys tab is a tab of the
         // Hosts page.
         hostsMenu.addItem(NSMenuItem.separator())
-        let newKeyItem = NSMenuItem(title: "New SSH Key\u{2026}", action: #selector(WorkspaceShellController.newKeyFromMenu), keyEquivalent: "n").withSymbol("key")
+        let newKeyItem = NSMenuItem(title: "New SSH Key\u{2026}", action: #selector(Navigator.newKeyFromMenu), keyEquivalent: "n").withSymbol("key")
         newKeyItem.keyEquivalentModifierMask = [.command, .shift]
-        newKeyItem.target = menuTarget
+        newKeyItem.target = navigatorTarget
         hostsMenu.addItem(newKeyItem)
-        let manageKeysItem = NSMenuItem(title: "Manage SSH Keys\u{2026}", action: #selector(WorkspaceShellController.selectKeys), keyEquivalent: "k").withSymbol("key.horizontal")
+        let manageKeysItem = NSMenuItem(title: "Manage SSH Keys\u{2026}", action: #selector(Navigator.selectKeys), keyEquivalent: "k").withSymbol("key.horizontal")
         manageKeysItem.keyEquivalentModifierMask = [.command, .shift]
-        manageKeysItem.target = menuTarget
+        manageKeysItem.target = navigatorTarget
         hostsMenu.addItem(manageKeysItem)
-        let newSnippetItem = NSMenuItem(title: "New Snippet\u{2026}", action: #selector(WorkspaceShellController.newSnippetFromMenu), keyEquivalent: "n").withSymbol("plus.rectangle.on.rectangle")
+        let newSnippetItem = NSMenuItem(title: "New Snippet\u{2026}", action: #selector(Navigator.newSnippetFromMenu), keyEquivalent: "n").withSymbol("plus.rectangle.on.rectangle")
         newSnippetItem.keyEquivalentModifierMask = [.command, .option]
-        newSnippetItem.target = menuTarget
+        newSnippetItem.target = navigatorTarget
         hostsMenu.addItem(newSnippetItem)
-        let manageSnippetsItem = NSMenuItem(title: "Manage Snippets\u{2026}", action: #selector(WorkspaceShellController.selectSnippets), keyEquivalent: "p").withSymbol("rectangle.stack")
+        let manageSnippetsItem = NSMenuItem(title: "Manage Snippets\u{2026}", action: #selector(Navigator.selectSnippets), keyEquivalent: "p").withSymbol("rectangle.stack")
         manageSnippetsItem.keyEquivalentModifierMask = [.command, .option]
-        manageSnippetsItem.target = menuTarget
+        manageSnippetsItem.target = navigatorTarget
         hostsMenu.addItem(manageSnippetsItem)
 
         // Session switching (`fm/grandline-session-switcher`, item 3). These
@@ -2104,24 +2118,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌘] / ⌘[ were verified unused anywhere in this menu bar.
         hostsMenu.addItem(NSMenuItem.separator())
         let nextSessionItem = NSMenuItem(title: "Next Session",
-                                        action: #selector(WorkspaceShellController.nextSession),
+                                        action: #selector(Navigator.nextSession),
                                         keyEquivalent: "]")
         nextSessionItem.withSymbol("chevron.forward.circle")
-        nextSessionItem.target = menuTarget
+        nextSessionItem.target = navigatorTarget
         hostsMenu.addItem(nextSessionItem)
         let previousSessionItem = NSMenuItem(title: "Previous Session",
-                                            action: #selector(WorkspaceShellController.previousSession),
+                                            action: #selector(Navigator.previousSession),
                                             keyEquivalent: "[")
         previousSessionItem.withSymbol("chevron.backward.circle")
-        previousSessionItem.target = menuTarget
+        previousSessionItem.target = navigatorTarget
         hostsMenu.addItem(previousSessionItem)
         for n in 1...9 {
             let item = NSMenuItem(title: "Session \(n)",
-                                  action: #selector(WorkspaceShellController.selectSessionByShortcut(_:)),
+                                  action: #selector(Navigator.selectSessionByShortcut(_:)),
                                   keyEquivalent: "\(n)")
             item.keyEquivalentModifierMask = [.command, .control]
             item.tag = n
-            item.target = menuTarget
+            item.target = navigatorTarget
             hostsMenu.addItem(item)
         }
 
@@ -2141,19 +2155,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // rather than giving the captain a choice. The item itself stays: it
         // is how "New Task…" is *discovered*, which is the whole point of a
         // menu bar, and it works from anywhere regardless of the showing page.
-        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(WorkspaceShellController.newShiftTaskFromMenu), keyEquivalent: "").withSymbol("plus.circle")
-        newTaskItem.target = menuTarget
+        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(Navigator.newShiftTaskFromMenu), keyEquivalent: "").withSymbol("plus.circle")
+        newTaskItem.target = navigatorTarget
         shiftMenu.addItem(newTaskItem)
-        let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(WorkspaceShellController.newShiftFollowUpFromMenu), keyEquivalent: "f").withSymbol("bell.badge")
+        let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(Navigator.newShiftFollowUpFromMenu), keyEquivalent: "f").withSymbol("bell.badge")
         newFollowUpItem.keyEquivalentModifierMask = [.command, .shift]
-        newFollowUpItem.target = menuTarget
+        newFollowUpItem.target = navigatorTarget
         shiftMenu.addItem(newFollowUpItem)
         // cockpit-fix-shift-new-project: no keyEquivalent - this menu follows
         // "Weekly Review"'s own no-shortcut precedent rather than force a
         // collision. (It could take ⌘⇧P now that F5 freed it, but a shortcut
         // the captain never had is not this task's to invent.)
-        let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(WorkspaceShellController.newShiftProjectFromMenu), keyEquivalent: "").withSymbol("folder.badge.plus")
-        newProjectItem.target = menuTarget
+        let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(Navigator.newShiftProjectFromMenu), keyEquivalent: "").withSymbol("folder.badge.plus")
+        newProjectItem.target = navigatorTarget
         shiftMenu.addItem(newProjectItem)
         shiftMenu.addItem(NSMenuItem.separator())
         // F5 (`fm/grandline-feature-f5-command-palette-expansion`) removed
@@ -2163,8 +2177,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // exactly the duplication the review asked to collapse. Tasks are
         // still fully searchable - from the Edit menu's "Search… ⌘K" or the
         // topbar Search pill. ⌘⇧P is now unbound.
-        let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(WorkspaceShellController.showShiftWeeklyReview), keyEquivalent: "").withSymbol("calendar")
-        weeklyReviewItem.target = menuTarget
+        let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(Navigator.showShiftWeeklyReview), keyEquivalent: "").withSymbol("calendar")
+        weeklyReviewItem.target = navigatorTarget
         shiftMenu.addItem(weeklyReviewItem)
         // In-app fallback for quick capture's global ⌥Space hotkey (see
         // `ShiftGlobalHotkey`'s header) - works with no Accessibility
@@ -2200,43 +2214,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         logAnalyzerMenuItem.submenu = logAnalyzerMenu
 
         let openAnalyzerItem = NSMenuItem(title: "Open Log Analyzer",
-                                          action: #selector(WorkspaceShellController.showLogAnalyzer), keyEquivalent: "l")
+                                          action: #selector(Navigator.showLogAnalyzer), keyEquivalent: "l")
         openAnalyzerItem.withSymbol("doc.text.magnifyingglass")
         openAnalyzerItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(openAnalyzerItem)
 
         let analyzeClipboardItem = NSMenuItem(title: "Analyze Clipboard",
-                                              action: #selector(WorkspaceShellController.analyzeClipboardInLogAnalyzer),
+                                              action: #selector(Navigator.analyzeClipboardInLogAnalyzer),
                                               keyEquivalent: "")
         analyzeClipboardItem.withSymbol("clipboard")
         logAnalyzerMenu.addItem(analyzeClipboardItem)
         logAnalyzerMenu.addItem(NSMenuItem.separator())
 
         let copyAnalysisItem = NSMenuItem(title: "Copy Analysis",
-                                          action: #selector(WorkspaceShellController.logAnalyzerCopyAnalysis), keyEquivalent: "c")
+                                          action: #selector(Navigator.logAnalyzerCopyAnalysis), keyEquivalent: "c")
         copyAnalysisItem.withSymbol("doc.on.doc")
         copyAnalysisItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(copyAnalysisItem)
 
         let sendToTerminalItem = NSMenuItem(title: "Send Top Command to Terminal",
-                                            action: #selector(WorkspaceShellController.logAnalyzerSendToTerminal), keyEquivalent: "t")
+                                            action: #selector(Navigator.logAnalyzerSendToTerminal), keyEquivalent: "t")
         sendToTerminalItem.withSymbol("terminal")
         sendToTerminalItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(sendToTerminalItem)
 
         let investigateItem = NSMenuItem(title: "Investigate Further",
-                                         action: #selector(WorkspaceShellController.logAnalyzerInvestigateFurther), keyEquivalent: "i")
+                                         action: #selector(Navigator.logAnalyzerInvestigateFurther), keyEquivalent: "i")
         investigateItem.withSymbol("magnifyingglass.circle")
         investigateItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(investigateItem)
 
         let createRCAItem = NSMenuItem(title: "Create RCA",
-                                       action: #selector(WorkspaceShellController.logAnalyzerCreateRCA), keyEquivalent: "a")
+                                       action: #selector(Navigator.logAnalyzerCreateRCA), keyEquivalent: "a")
         createRCAItem.withSymbol("doc.badge.plus")
         createRCAItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(createRCAItem)
 
-        for item in logAnalyzerMenu.items { item.target = menuTarget }
+        for item in logAnalyzerMenu.items { item.target = navigatorTarget }
 
         // Go menu - UX3's "a 'Go' menu listing every destination with its
         // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original

@@ -1304,7 +1304,7 @@ enum CredentialVaultViewSelfTest {
         AppLockGate.shared.setLocked(false)
         defer { AppLockGate.shared.setLocked(wasLocked) }
 
-        shell.show(.poneglyph)
+        shell.workspace.navigator.show(.poneglyph)
         window.displayIfNeeded()
         shell.view.layoutSubtreeIfNeeded()
 

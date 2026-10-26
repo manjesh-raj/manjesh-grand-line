@@ -762,6 +762,8 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
     /// a strong capture here would be a retain cycle waiting for the day one
     /// of them is no longer app-lifetime.
     static func standard(shell: WorkspaceShellController) -> UnifiedSearchActionProvider {
+        // R2-ARCH-05: the navigation verbs are the navigator's own.
+        let navigator = shell.workspace.navigator
         var actions: [Action] = RailDestination.allCases.map { destination in
             Action(
                 title: "Switch to \(destination.title)",
@@ -769,56 +771,56 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 keywords: [destination.title],
                 icon: .destination(destination),
                 destination: destination,
-                run: { [weak shell] in shell?.show(destination) }
+                run: { [weak navigator] in navigator?.show(destination) }
             )
         }
         actions.append(contentsOf: [
             Action(title: "New Task\u{2026}", meta: "Tasks", keywords: ["add", "create", "todo"],
-                   run: { [weak shell] in shell?.newShiftTaskFromMenu() }),
+                   run: { [weak navigator] in navigator?.newShiftTaskFromMenu() }),
             Action(title: "New Follow-up\u{2026}", meta: "Tasks", keywords: ["add", "create", "remind"],
-                   run: { [weak shell] in shell?.newShiftFollowUpFromMenu() }),
+                   run: { [weak navigator] in navigator?.newShiftFollowUpFromMenu() }),
             Action(title: "New Project\u{2026}", meta: "Tasks", keywords: ["add", "create"],
-                   run: { [weak shell] in shell?.newShiftProjectFromMenu() }),
+                   run: { [weak navigator] in navigator?.newShiftProjectFromMenu() }),
             Action(title: "Weekly Review", meta: "Tasks", keywords: ["week", "summary"],
-                   run: { [weak shell] in shell?.showShiftWeeklyReview() }),
+                   run: { [weak navigator] in navigator?.showShiftWeeklyReview() }),
             Action(title: "New Host\u{2026}", meta: "Hosts", keywords: ["add", "create", "ssh", "server"],
-                   run: { [weak shell] in shell?.newHostFromMenu() }),
+                   run: { [weak navigator] in navigator?.newHostFromMenu() }),
             Action(title: "Quick Connect", meta: "Hosts", keywords: ["ssh", "ad-hoc"],
-                   run: { [weak shell] in shell?.revealHostsQuickConnect() }),
+                   run: { [weak navigator] in navigator?.revealHostsQuickConnect() }),
             Action(title: "Manage SSH Keys", meta: "Hosts", keywords: ["key", "keychain"],
-                   run: { [weak shell] in shell?.selectKeys() }),
+                   run: { [weak navigator] in navigator?.selectKeys() }),
             Action(title: "New SSH Key\u{2026}", meta: "Hosts", keywords: ["add", "create", "keygen"],
-                   run: { [weak shell] in shell?.newKeyFromMenu() }),
+                   run: { [weak navigator] in navigator?.newKeyFromMenu() }),
             Action(title: "Manage Snippets", meta: "Hosts", keywords: ["snippet"],
-                   run: { [weak shell] in shell?.selectSnippets() }),
+                   run: { [weak navigator] in navigator?.selectSnippets() }),
             Action(title: "New Snippet\u{2026}", meta: "Hosts", keywords: ["add", "create"],
-                   run: { [weak shell] in shell?.newSnippetFromMenu() }),
+                   run: { [weak navigator] in navigator?.newSnippetFromMenu() }),
             Action(title: "Open Log Analyzer", meta: "Log Analyzer", keywords: ["logs", "investigate"],
-                   run: { [weak shell] in shell?.showLogAnalyzer() }),
+                   run: { [weak navigator] in navigator?.showLogAnalyzer() }),
             Action(title: "Analyze Clipboard", meta: "Log Analyzer", keywords: ["logs", "paste"],
-                   run: { [weak shell] in shell?.analyzeClipboardInLogAnalyzer() }),
+                   run: { [weak navigator] in navigator?.analyzeClipboardInLogAnalyzer() }),
             Action(title: "Find in Terminal", meta: "Console", keywords: ["search", "grep"],
-                   run: { [weak shell] in shell?.activateConsoleFind() }),
+                   run: { [weak navigator] in navigator?.activateConsoleFind() }),
             Action(title: "Settings", meta: "App", keywords: ["preferences", "config"],
-                   run: { [weak shell] in shell?.selectSettings() }),
+                   run: { [weak navigator] in navigator?.selectSettings() }),
             // Review #3's UX1: "the 14 ⌘K verbs have no 'New sticky note',
             // 'New code snippet', 'Ask the crew' or 'Lock Poneglyph'". Each
             // dispatches the same `AppShellController` method its File-menu
             // sibling does, per this provider's own rule - nothing here is new
             // behaviour.
             Action(title: "New Sticky Note", meta: "Sticky Board", keywords: ["add", "create", "note", "sticky"],
-                   run: { [weak shell] in shell?.newStickyNoteFromMenu() }),
+                   run: { [weak navigator] in navigator?.newStickyNoteFromMenu() }),
             Action(title: "New Code Snippet", meta: "Code Preview", keywords: ["add", "create", "code", "paste"],
-                   run: { [weak shell] in shell?.newCodeSnippetFromMenu() }),
+                   run: { [weak navigator] in navigator?.newCodeSnippetFromMenu() }),
             Action(title: "New Credential\u{2026}", meta: "Poneglyph", keywords: ["add", "create", "password", "secret", "vault"],
-                   run: { [weak shell] in shell?.newCredentialFromMenu() }),
+                   run: { [weak navigator] in navigator?.newCredentialFromMenu() }),
             Action(title: "New Schedule\u{2026}", meta: "Schedules", keywords: ["add", "create", "cron", "recurring"],
-                   run: { [weak shell] in shell?.newScheduleFromMenu() }),
+                   run: { [weak navigator] in navigator?.newScheduleFromMenu() }),
             Action(title: "Ask the Crew", meta: "Straw Hat Pirates", keywords: ["ai", "chat", "luffy", "crew", "ask"],
                    icon: .destination(.strawHat),
-                   run: { [weak shell] in shell?.show(.strawHat) }),
+                   run: { [weak navigator] in navigator?.show(.strawHat) }),
             Action(title: "Lock Poneglyph", meta: "Poneglyph", keywords: ["vault", "secure", "lock", "credential"],
-                   run: { [weak shell] in shell?.lockPoneglyph() }),
+                   run: { [weak navigator] in navigator?.lockPoneglyph() }),
             Action(title: "All Destinations\u{2026}", meta: "App", keywords: ["map", "pages", "everything", "navigate"],
                    run: { [weak shell] in shell?.onShowAllDestinations?() }),
         ])

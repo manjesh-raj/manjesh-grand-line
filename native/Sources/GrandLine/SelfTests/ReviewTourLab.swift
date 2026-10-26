@@ -448,7 +448,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("resize \(Int(width))x\(Int(height))")
             case .goto(let dest):
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("goto \(dest.rawValue)")
             case .menu:
@@ -458,7 +458,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("wait \(milliseconds)ms")
             case .demoTasks:
-                seedDemoTasks(shell.shiftStore)
+                seedDemoTasks(shell.workspace.shiftStore)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo tasks")
             case .demoHome:
@@ -580,7 +580,7 @@ enum ReviewTourLab {
             case .demoFocus:
                 var task = ShiftTask.fresh()
                 task.title = "Rotate the staging certificate"
-                shell.focusTimer.start(task: task)
+                shell.workspace.focusTimer.start(task: task)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo focus (\(task.title))")
@@ -615,7 +615,7 @@ enum ReviewTourLab {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
             case .demoFocusLog:
-                let store = shell.shiftStore
+                let store = shell.workspace.shiftStore
                 let tasks = Array(store.activeTasks.prefix(4))
                 let calendar = Calendar.current
                 let minutes = [[95, 40], [180, 65], [120], [150, 90, 30], [70]]
@@ -932,7 +932,7 @@ enum ReviewTourLab {
             session: QuotaWindow(kind: .session, percentUsed: 62,
                                  resetsAt: Date().addingTimeInterval(2 * 3600), pace: .onPace),
             weekly: nil, fable: nil, extraUsage: nil, latency: 1.2, log: "")))
-        shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: nil, state: .connected)
         var locked = ""
         if GrandLineServices.shared.hasBuiltVault, GrandLineServices.shared.vault.isUnlocked {
             GrandLineServices.shared.vault.lock(reason: "tour demo")

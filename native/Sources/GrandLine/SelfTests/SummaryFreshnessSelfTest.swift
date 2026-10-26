@@ -92,13 +92,13 @@ enum SummaryFreshnessSelfTest {
                 }
 
                 // The captain opens Updates and every tool comes back current.
-                rig.shell.show(.updates)
+                rig.shell.workspace.navigator.show(.updates)
                 let updates = rig.shell.updatesForTests
                 let allCurrent = [DependencyStatus](repeating: .upToDate, count: DependencyCatalog.items.count)
                 updates.debugApplyStatusesAndRender(allCurrent)
 
                 // ...and goes back to the hub, exactly as he did.
-                rig.shell.show(.homeCanvas)
+                rig.shell.workspace.navigator.show(.homeCanvas)
                 rig.canvas.debugRenderNow()
 
                 if poller.lastCounts.toolUpdates != 0 {
@@ -149,12 +149,12 @@ enum SummaryFreshnessSelfTest {
                          + "read '\(beforeText)'", &ok)
                 }
 
-                rig.shell.show(.githubSync)
+                rig.shell.workspace.navigator.show(.githubSync)
                 let sync = rig.shell.githubSyncForTests
                 let allInSync = [GitHubSyncStatus](repeating: .inSync, count: GitHubSyncCatalog.repos.count)
                 sync.debugApplyStatusesAndRender(allInSync)
 
-                rig.shell.show(.homeCanvas)
+                rig.shell.workspace.navigator.show(.homeCanvas)
                 rig.canvas.debugRenderNow()
 
                 if poller.lastCounts.forkDrift != 0 {
@@ -307,9 +307,9 @@ enum SummaryFreshnessSelfTest {
                 let poller = BackgroundSignalsPoller.shared
 
                 // Mount Updates, then navigate away so it is hidden but alive.
-                rig.shell.show(.updates)
+                rig.shell.workspace.navigator.show(.updates)
                 let updates = rig.shell.updatesForTests
-                rig.shell.show(.homeCanvas)
+                rig.shell.workspace.navigator.show(.homeCanvas)
 
                 if !updates.view.isHidden {
                     fail("the Updates page is still visible after navigating to the canvas - "
@@ -329,7 +329,7 @@ enum SummaryFreshnessSelfTest {
                 }
 
                 // ...and the same page, once visible, must still publish.
-                rig.shell.show(.updates)
+                rig.shell.workspace.navigator.show(.updates)
                 updates.debugApplyStatusesAndRender(
                     [DependencyStatus](repeating: .updateAvailable, count: DependencyCatalog.items.count))
                 if poller.lastCounts.toolUpdates != DependencyCatalog.items.count {

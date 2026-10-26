@@ -459,7 +459,7 @@ enum Audit3UIFixesSelfTest {
             ("never started", false, .none, "idle", .idle),
         ]
         for (label, running, outcome, wantValue, wantState) in cases {
-            let row = AppShellController.consolePeekRow(name: "Shell", running: running, lastExit: outcome)
+            let row = Workspace.consolePeekRow(name: "Shell", running: running, lastExit: outcome)
             check(row.value == wantValue,
                   "\(label) reads \"\(row.value)\", want \"\(wantValue)\"",
                   &ok)
@@ -469,8 +469,8 @@ enum Audit3UIFixesSelfTest {
         }
         // The word the finding objected to is gone from every state, and the
         // two that genuinely are faults are not quietly reported as clean.
-        let clean = AppShellController.consolePeekRow(name: "Shell", running: false, lastExit: .clean)
-        let failed = AppShellController.consolePeekRow(name: "Shell", running: false, lastExit: .failed(1))
+        let clean = Workspace.consolePeekRow(name: "Shell", running: false, lastExit: .clean)
+        let failed = Workspace.consolePeekRow(name: "Shell", running: false, lastExit: .failed(1))
         check(clean.state != failed.state,
               "GL-14: a clean exit and a failure are not the same state",
               &ok)

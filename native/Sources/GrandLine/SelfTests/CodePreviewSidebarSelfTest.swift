@@ -161,7 +161,7 @@ enum CodePreviewSidebarSelfTest {
             fail("no File menu", &ok)
             return
         }
-        let item = file.items.first { $0.action == #selector(AppShellController.toggleCodePreviewSidebarFromMenu) }
+        let item = file.items.first { $0.action == #selector(Navigator.toggleCodePreviewSidebarFromMenu) }
         check(item != nil, "the File menu should carry the snippet list toggle", &ok)
         check(item?.keyEquivalent == "b" && item?.keyEquivalentModifierMask == [.command],
               "the toggle should be \u{2318}B, got \(item?.keyEquivalent ?? "-") \(String(describing: item?.keyEquivalentModifierMask))",

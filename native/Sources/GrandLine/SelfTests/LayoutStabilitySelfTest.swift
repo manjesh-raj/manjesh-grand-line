@@ -70,7 +70,7 @@ enum LayoutStabilitySelfTest {
             let (window, shell) = ReviewTourLab.makeOffScreenShell()
             defer { window.orderOut(nil) }
             window.orderFront(nil)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             ReviewTourLab.seedDemoHome(shell.debugHomeCanvas)
             ReviewTourLab.seedDemoBriefing()
 
@@ -113,7 +113,7 @@ enum LayoutStabilitySelfTest {
                                                  window: NSWindow, scratch: URL, _ ok: inout Bool) {
         let label = "\(Int(size.width))x\(Int(size.height)), \(note == unbrokenNote ? "unbroken URL" : "captain's line")"
         resize(window, to: size, shell: shell)
-        shell.show(.overview)
+        shell.workspace.navigator.show(.overview)
         let fleet = shell.debugOverview
         ReviewTourLab.seedDemoDecision(fleet, scratch: scratch, note: note)
         settle(window, shell)
@@ -201,7 +201,7 @@ enum LayoutStabilitySelfTest {
 
     private static func checkTheGuardRestoresAWidenedWindow(shell: AppShellController, window: NSWindow,
                                                            _ ok: inout Bool) {
-        let guardrail = shell.windowOverflowGuard
+        let guardrail = shell.workspace.windowOverflowGuard
         let savedVisible = guardrail.visibleFrame
         defer {
             guardrail.visibleFrame = savedVisible
@@ -215,7 +215,7 @@ enum LayoutStabilitySelfTest {
         resize(window, to: NSSize(width: 1000, height: 620), shell: shell)
         resize(window, to: NSSize(width: 960, height: 620), shell: shell)
         guardrail.arm(for: window)
-        shell.show(.overview)
+        shell.workspace.navigator.show(.overview)
         settle(window, shell)
 
         // A view that makes the same mistake the composer's label made: a
@@ -237,7 +237,7 @@ enum LayoutStabilitySelfTest {
 
         wide.removeFromSuperview()
         settle(window, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(window, shell)
         check(abs(window.frame.width - 960) < 0.5,
               "guard: navigating away puts the window back at its last fitting 960pt (got \(window.frame.width))", &ok)
@@ -270,7 +270,7 @@ enum LayoutStabilitySelfTest {
                                                      _ ok: inout Bool) {
         let label = "\(Int(size.width))x\(Int(size.height))"
         let canvas = shell.debugHomeCanvas
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         ReviewTourLab.seedDemoHome(canvas)
         HomeFitSelfTest.show(rows: 3, at: size, shell: shell, window: window)
         let loaded = homeLayout(canvas)

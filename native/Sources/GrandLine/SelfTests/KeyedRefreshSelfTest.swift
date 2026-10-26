@@ -48,7 +48,7 @@ enum KeyedRefreshSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { window.orderOut(nil) }
         window.orderFront(nil)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         let canvas = shell.debugHomeCanvas
         // Pinned to the legacy scroller a CI runner ends up with. A runner
         // can switch scroller style after launch, which narrows the clip and
@@ -103,8 +103,8 @@ enum KeyedRefreshSelfTest {
         let rebuiltIDs = canvas.moduleCardsForTests.map(ObjectIdentifier.init)
 
         // A revisit with nothing new rebuilds nothing either.
-        shell.show(.settings)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.settings)
+        shell.workspace.navigator.show(.homeCanvas)
         shell.view.layoutSubtreeIfNeeded()
         let afterVisit = canvas.moduleCardsForTests.map(ObjectIdentifier.init)
         check(afterVisit == rebuiltIDs, "a revisit rebuilt Home's cards", &ok)
@@ -122,7 +122,7 @@ enum KeyedRefreshSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { window.orderOut(nil) }
         window.orderFront(nil)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         let canvas = shell.debugHomeCanvas
         canvas.debugSetScrollerStyle(.overlay)
         ReviewTourLab.seedDemoHome(canvas)

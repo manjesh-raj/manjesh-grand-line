@@ -89,7 +89,7 @@ enum MainSplitShellSelfTest {
     /// and all three stay on the toolbar; at 1512 they keep their labels.
     private static func checkNotebookLeavesTheToolbarRoomAtNarrowWidths(_ shell: MainSplitShellController,
                                                                        _ window: NSWindow, _ ok: inout Bool) {
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         resize(window, width: 1100, shell)
         settle(shell)
         let notebook = shell.workspace.notebook
@@ -197,7 +197,7 @@ enum MainSplitShellSelfTest {
                                                              _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         for destination in RailDestination.allCases {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             let module = ModuleTable.module(for: destination)
             check(shell.debugCurrentDestination == destination, "\(destination.rawValue) did not show", &ok)
@@ -269,7 +269,7 @@ enum MainSplitShellSelfTest {
         // the page then grows the window (gotcha (13)).
         for destination in RailDestination.allCases {
             resize(window, width: 1512, shell)
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             settle(shell)
             let keep = shell.debugNarrowestWidthKeepingSidebar.rounded(.up) + 1
             for (width, sidebarShown) in [(keep, true), (keep - 3, false)] {
@@ -294,7 +294,7 @@ enum MainSplitShellSelfTest {
                 resize(window, width: width, shell)
                 var collapsedOn: [String] = []
                 for destination in RailDestination.allCases {
-                    shell.show(destination)
+                    shell.workspace.navigator.show(destination)
                     settle(shell)
                     holds(width, "\(destination.rawValue) in \(palette.id) at \(Int(width))")
                     if shell.debugSidebarIsCollapsed { collapsedOn.append(destination.rawValue) }
@@ -307,7 +307,7 @@ enum MainSplitShellSelfTest {
         // Tasks' Weekly review is the one tab wider than its page: at 1100
         // it puts the sidebar away, and the other tabs bring it back.
         resize(window, width: 1100, shell)
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         clickTab("Board", shell)
         settle(shell)
@@ -332,11 +332,11 @@ enum MainSplitShellSelfTest {
         // comes back - measured: squeezed to its 200pt minimum when the
         // sidebar's pin was released in the same turn. Through Log Analyzer
         // at 1100, so the sidebar really did step aside on the way.
-        shell.show(.logAnalyzer)
+        shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
         resize(window, width: 1100, shell)
         check(shell.debugSidebarIsCollapsed, "at 1100 on Log Analyzer the sidebar did not step aside", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         resize(window, width: 1512, shell)
         check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - MainSplitShellController.sidebarWidth) < 0.5,
@@ -354,7 +354,7 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1100, shell)
         // Stage 7: Tasks' column is its filter row in this layout, so no tab
         // brings a column out at all.
-        shell.show(.shift)
+        shell.workspace.navigator.show(.shift)
         settle(shell)
         if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
             for tab in ["Board", "Weekly review", "List", "Calendar", "Board"] {
@@ -369,7 +369,7 @@ enum MainSplitShellSelfTest {
         // A column that does come back - Notebook's Pages, put away and
         // brought back through `pageForcesCollapse`, the switch Tasks' own
         // Weekly review used before stage 7 - takes its room from the page.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         let sidebarBefore = shell.debugSidebarIsCollapsed
         if let split = (shell.debugSlotController(.notebook) as? HelmSplitPageHosting)?.splitPage {
@@ -393,7 +393,7 @@ enum MainSplitShellSelfTest {
         }
         // The same reopen from Toggle Page Column (⌥⇧⌘S since R2-UX-09), on a
         // page whose column is the captain's.
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         settle(shell)
         if let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage {
             shell.togglePageColumnFromMenu()
@@ -410,7 +410,7 @@ enum MainSplitShellSelfTest {
         var frame = window.frame
         frame.size.width = 1100
         window.setFrame(frame, display: true)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         resize(window, width: 1512, shell)
     }
 
@@ -420,7 +420,7 @@ enum MainSplitShellSelfTest {
         // A module's row reopens the tab it showed last. (Which tab a module
         // opens on before it has shown one is `primaryRoute`, which the model
         // suite checks; every module has been shown by now.)
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         clickTab("Runbooks", shell)
         check(shell.sidebar.debugClick(.module(.crew)), "the Crew row is not in the sidebar", &ok)
@@ -432,8 +432,8 @@ enum MainSplitShellSelfTest {
               "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Runbooks tab it showed last", &ok)
 
         // A page inside a module of several lights its module's row.
-        shell.show(.review)
-        shell.show(.strawHat)
+        shell.workspace.navigator.show(.review)
+        shell.workspace.navigator.show(.strawHat)
         settle(shell)
         check(shell.sidebar.debugSelectedEntry == .module(.crew),
               "a page reached from outside the sidebar lit \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
@@ -454,7 +454,7 @@ enum MainSplitShellSelfTest {
         let pins = QuickAccessConfiguration(pinned: [.console, .strawHat, .hosts, .poneglyph])
         AppSettings.shared.quickAccess = pins
         shell.quickAccessDidChange(pins)
-        shell.sessions.register(hostID: UUID(), label: "Fixture", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: UUID(), label: "Fixture", accentHex: nil, state: .connected)
         settle(shell)
         let entries = shell.sidebar.debugVisibleEntries
         let groups = Set(WorkspaceGroup.allCases.map(\.title))
@@ -474,14 +474,14 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugContextMenuTitles(for: .module(.console)).contains("Connect to a Host\u{2026}"),
               "Console's menu lost Connect to a Host", &ok)
         check(AppSettings.shared.quickAccess == pins, "the sidebar layout changed the floating bar's pins", &ok)
-        for id in shell.sessions.sessions.map(\.hostID) { shell.sessions.unregister(hostID: id) }
+        for id in shell.workspace.hosts.sessions.sessions.map(\.hostID) { shell.workspace.hosts.sessions.unregister(hostID: id) }
         settle(shell)
     }
 
     private static func checkTheMapAndTheSidebarToggle(_ shell: MainSplitShellController, _ window: NSWindow,
                                                       _ ok: inout Bool) {
         resize(window, width: 1512, shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         // ⌥⌘S on a page with no column of its own: the sidebar.
         shell.toggleSidebarFromMenu()
@@ -495,7 +495,7 @@ enum MainSplitShellSelfTest {
 
         // R2-UX-09: ⌥⌘S on a page with its own column is still the app's
         // sidebar, and the column is Toggle Page Column's.
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         settle(shell)
         guard let split = (shell.debugSlotController(.settings) as? HelmSplitPageHosting)?.splitPage else {
             fail("Settings has no split page - the column half cannot be checked", &ok)
@@ -517,7 +517,7 @@ enum MainSplitShellSelfTest {
 
         // On Connections the page's column is put away for the toolbar's
         // tabs, so ⌥⌘S does what it does on any page without one.
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         shell.toggleSidebarFromMenu()
         settle(shell)
@@ -532,7 +532,7 @@ enum MainSplitShellSelfTest {
     private static func checkModuleTabsArePages(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         for module in WorkspaceModule.allCases where module.drawsToolbarTabs {
-            shell.show(module.primaryRoute)
+            shell.workspace.navigator.show(module.primaryRoute)
             settle(shell)
             for tab in module.tabs {
                 check(clickTab(tab.name, shell), "\(module.title)'s toolbar has no \(tab.name) tab", &ok)
@@ -549,11 +549,11 @@ enum MainSplitShellSelfTest {
         }
         // A deep link to a page lands on its tab; the page keeps the tab of
         // its own it last showed.
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         clickTab("Keys", shell)
-        shell.show(.review)
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.review)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         check(selectedTabName(shell) == "Keys", "returning to Hosts lit \(String(describing: selectedTabName(shell))), not Keys", &ok)
         clickTab("Hosts", shell)
@@ -564,7 +564,7 @@ enum MainSplitShellSelfTest {
         // Each page's own tabs are its module's, name for name.
         for module in WorkspaceModule.allCases {
             guard let route = module.pageTabHost else { continue }
-            shell.show(route)
+            shell.workspace.navigator.show(route)
             settle(shell)
             guard let host = shell.debugSlotController(route) as? ModuleTabHosting else {
                 fail("\(route.rawValue) draws \(module.title)'s tabs but is not a ModuleTabHosting page", &ok)
@@ -577,7 +577,7 @@ enum MainSplitShellSelfTest {
         if let shift = shell.debugSlotController(.shift) as? ShiftController {
             check(shift.debugViewTabs.isHidden, "Tasks still draws its own view switcher under the toolbar's tabs", &ok)
             // ...and a switch the page makes by itself moves the toolbar's tab.
-            shell.show(.shift)
+            shell.workspace.navigator.show(.shift)
             settle(shell)
             shift.showWeeklyReview()
             settle(shell)
@@ -590,7 +590,7 @@ enum MainSplitShellSelfTest {
         }
         if let fleet = shell.debugSlotController(.overview) as? FleetController {
             check(fleet.debugTabsAreHidden, "the Fleet page still draws its own tabs under Crew's", &ok)
-            shell.openFleetLog()
+            shell.workspace.navigator.openFleetLog()
             settle(shell)
             check(shell.currentModule == .crew && selectedTabName(shell) == "Log",
                   "opening the captain's log lit \(String(describing: selectedTabName(shell))) in \(shell.currentModule.title)", &ok)
@@ -609,7 +609,7 @@ enum MainSplitShellSelfTest {
     private static func checkTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         resize(window, width: 1512, shell)
         // The page's own actions are the page's views, moved into the toolbar.
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         // Stage 6: Hosts' one action is its primary one, the page's own
         // button at the toolbar's far right rather than among the others.
@@ -626,7 +626,7 @@ enum MainSplitShellSelfTest {
               "showing Hosts' button again did not bring the primary item back", &ok)
         // A page with other actions too (Health's Refresh): those are the
         // page-actions item, which follows its buttons the same way.
-        shell.show(.health)
+        shell.workspace.navigator.show(.health)
         settle(shell)
         let healthActions = (shell.debugSlotController(.health) as? DaylightDrillActions)?.drillHeaderActions ?? []
         let others = healthActions.filter { $0 !== shell.toolbar.debugPrimaryAction }
@@ -641,7 +641,7 @@ enum MainSplitShellSelfTest {
         zip(others, wasHidden).forEach { $0.isHidden = $1 }
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "showing Health's buttons again did not bring the actions item back", &ok)
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         // Connections' Activity: the captain's log, which the Hosts page's
         // column linked to before the toolbar's tabs replaced it.
@@ -651,7 +651,7 @@ enum MainSplitShellSelfTest {
         check(shell.debugCurrentDestination == .overview && selectedTabName(shell) == "Log",
               "Activity opened \(String(describing: shell.debugCurrentDestination)), not Crew › Log", &ok)
 
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
@@ -711,26 +711,26 @@ enum MainSplitShellSelfTest {
 
     private static func checkConsoleIsAModule(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let host = UUID()
-        shell.sessions.register(hostID: host, label: "DEV Bastion", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: host, label: "DEV Bastion", accentHex: nil, state: .connected)
         defer {
-            shell.sessions.unregister(hostID: host)
+            shell.workspace.hosts.sessions.unregister(hostID: host)
             settle(shell)
         }
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         check(shell.debugHeader == nil && shell.toolbar.debugCrumb.hasSuffix("Console"),
               "Console draws a header, or the crumb reads \"\(shell.toolbar.debugCrumb)\"", &ok)
         check(shell.debugSessionStripIsShown, "Console has a live session but no session strip", &ok)
         check(shell.sidebar.debugSelectedEntry == .module(.console), "the Console row is not lit", &ok)
         // The strip is Console's: no other module carries it.
-        shell.show(.review)
+        shell.workspace.navigator.show(.review)
         settle(shell)
         check(!shell.debugSessionStripIsShown, "the session strip followed the captain out of Console", &ok)
         // Quick Connect: its Hosts icon is Hosts' own quick-connect field. Stage
         // 7 made the one button a caption and two icons;
         // `SidebarRedesignsSelfTest` drives the Console icon and the caption's
         // menu form.
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectHosts), "Console offers no Quick Connect", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.quickConnectHosts), "Quick Connect has no Hosts icon", &ok)
@@ -746,7 +746,7 @@ enum MainSplitShellSelfTest {
         resize(window, width: 1512, shell)
         AppSettings.shared.homeCardLayout = .standard
         shell.debugHomeCanvas.cardLayout = .standard
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let canvas = shell.debugHomeCanvas
         check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && !canvas.usesDashboardLayoutForTests,
@@ -862,7 +862,7 @@ enum MainSplitShellSelfTest {
     }
 
     private static func checkBackAndForward(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        for page in [RailDestination.homeCanvas, .shift, .review] { shell.show(page) }
+        for page in [RailDestination.homeCanvas, .shift, .review] { shell.workspace.navigator.show(page) }
         settle(shell)
         let navigation = shell.toolbar.debugNavigation
         check(navigation.isEnabled(forSegment: 0) && !navigation.isEnabled(forSegment: 1),
@@ -874,7 +874,7 @@ enum MainSplitShellSelfTest {
         shell.debugStep(.forward)
         check(shell.debugCurrentDestination == .shift && navigation.isEnabled(forSegment: 1),
               "Forward went to \(String(describing: shell.debugCurrentDestination))", &ok)
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         check(!navigation.isEnabled(forSegment: 1), "a new page kept Forward enabled", &ok)
         // The segmented control itself reaches the same step, through its own
         // target and action. A momentary control keeps no selection set from
@@ -925,7 +925,7 @@ enum MainSplitShellSelfTest {
                                                          _ ok: inout Bool) {
         func opensClosesAndKeepsItsWidth(_ shell: MainSplitShellController, _ window: NSWindow, _ label: String) {
             resize(window, width: 1512, shell)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             settle(shell)
             if !shell.debugInspectorIsCollapsed { shell.setInspectorShown(false); settle(shell) }
             let before = window.frame.width
@@ -1002,9 +1002,9 @@ enum MainSplitShellSelfTest {
         check(toolbar.toolbar.allowsUserCustomization && !toolbar.toolbar.autosavesConfiguration,
               "the toolbar is not customisable, or AppKit autosaves it", &ok)
         // The page's own items come and go without saving anything.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         drain()
         check(AppSettings.shared.workspaceToolbarItems == nil,
@@ -1076,7 +1076,7 @@ enum MainSplitShellSelfTest {
 
     private static func checkTheLockHidesTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                    _ ok: inout Bool) {
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         // The closure `LockPresenter.showLock`/`hideLock` call -
         // `SplitShellModelSelfTest` guards that they do. `showLock` itself
@@ -1116,7 +1116,7 @@ enum MainSplitShellSelfTest {
         }
         // Nothing sits beside the body either: Knowledge's tree was the one
         // column, and stage 7 removed it.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         let knowledgeBody = body.convert(body.bounds, to: pane)
         check(knowledgeBody.minX.magnitude < 0.5, "under Knowledge the body starts \(knowledgeBody.minX)pt in", &ok)
@@ -1126,9 +1126,9 @@ enum MainSplitShellSelfTest {
         // sidebar under Console.
         let live = UUID()
         let restored = UUID()
-        shell.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
-        shell.sessions.register(hostID: restored, label: "PROD Web", accentHex: nil, state: .restored)
-        shell.show(.console)
+        shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: restored, label: "PROD Web", accentHex: nil, state: .restored)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         check(shell.debugSessionStripIsShown && shell.debugSessionStrip.debugPillHostIDs() == [live, restored],
               "Console's session strip lists \(shell.debugSessionStrip.debugPillHostIDs()), want both sessions", &ok)
@@ -1139,8 +1139,8 @@ enum MainSplitShellSelfTest {
         } else {
             fail("Console is not in the sidebar", &ok)
         }
-        shell.sessions.unregister(hostID: live)
-        shell.sessions.unregister(hostID: restored)
+        shell.workspace.hosts.sessions.unregister(hostID: live)
+        shell.workspace.hosts.sessions.unregister(hostID: restored)
         settle(shell)
         check(!shell.debugSessionStripIsShown, "Console's session strip stayed with no sessions", &ok)
     }
@@ -1148,17 +1148,17 @@ enum MainSplitShellSelfTest {
     private static func checkTheFocusChipIsInTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                         _ ok: inout Bool) {
         let toolbar = shell.toolbar!
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         check(!toolbar.debugFocusChipIsShown, "the toolbar shows a focus chip with no timer running", &ok)
         var task = ShiftTask.fresh()
         task.title = "Rotate the staging certificate"
-        shell.focusTimer.start(task: task)
+        shell.workspace.focusTimer.start(task: task)
         settle(shell)
         let chip = toolbar.debugFocusChip
         guard toolbar.debugFocusChipIsShown else {
             fail("a running timer put no chip in the toolbar", &ok)
-            _ = shell.focusTimer.stop()
+            _ = shell.workspace.focusTimer.stop()
             return
         }
         check(chip.debugTitleText == task.title && chip.debugCountdownText == "25:00",
@@ -1175,7 +1175,7 @@ enum MainSplitShellSelfTest {
         // there - and still beside the trailing cluster after a module's own
         // action has come and gone around it.
         for route in [RailDestination.console, .health, .notebook, .homeCanvas] {
-            shell.show(route)
+            shell.workspace.navigator.show(route)
             settle(shell)
             check(toolbar.debugFocusChipIsShown, "the focus chip is not in the toolbar under \(route.rawValue)", &ok)
             let ids = toolbar.debugItemIdentifiers
@@ -1188,7 +1188,7 @@ enum MainSplitShellSelfTest {
         check(shell.debugFocusPopoverIsShown, "clicking the focus chip opened no ring popover", &ok)
         check(chip.performPrimaryAction() && !shell.debugFocusPopoverIsShown, "a second click left the popover open", &ok)
         _ = chip.performPrimaryAction()
-        _ = shell.focusTimer.stop()
+        _ = shell.workspace.focusTimer.stop()
         settle(shell)
         check(!toolbar.debugFocusChipIsShown, "the chip stayed in the toolbar after the timer stopped", &ok)
         check(!shell.debugFocusPopoverIsShown, "the ring popover stayed open after the timer stopped", &ok)
@@ -1230,7 +1230,7 @@ enum MainSplitShellSelfTest {
         let width = window.frame.width
         defer { resize(window, width: width, shell) }
         resize(window, width: 1100, shell)
-        shell.show(.console)
+        shell.workspace.navigator.show(.console)
         settle(shell)
         // Measured with the full-width toolbar this check was written for:
         // R2-UX-10 keeps the sidebar beside Console at 1100, and the toolbar
@@ -1241,9 +1241,9 @@ enum MainSplitShellSelfTest {
         let actionsAlone = toolbar.debugPageActions.first?.window != nil
         var task = ShiftTask.fresh()
         task.title = "Rotate the staging certificate"
-        shell.focusTimer.start(task: task)
+        shell.workspace.focusTimer.start(task: task)
         settle(shell)
-        defer { _ = shell.focusTimer.stop() }
+        defer { _ = shell.workspace.focusTimer.stop() }
         let chip = toolbar.debugFocusChip
         check(toolbar.debugIsCompact && !chip.debugTitleIsShown && chip.toolTip?.contains(task.title) == true,
               "at 1100 the chip still names its task, or its tooltip does not", &ok)
@@ -1261,7 +1261,7 @@ enum MainSplitShellSelfTest {
         }
         // On a module with room, the compact chip is in the toolbar beside
         // the page's actions.
-        shell.show(.health)
+        shell.workspace.navigator.show(.health)
         settle(shell)
         check(chip.window != nil && toolbar.debugPageActions.first?.window != nil,
               "at 1100 on Health the compact chip or the page's actions went to the overflow menu", &ok)
@@ -1269,7 +1269,7 @@ enum MainSplitShellSelfTest {
         // opens Customize.
         // Through a resize, as the window gets there: the toolbar decides
         // what overflows when its width changes, not when an item is added.
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         resize(window, width: 1512, shell)
         resize(window, width: 1100, shell)
         check(chip.window != nil, "at 1100 on Home the chip went to the overflow menu ahead of Customize", &ok)

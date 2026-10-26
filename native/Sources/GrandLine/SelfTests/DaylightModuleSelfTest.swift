@@ -1674,7 +1674,7 @@ enum DaylightModuleSelfTest {
             // The canvas has no drill header; every other destination does,
             // and its back button returns to the canvas with the space intact.
             shell.selectSpace(.stores)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             if !shell.drillHeaderIsHiddenForTests {
                 fail("the canvas shows a drill cluster in the bar - the hub has no back", &ok)
             }
@@ -1690,7 +1690,7 @@ enum DaylightModuleSelfTest {
 
             // Every destination but the canvas is a drill page.
             for dest in RailDestination.allCases where dest != .homeCanvas {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 if shell.drillHeaderIsHiddenForTests {
                     fail("\(dest) has no drill header - it would have no way back", &ok)
                 }
@@ -1731,7 +1731,7 @@ enum DaylightModuleSelfTest {
             }
 
             shell.selectSpace(.stores)
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
 
             // The canvas rebuilds fifteen self-theming cards on every space
             // switch. Each card - and each card's gradient tile - registers a
@@ -2118,7 +2118,7 @@ enum DaylightModuleSelfTest {
                 case .ready: expected = "Ready"
                 default: expected = "Needs access"
                 }
-                shell.setDictationEngineStatus(status)
+                shell.workspace.setDictationEngineStatus(status)
                 pumpMainQueue { card(.dictation)?.chipText == expected }
                 guard let a = card(.dictation) else {
                     fail("no Dictation card rendered", &ok)

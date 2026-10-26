@@ -334,20 +334,20 @@ enum BackgroundSignalsSelfTest {
 
     private static func checkAppPasswordRetryBackoff(_ ok: inout Bool) {
         print("\n-- lock screen `av list` retry backs off --")
-        let base = AppShellController.appPasswordRetryBaseDelay
-        let ceiling = AppShellController.appPasswordRetryCeiling
+        let base = LockPresenter.appPasswordRetryBaseDelay
+        let ceiling = LockPresenter.appPasswordRetryCeiling
 
         // The fixture has to be able to tell the two apart, or "starts at base"
         // and "stops at ceiling" are the same assertion.
         check(ceiling > base, "fixture: the ceiling (\(ceiling)) is not above the base (\(base))", &ok)
 
-        check(AppShellController.appPasswordRetryDelay(attempt: 0) == base,
-              "first retry is \(AppShellController.appPasswordRetryDelay(attempt: 0))s, expected \(base)s - the common 'the helper is still starting' case must still recover fast", &ok)
+        check(LockPresenter.appPasswordRetryDelay(attempt: 0) == base,
+              "first retry is \(LockPresenter.appPasswordRetryDelay(attempt: 0))s, expected \(base)s - the common 'the helper is still starting' case must still recover fast", &ok)
 
-        var previous = AppShellController.appPasswordRetryDelay(attempt: 0)
+        var previous = LockPresenter.appPasswordRetryDelay(attempt: 0)
         var reachedCeiling = false
         for attempt in 1...12 {
-            let delay = AppShellController.appPasswordRetryDelay(attempt: attempt)
+            let delay = LockPresenter.appPasswordRetryDelay(attempt: attempt)
             check(delay >= previous, "retry \(attempt) got faster (\(previous)s -> \(delay)s)", &ok)
             check(delay <= ceiling, "retry \(attempt) is \(delay)s, above the \(ceiling)s ceiling", &ok)
             if delay == ceiling { reachedCeiling = true }
@@ -357,7 +357,7 @@ enum BackgroundSignalsSelfTest {
 
         // The whole point is that it is not flat: a schedule that never grows
         // would satisfy every assertion above.
-        check(AppShellController.appPasswordRetryDelay(attempt: 3) > base,
+        check(LockPresenter.appPasswordRetryDelay(attempt: 3) > base,
               "the retry delay never grows past \(base)s - this is still the flat cadence the fix replaced", &ok)
     }
 

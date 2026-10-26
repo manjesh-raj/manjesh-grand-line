@@ -15,10 +15,12 @@
 //
 // Both host the same `Workspace`: the same 29 pages, the same
 // `DestinationMounter`, the same host pages, the same lock. This class is
-// what they share - the workspace itself, the window's ground, and the API
-// the app delegate, the menus and the suites call on "the shell". Until
-// stage 3 that API lived on `AppShellController` and forwarded to the
-// workspace; it moved here unchanged, so it works whichever shell is showing.
+// what they share - the workspace itself and the window's ground. Until
+// R2-ARCH-05 it also carried about a hundred one-line forwards to the
+// workspace's parts, so the app delegate, the menus and the suites could
+// call "the shell"; they now call `workspace.navigator`, `.hosts`, `.lock`
+// and the workspace directly, and the menu targets the navigator for every
+// navigation verb.
 //
 // What differs between the two is the chrome, so a shell subclass overrides
 // the `WorkspaceChrome` hooks (what to draw when the workspace navigates) and
@@ -219,10 +221,6 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         workspace.navigator.show(.homeCanvas)
     }
 
-    /// The canvas itself, for a caller that wants the hub without changing
-    /// the space (the app delegate's launch landing).
-    @objc func showHomeCanvas() { workspace.navigator.show(.homeCanvas) }
-
     /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
     /// spaces (the original Daylight spec)".
     ///
@@ -336,218 +334,25 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
         }
     }
 
-    // MARK: The workspace's API, forwarded
+    // MARK: The sidebar verbs each shell answers
     //
-    // Everything below is a one-line forward to the part that does the work
-    // since stage 2 (see `Workspace.swift`'s header). The app delegate, the
-    // menu and the suites call these on whichever shell is showing.
+    // R2-ARCH-05: this section used to be about a hundred one-line forwards
+    // to the workspace's parts (`func openRunbook(id:) {
+    // workspace.navigator.openRunbook(id: id) }`), kept so the app delegate,
+    // the menu and the suites could keep calling "the shell". They are gone:
+    // the menu targets `workspace.navigator` for its navigation verbs and the
+    // app delegate reaches `workspace.navigator`, `.hosts`, `.lock` and the
+    // workspace itself directly. What stays on the shell is chrome - what
+    // differs by layout. `NavigationCoherenceSelfTest
+    // .checkTheShellHasNoForwards` fails if a forward comes back.
 
-    // The stores other surfaces read.
-    var codePreviewStore: CodePreviewStore { workspace.codePreviewStore }
-    var readingListStore: ReadingListStore { workspace.readingListStore }
-    var notebookStore: NotebookStore { workspace.notebookStore }
-    var stickyBoardStore: StickyBoardStore { workspace.stickyBoardStore }
-    var shiftStore: ShiftStore { workspace.shiftStore }
-    var focusTimer: FocusTimerController { workspace.focusTimer }
-    var windowOverflowGuard: WindowOverflowGuard { workspace.windowOverflowGuard }
-
-    static func consolePeekRow(name: String,
-                               running: Bool,
-                               lastExit: TabModel.ExitOutcome) -> HelmModulePeekRow {
-        Workspace.consolePeekRow(name: name, running: running, lastExit: lastExit)
-    }
-
-    // The callbacks the app delegate wires.
-    var onPresentHostEditor: ((Host?) -> Void)? {
-        get { workspace.onPresentHostEditor } set { workspace.onPresentHostEditor = newValue }
-    }
-    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)? {
-        get { workspace.onSendCommandToHosts } set { workspace.onSendCommandToHosts = newValue }
-    }
-    var onKeyChordChanged: ((KeyChord) -> Void)? {
-        get { workspace.onKeyChordChanged } set { workspace.onKeyChordChanged = newValue }
-    }
-    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)? {
-        get { workspace.onTerminalShortcutsChanged } set { workspace.onTerminalShortcutsChanged = newValue }
-    }
-    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)? {
-        get { workspace.onQuickCaptureShortcutChanged } set { workspace.onQuickCaptureShortcutChanged = newValue }
-    }
-    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
-        get { workspace.onDictationLocalWhisperChanged } set { workspace.onDictationLocalWhisperChanged = newValue }
-    }
-    var onSearchTapped: (() -> Void)? {
-        get { workspace.onSearchTapped } set { workspace.onSearchTapped = newValue }
-    }
-    var onRunSnippet: ((Snippet) -> Void)? {
-        get { workspace.onRunSnippet } set { workspace.onRunSnippet = newValue }
-    }
-    var onSessionStateChanged: (() -> Void)? {
-        get { workspace.navigator.onSessionStateChanged } set { workspace.navigator.onSessionStateChanged = newValue }
-    }
-    var onCurrentDestinationChanged: ((String?) -> Void)? {
-        get { workspace.navigator.onCurrentDestinationChanged }
-        set { workspace.navigator.onCurrentDestinationChanged = newValue }
-    }
-    var onReconnectHost: ((UUID) -> Bool)? {
-        get { workspace.navigator.onReconnectHost } set { workspace.navigator.onReconnectHost = newValue }
-    }
-    var onUnlocked: (() -> Void)? {
-        get { workspace.lock.onUnlocked } set { workspace.lock.onUnlocked = newValue }
-    }
-    var onLockStateChanged: ((Bool) -> Void)? {
-        get { workspace.lock.onLockStateChanged } set { workspace.lock.onLockStateChanged = newValue }
-    }
-
-    // The lock.
-    func showLock(reason: AppLockReason) { workspace.lock.showLock(reason: reason) }
-    func openWithoutLock() { workspace.lock.openWithoutLock() }
-    func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
-        workspace.lock.attemptUnlockFromCompactMode(password: password, completion: completion)
-    }
-    static var appPasswordRetryBaseDelay: TimeInterval { LockPresenter.appPasswordRetryBaseDelay }
-    static var appPasswordRetryCeiling: TimeInterval { LockPresenter.appPasswordRetryCeiling }
-    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval { LockPresenter.appPasswordRetryDelay(attempt: attempt) }
-
-    // The body area's transition.
-    typealias TransitionDirection = WorkspaceContent.TransitionDirection
-    static var destinationTransitionDuration: TimeInterval { WorkspaceContent.destinationTransitionDuration }
-    static var destinationTransitionOffset: CGFloat { WorkspaceContent.destinationTransitionOffset }
-    var pageCrossfade: PageCrossfade? {
-        get { workspace.content.pageCrossfade } set { workspace.content.pageCrossfade = newValue }
-    }
-    #if FM_SELFTESTS
-    var lastTransitionForTests: (direction: TransitionDirection, skipped: Bool,
-                                 reducedMotion: Bool, entryOffset: CGFloat)? {
-        workspace.content.lastTransitionForTests
-    }
-    #endif
-
-    // Navigation.
-    func show(_ dest: RailDestination) { workspace.navigator.show(dest) }
-    var recentDestinations: RecentDestinations { workspace.navigator.recentDestinations }
-    var currentContextTitle: String? { workspace.navigator.currentContextTitle }
-    var isTerminalDestinationShowing: Bool { workspace.navigator.isTerminalDestinationShowing }
-    var contextualNewAction: ContextualNewAction { workspace.navigator.contextualNewAction }
-    func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
-        workspace.navigator.runInConsole(label: label, command: command, completion: completion)
-    }
-    func captureSessionState() -> SessionRestoreState { workspace.navigator.captureSessionState() }
-    func restoreTabs(from state: SessionRestoreState) { workspace.navigator.restoreTabs(from: state) }
-    @discardableResult
-    func restoreDestination(from state: SessionRestoreState) -> Bool {
-        workspace.navigator.restoreDestination(from: state)
-    }
-    func activeTabShortcutTarget() -> TabShortcutHandling? { workspace.navigator.activeTabShortcutTarget() }
-    func forgetRecentHost(id: UUID) { workspace.navigator.forgetRecentHost(id: id) }
-    func showShiftDestination() { workspace.navigator.showShiftDestination() }
-    func openFleetLog() { workspace.navigator.openFleetLog() }
-    func openShiftTask(id: String) { workspace.navigator.openShiftTask(id: id) }
-    func openShiftFollowUp(id: String) { workspace.navigator.openShiftFollowUp(id: id) }
-    func openShiftProject(id: String) { workspace.navigator.openShiftProject(id: id) }
-    func openKubernetes(hostID: UUID, showTail: Bool) { workspace.navigator.openKubernetes(hostID: hostID, showTail: showTail) }
-    func openRunbook(id: String) { workspace.navigator.openRunbook(id: id) }
-    func openReadingListLink(id: String) { workspace.navigator.openReadingListLink(id: id) }
-    func openNotebookPage(id: String) { workspace.navigator.openNotebookPage(id: id) }
-    func openPostmortem(id: String) { workspace.navigator.openPostmortem(id: id) }
-    func openDestinationForCrew(_ dest: RailDestination, hint: String?) {
-        workspace.navigator.openDestinationForCrew(dest, hint: hint)
-    }
-    func openStickyNote(id: String) { workspace.navigator.openStickyNote(id: id) }
-    func openCodeSnippet(named name: String) { workspace.navigator.openCodeSnippet(named: name) }
-    func openCommandLibraryCommand(id: String) { workspace.navigator.openCommandLibraryCommand(id: id) }
-    func sendCommandToConsole(_ text: String) { workspace.navigator.sendCommandToConsole(text) }
-    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
-        workspace.navigator.openLogAnalyzer(with: capture, hostLabel: hostLabel)
-    }
-    func updateToolFromNotification(_ toolID: String) { workspace.navigator.updateToolFromNotification(toolID) }
-    func syncForkFromNotification(_ repoFullName: String) { workspace.navigator.syncForkFromNotification(repoFullName) }
-
-    // The menu's verbs. Their selectors are what `buildMenu` names, so they
-    // stay on the shell and forward - whichever shell is showing.
-    @objc func newContextualItem() { workspace.navigator.newContextualItem() }
-    @objc func newSavedLinkFromMenu() { workspace.navigator.newSavedLinkFromMenu() }
-    @objc func newNotebookPageFromMenu() { workspace.navigator.newNotebookPageFromMenu() }
-    @objc func newStickyNoteFromMenu() { workspace.navigator.newStickyNoteFromMenu() }
-    @objc func newCodeSnippetFromMenu() { workspace.navigator.newCodeSnippetFromMenu() }
-    @objc func runCodeSnippetFromMenu() { workspace.navigator.runCodeSnippetFromMenu() }
+    /// ⌥⌘S, Go > Toggle Sidebar. The floating bar has no sidebar of its own,
+    /// so it toggles the showing page's column; the sidebar layout overrides
+    /// this with its own sidebar.
     @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
     /// R2-UX-09: the showing page's own column, where it has one - the
     /// sidebar layout's ⌥⇧⌘S, now that ⌥⌘S is always its sidebar.
     @objc func togglePageColumnFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
-    @objc func toggleCodePreviewSidebarFromMenu() { workspace.navigator.toggleCodePreviewSidebarFromMenu() }
-    @objc func captureScreenRegionFromMenu() { workspace.navigator.captureScreenRegionFromMenu() }
-    @objc func copyWhiteboardImageFromMenu() { workspace.navigator.copyWhiteboardImageFromMenu() }
-    @objc func newCredentialFromMenu() { workspace.navigator.newCredentialFromMenu() }
-    @objc func newScheduleFromMenu() { workspace.navigator.newScheduleFromMenu() }
-    @objc func newCommandFromMenu() { workspace.navigator.newCommandFromMenu() }
-    @objc func newRunbookFromMenu() { workspace.navigator.newRunbookFromMenu() }
-    @objc func lockPoneglyph() { workspace.navigator.lockPoneglyph() }
-    @objc func revealHostsQuickConnect() { workspace.navigator.revealHostsQuickConnect() }
-    @objc func activateConsoleFind() { workspace.navigator.activateConsoleFind() }
-    @objc func selectSettings() { workspace.navigator.selectSettings() }
-    @objc func selectHosts() { workspace.navigator.selectHosts() }
-    @objc func newHostFromMenu() { workspace.navigator.newHostFromMenu() }
-    @objc func selectKeys() { workspace.navigator.selectKeys() }
-    @objc func selectSnippets() { workspace.navigator.selectSnippets() }
-    @objc func newKeyFromMenu() { workspace.navigator.newKeyFromMenu() }
-    @objc func newSnippetFromMenu() { workspace.navigator.newSnippetFromMenu() }
-    @objc func newShiftTaskFromMenu() { workspace.navigator.newShiftTaskFromMenu() }
-    @objc func newShiftFollowUpFromMenu() { workspace.navigator.newShiftFollowUpFromMenu() }
-    @objc func newShiftProjectFromMenu() { workspace.navigator.newShiftProjectFromMenu() }
-    @objc func showShiftWeeklyReview() { workspace.navigator.showShiftWeeklyReview() }
-    @objc func showLogAnalyzer() { workspace.navigator.showLogAnalyzer() }
-    @objc func analyzeClipboardInLogAnalyzer() { workspace.navigator.analyzeClipboardInLogAnalyzer() }
-    @objc func logAnalyzerCopyAnalysis() { workspace.navigator.logAnalyzerCopyAnalysis() }
-    @objc func logAnalyzerSendToTerminal() { workspace.navigator.logAnalyzerSendToTerminal() }
-    @objc func logAnalyzerInvestigateFurther() { workspace.navigator.logAnalyzerInvestigateFurther() }
-    @objc func logAnalyzerCreateRCA() { workspace.navigator.logAnalyzerCreateRCA() }
-    @objc func selectSessionByShortcut(_ sender: NSMenuItem) { workspace.hosts.selectSession(atShortcutIndex: sender.tag) }
-    @objc func nextSession() { workspace.hosts.nextSession() }
-    @objc func previousSession() { workspace.hosts.previousSession() }
-
-    // Host pages and live sessions.
-    var sessions: HostSessionRegistry { workspace.hosts.sessions }
-    var restoreTurnScheduler: (@escaping () -> Void) -> Void {
-        get { workspace.hosts.restoreTurnScheduler } set { workspace.hosts.restoreTurnScheduler = newValue }
-    }
-    func queueRestoredHostConsoles(_ hosts: [(host: Host, args: [String])]) {
-        workspace.hosts.queueRestoredHostConsoles(hosts)
-    }
-    func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
-        workspace.hosts.connectHost(host, args: args, navigate: navigate)
-    }
-    func isHostConnected(_ host: Host) -> Bool { workspace.hosts.isHostConnected(host) }
-    func sendCommandToHost(_ host: Host, args: [String], text: String) {
-        workspace.hosts.sendCommandToHost(host, args: args, text: text)
-    }
-    func revealHost(_ host: Host, args: [String]) { workspace.hosts.revealHost(host, args: args) }
-    func removeHostConsole(id: UUID) { workspace.hosts.removeHostConsole(id: id) }
-    func switchToSession(hostID: UUID) { workspace.hosts.switchToSession(hostID: hostID) }
-    func confirmEndSession(hostID: UUID) { workspace.hosts.confirmEndSession(hostID: hostID) }
-    func openSRELeadForCrew(hostHint: String?) -> String? { workspace.hosts.openSRELeadForCrew(hostHint: hostHint) }
-    func shutdownAllHostConsoles() { workspace.hosts.shutdownAllHostConsoles() }
-    #if FM_SELFTESTS
-    var pendingRestoredHostIDsForTests: [UUID] { workspace.hosts.pendingRestoredHostIDsForTests }
-    #endif
-
-    // The pages' own quit-time flushes and menu-bar surfaces.
-    func shutdownStickyBoard(deadline: DispatchTime) { workspace.shutdownStickyBoard(deadline: deadline) }
-    func shutdownScratchpads() { workspace.shutdownScratchpads() }
-    func shutdownReadingList(deadline: DispatchTime) { workspace.shutdownReadingList(deadline: deadline) }
-    func shutdownCodePreview(deadline: DispatchTime) { workspace.shutdownCodePreview(deadline: deadline) }
-    func shutdownNotebook(deadline: DispatchTime) { workspace.shutdownNotebook(deadline: deadline) }
-    func shutdownCredentialVault(deadline: DispatchTime) { workspace.shutdownCredentialVault(deadline: deadline) }
-    func shutdownStrawHatCrew() { workspace.shutdownStrawHatCrew() }
-    func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
-        workspace.askCrewFromMenuBar(text, completion: completion)
-    }
-    var poneglyphQuickCodes: [PoneglyphQuickCode] { workspace.poneglyphQuickCodes }
-    var poneglyphIsUnlocked: Bool { workspace.poneglyphIsUnlocked }
-    @discardableResult
-    func copyPoneglyphCodeFromMenuBar(id: String) -> String? { workspace.copyPoneglyphCodeFromMenuBar(id: id) }
-    func setDictationEngineStatus(_ status: DictationStatus) { workspace.setDictationEngineStatus(status) }
-    func makeCaptureFiler() -> CaptureFiler { workspace.makeCaptureFiler() }
 
     // MARK: Test hooks every shell answers
     //

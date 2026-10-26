@@ -464,13 +464,15 @@ enum FeatureInventorySelfTest {
     /// categories and their buttons, the App Intents, and the widgets.
     static func deepLinkIDs() -> [String: String] {
         var out: [String: String] = [:]
-        // The shell's own API and the navigator it forwards to since stage 2
-        // of the modular-shell migration: a route kept on either still
-        // counts, and one dropped from all of them fails. Since stage 3 the
-        // API is the base class both window layouts extend, and each layout
-        // may answer a route of its own.
+        // The shell's own API and the workspace's parts it used to forward
+        // to: a route kept on any of them still counts, and one dropped from
+        // all of them fails. Since stage 3 the shell API is the base class
+        // both window layouts extend, and each layout may answer a route of
+        // its own. Since R2-ARCH-05 the shell forwards nothing, so the routes
+        // are read where they live - the navigator, the host sessions and
+        // the lock.
         for file in ["WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
-                     "Navigator.swift"] {
+                     "Navigator.swift", "HostSessionCoordinator.swift", "LockPresenter.swift"] {
             guard let text = source(file) else { continue }
             let pattern = #"(?m)^\s*(?:@objc\s+)?func\s+((?:open|show|select|switchTo|reveal|new)[A-Za-z]*)\("#
             for name in matches(pattern, in: text) { out["link.route.\(name)"] = name }

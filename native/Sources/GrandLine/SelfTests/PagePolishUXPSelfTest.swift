@@ -145,7 +145,7 @@ enum PagePolishUXPSelfTest {
         ThemeManager.shared.setTheme(HelmTheme.theme(id: "dusk") ?? ThemeManager.shared.theme)
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
-        shell.show(.review)
+        shell.workspace.navigator.show(.review)
         let bar = shell.barForTests
         bar.setDrillContext(.init(title: "Review", subtitle: String(repeating: "Couldn't read a path ", count: 10),
                                   symbol: "arrow.triangle.branch", hue: .green, artwork: nil))
@@ -359,7 +359,7 @@ enum PagePolishUXPSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
         for destination in RailDestination.allCases {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             shell.view.layoutSubtreeIfNeeded()
             let primaries = visiblePrimaryButtons(in: shell.view)
             let titles = primaries.map { $0.title.isEmpty ? ($0.toolTip ?? "(icon)") : $0.title }
@@ -421,7 +421,7 @@ enum PagePolishUXPSelfTest {
         defer { _ = window }
         var measured = 0
         for destination in RailDestination.allCases {
-            shell.show(destination)
+            shell.workspace.navigator.show(destination)
             shell.view.layoutSubtreeIfNeeded()
             let body = shell.bodyContainerForTests
             let area = body.convert(body.bounds, to: nil)
@@ -475,7 +475,7 @@ enum PagePolishUXPSelfTest {
 
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
-        shell.show(.bootstrap)
+        shell.workspace.navigator.show(.bootstrap)
         shell.view.layoutSubtreeIfNeeded()
         let copies = shell.debugBootstrap.debugHomePathCopies
         check(copies == 1, "UXP-06: Bootstrap prints the firstmate home's path \(copies) times, want once", &ok)
@@ -493,7 +493,7 @@ enum PagePolishUXPSelfTest {
         var ok = true
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         let canvas = shell.debugHomeCanvas
         ReviewTourLab.seedDemoHome(canvas)
         for size in [NSSize(width: 1512, height: 945), NSSize(width: 1100, height: 720)] {
@@ -582,7 +582,7 @@ enum PagePolishUXPSelfTest {
         var ok = true
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         shell.view.layoutSubtreeIfNeeded()
         let body = shell.bodyContainerForTests
         var states: [HelmEmptyState] = []
@@ -733,14 +733,14 @@ enum PagePolishUXPSelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { _ = window }
 
-        shell.show(.settings)
+        shell.workspace.navigator.show(.settings)
         shell.view.layoutSubtreeIfNeeded()
         let settings = shell.settingsForTests
         let pane = settings.debugSelectedCategory.title
         check(!settings.debugToolbarTexts.contains(pane),
               "UXP-17: Settings' header row repeats the pane name \"\(pane)\" its hero already shows", &ok)
 
-        shell.show(.stickyBoard)
+        shell.workspace.navigator.show(.stickyBoard)
         shell.view.layoutSubtreeIfNeeded()
         if let sticky = shell.destinationViewIfMountedForTests(.stickyBoard) {
             var labels: [String] = []
@@ -757,7 +757,7 @@ enum PagePolishUXPSelfTest {
             fail("UXP-17: Sticky Board did not mount", &ok)
         }
 
-        shell.show(.schedules)
+        shell.workspace.navigator.show(.schedules)
         shell.view.layoutSubtreeIfNeeded()
         let schedules = shell.debugSchedules
         let group = SchedulesCardView.Group.needsYou.title

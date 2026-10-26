@@ -153,7 +153,7 @@ enum PageRedesignsSelfTest {
     private static func checkConnectionsTables(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                                _ ok: inout Bool) {
         resize(window, width: 1512, shell)
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         clickTab("Hosts", shell)
         let hosts = shell.workspace.hostsPanel
         check(hosts.drawsSidebarLayout, "Hosts did not switch to the sidebar layout's presentation", &ok)
@@ -256,7 +256,7 @@ enum PageRedesignsSelfTest {
     private static func checkTheInspectorKeepsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
                                                        _ scratch: URL, _ ok: inout Bool) {
         resize(window, width: 1100, shell)
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         clickTab("Hosts", shell)
         let table = shell.workspace.hostsPanel.debugHostsTable
         guard let host = shell.workspace.hostStore.hosts.first else {
@@ -275,7 +275,7 @@ enum PageRedesignsSelfTest {
 
         // Off a page that fills it, the inspector closes and the floor goes
         // back up - without the window moving.
-        shell.show(.logAnalyzer)
+        shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
         check(shell.debugInspectorIsCollapsed, "the inspector stayed open on Logs", &ok)
         // R2-UX-10: back up to Log Analyzer's own floor.
@@ -285,7 +285,7 @@ enum PageRedesignsSelfTest {
 
         // The captain's choice holds: hidden from the toolbar, a new
         // selection does not reopen it until the button does.
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         clickTab("Hosts", shell)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "coming back to a selected host did not reopen its details", &ok)
@@ -315,7 +315,7 @@ enum PageRedesignsSelfTest {
         let store = shell.debugPoneglyphStore
         let seeded = ReviewTourLab.seedDemoVault(store)
         check(store.isUnlocked && store.credentials.count == 7, "the scratch vault was not created: \(seeded)", &ok)
-        shell.show(.poneglyph)
+        shell.workspace.navigator.show(.poneglyph)
         settle(shell)
         let page = shell.debugPoneglyph
         check(page.drawsSidebarLayout, "Poneglyph did not switch to the sidebar layout's presentation", &ok)
@@ -465,7 +465,7 @@ enum PageRedesignsSelfTest {
                                                 _ ok: inout Bool) {
         let vault = shell.workspace.vault
         vault.debugPrepareUnreadForTests()
-        shell.show(.vault)
+        shell.workspace.navigator.show(.vault)
         settle(shell)
         // The visit starts the page's own read, which this process refuses.
         // It has to land before the fixture does, or it lands on top of it.
@@ -513,7 +513,7 @@ enum PageRedesignsSelfTest {
         let pane = shell.debugContentPane
         let body = shell.debugBodyContainer
         for route in [RailDestination.notebook, .runbooks, .postmortems, .docs, .readingList] {
-            shell.show(route)
+            shell.workspace.navigator.show(route)
             settle(shell)
             let frame = body.convert(body.bounds, to: pane)
             check(frame.minX.magnitude < 0.5 && abs(frame.width - pane.bounds.width) < 0.5,
@@ -525,7 +525,7 @@ enum PageRedesignsSelfTest {
 
         // Notebook's own page column is back: the tree was the reason it
         // was put away.
-        shell.show(.notebook)
+        shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
         check(notebook.splitPage?.pageForcesCollapse == false && notebook.splitPage?.isSidebarCollapsed == false
@@ -536,11 +536,11 @@ enum PageRedesignsSelfTest {
               "Notebook lists \(pages), want the three seeded pages", &ok)
 
         // Runbooks and Postmortems list their own items.
-        shell.show(.runbooks)
+        shell.workspace.navigator.show(.runbooks)
         settle(shell)
         let runbooks = Set(shell.workspace.runbooks.debugRunbookPlates.map(\.debugTitle))
         check(runbooks == ["Rotate a TLS certificate", "Fail over the database"], "Runbooks lists \(runbooks)", &ok)
-        shell.show(.postmortems)
+        shell.workspace.navigator.show(.postmortems)
         settle(shell)
         let postmortems = Set(shell.workspace.postmortems.debugPostmortemPlates.map(\.debugTitle))
         check(postmortems == ["Cache outage, 9 October", "Certificate expiry, 2 September"],
@@ -551,18 +551,18 @@ enum PageRedesignsSelfTest {
         let index = UnifiedSearchIndex()
         index.register(UnifiedSearchDocsProvider(
             store: shell.workspace.docsRunbookStore,
-            onOpenRunbook: { [weak shell] id in shell?.openRunbook(id: id) },
-            onOpenPostmortem: { [weak shell] id in shell?.openPostmortem(id: id) }))
+            onOpenRunbook: { [weak shell] id in shell?.workspace.navigator.openRunbook(id: id) },
+            onOpenPostmortem: { [weak shell] id in shell?.workspace.navigator.openPostmortem(id: id) }))
         index.register(UnifiedSearchNotebookProvider(
             store: shell.workspace.notebookStore,
-            onOpen: { [weak shell] id in shell?.openNotebookPage(id: id) }))
+            onOpen: { [weak shell] id in shell?.workspace.navigator.openNotebookPage(id: id) }))
         let found = index.flatItems(query: "cert").map(\.title)
         check(found.contains("Rotate a TLS certificate") && found.contains("Certificate expiry, 2 September")
                 && !found.contains("Fail over the database"),
               "searching \"cert\" finds \(found)", &ok)
         check(index.flatItems(query: "edge").contains { $0.title == "Edge architecture" },
               "searching \"edge\" does not find the Notebook page", &ok)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         if let runbook = index.flatItems(query: "Rotate").first(where: { $0.title == "Rotate a TLS certificate" }) {
             runbook.activate()
@@ -583,7 +583,7 @@ enum PageRedesignsSelfTest {
         resize(window, width: 1512, shell)
         check(WorkspaceModule.crew.tabs.first?.name == "Needs you" && WorkspaceModule.crew.tabs.first?.route == .overview,
               "Crew's first tab is not the Fleet page's Needs you", &ok)
-        shell.show(.overview)
+        shell.workspace.navigator.show(.overview)
         settle(shell)
         let fleet = shell.workspace.overview
         check(clickTab("Needs you", shell), "the toolbar has no Needs you tab on Crew", &ok)
@@ -669,7 +669,7 @@ enum PageRedesignsSelfTest {
 
         // Home's fleet row and the bell's entry land on Needs you.
         clickTab("In flight", shell)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         shell.workspace.homeCanvas.onOpenCrewDecisions?()
         settle(shell)
@@ -687,11 +687,11 @@ enum PageRedesignsSelfTest {
         ReviewTourLab.seedDemoHosts(shell.workspace)
         settle(shell)
         for route in [RailDestination.hosts, .poneglyph, .vault, .notebook, .overview, .runbooks] {
-            shell.show(route)
+            shell.workspace.navigator.show(route)
             settle(shell)
         }
         let hosts = shell.workspace.hostsPanel
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         check(!hosts.drawsSidebarLayout && onScreen(hosts.debugHostsList.card) && !onScreen(hosts.debugHostsTable.card),
               "the floating bar's Hosts page is not its list", &ok)

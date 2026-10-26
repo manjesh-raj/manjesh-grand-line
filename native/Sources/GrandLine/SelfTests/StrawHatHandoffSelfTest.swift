@@ -150,7 +150,7 @@ enum StrawHatHandoffSelfTest {
                                  keyStore: SSHKeyStore, snippetStore: SnippetStore,
                                  withTab: Bool = true) -> UUID {
         let id = UUID()
-        shell.sessions.register(hostID: id, label: label, accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: id, label: label, accentHex: nil, state: .connected)
         // `switchToSession` needs a real entry in `hostConsoles` as well as a
         // registered session - `debugSeedHostConsole` is the same bypass the
         // Recents suite uses, and the reason it exists: `connectHost` would
@@ -192,7 +192,7 @@ enum StrawHatHandoffSelfTest {
     private static func noLiveSessionRefusesAndLandsOnHosts() -> String? {
         withScratchEnv {
             let m = makeMountedShell()
-            guard let message = m.shell.openSRELeadForCrew(hostHint: nil) else {
+            guard let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: nil) else {
                 return "with no live session the handoff must refuse, not report success"
             }
             guard message.lowercased().contains("live host session") else {
@@ -212,7 +212,7 @@ enum StrawHatHandoffSelfTest {
         withScratchEnv {
             let m = makeMountedShell()
             let id = register(m.shell, label: "Prod Bastion", keyStore: m.keys, snippetStore: m.snippets)
-            guard m.shell.openSRELeadForCrew(hostHint: nil) == nil else {
+            guard m.shell.workspace.hosts.openSRELeadForCrew(hostHint: nil) == nil else {
                 return "one live session and no hint is unambiguous - it must be followed"
             }
             guard m.shell.debugActiveHostID == id else {
@@ -235,7 +235,7 @@ enum StrawHatHandoffSelfTest {
             let m = makeMountedShell()
             let dev = register(m.shell, label: "DEV Bastion", keyStore: m.keys, snippetStore: m.snippets)
             let prod = register(m.shell, label: "Prod Bastion", keyStore: m.keys, snippetStore: m.snippets)
-            guard m.shell.openSRELeadForCrew(hostHint: "prod") == nil else {
+            guard m.shell.workspace.hosts.openSRELeadForCrew(hostHint: "prod") == nil else {
                 return "a hint that matches exactly one live session must be followed"
             }
             guard m.shell.debugActiveHostID == prod else {
@@ -243,7 +243,7 @@ enum StrawHatHandoffSelfTest {
             }
             settleAndTearDownSRELead(m.shell, hostID: prod)
             // Case-insensitive: the captain wrote whatever they wrote.
-            guard m.shell.openSRELeadForCrew(hostHint: "DEV BASTION") == nil,
+            guard m.shell.workspace.hosts.openSRELeadForCrew(hostHint: "DEV BASTION") == nil,
                   m.shell.debugActiveHostID == dev else {
                 return "an exact label match must be case-insensitive"
             }
@@ -257,7 +257,7 @@ enum StrawHatHandoffSelfTest {
             let m = makeMountedShell()
             _ = register(m.shell, label: "Prod Bastion EU", keyStore: m.keys, snippetStore: m.snippets)
             _ = register(m.shell, label: "Prod Bastion US", keyStore: m.keys, snippetStore: m.snippets)
-            guard let message = m.shell.openSRELeadForCrew(hostHint: "prod") else {
+            guard let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: "prod") else {
                 return "two matches is genuinely ambiguous - opening one would be a guess"
             }
             guard message.lowercased().contains("more than one") else {
@@ -278,7 +278,7 @@ enum StrawHatHandoffSelfTest {
             // lazier resolution would just use it. But the captain named a
             // different host, and opening the wrong one is worse than saying
             // it is not there.
-            guard let message = m.shell.openSRELeadForCrew(hostHint: "prod-bastion") else {
+            guard let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: "prod-bastion") else {
                 return "a hint naming a host with no live session must not silently use another one"
             }
             guard message.contains("prod-bastion") else {
@@ -296,7 +296,7 @@ enum StrawHatHandoffSelfTest {
             let m = makeMountedShell()
             _ = register(m.shell, label: "DEV Bastion", keyStore: m.keys, snippetStore: m.snippets)
             _ = register(m.shell, label: "Prod Bastion", keyStore: m.keys, snippetStore: m.snippets)
-            guard let message = m.shell.openSRELeadForCrew(hostHint: nil) else {
+            guard let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: nil) else {
                 return "two live sessions and no hint must not pick one"
             }
             guard message.contains("2 live sessions") else {
@@ -317,7 +317,7 @@ enum StrawHatHandoffSelfTest {
             let m = makeMountedShell()
             let id = register(m.shell, label: "Prod Bastion", keyStore: m.keys,
                               snippetStore: m.snippets, withTab: false)
-            guard let message = m.shell.openSRELeadForCrew(hostHint: nil) else {
+            guard let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: nil) else {
                 return "a page with no tab must not report success"
             }
             guard message.lowercased().contains("no tab") else {
@@ -345,8 +345,8 @@ enum StrawHatHandoffSelfTest {
             // captain has not opened - and no console seeded for it, so
             // "nothing was started" is observable.
             let id = UUID()
-            m.shell.sessions.register(hostID: id, label: "Prod Bastion", accentHex: nil, state: .restored)
-            let message = m.shell.openSRELeadForCrew(hostHint: "Prod Bastion")
+            m.shell.workspace.hosts.sessions.register(hostID: id, label: "Prod Bastion", accentHex: nil, state: .restored)
+            let message = m.shell.workspace.hosts.openSRELeadForCrew(hostHint: "Prod Bastion")
             guard m.shell.debugHostConsole(id: id) == nil else {
                 return "a handoff must never fork a session - a real ssh and a Touch ID prompt are not navigation"
             }
@@ -372,7 +372,7 @@ enum StrawHatHandoffSelfTest {
         withScratchEnv {
             let m = makeMountedShell()
             for dest in [RailDestination.logAnalyzer, .stickyBoard, .runbooks, .console] {
-                m.shell.openDestinationForCrew(dest, hint: nil)
+                m.shell.workspace.navigator.openDestinationForCrew(dest, hint: nil)
                 guard m.shell.debugCurrentDestination == dest else {
                     return "a destination handoff must select \(dest.rawValue), got \(String(describing: m.shell.debugCurrentDestination))"
                 }
@@ -397,7 +397,7 @@ enum StrawHatHandoffSelfTest {
     private static func whiteboardHandoffOpensTheExistingComposerPrefilled() -> String? {
         withScratchEnv {
             let m = makeMountedShell()
-            m.shell.openDestinationForCrew(.whiteboard, hint: "three boxes and an arrow")
+            m.shell.workspace.navigator.openDestinationForCrew(.whiteboard, hint: "three boxes and an arrow")
             guard m.shell.debugCurrentDestination == .whiteboard else {
                 return "the handoff must select the Whiteboard first"
             }
@@ -417,7 +417,7 @@ enum StrawHatHandoffSelfTest {
             }
             // A handoff with no hint opens nothing extra rather than clearing
             // whatever the captain had typed.
-            m.shell.openDestinationForCrew(.whiteboard, hint: nil)
+            m.shell.workspace.navigator.openDestinationForCrew(.whiteboard, hint: nil)
             let settle = Date().addingTimeInterval(0.4)
             while Date() < settle { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
             guard m.shell.debugWhiteboard.debugComposer.debugPrompt == "three boxes and an arrow" else {
@@ -447,7 +447,7 @@ enum StrawHatHandoffSelfTest {
         withScratchEnv {
             let m = makeMountedShell()
             // Somewhere that is definitely not the Whiteboard.
-            m.shell.show(.logAnalyzer)
+            m.shell.workspace.navigator.show(.logAnalyzer)
             m.shell.view.layoutSubtreeIfNeeded()
             // Reaching past the production guard on purpose - the point is
             // that this call is survivable, not that the guard exists.

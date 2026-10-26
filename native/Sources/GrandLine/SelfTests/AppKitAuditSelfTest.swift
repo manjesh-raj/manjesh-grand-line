@@ -499,7 +499,7 @@ enum AppKitAuditSelfTest {
     // MARK: M1 - the space pill on the way back to the canvas
 
     /// M1: `DaylightModule.space(forDestination:)` returns nil for the canvas
-    /// itself, and both the drill-header back button and `showHomeCanvas()`
+    /// itself, and both the drill-header back button and `show(.homeCanvas)`
     /// route through `show(_:)` rather than `selectSpace` - so B5's fix left
     /// the pill asserting the drill page's space while the canvas rendered the
     /// space the captain last chose.

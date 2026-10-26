@@ -105,7 +105,7 @@ enum BootstrapWindowShrinkSelfTest {
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1440, height: 900), display: true)
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            shell.show(.bootstrap)
+            shell.workspace.navigator.show(.bootstrap)
 
             let bootstrap = shell.debugBootstrap
             // The in-flight state the audit named: the sweeps are dispatched
@@ -159,7 +159,7 @@ enum BootstrapWindowShrinkSelfTest {
             let (window, shell) = makeMountedShell()
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1440, height: 900), display: true)
             defer { window.orderOut(nil) }
-            shell.show(.bootstrap)
+            shell.workspace.navigator.show(.bootstrap)
             let bootstrap = shell.debugBootstrap
             bootstrap.viewWillAppear()
             bootstrap.debugShowActivePathRow()
@@ -304,14 +304,14 @@ enum BootstrapWindowShrinkSelfTest {
             let (window, shell) = makeMountedShell()
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            shell.show(.bootstrap)
+            shell.workspace.navigator.show(.bootstrap)
             window.contentView?.layoutSubtreeIfNeeded()
             let bootstrap = shell.debugBootstrap
             guard let light = bootstrap.debugStepTitleColor(.firstmateHome)?.usingColorSpace(.sRGB) else {
                 return "no Firstmate home step title to measure"
             }
 
-            shell.show(.updates)
+            shell.workspace.navigator.show(.updates)
             ThemeManager.shared.setTheme(.dusk)
             // Read while the page is still hidden: the titles are a repaint,
             // so they follow the theme at once. Reading after showing it
@@ -330,7 +330,7 @@ enum BootstrapWindowShrinkSelfTest {
                 return "the theme switch did not defer the section rebuild while hidden - "
                     + "this case no longer reaches the path it exists for"
             }
-            shell.show(.bootstrap)
+            shell.workspace.navigator.show(.bootstrap)
             window.contentView?.layoutSubtreeIfNeeded()
             guard !bootstrap.debugNeedsThemeRebuild else {
                 return "showing the page again did not settle the deferred rebuild - AppKit sends "

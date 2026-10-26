@@ -151,7 +151,7 @@ enum DestinationMountingSelfTest {
             let (window, shell) = makeMountedShell()
             // Wired exactly as `main.swift` does it.
             var seen: [String] = []
-            shell.onCurrentDestinationChanged = { context in
+            shell.workspace.navigator.onCurrentDestinationChanged = { context in
                 window.title = AppDelegate.windowTitle(context: context)
                 seen.append(window.title)
             }
@@ -160,7 +160,7 @@ enum DestinationMountingSelfTest {
             // Three real navigations, chosen so no two share a title.
             let visited: [RailDestination] = [.hosts, .console, .settings]
             for dest in visited {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 shell.view.layoutSubtreeIfNeeded()
             }
 
@@ -177,8 +177,8 @@ enum DestinationMountingSelfTest {
             }
             // And `currentContextTitle` is the same answer, since the two must
             // not be able to disagree.
-            guard shell.currentContextTitle == RailDestination.settings.title else {
-                return "currentContextTitle disagrees with the title bar: \(shell.currentContextTitle ?? "nil")"
+            guard shell.workspace.navigator.currentContextTitle == RailDestination.settings.title else {
+                return "currentContextTitle disagrees with the title bar: \(shell.workspace.navigator.currentContextTitle ?? "nil")"
             }
             return nil
         }
@@ -283,7 +283,7 @@ enum DestinationMountingSelfTest {
             let logsBefore = LogAnalyzerStore.debugInitCount
             let (_, shell) = makeMountedShell()
             for destination in [RailDestination.logAnalyzer, .runbooks, .postmortems] {
-                shell.show(destination)
+                shell.workspace.navigator.show(destination)
             }
             let runbookStores = DocsRunbookStore.debugInitCount - runbooksBefore
             let logStores = LogAnalyzerStore.debugInitCount - logsBefore
@@ -320,7 +320,7 @@ enum DestinationMountingSelfTest {
             let (_, shell) = makeMountedShell()
             for destination in [RailDestination.tools, .stickyBoard, .settings, .hosts] {
                 let before = shell.builtLazyDestinationsForTests
-                shell.show(destination)
+                shell.workspace.navigator.show(destination)
                 let added = shell.builtLazyDestinationsForTests.subtracting(before)
                 guard added == [destination.slot] else {
                     return "a first visit to \(destination.slot.rawValue) constructed "
@@ -339,18 +339,18 @@ enum DestinationMountingSelfTest {
     private static func test_reachInsThatDoNotNavigateBuildNothing() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
-            _ = shell.captureSessionState()
-            shell.setDictationEngineStatus(.recording)
-            _ = shell.poneglyphQuickCodes
-            _ = shell.poneglyphIsUnlocked
+            _ = shell.workspace.navigator.captureSessionState()
+            shell.workspace.setDictationEngineStatus(.recording)
+            _ = shell.workspace.poneglyphQuickCodes
+            _ = shell.workspace.poneglyphIsUnlocked
             let deadline = DispatchTime.now() + ShiftGitSync.terminateFlushBudget
-            shell.shutdownStickyBoard(deadline: deadline)
-            shell.shutdownScratchpads()
-            shell.shutdownReadingList(deadline: deadline)
-            shell.shutdownCodePreview(deadline: deadline)
-            shell.shutdownNotebook(deadline: deadline)
-            shell.shutdownCredentialVault(deadline: deadline)
-            shell.shutdownStrawHatCrew()
+            shell.workspace.shutdownStickyBoard(deadline: deadline)
+            shell.workspace.shutdownScratchpads()
+            shell.workspace.shutdownReadingList(deadline: deadline)
+            shell.workspace.shutdownCodePreview(deadline: deadline)
+            shell.workspace.shutdownNotebook(deadline: deadline)
+            shell.workspace.shutdownCredentialVault(deadline: deadline)
+            shell.workspace.shutdownStrawHatCrew()
             let built = shell.builtLazyDestinationsForTests
             guard built.isEmpty else {
                 return "a reach-in that does not navigate constructed: \(built.map(\.rawValue).sorted())"
@@ -387,8 +387,8 @@ enum DestinationMountingSelfTest {
             // run loop, which in this suite would also run every earlier
             // case's queued page refreshes against windows already torn down.
             // `LaunchPathSelfTest` covers the apply half on main.
-            shell.readingListStore.debugBackgroundReload.debugDrainQueue()
-            shell.stickyBoardStore.debugBackgroundReload.debugDrainQueue()
+            shell.workspace.readingListStore.debugBackgroundReload.debugDrainQueue()
+            shell.workspace.stickyBoardStore.debugBackgroundReload.debugDrainQueue()
             guard reads.backgroundReads.contains("links.yaml"), reads.backgroundReads.contains("notes.yaml") else {
                 return "the first load did not read on the parse thread: \(reads.backgroundReads.sorted())"
             }
@@ -416,7 +416,7 @@ enum DestinationMountingSelfTest {
             let before = Set(shell.mountedDestinationSlotsForTests)
             guard !before.contains(.docs) else { return "docs was already mounted before its first visit" }
 
-            shell.show(.docs)
+            shell.workspace.navigator.show(.docs)
             let after = Set(shell.mountedDestinationSlotsForTests)
             guard after.contains(.docs) else { return "show(.docs) did not mount the docs slot" }
             let added = after.subtracting(before)
@@ -437,18 +437,18 @@ enum DestinationMountingSelfTest {
     private static func test_revisitReusesSameView() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
-            shell.show(.tools)
+            shell.workspace.navigator.show(.tools)
             guard let first = shell.destinationViewIfMountedForTests(.tools) else {
                 return "tools did not mount on its first visit"
             }
             let firstID = ObjectIdentifier(first)
 
-            shell.show(.console)
+            shell.workspace.navigator.show(.console)
             guard shell.destinationViewIfMountedForTests(.tools)?.isHidden == true else {
                 return "navigating away from tools should hide its view, not drop it"
             }
 
-            shell.show(.tools)
+            shell.workspace.navigator.show(.tools)
             guard let second = shell.destinationViewIfMountedForTests(.tools) else {
                 return "tools lost its view across a navigate-away-and-back cycle"
             }
@@ -466,7 +466,7 @@ enum DestinationMountingSelfTest {
             // Visit every rail destination once, in enum order, exactly as a
             // captain clicking down the rail would.
             for dest in RailDestination.allCases {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 guard let view = shell.destinationViewIfMountedForTests(dest.slot) else {
                     return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
                 }
@@ -578,7 +578,7 @@ enum DestinationMountingSelfTest {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
             for dest in RailDestination.allCases {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
                 guard let view = shell.destinationViewIfMountedForTests(dest.slot) else {
                     return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
                 }
@@ -623,7 +623,7 @@ enum DestinationMountingSelfTest {
                 return "schedules must not share a slot with automation"
             }
 
-            shell.show(.schedules)
+            shell.workspace.navigator.show(.schedules)
             guard let schedulesView = shell.destinationViewIfMountedForTests(.schedules) else {
                 return "show(.schedules) did not mount the schedules slot"
             }
@@ -637,7 +637,7 @@ enum DestinationMountingSelfTest {
                 return "show(.schedules) unexpectedly mounted the automation slot too"
             }
 
-            shell.show(.automation)
+            shell.workspace.navigator.show(.automation)
             guard let automationView = shell.destinationViewIfMountedForTests(.automation) else {
                 return "show(.automation) did not mount the automation slot"
             }
@@ -676,7 +676,7 @@ enum DestinationMountingSelfTest {
                 return "health must not share a slot with settings"
             }
 
-            shell.show(.health)
+            shell.workspace.navigator.show(.health)
             guard let healthView = shell.destinationViewIfMountedForTests(.health) else {
                 return "show(.health) did not mount the health slot"
             }
@@ -690,7 +690,7 @@ enum DestinationMountingSelfTest {
                 return "show(.health) unexpectedly mounted the settings slot too"
             }
 
-            shell.show(.settings)
+            shell.workspace.navigator.show(.settings)
             guard let settingsView = shell.destinationViewIfMountedForTests(.settings) else {
                 return "show(.settings) did not mount the settings slot"
             }
@@ -742,7 +742,7 @@ enum DestinationMountingSelfTest {
                 return "runbooks and postmortems must not share a slot with each other"
             }
 
-            shell.show(.runbooks)
+            shell.workspace.navigator.show(.runbooks)
             guard let runbooksView = shell.destinationViewIfMountedForTests(.runbooks) else {
                 return "show(.runbooks) did not mount the runbooks slot"
             }
@@ -756,7 +756,7 @@ enum DestinationMountingSelfTest {
                 return "show(.runbooks) unexpectedly mounted the postmortems slot too"
             }
 
-            shell.show(.postmortems)
+            shell.workspace.navigator.show(.postmortems)
             guard let postmortemsView = shell.destinationViewIfMountedForTests(.postmortems) else {
                 return "show(.postmortems) did not mount the postmortems slot"
             }
@@ -764,7 +764,7 @@ enum DestinationMountingSelfTest {
                 return "the postmortems view should be visible right after show(.postmortems)"
             }
 
-            shell.show(.docs)
+            shell.workspace.navigator.show(.docs)
             guard let docsView = shell.destinationViewIfMountedForTests(.docs) else {
                 return "show(.docs) did not mount the docs slot"
             }
@@ -817,7 +817,7 @@ enum DestinationMountingSelfTest {
                 return "DevOps Commands must not share a slot with Tasks"
             }
 
-            shell.show(.commandLibrary)
+            shell.workspace.navigator.show(.commandLibrary)
             guard let libraryView = shell.destinationViewIfMountedForTests(.commandLibrary) else {
                 return "show(.commandLibrary) did not mount the commandLibrary slot"
             }
@@ -828,7 +828,7 @@ enum DestinationMountingSelfTest {
                 return "show(.commandLibrary) unexpectedly mounted the Tasks slot too"
             }
 
-            shell.show(.shift)
+            shell.workspace.navigator.show(.shift)
             guard let tasksView = shell.destinationViewIfMountedForTests(.shift) else {
                 return "show(.shift) did not mount the Tasks slot"
             }
@@ -870,7 +870,7 @@ enum DestinationMountingSelfTest {
             var subtitles: [String] = []
 
             for dest in group {
-                shell.show(dest)
+                shell.workspace.navigator.show(dest)
 
                 let title = shell.drillHeaderForTests.titleForTests
                 guard title == dest.title else {
@@ -940,7 +940,7 @@ enum DestinationMountingSelfTest {
                 return "poneglyph must not share a slot with the Setup group"
             }
 
-            shell.show(.poneglyph)
+            shell.workspace.navigator.show(.poneglyph)
             guard let poneglyphView = shell.destinationViewIfMountedForTests(.poneglyph) else {
                 return "show(.poneglyph) did not mount the poneglyph slot"
             }
@@ -954,7 +954,7 @@ enum DestinationMountingSelfTest {
                 return "show(.poneglyph) unexpectedly mounted the updates slot too"
             }
 
-            shell.show(.updates)
+            shell.workspace.navigator.show(.updates)
             guard let updatesView = shell.destinationViewIfMountedForTests(.updates) else {
                 return "show(.updates) did not mount the updates slot"
             }
@@ -1086,7 +1086,7 @@ enum DestinationMountingSelfTest {
                 let expected: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
                 var reported: Set<DestinationSlotID> = []
                 for dest in RailDestination.allCases {
-                    shell.show(dest)
+                    shell.workspace.navigator.show(dest)
                     guard let body = shell.destinationViewIfMountedForTests(dest.slot) else {
                         problems.append("\(label): \(dest) did not mount")
                         continue

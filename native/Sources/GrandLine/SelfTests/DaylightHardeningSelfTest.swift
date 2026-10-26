@@ -228,7 +228,7 @@ enum DaylightHardeningSelfTest {
     private static func test_keyLoopOrder() -> String? {
         withScratchEnv {
             let (window, shell) = makeShell()
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
 
@@ -264,7 +264,7 @@ enum DaylightHardeningSelfTest {
             // bar, so it is the head of the bar's own chain rather than the
             // first thing below it - which is the same reading order it
             // always had, one row up.
-            shell.show(.review)
+            shell.workspace.navigator.show(.review)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
             let header = shell.drillHeaderForTests
@@ -288,7 +288,7 @@ enum DaylightHardeningSelfTest {
 
             // Back on the canvas the cluster is hidden, so the bar's chain
             // must drop it rather than handing focus to an invisible control.
-            shell.show(.homeCanvas)
+            shell.workspace.navigator.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
             for view in shell.barKeyViewChainForTests where view.isHiddenOrHasHiddenAncestor {

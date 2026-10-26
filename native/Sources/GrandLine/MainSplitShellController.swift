@@ -457,7 +457,7 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onSelectTab = { [weak self] index in self?.tabClicked(index) }
         toolbar.onModuleAction = { [weak self] in self?.moduleActionClicked() }
         toolbar.onQuickConnectConsole = { [weak self] in self?.quickConnectConsole() }
-        toolbar.onQuickConnectHosts = { [weak self] in self?.revealHostsQuickConnect() }
+        toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
         toolbar.onToggleInspector = { [weak self] in
@@ -1030,7 +1030,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private func moduleActionClicked() {
         switch currentModule {
         case .home: setHomeCustomizing(!workspace.homeCanvas.isCustomizing)
-        case .connections: openFleetLog()
+        case .connections: workspace.navigator.openFleetLog()
         default: break
         }
     }

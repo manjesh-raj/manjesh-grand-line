@@ -123,11 +123,11 @@ enum KeyboardParitySelfTest {
         let (window, shell) = ReviewTourLab.makeOffScreenShell()
         defer { window.orderOut(nil) }
         window.orderFront(nil)
-        shell.show(.homeCanvas)
+        shell.workspace.navigator.show(.homeCanvas)
         let canvas = shell.debugHomeCanvas
         // The tour's own realistic Tasks data, which is what fills the
         // attention list.
-        ReviewTourLab.seedDemoTasks(shell.shiftStore)
+        ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
         ReviewTourLab.seedDemoHome(canvas)
         canvas.debugRenderNow()
         shell.view.layoutSubtreeIfNeeded()

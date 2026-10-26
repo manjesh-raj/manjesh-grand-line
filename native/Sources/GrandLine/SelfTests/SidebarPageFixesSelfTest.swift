@@ -88,7 +88,7 @@ enum SidebarPageFixesSelfTest {
 
     private static func checkConnections(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let hosts = shell.workspace.hostsPanel
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         clickTab("Hosts", shell)
         check(hosts.drawsSidebarLayout, "Connections did not adopt its sidebar presentation", &ok)
@@ -146,7 +146,7 @@ enum SidebarPageFixesSelfTest {
             fail("no demo host to put a session on - the Online check would pass vacuously", &ok)
             return
         }
-        shell.sessions.register(hostID: liveID, label: "Fixture", accentHex: nil, state: .connected)
+        shell.workspace.hosts.sessions.register(hostID: liveID, label: "Fixture", accentHex: nil, state: .connected)
         settle(shell)
         hosts.debugOnlineFilter.debugClickTab(id: HostsController.onlineFilterID)
         settle(shell)
@@ -157,7 +157,7 @@ enum SidebarPageFixesSelfTest {
         settle(shell)
         check(hosts.debugHostsTable.debugRows.filter { $0.isRecord }.count == records.count + 1,
               "All did not bring every host back", &ok)
-        shell.sessions.unregister(hostID: liveID)
+        shell.workspace.hosts.sessions.unregister(hostID: liveID)
         settle(shell)
 
         // The table ends under its last row rather than filling the page.
@@ -202,7 +202,7 @@ enum SidebarPageFixesSelfTest {
 
     private static func checkLogs(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let logs = shell.workspace.logAnalyzer
-        shell.show(.logAnalyzer)
+        shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
         check(logs.drawsSidebarLayout, "Logs did not adopt its sidebar presentation", &ok)
         check(shell.toolbar.debugPrimaryAction === logs.debugAnalyzeButton
@@ -272,7 +272,7 @@ enum SidebarPageFixesSelfTest {
         health.retryActions = [.backgroundSignals: { retried.append(.backgroundSignals) },
                                .dotfilesAutoSync: { retried.append(.dotfilesAutoSync) }]
         defer { health.retryActions = wired }
-        shell.show(.health)
+        shell.workspace.navigator.show(.health)
         settle(shell)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         settle(shell)
@@ -320,7 +320,7 @@ enum SidebarPageFixesSelfTest {
         ReviewTourLab.seedDemoHosts(shell.workspace)
         settle(shell)
         let hosts = shell.workspace.hostsPanel
-        shell.show(.hosts)
+        shell.workspace.navigator.show(.hosts)
         settle(shell)
         check(!hosts.drawsSidebarLayout && hosts.workspacePrimaryAction == nil, "the floating bar's Hosts has a toolbar primary action", &ok)
         check(!hosts.debugWorkspacePanel.isHidden && !hosts.debugQuickActions.isHidden && !hosts.debugOnlineChip.isHidden,
@@ -328,7 +328,7 @@ enum SidebarPageFixesSelfTest {
         check(hosts.drillHeaderActions.count == 1, "the floating bar's Hosts header actions changed", &ok)
 
         let logs = shell.workspace.logAnalyzer
-        shell.show(.logAnalyzer)
+        shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
         check(!logs.drawsSidebarLayout && logs.workspacePrimaryAction == nil
                 && logs.debugInputControls.contains { $0 === logs.debugAnalyzeButton } && logs.debugHintIsShown,
@@ -341,7 +341,7 @@ enum SidebarPageFixesSelfTest {
         logs.newInvestigation()
 
         let health = shell.workspace.health
-        shell.show(.health)
+        shell.workspace.navigator.show(.health)
         settle(shell)
         check(!health.drawsSidebarLayout && !health.debugHealthCard.drawsTable && health.workspacePrimaryAction == nil
                 && health.drillHeaderActions.count == 1,
