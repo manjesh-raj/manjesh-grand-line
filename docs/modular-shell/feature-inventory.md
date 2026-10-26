@@ -942,6 +942,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.systemDarkThemeID` | Saved preference `fm.systemDarkThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.systemLightThemeID` | Saved preference `fm.systemLightThemeID` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.terminalShortcuts` | Saved preference `fm.terminalShortcuts` | declared in AppSettings | Settings › Terminal |  |
+| `state.fm.updatesLastChecks` | Saved record `fm.updatesLastChecks` - the last real check of each tool, with when it was taken | declared in DependencyCheckCache | Setup › Updates (a visit shows a kept answer under 12 hours old, "checked 2h ago", R2-PERF-05) |  |
 | `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |
 | `state.fm.workspaceToolbar.items` | Saved preference `fm.workspaceToolbar.items` | declared in AppSettings | Window toolbar (R2-ARCH-06: the customised toolbar's items in order, saved to `AppDefaults` instead of AppKit's autosave; unset is the shipped default) |  |
 | `state.fm.workspaceToolbar.displayMode` | Saved preference `fm.workspaceToolbar.displayMode` | declared in AppSettings | Window toolbar (R2-ARCH-06: the display mode the customisation sheet chose; unset is icons only) |  |

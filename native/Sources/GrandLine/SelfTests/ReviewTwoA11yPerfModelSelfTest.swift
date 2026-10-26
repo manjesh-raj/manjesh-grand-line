@@ -20,6 +20,8 @@ enum ReviewTwoA11yPerfModelSelfTest {
         checkTheLabelWords(&ok)
         checkTheHealthMarksInWords(&ok)
         checkTheTourTakesATextScale(&ok)
+        checkTheUpdatesRecords(&ok)
+        checkAVisitRunsNoCheckOnAFreshRecord(&ok)
         print(ok ? "ReviewTwoA11yPerfModelSelfTest: PASS" : "ReviewTwoA11yPerfModelSelfTest: FAIL")
         return ok
     }
@@ -125,6 +127,127 @@ enum ReviewTwoA11yPerfModelSelfTest {
         check(tour.errors.isEmpty && tour.steps.first == .textScale(1.3),
               "a Larger tour parsed as \(tour.steps) with \(tour.errors)", &ok)
         if ok { print("  OK   default, large and larger parse, a bad or missing name does not") }
+    }
+
+    // MARK: R2-PERF-05
+
+    static let fixtureOutcome = CheckOutcome(installedLabel: "1.0.0", latestLabel: "1.2.0", status: .updateAvailable,
+                                             detail: "1.0.0 installed, 1.2.0 available", log: "fixture output")
+
+    private static func checkTheUpdatesRecords(_ ok: inout Bool) {
+        print("\n-- R2-PERF-05: the kept checks - written, read, expired --")
+        let defaults = AppDefaults.store
+        defer { defaults.removeObject(forKey: DependencyCheckRecords.defaultsKey) }
+        defaults.removeObject(forKey: DependencyCheckRecords.defaultsKey)
+        let records = DependencyCheckRecords(defaults: defaults)
+        let now = Date()
+        records.record(fixtureOutcome, for: "fixture-tool", at: now.addingTimeInterval(-2 * 3600))
+        let kept = records.recent(for: "fixture-tool", maxAge: UpdatesController.visitFreshness, now: now)
+        check(kept?.outcome.status == .updateAvailable && kept?.outcome.installedLabel == "1.0.0"
+              && kept?.outcome.latestLabel == "1.2.0" && kept?.outcome.detail == fixtureOutcome.detail,
+              "a kept check read back as \(String(describing: kept?.outcome))", &ok)
+        check(kept.map { abs($0.gatheredAt.timeIntervalSince(now.addingTimeInterval(-2 * 3600))) < 1 } == true,
+              "a kept check lost when it was taken", &ok)
+        check(kept?.outcome.log == DependencyCheckRecords.keptLog, "a kept check kept the tool's raw output", &ok)
+        check(records.recent(for: "fixture-tool", maxAge: UpdatesController.visitFreshness,
+                             now: now.addingTimeInterval(11 * 3600)) == nil,
+              "a check thirteen hours old still stands for a visit", &ok)
+        check(UpdatesController.visitFreshness == 12 * 3600, "the visit window moved without its comment", &ok)
+        var checking = fixtureOutcome
+        checking = CheckOutcome(installedLabel: "", latestLabel: nil, status: .checking, detail: "", log: "")
+        records.record(checking, for: "mid-check", at: now)
+        check(records.recent(for: "mid-check", maxAge: 60, now: now) == nil, "a row mid-check was kept as an answer", &ok)
+        for status in [DependencyStatus.upToDate, .updateAvailable, .notInstalled, .checkFailed] {
+            let name = DependencyCheckRecords.storedName(status)
+            check(name.flatMap(DependencyCheckRecords.status(named:)) == status, "\(status) does not round-trip", &ok)
+        }
+        defaults.set(Data("not json".utf8), forKey: DependencyCheckRecords.defaultsKey)
+        check(records.recent(for: "fixture-tool", maxAge: 3600, now: now) == nil, "an unreadable record read as an answer", &ok)
+
+        // The cache reads the newer of its own entry and the kept one, and
+        // records every real check it runs.
+        defaults.removeObject(forKey: DependencyCheckRecords.defaultsKey)
+        guard let item = DependencyCatalog.items.first else { fail("the catalog is empty", &ok); return }
+        let saved = DependencyCheckCache.checkOverrideForTests
+        defer { DependencyCheckCache.checkOverrideForTests = saved }
+        DependencyCheckCache.checkOverrideForTests = { _ in fixtureOutcome }
+        let cache = DependencyCheckCache(records: records)
+        check(cache.recentOutcome(for: item, maxAge: 3600) == nil, "an empty cache has a recent answer", &ok)
+        _ = cache.check(item, forceRefresh: true)
+        check(records.recent(for: item.id, maxAge: 60) != nil, "a real check was not kept", &ok)
+        check(cache.recentOutcome(for: item, maxAge: 60)?.outcome.status == .updateAvailable,
+              "the cache does not read its own fresh entry", &ok)
+        check(DependencyCheckCache().records == nil, "a suite's disposable cache keeps records", &ok)
+
+        // Never the captain's domain.
+        if let text = source("DependencyCheckCache.swift") {
+            check(!text.contains("UserDefaults.standard"), "the kept checks reach UserDefaults.standard", &ok)
+            check(text.contains("init(defaults: UserDefaults = AppDefaults.store)"),
+                  "the kept checks are not stored through AppDefaults.store", &ok)
+        } else {
+            fail("DependencyCheckCache.swift was not found, so the store guard measures nothing", &ok)
+        }
+        if ok { print("  OK   written through AppDefaults, read back with its time, expired at twelve hours, never mid-check") }
+    }
+
+    /// The page itself: a visit with a fresh record starts no check and says
+    /// how old it is. Check for updates and a stale record both check.
+    private static func checkAVisitRunsNoCheckOnAFreshRecord(_ ok: inout Bool) {
+        print("\n-- R2-PERF-05: a visit on a fresh record starts no check --")
+        let defaults = AppDefaults.store
+        defer { defaults.removeObject(forKey: DependencyCheckRecords.defaultsKey) }
+        let saved = DependencyCheckCache.checkOverrideForTests
+        defer { DependencyCheckCache.checkOverrideForTests = saved }
+        let lock = NSLock()
+        var checks = 0
+        DependencyCheckCache.checkOverrideForTests = { _ in
+            lock.lock(); checks += 1; lock.unlock()
+            return fixtureOutcome
+        }
+        func count() -> Int { lock.lock(); defer { lock.unlock() }; return checks }
+        let items = DependencyCatalog.items
+        func reset(keptAt date: Date?) {
+            for item in items { DependencyCheckCache.shared.invalidate(item.id) }
+            defaults.removeObject(forKey: DependencyCheckRecords.defaultsKey)
+            guard let date, let records = DependencyCheckCache.shared.records else { return }
+            for item in items { records.record(fixtureOutcome, for: item.id, at: date) }
+            lock.lock(); checks = 0; lock.unlock()
+        }
+        func visit() -> UpdatesController {
+            let page = UpdatesController()
+            _ = page.view
+            page.viewWillAppear()
+            return page
+        }
+        func pump(until done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(5)
+            while !done(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        }
+
+        reset(keptAt: Date().addingTimeInterval(-2 * 3600))
+        check(DependencyCheckCache.shared.records != nil, "the shared cache keeps no records", &ok)
+        let page = visit()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        check(count() == 0, "a visit with every tool checked two hours ago ran \(count()) check(s)", &ok)
+        check(!page.debugIsCheckingAll, "the visit is still sweeping", &ok)
+        check(page.debugLastCheckedText == "2h ago", "the page says it was checked \"\(page.debugLastCheckedText)\"", &ok)
+        check(page.debugRowStatuses.values.allSatisfy { $0 == .updateAvailable },
+              "the kept answers are not on the rows: \(Set(page.debugRowStatuses.values))", &ok)
+
+        // Check for updates runs every check, through the button.
+        page.debugCheckForUpdatesButton.performClick(nil)
+        pump { count() >= items.count && !page.debugIsCheckingAll }
+        check(count() == items.count, "Check for updates ran \(count()) checks for \(items.count) tools", &ok)
+        check(page.debugLastCheckedText == "just now", "after Check for updates the page says \"\(page.debugLastCheckedText)\"", &ok)
+        page.viewWillDisappear()
+
+        // A record older than the window is no record.
+        reset(keptAt: Date().addingTimeInterval(-(UpdatesController.visitFreshness + 3600)))
+        let stale = visit()
+        pump { count() >= items.count && !stale.debugIsCheckingAll }
+        check(count() == items.count, "a visit with thirteen-hour-old records ran \(count()) of \(items.count) checks", &ok)
+        stale.viewWillDisappear()
+        if ok { print("  OK   no check on a fresh record, \"2h ago\" shown, the button and a stale record check every tool") }
     }
 }
 
