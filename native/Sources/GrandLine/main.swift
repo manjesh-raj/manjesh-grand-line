@@ -2531,6 +2531,11 @@ if ProcessMode.current.isIsolated {
     // Pids are reused, so a folder by this name can be an earlier process's.
     // See `SelfTestScratchRoot`.
     SelfTestScratchRoot.startEmpty(scratchRoot)
+    // R2-PROC-08: and the folders earlier processes left in the temporary
+    // directory are swept, once their process is gone and they are an hour
+    // old. A run through `run-all-tests.sh` leaves none (the runner removes
+    // each suite's root); a suite or tour started by hand still does.
+    SelfTestScratchRoot.sweepStale(in: FileManager.default.temporaryDirectory)
     // R2-PROC-02: every store that resolves through `AppPaths.dataRoot()`
     // follows this one variable, so a store with no narrow entry below still
     // lands in scratch. `dataRoot()` answers the same folder on its own in an

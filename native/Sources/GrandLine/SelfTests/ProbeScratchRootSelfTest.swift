@@ -63,6 +63,7 @@ enum ProbeScratchRootSelfTest {
         ok = checkTheWidgetContractSpellsTheVariableIdentically() && ok
         ok = checkTheProbeScriptSetsTheScratchRoot() && ok
         ok = checkASelfTestProcessStartsOnAnEmptyScratchRoot() && ok
+        ok = checkOnlyADeadOldScratchFolderIsSwept() && ok
         print(ok ? "ProbeScratchRootSelfTest: OK" : "ProbeScratchRootSelfTest: FAILED")
         return ok
     }
@@ -278,6 +279,62 @@ enum ProbeScratchRootSelfTest {
                   "main.swift empties the per-process scratch root only after pointing a store into it", &ok)
         } else {
             fail("main.swift does not empty the per-process scratch root before using it", &ok)
+        }
+        return ok
+    }
+
+    /// R2-PROC-08: `SelfTestScratchRoot.sweepStale` removes a folder only when
+    /// its pid is dead and it is over an hour old. Real pids and real
+    /// modification dates, in a parent of the case's own, so the sweep never
+    /// looks at the real temporary directory here.
+    private static func checkOnlyADeadOldScratchFolderIsSwept() -> Bool {
+        var ok = true
+        let fm = FileManager.default
+        let parent = fm.temporaryDirectory.appendingPathComponent("gl-sweep-case-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: parent) }
+
+        // A pid nothing is running: counted down from the top of the range
+        // until `kill(pid, 0)` says no such process.
+        var dead: Int32 = 99_999
+        while dead > 1000, SelfTestScratchRoot.processIsAlive(dead) { dead -= 1 }
+        var deadToo: Int32 = dead - 1
+        while deadToo > 1000, SelfTestScratchRoot.processIsAlive(deadToo) { deadToo -= 1 }
+        let live = getppid()   // the runner's shell, or whatever started this suite
+        check(!SelfTestScratchRoot.processIsAlive(dead) && !SelfTestScratchRoot.processIsAlive(deadToo),
+              "could not find two dead pids - the case is vacuous", &ok)
+        check(SelfTestScratchRoot.processIsAlive(live), "the parent pid \(live) reads as dead - the case is vacuous", &ok)
+
+        let prefix = ProcessMode.scratchFolderPrefix
+        let twoHoursAgo = Date().addingTimeInterval(-2 * 60 * 60)
+        let folders: [(name: String, old: Bool, shouldGo: Bool, what: String)] = [
+            ("\(prefix)\(dead)", true, true, "a dead process's folder untouched for two hours"),
+            ("\(prefix)\(live)", true, false, "a live process's folder, however old"),
+            ("\(prefix)\(deadToo)", false, false, "a dead pid's folder written a moment ago (a new process may own it)"),
+            ("unrelated-folder", true, false, "a folder that is not a scratch root"),
+        ]
+        for folder in folders {
+            let url = parent.appendingPathComponent(folder.name, isDirectory: true)
+            try? fm.createDirectory(at: url.appendingPathComponent("tasks"), withIntermediateDirectories: true)
+            if folder.old { try? fm.setAttributes([.modificationDate: twoHoursAgo], ofItemAtPath: url.path) }
+        }
+        let removed = SelfTestScratchRoot.sweepStale(in: parent)
+        for folder in folders {
+            let exists = fm.fileExists(atPath: parent.appendingPathComponent(folder.name).path)
+            if folder.shouldGo {
+                check(!exists, "the sweep left \(folder.what)", &ok)
+            } else {
+                check(exists, "the sweep removed \(folder.what)", &ok)
+            }
+        }
+        check(removed.count == 1, "the sweep removed \(removed.count) folders, want exactly 1", &ok)
+
+        // And `main.swift` sweeps the temporary directory before any store
+        // is pointed anywhere.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let main = try? String(contentsOf: dir.appendingPathComponent("main.swift"), encoding: .utf8) {
+            let code = FeatureInventorySelfTest.stripComments(main)
+            check(code.contains("SelfTestScratchRoot.sweepStale(in: FileManager.default.temporaryDirectory)"),
+                  "main.swift's redirect block no longer sweeps stale scratch folders", &ok)
         }
         return ok
     }

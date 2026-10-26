@@ -121,6 +121,19 @@ One limit: a `git` command run inside a `/bin/sh -c` string is not visible to th
   A suite that keeps its own failure list without recording through the shared helpers shows no count rather than a wrong one (`E2ETestingPolicySelfTest` is one).
   Moving those onto the shared helpers is a mechanical change across many files and was left out of this one.
 
+### R2-PROC-08: stale scratch folders are swept
+
+PR #520 found 3,169 `selftest-process-<pid>` folders in the temporary directory and emptied only a process's own, because a sweep by dead pid alone could race a new process given that pid.
+`SelfTestScratchRoot.sweepStale` adds the condition that closes the race: a folder goes only when its pid is not in use and it has not changed for an hour.
+A process that took the pid over writes into the folder at once, so its folder is recent and stays.
+`main.swift`'s redirect block runs the sweep over the temporary directory on every self-test or tour start.
+A run through the runner leaves nothing to sweep, because the runner removes each suite's root.
+
+Measured on the development machine: the first suite run with the sweep removed 4,145 such folders.
+Seven of the 11 left belong to live test processes.
+The other four name pids that root processes now hold, which `kill(pid, 0)` reports as `EPERM`, so the sweep counts them as in use and leaves them.
+That is the conservative answer, and they go once those pids are free.
+
 ### R2-PROC-05: still open
 
 The window-backed lane is 124 suites and growing.
