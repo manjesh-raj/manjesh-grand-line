@@ -160,7 +160,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The floating bar's three dropdowns, rebuilt for this chrome. Each is
     /// the same controller the bar uses - the same panel, the same store, the
     /// same rows - opened from a toolbar button instead of a bar square.
-    let notificationCenter = NotificationCenterController()
+    /// The sidebar layout's bell opens the Bridge panel; the floating bar keeps
+    /// the classic one (R2-ARCH-01).
+    let notificationCenter = NotificationCenterController(style: .bridge)
     let recents = RecentDestinationsController()
     private let clipboardHistory = ClipboardHistoryController()
 
@@ -460,6 +462,7 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
+        notificationCenter.onOpenHome = { [weak self] in self?.openModule(.home) }
         toolbar.onToggleInspector = { [weak self] in
             guard let self else { return }
             self.setInspectorShown(self.inspectorItem.isCollapsed)

@@ -243,6 +243,29 @@ enum GrandLineNotificationCenterSelfTest {
         for id in ["q-before", "q-info", "q-act", "q-info2"] { center.set(nil, id: id) }
         center.clock = { Date() }
 
+        // MARK: the Bridge panel's sections (pure half of NotificationBridgePanelSelfTest)
+
+        let sectionBase = Date(timeIntervalSince1970: 1_750_000_000)
+        func dated(_ id: String, _ kind: AppNotificationKind, _ offset: TimeInterval, warning: Bool = false) -> AppNotification {
+            AppNotification(id: id, title: id, subtext: "", kind: kind, tint: .info,
+                            date: sectionBase.addingTimeInterval(offset), isWarning: warning, navigate: {})
+        }
+        let sections = NotificationBridgeSections([
+            dated("info-old", .informational, -500), dated("act-new", .actionNeeded, -10),
+            dated("act-old", .actionNeeded, -900), dated("act-overdue", .actionNeeded, -5, warning: true),
+            dated("info-new", .informational, -20),
+        ])
+        check("Now is the overdue entry even though it is the newest", sections.now?.id == "act-overdue")
+        check("Up next is the rest of the action-needed entries, oldest first",
+              sections.upNext.map(\.id) == ["act-old", "act-new"])
+        check("When you have a minute is the informational entries, newest first",
+              sections.later.map(\.id) == ["info-new", "info-old"])
+        check("the drawn order is Now, Up next, then later",
+              sections.ordered.map(\.id) == ["act-overdue", "act-old", "act-new", "info-new", "info-old"])
+        let onlyInfo = NotificationBridgeSections([dated("i", .informational, 0)])
+        check("with nothing action-needed there is no Now card", onlyInfo.now == nil && !onlyInfo.isEmpty)
+        check("an empty store is empty", NotificationBridgeSections([]).isEmpty)
+
         // MARK: a resolved entry starts genuinely fresh
 
         center.set(note("f1", subtext: "x", kind: .informational), id: "f1")
