@@ -40,13 +40,17 @@ extension HostsController {
             grid.bottomAnchor.constraint(equalTo: list.bottomAnchor),
         ])
         // One selection across the two views.
+        // H11: moving off a host with unsaved changes asks first, and stays
+        // put if the captain cancels.
         grid.onSelect = { [weak self] key in
             guard let self else { return }
+            guard self.mayLeaveHostPanel(for: key) else { self.restoreHostSelection(); return }
             self.hostsTable.setSelectedKey(key, notify: false)
             self.refreshDetailPanel()
         }
         hostsTable.onSelect = { [weak self] key in
             guard let self else { return }
+            guard self.mayLeaveHostPanel(for: key) else { self.restoreHostSelection(); return }
             self.hostsGrid.setSelected(key, notify: false)
             self.refreshDetailPanel()
         }
@@ -228,14 +232,20 @@ extension HostsController {
     /// Select `key` and open the inspector on it, as the captain's own
     /// request would (Space on a card).
     func showDetails(forKey key: String) {
-        hostsGrid.select(key: key)
+        guard mayLeaveHostPanel(for: key) else { return }
+        hostsGrid.setSelected(key, notify: false)
         hostsTable.setSelectedKey(key, notify: false)
         refreshDetailPanel()
         onShowInspector?()
     }
 
-    /// H5's pencil and ⌘E: the host's details, ready to edit.
+    /// H5's pencil, ⌘E and a menu's Edit: the host's form in the side
+    /// panel with the keyboard in it. The floating bar keeps its window.
     func editHost(_ host: Host) {
-        onAddOrEdit?(host)
+        guard drawsSidebarLayout else {
+            onAddOrEdit?(host)
+            return
+        }
+        openHostPanel(forEditing: host)
     }
 }

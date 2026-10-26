@@ -188,16 +188,19 @@ enum PageRedesignsSelfTest {
         table.debugSelect(key: edge.id.uuidString)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "selecting a host did not open the inspector", &ok)
-        check(shell.inspector.hostedContentView === hosts.debugInspectorDetail,
-              "the inspector is not showing the host's details", &ok)
+        // H6 of the Termius-style plan: a host's details are its form in the
+        // panel - every field the read-only details listed, now editable -
+        // with Connect at its foot and the rest of its actions in its menu.
+        // `ConnectionsCardsSelfTest` drives the form itself.
+        let panel = hosts.hostPanel
+        check(panel != nil && shell.inspector.hostedContentView === panel?.view,
+              "the inspector is not showing the host's form", &ok)
         check(shell.inspector.debugTitle == "edge-proxy-01", "the inspector is titled \"\(shell.inspector.debugTitle)\"", &ok)
-        let fields = hosts.debugInspectorDetail.debugFieldLabels
-        for field in ["Environment", "Endpoint", "User", "Credential", "Group", "Tags", "On connect"] {
-            check(fields.contains(field), "the host inspector has no \(field) (it has \(fields))", &ok)
-        }
-        let actions = hosts.debugInspectorDetail.debugActionButtons.map(\.title)
-        check(actions == ["Connect", "Edit\u{2026}", "Duplicate\u{2026}", "Delete\u{2026}"],
-              "the host inspector's actions are \(actions)", &ok)
+        check(panel?.debugAddressField.stringValue == edge.address && panel?.debugUsernameField.stringValue == edge.username,
+              "the host form does not hold the host's address and user", &ok)
+        check(panel?.debugFooterTitles == ["Connect", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
+        check(panel?.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"],
+              "the host form's menu is \(panel?.debugPanelMenuTitles ?? [])", &ok)
         check(hosts.debugSideStackIsHidden, "the page's own detail column shows beside the inspector", &ok)
 
         // The row's menu is the floating bar's overflow, and runs it.

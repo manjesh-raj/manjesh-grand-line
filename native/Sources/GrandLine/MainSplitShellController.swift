@@ -738,6 +738,12 @@ final class MainSplitShellController: WorkspaceShellController {
     /// The captain's own request, from the inspector button, the pane's close
     /// button or ⌥⌘I: the only route that may widen the window for it.
     func setInspectorShown(_ shown: Bool) {
+        // H11: closing the inspector over unsaved changes asks the page
+        // first; a cancel leaves the inspector exactly as it was.
+        if !shown, !inspectorItem.isCollapsed, let source = inspectorSource, !source.inspectorShouldClose() {
+            toolbar.setInspectorState(shown: true, wanted: inspectorWanted)
+            return
+        }
         inspectorWanted = shown
         inspectorPinnedOpen = shown
         let details = shown && inspectorSource?.inspectorContent != nil

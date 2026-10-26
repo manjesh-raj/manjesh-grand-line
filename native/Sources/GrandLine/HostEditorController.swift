@@ -56,9 +56,73 @@
 // equivalent in the mockup's four sections, and removing them would be a
 // functionality regression, not a restyle.
 
+// **H6 of the Termius-style plan: the side panel.** In the sidebar layout
+// this same controller is the host form in the shell's inspector, with
+// `presentation: .panel` - there is no pop-up editor there. Same sections in
+// the same order, the same validation and the same save; what differs is the
+// frame around them:
+//
+//   - `HelmFormSheet`'s panel chrome: no heading (the inspector names the
+//     host), a header with the host's tile and address, and a footer this
+//     controller keeps current (C1): the host's own action (Connect, or
+//     Switch to Session) while nothing has changed, then Cancel and Save
+//     Changes. Return saves and Esc cancels.
+//   - Group and Tags stack rather than share a row, for the 320pt panel.
+//   - Advanced is collapsed unless the host uses something in it.
+//   - Port forwards are edited inline (`PortForwardInlineEditor`) rather than
+//     in a second pop-up.
+//   - A save keeps the panel open on the saved host, and anything a save did
+//     not touch (`lastConnectedAt`, stamped by a connect while the form was
+//     open) is taken from the stored record rather than from the form.
+//
+// The floating bar keeps the window, unchanged (`presentation: .window`).
+
 import AppKit
 
 final class HostEditorController: NSViewController, NSTextFieldDelegate {
+
+    /// Where the form is drawn: its own window (the floating bar's), or the
+    /// sidebar shell's inspector.
+    enum Presentation {
+        case window
+        case panel
+    }
+
+    let presentation: Presentation
+
+    /// A panel footer's action while nothing has changed (Connect, Switch to
+    /// Session), set by the page that hosts the panel.
+    struct PanelAction {
+        let title: String
+        let symbol: String?
+        let run: () -> Void
+    }
+
+    /// The panel's own action and its overflow menu (Duplicate, Delete, End
+    /// Session) - both the page's, so the panel runs exactly what a card or
+    /// a row does. Set them, then `refreshPanelFooter()`.
+    var panelPrimary: PanelAction?
+    var panelMenu: [WorkspaceDetail.Action] = []
+    /// The line under the host's name in the panel's header: its live state.
+    var panelStatus: (text: String, tint: HelmTint)?
+    /// Something in the form changed, or it was saved or reset.
+    var onDirtyChange: ((Bool) -> Void)?
+    /// The panel's Cancel (or Esc) with changes, or a new host's Cancel.
+    var onPanelCancel: (() -> Void)?
+    /// The record as it is stored now, read at save time, so a save carries
+    /// what changed under the form (a connect's `lastConnectedAt`) rather
+    /// than overwriting it with the copy the form opened with.
+    var storedHost: (() -> Host?)?
+
+    /// The host the form is for (the saved one, after a panel save), or
+    /// `nil` for a new host not saved yet.
+    var currentRecord: Host? { editing }
+
+    /// Whether the form differs from what it opened with (C1's Save and
+    /// Cancel appear only then).
+    private(set) var isDirty = false
+    /// What the form held when it opened, or when it was last saved.
+    private var baseline: Host?
 
     /// The form's content column never grows past this, regardless of window
     /// width - a typical macOS dialog reading width, centred in whatever space
@@ -66,7 +130,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     private static let maxContentWidth: CGFloat = 520
 
     /// The host being edited; `nil` for a brand-new host.
-    private let editing: Host?
+    private var editing: Host?
 
     /// The saved-keys Keychain (Phase 2) - read to populate the key chooser,
     /// and written to by the inline "+ New Key…" flow (Fix 5).
@@ -145,7 +209,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Init
 
-    init(host: Host?, keyStore: SSHKeyStore, snippets: [Snippet], existingLabels: Set<String> = []) {
+    init(host: Host?, keyStore: SSHKeyStore, snippets: [Snippet], existingLabels: Set<String> = [],
+         presentation: Presentation = .window) {
+        self.presentation = presentation
         self.editing = host
         self.keyStore = keyStore
         self.snippets = snippets
@@ -163,13 +229,18 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Layout
 
+    private var form: HelmFormSheet!
+
     override func loadView() {
+        let panel = presentation == .panel
         let form = HelmFormSheet(title: editing == nil ? "New Host" : "Edit Host",
                                  scrolls: true,
-                                 maxContentWidth: Self.maxContentWidth,
-                                 domainHue: RailDestination.hosts.domainHue)
+                                 maxContentWidth: panel ? Self.panelContentWidth : Self.maxContentWidth,
+                                 domainHue: RailDestination.hosts.domainHue,
+                                 chrome: panel ? .panel : .sheet)
+        self.form = form
         form.autoresizingMask = [.width, .height]
-        form.setFrameSize(NSSize(width: 640, height: 780))
+        form.setFrameSize(NSSize(width: panel ? WorkspaceInspectorController.width : 640, height: 780))
         view = form
         form.onApplyTheme = { [weak self] theme in
             // The icon/colour swatches carry the host's own chosen accent, not
@@ -182,6 +253,12 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             self?.environmentPicker.applyTheme(theme)
             self?.keyIconTile.applyTheme(theme)
             self?.tagsChipsFlow.subviews.compactMap { $0 as? VocabularyChipView }.forEach { $0.applyTheme(theme) }
+            self?.applyPanelTheme(theme)
+        }
+        if panel { form.setPanelHeader(buildPanelHeader()) }
+        for field in [labelField, addressField, portField, usernameField, jumpViaField] { field.delegate = self }
+        for row in [agentForwardRow, blockViewRow, kubeContextBadgeRow] {
+            row.onToggle = { [weak self] in self?.fieldsChanged() }
         }
 
         labelField.stringValue = editing?.label ?? ""
@@ -194,7 +271,10 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         portField.formatter = intFormatter()
         usernameField.stringValue = editing?.username ?? ""
         form.addFieldColumns([("Port", portField), ("Username", usernameField)])
-        environmentPicker.onSelect = { [weak self] title in self?.groupField.stringValue = title }
+        environmentPicker.onSelect = { [weak self] title in
+            self?.groupField.stringValue = title
+            self?.fieldsChanged()
+        }
         environmentPicker.select(editing?.group)
         form.addField("Environment", environmentPicker)
 
@@ -219,40 +299,66 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         tagsColumn.translatesAutoresizingMaskIntoConstraints = false
         tagInputField.delegate = self
         renderTagChips()
-        form.addColumns([form.labelledField("Group", groupField),
-                          form.labelledField("Tags", tagsColumn)])
+        if panel {
+            // 320pt: one field per row.
+            form.addField("Group", groupField)
+            form.addField("Tags", tagsColumn)
+        } else {
+            form.addColumns([form.labelledField("Group", groupField),
+                              form.labelledField("Tags", tagsColumn)])
+        }
 
-        form.addSection("Advanced", number: "05")
+        let advancedStart = form.addSection("Advanced", number: "05", actions: panel ? [advancedToggle] : [])
         agentForwardRow.isOn = editing?.agentForward ?? false
         blockViewRow.isOn = editing?.blockViewOptIn ?? false
         kubeContextBadgeRow.isOn = editing?.kubeContextBadgeOptIn ?? false
+        _ = advancedStart
         form.addRow(agentForwardRow)
         form.addRow(blockViewRow)
         form.addRow(kubeContextBadgeRow)
+        advancedRows = [agentForwardRow, blockViewRow, kubeContextBadgeRow]
         jumpViaField.stringValue = editing?.jumpVia ?? ""
-        form.addField("Jump via", jumpViaField)
-        portForwardingButton.target = self
-        portForwardingButton.action = #selector(editPortForwarding)
-        updatePortForwardingButtonTitle()
-        let forwardingRow = NSStackView(views: [portForwardingButton, NSView()])
-        forwardingRow.orientation = .horizontal
-        forwardingRow.distribution = .fill
-        forwardingRow.translatesAutoresizingMaskIntoConstraints = false
-        forwardingRow.arrangedSubviews[1].setContentHuggingPriority(.defaultLow, for: .horizontal)
-        form.addRow(form.labelledField("Port forwarding", forwardingRow))
+        advancedRows.append(form.addField("Jump via", jumpViaField))
+        if panel {
+            // Inline, rather than a second pop-up.
+            let inline = PortForwardInlineEditor(rules: portForwards)
+            inline.onChange = { [weak self] in self?.fieldsChanged() }
+            inlineForwards = inline
+            advancedRows.append(form.addField("Port forwarding", inline))
+        } else {
+            portForwardingButton.target = self
+            portForwardingButton.action = #selector(editPortForwarding)
+            updatePortForwardingButtonTitle()
+            let forwardingRow = NSStackView(views: [portForwardingButton, NSView()])
+            forwardingRow.orientation = .horizontal
+            forwardingRow.distribution = .fill
+            forwardingRow.translatesAutoresizingMaskIntoConstraints = false
+            forwardingRow.arrangedSubviews[1].setContentHuggingPriority(.defaultLow, for: .horizontal)
+            let wrapped = form.labelledField("Port forwarding", forwardingRow)
+            form.addRow(wrapped)
+            advancedRows.append(wrapped)
+        }
         buildSnippetChooser()
         form.addRow(snippetCard)
-        form.addCaption("Jumping chains through another saved host's own jump host automatically. "
-            + "Agent forwarding and port-forwarding rules apply to this host's own connection.")
+        advancedRows.append(snippetCard)
+        advancedRows.append(form.addCaption("Jumping chains through another saved host's own jump host automatically. "
+            + "Agent forwarding and port-forwarding rules apply to this host's own connection."))
 
-        form.setFooter(target: self,
-                       confirmTitle: editing == nil ? "Create Host" : "Save Changes",
-                       confirm: #selector(save),
-                       cancel: #selector(cancel),
-                       delete: editing == nil ? nil : (title: "Delete Host", action: #selector(deleteHost)))
-
-        form.setSubtitle("Stored on this Mac. Credentials stay in the Keychain.")
+        if panel {
+            // Advanced starts open only when the host uses something in it.
+            setAdvancedShown(editing.map(Self.usesAdvanced) ?? false)
+            form.setPanelFooter(panelFooter)
+        } else {
+            form.setFooter(target: self,
+                           confirmTitle: editing == nil ? "Create Host" : "Save Changes",
+                           confirm: #selector(save),
+                           cancel: #selector(cancel),
+                           delete: editing == nil ? nil : (title: "Delete Host", action: #selector(deleteHost)))
+            form.setSubtitle("Stored on this Mac. Credentials stay in the Keychain.")
+        }
         form.refreshTheme()
+        baseline = assembledHost()
+        refreshPanelFooter()
     }
 
     override func viewDidAppear() {
@@ -289,6 +395,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
                                      self?.presentNewKeySheet()
                                  }]) { [weak self] chosen in
             self?.selectedKeyID = ids.indices.contains(chosen) ? ids[chosen] : nil
+            self?.fieldsChanged()
         }
     }
 
@@ -305,6 +412,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             do {
                 try self.keyStore.addNew(newKey, privateKeyData: privateKeyData, passphrase: passphrase)
                 self.buildKeyChooser(selecting: newKey.id)
+                self.fieldsChanged()
             } catch {
                 self.presentKeyStoreError(error, label: newKey.label)
             }
@@ -328,6 +436,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         selectedSnippetID = ids.indices.contains(index) ? ids[index] : nil
         snippetCard.configureChoices(titles, selectedIndex: index) { [weak self] chosen in
             self?.selectedSnippetID = ids.indices.contains(chosen) ? ids[chosen] : nil
+            self?.fieldsChanged()
         }
     }
 
@@ -358,9 +467,13 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         guard let field = notification.object as? NSTextField else { return }
         if field === groupField {
             environmentPicker.select(groupField.stringValue)
+            fieldsChanged()
             return
         }
-        guard field === tagInputField else { return }
+        guard field === tagInputField else {
+            fieldsChanged()
+            return
+        }
         let text = tagInputField.stringValue
         guard text.hasSuffix(",") else { return }
         let candidate = String(text.dropLast())
@@ -369,10 +482,22 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === tagInputField, commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
-        commitTag(tagInputField.stringValue)
-        tagInputField.stringValue = ""
-        return true
+        if control === tagInputField, commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitTag(tagInputField.stringValue)
+            tagInputField.stringValue = ""
+            return true
+        }
+        // C1, in the panel: Return saves and Esc cancels, from any field.
+        guard presentation == .panel else { return false }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)), isDirty || editing == nil {
+            savePanel()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)), isDirty || editing == nil {
+            cancelPanel()
+            return true
+        }
+        return false
     }
 
     private func commitTag(_ raw: String) {
@@ -381,6 +506,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         guard !tagChips.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
         tagChips.append(trimmed)
         renderTagChips()
+        fieldsChanged()
     }
 
     private func renderTagChips() {
@@ -391,6 +517,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             chip.onRemove = { [weak self] in
                 self?.tagChips.removeAll { $0 == tag }
                 self?.renderTagChips()
+                self?.fieldsChanged()
             }
             return chip
         }
@@ -507,12 +634,14 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     @objc private func pickIcon(_ sender: NSButton) {
         selectedIcon = sender.identifier?.rawValue ?? selectedIcon
         styleIconButtons()
+        fieldsChanged()
     }
 
     @objc private func pickColor(_ sender: NSButton) {
         selectedAccent = sender.identifier?.rawValue ?? selectedAccent
         styleIconButtons() // recolour the selected icon preview
         styleColorButtons()
+        fieldsChanged()
     }
 
     /// F3: the chosen icon sits on a **filled** tile in the chosen accent, not
@@ -606,17 +735,20 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Actions
 
-    @objc private func save() {
+    /// Every field, checked the way Save always has, then assembled onto
+    /// `base`. `nil` (after telling the captain why) when a field is not one
+    /// `ssh` could use.
+    private func validatedHost() -> Host? {
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !address.isEmpty else {
             flag(addressField)
-            return
+            return nil
         }
         guard let port = Int(portField.stringValue), (1...65535).contains(port) else {
             flag(portField)
             warn(title: "Invalid port", body: "Port must be a whole number between 1 and 65535.")
-            return
+            return nil
         }
         // GL-08: a leading dash makes `ssh` read the value as an option, not a
         // host - `-oProxyCommand=<cmd>` runs `<cmd>` locally on Connect. The
@@ -629,31 +761,63 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             warn(title: "Address can't start with \u{201C}-\u{201D}",
                  body: "`ssh` would read it as a command-line option instead of a hostname. "
                      + "If you meant a hostname, remove the leading dash.")
-            return
+            return nil
         }
         if Host.hasUnsafeLeadingDash(usernameField.stringValue) {
             flag(usernameField)
             warn(title: "Username can't start with \u{201C}-\u{201D}",
                  body: "`ssh` would read it as a command-line option instead of a login name.")
-            return
+            return nil
         }
         if Host.hasUnsafeLeadingDash(jumpViaField.stringValue) {
             flag(jumpViaField)
             warn(title: "Jump host can't start with \u{201C}-\u{201D}",
                  body: "`ssh` would read it as a command-line option instead of a jump destination.")
-            return
+            return nil
         }
-
-        var host = editing ?? Host(label: "", address: "")
         let resolvedLabel = label.isEmpty ? address : label
         if existingLabels.contains(resolvedLabel) {
             flag(labelField)
             warn(title: "Duplicate label", body: "Another saved host already uses the label \u{201C}\(resolvedLabel)\u{201D}. Quick-connect can't tell them apart - pick a unique label.")
-            return
+            return nil
         }
-        host.label = resolvedLabel
+        // The inline forwards are checked with the rules sheet's own words.
+        if let inlineForwards {
+            for rule in inlineForwards.rules {
+                guard (1...65535).contains(rule.listenPort) else {
+                    warn(title: "Invalid listen port", body: "Listen port must be a whole number between 1 and 65535.")
+                    return nil
+                }
+                if rule.kind != .dynamic {
+                    guard (1...65535).contains(rule.destPort) else {
+                        warn(title: "Invalid destination port", body: "Destination port must be a whole number between 1 and 65535.")
+                        return nil
+                    }
+                    guard !rule.destHost.isEmpty else {
+                        warn(title: "Missing destination host", body: "Local and Remote forwarding rules need a destination host.")
+                        return nil
+                    }
+                    if Host.hasUnsafeLeadingDash(rule.destHost) {
+                        warn(title: "Destination can't start with \u{201C}-\u{201D}",
+                             body: "`ssh` would read it as a command-line option.")
+                        return nil
+                    }
+                }
+            }
+        }
+        return assembledHost(base: storedHost?() ?? editing)
+    }
+
+    /// The form as a host, on `base` (whatever the form does not edit comes
+    /// from there). No validation - this is also what the panel compares to
+    /// decide whether anything changed.
+    private func assembledHost(base: Host? = nil) -> Host {
+        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var host = base ?? editing ?? Host(label: "", address: "")
+        host.label = label.isEmpty ? address : label
         host.address = address
-        host.port = port
+        host.port = Int(portField.stringValue) ?? 0
         host.username = usernameField.stringValue.trimmingCharacters(in: .whitespaces)
         host.keyID = selectedKeyID
         let group = groupField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -664,11 +828,15 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         host.kubeContextBadgeOptIn = kubeContextBadgeRow.isOn
         let jumpVia = jumpViaField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         host.jumpVia = jumpVia.isEmpty ? nil : jumpVia
-        host.portForwards = portForwards
+        host.portForwards = inlineForwards?.rules ?? portForwards
         host.startupSnippetID = selectedSnippetID
         host.iconSymbol = selectedIcon
         host.accentHex = selectedAccent
+        return host
+    }
 
+    @objc private func save() {
+        guard let host = validatedHost() else { return }
         onSave?(host)
         closeEditor()
     }
@@ -682,6 +850,223 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     @objc private func cancel() {
         closeEditor()
     }
+
+    // MARK: The panel (H6, H10, H11)
+
+    /// The panel's column: the inspector's width less its gutters.
+    static let panelContentWidth: CGFloat = WorkspaceInspectorController.width - 2 * HelmFormSheet.panelGutter
+
+    private var inlineForwards: PortForwardInlineEditor?
+    private var advancedRows: [NSView] = []
+    private var advancedShown = true
+    private lazy var advancedToggle: HelmButton = {
+        let b = HelmButton(title: "Show", variant: .quiet, size: .small, target: self, action: #selector(advancedToggled))
+        b.setAccessibilityLabel("Show advanced settings")
+        return b
+    }()
+    private let panelTile = IconTileView(size: 34, cornerRadius: 9)
+    private let panelKicker = NSTextField(labelWithString: "")
+    private let panelSubtitle = NSTextField(labelWithString: "")
+    private let panelStatusPill = HelmStatusPill(style: .dotWord)
+    private lazy var panelFooter = NSStackView()
+    private lazy var panelPrimaryButton = HelmButton(title: "Connect", variant: .primary, symbol: "bolt.fill",
+                                                     target: self, action: #selector(panelPrimaryClicked))
+    private lazy var panelMenuButton: HelmButton = {
+        let b = HelmButton(symbol: "ellipsis", variant: .secondary, target: self, action: #selector(panelMenuClicked(_:)))
+        b.toolTip = "More actions"
+        b.setAccessibilityLabel("More actions")
+        return b
+    }()
+    private lazy var panelCancelButton = HelmButton(title: "Cancel", variant: .secondary,
+                                                    target: self, action: #selector(panelCancelClicked))
+    private lazy var panelSaveButton = HelmButton(title: "Save Changes", variant: .primary,
+                                                  target: self, action: #selector(panelSaveClicked))
+
+    /// Whether a host uses anything Advanced holds, so its section opens.
+    static func usesAdvanced(_ host: Host) -> Bool {
+        host.agentForward || host.blockViewOptIn || host.kubeContextBadgeOptIn
+            || !(host.jumpVia ?? "").isEmpty || !host.portForwards.isEmpty || host.startupSnippetID != nil
+    }
+
+    private func buildPanelHeader() -> NSView {
+        panelKicker.lineBreakMode = .byTruncatingTail
+        panelSubtitle.lineBreakMode = .byTruncatingTail
+        panelSubtitle.font = HelmType.code()
+        let text = NSStackView(views: [panelKicker, panelSubtitle, panelStatusPill])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = HelmMetrics.s0
+        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [panelTile, text])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s3
+        panelTile.setContentHuggingPriority(.required, for: .horizontal)
+        refreshPanelHeader()
+        return row
+    }
+
+    private func refreshPanelHeader() {
+        guard presentation == .panel else { return }
+        let theme = ThemeManager.shared.theme
+        panelTile.configure(symbol: selectedIcon, tint: .accent, pointSize: HelmType.scaled(14))
+        panelTile.overrideFill(hex: selectedAccent)
+        panelTile.applyTheme(theme)
+        let kicker = editing == nil ? "New host" : (editing.map(HostsController.roleKicker) ?? "SSH")
+        panelKicker.attributedStringValue = NSAttributedString(
+            string: kicker.uppercased(), attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+        let draft = assembledHost()
+        panelSubtitle.stringValue = draft.address.isEmpty ? "Not saved yet" : draft.subtitle
+        panelSubtitle.textColor = HelmTheme.mutedInk(theme)
+        panelSubtitle.toolTip = panelSubtitle.stringValue
+        if let status = panelStatus {
+            panelStatusPill.isHidden = false
+            panelStatusPill.configure(text: status.text, tint: status.tint, theme: theme)
+        } else {
+            panelStatusPill.isHidden = true
+        }
+    }
+
+    private func applyPanelTheme(_ theme: HelmTheme) {
+        guard presentation == .panel else { return }
+        refreshPanelHeader()
+    }
+
+    /// Something the form holds changed: re-decide whether it differs from
+    /// what it opened with.
+    private func fieldsChanged() {
+        guard isViewLoaded, let baseline else { return }
+        let dirty = assembledHost() != baseline
+        refreshPanelHeader()
+        guard dirty != isDirty else { return }
+        isDirty = dirty
+        refreshPanelFooter()
+        onDirtyChange?(dirty)
+    }
+
+    /// C1: the host's own action while nothing changed; Cancel and Save
+    /// Changes once something has. A new host is always Cancel and Create.
+    func refreshPanelFooter() {
+        guard presentation == .panel, isViewLoaded else { return }
+        panelFooter.arrangedSubviews.forEach { panelFooter.removeArrangedSubview($0); $0.removeFromSuperview() }
+        panelFooter.orientation = .horizontal
+        panelFooter.spacing = HelmMetrics.s2
+        panelFooter.alignment = .centerY
+        let editingChanges = isDirty || editing == nil
+        if editingChanges {
+            panelSaveButton.title = editing == nil ? "Create Host" : "Save Changes"
+            panelFooter.distribution = .fillEqually
+            panelFooter.addArrangedSubview(panelCancelButton)
+            panelFooter.addArrangedSubview(panelSaveButton)
+        } else {
+            panelFooter.distribution = .fill
+            if let primary = panelPrimary {
+                panelPrimaryButton.title = primary.title
+                panelPrimaryButton.symbolName = primary.symbol
+                panelFooter.addArrangedSubview(panelPrimaryButton)
+                panelPrimaryButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            }
+            if !panelMenu.isEmpty {
+                panelFooter.addArrangedSubview(panelMenuButton)
+                panelMenuButton.setContentHuggingPriority(.required, for: .horizontal)
+            }
+        }
+        refreshPanelHeader()
+    }
+
+    @objc private func panelPrimaryClicked() { panelPrimary?.run() }
+
+    @objc private func panelMenuClicked(_ sender: NSButton) {
+        makePanelMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + HelmMetrics.s1), in: sender)
+    }
+
+    private func makePanelMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (index, action) in panelMenu.enumerated() {
+            let item = NSMenuItem(title: action.title, action: #selector(panelMenuItemPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            if let symbol = action.symbol { item.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(12)) }
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func panelMenuItemPicked(_ sender: NSMenuItem) {
+        guard sender.tag < panelMenu.count else { return }
+        panelMenu[sender.tag].run()
+    }
+
+    @objc private func panelCancelClicked() { cancelPanel() }
+    @objc private func panelSaveClicked() { savePanel() }
+
+    /// Save from the panel. The panel stays open on the saved host, clean.
+    /// Returns whether it saved (a field Save refuses keeps it dirty).
+    @discardableResult
+    func savePanel() -> Bool {
+        guard let host = validatedHost() else { return false }
+        onSave?(host)
+        editing = host
+        baseline = assembledHost()
+        isDirty = false
+        refreshPanelFooter()
+        onDirtyChange?(false)
+        return true
+    }
+
+    /// The panel's Cancel: the page puts the stored host back (or closes a
+    /// new host's form).
+    func cancelPanel() {
+        onPanelCancel?()
+    }
+
+    @objc private func advancedToggled() {
+        setAdvancedShown(!advancedShown)
+    }
+
+    private func setAdvancedShown(_ shown: Bool) {
+        advancedShown = shown
+        // Arranged subviews of the form's stack: hidden drops them out of
+        // layout (gotcha (11)'s stack exemption).
+        advancedRows.forEach { $0.isHidden = !shown }
+        advancedToggle.title = shown ? "Hide" : "Show"
+        advancedToggle.setAccessibilityLabel(shown ? "Hide advanced settings" : "Show advanced settings")
+    }
+
+    /// Put the keyboard in the name field - the pencil's "ready to edit".
+    func focusFirstField() {
+        view.window?.makeFirstResponder(labelField)
+    }
+
+    #if FM_SELFTESTS
+    var debugIsDirty: Bool { isDirty }
+    var debugFooterTitles: [String] {
+        panelFooter.arrangedSubviews.compactMap { ($0 as? HelmButton).map { $0.title.isEmpty ? ($0.accessibilityLabel() ?? "") : $0.title } }
+    }
+    var debugFooterButtons: [HelmButton] { panelFooter.arrangedSubviews.compactMap { $0 as? HelmButton } }
+    var debugLabelField: HelmTextField { labelField }
+    var debugAddressField: HelmTextField { addressField }
+    var debugPortField: HelmTextField { portField }
+    var debugUsernameField: HelmTextField { usernameField }
+    var debugAdvancedShown: Bool { advancedShown }
+    var debugAdvancedRowsHidden: Bool { advancedRows.allSatisfy(\.isHidden) }
+    var debugAdvancedToggle: HelmButton { advancedToggle }
+    var debugInlineForwards: PortForwardInlineEditor? { inlineForwards }
+    var debugPanelMenuTitles: [String] { makePanelMenu().items.map(\.title) }
+    var debugPanelSubtitle: String { panelSubtitle.stringValue }
+    /// Type into a field as the captain would: the text, then the delegate's
+    /// own change callback.
+    func debugType(_ text: String, into field: NSTextField) {
+        field.stringValue = text
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: field))
+    }
+    /// A key command as the field editor sends it to the delegate.
+    @discardableResult
+    func debugCommand(_ selector: Selector, in field: NSTextField) -> Bool {
+        guard let editor = field.window?.fieldEditor(true, for: field) as? NSTextView else { return false }
+        return control(field, textView: editor, doCommandBy: selector)
+    }
+    #endif
 
     /// Briefly flash a required field's focus ring when it is empty.
     private func flag(_ field: NSTextField) {

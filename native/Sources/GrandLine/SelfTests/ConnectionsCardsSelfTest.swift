@@ -18,6 +18,10 @@
 //     Larger text scale, and the recent row with "last connected".
 //   - K1, K3, K4 and K6: the keys as cards, key search, what a key card says,
 //     and Touch ID's chip in the Keys row.
+//   - H6, H10 and H11: a host is edited in the side panel - no pop-up - with
+//     Connect at its foot until something changes, then Cancel and Save
+//     Changes; Return saves and Esc cancels; a new host is an empty form
+//     there; and leaving unsaved changes asks Save, Discard or Cancel.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 // The arithmetic is asserted headless in `ConnectionsLogicSelfTest`.
@@ -49,8 +53,9 @@ enum ConnectionsCardsSelfTest {
             defer { window.orderOut(nil) }
             ReviewTourLab.seedDemoHosts(shell.workspace)
             settle(shell)
-            for check in [checkKeyCards, checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts, checkTagMatch,
-                          checkTagOverflow, checkFindOrConnect, checkSplitButtons] {
+            for check in [checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
+                          checkHostCards, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
+                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -226,8 +231,13 @@ enum ConnectionsCardsSelfTest {
         check(bolt === buttons[0], "H5: a click on the bolt reached \(String(describing: bolt))", &ok)
         check(connects == [bastion.id], "H5: the bolt connected \(connects)", &ok)
         realClick(at: centre(of: buttons[1]), in: window)
-        check(edits.last??.id == bastion.id, "H5: the pencil did not open bastion-stg's editor", &ok)
+        settle(shell)
+        // H6: the pencil edits in the side panel, never a window.
+        check(edits.isEmpty && hosts.hostPanelKey == bastion.id.uuidString && shell.inspector.debugTitle == "bastion-stg",
+              "H5: the pencil did not open bastion-stg's form in the panel", &ok)
 
+        grid.select(key: edge.id.uuidString)
+        settle(shell)
         // H2: List, with the selection carried over, and back.
         hosts.hostsViewModeControl.debugClickTab(id: HostsController.listModeID)
         settle(shell)
@@ -285,7 +295,9 @@ enum ConnectionsCardsSelfTest {
         check(!shell.debugInspectorIsCollapsed && shell.inspector.debugTitle == "edge-proxy-01",
               "keyboard: Space did not open the details", &ok)
         card.debugKey(14, characters: "e", modifiers: .command)
-        check(edits.last??.id == edge.id, "keyboard: ⌘E did not edit", &ok)
+        settle(shell)
+        check(edits.isEmpty && hosts.hostPanelKey == edge.id.uuidString && hosts.hostPanel != nil,
+              "keyboard: ⌘E did not edit in the panel", &ok)
         card.debugKey(51, characters: "\u{7f}")
         check(confirms.last?.contains("edge-proxy-01") == true && store.host(id: edge.id) != nil,
               "keyboard: Delete did not ask first (\(confirms))", &ok)
@@ -350,6 +362,230 @@ enum ConnectionsCardsSelfTest {
             }
         }
         resize(window, width: 1512, shell)
+    }
+
+    // MARK: H6
+
+    /// Selects `label`'s card through the grid, and returns the host.
+    @discardableResult
+    static func selectHost(_ label: String, _ hosts: HostsController, _ shell: MainSplitShellController) -> Host? {
+        guard let host = shell.workspace.hostStore.hosts.first(where: { $0.label == label }) else { return nil }
+        hosts.hostsGrid.select(key: host.id.uuidString)
+        settle(shell)
+        return host
+    }
+
+    private static func checkHostPanel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let store = shell.workspace.hostStore
+        var windowsOpened = 0
+        let savedEdit = hosts.onAddOrEdit
+        hosts.onAddOrEdit = { _ in windowsOpened += 1 }
+        var problems: [String] = []
+        HelmConfirm.responderForTests = { request in problems.append(request.title); return .confirm }
+        defer { hosts.onAddOrEdit = savedEdit; HelmConfirm.responderForTests = nil }
+
+        guard let edge = selectHost("edge-proxy-01", hosts, shell), let panel = hosts.hostPanel else {
+            fail("H6: selecting a host shows no form in the panel", &ok)
+            return
+        }
+        check(shell.inspector.hostedContentView === panel.view && shell.inspector.debugTitle == "edge-proxy-01",
+              "H6: the inspector shows \(shell.inspector.debugTitle), not the host's form", &ok)
+        check(panel.presentation == .panel && (panel.view as? HelmFormSheet)?.chrome == .panel,
+              "H6: the panel's form is not the panel chrome", &ok)
+        check(panel.debugFooterTitles == ["Connect", "More actions"], "H6: a clean form's footer is \(panel.debugFooterTitles)", &ok)
+        check(panel.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"], "H6: the panel's menu is \(panel.debugPanelMenuTitles)", &ok)
+        check(panel.debugAdvancedShown && !panel.debugAdvancedRowsHidden,
+              "H6: Advanced is collapsed for a host with a startup snippet", &ok)
+
+        // H5's pencil: the form, the keyboard in its name, and no window.
+        if let card = hosts.hostsGrid.debugCardView(key: edge.id.uuidString), card.debugActionButtons.count == 2 {
+            realClick(at: centre(of: card.debugActionButtons[1]), in: window)
+            settle(shell)
+        }
+        let responder = window.firstResponder
+        let editing = responder === panel.debugLabelField
+            || ((responder as? NSText)?.delegate as? NSTextField) === panel.debugLabelField
+        check(editing, "H5: the pencil did not put the keyboard in the host's name (\(String(describing: responder)))", &ok)
+        check(windowsOpened == 0, "H6: editing opened \(windowsOpened) editor window(s)", &ok)
+
+        // C1: a change brings Cancel and Save Changes; Return saves.
+        panel.debugType("edge-01b.example.test", into: panel.debugAddressField)
+        check(panel.debugIsDirty && panel.debugFooterTitles == ["Cancel", "Save Changes"],
+              "C1: an edited form's footer is \(panel.debugFooterTitles)", &ok)
+        // A connect stamps the record while the form is open; the save keeps it.
+        store.recordConnection(id: edge.id, at: Date(timeIntervalSinceReferenceDate: 800_000_200))
+        settle(shell)
+        check(hosts.hostPanel === panel && panel.debugIsDirty, "H6: a store change under the form threw its edits away", &ok)
+        check(panel.debugCommand(#selector(NSResponder.insertNewline(_:)), in: panel.debugUsernameField),
+              "C1: Return in a field did not save", &ok)
+        settle(shell)
+        let saved = store.host(id: edge.id)
+        check(saved?.address == "edge-01b.example.test", "C1: Return saved \(saved?.address ?? "nothing")", &ok)
+        check(saved?.lastConnectedAt == Date(timeIntervalSinceReferenceDate: 800_000_200),
+              "H6: the save dropped the connect's lastConnectedAt", &ok)
+        let after = hosts.hostPanel
+        check(after?.debugIsDirty == false && after?.debugFooterTitles == ["Connect", "More actions"],
+              "C1: after a save the footer is \(after?.debugFooterTitles ?? [])", &ok)
+
+        // Esc puts the stored host back.
+        guard let current = hosts.hostPanel else { return }
+        current.debugType("9999", into: current.debugPortField)
+        check(current.debugIsDirty, "C1: changing the port did not mark the form changed", &ok)
+        check(current.debugCommand(#selector(NSResponder.cancelOperation(_:)), in: current.debugPortField),
+              "C1: Esc did not cancel", &ok)
+        settle(shell)
+        check(store.host(id: edge.id)?.port == 22 && hosts.hostPanel?.debugPortField.stringValue == "22"
+                && hosts.hostPanel?.debugIsDirty == false,
+              "C1: Esc did not put the stored port back", &ok)
+
+        // GL-08 still refuses a leading dash, and the form keeps its edit.
+        guard let guarded = hosts.hostPanel else { return }
+        guarded.debugType("-oProxyCommand=touch /tmp/x", into: guarded.debugAddressField)
+        problems.removeAll()
+        guarded.debugCommand(#selector(NSResponder.insertNewline(_:)), in: guarded.debugAddressField)
+        check(problems.first?.contains("Address can't start with") == true, "GL-08: the panel saved a leading dash (\(problems))", &ok)
+        check(store.host(id: edge.id)?.address == "edge-01b.example.test" && guarded.debugIsDirty,
+              "GL-08: a refused save changed the store or lost the edit", &ok)
+        guarded.debugCommand(#selector(NSResponder.cancelOperation(_:)), in: guarded.debugAddressField)
+        settle(shell)
+
+        // Advanced is collapsed unless used, and inline forwards save.
+        guard let lab = selectHost("lab-box", hosts, shell), let labPanel = hosts.hostPanel else { return }
+        check(!labPanel.debugAdvancedShown && labPanel.debugAdvancedRowsHidden, "H6: Advanced is open for a host that uses none of it", &ok)
+        labPanel.debugAdvancedToggle.performClick(nil)
+        check(labPanel.debugAdvancedShown && !labPanel.debugAdvancedRowsHidden, "H6: Show did not open Advanced", &ok)
+        guard let forwards = labPanel.debugInlineForwards else {
+            fail("H6: the panel has no inline port forwards", &ok)
+            return
+        }
+        forwards.debugAddButton.performClick(nil)
+        guard let row = forwards.debugRows.last else { return fail("H6: Add Forward added no rule", &ok) }
+        row.listenField.stringValue = "127.0.0.1:9000"
+        row.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        row.destinationField.stringValue = "localhost:90"
+        row.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        check(labPanel.debugIsDirty, "H6: adding a forward did not mark the form changed", &ok)
+        check(labPanel.savePanel(), "H6: the forward did not save", &ok)
+        settle(shell)
+        let rule = store.host(id: lab.id)?.portForwards.first
+        check(rule?.bindAddress == "127.0.0.1" && rule?.listenPort == 9000 && rule?.destHost == "localhost" && rule?.destPort == 90,
+              "H6: the inline forward saved as \(String(describing: rule))", &ok)
+        check(windowsOpened == 0, "H6: \(windowsOpened) editor window(s) opened", &ok)
+    }
+
+    // MARK: H10
+
+    private static func checkNewHostPanel(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let store = shell.workspace.hostStore
+        var windowsOpened = 0
+        let savedEdit = hosts.onAddOrEdit
+        hosts.onAddOrEdit = { _ in windowsOpened += 1 }
+        defer { hosts.onAddOrEdit = savedEdit }
+        let before = store.hosts.count
+        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        settle(shell)
+        guard let panel = hosts.hostPanel, hosts.hostPanelKey == HostsController.newHostPanelKey else {
+            fail("H10: Add Host did not open a new host's form in the panel", &ok)
+            return
+        }
+        check(windowsOpened == 0, "H10: Add Host opened a window", &ok)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.debugTitle == "New Host" && shell.inspector.hostedContentView === panel.view,
+              "H10: the panel shows \(shell.inspector.debugTitle)", &ok)
+        check(hosts.hostsGrid.selectedKey == nil, "H10: a card stays selected beside a new host's form", &ok)
+        check(panel.debugFooterTitles == ["Cancel", "Create Host"], "H10: a new host's footer is \(panel.debugFooterTitles)", &ok)
+        check(panel.debugLabelField.stringValue.isEmpty && panel.debugAddressField.stringValue.isEmpty,
+              "H10: the new host's form is not empty", &ok)
+        panel.debugType("scratch-box", into: panel.debugLabelField)
+        panel.debugType("scratch.example.test", into: panel.debugAddressField)
+        panel.debugFooterButtons.last?.performClick(nil)
+        settle(shell)
+        guard let created = store.hosts.first(where: { $0.label == "scratch-box" }) else {
+            fail("H10: Create Host saved nothing (\(store.hosts.count) hosts, \(before) before)", &ok)
+            return
+        }
+        check(store.hosts.count == before + 1, "H10: Create Host added \(store.hosts.count - before) hosts", &ok)
+        check(hosts.hostsGrid.selectedKey == created.id.uuidString && shell.inspector.debugTitle == "scratch-box"
+                && hosts.hostPanel?.debugFooterTitles == ["Connect", "More actions"],
+              "H10: after Create the panel shows \(shell.inspector.debugTitle)", &ok)
+        // A new host's Cancel closes its form, and saves nothing.
+        hosts.newHost()
+        settle(shell)
+        hosts.hostPanel?.debugType("never-saved", into: hosts.hostPanel!.debugLabelField)
+        hosts.hostPanel?.debugFooterButtons.first?.performClick(nil)
+        settle(shell)
+        check(hosts.hostPanel == nil && !store.hosts.contains { $0.label == "never-saved" },
+              "H10: Cancel on a new host left a form or saved it", &ok)
+        store.delete(id: created.id)
+        settle(shell)
+    }
+
+    // MARK: H11
+
+    private static func checkUnsavedChanges(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let store = shell.workspace.hostStore
+        var answer = HelmConfirm.Response.cancel
+        var asked: [String] = []
+        HelmConfirm.responderForTests = { request in asked.append(request.title); return answer }
+        defer { HelmConfirm.responderForTests = nil }
+        guard let edge = selectHost("edge-proxy-02", hosts, shell),
+              let bastion = store.hosts.first(where: { $0.label == "bastion-stg" }),
+              let bastionCard = hosts.hostsGrid.debugCardView(key: bastion.id.uuidString),
+              let panel = hosts.hostPanel else {
+            fail("H11: the fixture hosts are missing", &ok)
+            return
+        }
+        panel.debugType("ops2", into: panel.debugUsernameField)
+
+        // Cancel: nothing moves, nothing is lost.
+        answer = .cancel
+        realClick(at: cardBody(bastionCard), in: window)
+        settle(shell)
+        check(asked.last == "Save changes to \u{201C}edge-proxy-02\u{201D}?", "H11: moving away asked \(asked)", &ok)
+        check(hosts.hostsGrid.selectedKey == edge.id.uuidString && hosts.hostsTable.selectedKey == edge.id.uuidString,
+              "H11: Cancel still moved the selection", &ok)
+        check(hosts.hostPanel === panel && panel.debugIsDirty && panel.debugUsernameField.stringValue == "ops2",
+              "H11: Cancel lost the edit", &ok)
+
+        // Closing the panel asks too, and Cancel keeps it open.
+        shell.setInspectorShown(false)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && panel.debugIsDirty, "H11: closing the panel did not ask, or lost the edit", &ok)
+
+        // Discard: it moves, and the store never saw the edit.
+        answer = .extra
+        realClick(at: cardBody(bastionCard), in: window)
+        settle(shell)
+        check(hosts.hostsGrid.selectedKey == bastion.id.uuidString && store.host(id: edge.id)?.username == "ops",
+              "H11: Discard did not move, or saved the edit", &ok)
+
+        // Save: the edit is kept and then it moves.
+        guard let bastionPanel = hosts.hostPanel else { return }
+        bastionPanel.debugType("deploy", into: bastionPanel.debugUsernameField)
+        answer = .confirm
+        hosts.hostsGrid.select(key: edge.id.uuidString)
+        settle(shell)
+        check(store.host(id: bastion.id)?.username == "deploy" && hosts.hostsGrid.selectedKey == edge.id.uuidString,
+              "H11: Save did not save before moving", &ok)
+        // Starting a new host is moving away too.
+        hosts.hostPanel?.debugType("ops3", into: hosts.hostPanel!.debugUsernameField)
+        answer = .cancel
+        hosts.newHost()
+        settle(shell)
+        check(hosts.hostPanelKey == edge.id.uuidString && hosts.hostPanel?.debugIsDirty == true,
+              "H11: Add Host over unsaved changes did not ask", &ok)
+        answer = .extra
+        hosts.hostPanel?.cancelPanel()
+        settle(shell)
+        var restored = bastion
+        restored.username = "ops"
+        store.update(restored)
+        settle(shell)
     }
 
     // MARK: K1, K3, K4, K6
@@ -531,10 +767,15 @@ enum ConnectionsCardsSelfTest {
         let savedOpen = hosts.onAddOrEdit
         hosts.onAddOrEdit = { opened.append($0) }
         defer { hosts.onAddOrEdit = savedOpen }
+        // H10: both open a new host's form in the panel.
         main.performClick(nil)
-        check(opened.count == 1, "H8: Add Host's main half did not open a new host", &ok)
+        check(opened.isEmpty && hosts.hostPanelKey == HostsController.newHostPanelKey,
+              "H8: Add Host's main half did not open a new host", &ok)
+        hosts.hostPanel?.cancelPanel()
         hostSplit.debugPick("New Host\u{2026}")
-        check(opened.count == 2, "H8: New Host from the menu did not open a new host", &ok)
+        check(opened.isEmpty && hosts.hostPanelKey == HostsController.newHostPanelKey,
+              "H8: New Host from the menu did not open a new host", &ok)
+        hosts.hostPanel?.cancelPanel()
         hostSplit.debugPick("Quick Connect")
         settle(shell)
         let editor = window.firstResponder as? NSView

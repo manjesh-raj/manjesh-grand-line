@@ -415,6 +415,13 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// H1: the hosts as cards, the sidebar layout's default view (C4).
     /// `HostsController+Cards.swift` fills it.
     private(set) lazy var hostsGrid = HelmCardGrid()
+    /// H6: the host form in the side panel, and which record it is for -
+    /// a host's id, or `newHostPanelKey` (H10). `HostsController+Panel.swift`.
+    var hostPanel: HostEditorController?
+    var hostPanelKey: String?
+    /// Set while the panel's save writes the store, whose reload must not
+    /// rebuild the form mid-save.
+    var hostPanelIsSaving = false
     /// H2: Grid or List, over the hosts. One stored choice
     /// (`AppSettings.connectionsShowList`) for Hosts and Keys.
     lazy var hostsViewModeControl = makeViewModeControl()
@@ -1496,6 +1503,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// ⌘N / the card header's "Add Host": add a new host.
     @objc func newHost() {
         select(tab: .hosts)
+        // H10: in the sidebar layout a new host is an empty form in the side
+        // panel; the floating bar keeps its window.
+        if drawsSidebarLayout {
+            openNewHostPanel()
+            return
+        }
         onAddOrEdit?(nil)
     }
 
@@ -2069,6 +2082,10 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     var inspectorContent: WorkspaceInspectorContent? {
         guard drawsSidebarLayout, let inspectorTitle else { return nil }
+        // H6: a saved host, or a new one, is its form in the panel.
+        if activeTab == .hosts, let panel = hostPanel {
+            return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)
+        }
         return WorkspaceInspectorContent(title: inspectorTitle, view: inspectorDetail)
     }
 
@@ -2205,7 +2222,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
             actions.append(.init("End Session", symbol: "xmark.circle") { [weak self] in self?.onEndSession?(host.id) })
         }
         actions += [
-            .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.onAddOrEdit?(host) },
+            .init("Edit\u{2026}", symbol: "pencil") { [weak self] in self?.editHost(host) },
             .init("Duplicate\u{2026}", symbol: "plus.square.on.square") { [weak self] in self?.duplicate(host) },
             .init("Delete\u{2026}", symbol: "trash", role: .destructive) { [weak self] in self?.confirmDeleteHost(host) },
         ]
@@ -2283,6 +2300,13 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     /// Fill the inspector from the showing table's selection, and tell the
     /// shell.
     private func refreshSidebarInspector() {
+        if activeTab == .hosts, let title = syncHostPanel() {
+            inspectorTitle = title
+            sideStack.detail.clear()
+            updateInspectorVisibility()
+            onInspectorContentChanged?()
+            return
+        }
         let detail = currentWorkspaceDetail()
         if let detail { inspectorDetail.show(detail) }
         inspectorTitle = detail?.title
