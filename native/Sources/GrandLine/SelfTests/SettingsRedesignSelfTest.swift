@@ -32,6 +32,11 @@
 //      breakpoint - so the two arrangements' constraints have to be swapped
 //      rather than accumulated. Asserted across several resizes in both
 //      directions, because a single collapse cannot see the defect.
+//   6. **Capture's clipboard history switch is off by default and drives the
+//      live capture.** A real press on the real switch, read back from
+//      `AppSettings` and from an armed `ClipboardHistoryController`, so the
+//      wiring from the page to the pasteboard watch is what is asserted, not
+//      the setter alone.
 //
 // Window-backed on purpose (and so listed in `NEEDS_SESSION`): the search and
 // history cases drive real `HoverHighlightView` presses and read painted
@@ -59,7 +64,8 @@ enum SettingsRedesignSelfTest {
                       checkBackAndForwardWalkTheHistory,
                       checkTheThemeGridRendersFiltersAndSelects,
                       checkADependentRowIsDimmedAndInert,
-                      checkTheWidePageCollapsesAndComesBack] {
+                      checkTheWidePageCollapsesAndComesBack,
+                      checkTheClipboardHistorySwitchDrivesCapture] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -454,6 +460,53 @@ enum SettingsRedesignSelfTest {
             ok = false
         }
         if ok { print("  ok   two dependency keys, dimmed and inert in both directions") }
+    }
+
+    // MARK: 6. Capture's clipboard history switch
+
+    private static func checkTheClipboardHistorySwitchDrivesCapture(_ ok: inout Bool) {
+        print("\n-- Capture's clipboard history switch is off by default and drives the capture --")
+        let before = AppSettings.shared.clipboardHistoryEnabled
+        defer { AppSettings.shared.clipboardHistoryEnabled = before }
+        AppSettings.shared.clipboardHistoryEnabled = false
+
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-settings-clipboard-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let controller = ClipboardHistoryController(
+            store: ClipboardHistoryStore(fileURL: root.appendingPathComponent("h.sealed"),
+                                         key: ClipboardHistoryKey.ephemeralKey()))
+        controller.startCapturing()
+
+        let settings = makeSettings()
+        let window = mount(settings)
+        defer { _ = window }
+        settings.select(.capture)
+        let toggle = settings.debugClipboardHistorySwitch
+        guard toggle.window === window, !toggle.isHiddenOrHasHiddenAncestor else {
+            print("  FAIL the clipboard history switch is not on the Capture page")
+            ok = false
+            return
+        }
+        if toggle.isOn || controller.isCapturing {
+            print("  FAIL the switch reads \(toggle.isOn) and the controller capturing \(controller.isCapturing) "
+                  + "with the history off")
+            ok = false
+        }
+
+        _ = toggle.accessibilityPerformPress()   // -> on
+        if !AppSettings.shared.clipboardHistoryEnabled || !controller.isCapturing {
+            print("  FAIL pressing the switch on left the preference \(AppSettings.shared.clipboardHistoryEnabled) "
+                  + "and the controller capturing \(controller.isCapturing)")
+            ok = false
+        }
+        _ = toggle.accessibilityPerformPress()   // -> off
+        if AppSettings.shared.clipboardHistoryEnabled || controller.isCapturing {
+            print("  FAIL pressing the switch off left the preference \(AppSettings.shared.clipboardHistoryEnabled) "
+                  + "and the controller capturing \(controller.isCapturing)")
+            ok = false
+        }
+        if ok { print("  ok   off by default, and the switch starts and stops the capture with no relaunch") }
     }
 
     // MARK: 5. The wide page's collapse

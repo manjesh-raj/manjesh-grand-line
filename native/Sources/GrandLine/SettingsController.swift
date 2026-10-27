@@ -192,7 +192,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .shortcuts:
                 return "Every keyboard shortcut in one place. Terminal, capture and dictation shortcuts can be changed here."
             case .capture:
-                return "One chord, from any app, for anything you want to write down before it is gone. It files to tasks, notes, stickies, snippets or the vault."
+                return "One chord, from any app, for anything you want to write down before it is gone. It files to tasks, notes, stickies, snippets or the vault. The clipboard history lives here too."
             case .menuBar:
                 return "Run Grand Line from the status item with no main window. Nothing gets turned off."
             case .briefings:
@@ -216,7 +216,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show"
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell scrollback history rows memory"
             case .shortcuts: return "keyboard shortcut hotkey chord key binding rebind record conflict menu split pane tab dictation capture"
-            case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
+            case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky clipboard history copy paste pasteboard"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing claude summary"
             case .intents: return "siri spotlight raycast shortcuts automation app intents"
@@ -523,6 +523,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private var resetCaptureShortcutButton: HelmButton?
     private var captureAccessibilityButton: HelmButton?
     private var captureAccessibilityStatus: NSTextField?
+    /// F3's clipboard history, off by default (`AppSettings.clipboardHistoryEnabled`).
+    private let clipboardHistorySwitch = HelmToggle()
 
     /// How this page asks whether the capture hotkey's global half is armed.
     ///
@@ -1801,6 +1803,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         trustColumn.alignment = .trailing
         trustColumn.spacing = HelmMetrics.s1
 
+        clipboardHistorySwitch.onToggle = { [weak self] in self?.clipboardHistoryToggled() }
+
         refreshCaptureControls()
 
         return [
@@ -1814,12 +1818,26 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                 SettingsRow(title: "Accessibility permission",
                             description: "macOS only delivers keystrokes from other apps to a trusted Accessibility client. Without it the chord still works while Grand Line is frontmost, which is why a missing grant reads as \u{201C}it only sometimes works\u{201D} rather than as an error.",
                             control: trustColumn),
-            ]), foot: "Granting it while Grand Line is already running is enough - the monitors are reinstalled the next time you switch back to this app. No relaunch needed.")
+            ]), foot: "Granting it while Grand Line is already running is enough - the monitors are reinstalled the next time you switch back to this app. No relaunch needed."),
+
+            SettingsSection(heading: "Clipboard history", group: SettingsGroup(rows: [
+                SettingsRow(title: "Keep a clipboard history",
+                            description: "Remembers the last 200 things you copy in any app, encrypted on this Mac, and brings them back with \u{21E7}\u{2318}V from the Edit menu. Anything copied from \(PlaceName.of(.poneglyph)) is never recorded.",
+                            control: clipboardHistorySwitch),
+            ]), foot: "Off by default. While it is off nothing watches or reads the clipboard, and \u{21E7}\u{2318}V is not in the Edit menu. A history recorded before it was turned off stays encrypted on disk and comes back when you turn it on again."),
         ]
+    }
+
+    @objc private func clipboardHistoryToggled() {
+        AppSettings.shared.clipboardHistoryEnabled = clipboardHistorySwitch.isOn
+        // The Edit menu's item has just been shown or hidden, and the
+        // Shortcuts page lists menu chords.
+        shortcutsPage.reload()
     }
 
     private func refreshCaptureControls() {
         captureShortcutRecorder?.shortcut = AppSettings.shared.quickCaptureShortcut
+        clipboardHistorySwitch.isOn = AppSettings.shared.clipboardHistoryEnabled
         resetCaptureShortcutButton?.isEnabled =
             AppSettings.shared.quickCaptureShortcut != .quickCaptureDefault
         let trusted = quickCaptureAccessibilityTrusted?() ?? AXIsProcessTrusted()
@@ -2759,8 +2777,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // nothing failed: the control worked perfectly and looked wrong.
         captureShortcutRecorder?.applyTheme(theme)
         for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
-                       compactModeSwitch, compactDockSwitch,
-                       compactBadgeSwitch] + moduleSwitches.map(\.toggle) {
+                       compactModeSwitch, compactDockSwitch, compactBadgeSwitch, separateMenuBarItemsSwitch,
+                       clipboardHistorySwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
         }
         profileTabs?.applyTheme(theme)
@@ -2920,11 +2938,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var debugCompactModeSwitch: HelmToggle { compactModeSwitch }
     var debugCompactDockSwitch: HelmToggle { compactDockSwitch }
     var debugCompactBadgeSwitch: HelmToggle { compactBadgeSwitch }
+    var debugClipboardHistorySwitch: HelmToggle { clipboardHistorySwitch }
     /// Every toggle on the page, in page order. A suite asserts the count, so
     /// a toggle added without coming here fails by name.
     var debugToggles: [HelmToggle] {
         [terminalColors.changeSwitch, autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch,
-         morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
+         morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
+         separateMenuBarItemsSwitch, clipboardHistorySwitch]
     }
     /// T4's two controls. The suite types into the real field and sends its
     /// real action, so these hand out the controls rather than a commit.

@@ -79,8 +79,10 @@ enum SettingsSidebarNavigationSelfTest {
     /// card. Thirty-three since the theme split added the Terminal page's
     /// Terminal colours card, its light and dark pair card and its Schemes
     /// card (Appearance's follow-system card became the Appearance control's,
-    /// so that page's count did not move).
-    private static let expectedCardCount = 33
+    /// so that page's count did not move). Thirty-four since the Capture page
+    /// gained its Clipboard history card (the switch that turns the history
+    /// on, off by default).
+    private static let expectedCardCount = 34
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

@@ -445,6 +445,11 @@ enum BarNavigationModernizationSelfTest {
         let wasLocked = AppLockGate.shared.isLocked
         AppLockGate.shared.setLocked(false)
         defer { AppLockGate.shared.setLocked(wasLocked) }
+        // The history is off by default, and an off history's ⌘⇧V beeps
+        // rather than opening - so turn it on for the check and put it back.
+        let wasEnabled = AppSettings.shared.clipboardHistoryEnabled
+        AppSettings.shared.clipboardHistoryEnabled = true
+        defer { AppSettings.shared.clipboardHistoryEnabled = wasEnabled }
         let clipboard = bar.clipboardHistory
         let panel = clipboard.debugPanel
         defer { panel.close() }
@@ -713,8 +718,13 @@ enum BarNavigationModernizationSelfTest {
 
     private static func test_b5PanelsAreLockRegistered() -> String? {
         let bar = makeLaidOutBar()
+        // The panels first: the clipboard history builds its panel on first
+        // use (it is off by default), and a panel registers itself with the
+        // gate as it is built - so reading the registry before asking for the
+        // panels would miss one that is registered the moment it exists.
+        let panels = bar.debugBarPanels()
         let registered = AppLockGate.shared.debugRegisteredWindows
-        for (name, panel) in bar.debugBarPanels() {
+        for (name, panel) in panels {
             guard registered.contains(where: { $0 === panel.debugPanelWindow }) else {
                 return "\(name)'s panel is not registered with the lock gate. These used to be popovers on "
                     + "`registerLockDismissiblePopover`; a panel is its own window layered above the lock "
