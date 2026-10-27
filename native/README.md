@@ -74,7 +74,7 @@ is vendored under `Vendor/`, so the build needs no network.
 | `whisper.cpp` | Local Whisper for dictation, CPU + Metal. The shader is a generated file; see `Scripts/build-whisper-metal-shader.py` |
 | `YamlSwift` | Patched for insertion order and quote preservation |
 | `Excalidraw`, `Monaco` | Committed, self-contained web bundles for the Whiteboard and Code Preview (the Notebook's source pane loads the same Monaco bundle - one integration, not two). Loaded from disk with no CDN and no runtime download; `swift build` never touches them |
-| `ScheduleX` | The same kind of bundle for Tasks › Calendar. Open-source packages only, and its drag plugin is the last MIT release adapted to the 4.x core - read `Vendor/ScheduleX/README.md` before bumping it |
+| `ScheduleX` | The same kind of bundle for the Calendar page. Open-source packages only, and its drag plugin is the last MIT release adapted to the 4.x core - read `Vendor/ScheduleX/README.md` before bumping it |
 
 A change to a vendored web bundle's source needs its `Scripts/build-*-web.sh`
 re-run - **the app loads the committed artifact, so a source edit alone is

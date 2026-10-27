@@ -4,7 +4,7 @@
 // full review section 5.8): a source list over the module table, hosted in the
 // split view's sidebar item.
 //
-// It lists Home and the seventeen modules under the four groups the module
+// It lists Home and the eighteen modules under the four groups the module
 // table assigns (Work, Observe, Workbench, Machine), and the live host
 // sessions as children of Console. A module's pages are its tabs in the window
 // toolbar, so every one of the 29 destinations is one click on its module and
@@ -33,7 +33,7 @@ import AppKit
 enum WorkspaceSidebarEntry: Equatable {
     /// A section header: one of the four groups.
     case section(String)
-    /// Home, or one of the seventeen modules.
+    /// Home, or one of the eighteen modules.
     case module(WorkspaceModule)
     /// A live host session, a child of Console.
     case session(hostID: UUID)
@@ -104,7 +104,7 @@ extension WorkspaceModule {
 /// did. Each size goes through `HelmType.scaled`, so the chrome text scale
 /// still moves all of them together.
 enum WorkspaceSidebarMetrics {
-    /// Home and the seventeen modules.
+    /// Home and the eighteen modules.
     static let moduleRowHeight: CGFloat = 32
     /// A live session under Console: one step down from a module.
     static let sessionRowHeight: CGFloat = 30

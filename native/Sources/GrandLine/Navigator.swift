@@ -196,6 +196,9 @@ final class Navigator: NSObject {
     /// a fix to the sheet cannot miss an entry point.
     @objc func newContextualItem() {
         switch contextualNewAction {
+        // On the Calendar, ⌘N is its own New Task, dated to the day on
+        // screen, rather than a trip to Tasks with an undated one.
+        case .task where currentDestinationKind == .rail(.calendar): workspace.calendar.newTaskFromMenu()
         case .task: newShiftTaskFromMenu()
         case .host: newHostFromMenu()
         case .sshKey: newKeyFromMenu()

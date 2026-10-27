@@ -233,6 +233,15 @@ final class Workspace {
         return built(.shift, shift)
     }()
 
+    /// The Calendar: Shift's tasks and follow-ups by date, on the shell's one
+    /// `ShiftStore` (GL-23), so a drop here and an edit on Tasks write the
+    /// same records.
+    private(set) lazy var calendar: TaskCalendarController = {
+        let calendar = TaskCalendarController(store: shiftStore)
+        calendar.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        return built(.calendar, calendar)
+    }()
+
     /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
     /// PERF-02: handed the shell's one `DocsRunbookStore` and
     /// `LogAnalyzerStore` rather than building its own.
@@ -860,6 +869,7 @@ final class Workspace {
         mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, makeController: { [self] in self.console }))
         mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.title, mountsEagerly: false, makeController: { [self] in self.hostsPanel }))
         mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.title, mountsEagerly: false, makeController: { [self] in self.shift }))
+        mounter.register(DestinationSlot(id: .calendar, title: RailDestination.calendar.title, mountsEagerly: false, makeController: { [self] in self.calendar }))
         mounter.register(DestinationSlot(id: .review, title: RailDestination.review.title, mountsEagerly: true, makeController: { [self] in self.review }))
         mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.title, mountsEagerly: false, makeController: { [self] in self.logAnalyzer }))
         mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, makeController: { [self] in self.kubernetes }))

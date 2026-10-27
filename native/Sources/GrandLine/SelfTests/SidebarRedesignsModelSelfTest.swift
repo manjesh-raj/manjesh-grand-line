@@ -354,7 +354,7 @@ enum SidebarRedesignsModelSelfTest {
                        "[scopeFilter, followUpsJump, projectPopup, spacer, sortPopup, doneWindowNote]",
                        "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
                        "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
-                       "boardView.adoptWorkspaceStyle()", "calendarView.adoptWorkspaceStyle()"] {
+                       "boardView.adoptWorkspaceStyle()"] {
             check(shift.contains(needle), "Tasks' sidebar presentation lost `\(needle)`", &ok)
         }
     }

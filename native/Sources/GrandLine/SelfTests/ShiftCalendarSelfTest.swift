@@ -47,7 +47,9 @@ enum ShiftCalendarSelfTest {
         checkLocaleAndWeekStart(check)
         checkPalette(check)
         checkReschedule(check)
+        checkFollowUps(check)
         checkCaption(check)
+        checkScales(check)
 
         print(ok ? "ShiftCalendarSelfTest: OK" : "ShiftCalendarSelfTest: FAILURES")
         return ok
@@ -193,6 +195,32 @@ enum ShiftCalendarSelfTest {
         for message in ["ready", "error", "range", "open", "add", "move"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
+        // The captain's card: its header, weekday row and legend are this
+        // bundle's, not Schedule-X's, and Agenda is the open-source list view.
+        if let html = try? String(contentsOf: dir.appendingPathComponent("index.html"), encoding: .utf8) {
+            for id in ["gl-prev", "gl-next", "gl-title", "gl-today", "gl-views", "gl-weekdays", "gl-legend"] {
+                check(html.contains("id=\"\(id)\""), "the page shell has no #\(id)")
+            }
+            for scale in ShiftCalendarScale.allCases {
+                check(html.contains("data-view=\"\(scale.rawValue)\""), "the card has no \(scale.title) pill")
+            }
+        } else {
+            check(false, "could not read the bundle's index.html")
+        }
+        check(js.contains("\"list\""), "the bundle does not register Schedule-X's list view (Agenda)")
+        if let css = try? String(contentsOf: dir.appendingPathComponent("task-calendar.css"), encoding: .utf8) {
+            // The raised cells are drawn inside each day, never as a margin
+            // between days: the drag plugin finds the drop day with
+            // `closest('.sx__month-grid-day')`, and a gap would be nowhere.
+            check(css.contains(".sx__month-grid-day:before"), "the month grid's raised cell is not drawn inside the day")
+            check(css.contains(".sx__calendar-header{display:none}"), "Schedule-X's own header still shows")
+            for variable in ShiftCalendarPalette.requiredVariables where variable.hasPrefix("--gl-") {
+                guard variable != "--gl-accent-ink", variable != "--gl-now-line" else { continue }
+                check(css.contains("var(\(variable))"), "the stylesheet never reads \(variable)")
+            }
+        } else {
+            check(false, "could not read the bundle's task-calendar.css")
+        }
         // The 4.0.1 rename adapter: without it the core never starts a drag.
         // The core itself *calls* these hooks by name, so a bare name search
         // would pass with the adapter gone; the adapter is the one place they
@@ -237,14 +265,42 @@ enum ShiftCalendarSelfTest {
         check(ShiftCalendarPayload.event(for: entry(cancelled: true))["movable"] as? Bool == false,
               "a cancelled task must never be movable")
 
-        // Every event names a calendar the palette actually defines.
+        // A task's colour is its priority's category, a follow-up's is its
+        // own, and every category has colours in the palette and a line in
+        // the legend.
         let palette = ShiftCalendarPalette.calendars(for: HelmTheme.dusk)
-        for project in [nil, "p-alpha", "p-beta", "p-gamma"] as [String?] {
-            let id = ShiftCalendarPayload.event(for: entry(project: project))["calendarId"] as? String ?? ""
+        let expected: [(ShiftPriority, ShiftCalendarEntry.Kind, ShiftCalendarCategory)] = [
+            (.high, .task, .high), (.normal, .task, .normal), (.low, .task, .low),
+            (.high, .followUp, .followUp), (.low, .followUp, .followUp),
+        ]
+        for (priority, kind, category) in expected {
+            var item = entry()
+            item.priority = priority
+            item.kind = kind
+            let id = ShiftCalendarPayload.event(for: item)["calendarId"] as? String ?? ""
+            check(id == category.rawValue, "a \(priority) \(kind) should be drawn as \(category), got \(id)")
             check(palette[id] != nil, "an event's calendar \(id) has no colours in the palette")
         }
-        check(Set(palette.keys) == Set(ShiftCalendarPayload.allCalendarIDs),
-              "the palette and the payload disagree about the calendar ids")
+        check(Set(palette.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue)),
+              "the palette and the categories disagree about the calendar ids")
+        let legend = ShiftCalendarPalette.legend(for: HelmTheme.dusk)
+        check(legend.map { $0["id"] ?? "" } == ShiftCalendarCategory.allCases.map(\.rawValue),
+              "the legend names every category once, in order")
+        check(legend.map { $0["label"] ?? "" } == ["High priority", "Normal priority", "Low priority", "Follow-up"],
+              "the legend's words are \(legend.map { $0["label"] ?? "" })")
+        // The discriminating half: four categories really are four colours.
+        let edges = Set(ShiftCalendarCategory.allCases.map {
+            ShiftCalendarPalette.colours(for: $0, theme: HelmTheme.dusk)["main"] ?? "" })
+        check(edges.count == 4, "the four categories should be four colours on Dusk, got \(edges)")
+
+        var followUp = entry()
+        followUp.kind = .followUp
+        let followUpEvent = ShiftCalendarPayload.event(for: followUp)
+        check(followUpEvent["id"] as? String == "followup:t1" && followUpEvent["kind"] as? String == "followUp",
+              "a follow-up's event id is prefixed and its kind crosses, got \(followUpEvent)")
+        check(allDay["allDay"] as? Bool == true
+              && ShiftCalendarPayload.event(for: entry(time: "09:30"))["allDay"] as? Bool == false,
+              "the page is told which records have no time (the agenda hides theirs)")
 
         // The model's own movability, which is what the payload reads.
         var task = ShiftTask.fresh()
@@ -302,6 +358,10 @@ enum ShiftCalendarSelfTest {
             ("--sx-color-on-secondary-container", "--sx-color-secondary-container"),
             ("--sx-color-neutral", "--sx-color-background"),
             ("--gl-accent-ink", "--sx-color-background"),
+            // The card and its cells.
+            ("--gl-ink", "--gl-card"),
+            ("--gl-ink", "--gl-cell"),
+            ("--gl-muted", "--gl-cell"),
         ]
         for theme in HelmTheme.appThemes {
             let vars = ShiftCalendarPalette.variables(for: theme)
@@ -320,6 +380,32 @@ enum ShiftCalendarSelfTest {
             }
             check(vars["--sx-color-background"]?.uppercased() == "#" + theme.chromeBackgroundHex.uppercased(),
                   "\(theme.id): the calendar's ground is the theme's card surface")
+            check(vars["--gl-ground"]?.uppercased() == "#" + theme.backgroundHex.uppercased(),
+                  "\(theme.id): the page around the card is the native page's own ground")
+            if let cell = vars["--gl-cell"], let card = vars["--gl-card"], let dim = vars["--gl-cell-dim"],
+               let faint = vars["--gl-faint"] {
+                let nsCell = HelmTheme.nsColor(String(cell.dropFirst()))
+                let nsCard = HelmTheme.nsColor(String(card.dropFirst()))
+                let nsDim = HelmTheme.nsColor(String(dim.dropFirst()))
+                // A day cell is visibly its own surface on its card: the 8-bit
+                // quantisation leaves ~0.01 under the 1.08 floor at most.
+                let separation = HelmContrast.ratio(nsCell, nsCard)
+                check(separation >= ShiftCalendarPalette.cellSeparation - 0.012,
+                      "\(theme.id): a day cell measures \(String(format: "%.3f", separation)):1 on its card")
+                check(dim != cell, "\(theme.id): a day outside the month is not dimmed")
+                let faintRatio = HelmContrast.ratio(HelmTheme.nsColor(String(faint.dropFirst())), nsDim)
+                check(faintRatio >= ShiftCalendarPalette.faintTextFloor,
+                      "\(theme.id): an outside day's number measures \(String(format: "%.2f", faintRatio)):1")
+                if let muted = vars["--gl-muted"] {
+                    let mutedRatio = HelmContrast.ratio(HelmTheme.nsColor(String(muted.dropFirst())), nsCell)
+                    check(faintRatio < mutedRatio - 0.5,
+                          "\(theme.id): an outside day's number (\(String(format: "%.2f", faintRatio)):1) should read "
+                          + "fainter than the month's own (\(String(format: "%.2f", mutedRatio)):1)")
+                }
+                let dimSeparation = HelmContrast.ratio(nsDim, nsCard)
+                check(dimSeparation < separation,
+                      "\(theme.id): a dimmed day should sit flatter on the card than a day of the month")
+            }
             check((ShiftCalendarPalette.themePayload(for: theme)["dark"] as? Bool) == (theme.mode == .dark),
                   "\(theme.id): the page's register must follow the theme's mode")
 
@@ -386,12 +472,72 @@ enum ShiftCalendarSelfTest {
         }
     }
 
+    // MARK: 7. Follow-ups
+
+    private static func checkFollowUps(_ check: (Bool, String) -> Void) {
+        var pending = ShiftFollowUp.fresh()
+        pending.title = "Ping the vendor"
+        pending.followUpAt = "2026-10-28"
+        var done = pending
+        done.id = "done"
+        done.status = .done
+        var undated = pending
+        undated.id = "undated"
+        undated.followUpAt = nil
+        var outside = pending
+        outside.id = "outside"
+        outside.followUpAt = "2026-12-01"
+        let start = ShiftDateFormatting.date(from: "2026-10-26") ?? Date()
+        let end = ShiftDateFormatting.date(from: "2026-11-01") ?? Date()
+        let entries = ShiftCalendarModel.entries(followUps: [pending, done, undated, outside], from: start, through: end)
+        check(entries.map(\.taskID) == [pending.id] && entries.first?.kind == .followUp && entries.first?.isMovable == true,
+              "only a pending, dated follow-up in range is drawn, got \(entries.map(\.taskID))")
+
+        var task = ShiftTask.fresh()
+        task.title = "A task the same day"
+        task.dueDate = "2026-10-28"
+        task.dueTime = "08:00"
+        let both = ShiftCalendarModel.entries(tasks: [task], followUps: [pending], from: start, through: end)
+        check(both.map(\.kind) == [.followUp, .task],
+              "an all-day follow-up sorts above a timed task on its day, got \(both.map(\.kind))")
+
+        if case .moved(let moved) = ShiftCalendarReschedule.apply(followUp: pending, day: "2026-10-30", time: "11:00") {
+            check(moved.followUpAt == "2026-10-30" && moved.followUpTime == nil,
+                  "a follow-up with no time moves its day only")
+        } else { check(false, "a pending follow-up dropped on a new day should move") }
+        check(ShiftCalendarReschedule.apply(followUp: pending, day: "2026-10-28", time: nil) == .unchanged,
+              "a follow-up dropped where it already is writes nothing")
+        if case .refused = ShiftCalendarReschedule.apply(followUp: done, day: "2026-10-30", time: nil) {} else {
+            check(false, "a finished follow-up must be refused")
+        }
+    }
+
     private static func checkCaption(_ check: (Bool, String) -> Void) {
         check(ShiftCalendarView.subtitle(total: 0, projected: 0) == "Nothing scheduled in this period.",
               "an empty period is stated, never left blank (GL-14)")
         let mixed = ShiftCalendarView.subtitle(total: 5, projected: 3)
         check(mixed.hasPrefix("2 tasks, 3 projected from a repeat rule"),
               "projections are counted apart from real tasks, got \"\(mixed)\"")
+        let withFollowUps = ShiftCalendarView.subtitle(total: 2, projected: 0, followUps: 1)
+        check(withFollowUps.hasPrefix("2 tasks and 1 follow-up in this period"),
+              "follow-ups are counted beside tasks, got \"\(withFollowUps)\"")
+        check(ShiftCalendarView.subtitle(total: 0, projected: 0, followUps: 2).hasPrefix("2 follow-ups in this period"),
+              "a period with only follow-ups is not stated as empty")
+    }
+
+    // MARK: 8. The four views
+
+    private static func checkScales(_ check: (Bool, String) -> Void) {
+        check(ShiftCalendarScale.agenda.rawValue == "list", "Agenda is Schedule-X's open-source list view")
+        check(WorkspaceModule.calendar.children == ShiftCalendarScale.allCases.map(\.title),
+              "the Calendar module's tabs are its four views, got \(WorkspaceModule.calendar.children)")
+        for scale in ShiftCalendarScale.allCases {
+            check(ShiftCalendarScale(title: scale.title) == scale, "\(scale.title) does not round-trip")
+        }
+        let agenda = ShiftCalendarModel.range(for: ShiftDateFormatting.date(from: "2026-10-15") ?? Date(), scale: .agenda)
+        let month = ShiftCalendarModel.range(for: ShiftDateFormatting.date(from: "2026-10-15") ?? Date(), scale: .month)
+        check(agenda.start == month.start && agenda.days == month.days,
+              "the agenda covers the month the month grid does")
     }
 
     // MARK: Helpers

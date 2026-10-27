@@ -44,7 +44,8 @@ enum SplitShellModelSelfTest {
     static func run() -> Bool {
         var allOK = true
         for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
-                      checkTheTabsAreTheRealViews, checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
+                      checkTheTabsAreTheRealViews, checkTheCalendarRow, checkSavedSidebarsGetTheCalendar,
+                      checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
                       checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
                       checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
                       checkTheWiring, checkTheLayoutDrawsNoStatusStrip] {
@@ -60,8 +61,8 @@ enum SplitShellModelSelfTest {
 
     private static func checkEveryModuleIsListedOnce(_ ok: inout Bool) {
         let listed = WorkspaceSidebarModel.listedModules()
-        check(listed.count == 18 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
-              "the sidebar lists \(listed.map(\.rawValue)), want Home and the seventeen modules once each", &ok)
+        check(listed.count == 19 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
+              "the sidebar lists \(listed.map(\.rawValue)), want Home and the eighteen modules once each", &ok)
 
         // The same set as the rows the outline view gets, read off the tree.
         let roots = WorkspaceSidebarModel.roots(sessions: [])
@@ -109,7 +110,7 @@ enum SplitShellModelSelfTest {
         check(sections == WorkspaceGroup.allCases.map(\.title),
               "the sections are \(sections), want the four groups in order", &ok)
         let expected: [WorkspaceGroup: [WorkspaceModule]] = [
-            .work: [.tasks, .crew, .connections, .console, .knowledge, .secrets],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .secrets],
             .observe: [.kubernetes, .logs, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
@@ -127,8 +128,10 @@ enum SplitShellModelSelfTest {
     private static func checkTheTabsAreTheRealViews(_ ok: inout Bool) {
         typealias Tab = (name: String, route: RailDestination, pageTab: Bool)
         let expected: [WorkspaceModule: [Tab]] = [
-            .tasks: [("Board", .shift, true), ("List", .shift, true), ("Calendar", .shift, true),
-                     ("Weekly review", .shift, true)],
+            .tasks: [("Board", .shift, true), ("List", .shift, true), ("Weekly review", .shift, true)],
+            // The Calendar's own page draws its four views (`TaskCalendarController`).
+            .calendar: [("Month", .calendar, true), ("Week", .calendar, true), ("Day", .calendar, true),
+                        ("Agenda", .calendar, true)],
             // Needs you is the Fleet page's, in the sidebar layout only: the
             // parked tasks and their open decisions (the later page work).
             .crew: [("Needs you", .overview, true), ("In flight", .overview, true), ("Review", .review, false),
@@ -155,14 +158,105 @@ enum SplitShellModelSelfTest {
         check(!WorkspaceModule.settings.drawsToolbarTabs && !WorkspaceModule.settings.children.isEmpty,
               "Settings' categories moved into the toolbar; its page keeps its own column", &ok)
         // The captain's call: no big title on Connections and Console, and
-        // every other module keeps its title and subtitle.
+        // the Calendar draws its mockup's heading itself; every other module
+        // keeps its title and subtitle.
         let headless = WorkspaceModule.allCases.filter { !$0.showsHeader }
-        check(headless == [.connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
+        check(headless == [.calendar, .connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
     /// Stage 6, the captain's call: the sidebar lists no pins. A Pinned
     /// section repeated pages that already had a module row and a tab. The
     /// pins themselves are the floating bar's, untouched.
+    /// The captain's mockup: Calendar is its own row in Work, right after
+    /// Tasks and before Crew, and it is the one route to the calendar - Tasks
+    /// has no Calendar tab left to be a second one.
+    private static func checkTheCalendarRow(_ ok: inout Bool) {
+        let work = WorkspaceSidebarModel.modules(in: .work)
+        if let tasks = work.firstIndex(of: .tasks), let calendar = work.firstIndex(of: .calendar),
+           let crew = work.firstIndex(of: .crew) {
+            check(calendar == tasks + 1 && crew == calendar + 1,
+                  "Work lists \(work.map(\.rawValue)), want Calendar between Tasks and Crew", &ok)
+        } else {
+            fail("Work lists \(work.map(\.rawValue)), with no Calendar row", &ok)
+        }
+        // The tree the outline view draws, not only the model's list.
+        let workNode = WorkspaceSidebarModel.roots(sessions: []).first { $0.entry == .section(WorkspaceGroup.work.title) }
+        check(workNode?.children.prefix(3).map(\.entry) == [.module(.tasks), .module(.calendar), .module(.crew)],
+              "the sidebar's Work rows start \(workNode?.children.prefix(3).map(\.entry) ?? [])", &ok)
+
+        // Routing: the row opens the Calendar page, on its Month view, and
+        // that page belongs to the row.
+        check(WorkspaceModule.calendar.primaryRoute == .calendar,
+              "the Calendar row opens \(WorkspaceModule.calendar.primaryRoute.rawValue)", &ok)
+        check(ModuleTable.module(for: .calendar) == .calendar, "the Calendar page lights the \(ModuleTable.module(for: .calendar)) row", &ok)
+        check(ModuleTable.tab(for: .calendar, pageTab: nil)?.name == "Month",
+              "the Calendar page stands for \(ModuleTable.tab(for: .calendar, pageTab: nil)?.name ?? "no tab")", &ok)
+        check(RailDestination.calendar.slot == .calendar, "the Calendar has no slot of its own", &ok)
+        check(ContextualNewAction.forDestination(.calendar) == .task, "⌘N on the Calendar should make a task", &ok)
+        check(WorkspaceToolbar.calendarSymbol == RailDestination.calendar.symbol,
+              "the toolbar's calendar button and the Calendar row draw different glyphs", &ok)
+        check(RailDestination.calendar.symbol != RailDestination.schedules.symbol,
+              "Calendar and Schedules share a sidebar glyph", &ok)
+
+        // One route: no tab anywhere else is called Calendar.
+        let stray = WorkspaceModule.allCases.filter { $0 != .calendar }.flatMap(\.tabs).filter { $0.name == "Calendar" }
+        check(stray.isEmpty, "\(stray.map { "\($0.module.title) › \($0.name)" }) is a second route to the calendar", &ok)
+
+        // The Go menu is the sidebar's map, and the chords follow the rows.
+        let entries = WorkspaceGoMenu.entries()
+        if let tasks = entries.firstIndex(of: .module(.tasks)), let calendar = entries.firstIndex(of: .module(.calendar)) {
+            let between = entries[(tasks + 1)..<calendar]
+            check(between.allSatisfy { if case .tab(let tab) = $0 { return tab.module == .tasks } else { return false } },
+                  "the Go menu puts \(between) between Tasks and Calendar", &ok)
+        } else {
+            fail("the Go menu has no Calendar row", &ok)
+        }
+        check(WorkspaceGoMenu.chord(for: .calendar) == 3 && WorkspaceGoMenu.chord(for: .crew) == 4,
+              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar) ?? 0) and Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0)", &ok)
+    }
+
+    /// A captain who has customised the sidebar - hidden modules of their own,
+    /// or a profile's starting set - still gets the new Calendar row. The set
+    /// is stored as the modules to *hide*, so a module the stored list has
+    /// never heard of is shown; this pins that, against the obvious-looking
+    /// rewrite to a list of modules to show, which would silently drop every
+    /// new module from every existing install.
+    private static func checkSavedSidebarsGetTheCalendar(_ ok: inout Bool) {
+        let defaults = AppDefaults.store
+        let key = "fm.hiddenModules"
+        let saved = defaults.object(forKey: key)
+        defer {
+            if let saved { defaults.set(saved, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        // As an install from before the Calendar row wrote it: two modules
+        // hidden, and one id this build no longer knows.
+        defaults.set(["crew", "logs", "today"], forKey: key)
+        let hidden = AppSettings.shared.hiddenModules
+        check(hidden == [.crew, .logs], "a saved hidden set read back as \(hidden.map(\.rawValue).sorted())", &ok)
+        let work = WorkspaceSidebarModel.modules(in: .work, hidden: hidden)
+        check(work.prefix(2) == [.tasks, .calendar] && !work.contains(.crew),
+              "a customised sidebar's Work lists \(work.map(\.rawValue)), want Calendar after Tasks", &ok)
+        check(WorkspaceGoMenu.entries(hidden: hidden).contains(.module(.calendar)),
+              "a customised sidebar's Go menu has no Calendar", &ok)
+        check(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == 3,
+              "with Crew hidden Calendar should still be ⌘3, got \(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) ?? 0)", &ok)
+
+        // Even Tasks hidden leaves Calendar where the captain can find it.
+        defaults.set(["tasks"], forKey: key)
+        check(WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules).first == .calendar,
+              "hiding Tasks hid the Calendar too", &ok)
+
+        // Both profiles' starting sets show it, so a profile still matches
+        // the set it wrote before the row existed.
+        for profile in WorkspaceProfile.allCases {
+            check(!profile.hiddenModules.contains(.calendar), "the \(profile.title) profile hides the Calendar", &ok)
+            defaults.set(profile.hiddenModules.map(\.rawValue).sorted(), forKey: key)
+            check(WorkspaceProfile.matching(AppSettings.shared.hiddenModules) == profile,
+                  "a saved \(profile.title) set no longer reads as \(profile.title)", &ok)
+        }
+        check(WorkspaceModule.calendar.canBeHidden, "the Calendar row cannot be hidden in Settings", &ok)
+    }
+
     private static func checkTheSidebarDrawsNoPins(_ ok: inout Bool) {
         // Every top-level row is Home or one of the four groups - there is
         // nowhere for a pin to go.

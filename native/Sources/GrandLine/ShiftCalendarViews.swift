@@ -1,12 +1,15 @@
 // Grand Line - native macOS app.
 //
-// The Tasks page's calendar - the third view beside Board and List.
+// The Calendar - its own sidebar row in Work, after Tasks
+// (`TaskCalendarController`). It was Tasks' third tab until the captain moved
+// it out.
 //
 // **It is a Schedule-X calendar in a web view** (the captain's choice, after
-// the open-source calendar options review): month, week and day views, today's
-// highlight, a now-line, and dragging a task to a new day or time. The bundle
-// is vendored and offline (`Vendor/ScheduleX/README.md`); this file decides
-// what goes into it and what comes back out.
+// the open-source calendar options review): month, week, day and agenda
+// views, today's highlight, a now-line, and dragging a task or a follow-up to
+// a new day or time. The bundle is vendored and offline
+// (`Vendor/ScheduleX/README.md`); this file decides what goes into it and
+// what comes back out.
 //
 // Three rules carry over from the hand-drawn grid this replaced
 // (`docs/history/34-recurrence-and-calendar.md`), and all three are enforced
@@ -33,27 +36,46 @@ import AppKit
 
 // MARK: - The model
 
-/// The three views the calendar offers, by Schedule-X's own view names.
+/// The four views the calendar offers, by Schedule-X's own view names.
+/// Agenda is Schedule-X's open-source list view: a month of records, day by
+/// day.
 enum ShiftCalendarScale: String, CaseIterable {
     case month = "month-grid"
     case week
     case day
+    case agenda = "list"
 
+    /// Also the Calendar module's tab names (`ModuleTable.modules`).
     var title: String {
         switch self {
         case .month: return "Month"
         case .week: return "Week"
         case .day: return "Day"
+        case .agenda: return "Agenda"
         }
+    }
+
+    init?(title: String) {
+        guard let match = Self.allCases.first(where: { $0.title == title }) else { return nil }
+        self = match
     }
 }
 
-/// One task's appearance on one day.
+/// One task's or follow-up's appearance on one day.
 ///
 /// A value rather than a view so the placement rules are assertable without a
 /// window - which is what lets the recurrence projection be covered by the
 /// blocking CI lane rather than only by the windowed one.
 struct ShiftCalendarEntry: Equatable {
+    /// The two Shift records that carry a date. A follow-up is its own type
+    /// with its own `followUpAt`, so it opens its own editor and a drop
+    /// writes its own date.
+    enum Kind: String {
+        case task
+        case followUp
+    }
+
+    /// The record's id: a task's, or a follow-up's when `kind` says so.
     var taskID: String
     var title: String
     var day: String          // "YYYY-MM-DD"
@@ -67,8 +89,9 @@ struct ShiftCalendarEntry: Equatable {
     /// A cancelled task is still drawn (it is on the board too) but, like a
     /// completed one, it is not something a drag should reschedule.
     var isCancelled: Bool = false
+    var kind: Kind = .task
 
-    /// Whether a drag may move this entry. Only a real, open task.
+    /// Whether a drag may move this entry. Only a real, open record.
     var isMovable: Bool { !isProjected && !isCompleted && !isCancelled }
 }
 
@@ -109,16 +132,42 @@ enum ShiftCalendarModel {
                 out.append(entry(for: task, day: day, time: task.dueTime == nil ? nil : time, projected: true))
             }
         }
-        return out.sorted { lhs, rhs in
-            if lhs.day != rhs.day { return lhs.day < rhs.day }
-            // An all-day task sorts above a timed one: it is the day's
-            // heading, not an event inside it.
-            switch (lhs.time, rhs.time) {
-            case let (l?, r?) where l != r: return l < r
-            case (nil, .some): return true
-            case (.some, nil): return false
-            default: return lhs.title < rhs.title
-            }
+        return out.sorted(by: inDayOrder)
+    }
+
+    /// Every pending follow-up whose date falls inside `[from, through]`. A
+    /// follow-up marked done has been dealt with, and like a completed task's
+    /// later dates it is not something still to come.
+    static func entries(followUps: [ShiftFollowUp], from: Date, through: Date,
+                        calendar: Calendar = .current) -> [ShiftCalendarEntry] {
+        followUps.compactMap { item in
+            guard item.status == .pending, let day = item.followUpAt,
+                  let at = ShiftDateFormatting.dateTime(from: day, time: item.followUpTime),
+                  at >= calendar.startOfDay(for: from), at <= through else { return nil }
+            return ShiftCalendarEntry(taskID: item.id, title: item.title, day: day, time: item.followUpTime,
+                                      projectID: item.projectID, priority: item.priority,
+                                      isProjected: false, isCompleted: false, kind: .followUp)
+        }
+    }
+
+    /// Tasks and follow-ups together, in the one order `entries(tasks:)`
+    /// sorts by.
+    static func entries(tasks: [ShiftTask], followUps: [ShiftFollowUp], from: Date, through: Date,
+                        calendar: Calendar = .current) -> [ShiftCalendarEntry] {
+        (entries(tasks: tasks, from: from, through: through, calendar: calendar)
+            + entries(followUps: followUps, from: from, through: through, calendar: calendar))
+            .sorted(by: inDayOrder)
+    }
+
+    /// By day; an all-day record above a timed one, because it is the day's
+    /// heading rather than an event inside it; then by time and title.
+    static func inDayOrder(_ lhs: ShiftCalendarEntry, _ rhs: ShiftCalendarEntry) -> Bool {
+        if lhs.day != rhs.day { return lhs.day < rhs.day }
+        switch (lhs.time, rhs.time) {
+        case let (l?, r?) where l != r: return l < r
+        case (nil, .some): return true
+        case (.some, nil): return false
+        default: return lhs.title < rhs.title
         }
     }
 
@@ -142,7 +191,7 @@ enum ShiftCalendarModel {
             return (startOfDay, 1)
         case .week:
             return (weekStart(of: startOfDay, calendar: calendar), 7)
-        case .month:
+        case .month, .agenda:
             let components = calendar.dateComponents([.year, .month], from: startOfDay)
             let firstOfMonth = calendar.date(from: components) ?? startOfDay
             return (weekStart(of: firstOfMonth, calendar: calendar), 42)
@@ -168,7 +217,9 @@ enum ShiftCalendarPayload {
     ///
     /// The id is the task's own for a real record, and the task id plus the
     /// day for a projection, so the many projections of one rule stay distinct
-    /// while every one of them still opens the same task (`taskID`).
+    /// while every one of them still opens the same task (`taskID`). A
+    /// follow-up's carries a prefix, because a follow-up and a task are two
+    /// stores whose ids nothing keeps apart.
     ///
     /// A task has a due time but no duration, so a timed task is drawn as a
     /// half-hour block. It ends at 23:59 at the latest: a block that crossed
@@ -183,13 +234,20 @@ enum ShiftCalendarPayload {
             start = entry.day
             end = entry.day
         }
+        let id: String
+        switch entry.kind {
+        case .task: id = entry.isProjected ? "\(entry.taskID)@\(entry.day)" : entry.taskID
+        case .followUp: id = "followup:\(entry.taskID)"
+        }
         return [
-            "id": entry.isProjected ? "\(entry.taskID)@\(entry.day)" : entry.taskID,
+            "id": id,
             "taskID": entry.taskID,
+            "kind": entry.kind.rawValue,
             "title": entry.title,
             "start": start,
             "end": end,
-            "calendarId": calendarID(forProjectID: entry.projectID),
+            "allDay": entry.time == nil,
+            "calendarId": ShiftCalendarCategory(entry: entry).rawValue,
             "projected": entry.isProjected,
             "completed": entry.isCompleted,
             "movable": entry.isMovable,
@@ -197,17 +255,6 @@ enum ShiftCalendarPayload {
     }
 
     static let timedBlockMinutes = 30
-
-    /// A task's colour is its project's, through the same palette the board's
-    /// cards use, so one project reads as one colour on every Tasks view.
-    static func calendarID(forProjectID id: String?) -> String {
-        "tint-\(ShiftProjectPalette.tint(forProjectID: id))"
-    }
-
-    /// Every calendar id `calendarID(forProjectID:)` can produce.
-    static var allCalendarIDs: [String] {
-        (ShiftProjectPalette.tints + [.neutral]).map { "tint-\($0)" }
-    }
 
     /// Schedule-X accepts a locale only in `ll-RR` form and throws on
     /// anything else ("en", "zh-Hans-CN"), so the captain's locale is reduced
@@ -253,6 +300,55 @@ enum ShiftCalendarPayload {
     }
 }
 
+// MARK: - What each colour means
+
+/// The calendar's colour categories, one per kind of record, and the legend
+/// under the grid that names them.
+///
+/// A task is coloured by its priority and a follow-up by being one. Both are
+/// real fields every record has, which is why the calendar colours by them
+/// rather than by project: most tasks carry no project, and a calendar where
+/// nearly every chip is the one no-project grey says nothing. The mapping is
+/// fixed, so a colour means the same thing in every month and every theme.
+enum ShiftCalendarCategory: String, CaseIterable {
+    case high = "kind-high"
+    case normal = "kind-normal"
+    case low = "kind-low"
+    case followUp = "kind-followup"
+
+    init(entry: ShiftCalendarEntry) {
+        guard entry.kind == .task else { self = .followUp; return }
+        switch entry.priority {
+        case .high: self = .high
+        case .normal: self = .normal
+        case .low: self = .low
+        }
+    }
+
+    /// The legend's words.
+    var title: String {
+        switch self {
+        case .high: return "High priority"
+        case .normal: return "Normal priority"
+        case .low: return "Low priority"
+        case .followUp: return "Follow-up"
+        }
+    }
+
+    /// A semantic hue, resolved per theme, so every palette supplies its own:
+    /// the theme's red for urgent, its green for low, its amber for a
+    /// follow-up, which is a thing to check on, and its violet for the
+    /// commonest case, which must not read as a warning.
+    var tint: HelmTint {
+        switch self {
+        case .high: return .critical
+        case .normal: return .violet
+        case .low: return .good
+        case .followUp: return .warn
+        }
+    }
+}
+
 // MARK: - The palette
 
 /// The app theme, as Schedule-X's CSS variables.
@@ -288,6 +384,9 @@ enum ShiftCalendarPalette {
         "--sx-internal-color-gray-ripple-background", "--sx-internal-color-light-gray",
         "--sx-internal-color-text",
         "--gl-now-line", "--gl-accent-ink",
+        // The card and its cells (task-calendar.css).
+        "--gl-ground", "--gl-card", "--gl-card-edge", "--gl-cell", "--gl-cell-dim",
+        "--gl-ink", "--gl-muted", "--gl-faint", "--gl-control-edge", "--gl-control-hover",
     ]
 
     /// Every CSS variable, resolved from `theme`.
@@ -313,6 +412,13 @@ enum ShiftCalendarPalette {
         func toward(_ fraction: CGFloat) -> String {
             CodePreviewTheme.hex(surface.blended(withFraction: fraction, of: inkColor) ?? surface)
         }
+        let cell = cellFill(theme)
+        // A day outside the month sits almost flat on the card: present, so
+        // the weeks stay whole, but plainly not this month's.
+        let cellDim = CodePreviewTheme.hex(cell.blended(withFraction: 0.8, of: surface) ?? surface)
+        let edge = CodePreviewTheme.hex(opaque(HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha), over: surface))
+        let faint = faintHex(theme, on: HelmTheme.nsColor(String(cellDim.dropFirst())))
         return [
             "--sx-color-primary": "#" + theme.accentHex,
             "--sx-color-on-primary": onAccent,
@@ -354,52 +460,115 @@ enum ShiftCalendarPalette {
             // Today's weekday name in the week view is text, so it takes the
             // accent corrected for legibility, not the raw fill colour.
             "--gl-accent-ink": CodePreviewTheme.legibleHex(accent, on: surface),
+            // The card is a `HelmCard`'s own surface and edge, on the page
+            // ground the native pane paints, so it reads as the same card
+            // every other page draws.
+            "--gl-ground": "#" + theme.backgroundHex,
+            "--gl-card": surfaceHex,
+            "--gl-card-edge": edge,
+            "--gl-cell": CodePreviewTheme.hex(cell),
+            "--gl-cell-dim": cellDim,
+            "--gl-ink": ink,
+            "--gl-muted": CodePreviewTheme.legibleHex(opaque(HelmTheme.mutedInk(theme), over: surface),
+                                                      on: quantised(cell)),
+            "--gl-faint": faint,
+            "--gl-control-edge": line,
+            "--gl-control-hover": toward(0.06),
         ]
     }
 
-    /// `setTheme`'s payload: the variables plus the register.
-    static func themePayload(for theme: HelmTheme) -> [String: Any] {
-        ["vars": variables(for: theme), "dark": theme.mode == .dark,
-         "calendars": calendars(for: theme)]
+    /// A day cell: a step from the card toward the page ground, which is the
+    /// captain's design (cells sunk a shade into their card), or, where a
+    /// palette paints the two the same (`chromeBackgroundHex ==
+    /// backgroundHex` in several), the smallest step that still separates
+    /// the cell from its card - sinking first, and rising toward ink where
+    /// the card is already too close to black to sink from (High contrast
+    /// dark: black can only give it 1.05:1).
+    static func cellFill(_ theme: HelmTheme) -> NSColor {
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let ground = HelmTheme.nsColor(theme.backgroundHex)
+        let step = theme.mode == .dark ? 0.55 : 0.6
+        let towardGround = quantised(surface.blended(withFraction: step, of: ground) ?? surface)
+        if HelmContrast.ratio(towardGround, surface) >= cellSeparation { return towardGround }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let targets: [NSColor] = theme.mode == .dark ? [.black, ink] : [ink]
+        for target in targets {
+            var fraction: CGFloat = 0.01
+            while fraction <= 0.3 {
+                let fill = quantised(surface.blended(withFraction: fraction, of: target) ?? surface)
+                if HelmContrast.ratio(fill, surface) >= cellSeparation { return fill }
+                fraction += 0.01
+            }
+        }
+        return towardGround
     }
 
-    /// One Schedule-X calendar per project hue, plus one for a task with no
-    /// project.
+    /// How far a cell steps from its card: Daylight's own card-over-paper
+    /// separation, the same floor a page's nav column clears.
+    static let cellSeparation = HelmTheme.sidePanelSeparation
+
+    /// A day number outside the month: quiet, not gone. Muted ink stepped
+    /// toward the dimmed cell for as long as it still clears 3:1 against it,
+    /// the large-text floor (WCAG 1.4.3), which a 14pt medium numeral that
+    /// is not the month's own is held to here rather than to body text's.
+    static let faintTextFloor = 3.0
+
+    static func faintHex(_ theme: HelmTheme, on dimCell: NSColor) -> String {
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let muted = quantised(opaque(HelmTheme.mutedInk(theme), over: surface))
+        var best = muted
+        var fraction: CGFloat = 0.05
+        while fraction <= 0.6 {
+            let candidate = quantised(muted.blended(withFraction: fraction, of: dimCell) ?? muted)
+            guard HelmContrast.ratio(candidate, dimCell) >= faintTextFloor else { break }
+            best = candidate
+            fraction += 0.05
+        }
+        return CodePreviewTheme.hex(best)
+    }
+
+    /// `setTheme`'s payload: the variables plus the register, the calendars
+    /// and the legend that names them.
+    static func themePayload(for theme: HelmTheme) -> [String: Any] {
+        ["vars": variables(for: theme), "dark": theme.mode == .dark,
+         "calendars": calendars(for: theme), "legend": legend(for: theme)]
+    }
+
+    /// The legend under the grid, one item per category in a fixed order.
+    static func legend(for theme: HelmTheme) -> [[String: String]] {
+        ShiftCalendarCategory.allCases.map { category in
+            let colours = colours(for: category, theme: theme)
+            return ["id": category.rawValue, "label": category.title,
+                    "main": colours["main"] ?? "", "container": colours["container"] ?? ""]
+        }
+    }
+
+    /// One Schedule-X calendar per category (`ShiftCalendarCategory`).
     ///
-    /// A project's events are a tinted surface: the fill and the label come
-    /// from `HelmContrast.tintedSurface` rather than being picked, because a
+    /// A chip is a tinted surface: the fill and the label come from
+    /// `HelmContrast.tintedSurface` rather than being picked, because a
     /// `HelmTint` hue is safe as a fill and not automatically as text. The
-    /// no-project calendar takes the quiet well with ink text instead, because
-    /// `.neutral` is page ink and washing it produces a near-black chip
-    /// (AGENTS.md's colour rules record that defect). Both registers get the
-    /// same values: the page is re-themed on every theme change, so the
-    /// light/dark pair Schedule-X asks for is always the active theme's.
+    /// accent edge is the hue itself. Both registers get the same values: the
+    /// page is re-themed on every theme change, so the light/dark pair
+    /// Schedule-X asks for is always the active theme's.
     static func calendars(for theme: HelmTheme) -> [String: Any] {
         var out: [String: Any] = [:]
-        for tint in ShiftProjectPalette.tints + [.neutral] {
-            let colours: [String: String]
-            if tint == .neutral {
-                let well = HelmField.fill(theme)
-                colours = [
-                    "main": CodePreviewTheme.hex(opaque(HelmTheme.mutedInk(theme),
-                                                        over: HelmTheme.nsColor(theme.chromeBackgroundHex))),
-                    "container": CodePreviewTheme.hex(well),
-                    "onContainer": CodePreviewTheme.legibleHex(HelmTheme.nsColor(theme.chromeInkHex),
-                                                               on: quantised(well)),
-                ]
-            } else {
-                let surface = HelmContrast.tintedSurface(tintHex: tint.hex(in: theme), theme: theme,
-                                                        target: HelmContrast.textTarget)
-                colours = [
-                    "main": "#" + tint.hex(in: theme),
-                    "container": CodePreviewTheme.hex(surface.fill),
-                    "onContainer": CodePreviewTheme.legibleHex(surface.foreground, on: quantised(surface.fill)),
-                ]
-            }
-            let id = "tint-\(tint)"
-            out[id] = ["colorName": id, "lightColors": colours, "darkColors": colours]
+        for category in ShiftCalendarCategory.allCases {
+            let colours = colours(for: category, theme: theme)
+            out[category.rawValue] = ["colorName": category.rawValue, "lightColors": colours, "darkColors": colours]
         }
         return out
+    }
+
+    /// One category's three colours: the edge, the chip's fill and its text.
+    static func colours(for category: ShiftCalendarCategory, theme: HelmTheme) -> [String: String] {
+        let hex = category.tint.hex(in: theme)
+        let surface = HelmContrast.tintedSurface(tintHex: hex, theme: theme, target: HelmContrast.textTarget)
+        return [
+            "main": "#" + hex,
+            "container": CodePreviewTheme.hex(surface.fill),
+            "onContainer": CodePreviewTheme.legibleHex(surface.foreground, on: quantised(surface.fill)),
+        ]
     }
 
     /// `color` as the page will receive it: rounded to 8 bits per channel.
@@ -456,6 +625,30 @@ enum ShiftCalendarReschedule {
         return .moved(moved)
     }
 
+    /// A drop of a follow-up. The same rule as a task's: a follow-up with no
+    /// time stays dated only, and a done one cannot move.
+    enum FollowUpOutcome: Equatable {
+        case moved(ShiftFollowUp)
+        case unchanged
+        case refused(String)
+    }
+
+    static func apply(followUp: ShiftFollowUp, day: String, time: String?) -> FollowUpOutcome {
+        guard followUp.status == .pending else { return .refused("A finished follow-up can't be moved.") }
+        guard ShiftDateFormatting.date(from: day) != nil, day.count == 10 else {
+            return .refused("That isn't a day the calendar can save.")
+        }
+        let newTime: String? = followUp.followUpTime == nil ? nil : (time ?? followUp.followUpTime)
+        if let newTime, !isClock(newTime) {
+            return .refused("That isn't a time the calendar can save.")
+        }
+        guard day != followUp.followUpAt || newTime != followUp.followUpTime else { return .unchanged }
+        var moved = followUp
+        moved.followUpAt = day
+        moved.followUpTime = newTime
+        return .moved(moved)
+    }
+
     private static func isClock(_ text: String) -> Bool {
         let parts = text.split(separator: ":")
         guard parts.count == 2, parts.allSatisfy({ $0.count == 2 }),
@@ -466,45 +659,66 @@ enum ShiftCalendarReschedule {
 
 // MARK: - The view
 
-/// The calendar tab: a caption stating what is in the visible period, and the
-/// Schedule-X page in a card. The page is not loaded until the tab is first
-/// shown, so a session that never opens the calendar pays nothing for it.
+/// The calendar: the Schedule-X page, and - in the sidebar layout - the
+/// mockup's heading with a caption stating what is in the visible period.
+/// The floating bar's drill header states that caption itself (the
+/// controller's `drillHeaderSubtitle`), so there it is not drawn twice. The
+/// page draws its own card (the captain's raised card,
+/// with its header, weekday row and legend), so this view only hosts it and
+/// fills whatever its page gives it. The page is not loaded until the view is
+/// first shown, so a session that never opens the calendar pays nothing for
+/// it.
 final class ShiftCalendarView: NSView {
 
-    /// Opens the task behind an event - the same `ShiftController.openBoardTask`
-    /// path the board's cards use, so there is one "open a task" in this page.
+    /// Opens the task behind an event, through the one task editor
+    /// (`ShiftRecordSheets`).
     var onOpenTask: ((String) -> Void)?
+    /// Opens the follow-up behind an event.
+    var onOpenFollowUp: ((String) -> Void)?
     /// A new task on a double-clicked day, at a time when one was clicked.
     var onAddTask: ((_ day: String, _ time: String?) -> Void)?
-    /// A dropped event. The controller decides; see this file's header.
+    /// A dropped task. The controller decides; see this file's header.
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
+    /// A dropped follow-up.
+    var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// The visible period or the view changed: the caption and the scale
+    /// may both be new.
+    var onPeriodChanged: (() -> Void)?
 
     private(set) var scale: ShiftCalendarScale = .month
 
     private let captionLabel = NSTextField(labelWithString: "")
-    private let card = NSView()
+    /// The sidebar layout's "Calendar" heading, the captain's mockup's. The
+    /// shell's module header draws no title there (only a subtitle), so the
+    /// page draws its own, with the period's count beside it.
+    private let headingLabel = NSTextField(labelWithString: "")
+    private let host = NSView()
     private let webView = ShiftCalendarWebView()
     /// Built only when this machine has no bundle, which is never on a
     /// normal install.
     private var missingBundleState: HelmEmptyState?
-    /// The sidebar layout's card radius - see `adoptWorkspaceStyle`.
-    private(set) var usesWorkspaceStyle = false
+    /// Drawn only with the heading: the card starts at the top until then.
+    private var headingRow: [NSLayoutConstraint] = []
+    private var hostTopToSelf: NSLayoutConstraint?
 
     private var tasks: [ShiftTask] = []
-    private var projects: [ShiftProject] = []
+    private var followUps: [ShiftFollowUp] = []
     /// The period the page last reported, as `YYYY-MM-DD` strings. Until the
     /// first report it is the month grid around today, which is what the page
     /// opens on.
     private var visibleRange: (start: String, end: String)?
+    /// The day the page is focused on, as it last reported it.
+    private(set) var focusedDay: String?
+    /// The period on screen, once the page has reported one.
+    var visibleDays: (start: String, end: String)? { visibleRange }
     private var isConfigured = false
     private(set) var lastEventsPayload: [[String: Any]] = []
+    private(set) var caption = ""
 
-    /// The calendar's own height. A required constant is safe here in a way
-    /// a required *width* is not (gotcha (13) is about a width reaching the
-    /// window): the page is inside a vertical scroll view, so a tall card
-    /// scrolls rather than growing the window. Month view fits six weeks in
-    /// it, and week and day view scroll their hours inside it.
-    static let calendarHeight: CGFloat = 720
+    /// The calendar's floor. The page fills the height its page gives it, so
+    /// month view's cells grow with the window; below this the month grid's
+    /// six weeks stop fitting two chips a day.
+    static let minimumHeight: CGFloat = 520
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -521,25 +735,40 @@ final class ShiftCalendarView: NSView {
         captionLabel.translatesAutoresizingMaskIntoConstraints = false
         captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        card.wantsLayer = true
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(webView)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(webView)
 
+        headingLabel.font = HelmType.pageTitle()
+        headingLabel.lineBreakMode = .byTruncatingTail
+        headingLabel.translatesAutoresizingMaskIntoConstraints = false
+        headingLabel.isHidden = true
+        captionLabel.isHidden = true
+        headingLabel.setContentHuggingPriority(.required, for: .horizontal)
+        headingLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        addSubview(headingLabel)
         addSubview(captionLabel)
-        addSubview(card)
+        addSubview(host)
+        let toSelf = host.topAnchor.constraint(equalTo: topAnchor)
+        hostTopToSelf = toSelf
+        headingRow = [
+            headingLabel.topAnchor.constraint(equalTo: topAnchor),
+            headingLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            captionLabel.firstBaselineAnchor.constraint(equalTo: headingLabel.firstBaselineAnchor),
+            captionLabel.leadingAnchor.constraint(greaterThanOrEqualTo: headingLabel.trailingAnchor, constant: HelmMetrics.s4),
+            captionLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            host.topAnchor.constraint(equalTo: headingLabel.bottomAnchor, constant: HelmMetrics.s3),
+        ]
         NSLayoutConstraint.activate([
-            captionLabel.topAnchor.constraint(equalTo: topAnchor),
-            captionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            captionLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            card.topAnchor.constraint(equalTo: captionLabel.bottomAnchor, constant: HelmMetrics.s2),
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            card.heightAnchor.constraint(equalToConstant: Self.calendarHeight),
-            webView.topAnchor.constraint(equalTo: card.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            toSelf,
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+            host.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight),
+            webView.topAnchor.constraint(equalTo: host.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
 
         webView.onReady = { [weak self] in self?.pageDidBecomeReady() }
@@ -550,23 +779,33 @@ final class ShiftCalendarView: NSView {
             guard let self else { return }
             self.scale = ShiftCalendarScale(rawValue: view) ?? self.scale
             self.visibleRange = (start, end)
+            self.focusedDay = self.webView.focusedDay
             self.pushEvents()
+            self.onPeriodChanged?()
         }
         webView.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
+        webView.onOpenFollowUp = { [weak self] id in self?.onOpenFollowUp?(id) }
         webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
         webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
+        webView.onMoveFollowUp = { [weak self] id, day, time in self?.onMoveFollowUp?(id, day, time) }
 
         applyTheme(ThemeManager.shared.theme)
         refreshCaption()
     }
 
-    /// The sidebar layout's card: the prototype's 12pt corners. Once, the
-    /// first time the sidebar layout shows the page; never undone.
-    func adoptWorkspaceStyle() {
-        guard !usesWorkspaceStyle else { return }
-        usesWorkspaceStyle = true
-        applyTheme(ThemeManager.shared.theme)
+    /// The sidebar layout's heading: `title` large on the left and the
+    /// period's count beside it, trailing. Once, and never undone (the layout
+    /// is chosen at launch).
+    func showHeading(_ title: String) {
+        guard headingLabel.isHidden else { return }
+        headingLabel.stringValue = title
+        headingLabel.isHidden = false
+        captionLabel.isHidden = false
+        hostTopToSelf?.isActive = false
+        NSLayoutConstraint.activate(headingRow)
     }
+
+    var showsHeading: Bool { !headingLabel.isHidden }
 
     // MARK: Loading
 
@@ -580,8 +819,8 @@ final class ShiftCalendarView: NSView {
         activateIfShowing()
     }
 
-    /// Loads the page the first time the tab is genuinely on screen, or puts
-    /// up the "no bundle" state when this machine has none.
+    /// Loads the page the first time the calendar is genuinely on screen, or
+    /// puts up the "no bundle" state when this machine has none.
     private func activateIfShowing() {
         guard window != nil, !isHiddenOrHasHiddenAncestor, !webView.hasLoaded else { return }
         if !webView.activate() { showMissingBundle() }
@@ -594,11 +833,11 @@ final class ShiftCalendarView: NSView {
                                    title: "Calendar unavailable",
                                    body: ShiftCalendarAssets.missingBundleMessage)
         state.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(state)
+        host.addSubview(state)
         NSLayoutConstraint.activate([
-            state.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            state.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-            state.widthAnchor.constraint(lessThanOrEqualTo: card.widthAnchor, constant: -48),
+            state.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            state.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+            state.widthAnchor.constraint(lessThanOrEqualTo: host.widthAnchor, constant: -48),
         ])
         missingBundleState = state
     }
@@ -618,11 +857,28 @@ final class ShiftCalendarView: NSView {
         }
     }
 
+    // MARK: Views
+
+    /// Shows `scale`, through the page's own pill handler, so a toolbar tab
+    /// and a pill in the card are one path. Before the page is up it is the
+    /// view the page opens on.
+    func show(scale: ShiftCalendarScale) {
+        guard scale != self.scale else { return }
+        self.scale = scale
+        onPeriodChanged?()
+        guard isConfigured else { return }
+        webView.call("setView", payload: ["view": scale.rawValue]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setView failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
     // MARK: Data
 
-    func configure(tasks: [ShiftTask], projects: [ShiftProject]) {
+    func configure(tasks: [ShiftTask], followUps: [ShiftFollowUp] = []) {
         self.tasks = tasks
-        self.projects = projects
+        self.followUps = followUps
         pushEvents()
     }
 
@@ -654,25 +910,31 @@ final class ShiftCalendarView: NSView {
             start = s
             end = calendar.date(byAdding: .day, value: days, to: s) ?? s
         }
-        return ShiftCalendarModel.entries(tasks: tasks, from: start, through: end.addingTimeInterval(-1),
-                                          calendar: calendar)
+        return ShiftCalendarModel.entries(tasks: tasks, followUps: followUps,
+                                          from: start, through: end.addingTimeInterval(-1), calendar: calendar)
     }
 
     private func refreshCaption(entries: [ShiftCalendarEntry]? = nil) {
         let list = entries ?? visibleEntries()
-        captionLabel.stringValue = Self.subtitle(total: list.count, projected: list.filter(\.isProjected).count)
+        let tasksOnly = list.filter { $0.kind == .task }
+        caption = Self.subtitle(total: tasksOnly.count, projected: tasksOnly.filter(\.isProjected).count,
+                                followUps: list.count - tasksOnly.count)
+        captionLabel.stringValue = caption
     }
 
-    /// GL-14: "no tasks in this period" is a real, stated answer, never a
+    /// GL-14: "nothing in this period" is a real, stated answer, never a
     /// blank grid the reader has to interpret. The projected count is stated
     /// separately because a month showing 40 events of which 35 are
     /// projections is a different fact from a month with 40 real tasks.
-    static func subtitle(total: Int, projected: Int) -> String {
-        guard total > 0 else { return "Nothing scheduled in this period." }
+    static func subtitle(total: Int, projected: Int, followUps: Int = 0) -> String {
+        guard total + followUps > 0 else { return "Nothing scheduled in this period." }
         let real = total - projected
-        var text = real == 1 ? "1 task" : "\(real) tasks"
+        var parts: [String] = []
+        if real > 0 || total > 0 { parts.append(real == 1 ? "1 task" : "\(real) tasks") }
+        if followUps > 0 { parts.append(followUps == 1 ? "1 follow-up" : "\(followUps) follow-ups") }
+        var text = parts.joined(separator: " and ")
         if projected > 0 { text += ", \(projected) projected from a repeat rule" }
-        return text + " in this period. Drag a task to move its due date."
+        return text + " in this period. Drag one to move its date."
     }
 
     // MARK: Theme
@@ -681,13 +943,11 @@ final class ShiftCalendarView: NSView {
     /// and only their colours change.
     func applyTheme(_ theme: HelmTheme) {
         captionLabel.textColor = HelmTheme.mutedInk(theme)
-        let radius = usesWorkspaceStyle ? 12 : HelmMetrics.rCard
-        HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: radius, daylightRadius: radius)
-        card.layer?.masksToBounds = true
+        headingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         // AGENTS.md's theming rule: a themed view forces its appearance, or
         // anything resolving a system colour (the web view's own scrollers)
         // follows the OS instead of the theme.
-        card.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        host.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         guard isConfigured else { return }
         webView.call("setTheme", payload: ShiftCalendarPalette.themePayload(for: theme)) { result in
             if case .failure(let error) = result {
@@ -701,6 +961,8 @@ final class ShiftCalendarView: NSView {
     #if FM_SELFTESTS
     var debugWebView: ShiftCalendarWebView { webView }
     var debugCaption: String { captionLabel.stringValue }
+    var debugHeading: NSTextField { headingLabel }
+    var debugCaptionLabel: NSTextField { captionLabel }
     var debugIsConfigured: Bool { isConfigured }
     var debugShowsMissingBundle: Bool { missingBundleState != nil }
     var debugEventIDs: [String] { lastEventsPayload.compactMap { $0["id"] as? String } }

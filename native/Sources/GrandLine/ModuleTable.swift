@@ -33,7 +33,8 @@
 // **The planned home of each destination** is the `module` and `child` columns.
 // They follow the captain's modular workspace prototype (Version 2): eighteen
 // sidebar items, which are Home plus seventeen modules in four groups, with
-// Console as its own module.
+// Console as its own module - and a nineteenth since, the Calendar row the
+// captain's later mockup puts in Work after Tasks.
 // `docs/modular-shell/feature-inventory.md` is the feature-level half of the
 // same plan, and its suite checks that every destination row there names the
 // module this table does.
@@ -62,6 +63,7 @@ enum WorkspaceGroup: String, CaseIterable {
 enum WorkspaceModule: String, CaseIterable {
     case home
     case tasks
+    case calendar
     case crew
     case connections
     case console
@@ -307,6 +309,25 @@ enum ModuleTable {
                          slot: .shift, subtitle: "A task board, follow-ups and projects",
                          mountsEagerly: false, space: .command, homeCards: [.tasks],
                          newAction: .task, module: .tasks, child: nil),
+        // Its symbol:
+        //   A calendar with a check: what it shows is tasks by their due
+        //   date. The plain `calendar` glyph is Schedules', a few rows down
+        //   the same sidebar, and two identical icons would read as one page.
+        //   The toolbar's calendar button reads this row too, so the button
+        //   and the row it opens agree.
+        // Its hue:
+        //   Tasks, whose records it draws.
+        // Its line:
+        //   A fallback only - `TaskCalendarController` supplies the visible
+        //   period's own count (GL-14).
+        // Its module:
+        //   Its own sidebar row in Work, after Tasks, where the captain's
+        //   mockup puts it. It was Tasks' third tab until then
+        //   (`docs/history/34-recurrence-and-calendar.md`).
+        ModuleDescriptor(route: .calendar, title: "Calendar", symbol: "calendar.badge.checkmark", hue: .rose,
+                         slot: .calendar, subtitle: "Tasks and follow-ups by the day they are due",
+                         mountsEagerly: false, space: .command, homeCards: [],
+                         newAction: .task, module: .calendar, child: nil),
         // Its hue:
         //   Merge queue
         ModuleDescriptor(route: .review, title: "Review", symbol: "arrow.triangle.branch", hue: .green,
@@ -633,14 +654,19 @@ enum ModuleTable {
     /// module's children that are its own tabs rather than destinations:
     /// Shift's views are Tasks' tabs, the Fleet page's Needs you, Dashboard
     /// and Log are Crew's Needs you, In flight and Log, the Hosts page's
-    /// Hosts, SSH Keys and Snippets are Connections' first three, and
-    /// Kubernetes' Cluster and Log Tail are its own. The captain dropped the
-    /// content column's header on Connections and Console; every other
-    /// module keeps it.
+    /// Hosts, SSH Keys and Snippets are Connections' first three, the
+    /// Calendar's Month, Week, Day and Agenda are its own, and Kubernetes'
+    /// Cluster and Log Tail are its own. The captain dropped the content
+    /// column's header on Connections and Console; the Calendar draws the
+    /// mockup's heading itself, with its count beside it, so the column's
+    /// header would only repeat it. Every other module keeps it.
     static let modules: [WorkspaceModuleDescriptor] = [
         WorkspaceModuleDescriptor(module: .home, title: "Home", group: nil, children: []),
         WorkspaceModuleDescriptor(module: .tasks, title: "Tasks", group: .work,
-                                  children: ["Board", "List", "Calendar", "Weekly review"], pageTabHost: .shift),
+                                  children: ["Board", "List", "Weekly review"], pageTabHost: .shift),
+        WorkspaceModuleDescriptor(module: .calendar, title: "Calendar", group: .work,
+                                  children: ["Month", "Week", "Day", "Agenda"], pageTabHost: .calendar,
+                                  showsHeader: false),
         WorkspaceModuleDescriptor(module: .crew, title: "Crew", group: .work,
                                   children: ["Needs you", "In flight", "Review", "Ask the crew", "Log"],
                                   symbol: "person.3.fill", pageTabHost: .overview),

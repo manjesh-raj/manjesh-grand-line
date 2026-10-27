@@ -29,7 +29,7 @@
 //     capsule of their own (stage 7 drew them with a caption on Console only;
 //     U-02, the captain's call, took the caption out and put them everywhere),
 //   - the trailing cluster: the light/dark toggle and the notifications
-//     button (the captain kept both), the calendar button (Tasks › Calendar
+//     button (the captain kept both), the calendar button (the Calendar page
 //     from any page, the captain's ask), the inspector toggle, then Search,
 //   - and last, at the far right after Search, the page's one primary action
 //     where it has one (Add Host, Analyze, Copy diagnostics), as the
@@ -99,8 +99,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     /// The calendar button's glyph, shared by its live item and its palette
-    /// copy.
-    static let calendarSymbol = "calendar"
+    /// copy. The Calendar's own sidebar glyph, so the button and the row it
+    /// opens look like one thing.
+    static var calendarSymbol: String { RailDestination.calendar.symbol }
 
     /// AppKit keeps every live toolbar with the same identifier in step -
     /// items and display mode alike - so a suite that stands a second one up
@@ -121,7 +122,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var onQuickConnectHosts: (() -> Void)?
     var onToggleTheme: (() -> Void)?
     var onNotifications: ((NSView) -> Void)?
-    /// The calendar button: Tasks › Calendar, from whichever page is showing.
+    /// The calendar button: the Calendar page, from whichever page is showing.
     var onCalendar: (() -> Void)?
     var onToggleInspector: (() -> Void)?
     var onSearch: (() -> Void)?
@@ -609,7 +610,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             return item
         case ItemID.calendar:
             let item = imageItem(identifier, symbol: Self.calendarSymbol, label: "Calendar",
-                                 help: "Open Tasks › Calendar", action: #selector(calendarClicked))
+                                 help: "Open the Calendar", action: #selector(calendarClicked))
             item.image?.accessibilityDescription = "Calendar"
             return item
         case ItemID.inspector:

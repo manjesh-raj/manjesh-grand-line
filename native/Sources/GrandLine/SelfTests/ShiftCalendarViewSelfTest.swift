@@ -1,14 +1,17 @@
 // Grand Line - native macOS app.
 //
-// The Tasks calendar's page half: a real `ShiftController` over a scratch
-// store, in a real window, with the Calendar tab genuinely selected and the
-// real vendored Schedule-X page loaded in a real `WKWebView`.
+// The Calendar's page half: a real `TaskCalendarController` over a scratch
+// store, in a real window, with the real vendored Schedule-X page loaded in a
+// real `WKWebView`.
 //
 // Everything here is read back from the page's own DOM, never from what the
 // native side believes it sent:
 //
-//   - the page is not loaded until the tab is first shown (a session that
-//     never opens the calendar pays nothing);
+//   - the page is not loaded until the calendar is first shown (a session
+//     that never opens the calendar pays nothing);
+//   - the captain's card is what is drawn: the period's title, the filled
+//     pill for the showing view, the weekday row, the legend, dimmed days
+//     outside the month, raised day cells and today as a pill;
 //   - the store's tasks render as Schedule-X events, a projection is drawn
 //     faint and a real task is not, and today is highlighted;
 //   - **a real drag writes the real store**. The suite dispatches the same
@@ -18,10 +21,13 @@
 //     reschedule rule and `ShiftStore` - and then the task is read back from
 //     the store. Done in the month grid and in the week view's time grid;
 //   - a projection cannot be dragged, whatever the DOM is persuaded to do;
-//   - a click on an event reaches `onOpenTask` with the task's id;
-//   - paging the calendar re-reads the store for the new period;
+//   - a click on an event reaches `onOpenTask` with the task's id, and a
+//     follow-up's reaches `onOpenFollowUp`, and a drag moves its own date;
+//   - a pill in the card and the toolbar's tab are one path: either moves
+//     the other, and Agenda is the open-source list view;
+//   - the card's own Next button pages, and paging re-reads the store;
 //   - the page's CSS variables follow a live theme change, light and dark;
-//   - hiding the tab suspends the page.
+//   - hiding the page suspends it.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -60,30 +66,34 @@ enum ShiftCalendarViewSelfTest {
             let todayDay = ShiftDateFormatting.components(from: today).0
             let repeating = seed(store, title: "Standup notes", due: todayDay, time: "09:30",
                                  rule: ShiftRecurrence(frequency: .daily))
-            let single = seed(store, title: "Renew wildcard TLS", due: todayDay, time: nil, rule: nil)
+            let single = seed(store, title: "Renew wildcard TLS", due: todayDay, time: nil, rule: nil,
+                              priority: .high)
+            var followUp = ShiftFollowUp.fresh()
+            followUp.title = "Ping the registrar"
+            followUp.followUpAt = todayDay
+            store.addFollowUp(followUp)
 
             let (controller, window) = mount(store: store)
             defer { window.orderOut(nil) }
             let view = controller.debugCalendarView
             let web = view.debugWebView
+            var tabChanges = 0
+            controller.onModuleTabChanged = { tabChanges += 1 }
 
             // MARK: Lazy until shown
 
-            check(!controller.debugCalendarIsVisible, "the calendar must not be showing before it is selected")
-            check(!web.hasLoaded, "the calendar page must not load until the tab is first shown")
+            check(!web.hasLoaded, "the calendar page must not load until the page is first shown")
 
-            controller.debugSelectTasksView("calendar")
+            controller.view.isHidden = false
             controller.view.layoutSubtreeIfNeeded()
-            check(controller.debugCalendarIsVisible, "selecting Calendar should show the calendar")
-            check(!controller.debugBoardIsVisible, "the board should hide when the calendar is showing")
-            check(web.hasLoaded, "showing the tab should load the page")
+            check(web.hasLoaded, "showing the page should load it")
 
             guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
                 failures.append("the Schedule-X page never reported ready and configured")
                 return
             }
             check(web.frame.height > 600 && web.frame.width > 600,
-                  "the calendar should have a real frame, got \(web.frame.size)")
+                  "the calendar should fill its page, got \(web.frame.size)")
 
             // MARK: The store's tasks render
 
@@ -97,6 +107,45 @@ enum ShiftCalendarViewSelfTest {
 
             check(eventIn(web, id: single, day: todayDay), "a one-off task should render on its own due day")
             check(eventIn(web, id: repeating, day: todayDay), "a repeating task's own instance renders on its day")
+            let followUpEventID = "followup:\(followUp.id)"
+            check(eventIn(web, id: followUpEventID, day: todayDay), "a pending follow-up renders on its day")
+
+            // MARK: The captain's card
+
+            let monthTitle = month["title"] as? String ?? ""
+            let expectedMonth = DateFormatter.localizedString(from: today, dateStyle: .long, timeStyle: .none)
+            check(!monthTitle.isEmpty && monthTitle.contains(String(calendar.component(.year, from: today))),
+                  "the card's title should name the month and year, got \"\(monthTitle)\" (today is \(expectedMonth))")
+            check(month["activePill"] as? String == "month-grid", "the Month pill is the filled one, got \(month)")
+            check((month["weekdays"] as? [String])?.count == 7, "the weekday row has seven names, got \(month)")
+            check(month["legend"] as? [String] == ShiftCalendarCategory.allCases.map(\.rawValue),
+                  "the legend names every category, got \(month["legend"] ?? "nothing")")
+            check(js(web, "getComputedStyle(document.querySelector('.sx__calendar-header')).display") as? String == "none",
+                  "Schedule-X's own header must give way to the card's")
+            if let start = month["start"] as? String,
+               start < ShiftDateFormatting.components(from: calendar.date(from: calendar.dateComponents(
+                   [.year, .month], from: today)) ?? today).0 {
+                // Schedule-X sets the class in an effect, after its first paint.
+                _ = waitFor(timeout: 3) { (state(web)["dimmedCells"] as? Int ?? 0) > 0 }
+                let dimmed = state(web)["dimmedCells"] as? Int ?? 0
+                check(dimmed > 0, "days outside the month should be dimmed, got \(dimmed) from \(month["start"] ?? "")")
+            }
+            let cellFill = js(web, "getComputedStyle(document.querySelector('.sx__month-grid-day:not(.is-leading-or-trailing)'),"
+                              + " '::before').backgroundColor") as? String
+            let dimFill = js(web, "(() => { const el = document.querySelector('.sx__month-grid-day.is-leading-or-trailing');"
+                             + " return el ? getComputedStyle(el, '::before').backgroundColor : null })()") as? String
+            check(cellFill != nil && cellFill != "rgba(0, 0, 0, 0)",
+                  "each day should be its own filled cell, got \(cellFill ?? "nil")")
+            if let dimFill { check(dimFill != cellFill, "a dimmed day should not look like a day of the month") }
+            let todayPill = js(web, "(() => { const r = document.querySelector('.sx__month-grid-day__header-date.sx__is-today')"
+                               + ".getBoundingClientRect(); return [r.width, r.height] })()") as? [Double] ?? []
+            check(todayPill.count == 2 && todayPill[0] > todayPill[1],
+                  "today should be a pill, wider than it is tall, got \(todayPill)")
+            let edges = month["chipEdges"] as? [String] ?? []
+            check(edges.contains { $0.contains(ShiftCalendarCategory.high.rawValue) }
+                  && edges.contains { $0.contains(ShiftCalendarCategory.followUp.rawValue) },
+                  "a high-priority task and a follow-up should be drawn in their own colours, got \(edges)")
+            check(controller.newTaskDay == todayDay, "New task on this month is dated today, got \(controller.newTaskDay)")
 
             // A projection is drawn as one: faint, and not draggable.
             let tomorrowDay = ShiftDateFormatting.components(
@@ -124,6 +173,14 @@ enum ShiftCalendarViewSelfTest {
             check(opened == single, "clicking an event should open its task, got \(opened ?? "nothing")")
             view.onOpenTask = openTask
 
+            let openFollowUp = view.onOpenFollowUp
+            var openedFollowUp: String?
+            view.onOpenFollowUp = { openedFollowUp = $0 }
+            _ = js(web, "document.querySelector('[data-event-id=\"\(followUpEventID)\"]').click()")
+            _ = waitFor(timeout: 2) { openedFollowUp != nil }
+            check(openedFollowUp == followUp.id, "clicking a follow-up should open the follow-up, got \(openedFollowUp ?? "nothing")")
+            view.onOpenFollowUp = openFollowUp
+
             // MARK: A real month-grid drag writes the store
 
             let target = calendar.date(byAdding: .day, value: 2, to: today) ?? today
@@ -141,6 +198,11 @@ enum ShiftCalendarViewSelfTest {
             _ = waitFor(timeout: 3) { eventIn(web, id: single, day: targetDay) }
             check(eventIn(web, id: single, day: targetDay), "the page should redraw the task on its new day")
 
+            monthDrag(web, eventID: followUpEventID, toDay: targetDay)
+            _ = waitFor(timeout: 5) { store.followUps.first { $0.id == followUp.id }?.followUpAt == targetDay }
+            check(store.followUps.first { $0.id == followUp.id }?.followUpAt == targetDay,
+                  "dragging a follow-up should move its date in the store")
+
             // MARK: A projection cannot be dragged
 
             if view.debugEventIDs.contains(projectionID) {
@@ -154,9 +216,15 @@ enum ShiftCalendarViewSelfTest {
 
             // MARK: A real week-view drag moves the time
 
-            _ = call(web, "setView", ["view": "week"])
+            // The card's own Week pill: the native side, and so the toolbar,
+            // follow it.
+            let changesBefore = tabChanges
+            _ = js(web, "document.querySelector('#gl-views [data-view=\"week\"]').click()")
             _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "week" && view.scale == .week }
-            check(view.scale == .week, "the native side should follow the page into the week view")
+            check(view.scale == .week && controller.selectedModuleTabName == "Week",
+                  "the native side should follow the Week pill, got \(view.scale)")
+            check(tabChanges > changesBefore, "the toolbar should hear the page switched view")
+            check(state(web)["activePill"] as? String == "week", "the Week pill should be the filled one")
             _ = waitFor(timeout: 3) {
                 (js(web, "!!document.querySelector('.sx__time-grid-event[data-event-id=\"\(repeating)\"]')") as? Bool) == true
             }
@@ -170,10 +238,8 @@ enum ShiftCalendarViewSelfTest {
             // MARK: Paging re-reads the store
 
             let weekStart = state(web)["start"] as? String
-            // Schedule-X's own header button. Its chevrons act on `mouseup`
-            // rather than `click`, so that is what is sent.
-            _ = js(web, "document.querySelector('.sx__forward-backward-navigation button:last-of-type')"
-                   + ".dispatchEvent(new MouseEvent('mouseup', {bubbles: true}))")
+            let weekTitle = state(web)["title"] as? String
+            _ = js(web, "document.getElementById('gl-next').click()")
             _ = waitFor(timeout: 5) { (state(web)["start"] as? String) != weekStart }
             check(state(web)["start"] as? String != weekStart, "Next period should move the visible week")
             _ = waitFor(timeout: 3) { !view.debugEventIDs.contains(repeating) }
@@ -181,7 +247,22 @@ enum ShiftCalendarViewSelfTest {
                   "next week's events should not include this week's real instance")
             check(view.debugEventIDs.contains { $0.hasPrefix("\(repeating)@") },
                   "next week should carry the daily rule's projections")
-            _ = call(web, "setView", ["view": "month-grid"])
+            check(state(web)["title"] as? String != weekTitle, "the card's title should follow the new week")
+
+            // MARK: The toolbar's Agenda tab
+
+            controller.selectModuleTab(named: "Agenda")
+            _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "list" }
+            check(state(web)["view"] as? String == "list" && state(web)["activePill"] as? String == "list",
+                  "the Agenda tab should show Schedule-X's list view with its pill filled")
+            _ = js(web, "document.getElementById('gl-today').click()")
+            _ = waitFor(timeout: 3) {
+                (js(web, "document.querySelectorAll('.sx__list-event').length") as? Int ?? 0) > 0
+            }
+            check((js(web, "document.querySelectorAll('.sx__list-event').length") as? Int ?? 0) > 0,
+                  "the agenda should list this month's records")
+            controller.selectModuleTab(named: "Month")
+            _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "month-grid" }
             _ = call(web, "showDate", ["date": todayDay])
 
             // MARK: The theme follows live
@@ -205,7 +286,7 @@ enum ShiftCalendarViewSelfTest {
 
             // MARK: Hidden means suspended
 
-            controller.debugSelectTasksView("board")
+            controller.view.isHidden = true
             controller.view.layoutSubtreeIfNeeded()
             _ = waitFor(timeout: 3) {
                 (js(web, "document.documentElement.classList.contains('gl-suspended')") as? Bool) == true
@@ -318,9 +399,10 @@ enum ShiftCalendarViewSelfTest {
 
     @discardableResult
     private static func seed(_ store: ShiftStore, title: String, due: String?, time: String?,
-                             rule: ShiftRecurrence?) -> String {
+                             rule: ShiftRecurrence?, priority: ShiftPriority = .normal) -> String {
         var task = ShiftTask.fresh()
         task.title = title
+        task.priority = priority
         task.dueDate = due
         task.dueTime = time
         task.recurrence = rule
@@ -328,15 +410,27 @@ enum ShiftCalendarViewSelfTest {
         return task.id
     }
 
-    private static func mount(store: ShiftStore) -> (ShiftController, NSWindow) {
-        let controller = ShiftController(store: store)
+    /// Mounted hidden, the way the shell mounts a lazy page before it shows
+    /// it, so the suite can see the page wait to load.
+    private static func mount(store: ShiftStore) -> (TaskCalendarController, NSWindow) {
+        let controller = TaskCalendarController(store: store)
         let window = OffScreenProbe.window(width: 1300, height: 950, styleMask: [.titled, .resizable])
-        window.contentView = controller.view
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1300, height: 950))
+        window.contentView = container
+        controller.view.isHidden = true
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.topAnchor.constraint(equalTo: container.topAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
         window.orderFront(nil)
         controller.viewWillAppear()
         drain()
-        controller.debugRender()
-        controller.view.layoutSubtreeIfNeeded()
+        controller.render()
+        container.layoutSubtreeIfNeeded()
         return (controller, window)
     }
 

@@ -106,7 +106,9 @@ enum ContextualNewAction: String, CaseIterable {
     static func forDestination(_ destination: RailDestination,
                                hostsTab: HostsTab? = nil) -> ContextualNewAction {
         switch destination {
-        case .shift: return .task
+        // The Calendar's New Task is the same sheet, dated to the day the
+        // calendar is showing (`TaskCalendarController.newTaskFromMenu`).
+        case .shift, .calendar: return .task
         case .hosts:
             switch hostsTab {
             case .keys: return .sshKey

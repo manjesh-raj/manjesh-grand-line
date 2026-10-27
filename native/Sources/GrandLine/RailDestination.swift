@@ -230,7 +230,7 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+    case overview, strawHat, console, hosts, shift, calendar, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     /// R2-ARCH-03: read from `ModuleTable.rows`, the one place a destination's
     /// identity is written down. Why each destination has the glyph it has is
@@ -302,7 +302,7 @@ enum RailDestination: String, CaseIterable {
         case .githubSync: return GithubSyncIcon.image
         case .settings: return SettingsAppIcon.image
         case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook,
-             .readingList:
+             .readingList, .calendar:
             return nil
         }
     }
@@ -353,7 +353,7 @@ enum RailDestination: String, CaseIterable {
         // A Setup sub-page like the four above it. `.good` is unclaimed in this
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
-        case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
+        case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .calendar, .review, .logAnalyzer, .kubernetes,
              .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems, .settings: return .accent
         }
     }
@@ -361,7 +361,7 @@ enum RailDestination: String, CaseIterable {
     var isDailyUse: Bool {
         switch self {
         // Read every morning, which is what this property means.
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
+        case .homeCanvas, .overview, .console, .hosts, .shift, .calendar, .review, .logAnalyzer: return true
         // A utility (`isDailyUse == false`) on the same criterion as
         // Log Analyzer's siblings: cluster state is looked at when something
         // is wrong, not checked every morning. Its own space is Operations

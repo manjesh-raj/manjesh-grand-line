@@ -632,11 +632,11 @@ enum SelfTestDispatch {
             exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
         }
 
-        // Tasks › Calendar, the Schedule-X page. Split the way Code Preview's suites
+        // The Calendar, the Schedule-X page. Split the way Code Preview's suites
         // are: `ShiftCalendarSelfTest` is pure logic (the vendored bundle's digests,
         // its offline CSP and licences, the event payload, the palette's contrast on
         // every app theme, the reschedule rule) and runs in CI's blocking lane;
-        // `ShiftCalendarViewSelfTest` mounts the real Tasks page with the real page
+        // `ShiftCalendarViewSelfTest` mounts the real Calendar page with the real page
         // in a real `WKWebView` and drives a real drag into the store, so it is
         // window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
         if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_CALENDAR_TESTS"] == "1" {

@@ -28,7 +28,28 @@
     <link rel="stylesheet" href="./task-calendar.css" />
   </head>
   <body>
-    <div id="calendar"></div>
+    <!-- The card. Schedule-X's own header (a Today button, a view menu and a
+         date field) is hidden; this one is the captain's design: round
+         previous and next buttons, the period's title, and the views as
+         pills. task-calendar.js drives every control here. -->
+    <main class="gl-card" id="gl-card">
+      <header class="gl-head">
+        <button type="button" class="gl-round" id="gl-prev" aria-label="Previous period">&#x2039;</button>
+        <button type="button" class="gl-round" id="gl-next" aria-label="Next period">&#x203A;</button>
+        <h1 class="gl-title" id="gl-title" aria-live="polite"></h1>
+        <span class="gl-spacer"></span>
+        <button type="button" class="gl-pill gl-today" id="gl-today">Today</button>
+        <nav class="gl-views" id="gl-views" aria-label="Calendar view">
+          <button type="button" class="gl-pill" data-view="day">Day</button>
+          <button type="button" class="gl-pill" data-view="week">Week</button>
+          <button type="button" class="gl-pill" data-view="month-grid">Month</button>
+          <button type="button" class="gl-pill" data-view="list">Agenda</button>
+        </nav>
+      </header>
+      <div class="gl-weekdays" id="gl-weekdays" aria-hidden="true"></div>
+      <div id="calendar"></div>
+      <footer class="gl-legend" id="gl-legend"></footer>
+    </main>
     <!-- A classic script, not `type="module"`, for the reason the other two
          page shells give: a module graph on a file:// origin is a needless
          portability question, and the bundle is one self-contained IIFE. -->

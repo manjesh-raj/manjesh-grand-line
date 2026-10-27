@@ -113,11 +113,13 @@ enum ReviewTourLab {
         /// Render Home's whole scroll document, not just the window - what a
         /// page that overflows really holds below the fold.
         case renderDoc(String)
-        /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
-        /// through its own segmented control. `calendar month|week|day` also
-        /// puts the calendar's page in that view, through its own bridge -
-        /// give it a `wait` before the next `render`, the page is async.
+        /// Switch the Tasks page to `board`, `list` or `review` through its
+        /// own segmented control.
         case tasksView(String)
+        /// Put the Calendar page in `month`, `week`, `day` or `agenda`,
+        /// through the same path its toolbar tab takes. Give it a `wait`
+        /// before the next `render`: the page is async.
+        case calendarView(ShiftCalendarScale)
         /// Put one top-bar square into a state a click or a pointer would:
         /// `bar hover <target>`, `bar press <target>`, or `bar rest` to put
         /// every square back. A target is a destination's raw value, or
@@ -293,7 +295,7 @@ enum ReviewTourLab {
             switch self {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
-                    + "demo, measure, measurewindow, orderfront, probe, tasks, bar, fleet, inspector, sidebar, "
+                    + "demo, measure, measurewindow, orderfront, probe, tasks, calendar, bar, fleet, inspector, sidebar, "
                     + "tab, customize, select, textscale, settings, grouped, code)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
@@ -389,13 +391,15 @@ enum ReviewTourLab {
             return .success(.renderDoc(argument))
         case "tasks":
             let words = argument.split(separator: " ").map(String.init)
-            guard let first = words.first, ["board", "list", "calendar", "review"].contains(first),
-                  words.count == 1 || (first == "calendar" && words.count == 2
-                                       && ShiftCalendarScale.allCases.map(\.title).map { $0.lowercased() }
-                                           .contains(words[1])) else {
+            guard let first = words.first, ["board", "list", "review"].contains(first), words.count == 1 else {
                 return .failure(.badArgument(argument))
             }
             return .success(.tasksView(argument))
+        case "calendar":
+            guard let scale = ShiftCalendarScale.allCases.first(where: { $0.title.lowercased() == argument }) else {
+                return .failure(.badArgument(argument))
+            }
+            return .success(.calendarView(scale))
         case "bar":
             let words = argument.split(separator: " ").map(String.init)
             guard let first = words.first, let state = BarState(rawValue: first) else {
@@ -591,14 +595,13 @@ enum ReviewTourLab {
                     log.append("renderdoc FAILED \(name) - the document has no bitmap to cache")
                 }
             case .tasksView(let id):
-                let words = id.split(separator: " ").map(String.init)
-                shell.debugShift.debugShowView(words[0])
+                shell.debugShift.debugShowView(id)
                 shell.view.layoutSubtreeIfNeeded()
-                if words.count == 2,
-                   let scale = ShiftCalendarScale.allCases.first(where: { $0.title.lowercased() == words[1] }) {
-                    shell.debugShift.debugCalendarView.debugWebView.call("setView", payload: ["view": scale.rawValue])
-                }
                 log.append("tasks \(id)")
+            case .calendarView(let scale):
+                shell.workspace.calendar.selectModuleTab(named: scale.title)
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("calendar \(scale.title.lowercased())")
             case .barState(let state, let target):
                 guard let classic = shell as? AppShellController else {
                     log.append("bar \(state.rawValue) FAILED - there is no floating bar in the sidebar layout")

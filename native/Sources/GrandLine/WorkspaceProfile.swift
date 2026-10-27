@@ -2,13 +2,13 @@
 //
 // R2-UX-01 (b) of the second full review: Personal and Operator profiles.
 //
-// Eight of the seventeen modules assume an SRE running a firstmate fleet
+// Eight of the eighteen modules assume an SRE running a firstmate fleet
 // (Crew, Connections, Console, Kubernetes, Logs, Health, Schedules, Setup).
 // A general user - a student, a writer - met all eight on the first screen.
 // A profile is a starting set of hidden modules, chosen on the first run:
 //
-//   - Personal shows Home, Tasks, Knowledge, Secrets, Tools, Whiteboard,
-//     Sticky Board, Code, Dictation and Settings.
+//   - Personal shows Home, Tasks, Calendar, Knowledge, Secrets, Tools,
+//     Whiteboard, Sticky Board, Code, Dictation and Settings.
 //   - Operator shows everything. An install from before profiles existed is
 //     Operator, so nothing it had disappears.
 //

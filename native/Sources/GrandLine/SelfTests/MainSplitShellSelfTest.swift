@@ -357,7 +357,7 @@ enum MainSplitShellSelfTest {
         shell.workspace.navigator.show(.shift)
         settle(shell)
         if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
-            for tab in ["Board", "Weekly review", "List", "Calendar", "Board"] {
+            for tab in ["Board", "Weekly review", "List", "Board"] {
                 clickTab(tab, shell)
                 check(split.isSidebarCollapsed, "Tasks' \(tab) tab brought its page column out", &ok)
             }
@@ -893,8 +893,9 @@ enum MainSplitShellSelfTest {
     }
 
     /// The toolbar's calendar button, after the bell on every page: from a
-    /// page far from Tasks, its own target and action land on Tasks with the
-    /// Calendar tab lit and the calendar showing - not merely on Tasks.
+    /// page far from it, its own target and action land on the Calendar page
+    /// with its Calendar sidebar row lit and its own view tab selected - and
+    /// not on Tasks, which no longer has a Calendar tab to land on.
     private static func checkTheCalendarButton(_ shell: MainSplitShellController, _ window: NSWindow,
                                                _ ok: inout Bool) {
         shell.workspace.navigator.show(.hosts)
@@ -907,15 +908,17 @@ enum MainSplitShellSelfTest {
         check(item.visibilityPriority != .low, "the calendar button is among the first to overflow", &ok)
         _ = NSApplication.shared.sendAction(action, to: item.target, from: item)
         settle(shell)
-        check(shell.debugCurrentDestination == .shift,
+        check(shell.debugCurrentDestination == .calendar,
               "the calendar button went to \(String(describing: shell.debugCurrentDestination))", &ok)
-        check(selectedTabName(shell) == "Calendar",
-              "the calendar button lit \(selectedTabName(shell) ?? "no tab") instead of Calendar", &ok)
-        // The page's own view, not the calendar's visibility: this suite's
-        // Tasks store is empty, so the page draws its "start here" state in
-        // place of every view (R2-UX-07), the calendar included.
-        check(shell.workspace.shift.debugTasksViewID == "calendar",
-              "the calendar button left the Tasks page on \(shell.workspace.shift.debugTasksViewID)", &ok)
+        check(shell.currentModule == .calendar,
+              "the calendar button lit the \(shell.currentModule.title) row instead of Calendar", &ok)
+        // It reopens the view the calendar last showed, as the row does, so
+        // the lit tab is whichever view the page is on.
+        let view = shell.workspace.calendar.selectedModuleTabName
+        check(selectedTabName(shell) == view,
+              "the calendar button lit \(selectedTabName(shell) ?? "no tab") with the Calendar on \(view)", &ok)
+        check(shell.workspace.calendar.drawsSidebarLayout && shell.workspace.calendar.debugCalendarView.showsHeading,
+              "the Calendar page did not take the sidebar layout's heading", &ok)
     }
 
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

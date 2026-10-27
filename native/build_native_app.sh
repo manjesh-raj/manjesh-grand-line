@@ -178,7 +178,7 @@ fi
 if [ -d "Vendor/ScheduleX/web" ]; then
   cp -R "Vendor/ScheduleX/web" "$APP_DIR/Contents/Resources/ScheduleXWeb"
 else
-  echo "⚠️  No Vendor/ScheduleX/web - Tasks › Calendar will show its"
+  echo "⚠️  No Vendor/ScheduleX/web - the Calendar page will show its"
   echo "    \"no bundle\" empty state. Run Scripts/build-schedule-x-web.sh to build it."
 fi
 
