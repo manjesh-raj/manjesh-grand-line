@@ -14,7 +14,9 @@
 //      the project filter, Follow-ups, the sort and the Done window), New
 //      task at the toolbar's far right, the prototype's board lanes and cards,
 //      the List tab as one table that completes and reopens a task through
-//      its check, the calendar's month card, and Weekly review's five cards.
+//      its check, Follow-ups as the same table with the same ⋯ menu (Delete
+//      included) and an editor sheet with the task editor's Delete, the
+//      calendar's month card, and Weekly review's five cards.
 //   4. **Setup**: the summary row on all four tabs; Updates as one table of
 //      tools grouped by source, with Update only where there is one and
 //      Check for updates at the far right; Setup steps as a list with Details
@@ -83,7 +85,8 @@ enum SidebarRedesignsSelfTest {
                 resize(window, width: 1512, shell)
                 ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
-                for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksReview,
+                for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
+                              checkTasksReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
                     var ok = true
                     check(shell, window, &ok)
@@ -370,6 +373,113 @@ enum SidebarRedesignsSelfTest {
         }
         check(tasks.debugWorkspaceFilterRow.arrangedSubviews.contains { $0 === tasks.debugSortPopup },
               "the sort left the filter row", &ok)
+    }
+
+    /// Follow-ups are the List tab's table too: a check, the columns and a ⋯
+    /// on hover whose menu deletes, through GL-06's confirm. The flat list
+    /// they used to be offered Delete only on a right click, so a captain saw
+    /// a follow-up they could tick off and nothing else. The editor sheet
+    /// carries the task editor's Delete as well.
+    private static func checkTasksFollowUps(_ shell: MainSplitShellController, _ window: NSWindow,
+                                            _ ok: inout Bool) {
+        let tasks = shell.workspace.shift
+        let store = shell.workspace.shiftStore
+        // A follow-up of the suite's own, so deleting it leaves the seeded two
+        // for every check after this one.
+        var mine = ShiftFollowUp.fresh()
+        mine.title = "Chase the vendor about the renewal quote"
+        mine.followUpAt = ShiftDateFormatting.components(from: Date()).dateStr
+        store.addFollowUp(mine)
+        clickTab("Board", shell)
+        tasks.render()
+        settle(shell)
+
+        let table = tasks.debugFollowUpsTable
+        check(!table.card.isHidden && table.card.window != nil, "the Follow-ups card is not on the Board page", &ok)
+        check(table.debugHeaderTitles.contains("Follow-up") && table.debugHeaderTitles.contains("Due"),
+              "the Follow-ups table's columns are \(table.debugHeaderTitles)", &ok)
+        let keys = table.debugRows.compactMap(\.key)
+        check(Set(keys) == Set(store.followUps.map(\.id)),
+              "the Follow-ups table lists \(keys.count) of \(store.followUps.count) follow-ups", &ok)
+        guard let row = table.debugRows.first(where: { $0.key == mine.id }) else {
+            fail("the new follow-up has no row", &ok)
+            return
+        }
+        guard case .view(let view)? = row.cells["done"], view is ShiftTaskCheckBadge else {
+            fail("a follow-up row has no check", &ok)
+            return
+        }
+        let menu = table.debugMenuTitles(key: mine.id)
+        for title in ["Open Follow-up\u{2026}", "Mark Done", "Snooze to Tomorrow", "Delete Follow-up\u{2026}"] {
+            check(menu.contains(title), "a follow-up row's menu lacks \(title): \(menu)", &ok)
+        }
+        // The ⋯ a task row shows on hover, and so where Delete can be seen.
+        table.debugHover(key: mine.id)
+        settle(shell)
+        check(table.debugActionsCell(key: mine.id)?.debugRevealed == true,
+              "hovering a follow-up shows no \u{22EF} for its actions", &ok)
+        table.debugHover(key: nil)
+
+        // Delete asks first (GL-06), and Cancel keeps it.
+        var asked: [String] = []
+        var answer = HelmConfirm.Response.cancel
+        HelmConfirm.responderForTests = { request in
+            asked.append(request.title)
+            return answer
+        }
+        defer { HelmConfirm.responderForTests = nil }
+        check(table.debugPickMenuItem(key: mine.id, title: "Delete Follow-up\u{2026}"),
+              "the menu's Delete Follow-up did not run", &ok)
+        settle(shell)
+        check(asked == ["Delete \u{201C}\(mine.title)\u{201D}?"], "Delete asked \(asked), not the follow-up's confirm", &ok)
+        check(store.followUps.contains { $0.id == mine.id }, "Cancel deleted the follow-up", &ok)
+        answer = .confirm
+        _ = table.debugPickMenuItem(key: mine.id, title: "Delete Follow-up\u{2026}")
+        settle(shell)
+        check(!store.followUps.contains { $0.id == mine.id }, "confirming Delete Follow-up did not delete it", &ok)
+        check(!tasks.debugFollowUpsTable.debugRows.contains { $0.key == mine.id },
+              "the deleted follow-up is still in the table", &ok)
+
+        // The check marks a follow-up done, and back, through its own button.
+        if let first = store.followUps.first,
+           case .view(let view)? = tasks.debugFollowUpsTable.debugRows.first(where: { $0.key == first.id })?.cells["done"],
+           let badge = view as? ShiftTaskCheckBadge {
+            let wasDone = first.status == .done
+            badge.performClick(nil)
+            settle(shell)
+            check(store.followUps.first { $0.id == first.id }.map { ($0.status == .done) != wasDone } == true,
+                  "the check did not change the follow-up's status", &ok)
+            if case .view(let view)? = tasks.debugFollowUpsTable.debugRows.first(where: { $0.key == first.id })?.cells["done"],
+               let badge = view as? ShiftTaskCheckBadge {
+                badge.performClick(nil)
+                settle(shell)
+            }
+            check(store.followUps.first { $0.id == first.id }.map { ($0.status == .done) == wasDone } == true,
+                  "the check did not put the follow-up back", &ok)
+        } else {
+            fail("the seeded follow-ups have no check", &ok)
+        }
+
+        // The editor sheet: an existing follow-up's has the task editor's
+        // Delete, which hands its owner the id; a new one's has none.
+        guard let existing = store.followUps.first else {
+            fail("the seeded follow-ups are gone", &ok)
+            return
+        }
+        let editor = ShiftFollowUpEditorController(followUp: existing, tasks: [], projects: [])
+        var deletedID: String?
+        editor.onDelete = { deletedID = $0 }
+        let delete = descendants(HelmButton.self, in: editor.view).first { $0.title == "Delete" }
+        check(delete != nil, "the Edit Follow-up sheet has no Delete button", &ok)
+        delete?.performClick(nil)
+        check(deletedID == existing.id, "the sheet's Delete handed over \(deletedID ?? "nothing")", &ok)
+        let fresh = ShiftFollowUpEditorController(followUp: nil, tasks: [], projects: [])
+        check(!descendants(HelmButton.self, in: fresh.view).contains { $0.title == "Delete" },
+              "the New Follow-up sheet offers Delete for a follow-up that does not exist", &ok)
+    }
+
+    private static func descendants<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { ($0 as? T).map { [$0] } ?? [] } + view.subviews.flatMap { descendants(type, in: $0) }
     }
 
     /// The Calendar is its own sidebar row now (`TaskCalendarSelfTest`), so

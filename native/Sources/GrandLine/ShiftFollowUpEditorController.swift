@@ -32,6 +32,10 @@ final class ShiftFollowUpEditorController: NSViewController {
 
     /// Called with the assembled follow-up on Save.
     var onSave: ((ShiftFollowUp) -> Void)?
+    /// The sheet's Delete button, handed the follow-up's id - the task
+    /// editor's `onDelete`, for the record type beside it. Its owner confirms
+    /// and deletes.
+    var onDelete: ((String) -> Void)?
 
     private let titleField = HelmTextField(placeholder: "What needs checking on?", style: .lead)
     /// E6 - see `ShiftTaskEditorController.dueDatePicker`.
@@ -111,10 +115,13 @@ final class ShiftFollowUpEditorController: NSViewController {
         notesView.string = editing?.notes ?? prefillNotes ?? ""
         form.addRow(notesView)
 
+        // An existing follow-up offers Delete where an existing task does,
+        // so the two sheets a captain opens from the same page agree.
         form.setFooter(target: self,
                        confirmTitle: editing == nil ? "Create Follow-up" : "Save",
                        confirm: #selector(save),
-                       cancel: #selector(cancel))
+                       cancel: #selector(cancel),
+                       delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteFollowUp)))
 
         form.setSubtitle("Something to check on later.")
         form.refreshTheme()
@@ -165,11 +172,29 @@ final class ShiftFollowUpEditorController: NSViewController {
         let notes = notesView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         followUp.notes = notes.isEmpty ? nil : notes
         onSave?(followUp)
-        dismiss(self)
+        dismissIfPresented()
+    }
+
+    /// See `ShiftTaskEditorController.dismissIfPresented`: `dismiss(_:)` on a
+    /// controller that was never presented raises rather than doing nothing.
+    private func dismissIfPresented() {
+        if presentingViewController != nil {
+            dismiss(self)
+        } else {
+            view.window?.close()
+        }
     }
 
     @objc private func cancel() {
-        dismiss(self)
+        dismissIfPresented()
+    }
+
+    /// Asks; never deletes - see `ShiftTaskEditorController.deleteTask`. The
+    /// confirmation and the store call are `ShiftRecordSheets.confirmDeleteFollowUp`'s.
+    @objc private func deleteFollowUp() {
+        guard let id = editing?.id else { return }
+        onDelete?(id)
+        dismissIfPresented()
     }
 
     #if FM_SELFTESTS

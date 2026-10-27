@@ -152,11 +152,17 @@ final class TaskCalendarController: NSViewController {
     private func openFollowUp(id: String) {
         guard let item = store.followUps.first(where: { $0.id == id }) else { return }
         ShiftRecordSheets.presentFollowUpEditor(from: self, store: store, followUp: item,
-                                                onSaved: { [weak self] in self?.render() })
+                                                onSaved: { [weak self] in self?.render() },
+                                                onDelete: { [weak self] id in self?.confirmDeleteFollowUp(id: id) })
     }
 
     private func confirmDeleteTask(id: String) {
         guard ShiftRecordSheets.confirmDeleteTask(id: id, store: store, in: view) else { return }
+        render()
+    }
+
+    private func confirmDeleteFollowUp(id: String) {
+        guard ShiftRecordSheets.confirmDeleteFollowUp(id: id, store: store, in: view) else { return }
         render()
     }
 
