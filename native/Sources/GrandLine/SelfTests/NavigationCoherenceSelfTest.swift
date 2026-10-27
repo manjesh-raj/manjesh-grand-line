@@ -711,7 +711,10 @@ enum NavigationCoherenceSelfTest {
     ///     without it, so it does not come back on a downgrade-upgrade cycle;
     ///   - the feature is still reachable: the Edit menu's "Clipboard
     ///     History…" item is still there on ⇧⌘V, because once the square is
-    ///     gone that item is the only way in.
+    ///     gone that item is the only way in;
+    ///   - and that item follows Settings > Capture's switch, which is off by
+    ///     default: hidden while the history is off (so ⇧⌘V does nothing and
+    ///     no shortcut list prints it), shown once it is on.
     private static func checkClipboardHistoryIsNotAShortcut() -> Bool {
         var ok = true
         func isClipboard(_ raw: String) -> Bool { raw.localizedCaseInsensitiveContains("clipboard") }
@@ -758,6 +761,32 @@ enum NavigationCoherenceSelfTest {
             let wanted = KeyboardShortcutCatalog.keycaps(keyEquivalent: "v", modifiers: [.command, .shift]).joined()
             check(item.chord == wanted, "Clipboard History is on \(item.chord), expected \(wanted)", &ok)
         }
+
+        let before = AppSettings.shared.clipboardHistoryEnabled
+        defer { AppSettings.shared.clipboardHistoryEnabled = before }
+        func clipboardItem(_ menu: NSMenu) -> NSMenuItem? {
+            menu.items.compactMap(\.submenu).flatMap(\.items).first { $0.title == "Clipboard History\u{2026}" }
+        }
+        func listed(_ menu: NSMenu) -> Bool {
+            KeyboardShortcutCatalog.menuItems(from: menu).flatMap(\.items)
+                .contains { $0.title == "Clipboard History\u{2026}" }
+        }
+        AppSettings.shared.clipboardHistoryEnabled = false
+        let delegate = AppDelegate()
+        let offMenu = delegate.buildMenu(installing: false)
+        check(clipboardItem(offMenu)?.isHidden == true,
+              "with the clipboard history off, Edit > Clipboard History… is not hidden", &ok)
+        check(!listed(offMenu), "a hidden Clipboard History… item is still listed as a shortcut", &ok)
+        // The same delegate's item, re-shown by the preference rather than by
+        // a rebuild - the path a Settings toggle takes.
+        AppSettings.shared.clipboardHistoryEnabled = true
+        delegate.applyClipboardHistoryMenuVisibility()
+        check(clipboardItem(offMenu)?.isHidden == false,
+              "with the clipboard history on, Edit > Clipboard History… is still hidden", &ok)
+        check(listed(offMenu), "a visible Clipboard History… item is not listed as a shortcut", &ok)
+        let onMenu = AppDelegate().buildMenu(installing: false)
+        check(clipboardItem(onMenu)?.isHidden == false,
+              "a menu built with the clipboard history on hides its item", &ok)
         return ok
     }
 

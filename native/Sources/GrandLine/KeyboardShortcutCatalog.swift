@@ -137,7 +137,10 @@ enum KeyboardShortcutCatalog {
                 items += collect(from: submenu)
                 continue
             }
-            guard !item.isSeparatorItem, !item.keyEquivalent.isEmpty else { continue }
+            // A hidden item takes no part in key-equivalent matching, so its
+            // chord does nothing and is not a shortcut to list. Edit's
+            // Clipboard History… is hidden while that feature is off.
+            guard !item.isSeparatorItem, !item.isHidden, !item.keyEquivalent.isEmpty else { continue }
             items.append(item)
         }
         return items

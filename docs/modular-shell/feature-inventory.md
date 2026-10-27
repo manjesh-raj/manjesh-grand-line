@@ -185,7 +185,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.App/Services` | App > Services | no shortcut | Main menu › App (unchanged) |  |
 | `menu.App/Settings…` | App > Settings… | shortcut ⌘, | Main menu › App (unchanged; selects the Settings module) |  |
 | `menu.App/Show All` | App > Show All | no shortcut | Main menu › App (unchanged) |  |
-| `menu.Edit/Clipboard History…` | Edit > Clipboard History… | shortcut ⇧⌘V | Main menu › Edit (unchanged) |  |
+| `menu.Edit/Clipboard History…` | Edit > Clipboard History… | shortcut ⇧⌘V | Main menu › Edit (unchanged; hidden while Settings > Capture's clipboard history is off, the default) |  |
 | `menu.Edit/Copy` | Edit > Copy | shortcut ⌘C | Main menu › Edit (unchanged) |  |
 | `menu.Edit/Cut` | Edit > Cut | shortcut ⌘X | Main menu › Edit (unchanged) |  |
 | `menu.Edit/Find in Terminal` | Edit > Find in Terminal | no shortcut | Main menu › Edit (unchanged) |  |
@@ -327,7 +327,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.⇧⌘N` | ⇧⌘N - New SSH Key… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⇧⌘S` | ⇧⌘S - Capture Screen Region… | File menu | Main menu › File (unchanged chord) |  |
 | `key.⇧⌘T` | ⇧⌘T - Send Top Command to Terminal | Log Analyzer menu | Main menu › Log Analyzer (unchanged chord) |  |
-| `key.⇧⌘V` | ⇧⌘V - Clipboard History… | Edit menu | Main menu › Edit (unchanged chord) |  |
+| `key.⇧⌘V` | ⇧⌘V - Clipboard History… | Edit menu | Main menu › Edit (unchanged chord; hidden while Settings > Capture's clipboard history is off, the default) |  |
 | `key.⌃⌘1` | ⌃⌘1 - Session 1 | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌃⌘2` | ⌃⌘2 - Session 2 | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌃⌘3` | ⌃⌘3 - Session 3 | Hosts menu | Main menu › Hosts (unchanged chord) |  |
@@ -525,6 +525,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Notify when the crew needs you` | Settings row: Notify when the crew needs you | Settings > Terminal | Settings › Terminal (unchanged row) |  |
 | `settings.row.Open Grand Line from anywhere` | Settings row: Open Grand Line from anywhere | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Open the capture panel` | Settings row: Open the capture panel | Settings > Capture | Settings › Capture (unchanged row) |  |
+| `settings.row.Keep a clipboard history` | Settings row: Keep a clipboard history | Settings > Capture | Settings › Capture (off by default; while off, nothing watches the clipboard and Edit > Clipboard History… is hidden) |  |
 | `settings.row.Poneglyph vault` | Settings row: Poneglyph vault | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Reconnect automatically` | Settings row: Reconnect automatically | Settings > Terminal | Settings › Terminal (unchanged row) |  |
 | `settings.row.Scrollback` | Settings row: Scrollback | new (T4 of the Termius-style plan) - before it the depth was a fixed 10,000 rows | Settings › Terminal › History (a typed depth, 1,000 to 100,000 with 0 meaning 100,000, applied to every open pane at once; lowering it under an open pane's history asks first) |  |
@@ -959,6 +960,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.keychainMigrationGaveUpReasons` | Saved preference `fm.keychainMigrationGaveUpReasons` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
 | `state.fm.menuBarSeparateItems` | Saved preference `fm.menuBarSeparateItems` | declared in AppSettings | Settings › Menu Bar |  |
 | `state.fm.morningBriefingEnabled` | Saved preference `fm.morningBriefingEnabled` | declared in AppSettings | Settings › Briefings |  |
+| `state.fm.clipboardHistoryEnabled` | Saved preference `fm.clipboardHistoryEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.morningBriefingRecord` | Saved preference `fm.morningBriefingRecord` | declared in AppSettings | Home (Morning briefing card's cache) |  |
 | `state.fm.notebook.inspectorVisible` | Saved preference `fm.notebook.inspectorVisible` | declared in NotebookController | Knowledge › Notebook |  |
 | `state.fm.notifications.mutedSources` | Saved preference `fm.notifications.mutedSources` | new (Bridge extras) - before it a mute lasted for the session only | Toolbar (the notifications panel's row menu, Mute <source>; kept across relaunch) |  |

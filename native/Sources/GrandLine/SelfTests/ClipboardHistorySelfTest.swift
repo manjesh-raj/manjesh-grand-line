@@ -6,6 +6,14 @@
 // eviction and what a pin does to it, dedup, the sealed round trip, and the
 // shared `changeCount` watch's fan-out.
 //
+// **And the off switch** (`fm/grandline-clipboard-history-setting`): the
+// history is off by default, and while it is off the controller holds no
+// subscription to the pasteboard watch, never builds its store, and records
+// nothing even when its capture path is driven directly. Asserted against the
+// sealed file on disk as well as the controller, and in both directions - the
+// identical copy does land once it is switched on, so the "nothing recorded"
+// half cannot pass against a controller that simply never records.
+//
 // **The one case that matters most is `checkPoneglyphCopiesNeverLand`.** It is
 // a real security property, not a nice-to-have, so it is asserted in both
 // directions: the identical string *does* land when it is an ordinary copy,
@@ -56,6 +64,9 @@ enum ClipboardHistorySelfTest {
         checkFilter(check)
         checkTheSharedChangeWatch(check)
         checkARapidBurstOfCopiesAllReachDisk(check)
+        checkTheHistoryIsOffByDefault(check)
+        checkNothingIsCapturedWhileOff(check)
+        checkTheRealPreferenceDrivesTheWatch(check)
 
         print(ok ? "ClipboardHistorySelfTest: OK" : "ClipboardHistorySelfTest: FAILURES")
         return ok
@@ -672,6 +683,130 @@ enum ClipboardHistorySelfTest {
         clipboard.unobserveChanges(token)
         check(clipboard.changeObserverCountForTests == before,
               "the observer is removed again, count \(clipboard.changeObserverCountForTests)")
+    }
+}
+
+// MARK: The off switch
+
+extension ClipboardHistorySelfTest {
+
+    /// A fresh install, and an install from before this setting existed, both
+    /// have no value stored - and both must read off.
+    fileprivate static func checkTheHistoryIsOffByDefault(_ check: (Bool, String) -> Void) {
+        let suiteName = "grandline-clipboard-default-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            check(false, "could not build a scratch defaults domain")
+            return
+        }
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: defaults)
+        check(!settings.clipboardHistoryEnabled, "the clipboard history is off with nothing stored")
+        // Discriminating half: the property really does read the store, so
+        // the line above is a default rather than a constant.
+        settings.clipboardHistoryEnabled = true
+        check(settings.clipboardHistoryEnabled, "the clipboard history reads on once it is turned on")
+        settings.clipboardHistoryEnabled = false
+        check(!settings.clipboardHistoryEnabled, "and off again")
+    }
+
+    /// The captain's property: while the history is off nothing watches the
+    /// pasteboard, nothing reads it and nothing is stored.
+    fileprivate static func checkNothingIsCapturedWhileOff(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-off-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        guard let key = ClipboardHistoryKey.ephemeralKey() else {
+            check(false, "could not build a throwaway key")
+            return
+        }
+        // The capture path checks the lock gate after the preference, so an
+        // unlocked gate is what makes the "on" half reachable at all.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
+        var enabled = false
+        var storesBuilt = 0
+        func makeStore() -> ClipboardHistoryStore {
+            storesBuilt += 1
+            return ClipboardHistoryStore(fileURL: file, key: key)
+        }
+        let watch = CredentialVaultClipboard.shared
+        let observersBefore = watch.changeObserverCountForTests
+        let controller = ClipboardHistoryController(store: makeStore(), isEnabled: { enabled })
+        func preferenceChanged() {
+            NotificationCenter.default.post(name: AppSettings.clipboardHistoryPreferenceDidChange, object: nil)
+        }
+
+        withPasteboard { pasteboard in
+            // Off: armed the way the app arms it, and still nothing.
+            controller.startCapturing()
+            check(!controller.isCapturing, "an armed controller is not capturing while the history is off")
+            check(watch.changeObserverCountForTests == observersBefore,
+                  "nothing subscribes to the pasteboard watch while the history is off, "
+                  + "\(watch.changeObserverCountForTests) observers against \(observersBefore)")
+            pasteboard.clearContents()
+            pasteboard.setString("copied-while-off", forType: .string)
+            controller.debugRecord(from: pasteboard)
+            check(storesBuilt == 0 && controller.debugStoreIfBuilt == nil,
+                  "a copy while off does not even open the history (stores built: \(storesBuilt))")
+            check(!FileManager.default.fileExists(atPath: file.path), "and nothing is written to disk")
+
+            // On: the same controller, the same path, and now it records -
+            // which is what makes the "nothing" above a decision rather than
+            // a controller that never records.
+            enabled = true
+            preferenceChanged()
+            check(controller.isCapturing, "turning the history on starts capturing with no relaunch")
+            check(watch.changeObserverCountForTests == observersBefore + 1,
+                  "and subscribes to the one shared pasteboard watch")
+            pasteboard.clearContents()
+            pasteboard.setString("copied-while-on", forType: .string)
+            controller.debugRecord(from: pasteboard)
+            let texts = controller.debugStoreIfBuilt?.entries.map(\.text) ?? []
+            check(texts == ["copied-while-on"], "the copy made while on is recorded, and only it: \(texts)")
+
+            // Off again: unsubscribed, the store written out and dropped.
+            enabled = false
+            preferenceChanged()
+            check(!controller.isCapturing, "turning the history off stops capturing")
+            check(watch.changeObserverCountForTests == observersBefore,
+                  "and leaves the pasteboard watch with no subscription from it")
+            check(controller.debugStoreIfBuilt == nil,
+                  "and drops the decrypted history from memory")
+            pasteboard.clearContents()
+            pasteboard.setString("copied-after-turning-off", forType: .string)
+            controller.debugRecord(from: pasteboard)
+            check(storesBuilt == 1, "a copy after turning it off does not reopen the history")
+        }
+
+        // The bytes on disk, not only the controller's word for it.
+        let reopened = ClipboardHistoryStore(fileURL: file, key: key)
+        let onDisk = reopened.entries.map(\.text)
+        check(onDisk == ["copied-while-on"],
+              "the sealed file holds only the copy made while on, found \(onDisk)")
+    }
+
+    /// The path the app really takes: `AppSettings`' own setter posts the
+    /// change, and a controller using the default preference read follows it.
+    fileprivate static func checkTheRealPreferenceDrivesTheWatch(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-pref-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let before = AppSettings.shared.clipboardHistoryEnabled
+        defer { AppSettings.shared.clipboardHistoryEnabled = before }
+        AppSettings.shared.clipboardHistoryEnabled = false
+
+        let controller = ClipboardHistoryController(
+            store: ClipboardHistoryStore(fileURL: root.appendingPathComponent("h.sealed"),
+                                         key: ClipboardHistoryKey.ephemeralKey()))
+        controller.startCapturing()
+        check(!controller.isCapturing, "with the real preference off, the controller does not capture")
+        AppSettings.shared.clipboardHistoryEnabled = true
+        check(controller.isCapturing, "setting AppSettings.clipboardHistoryEnabled starts the capture")
+        AppSettings.shared.clipboardHistoryEnabled = false
+        check(!controller.isCapturing, "clearing it stops the capture again")
     }
 }
 

@@ -221,6 +221,9 @@ extension AppDelegate {
         clipboardHistoryItem.keyEquivalentModifierMask = [.command, .shift]
         clipboardHistoryItem.target = menuTarget
         editMenu.addItem(clipboardHistoryItem)
+        // Off by default (Settings > Capture), and hidden while it is off.
+        self.clipboardHistoryMenuItem = clipboardHistoryItem
+        applyClipboardHistoryMenuVisibility()
         editMenu.addItem(withTitle: "Select All", symbol: "selection.pin.in.out", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(withTitle: "Find…", symbol: "magnifyingglass", action: #selector(ConsoleController.showFind), keyEquivalent: "f")

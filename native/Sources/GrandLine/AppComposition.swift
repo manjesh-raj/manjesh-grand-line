@@ -173,6 +173,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.keyEquivalent = character
         item.keyEquivalentModifierMask = chord.modifiers
     }
+    /// F3's Edit > Clipboard History… item, held so it can follow
+    /// `AppSettings.clipboardHistoryEnabled` without rebuilding the menu.
+    weak var clipboardHistoryMenuItem: NSMenuItem?
+
+    /// Hide ⌘⇧V's item while the clipboard history is off.
+    ///
+    /// Hidden rather than disabled: AppKit leaves a hidden item out of
+    /// key-equivalent matching, so the chord goes with it, and this app
+    /// implements no `validateMenuItem` to disable one with. Settings >
+    /// Shortcuts and the Help sheet skip a hidden item too
+    /// (`KeyboardShortcutCatalog.menuItems(from:)`), so neither lists a
+    /// shortcut that does nothing.
+    func applyClipboardHistoryMenuVisibility() {
+        clipboardHistoryMenuItem?.isHidden = !AppSettings.shared.clipboardHistoryEnabled
+    }
     /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
     /// restored after the Tab menu's removal took them. A local monitor
     /// rather than menu items - see `TabKeyboardShortcuts`'s header for why
@@ -628,6 +643,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // F3: arm the clipboard-history capture loop. Once, here - see
         // `ClipboardHistoryController.startCapturing()` for why not at init.
         appShell.startClipboardHistoryCapture()
+        // Settings > Capture's switch. The controller re-reads the preference
+        // on the same notification; this keeps the menu item in step with it.
+        NotificationCenter.default.addObserver(
+            forName: AppSettings.clipboardHistoryPreferenceDidChange, object: nil, queue: nil
+        ) { [weak self] _ in
+            self?.applyClipboardHistoryMenuVisibility()
+        }
         shiftHotkey.requestPermissionIfNeeded()
         shiftHotkey.start()
         // The prompt above opens System Settings, so a captain granting

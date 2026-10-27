@@ -429,6 +429,15 @@ enum FeatureInventorySelfTest {
                     out["key.\(entry.chord)"] = "\(section.title): \(entry.title)"
                 }
             }
+            // The sheet leaves out an item a setting has hidden (Edit's
+            // Clipboard History… while that feature is off, which is the
+            // default) because its chord does nothing until then. It is still
+            // a chord the app has, so the inventory still counts it.
+            for (title, item) in hiddenItemsWithChords(in: menu) {
+                let chord = KeyboardShortcutCatalog.keycaps(keyEquivalent: item.keyEquivalent,
+                                                            modifiers: item.keyEquivalentModifierMask).joined()
+                if out["key.\(chord)"] == nil { out["key.\(chord)"] = "\(title): \(item.title)" }
+            }
         }
         for action in TerminalShortcutAction.allCases {
             out["key.terminal.\(action.rawValue)"] = action.title
@@ -438,6 +447,18 @@ enum FeatureInventorySelfTest {
             out["key.dictation"] = "Start / stop dictation"
         }
         return out
+    }
+
+    /// Every hidden item carrying a key equivalent, with its top-level menu's
+    /// title.
+    private static func hiddenItemsWithChords(in menu: NSMenu) -> [(String, NSMenuItem)] {
+        func walk(_ menu: NSMenu, _ title: String) -> [(String, NSMenuItem)] {
+            menu.items.flatMap { item -> [(String, NSMenuItem)] in
+                if let submenu = item.submenu { return walk(submenu, title) }
+                return item.isHidden && !item.keyEquivalent.isEmpty ? [(title, item)] : []
+            }
+        }
+        return menu.items.compactMap(\.submenu).flatMap { walk($0, $0.title) }
     }
 
     /// The ⌘K palette's providers (as registered in `main.swift`) and the app

@@ -231,6 +231,10 @@ final class CredentialVaultClipboard {
 
     private func startWatchIfNeeded() {
         guard watchTimer == nil else { return }
+        // A watch reports changes from the moment it starts. Without this the
+        // baseline is whatever the last watch saw, so turning the clipboard
+        // history on would record the copy that was made while it was off.
+        lastSeenChangeCount = NSPasteboard.general.changeCount
         scheduleWatch(interval: Self.watchInterval)
     }
 

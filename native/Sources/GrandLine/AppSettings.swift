@@ -45,6 +45,7 @@ final class AppSettings {
         static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
+        static let clipboardHistoryEnabled = "fm.clipboardHistoryEnabled"
         static let dotfilesAutoCommitEnabled = "fm.dotfilesAutoCommitEnabled"
         static let compactModeEnabled = "fm.compactModeEnabled"
         static let compactModeHidesDockIcon = "fm.compactModeHidesDockIcon"
@@ -358,6 +359,30 @@ final class AppSettings {
         get { defaults.bool(forKey: Keys.snippetExpansionEnabled) }
         set { defaults.set(newValue, forKey: Keys.snippetExpansionEnabled) }
     }
+
+    /// F3's clipboard history (Settings > Capture). **Off by default**, and
+    /// for everyone: an install from before this setting existed has no value
+    /// stored, reads `false`, and stops recording on its next launch.
+    ///
+    /// The captain asked for that explicitly. A history is a transcript of
+    /// everything copied on the machine, so it is something to opt into, not
+    /// something to find out about. While it is off nothing watches the
+    /// pasteboard, nothing reads it and nothing is written - see
+    /// `ClipboardHistoryController.syncCaptureWithPreference()`. What an
+    /// earlier build already recorded stays where it was, sealed and
+    /// untouched, so turning this back on brings it back.
+    ///
+    /// Posts `clipboardHistoryPreferenceDidChange`, so the capture loop and
+    /// the Edit menu's ⌘⇧V item follow a change without a relaunch.
+    var clipboardHistoryEnabled: Bool {
+        get { defaults.bool(forKey: Keys.clipboardHistoryEnabled) }
+        set {
+            defaults.set(newValue, forKey: Keys.clipboardHistoryEnabled)
+            NotificationCenter.default.post(name: AppSettings.clipboardHistoryPreferenceDidChange, object: self)
+        }
+    }
+
+    static let clipboardHistoryPreferenceDidChange = Notification.Name("fm.clipboardHistoryPreferenceDidChange")
 
     /// Bootstrap's "Dotfiles & machine config" card: whether Grand Line
     /// commits and pushes changes under the dotfiles repo's `home/` tree by

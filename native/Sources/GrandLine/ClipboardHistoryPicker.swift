@@ -35,6 +35,11 @@
 // checked-free against `main.swift`'s own menu (the Edit menu's Paste is ⌘V;
 // nothing claimed ⇧⌘V), which is the check `NavigationCoherenceSelfTest`
 // enforces for every chord in this app.
+//
+// **Off by default.** Settings > Capture's "Keep a clipboard history" switch
+// (`AppSettings.clipboardHistoryEnabled`) decides whether any of this exists.
+// While it is off the Edit menu hides the item, so ⌘⇧V does nothing, and the
+// controller below holds no pasteboard subscription and builds no store.
 
 import AppKit
 
@@ -42,14 +47,30 @@ import AppKit
 
 /// Owns the panel and the panel's content - the same shape
 /// `RecentDestinationsController` has, for the same reason, minus the button.
+///
+/// **Everything here follows `AppSettings.clipboardHistoryEnabled`, which is
+/// off by default.** The store, the panel and the pasteboard subscription are
+/// all built on first need rather than at init, so a captain who never turns
+/// the history on never has its Keychain key minted, its sealed file opened or
+/// the pasteboard watched. Turning it off tears all three down again.
 final class ClipboardHistoryController: NSObject {
     /// The view the panel drops down from. Set by the bar once it has built
     /// its own views; see this file's header for why it is zero-width.
     weak var anchor: NSView?
 
-    private let panel: HelmBarPanel
-    private let content: ClipboardHistoryPanelViewController
-    private let store: ClipboardHistoryStore
+    /// Built the first time a copy is recorded or the picker opens.
+    private var store: ClipboardHistoryStore?
+    /// The panel and its content, built the first time ⌘⇧V opens them. Kept
+    /// apart from the store because recording a copy needs no window, and the
+    /// panel is a real `NSPanel`.
+    private struct Picker {
+        let content: ClipboardHistoryPanelViewController
+        let panel: HelmBarPanel
+    }
+
+    private var picker: Picker?
+    private let makeStore: () -> ClipboardHistoryStore
+    private let isEnabled: () -> Bool
     private var themeObservation: ThemeObservation?
     /// R2-ARCH-08: the store's one observer list; dropped when the picker goes.
     private var storeObservation: StoreObservation?
@@ -60,53 +81,101 @@ final class ClipboardHistoryController: NSObject {
     var onPasted: ((ClipboardHistoryEntry) -> Void)?
 
     private var captureToken: UUID?
+    /// Set once by `startCapturing()`: the app wants copies recorded whenever
+    /// the preference allows it. Nothing else sets it - see that method.
+    private var isArmed = false
+    private var preferenceObserver: NSObjectProtocol?
 
     /// **This controller owns the one `ClipboardHistoryStore`** (GL-23 - it
     /// caches its decrypted entries, so a second instance would be a second
     /// source of truth and a second writer to one file). Injectable for a
     /// suite, defaulted for the app, the same shape every store-backed
-    /// controller here uses.
-    init(store: ClipboardHistoryStore = ClipboardHistoryStore()) {
-        self.store = store
-        content = ClipboardHistoryPanelViewController(store: store)
-        panel = HelmBarPanel(content: content)
+    /// controller here uses. It is an autoclosure because constructing the
+    /// default store reads the Keychain and opens the sealed file, and neither
+    /// may happen while the history is off.
+    init(store: @autoclosure @escaping () -> ClipboardHistoryStore = ClipboardHistoryStore(),
+         isEnabled: @escaping () -> Bool = { AppSettings.shared.clipboardHistoryEnabled }) {
+        makeStore = store
+        self.isEnabled = isEnabled
         super.init()
-        content.onSizeChanged = { [weak self] size in self?.panel.setContentSize(size) }
-        content.onRequestClose = { [weak self] in self?.panel.close() }
-        content.onPaste = { [weak self] entry in
-            guard let self else { return }
-            guard self.store.copyToPasteboard(entry) else { return }
-            self.onPasted?(entry)
-            self.panel.close()
-        }
-        themeObservation = ThemeManager.shared.observe { [weak self] theme in
-            self?.content.applyTheme(theme)
-        }
-        storeObservation = store.observe { [weak self] in
-            // Only while it is open: a repaint of a panel nobody can see is
-            // exactly the work GL-24's "a theme observer repaints, it never
-            // fetches" and GL-13 both exist to avoid, and this fires on every
-            // copy the captain makes anywhere on the machine.
-            guard self?.panel.isShown == true else { return }
-            self?.content.reload()
-        }
     }
 
     deinit {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
-        if let storeObservation { store.unobserve(storeObservation) }
+        if let storeObservation, let store { store.unobserve(storeObservation) }
         if let captureToken { CredentialVaultClipboard.shared.unobserveChanges(captureToken) }
+        if let preferenceObserver { NotificationCenter.default.removeObserver(preferenceObserver) }
+    }
+
+    /// The one store, built the first time anything needs it.
+    private func builtStore() -> ClipboardHistoryStore {
+        if let store { return store }
+        let built = makeStore()
+        store = built
+        storeObservation = built.observe { [weak self] in
+            // Only while it is open: a repaint of a panel nobody can see is
+            // exactly the work GL-24's "a theme observer repaints, it never
+            // fetches" and GL-13 both exist to avoid, and this fires on every
+            // copy the captain makes anywhere on the machine.
+            guard let picker = self?.picker, picker.panel.isShown else { return }
+            picker.content.reload()
+        }
+        return built
+    }
+
+    /// The panel and its content, built the first time ⌘⇧V needs them.
+    private func builtPicker() -> Picker {
+        if let picker { return picker }
+        let store = builtStore()
+        let content = ClipboardHistoryPanelViewController(store: store)
+        let panel = HelmBarPanel(content: content)
+        let built = Picker(content: content, panel: panel)
+        // Assigned before the theme observer below: `ThemeManager.observe`
+        // fires synchronously at registration, and its closure reads `picker`.
+        picker = built
+        content.onSizeChanged = { [weak panel] size in panel?.setContentSize(size) }
+        content.onRequestClose = { [weak panel] in panel?.close() }
+        content.onPaste = { [weak self] entry in
+            guard let self, let store = self.store else { return }
+            guard store.copyToPasteboard(entry) else { return }
+            self.onPasted?(entry)
+            self.picker?.panel.close()
+        }
+        themeObservation = ThemeManager.shared.observe { [weak self] theme in
+            self?.picker?.content.applyTheme(theme)
+        }
+        return built
+    }
+
+    /// Close and drop the panel, write out anything still pending, and drop
+    /// the store. Called when the history is turned off, so the decrypted
+    /// entries do not stay in memory behind a feature that is off.
+    private func tearDown() {
+        if let picker {
+            picker.panel.close()
+            if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+            themeObservation = nil
+            self.picker = nil
+        }
+        if let store {
+            store.flush()
+            if let storeObservation { store.unobserve(storeObservation) }
+            storeObservation = nil
+            self.store = nil
+        }
     }
 
     /// PF2: the history's seal-and-write moved off the main thread, so ⌘Q
     /// inside that window would otherwise lose the last copy. Called from
     /// `AppDelegate.applicationWillTerminate`, the same shape as every other
-    /// debounced store's flush there.
+    /// debounced store's flush there. A store that was never built has
+    /// nothing to flush, and building one here would open the file for no
+    /// reason.
     func shutdown() {
-        store.flush()
+        store?.flush()
     }
 
-    /// Start recording copies.
+    /// Start recording copies, whenever the preference allows it.
     ///
     /// **Called explicitly from `main.swift` rather than at init**, and that
     /// is deliberate: a dozen self-test suites construct a real
@@ -115,17 +184,62 @@ final class ClipboardHistoryController: NSObject {
     /// the captain's real clipboard for the length of the run. The app arms
     /// it once; nothing else does.
     ///
+    /// Arming is not the same as watching. The watch follows
+    /// `AppSettings.clipboardHistoryEnabled` from here on, through
+    /// `clipboardHistoryPreferenceDidChange`, so Settings turns it on and off
+    /// without a relaunch.
+    ///
     /// The watch itself is `CredentialVaultClipboard`'s single shared
     /// `changeCount` tick - see that class's own header for why there is not a
     /// second poller.
     func startCapturing() {
-        guard captureToken == nil else { return }
-        captureToken = CredentialVaultClipboard.shared.observeChanges { [weak self] _ in
-            self?.recordCurrentPasteboard()
+        guard !isArmed else { return }
+        isArmed = true
+        // `queue: nil`: Settings writes the preference on the main thread, and
+        // the watch has to be gone by the time that write returns rather than
+        // one run-loop turn later, when a tick could already have fired.
+        preferenceObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.clipboardHistoryPreferenceDidChange, object: nil, queue: nil
+        ) { [weak self] _ in
+            self?.syncCaptureWithPreference()
+        }
+        syncCaptureWithPreference()
+    }
+
+    /// Subscribe to the pasteboard watch when the history is armed and on,
+    /// and unsubscribe (dropping the store and closing the panel) when it is
+    /// not.
+    ///
+    /// Unsubscribing is what stops the watch itself:
+    /// `CredentialVaultClipboard` invalidates its timer once its last
+    /// observer goes, and this is its only one.
+    func syncCaptureWithPreference() {
+        let wanted = isArmed && isEnabled()
+        if wanted {
+            guard captureToken == nil else { return }
+            captureToken = CredentialVaultClipboard.shared.observeChanges { [weak self] _ in
+                self?.recordCurrentPasteboard()
+            }
+        } else {
+            if let captureToken {
+                CredentialVaultClipboard.shared.unobserveChanges(captureToken)
+                self.captureToken = nil
+            }
+            if !isEnabled() { tearDown() }
         }
     }
 
-    private func recordCurrentPasteboard() {
+    /// Whether a copy made right now would be recorded. The suite's way to
+    /// ask the controller's decision rather than infer it from a store.
+    var isCapturing: Bool { captureToken != nil }
+
+    private func recordCurrentPasteboard(_ pasteboard: NSPasteboard = .general) {
+        // A tick already in flight when the preference flipped must not
+        // record. The unsubscribe above normally makes this unreachable; it
+        // is checked anyway because "nothing is recorded while it is off" is
+        // the property the captain asked for, and it should not depend on the
+        // order two callbacks happen to run in.
+        guard isEnabled() else { return }
         // GL-09: recording is a *write of the captain's data* driven by
         // activity outside this app, which is the exact shape the gate's own
         // header describes. A locked app records nothing - otherwise walking
@@ -133,7 +247,8 @@ final class ClipboardHistoryController: NSObject {
         // history.
         guard AppLockGate.shared.allows(.clipboardHistory) else { return }
         let source = NSWorkspace.shared.frontmostApplication?.localizedName
-        let outcome = store.record(sourceApp: source == "Grand Line" ? nil : source)
+        let outcome = builtStore().record(from: pasteboard,
+                                          sourceApp: source == "Grand Line" ? nil : source)
         if case .refusedConcealed = outcome {
             AppLog.ui.info("clipboard history: skipped a concealed copy")
         }
@@ -144,29 +259,46 @@ final class ClipboardHistoryController: NSObject {
     /// GL-09: the history is a disclosure of everything the captain has
     /// copied, and this panel is `.floating` - so it is gated exactly like the
     /// other walk-up surfaces.
+    ///
+    /// While the history is off the Edit menu hides its item, so nothing
+    /// should reach here. A caller that does anyway gets a beep, not a panel
+    /// over a history the captain switched off.
     func toggle() {
+        guard isEnabled() else {
+            AppLog.ui.info("clipboard history refused - it is turned off")
+            NSSound.beep()
+            return
+        }
         guard AppLockGate.shared.allows(.clipboardHistory) else {
             AppLog.lifecycle.info("clipboard history refused - app is locked (GL-09)")
             NSSound.beep()
             return
         }
-        if panel.isShown {
-            panel.close()
+        let picker = builtPicker()
+        if picker.panel.isShown {
+            picker.panel.close()
         } else {
             guard let anchor else {
                 AppLog.ui.error("clipboard history has no anchor - the bar never installed one")
                 NSSound.beep()
                 return
             }
-            content.reload()
-            panel.show(under: anchor)
-            content.focusFilter()
+            picker.content.reload()
+            picker.panel.show(under: anchor)
+            picker.content.focusFilter()
         }
     }
 
     #if FM_SELFTESTS
-    var debugPanel: HelmBarPanel { panel }
-    var debugContent: ClipboardHistoryPanelViewController { content }
+    var debugPanel: HelmBarPanel { builtPicker().panel }
+    var debugContent: ClipboardHistoryPanelViewController { builtPicker().content }
+    /// The store, if anything has built it - so a suite can assert that the
+    /// off state never opened the history at all.
+    var debugStoreIfBuilt: ClipboardHistoryStore? { store }
+    /// Run the capture path against `pasteboard`, exactly as the watch's
+    /// handler does but without the system pasteboard. The watch's own
+    /// subscription is asserted separately through `isCapturing`.
+    func debugRecord(from pasteboard: NSPasteboard) { recordCurrentPasteboard(pasteboard) }
     #endif
 }
 
