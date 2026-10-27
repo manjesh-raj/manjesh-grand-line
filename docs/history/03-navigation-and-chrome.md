@@ -1340,3 +1340,34 @@ The four delegate files are extensions of `AppDelegate`, not new types: each rea
 About thirty suites read `main.swift` as source; they read `SelfTestSources.selfTestDispatchSource()` or `SelfTestSources.appDelegateSource()` (the delegate's files in order, `main.swift` first) now, and the feature inventory reads the delegate's files as `main`, so no inventory id changed.
 `LaunchPathSelfTest.mainSwiftIsOnlyTheEntryPoint` caps `main.swift` at 150 lines, rejects a top-level type or function in it, and pins the launch order.
 
+
+### Home's cards are sized by dragging (free resize)
+
+The captain could only pick Small, Large or Full Width for a Home card, and asked to drag the width and the height to their own taste.
+Customize now puts three grips on every card (`HomeCardResizeHandle`): the trailing edge sizes the width, the bottom edge the height, and the corner both.
+The size menu in the card's controls became Reset Size, and a double-click on a grip puts that dimension back.
+
+- **The width is a share of a 24-column grid (`HomeCardGrid`), not a point width.**
+  A card keeps its place in the composition when the window changes size, and 24 divides by two, three and four, so halves, thirds and quarters line up across rows.
+  At the sidebar layout's 1512 a column is about 50pt, which reads as a continuous drag.
+- **A card is never narrower than the canvas's 255pt minimum.**
+  When the window makes a card too narrow, it widens to the next quarter, third, half or full row rather than to the bare minimum, because the bare minimum left a sliver at the end of every row.
+- **The height is optional.**
+  A card nobody has dragged takes its row's height (`equalHeights`), exactly as before.
+  A dragged card has its own height, snapped to 8pt and held between the card's own floor and 720pt, and it is exempt from the row's tie, so its neighbours keep their own heights.
+  It is never drawn shorter than its content: the card never clips its body, so the drag stops where the content still fits.
+- **The rows are still `HelmResponsiveGrid.spanningRows`**, which gained a fixed column count and a per-item fixed height.
+  The fixed height goes on after the floor has measured the item's natural height; measured with it, the floor is the fixed height itself and the card can never be made shorter again without a rebuild.
+- **The card being dragged survives the rebuild its own drag causes.**
+  Its grips are the views the drag's events go to, and a rebuilt card's grips are new views.
+  With the card rebuilt, the rest of the drag went to a view no longer in the page and the card stayed at its old width (measured with the reuse disabled: 588pt instead of the grid's 1192pt).
+- **Migration is a read.**
+  `fm.homeCardLayout` keeps its `sizes` map and gains `cardSizes`.
+  A layout saved with fixed sizes reads `small`, `large` and `wide` as 6, 12 and 24 columns, which at four of the old columns are exactly the widths they drew.
+  This build still writes the nearest fixed size into `sizes`, so an older build reading the same domain draws roughly the same Home.
+
+Tests: `FM_RUN_SPLIT_SHELL_MODEL_TESTS` covers the sizes, their snapping and range, persistence, the migration and the grid arithmetic.
+`FM_RUN_MAIN_SPLIT_SHELL_TESTS` drags each grip through its real mouse handlers and checks the width, the height, reflow without overlap, the content floor, the double-click and Reset Size.
+Injected regressions (the migration mapping, the kept card, the fixed height) each failed a named case.
+Verified visually with an off-screen render of the sidebar shell through the tour lab, in Daylight and Dusk.
+A real pointer drag in a composited window was not verified, because screen capture is not granted on this machine.

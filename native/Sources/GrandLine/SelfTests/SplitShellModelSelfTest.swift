@@ -48,6 +48,7 @@ enum SplitShellModelSelfTest {
                       checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
                       checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
                       checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
+                      checkHomeCardFreeSizes, checkHomeCardSizeMigration, checkHomeCardGrid,
                       checkTheWiring, checkTheLayoutDrawsNoStatusStrip] {
             var ok = true
             check(&ok)
@@ -461,10 +462,11 @@ enum SplitShellModelSelfTest {
         check(Set(standard.shown) == Set(DaylightModule.canvasOrder.filter { $0.isVisible(in: .overview) })
                 && standard.shown.count == Set(standard.shown).count && !standard.shown.isEmpty,
               "the standard layout is \(standard.shown.map(\.rawValue)), not the hub's own cards", &ok)
-        // Arranged to fill rows: at four columns, two full rows.
-        let rows = HelmResponsiveGrid.packRows(spans: standard.shown.map { standard.size(of: $0).span }, columns: 4)
-        check(rows.allSatisfy { $0.reduce(0) { $0 + $1.span } == 4 },
-              "at four columns Home's own cards leave a gap: \(rows.map { $0.map(\.span) })", &ok)
+        // Arranged to fill rows: on the 24-column grid, two full rows.
+        let spans: [Int] = standard.shown.map { standard.size(of: $0).columns }
+        let rows = HelmResponsiveGrid.packRows(spans: spans, columns: HomeCardGrid.columns)
+        check(rows.allSatisfy { $0.reduce(0) { $0 + $1.span } == HomeCardGrid.columns },
+              "Home's own cards leave a gap: \(rows.map { $0.map(\.span) })", &ok)
         check(Set(standard.shown).union(standard.hidden) == Set(DaylightModule.allCases)
                 && Set(standard.shown).isDisjoint(with: standard.hidden),
               "shown and hidden do not partition every card", &ok)
@@ -482,8 +484,9 @@ enum SplitShellModelSelfTest {
         layout.move(second, by: -1)
         check(Array(layout.shown.prefix(2)) == [second, first], "moving a card earlier did not swap it with the one before", &ok)
         check(!layout.canMove(second, by: -1), "the first card can still move earlier", &ok)
-        layout.setSize(.wide, for: first)
-        check(layout.size(of: first) == .wide && HomeCardLayout.Size.wide.span >= 12, "a card's size did not stick", &ok)
+        layout.setSize(.init(columns: 17, height: 301), for: first)
+        check(layout.size(of: first) == .init(columns: 17, height: 304) && layout.hasCustomSize(first),
+              "a card's free size did not stick, snapped to the step: \(layout.size(of: first))", &ok)
         layout.hide(first)
         check(!layout.shown.contains(first) && layout.hidden.contains(first), "hiding a card did not take it off Home", &ok)
 
@@ -509,6 +512,8 @@ enum SplitShellModelSelfTest {
             return
         }
         check(again.shownIDs.contains("aCardFromANewerBuild"), "an edit dropped a newer build's card", &ok)
+        check(again.size(of: second) == read.size(of: second) && again == read,
+              "the free sizes did not round-trip: \(again.size(of: second)) for \(read.size(of: second))", &ok)
         check(HomeCardLayout(storedData: Data("not json".utf8)) == nil, "junk decoded as a layout", &ok)
 
         // The preference: the standard set until written, and what was written after.
@@ -524,6 +529,153 @@ enum SplitShellModelSelfTest {
         check(settings.homeCardLayout == layout, "Home's layout did not persist", &ok)
         defaults.set(Data("junk".utf8), forKey: "fm.homeCardLayout")
         check(settings.homeCardLayout == .standard, "an unreadable layout did not fall back to the standard set", &ok)
+    }
+
+    // MARK: 3c - Home's free card sizes
+
+    /// A card's size is a width on the 24-column grid and an optional height
+    /// of its own, held to what the grid can draw.
+    private static func checkHomeCardFreeSizes(_ ok: inout Bool) {
+        var layout = HomeCardLayout.standard
+        let card = DaylightModule.fleet
+        check(layout.size(of: card) == .small && layout.size(of: card).height == nil && !layout.hasCustomSize(card),
+              "a card the captain never sized is not at its own size: \(layout.size(of: card))", &ok)
+
+        // Widths are held to the grid.
+        layout.setSize(.init(columns: 40), for: card)
+        check(layout.size(of: card).columns == HomeCardGrid.columns, "a width past the grid was kept as \(layout.size(of: card))", &ok)
+        layout.setSize(.init(columns: 0), for: card)
+        check(layout.size(of: card).columns == 1, "a width under one column was kept as \(layout.size(of: card))", &ok)
+
+        // Heights snap to the step and stay in the range a card can be drawn at.
+        layout.setSize(.init(columns: 9, height: 213), for: card)
+        check(layout.size(of: card).height == 216, "213pt did not snap to 216pt: \(layout.size(of: card))", &ok)
+        layout.setSize(.init(columns: 9, height: 3), for: card)
+        check(layout.size(of: card).height == HomeCardGrid.heightRange.lowerBound,
+              "a 3pt card was kept as \(layout.size(of: card)), not the card's own floor", &ok)
+        layout.setSize(.init(columns: 9, height: 50_000), for: card)
+        check(layout.size(of: card).height == HomeCardGrid.heightRange.upperBound,
+              "a 50,000pt card was kept as \(layout.size(of: card)), not the maximum", &ok)
+
+        // Reset puts the card's own size back, and the layout is the one it
+        // started as - so Reset Layout and a reset card compare equal.
+        layout.resetSize(of: card)
+        check(layout == .standard && !layout.hasCustomSize(card), "resetting a card's size left \(layout.size(of: card))", &ok)
+
+        // A size that survives a write and a read is the size that was set,
+        // through the preference the shell keeps it in.
+        layout.setSize(.init(columns: 15, height: 360), for: .mergeQueue)
+        layout.setSize(.init(columns: 7), for: .health)
+        let suite = "split-shell-home-free-size-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            fail("could not open a scratch defaults domain", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        settings.homeCardLayout = layout
+        let read = AppSettings(defaults: defaults).homeCardLayout
+        check(read == layout && read.size(of: .mergeQueue) == .init(columns: 15, height: 360)
+                && read.size(of: .health) == .init(columns: 7),
+              "the free sizes did not persist: \(read.size(of: .mergeQueue)), \(read.size(of: .health))", &ok)
+    }
+
+    /// A layout saved with the three fixed sizes keeps its look, and this
+    /// build still writes the nearest fixed size for an older one to read.
+    private static func checkHomeCardSizeMigration(_ ok: inout Bool) {
+        // Exactly what the fixed-size build wrote: no `cardSizes` at all.
+        let saved = #"{"shown":["fleet","briefing","health","tasks"],"sizes":{"briefing":"wide","fleet":"small","health":"large"}}"#
+        guard let old = HomeCardLayout(storedData: Data(saved.utf8)) else {
+            fail("a layout saved with fixed sizes did not read", &ok)
+            return
+        }
+        check(old.shown == [.fleet, .briefing, .health, .tasks], "the saved cards changed: \(old.shown.map(\.rawValue))", &ok)
+        check(old.size(of: .fleet) == .small && old.size(of: .health) == .large && old.size(of: .briefing) == .fullWidth
+                && old.size(of: .tasks) == HomeCardLayout.ownSize(of: .tasks),
+              "the fixed sizes did not migrate: fleet \(old.size(of: .fleet)), health \(old.size(of: .health)), "
+                + "briefing \(old.size(of: .briefing)), tasks \(old.size(of: .tasks))", &ok)
+        check([old.size(of: .fleet), old.size(of: .health), old.size(of: .briefing)].allSatisfy { $0.height == nil },
+              "a migrated card was given a height of its own rather than its row's", &ok)
+
+        // Roughly its current look, measured: at the width the old grid drew
+        // four columns (the sidebar layout at 1512, ~1200pt), small, large and
+        // full width are exactly the widths they were.
+        let container: CGFloat = 1200
+        let spacing = HomeCanvasController.gridSpacing
+        let oldUnit = HelmResponsiveGrid.itemWidth(containerWidth: container, columns: 4, spacing: spacing)
+        for (legacy, oldSpan) in [(HomeCardLayout.LegacySize.small, 1), (.large, 2), (.wide, 4)] {
+            let was = oldUnit * CGFloat(oldSpan) + spacing * CGFloat(oldSpan - 1)
+            let now = HomeCardGrid.width(columns: legacy.size.columns, containerWidth: container, spacing: spacing)
+            check(abs(was - now) < 0.5, "a \(legacy.rawValue) card was \(was)pt wide and is now \(now)pt", &ok)
+        }
+
+        // Editing one card rewrites it as a free size and leaves the others'
+        // fixed sizes exactly as they were saved.
+        var edited = old
+        edited.setSize(.init(columns: 10, height: 280), for: .health)
+        guard let data = edited.storedData,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let sizes = json["sizes"] as? [String: String], let cardSizes = json["cardSizes"] as? [String: Any] else {
+            fail("the edited layout did not encode both maps", &ok)
+            return
+        }
+        check(sizes == ["briefing": "wide", "fleet": "small", "health": "large"],
+              "the fixed sizes an older build reads changed: \(sizes)", &ok)
+        check(Set(cardSizes.keys) == ["health"], "only the edited card should carry a free size: \(cardSizes.keys.sorted())", &ok)
+        check(HomeCardLayout(storedData: data)?.size(of: .health) == .init(columns: 10, height: 280),
+              "the edited card's free size did not read back", &ok)
+
+        // The nearest fixed size an older build is told.
+        let nearest = [1, 6, 9, 10, 12, 17, 18, 24].map { HomeCardLayout.LegacySize(nearest: $0).rawValue }
+        check(nearest == ["small", "small", "small", "large", "large", "large", "wide", "wide"],
+              "the nearest fixed sizes are \(nearest)", &ok)
+
+        // A `cardSizes` this build cannot read costs the sizes, not the cards.
+        let damaged = #"{"shown":["fleet","health"],"sizes":{"health":"large"},"cardSizes":"not a map"}"#
+        let read = HomeCardLayout(storedData: Data(damaged.utf8))
+        check(read?.shown == [.fleet, .health] && read?.size(of: .health) == .large,
+              "a damaged free-size map took the layout down with it: \(String(describing: read?.shown))", &ok)
+    }
+
+    /// The grid's arithmetic: widths, the drag's nearest column, the
+    /// narrowest readable card and how a too-narrow card is widened.
+    private static func checkHomeCardGrid(_ ok: inout Bool) {
+        let spacing: CGFloat = 16
+        let container: CGFloat = 1200
+        // Columns add up: a row of spans totalling the grid is the container.
+        let halves = HomeCardGrid.width(columns: 12, containerWidth: container, spacing: spacing) * 2 + spacing
+        check(abs(halves - container) < 0.5, "two halves and a gap are \(halves)pt of \(container)pt", &ok)
+        check(abs(HomeCardGrid.width(columns: HomeCardGrid.columns, containerWidth: container, spacing: spacing) - container) < 0.5,
+              "a full-width card is not the container's width", &ok)
+
+        // A dragged width lands on the nearest column, and never off the grid.
+        for span in [1, 5, 13, 24] {
+            let width = HomeCardGrid.width(columns: span, containerWidth: container, spacing: spacing)
+            check(HomeCardGrid.columns(nearestWidth: width + 10, containerWidth: container, spacing: spacing) == span,
+                  "\(width + 10)pt did not land on \(span) columns", &ok)
+        }
+        check(HomeCardGrid.columns(nearestWidth: -400, containerWidth: container, spacing: spacing) == 1
+                && HomeCardGrid.columns(nearestWidth: 9_000, containerWidth: container, spacing: spacing) == HomeCardGrid.columns,
+              "a drag past either end left the grid", &ok)
+
+        // The narrowest card is the canvas's own minimum width.
+        let minimum = HomeCardGrid.minimumColumns(containerWidth: container, minWidth: 255, spacing: spacing)
+        check(HomeCardGrid.width(columns: minimum, containerWidth: container, spacing: spacing) >= 255 - 0.5
+                && HomeCardGrid.width(columns: minimum - 1, containerWidth: container, spacing: spacing) < 255,
+              "\(minimum) columns is not the narrowest 255pt card at \(container)pt", &ok)
+
+        // A card wide enough keeps its width exactly; one the window made too
+        // narrow widens to the next quarter, third, half or full row.
+        check(HomeCardGrid.effectiveColumns(7, minimum: 6) == 7, "a card wide enough was widened", &ok)
+        check(HomeCardGrid.effectiveColumns(6, minimum: 7) == 8, "a too-narrow card did not widen to a third", &ok)
+        check(HomeCardGrid.effectiveColumns(9, minimum: 10) == 12, "a too-narrow card did not widen to a half", &ok)
+        check(HomeCardGrid.effectiveColumns(3, minimum: 20) == 24, "a too-narrow card did not widen to the full row", &ok)
+        // Rows of widened cards still fill: three 6-column cards at a width
+        // that needs 7 become thirds, not three cards and a sliver.
+        let narrow = HomeCardGrid.minimumColumns(containerWidth: 1000, minWidth: 255, spacing: spacing)
+        let widened = HomeCardGrid.effectiveColumns(6, minimum: narrow)
+        check(narrow > 6 && HomeCardGrid.columns % widened == 0,
+              "at 1000pt a quarter card widened to \(widened) of \(HomeCardGrid.columns) (minimum \(narrow)), which rows do not fill", &ok)
     }
 
     // MARK: 4 - the wiring

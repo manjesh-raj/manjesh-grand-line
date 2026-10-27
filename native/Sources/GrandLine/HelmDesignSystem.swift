@@ -5048,6 +5048,14 @@ enum HelmResponsiveGrid {
         return rows
     }
 
+    /// The identifier on the height constraint `spanningRows` gives an item
+    /// with a `fixedHeight`, so a caller can move it without a rebuild.
+    static let fixedHeightIdentifier = "HelmResponsiveGrid.fixedHeight"
+    /// The identifier on the constraints `spanningRows` puts on an item
+    /// itself - its width and its height floor - so a caller that moves the
+    /// item into a new row can take them off first.
+    static let cellConstraintIdentifier = "HelmResponsiveGrid.cell"
+
     /// Lays `items` out into span-aware rows.
     ///
     /// Unlike `rows(_:)` above this cannot use `.fillEqually` - a span-2 card
@@ -5088,17 +5096,25 @@ enum HelmResponsiveGrid {
     /// tied neighbour, which the stack still stretches to the row - the
     /// reasoning, and the measurements behind both halves, are at the call
     /// site below.
+    ///
+    /// `columnCount` replaces the column count derived from `minItemWidth`
+    /// with a fixed grid - Home's arranged cards are sized in 24ths of the
+    /// row (`HomeCardGrid`), and the caller keeps each span wide enough to
+    /// read. `fixedHeight` gives an item a height of its own: it is exempt
+    /// from the tie exactly as `exemptsHeightTie` describes, and it prefers
+    /// that height over its natural one without ever going below it.
     static func spanningRows<Item>(_ items: [Item],
                                    spans: (Item) -> Int,
                                    containerWidth: CGFloat,
                                    minItemWidth: CGFloat,
+                                   columnCount fixedColumnCount: Int? = nil,
                                    spacing: CGFloat = spacing,
                                    equalHeights: Bool = false,
                                    exemptsHeightTie: (Item) -> Bool = { _ in false },
+                                   fixedHeight: (Item) -> CGFloat? = { _ in nil },
                                    makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
-        let columnCount = columns(containerWidth: containerWidth,
-                                  minItemWidth: minItemWidth,
-                                  spacing: spacing)
+        let columnCount = fixedColumnCount.map { max(1, $0) }
+            ?? columns(containerWidth: containerWidth, minItemWidth: minItemWidth, spacing: spacing)
         let unit = itemWidth(containerWidth: containerWidth,
                              columns: columnCount,
                              spacing: spacing)
@@ -5108,6 +5124,7 @@ enum HelmResponsiveGrid {
             var views: [NSView] = []
             var itemViews: [NSView] = []
             var exemptViews: [NSView] = []
+            var fixedViews: [(view: NSView, height: CGFloat)] = []
             var used = 0
             for placement in row {
                 let width = unit * CGFloat(placement.span) + spacing * CGFloat(placement.span - 1)
@@ -5115,10 +5132,14 @@ enum HelmResponsiveGrid {
                 view.translatesAutoresizingMaskIntoConstraints = false
                 let widthConstraint = view.widthAnchor.constraint(equalToConstant: width)
                 widthConstraint.priority = HelmDaylightPriority.contentTie
+                widthConstraint.identifier = cellConstraintIdentifier
                 widthConstraint.isActive = true
                 view.setContentHuggingPriority(.required, for: .horizontal)
                 views.append(view)
-                if exemptsHeightTie(items[placement.index]) {
+                if let height = fixedHeight(items[placement.index]) {
+                    fixedViews.append((view, height))
+                    exemptViews.append(view)
+                } else if exemptsHeightTie(items[placement.index]) {
                     exemptViews.append(view)
                 } else {
                     itemViews.append(view)
@@ -5198,8 +5219,9 @@ enum HelmResponsiveGrid {
                         // `HelmModuleCard.minimumHeight` is required.
                         let natural = view.fittingSize.height
                         if natural > 0 {
-                            view.heightAnchor.constraint(greaterThanOrEqualToConstant: natural)
-                                .isActive = true
+                            let floor = view.heightAnchor.constraint(greaterThanOrEqualToConstant: natural)
+                            floor.identifier = cellConstraintIdentifier
+                            floor.isActive = true
                         }
                     }
 
@@ -5227,6 +5249,20 @@ enum HelmResponsiveGrid {
                         tieHeights(itemViews, to: guide.heightAnchor)
                     }
                 }
+            }
+            // A fixed height goes on only now, after the floor above has
+            // measured the item's natural height: measured with it, the floor
+            // is the fixed height itself, and the item could never be made
+            // shorter again without a rebuild. Over the stack's own 250
+            // stretch and the 499 tie, and under that required floor - so the
+            // item is its fixed height when its content fits and its
+            // content's when it does not. Safe as a height for the reason the
+            // floor's own comment gives.
+            for (view, height) in fixedViews {
+                let preferred = view.heightAnchor.constraint(equalToConstant: height)
+                preferred.priority = .defaultHigh
+                preferred.identifier = fixedHeightIdentifier
+                preferred.isActive = true
             }
             return stack
         }

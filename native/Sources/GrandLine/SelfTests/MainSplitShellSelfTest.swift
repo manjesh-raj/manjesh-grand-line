@@ -821,21 +821,8 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(canvas.visibleModulesForTests.last == first, "adding \(first.rawValue) back did not put it at the end", &ok)
 
-        // Full width: the card spans the grid.
-        if let strip = canvas.cardStripsForTests[first] {
-            let menu = strip.sizeMenu()
-            if let index = menu.items.firstIndex(where: { $0.title == HomeCardLayout.Size.wide.title }) {
-                menu.performActionForItem(at: index)
-            }
-        }
-        settle(shell)
-        let widths = canvas.gridRowsForTests.map(\.frame.width)
-        if let card = canvas.cardForTests(first), let widest = widths.max() {
-            check(abs(card.frame.width - widest) < 1, "a full-width card is \(card.frame.width)pt in a \(widest)pt grid", &ok)
-        } else {
-            fail("the resized card is not on Home", &ok)
-        }
-        check(AppSettings.shared.homeCardLayout.size(of: first) == .wide, "the card's size was not kept", &ok)
+        // Free sizing, through the card's own grips.
+        checkHomeCardsResizeByDragging(shell, canvas, first, &ok)
 
         // Move earlier, through its button.
         let before = canvas.visibleModulesForTests
@@ -864,6 +851,141 @@ enum MainSplitShellSelfTest {
         // Home has no other space to leave Customize by (R2-UX-02), so Done
         // is the way out, and it is checked above. End it for what follows.
         if canvas.isCustomizing { shell.debugModuleAction(); settle(shell) }
+    }
+
+    /// Every arranged card's frame in window coordinates.
+    private static func cardFrames(_ canvas: HomeCanvasController) -> [DaylightModule: NSRect] {
+        var frames: [DaylightModule: NSRect] = [:]
+        for module in canvas.visibleModulesForTests {
+            if let card = canvas.cardForTests(module) { frames[module] = card.convert(card.bounds, to: nil) }
+        }
+        return frames
+    }
+
+    private static func checkNoCardsOverlap(_ canvas: HomeCanvasController, _ when: String, _ ok: inout Bool) {
+        let frames = cardFrames(canvas)
+        check(frames.count == canvas.visibleModulesForTests.count, "\(when): not every card is on Home", &ok)
+        let pairs = frames.flatMap { a in frames.compactMap { b in a.key.rawValue < b.key.rawValue ? (a, b) : nil } }
+        for (a, b) in pairs where a.value.insetBy(dx: 0.5, dy: 0.5).intersects(b.value.insetBy(dx: 0.5, dy: 0.5)) {
+            fail("\(when): \(a.key.rawValue) \(a.value) overlaps \(b.key.rawValue) \(b.value)", &ok)
+        }
+    }
+
+    /// The captain drags a card's trailing edge, bottom edge and corner: the
+    /// card is that size on the grid, its neighbours reflow without overlap,
+    /// the size is kept, and a double-click or Reset Size puts it back.
+    private static func checkHomeCardsResizeByDragging(_ shell: MainSplitShellController, _ canvas: HomeCanvasController,
+                                                       _ module: DaylightModule, _ ok: inout Bool) {
+        guard let card = canvas.cardForTests(module),
+              let handles = canvas.resizeHandlesForTests[module],
+              let trailing = handles.first(where: { $0.edge == .trailing }),
+              let bottom = handles.first(where: { $0.edge == .bottom }),
+              let corner = handles.first(where: { $0.edge == .corner }) else {
+            fail("\(module.rawValue) has no resize grips in Customize - the rest is vacuous", &ok)
+            return
+        }
+        check(canvas.resizeHandlesForTests.count == canvas.visibleModulesForTests.count,
+              "not every card wears resize grips in Customize", &ok)
+        // The grips sit inside the card, on its edges, and clear of its header controls.
+        let cardFrame = card.convert(card.bounds, to: nil)
+        for handle in handles {
+            let frame = handle.convert(handle.bounds, to: nil)
+            check(cardFrame.insetBy(dx: -0.5, dy: -0.5).contains(frame) && frame.width > 0 && frame.height > 0,
+                  "the \(handle.edge) grip sits at \(frame), outside its card \(cardFrame)", &ok)
+            if let controls = card.debugHeaderAccessoryFrameInCard {
+                check(!card.convert(controls, to: nil).intersects(frame), "the \(handle.edge) grip covers the card's controls", &ok)
+            }
+        }
+        let gridWidth = canvas.gridRowsForTests.map(\.frame.width).max() ?? 0
+        let startWidth = card.frame.width
+
+        // Wider, past the grid: the card takes the whole row, the card that
+        // shared its row moves below it, and nothing overlaps.
+        trailing.debugDrag(dx: 4_000, dy: 0)
+        settle(shell)
+        check(canvas.cardForTests(module) === card, "a drag rebuilt the card it was dragging", &ok)
+        check(abs(card.frame.width - gridWidth) < 1, "dragged past the grid, the card is \(card.frame.width)pt of \(gridWidth)pt", &ok)
+        check(AppSettings.shared.homeCardLayout.size(of: module).columns == HomeCardGrid.columns,
+              "the full width was not kept: \(AppSettings.shared.homeCardLayout.size(of: module))", &ok)
+        let wide = card.convert(card.bounds, to: nil)
+        for (other, frame) in cardFrames(canvas) where other != module {
+            check(frame.maxY <= wide.minY + 0.5 || frame.minY >= wide.maxY - 0.5,
+                  "\(other.rawValue) still shares a row with a full-width card", &ok)
+        }
+        checkNoCardsOverlap(canvas, "after a full-width drag", &ok)
+
+        // Narrower, by about four columns' worth: the width lands on the grid,
+        // not where the pointer let go.
+        let unit = (gridWidth + HomeCanvasController.gridSpacing) / CGFloat(HomeCardGrid.columns)
+        trailing.debugDrag(dx: -(unit * 4 + 7), dy: 0)
+        settle(shell)
+        let columns = AppSettings.shared.homeCardLayout.size(of: module).columns
+        check(columns == HomeCardGrid.columns - 4, "four columns narrower kept \(columns) columns", &ok)
+        let expected = unit * CGFloat(columns) - HomeCanvasController.gridSpacing
+        check(abs(card.frame.width - expected) < 1, "a \(columns)-column card is \(card.frame.width)pt, not \(expected)pt", &ok)
+        checkNoCardsOverlap(canvas, "after a narrowing drag", &ok)
+
+        // Narrower than a card can be read at: held at the canvas's minimum.
+        trailing.debugDrag(dx: -4_000, dy: 0)
+        settle(shell)
+        check(card.frame.width >= HomeCanvasController.minModuleWidth - 1,
+              "dragged to nothing, the card is \(card.frame.width)pt, under the \(HomeCanvasController.minModuleWidth)pt minimum", &ok)
+
+        // Taller, from the bottom edge: a height of its own, snapped, and the
+        // card is drawn at it. Its row grows to it.
+        let startHeight = card.frame.height
+        bottom.debugDrag(dx: 0, dy: 123)
+        settle(shell)
+        guard let height = AppSettings.shared.homeCardLayout.size(of: module).height else {
+            fail("a bottom-edge drag kept no height", &ok)
+            return
+        }
+        check(height.truncatingRemainder(dividingBy: HomeCardGrid.heightStep) == 0 && abs(height - (startHeight + 123)) <= HomeCardGrid.heightStep,
+              "dragged 123pt down from \(startHeight)pt, the height kept is \(height)pt", &ok)
+        check(abs(card.frame.height - height) < 1, "a \(height)pt card is drawn \(card.frame.height)pt tall", &ok)
+        checkNoCardsOverlap(canvas, "after a taller drag", &ok)
+
+        // Shorter than its content: held where the content still fits, never clipped.
+        bottom.debugDrag(dx: 0, dy: -2_000)
+        settle(shell)
+        let floor = HomeCardGrid.heightRange.lowerBound
+        check(card.frame.height >= floor - 0.5 && card.frame.height >= card.fittingSize.height - 1,
+              "dragged to nothing, the card is \(card.frame.height)pt; its floor is \(floor)pt and its content \(card.fittingSize.height)pt", &ok)
+
+        // The corner sizes both at once.
+        corner.debugDrag(dx: unit * 3, dy: 60)
+        settle(shell)
+        let both = AppSettings.shared.homeCardLayout.size(of: module)
+        check(both.height != nil && card.frame.width > HomeCanvasController.minModuleWidth,
+              "a corner drag did not size both: \(both)", &ok)
+        checkNoCardsOverlap(canvas, "after a corner drag", &ok)
+        check(canvas.sizeBadgeForTests.superview == nil, "the size badge stayed after the drag ended", &ok)
+
+        // The sizes survive a relaunch's read of the preference.
+        let kept = AppSettings.shared.homeCardLayout
+        check(HomeCardLayout(storedData: kept.storedData ?? Data()) == kept, "the dragged sizes did not round-trip", &ok)
+
+        // Double-click the bottom grip: the height goes back to the row's.
+        bottom.debugDoubleClick()
+        settle(shell)
+        check(AppSettings.shared.homeCardLayout.size(of: module).height == nil,
+              "a double-click on the bottom grip left a height of \(String(describing: AppSettings.shared.homeCardLayout.size(of: module).height))", &ok)
+
+        // Reset Size, from the card's controls: its own size again.
+        guard let strip = canvas.cardStripsForTests[module] else {
+            fail("the resized card lost its controls", &ok)
+            return
+        }
+        check(strip.debugResetSizeButton.isEnabled, "Reset Size is off on a card the captain sized", &ok)
+        strip.debugResetSizeButton.performClick(nil)
+        settle(shell)
+        check(!AppSettings.shared.homeCardLayout.hasCustomSize(module), "Reset Size left \(AppSettings.shared.homeCardLayout.size(of: module))", &ok)
+        if let card = canvas.cardForTests(module) {
+            check(abs(card.frame.width - startWidth) < 1, "after Reset Size the card is \(card.frame.width)pt, it started \(startWidth)pt", &ok)
+        }
+        check(canvas.cardStripsForTests[module]?.debugResetSizeButton.isEnabled == false,
+              "Reset Size is still on for a card at its own size", &ok)
+        checkNoCardsOverlap(canvas, "after Reset Size", &ok)
     }
 
     private static func checkBackAndForward(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
