@@ -1827,9 +1827,10 @@ final class HomeCanvasController: NSViewController {
                                    keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
         contentWidthConstraint?.constant = available
         attentionCard.setLayoutWidth(available)
-        let spans = Dictionary(uniqueKeysWithValues: modules.map { ($0, cardSpan($0)) })
+        let spans = Dictionary(modules.map { ($0, cardSpan($0)) }, uniquingKeysWith: { first, _ in first })
         let widths = spans.mapValues { HomeCardGrid.width(columns: $0, containerWidth: available, spacing: Self.gridSpacing) }
-        let heights = Dictionary(uniqueKeysWithValues: modules.map { ($0, arrangedHeight(of: $0, width: widths[$0] ?? 0)) })
+        let heights = Dictionary(modules.map { ($0, arrangedHeight(of: $0, width: widths[$0] ?? 0)) },
+                                 uniquingKeysWith: { first, _ in first })
         let rows = HelmResponsiveGrid.spanningRows(
             modules,
             spans: { spans[$0] ?? 1 },
