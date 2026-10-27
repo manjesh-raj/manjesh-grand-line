@@ -579,14 +579,18 @@ enum Subprocess {
     /// Run git. `authenticateFor` supplies a remote URL when the operation
     /// talks to that remote (`clone`/`fetch`/`push`); a purely local operation
     /// (`status`, `show`, `commit`) passes `nil` and gets no token.
+    /// `extraEnv` is for git's own plumbing variables (`GIT_INDEX_FILE`), and
+    /// the token injection is applied over it.
     static func git(
         _ arguments: [String],
         cwd: URL?,
         authenticateFor remoteURL: String? = nil,
+        extraEnv: [String: String] = [:],
         timeout: TimeInterval? = defaultTimeout,
         log: os.Logger = AppLog.gitSync
     ) -> SubprocessResult {
-        var extra: [String: String] = ["GIT_TERMINAL_PROMPT": "0"]
+        var extra = extraEnv
+        extra["GIT_TERMINAL_PROMPT"] = "0"
         if let remoteURL {
             for (key, value) in gitAuthEnvironment(remoteURL: remoteURL) { extra[key] = value }
         }

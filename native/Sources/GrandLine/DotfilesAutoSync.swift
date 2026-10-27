@@ -65,6 +65,15 @@
 // "refuse rather than overwrite real diverged work" rule in `GitHubSyncData.swift`
 // and `ShiftGitSync.pullNow`'s `.diverged` case. There is no force-push path in
 // this file and a source guard in the suite fails the run if one appears.
+//
+// **Runtime churn under `home/` is not configuration, so it is never synced.**
+// `~/.config/herdr` is symlinked into the checkout as a whole directory, and
+// herdr writes a new `session-snapshots/session-*.json` on every session and
+// prunes old ones. Before `ignoredRuntimePaths` existed this class committed and
+// pushed that churn every few minutes, and the card listed every snapshot as a
+// change. Every pathspec-limited command below now also carries an exclude for
+// each ignored path, and snapshots an earlier build already committed are
+// untracked once (`untrackIgnoredFiles`), leaving the files themselves on disk.
 
 import Foundation
 import CoreServices
@@ -126,6 +135,42 @@ final class DotfilesAutoSync {
     /// push on his behalf.
     static let commitMessagePrefix = "Dotfiles auto-sync:"
 
+    /// Paths under `home/` that a program rewrites while it runs, rather than
+    /// configuration anyone edits. They are never staged, committed, pushed or
+    /// counted as a change, and the Setup card never lists them.
+    ///
+    /// Each entry is a repo-relative directory (or file) under
+    /// `autoCommitSubpath`, and covers everything beneath it. Add a path here
+    /// when another tool's runtime state turns up in the card's changed-files
+    /// list - the rest of this class, `DotfilesSource.repoState` and the
+    /// watcher all read this one list.
+    ///
+    /// - `home/.config/herdr/session-snapshots`: herdr writes a new
+    ///   `session-*.json` every session and prunes the oldest, so a synced copy
+    ///   is a commit every few minutes and restores nothing useful on another
+    ///   machine. `home/.config/herdr/config.toml` beside it is real
+    ///   configuration and still syncs.
+    static let ignoredRuntimePaths = [
+        "home/.config/herdr/session-snapshots",
+    ]
+
+    /// `ignoredRuntimePaths` as git exclude pathspecs, appended after the
+    /// including pathspec of every status, add and commit that should not see
+    /// them.
+    static var ignoredPathspecs: [String] {
+        ignoredRuntimePaths.map { ":(exclude)\($0)" }
+    }
+
+    /// The pathspec every write here is limited to: `home`, minus the ignored
+    /// runtime paths.
+    static var autoCommitPathspec: [String] { [autoCommitSubpath] + ignoredPathspecs }
+
+    /// Whether a repo-relative path is one of `ignoredRuntimePaths` or lies
+    /// beneath one.
+    static func isIgnoredRuntimePath(_ relativePath: String) -> Bool {
+        ignoredRuntimePaths.contains { relativePath == $0 || relativePath.hasPrefix($0 + "/") }
+    }
+
     // MARK: Configuration
 
     let workingTree: URL
@@ -138,6 +183,12 @@ final class DotfilesAutoSync {
 
     /// `<workingTree>/home` - what the FSEvents stream watches.
     var homeRoot: URL { workingTree.appendingPathComponent(Self.autoCommitSubpath, isDirectory: true) }
+
+    /// `workingTree` as FSEvents may spell it, each ending in `/`. FSEvents
+    /// reports the real path (`/private/var/folders/...` for a temporary
+    /// directory), which is not always the spelling `workingTree` was given
+    /// in, so both are kept.
+    private let eventPathPrefixes: [String]
 
     // MARK: State (GL-28)
 
@@ -182,6 +233,13 @@ final class DotfilesAutoSync {
         self.watcherLatency = watcherLatency
         self.isEnabled = isEnabled
         self.queue = DispatchQueue(label: queueLabel)
+        let plain = workingTree.standardizedFileURL.path
+        var prefixes: [String] = []
+        for spelling in [plain, CodeSandbox.realPath(plain)] {
+            let prefix = spelling.hasSuffix("/") ? spelling : spelling + "/"
+            if !prefixes.contains(prefix) { prefixes.append(prefix) }
+        }
+        self.eventPathPrefixes = prefixes
     }
 
     /// `~/.dotfiles`'s resolved target, overridable via
@@ -339,9 +397,13 @@ final class DotfilesAutoSync {
             info: Unmanaged.passUnretained(self).toOpaque(),
             retain: nil, release: nil, copyDescription: nil
         )
-        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+        // Without `kFSEventStreamCreateFlagUseCFTypes`, `eventPaths` is a C
+        // array of C strings.
+        let callback: FSEventStreamCallback = { _, info, count, eventPaths, _, _ in
             guard let info else { return }
-            Unmanaged<DotfilesAutoSync>.fromOpaque(info).takeUnretainedValue().fileSystemChanged()
+            let cPaths = eventPaths.assumingMemoryBound(to: UnsafePointer<CChar>.self)
+            let paths = (0..<count).map { String(cString: cPaths[$0]) }
+            Unmanaged<DotfilesAutoSync>.fromOpaque(info).takeUnretainedValue().fileSystemChanged(paths: paths)
         }
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault, callback, &context,
@@ -378,7 +440,13 @@ final class DotfilesAutoSync {
     /// been quiet for `debounceInterval`. That is "wait for the edits to
     /// settle", and it is the same `pendingCommit?.cancel()` + `asyncAfter`
     /// shape every sibling sync class uses.
-    func fileSystemChanged() {
+    ///
+    /// `paths` are the absolute paths FSEvents reported. A batch that touched
+    /// nothing but `ignoredRuntimePaths` is dropped here, so herdr writing a
+    /// session snapshot neither flips the card to "Local changes" nor queues a
+    /// pass. `nil` (a test standing in for an event) always counts.
+    func fileSystemChanged(paths: [String]? = nil) {
+        if let paths, !paths.isEmpty, paths.allSatisfy(isIgnoredEventPath) { return }
         queue.async { [weak self] in
             guard let self, self.isEnabled() else { return }
             self.setStatus(.localChanges)
@@ -387,6 +455,17 @@ final class DotfilesAutoSync {
             self.pendingCommit = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
+    }
+
+    /// Whether one absolute path FSEvents reported lies under
+    /// `ignoredRuntimePaths`. A path outside the working tree is not ignored,
+    /// so an unexpected spelling costs one extra pass rather than a missed
+    /// edit.
+    func isIgnoredEventPath(_ absolutePath: String) -> Bool {
+        for prefix in eventPathPrefixes where absolutePath.hasPrefix(prefix) {
+            return Self.isIgnoredRuntimePath(String(absolutePath.dropFirst(prefix.count)))
+        }
+        return false
     }
 
     /// The safety net: one local `git status` every `safetyNetInterval`, which
@@ -457,10 +536,11 @@ final class DotfilesAutoSync {
         }
 
         let dirty = uncommittedHomeFiles()
-        // Nothing local *and* nothing of ours left over from a failed push.
-        // The second half is what makes a push that failed while offline
-        // recover on the next pass instead of sitting forever.
-        if dirty.isEmpty, ownUnpushedCommitCount(branch: branch) == 0 {
+        // Nothing local, nothing ignored still tracked, *and* nothing of ours
+        // left over from a failed push. The last half is what makes a push
+        // that failed while offline recover on the next pass instead of
+        // sitting forever.
+        if dirty.isEmpty, trackedIgnoredFiles().isEmpty, ownUnpushedCommitCount(branch: branch) == 0 {
             setStatus(.synced)
             return .nothingToDo
         }
@@ -498,15 +578,15 @@ final class DotfilesAutoSync {
             }
         }
 
+        // S15 (review security finding). This defaults to **on**, watches the
+        // file system and stages the equivalent of `git add -A` over `home/`,
+        // so a file that happens to hold a secret was pushed within seconds
+        // of appearing with no step where anyone looked at it. Refuse the
+        // whole pass, untracking included, rather than commit part of it: a
+        // partial commit would leave the captain reasoning about which half
+        // went out. See `DotfilesSecretScan`'s header for what this is and is
+        // not.
         if !dirty.isEmpty {
-            // S15 (review security finding). This defaults to **on**, watches
-            // the file system and stages the equivalent of `git add -A` over
-            // `home/`, so a file that happens to hold a secret was pushed
-            // within seconds of appearing with no step where anyone looked at
-            // it. Refuse the whole pass rather than commit part of it: a
-            // partial commit would leave the captain reasoning about which
-            // half went out. See `DotfilesSecretScan`'s header for what this
-            // is and is not.
             let findings = scanForSecrets(dirty)
             if !findings.isEmpty {
                 let reason = DotfilesSecretScan.refusalMessage(findings)
@@ -514,7 +594,18 @@ final class DotfilesAutoSync {
                 setStatus(.failed(reason))
                 return .failed(reason)
             }
-            let add = runGit(["add", "-A", "--", Self.autoCommitSubpath], authenticated: false)
+        }
+
+        // Read after the fast-forward, which may already have brought in
+        // another machine's untracking commit.
+        let staleTracked = trackedIgnoredFiles()
+        if !staleTracked.isEmpty, let reason = untrackIgnoredFiles(staleTracked) {
+            setStatus(.failed(reason))
+            return .failed(reason)
+        }
+
+        if !dirty.isEmpty {
+            let add = runGit(["add", "-A", "--"] + Self.autoCommitPathspec, authenticated: false)
             guard add.status == 0 else {
                 let reason = "git add failed: \(add.stderr)"
                 setStatus(.failed(reason))
@@ -524,7 +615,7 @@ final class DotfilesAutoSync {
             // alone, ignoring anything else already staged. That is what makes
             // the scope boundary a property of the command - see the header.
             let message = "\(Self.commitMessagePrefix) \(dirty.count) file\(dirty.count == 1 ? "" : "s") under \(Self.autoCommitSubpath)/"
-            let commit = runGit(["commit", "-m", message, "--", Self.autoCommitSubpath], authenticated: false)
+            let commit = runGit(["commit", "-m", message, "--"] + Self.autoCommitPathspec, authenticated: false)
             guard commit.status == 0 else {
                 let reason = "git commit failed: \(commit.stderr.isEmpty ? commit.stdout : commit.stderr)"
                 setStatus(.failed(reason))
@@ -558,7 +649,50 @@ final class DotfilesAutoSync {
             return .failed(reason)
         }
         setStatus(.synced)
-        return .pushed(fileCount: dirty.count)
+        return .pushed(fileCount: dirty.count + staleTracked.count)
+    }
+
+    /// Stops tracking every file under `ignoredRuntimePaths` that an earlier
+    /// build committed, in one commit of this class's own, and leaves the
+    /// files on disk. Returns the failure to report, or `nil`.
+    ///
+    /// **Not `git commit -- <path>`**, which is what every other commit here
+    /// uses and which cannot express this: a pathspec commit re-reads each
+    /// path from the working tree, so a snapshot that is still on disk goes
+    /// straight back into the commit (measured on a scratch repository, only
+    /// the snapshots herdr had already deleted dropped out). So the commit is
+    /// built in a temporary index read from `HEAD`, which keeps the scope
+    /// boundary the header describes - nothing the captain staged in the real
+    /// index can ride along - and the real index is then brought into line
+    /// with `git rm --cached`, which never touches the working tree.
+    /// Without that second step the real index would still list the files,
+    /// and the captain's next commit by hand would add them back.
+    private func untrackIgnoredFiles(_ files: [String]) -> String? {
+        let tempIndex = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-dotfiles-untrack-\(UUID().uuidString).index")
+        defer { try? FileManager.default.removeItem(at: tempIndex) }
+        let tempEnvironment = ["GIT_INDEX_FILE": tempIndex.path]
+        let untrackArgs = ["rm", "-r", "--cached", "--quiet", "--ignore-unmatch", "--"] + Self.ignoredRuntimePaths
+
+        let inHead = runGit(["ls-tree", "-r", "--name-only", "HEAD", "--"] + Self.ignoredRuntimePaths,
+                            authenticated: false)
+        guard inHead.status == 0 else {
+            return "git ls-tree failed: \(inHead.stderr)"
+        }
+        if !inHead.stdout.isEmpty {
+            let read = runGit(["read-tree", "HEAD"], authenticated: false, extraEnv: tempEnvironment)
+            guard read.status == 0 else { return "git read-tree failed: \(read.stderr)" }
+            let remove = runGit(untrackArgs, authenticated: false, extraEnv: tempEnvironment)
+            guard remove.status == 0 else { return "git rm --cached failed: \(remove.stderr)" }
+            let message = "\(Self.commitMessagePrefix) stop tracking \(files.count) runtime file\(files.count == 1 ? "" : "s") under \(Self.ignoredRuntimePaths.map { $0 + "/" }.joined(separator: ", "))"
+            let commit = runGit(["commit", "-m", message], authenticated: false, extraEnv: tempEnvironment)
+            guard commit.status == 0 else {
+                return "git commit failed: \(commit.stderr.isEmpty ? commit.stdout : commit.stderr)"
+            }
+        }
+        let realIndex = runGit(untrackArgs, authenticated: false)
+        guard realIndex.status == 0 else { return "git rm --cached failed: \(realIndex.stderr)" }
+        return nil
     }
 
     /// S15: every dirty path under `home/`, read and inspected.
@@ -596,8 +730,18 @@ final class DotfilesAutoSync {
         // see - measured, `home/.aws/credentials` sailed through while a
         // sibling `home/.npmrc` was held. It also makes the commit message's
         // file count the real one.
-        let result = runGit(["status", "--short", "--untracked-files=all", "--", Self.autoCommitSubpath],
+        let result = runGit(["status", "--short", "--untracked-files=all", "--"] + Self.autoCommitPathspec,
                             authenticated: false)
+        return result.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    /// Files under `ignoredRuntimePaths` that git still tracks, in `HEAD` or
+    /// in the index (`--with-tree=HEAD` lists both), so a pass that stopped
+    /// between the untracking commit and the index update finishes the job
+    /// on the next one.
+    func trackedIgnoredFiles() -> [String] {
+        let result = runGit(["ls-files", "--with-tree=HEAD", "--"] + Self.ignoredRuntimePaths, authenticated: false)
+        guard result.status == 0 else { return [] }
         return result.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
@@ -630,12 +774,14 @@ final class DotfilesAutoSync {
     /// legitimately slow and this is still a bound.
     private static let gitTimeout: TimeInterval = 300
 
-    private func runGit(_ args: [String], authenticated: Bool) -> SubprocessResult {
+    private func runGit(_ args: [String], authenticated: Bool,
+                        extraEnv: [String: String] = [:]) -> SubprocessResult {
         #if FM_SELFTESTS
         DotfilesAutoSyncTestSeam.record(args)
         #endif
         return Subprocess.git(args, cwd: workingTree,
                               authenticateFor: authenticated ? remoteURL : nil,
+                              extraEnv: extraEnv,
                               timeout: Self.gitTimeout)
     }
 

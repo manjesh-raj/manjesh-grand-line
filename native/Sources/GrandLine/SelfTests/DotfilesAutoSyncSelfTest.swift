@@ -447,6 +447,16 @@ enum DotfilesAutoSyncSelfTest {
             }
             check(code.contains("\"clone\"") == false,
                   "case 10: DotfilesAutoSync must never clone - the checkout is the captain's, created by bootstrap.sh")
+            // Untracking runtime churn uses `git rm`, and only ever with
+            // `--cached`: a plain `git rm` would delete herdr's live session
+            // snapshots from the captain's disk.
+            let rmLines = code.split(separator: "\n").filter { $0.contains("\"rm\"") }
+            check(!rmLines.isEmpty,
+                  "case 10 fixture: the untracking step's `git rm` should be visible to this guard, or the --cached check below is vacuous")
+            for line in rmLines {
+                check(line.contains("\"--cached\""),
+                      "case 10: every git rm in DotfilesAutoSync must carry --cached and leave the files on disk, got: \(line.trimmingCharacters(in: .whitespaces))")
+            }
             // Discriminating power: the guard is looking at real code, not an
             // empty string.
             check(code.contains("\"push\""),
@@ -687,6 +697,226 @@ enum DotfilesAutoSyncSelfTest {
             // one the captain routes around.
             check(DotfilesSecretScan.inspect(path: "home/wallpaper.png", contents: nil) == nil,
                   "case 15: an unreadable, innocuously-named file is not a finding")
+        }
+
+        // The herdr snapshot directory, and helpers for the four cases below.
+        let snapshotDir = "home/.config/herdr/session-snapshots"
+        func snapshot(_ n: Int) -> String { "\(snapshotDir)/session-000000000000000000\(n)-1704-0.json" }
+        func rawStatusPaths(_ repo: URL) -> [String] {
+            shell(["-C", repo.path, "status", "--short", "--untracked-files=all"]).stdout
+                .split(separator: "\n").compactMap { BootstrapController.statusLinePath(String($0)) }
+        }
+        func trackedIn(_ repo: URL, ref: String) -> [String] {
+            shell(["-C", repo.path, "ls-tree", "-r", "--name-only", ref, "--", snapshotDir]).stdout
+                .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+        }
+
+        // MARK: 16 - herdr session snapshots are not counted, staged or
+        // committed, and the herdr config beside them still syncs
+
+        do {
+            check(DotfilesAutoSync.ignoredRuntimePaths.contains(snapshotDir),
+                  "case 16: herdr's session-snapshots directory should be on the built-in ignore list")
+            for path in DotfilesAutoSync.ignoredRuntimePaths {
+                check(path.hasPrefix(DotfilesAutoSync.autoCommitSubpath + "/"),
+                      "case 16: an ignored runtime path must lie under \(DotfilesAutoSync.autoCommitSubpath)/, got \(path)")
+            }
+            check(DotfilesAutoSync.isIgnoredRuntimePath(snapshot(1)),
+                  "case 16: a snapshot file is under an ignored path")
+            check(!DotfilesAutoSync.isIgnoredRuntimePath("home/.config/herdr/config.toml"),
+                  "case 16: herdr's config.toml is configuration and must not be ignored")
+            check(!DotfilesAutoSync.isIgnoredRuntimePath(snapshotDir + "-old/x.json"),
+                  "case 16: a sibling that merely shares the prefix is not ignored")
+
+            let remote = makeBareRemote("case16.git")
+            let tree = makeClone(of: remote, named: "case16", seed: true)
+            let sync = makeSync(tree, remote: remote)
+            defer { sync.stop() }
+
+            // A snapshot-only change first: herdr wrote one and nobody edited
+            // anything.
+            write(tree.appendingPathComponent(snapshot(1)), "{\"panes\":[]}\n")
+            check(rawStatusPaths(tree).contains(snapshot(1)),
+                  "case 16 fixture: git itself should see the new snapshot, or the checks below are vacuous")
+            check(sync.uncommittedHomeFiles().isEmpty,
+                  "case 16: a new snapshot alone is not a change, got \(sync.uncommittedHomeFiles())")
+            let baseline = commitCount(remote, ref: "main")
+            let quiet = sync.syncNow()
+            check(quiet == .nothingToDo,
+                  "case 16: a pass that finds only snapshot churn should have nothing to do, got \(quiet)")
+            check(commitCount(tree) == baseline && commitCount(remote, ref: "main") == baseline,
+                  "case 16: snapshot churn alone must produce no commit and no push")
+
+            // Now a real config edit lands next to more churn.
+            write(tree.appendingPathComponent(snapshot(2)), "{\"panes\":[1]}\n")
+            write(tree.appendingPathComponent("home/.config/herdr/config.toml"), "[theme.custom]\naccent = \"#5a5a5a\"\n")
+            let lines = sync.uncommittedHomeFiles()
+            check(lines.count == 1 && lines.first?.hasSuffix("home/.config/herdr/config.toml") == true,
+                  "case 16: only config.toml should be counted, got \(lines)")
+            let outcome = sync.syncNow()
+            check(outcome == .pushed(fileCount: 1),
+                  "case 16: the config edit should be committed and pushed on its own, got \(outcome)")
+            check(filesInCommit(tree, ref: "HEAD") == ["home/.config/herdr/config.toml"],
+                  "case 16: the commit should hold config.toml and no snapshot, got \(filesInCommit(tree, ref: "HEAD"))")
+            check(trackedIn(tree, ref: "origin/main").isEmpty,
+                  "case 16: no snapshot may reach the remote, got \(trackedIn(tree, ref: "origin/main"))")
+            let pushedConfig = shell(["--git-dir", remote.path, "show", "main:home/.config/herdr/config.toml"]).stdout
+            check(pushedConfig.contains("#5a5a5a"),
+                  "case 16: the remote should carry the new herdr config, got \(pushedConfig)")
+            check(fm.fileExists(atPath: tree.appendingPathComponent(snapshot(1)).path)
+                    && fm.fileExists(atPath: tree.appendingPathComponent(snapshot(2)).path),
+                  "case 16: herdr's snapshots must stay on disk, untouched")
+            check(sync.status == .synced, "case 16: status should end at .synced, got \(sync.status)")
+        }
+
+        // MARK: 17 - snapshots an earlier build already committed are
+        // untracked once, kept on disk, and nothing staged by hand rides along
+
+        do {
+            let remote = makeBareRemote("case17.git")
+            let tree = makeClone(of: remote, named: "case17", seed: true)
+            let sync = makeSync(tree, remote: remote)
+            defer { sync.stop() }
+
+            // What the old build did: commit and push snapshots like any
+            // other file under home/.
+            for n in 1...3 { write(tree.appendingPathComponent(snapshot(n)), "{\"n\":\(n)}\n") }
+            _ = shell(["-C", tree.path, "add", "-A"])
+            _ = shell(["-C", tree.path, "commit", "-m", "Dotfiles auto-sync: 3 files under home/"])
+            _ = shell(["-C", tree.path, "push", "origin", "main"])
+            // Then herdr pruned one and wrote a new one - the screenshot's
+            // ` D` and `??` lines - and the captain staged a backup by hand.
+            try? fm.removeItem(at: tree.appendingPathComponent(snapshot(1)))
+            write(tree.appendingPathComponent(snapshot(4)), "{\"n\":4}\n")
+            let handStaged = "\(DotfilesAutoSync.neverAutoCommitted[0])/seed.txt"
+            write(tree.appendingPathComponent(handStaged), "staged by hand\n")
+            _ = shell(["-C", tree.path, "add", "--", handStaged])
+
+            check(trackedIn(tree, ref: "HEAD").count == 3,
+                  "case 17 fixture: three snapshots should be tracked before the pass, got \(trackedIn(tree, ref: "HEAD"))")
+            check(sync.trackedIgnoredFiles().count == 3,
+                  "case 17: the sync should see the three tracked snapshots, got \(sync.trackedIgnoredFiles())")
+            check(sync.uncommittedHomeFiles().isEmpty,
+                  "case 17: the deleted and new snapshots are not counted as changes, got \(sync.uncommittedHomeFiles())")
+
+            let remoteBefore = commitCount(remote, ref: "main")
+            let outcome = sync.syncNow()
+            check(outcome == .pushed(fileCount: 3),
+                  "case 17: the pass should untrack the three snapshots and push, got \(outcome)")
+            check(commitCount(remote, ref: "main") == remoteBefore + 1,
+                  "case 17: exactly one untracking commit should reach the remote")
+            let subject = shell(["-C", tree.path, "log", "-1", "--pretty=format:%s"]).stdout
+            check(subject.hasPrefix(DotfilesAutoSync.commitMessagePrefix),
+                  "case 17: the untracking commit should carry this class's prefix, got \(subject)")
+            check(trackedIn(tree, ref: "HEAD").isEmpty && trackedIn(tree, ref: "origin/main").isEmpty,
+                  "case 17: no snapshot should be tracked locally or on the remote afterwards")
+            check(sync.trackedIgnoredFiles().isEmpty,
+                  "case 17: the real index should no longer list a snapshot, got \(sync.trackedIgnoredFiles())")
+            let touched = filesInCommit(tree, ref: "HEAD")
+            check(touched.allSatisfy { $0.hasPrefix(snapshotDir + "/") } && touched.count == 3,
+                  "case 17: the commit should only remove the three snapshots, got \(touched)")
+            for n in 2...4 {
+                check(fm.fileExists(atPath: tree.appendingPathComponent(snapshot(n)).path),
+                      "case 17: snapshot \(n) must still be on disk - untracking never deletes herdr's files")
+            }
+            let staged = shell(["-C", tree.path, "diff", "--cached", "--name-only"]).stdout
+            check(staged == handStaged,
+                  "case 17: only the captain's hand-staged file should still be staged, got \(staged)")
+            let deletedLines = shell(["-C", tree.path, "status", "--short"]).stdout
+                .split(separator: "\n")
+                .filter { $0.contains(snapshotDir) && $0.trimmingCharacters(in: .whitespaces).hasPrefix("D") }
+            check(deletedLines.isEmpty,
+                  "case 17: git itself should no longer report a snapshot as deleted, got \(deletedLines)")
+
+            // One-time: the next pass has nothing left to do.
+            let again = sync.syncNow()
+            check(again == .nothingToDo,
+                  "case 17: untracking is one-time, and the next pass should have nothing to do, got \(again)")
+            check(commitCount(remote, ref: "main") == remoteBefore + 1,
+                  "case 17: the second pass must not commit again")
+        }
+
+        // MARK: 18 - the Setup card's own status read leaves snapshots out
+
+        do {
+            let remote = makeBareRemote("case18.git")
+            let tree = makeClone(of: remote, named: "case18", seed: true)
+            write(tree.appendingPathComponent(snapshot(1)), "{}\n")
+            _ = shell(["-C", tree.path, "add", "-A"])
+            _ = shell(["-C", tree.path, "commit", "-m", "old build"])
+            try? fm.removeItem(at: tree.appendingPathComponent(snapshot(1)))
+            write(tree.appendingPathComponent(snapshot(2)), "{}\n")
+            write(tree.appendingPathComponent("home/.config/herdr/config.toml"), "[theme.custom]\naccent = \"#181818\"\n")
+
+            let raw = shell(["-C", tree.path, "status", "--short"]).stdout
+            check(raw.contains("session-snapshots"),
+                  "case 18 fixture: git itself should list the snapshot churn, got \(raw)")
+            let state = DotfilesSource.repoState(at: tree.path)
+            check(!state.dirtyFiles.contains(where: { $0.contains("session-snapshots") }),
+                  "case 18: the card's changed-files list must not show snapshots, got \(state.dirtyFiles)")
+            check(state.dirtyFiles.contains(where: { $0.hasSuffix("home/.config/herdr/config.toml") }),
+                  "case 18: the card should still list the herdr config edit, got \(state.dirtyFiles)")
+        }
+
+        // MARK: 19 - a snapshot write does not wake the watcher
+
+        do {
+            let remote = makeBareRemote("case19.git")
+            let tree = makeClone(of: remote, named: "case19", seed: true)
+            // A debounce long enough that nothing commits while this case
+            // looks; `stop()` cancels whatever is pending.
+            let sync = makeSync(tree, remote: remote, debounce: 60, watcherLatency: 0.1)
+            defer { sync.stop() }
+
+            // FSEvents reports the real path, and a temporary directory has
+            // two spellings - both must match.
+            let plainSnapshot = tree.appendingPathComponent(snapshot(1)).path
+            let realTree = CodeSandbox.realPath(tree.path)
+            check(sync.isIgnoredEventPath(plainSnapshot),
+                  "case 19: a snapshot path in the working tree's own spelling is ignored")
+            check(sync.isIgnoredEventPath(realTree + "/" + snapshot(1)),
+                  "case 19: a snapshot path in its real-path spelling is ignored")
+            check(sync.isIgnoredEventPath(realTree + "/" + snapshotDir),
+                  "case 19: the snapshot directory itself is ignored")
+            check(!sync.isIgnoredEventPath(realTree + "/home/.config/herdr/config.toml"),
+                  "case 19: herdr's config.toml event is not ignored")
+            check(!sync.isIgnoredEventPath("/elsewhere/" + snapshot(1)),
+                  "case 19: a path outside the working tree is not ignored")
+
+            sync.fileSystemChanged(paths: [plainSnapshot, realTree + "/" + snapshot(2)])
+            sync.drainQueueForTests()
+            check(!sync.hasPendingCommitForTests,
+                  "case 19: an event batch of only snapshots must not queue a pass")
+            check(sync.reportedStatus == nil,
+                  "case 19: and must not flip the card to Local changes, got \(String(describing: sync.reportedStatus))")
+
+            sync.fileSystemChanged(paths: [plainSnapshot, realTree + "/home/.config/herdr/config.toml"])
+            sync.drainQueueForTests()
+            check(sync.hasPendingCommitForTests,
+                  "case 19: a batch that also touched real config must queue a pass")
+            sync.stop()
+
+            // The real watcher: the FSEvents callback has to read the event
+            // paths correctly for the filter to see them at all.
+            let watched = makeSync(tree, remote: remote, debounce: 60, watcherLatency: 0.1)
+            defer { watched.stop() }
+            watched.start()
+            watched.drainQueueForTests()
+            write(tree.appendingPathComponent(snapshot(3)), "{}\n")
+            Thread.sleep(forTimeInterval: 1.5)
+            watched.drainQueueForTests()
+            check(!watched.hasPendingCommitForTests,
+                  "case 19: a real snapshot write must not queue a pass through the real watcher")
+            write(tree.appendingPathComponent("home/.config/herdr/config.toml"), "[theme.custom]\naccent = \"#191919\"\n")
+            var queued = false
+            let deadline = Date().addingTimeInterval(10)
+            while Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.25)
+                watched.drainQueueForTests()
+                if watched.hasPendingCommitForTests { queued = true; break }
+            }
+            check(queued,
+                  "case 19: a real config write through the same watcher should still queue a pass - otherwise the check above is vacuous")
         }
 
         return finish(failures)
