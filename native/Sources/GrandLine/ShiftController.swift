@@ -486,6 +486,26 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         table.accessibilityName = "Tasks"
         return table
     }()
+    /// The Follow-ups card's rows, as the List tab's table draws a task: a
+    /// check, the columns and a ⋯ menu that holds every action a follow-up
+    /// has, Delete included. The flat list only offered those on a right
+    /// click nobody could see, so a follow-up looked like it could be ticked
+    /// off and nothing else. It draws in `followUpPanel` itself, so the
+    /// card's header, its Add and everything that hides or scrolls to it are
+    /// unchanged.
+    private lazy var followUpsTable: HelmDataTable = {
+        let table = HelmDataTable(columns: [
+            .init(id: "done", title: "", width: 40),
+            .init(id: "followUp", title: "Follow-up", width: 320, minWidth: 220, flexible: true),
+            .init(id: "project", title: "Project", width: 180),
+            .init(id: "status", title: "Status", width: 120, hiddenBelow: 760),
+            .init(id: "priority", title: "Priority", width: 100, hiddenBelow: 680),
+            .init(id: "due", title: "Due", width: 130),
+        ], actionsWidth: 120, card: followUpPanel)
+        table.sizesToFitRows = true
+        table.accessibilityName = "Follow-ups"
+        return table
+    }()
     /// Weekly review's five figures, as the prototype's summary cards.
     private lazy var reviewCards: [HelmMetricCard] = [
         HelmMetricCard(caption: "Completed this week", tint: nil, showsDetail: true),
@@ -732,8 +752,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             self?.presentFollowUpEditor(for: item)
         }
         followUpListView.onToggleDone = { [weak self] item in
-            self?.store.setFollowUpStatus(id: item.id, done: item.status != .done)
-            self?.render()
+            self?.toggleFollowUpDone(id: item.id)
         }
         followUpListView.onSnooze = { [weak self] item, option in
             self?.snoozeFollowUp(item, option: option)
@@ -1466,13 +1485,15 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The same, for a follow-up - see `ShiftStore.deleteFollowUp`'s header
     /// for why follow-ups got a delete alongside tasks and projects did not.
     func confirmDeleteFollowUp(id: String) {
+        guard ShiftRecordSheets.confirmDeleteFollowUp(id: id, store: store, in: view) else { return }
+        render()
+    }
+
+    /// Done to pending and back, from the flat list's check, the Follow-ups
+    /// table's check and that table's menu alike.
+    private func toggleFollowUpDone(id: String) {
         guard let item = store.followUps.first(where: { $0.id == id }) else { return }
-        guard DestructiveConfirm.confirm(message: "Delete \u{201C}\(item.title)\u{201D}?",
-                                         detail: "This follow-up is removed for good. This can't be undone.",
-                                         confirmTitle: "Delete Follow-up",
-                                         window: view.window) else { return }
-        store.deleteFollowUp(id: id)
-        Toast.show(in: view, message: "\u{201C}\(item.title)\u{201D} deleted")
+        store.setFollowUpStatus(id: id, done: item.status != .done)
         render()
     }
 
@@ -2356,7 +2377,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     private func presentFollowUpEditor(for followUp: ShiftFollowUp?) {
         ShiftRecordSheets.presentFollowUpEditor(from: self, store: store, followUp: followUp,
-                                                onSaved: { [weak self] in self?.render() })
+                                                onSaved: { [weak self] in self?.render() },
+                                                onDelete: { [weak self] id in self?.confirmDeleteFollowUp(id: id) })
     }
 
     /// Presents the New Project sheet (cockpit-fix-shift-new-project) - the
@@ -2635,6 +2657,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             scopeFilter.applyTheme(theme)
             projectPopup.contentTintColor = ink
             tasksTable.applyTheme(theme)
+            followUpsTable.applyTheme(theme)
             for card in reviewCards { card.applyTheme(theme) }
         }
     }
@@ -2785,6 +2808,8 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             dashboardContainer.addArrangedSubview(tasksTable.card)
         }
         tasksTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        // Takes over the Follow-ups card's body; the flat list leaves it.
+        _ = followUpsTable
         adoptWorkspaceWeeklyReview()
         // Centred in the content pane like every page-level empty state
         // (UXP-13), not resting at the top of the scroll document.
@@ -2884,6 +2909,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         projectPopup.selectItem(at: selected)
         doneWindowNote.isHidden = tasksView != .board
         tasksTable.setRows(taskTableRows())
+        followUpsTable.setRows(followUpTableRows())
     }
 
     @objc fileprivate func projectPopupChanged() {
@@ -3015,6 +3041,92 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         }
     }
 
+    // MARK: The Follow-ups table
+
+    /// Pending follow-ups in the store's order, then the ones already done -
+    /// the List tab's shape, open work above finished work.
+    fileprivate func followUpTableRows() -> [HelmDataTable.Row] {
+        let items = store.followUps
+        let rows = (items.filter { $0.status != .done } + items.filter { $0.status == .done }).map(followUpRow)
+        guard rows.isEmpty else { return rows }
+        return [.empty(symbol: "bell", title: "No follow-ups yet", body: "New follow-up adds one.",
+                       action: .init(title: "New follow-up", symbol: "plus") { [weak self] in
+                           self?.newFollowUpClicked() })]
+    }
+
+    /// One follow-up, in `taskRow`'s columns and with its menu's shape:
+    /// open, done or reopen, the follow-up's own reschedule (Snooze, where a
+    /// task has Push to), and Delete last.
+    private func followUpRow(_ item: ShiftFollowUp) -> HelmDataTable.Row {
+        var row = HelmDataTable.Row.record(item.id)
+        let isDone = item.status == .done
+        let id = item.id
+        let check = ShiftTaskCheckBadge(size: 18)
+        check.setChecked(isDone, tint: HelmTheme.nsColor(isDone ? HelmTint.good.hex(in: theme) : theme.chromeLineHex))
+        check.setAccessibilityLabel(isDone ? "Reopen \(item.title)" : "Mark \(item.title) as done")
+        check.target = self
+        check.action = #selector(followUpTableCheckClicked(_:))
+        check.identifier = NSUserInterfaceItemIdentifier(id)
+        row.cells["done"] = .view(check)
+        row.cells["followUp"] = .title(item.title, subtitle: nil, subtitleIsCode: false, symbol: nil,
+                                       tint: .neutral, tintHex: nil)
+        let project = item.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
+        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
+                                                     tint: ShiftProjectPalette.tint(forProjectID: item.projectID),
+                                                     theme: theme))
+        row.cells["status"] = .muted(isDone ? "Done" : "Pending")
+        if let pill = ShiftTaskSignals.priorityPill(item.priority) {
+            let chip = HelmStatusPill(style: .pill)
+            chip.configure(text: pill.text, tint: pill.tint, theme: theme)
+            row.cells["priority"] = .view(chip)
+        } else {
+            row.cells["priority"] = HelmDataTable.Cell.none
+        }
+        if isDone {
+            row.cells["due"] = item.followUpAt.map { .muted(ShiftDateFormatting.friendly($0)) }
+                ?? HelmDataTable.Cell.none
+        } else if let due = ShiftTaskSignals.dueCaption(date: item.followUpAt, time: item.followUpTime) {
+            row.cells["due"] = due.tint.map { .status(due.text, tint: $0) } ?? .muted(due.text)
+        } else {
+            row.cells["due"] = HelmDataTable.Cell.none
+        }
+        row.activate = { [weak self] in self?.openFollowUp(id: id) }
+        var menu: [HelmDataTable.Action] = [
+            .init(title: "Open Follow-up\u{2026}", symbol: "arrow.up.forward.square") { [weak self] in
+                self?.openFollowUp(id: id)
+            },
+            isDone
+                ? .init(title: "Reopen", symbol: "arrow.uturn.backward") { [weak self] in
+                    self?.toggleFollowUpDone(id: id) }
+                : .init(title: "Mark Done", symbol: "checkmark.circle") { [weak self] in
+                    self?.toggleFollowUpDone(id: id) },
+        ]
+        if !isDone {
+            let snoozes: [(String, String, ShiftSnoozeOption)] = [
+                ("Snooze 30 Minutes", "clock", .minutes30),
+                ("Snooze 1 Hour", "clock", .hour1),
+                ("Snooze to Tomorrow", "sun.max", .tomorrow),
+                ("Snooze to Next Week", "calendar", .nextWeek),
+                ("Snooze Until\u{2026}", "slider.horizontal.3", .custom),
+            ]
+            for (title, symbol, option) in snoozes {
+                menu.append(.init(title: title, symbol: symbol) { [weak self] in
+                    self?.snoozeFollowUp(item, option: option)
+                })
+            }
+        }
+        menu.append(.init(title: "Delete Follow-up\u{2026}", symbol: "trash") { [weak self] in
+            self?.confirmDeleteFollowUp(id: id)
+        })
+        row.menu = menu
+        return row
+    }
+
+    @objc fileprivate func followUpTableCheckClicked(_ sender: ShiftTaskCheckBadge) {
+        guard let id = sender.identifier?.rawValue else { return }
+        toggleFollowUpDone(id: id)
+    }
+
     // MARK: Weekly review
 
     private func adoptWorkspaceWeeklyReview() {
@@ -3137,6 +3249,7 @@ extension ShiftController {
     var debugProjectPopup: HelmPopUpButton { projectPopup }
     var debugFollowUpsJump: HelmButton { followUpsJump }
     var debugTasksTable: HelmDataTable { tasksTable }
+    var debugFollowUpsTable: HelmDataTable { followUpsTable }
     var debugReviewCards: [HelmMetricCard] { reviewCards }
     /// The Pushed back panel's count, when it is mounted and showing.
     var debugPushedBackCount: String? {

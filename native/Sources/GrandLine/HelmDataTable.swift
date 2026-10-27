@@ -166,7 +166,9 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
 
     // MARK: State
 
-    let card = HelmCard()
+    /// The card the table draws in: its own, or one the page already has
+    /// (`init`'s `card`).
+    let card: HelmCard
 
     /// The selected record's key, or `nil` when the selection is cleared or
     /// lands on nothing selectable.
@@ -238,7 +240,12 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     ///   - actionsWidth: the trailing column that holds each row's actions.
     ///   - reorderType: a private pasteboard type, when rows may be dragged
     ///     to reorder them (`Row.reorderGroup`).
-    init(columns: [Column], actionsWidth: CGFloat, reorderType: NSPasteboard.PasteboardType? = nil) {
+    ///   - card: a card the page already has, header and all, for a table
+    ///     that takes over that card's body. A second card nested inside the
+    ///     first would draw two outlines. A fresh card when omitted.
+    init(columns: [Column], actionsWidth: CGFloat, reorderType: NSPasteboard.PasteboardType? = nil,
+         card: HelmCard = HelmCard()) {
+        self.card = card
         self.columns = columns
         self.actionsWidth = actionsWidth
         self.reorderType = reorderType

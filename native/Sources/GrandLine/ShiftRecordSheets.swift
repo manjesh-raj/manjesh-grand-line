@@ -60,9 +60,14 @@ enum ShiftRecordSheets {
     }
 
     /// The follow-up editor: a new one when `followUp` is nil.
+    ///
+    /// `onDelete` is the task editor's own, for the same reason and with the
+    /// same deferral: an existing follow-up's sheet carries the Delete button a
+    /// task's does, and it confirms through the caller's one delete path.
     static func presentFollowUpEditor(from presenter: NSViewController, store: ShiftStore,
                                       followUp: ShiftFollowUp?, prefill: ShiftFollowUp? = nil,
-                                      onSaved: @escaping () -> Void) {
+                                      onSaved: @escaping () -> Void,
+                                      onDelete: @escaping (String) -> Void) {
         let editor = ShiftFollowUpEditorController(followUp: followUp ?? prefill, tasks: store.activeTasks,
                                                    projects: store.projects)
         editor.onSave = { saved in
@@ -72,6 +77,9 @@ enum ShiftRecordSheets {
                 store.addFollowUp(saved)
             }
             onSaved()
+        }
+        editor.onDelete = { id in
+            DispatchQueue.main.async { onDelete(id) }
         }
         presenter.presentAsSheet(editor)
     }
@@ -95,6 +103,21 @@ enum ShiftRecordSheets {
                                          window: view.window) else { return false }
         store.deleteTask(id: id)
         Toast.show(in: view, message: "\u{201C}\(task.title)\u{201D} deleted")
+        return true
+    }
+
+    /// GL-06's one confirmation for deleting a follow-up, the same shape as
+    /// `confirmDeleteTask`: the Tasks page's rows and both pages' editor
+    /// sheets all land here, so none of them can ask differently or not ask.
+    @discardableResult
+    static func confirmDeleteFollowUp(id: String, store: ShiftStore, in view: NSView) -> Bool {
+        guard let item = store.followUps.first(where: { $0.id == id }) else { return false }
+        guard DestructiveConfirm.confirm(message: "Delete \u{201C}\(item.title)\u{201D}?",
+                                         detail: "This follow-up is removed for good. This can't be undone.",
+                                         confirmTitle: "Delete Follow-up",
+                                         window: view.window) else { return false }
+        store.deleteFollowUp(id: id)
+        Toast.show(in: view, message: "\u{201C}\(item.title)\u{201D} deleted")
         return true
     }
 
