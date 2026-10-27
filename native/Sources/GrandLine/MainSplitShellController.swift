@@ -437,8 +437,15 @@ final class MainSplitShellController: WorkspaceShellController {
     /// priority (490), which the resting priority would beat, so the sidebar
     /// holds at `HelmSplitPage.sidebarHoldingPriority` (489) only while one
     /// is being placed, and then holds wherever it was put.
+    ///
+    /// The placement is laid out before the hold comes back. On macOS 26 the
+    /// divider has moved by the time `setPosition` returns. On CI's macOS 15
+    /// runner a `setPosition` to 224pt left the sidebar at 264 without this
+    /// layout, which reads as the move waiting for the next layout pass, by
+    /// when the resting hold was back.
     private func placingDividerDidChange(_ placing: Bool) {
         guard let sidebarItem else { return }
+        if !placing { splitController.splitView.layoutSubtreeIfNeeded() }
         sidebarItem.holdingPriority = placing ? HelmSplitPage.sidebarHoldingPriority : Self.sidebarRestingPriority
     }
 

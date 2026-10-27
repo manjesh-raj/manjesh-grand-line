@@ -1386,6 +1386,8 @@ That is above every page's ties and still below the window's 500, so it cannot h
 A divider drag and `setPosition(_:ofDividerAt:)` both place the divider at 490, which the resting priority would beat.
 `WorkspaceShellSplitView` reports both, and the shell drops back to 489 only while a divider is being placed.
 A synthetic drag in the off-screen shell moved the sidebar from 220pt to 260pt with the fix, and recorded 260 as the captain's width.
+The shell lays the split view out before it restores the resting priority.
+Without that, CI's macOS 15 runner left a `setPosition` to 224pt at 264, while macOS 26 passed.
 
 The same work found the split view's own held divider position coming back after a pin was released.
 `fm/grandline-flaky-sidebar-width-test-1793096163` fixed that independently for its CI flake (`holdDividerAtSidebarWidth`), and this branch is rebased onto it.
