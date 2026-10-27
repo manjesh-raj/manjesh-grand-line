@@ -37,7 +37,10 @@ struct DotfilesRepoState {
     let remoteURL: String?
     let branch: String?
     /// Non-empty `git status --short` lines - a real "uncommitted changes"
-    /// state, not assumed clean.
+    /// state, not assumed clean. Paths in
+    /// `DotfilesAutoSync.ignoredRuntimePaths` are left out: they are runtime
+    /// churn rather than configuration, and auto-sync never commits them, so
+    /// listing them would keep the card dirty for nothing anyone can act on.
     let dirtyFiles: [String]
     /// The live `user = "..."` value parsed out of `flake.nix`, or `nil` if
     /// the file is missing or the line couldn't be found.
@@ -149,7 +152,8 @@ enum DotfilesSource {
     static func repoState(at repoPath: String) -> DotfilesRepoState {
         let remote = run("/usr/bin/git", ["-C", repoPath, "remote", "get-url", "origin"]).stdout
         let branch = run("/usr/bin/git", ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"]).stdout
-        let statusOut = run("/usr/bin/git", ["-C", repoPath, "status", "--short"]).stdout
+        let statusOut = run("/usr/bin/git", ["-C", repoPath, "status", "--short", "--", "."]
+                                + DotfilesAutoSync.ignoredPathspecs).stdout
         let dirty = statusOut.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         let branchName = branch.isEmpty ? nil : branch
         let behind = behindOrigin(repoPath: repoPath, branch: branchName)

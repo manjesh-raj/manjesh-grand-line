@@ -1085,3 +1085,44 @@ What changed:
 In the sidebar layout, Setup's four tabs share one row of summary cards (`SetupSummary`), Updates is one table of tools, Setup steps is a list with Details, Automation is one card of switches, and GitHub sync opens on a paused-push card over a forks table.
 The floating bar's pages are unchanged, except GitHub sync's subtitle, which no longer says "all in sync" over checks that failed.
 The account, the decisions and the measurements are in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md), under "The captain's second list from the sidebar layout".
+
+## Dotfiles auto-sync ignores herdr's session snapshots (`fm/grandline-dotfiles-sync-ignore-sessions-1793082301`)
+
+The captain's Setup card showed "Dotfiles auto-sync · Diverged" over a changed-files list that was almost all `home/.config/herdr/session-snapshots/session-*.json`, as ` D` and `??` lines, plus a modified `config.toml`.
+`~/.config/herdr` is symlinked into the checkout as a whole directory, and herdr writes a new snapshot every session and prunes the oldest.
+The real repository's reflog showed auto-sync committing that churn every 15-30 minutes ("2 files under home/" each time), and 48 snapshots were tracked.
+
+### What changed
+
+- `DotfilesAutoSync.ignoredRuntimePaths` is a built-in list, holding `home/.config/herdr/session-snapshots` today.
+  Every pathspec-limited `status`, `add` and `commit` carries a `:(exclude)` for each entry, and so does `DotfilesSource.repoState`'s status, which is the card's list.
+- Snapshots an earlier build committed are untracked once, in a commit with the usual prefix, and the files stay on disk.
+  `git commit -- <path>` cannot express that, because a pathspec commit re-reads each path from the working tree and puts a still-present snapshot straight back (measured on a scratch repository).
+  The commit is built in a temporary `GIT_INDEX_FILE` read from `HEAD`, so nothing the captain staged can ride along, and the real index is brought into line with `git rm --cached`.
+- The FSEvents callback now reads its event paths, and a batch that touched only ignored paths does not flip the card to Local changes or queue a pass.
+- `config.toml` beside the snapshots still syncs.
+
+### Why the card said Diverged, and what still needs a human
+
+The ignore did not cause the divergence and does not clear it.
+In the real repository, auto-sync committed `dd622f2` (a real `config.toml` change) at 21:30:53, the same second the app's Code snippets sync pushed `eac680c` from its own clone.
+The push was rejected, and every pass since sees a local commit of ours and new commits on origin, which this class refuses to resolve by design.
+Ignoring the churn makes such a race much rarer, because auto-sync now commits only on real config edits, but the current state needs `git -C ~/.dotfiles pull --rebase --autostash` once.
+The origin commits touch only Code snippets and backups, so the rebase is clean.
+The next pass then untracks the 48 snapshots and pushes.
+
+### Considered and left out
+
+- Other herdr files tracked in the same directory: `release-notes.json`, `.plugins.lock` and `herdr.sock.agent`.
+  None was dirty in the captain's repository, so none was added.
+- Adding the path to `manjesh-config`'s own `.gitignore`, which already lists herdr's `*.log`, `*.sock` and `session.json`.
+  That is a change to the dotfiles repository rather than to this app, and auto-sync never writes outside `home/`.
+- Rebasing auto-sync's own unpushed commits automatically when origin's new commits touch nothing under `home/`.
+  That would clear this kind of Diverged without a human, but it reverses the "refused, never resolved" rule in `DotfilesAutoSync.swift`'s header, so it is a captain decision.
+
+### Verified
+
+`FM_RUN_DOTFILES_AUTO_SYNC_TESTS` cases 16-19 cover the exclusion, the one-time untracking, the card's list and the watcher filter, and case 10 now guards that every `git rm` carries `--cached`.
+Each was confirmed to fail with its piece of the fix removed (the exclude pathspecs, the untracking call, the real-index update, the event filter).
+A tour render against a scratch repository shaped like the screenshot showed the list down to the one `config.toml` line.
+A second machine that fast-forwards over the untracking commit will have those tracked snapshot files removed from its disk, as git does for any file a pulled commit deletes. That was not tested on a real second machine.
