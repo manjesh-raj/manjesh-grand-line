@@ -35,6 +35,7 @@ enum CodePreviewSelfTest {
         checkAssets(check)
         checkOfflineByConstruction(check)
         checkBundleCarriesEveryLanguage(check)
+        checkBundleCarriesTheWorkbenchBridge(check)
         checkLanguageTable(check)
         checkFilenameMapping(check)
         checkDetection(check)
@@ -276,6 +277,28 @@ enum CodePreviewSelfTest {
               "the TypeScript language *service* is in the bundle - this panel is highlight-only (see the README)")
         check(!js.contains("jsonDefaults"),
               "the JSON language *service* is in the bundle - JSON is meant to be the hand-written Monarch tokenizer")
+    }
+
+    /// The sidebar layout's bridge calls and page messages, in the committed
+    /// bundle - the app loads `web/`, never `src/`, so a source edit without
+    /// a rebuild would leave the native toolbar's Undo, the dirty marker and
+    /// the current-line bar talking to a page that has never heard of them.
+    private static func checkBundleCarriesTheWorkbenchBridge(_ check: (Bool, String) -> Void) {
+        guard let dir = CodePreviewAssets.webDirectory(),
+              let js = try? String(contentsOf: dir.appendingPathComponent("code-preview.js"), encoding: .utf8),
+              let html = try? String(contentsOf: dir.appendingPathComponent("index.html"), encoding: .utf8) else {
+            check(false, "could not read the bundle's code-preview.js and index.html")
+            return
+        }
+        for entry in ["undo(", "redo(", "setPresentation(", "editorInfo(", "renderNow(", "readCurrentLineBar("] {
+            check(js.contains(entry), "the committed bundle has no `\(entry)` bridge call - re-run Scripts/build-monaco-web.sh")
+        }
+        for message in ["type:\"pending\"", "type:\"history\""] {
+            check(js.contains(message), "the committed bundle never posts \(message) - re-run Scripts/build-monaco-web.sh")
+        }
+        check(js.contains("insertSpaces"), "the bundle's cursor message carries no indentation")
+        check(html.contains("html.gl-current-line-bar .monaco-editor .view-overlays .current-line"),
+              "the page shell has no current-line bar rule")
     }
 
     /// The `content="…"` of the page's CSP meta tag.

@@ -318,3 +318,50 @@ The orange dot on the active tab is `TabChipView`'s *selected* marker (E4), so t
 
 **Not verified.** The probe app's Monaco page never finished loading on this machine (`isLoading` true after 60s, `evaluateJavaScript` never answered) even with the window front and unoccluded, so the screenshots show the editor card's "Starting the editor…" state.
 The page reaches ready with this change in all three windowed Code Preview suites.
+
+## `fm/grandline-code-workbench-ui-1793031226`: the sidebar layout's Workbench presentation
+
+The captain pasted an HTML concept for the Code page ("Workbench > Code") and asked for the page to match its structure and polish.
+The concept is a light-only mock, so what was reproduced is its structure, spacing and hierarchy, drawn in this app's own tokens in every palette.
+The floating bar is frozen, so its page is exactly what it was; the new presentation is built by `adoptSidebarLayout()` and lives in `CodePreviewWorkbench.swift`.
+
+**What shipped.**
+
+- Cards: the snippet list in a card with a "Snippets / N items" header and a sync line at its foot, a Quick actions card (New snippet ⌘N, Import file…), a toolbar card, and an editor card holding the tabs, a title row (file name, folder, Expand, More), the code and the Run results dock.
+- The toolbar card holds the list toggle, the language picker, Format, Undo, Redo, the text-size stepper, a run status sentence and a primary Run script button.
+  The window toolbar carries none of the page's tools any more (`drillHeaderActions` is empty in both layouts), which reverses R2-UX-06 for this page on the captain's instruction.
+  Find, word wrap, the runners list, Rename, Duplicate, Copy, Clear and Close are in the title row's More menu.
+- The Run results dock (`CodeRunResultsDock.swift`): a verdict chip, the elapsed time, Copy output and Clear, Standard output and Errors (stderr) tabs with real line counts, and a terminal surface that is dark in every palette.
+- The right column (`CodePreviewInspector.swift`): Run configuration, Script checks and Editor preferences, hidden below a 1040pt page width and by Expand.
+- The status bar leads with position, language, encoding and indentation, and trails with the sync state.
+- Editor details: Monaco draws a 2px accent bar on the current line, file tabs truncate in the middle under a 200pt cap, and a tab and its row show an unsaved dot while the page's debounce holds an edit.
+
+**Two behaviour changes under the surface, and why.**
+
+- `CodeRunner` captures stdout and stderr apart.
+  An Errors tab would not have been true over a merged pipe.
+  The cost is the exact interleaving the merged pipe kept; the floating bar's single pane now reads stdout, then stderr.
+  One visible consequence worth knowing before it reads as a bug: `/usr/bin/python3` prints its `xcrun_db` "couldn't create cache file" line on stderr under the sandbox, so a Python run usually shows one line on the Errors tab.
+- `CodeRunner.checkSyntax` is new: `bash -n`, `zsh -n`, Python's `ast.parse` and `node --check`, under the run's own sandbox profile with a 5s bound.
+  Swift, TypeScript and Deno have no cheap parse-only mode, so they say "No syntax check" rather than passing.
+
+**The Run configuration card states only what the code does.**
+The concept said "Isolated process" and "Network Disabled"; the card says "Sandboxed process", "Blocked", "Temporary" and the real wall clock, and its note names exactly the profile's denials.
+`CodePreviewWorkbenchSelfTest.checkInspectorClaimsAreBacked` reads the profile text and the runner's own source for each claim, so a change that makes a sentence false fails a test.
+
+**Three things a measurement found.**
+
+- A constraint swapped inside `layout()` after `super.layout()` leaves that pass's frames stale.
+  The editor card kept the inspector's gap at a narrow width until the breakpoint was applied in `setFrameSize` and before `super.layout()`.
+- The floating bar's `sidebar.width == 208` is a constraint on the list view itself, so it survived the move into the card and tied with the card's own width at the same priority (a 220pt column where 200 was asked for).
+  `buildWorkbench` deactivates it.
+- A theme's `accentHex` has no `#`, so the first current-line bar was an invalid CSS colour and drew nothing; Monaco's own computed `box-shadow` read `none`.
+  `readCurrentLineBar` is the bridge call that reads it back.
+
+**The tour lab can render this page now.**
+`cacheDisplay` draws a `WKWebView` blank, and an off-screen page is `visibilityState: hidden`, so Monaco never draws its lines.
+The lab composites each web view's `takeSnapshot` over its rectangle, turns off WebKit's occlusion detection for its own web views, and calls the new `renderNow` bridge call (Monaco's synchronous `editor.render`).
+`code run` runs the showing snippet through the page's own Run, so seed only harmless fixtures.
+
+**Verification.** `FM_RUN_CODE_PREVIEW_WORKBENCH_TESTS` (pure, blocking lane) and `FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS` (window-backed).
+Renders before and after, Dusk and Daylight, 1512 and 1100 wide, and at the Larger text scale, are in the task's data directory rather than the repo.

@@ -81,6 +81,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         /// overrides a deliberate choice, however plain the file looks
         /// afterwards.
         var languageOverridden = false
+        /// The editor holds text the disk does not have yet: set by the
+        /// page's `pending` message on the first keystroke of a burst,
+        /// cleared when its debounced `change` has been written.
+        var hasPendingEdit = false
         let chip: TabChipView
 
         init(key: String, name: String, content: String, persisted: Bool, chip: TabChipView) {
@@ -224,6 +228,11 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     private let statusBar = NSView()
     private let statusSeparator = NSView()
+    private var statusLeading: NSStackView!
+    private var statusTrailing: NSStackView!
+    /// The sidebar layout's indentation reading ("Spaces: 2") - Monaco's own
+    /// per-model value, which may have been detected from the text.
+    private let indentLabel = NSTextField(labelWithString: "")
     private let cursorLabel = NSTextField(labelWithString: "")
     private let languageLabel = NSTextField(labelWithString: "")
     private let encodingLabel = NSTextField(labelWithString: "UTF-8")
@@ -248,6 +257,74 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// and apply an older result over a newer one.
     private var isFormatting = false
 
+    // MARK: The sidebar layout (Workbench > Code)
+
+    /// Built once, by `adoptSidebarLayout()`; `nil` for the page's whole life
+    /// in the floating bar. See `CodePreviewWorkbench.swift` for the layout.
+    private var workbench: CodePreviewWorkbenchView?
+    private let dock = CodeRunResultsDock()
+    private lazy var titleRow = CodePreviewEditorTitleRow(trailing: [expandButton, editorMoreMenu.button])
+    private let runStatus = CodePreviewRunStatus()
+    private let syncFooter = CodePreviewSyncFooter()
+    private let runConfigurationCard = CodePreviewInspectorCard(title: "Run configuration")
+    private let scriptChecksCard = CodePreviewInspectorCard(title: "Script checks")
+    private let editorPreferencesCard = CodePreviewInspectorCard(title: "Editor preferences")
+    private lazy var undoButton = HelmPageToolbar.iconButton(
+        symbol: "arrow.uturn.backward", tooltip: "Undo (\u{2318}Z)",
+        target: self, action: #selector(undoTapped))
+    private lazy var redoButton = HelmPageToolbar.iconButton(
+        symbol: "arrow.uturn.forward", tooltip: "Redo (\u{21E7}\u{2318}Z)",
+        target: self, action: #selector(redoTapped))
+    private lazy var expandButton = HelmPageToolbar.iconButton(
+        symbol: "arrow.up.left.and.arrow.down.right",
+        tooltip: "Expand the editor - hide the snippet list and the side cards",
+        target: self, action: #selector(toggleExpandTapped))
+    private lazy var newSnippetAction = CodePreviewQuickActionButton(
+        title: "New snippet", symbol: "plus", shortcut: "\u{2318}N",
+        tooltip: "Open a new, empty snippet (\u{2318}N)") { [weak self] in self?.newSnippetTapped() }
+    private lazy var importAction = CodePreviewQuickActionButton(
+        title: "Import file\u{2026}", symbol: "square.and.arrow.down", shortcut: nil,
+        tooltip: "Open a text file from this Mac as a new snippet - the same as dropping it on the page") { [weak self] in
+        self?.importFileTapped()
+    }
+    /// The title row's More menu. In the sidebar layout it carries what the
+    /// floating bar's toolbar shows as buttons (Find, wrap, the runners list)
+    /// plus the snippet's own verbs, so nothing the old cluster reached is
+    /// lost when the window toolbar stops carrying it.
+    private lazy var editorMoreMenu = HelmOverflowMenu(items: [
+        .init("Find in snippet (\u{2318}F)", symbol: "magnifyingglass") { [weak self] in self?.showFind() },
+        .init(title: { [weak self] in (self?.wrapOn ?? false) ? "Turn word wrap off" : "Turn word wrap on" },
+              symbol: "text.alignleft") { [weak self] in self?.toggleWrapTapped() },
+        .init("Rename snippet", symbol: "pencil") { [weak self] in
+            guard let self, let key = self.currentKey else { return }
+            self.beginRenameFromSidebar(key: key)
+        },
+        .init("Duplicate snippet", symbol: "plus.square.on.square") { [weak self] in
+            guard let self, let key = self.currentKey else { return }
+            self.duplicateTab(key: key)
+        },
+        .init("Copy snippet", symbol: "doc.on.doc") { [weak self] in self?.copyTapped() },
+        .init("Clear snippet", symbol: "eraser") { [weak self] in self?.clearTapped() },
+        .init("Close snippet", symbol: "xmark") { [weak self] in
+            guard let self, let key = self.currentKey else { return }
+            self.closeTab(key: key)
+        },
+        .init("Runners and formatters\u{2026}", symbol: "cpu",
+              isEnabled: { [weak self] in self?.runner.isWarm ?? false }) { [weak self] in self?.runnersTapped() },
+    ], tooltip: "More - find, word wrap, rename, copy, clear or close this snippet")
+    /// The last syntax check, and what it was about - so a result that lands
+    /// after the captain typed on, or moved to another tab, is not shown
+    /// against text it never read.
+    private var syntaxResult: (key: String, content: String, language: String, check: CodeSyntaxCheck)?
+    private var syntaxGeneration = 0
+    /// What Monaco reports it is drawing with (`editorInfo`), for the
+    /// Editor preferences card. `nil` until the page has answered.
+    private var editorFontFamily: String?
+    private var editorLineNumbers: Bool?
+
+    /// A file tab's widest, before its name truncates in the middle.
+    private static let fileTabMaximumWidth: CGFloat = 200
+
     private static let cardInset: CGFloat = HelmMetrics.s3
     private static let statusBarHeight: CGFloat = 26
     /// The tab strip's height inside the 44pt toolbar: a 28pt chip plus room
@@ -269,12 +346,13 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     var onDrillSubtitleChanged: (() -> Void)?
 
-    /// Empty on purpose - see the file header. Console makes the same call.
-    /// R2-UX-06: in the sidebar layout this page's action cluster is the
-    /// window toolbar's, so two toolbars no longer stack; the snippet tabs
-    /// stay in the page's own row, which is content rather than chrome. The
-    /// floating bar keeps the cluster in that row.
-    var drillHeaderActions: [NSView] { drawsSidebarLayout ? pageActionViews : [] }
+    /// Empty in both layouts. The floating bar keeps the cluster in the
+    /// page's own toolbar row (see the file header; Console makes the same
+    /// call). The sidebar layout used to hand it to the window toolbar
+    /// (R2-UX-06); the captain's reviewed Workbench concept puts the page's
+    /// tools in the page's own toolbar card instead, and leaves the window
+    /// toolbar with only the shell's global items.
+    var drillHeaderActions: [NSView] { [] }
 
     /// The cluster, in the reviewed mockup's order.
     private var pageActionViews: [NSView] {
@@ -330,6 +408,11 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             self?.cursor = cursor
             self?.refreshStatusBar()
         }
+        webView.onEditPending = { [weak self] key in self?.editPending(key: key) }
+        webView.onHistoryChanged = { [weak self] canUndo, canRedo in
+            self?.undoButton.isEnabled = canUndo
+            self?.redoButton.isEnabled = canRedo
+        }
 
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
             self?.theme = theme
@@ -340,12 +423,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // terminals) - one setting, one place to change it.
         fontObservation = FontSizeManager.shared.observe { [weak self] size in
             self?.pushFontSize(size)
+            self?.refreshEditorInfo()
         }
 
         store.gitSync?.observeStatus { [weak self] status in
             guard let self else { return }
             self.syncStatus = status
             self.refreshStatusBar()
+            self.refreshSyncFooter()
             self.onDrillSubtitleChanged?()
             // A status change is the one signal this page gets that the git
             // working tree moved - which on a fresh machine is when the
@@ -716,6 +801,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // VS Code's own arrangement, which is what the reviewed mockup shows.
         let leading = NSStackView(views: [cursorLabel])
         let trailing = NSStackView(views: [languageLabel, encodingLabel, syncLabel])
+        statusLeading = leading
+        statusTrailing = trailing
         for stack in [leading, trailing] {
             stack.orientation = .horizontal
             stack.alignment = .centerY
@@ -767,6 +854,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         pushFontSize(FontSizeManager.shared.size)
         restoreSnippetsIfNeeded()
         refreshRunControls()
+        refreshEditorInfo()
         // F11 / GL-12: asking "what interpreters and formatters does this
         // machine have" means resolving ~15 executables and running
         // `--version` on each, so it happens off the main thread and the two
@@ -775,6 +863,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // that never opens Code Preview pays nothing.
         runner.warmUp { [weak self] in
             self?.refreshRunControls()
+            self?.scheduleSyntaxCheck()
             self?.onDrillSubtitleChanged?()
         }
         onDrillSubtitleChanged?()
@@ -850,6 +939,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // A long name truncates on the chip, so the whole of it is one hover
         // away (the chip's own label is tail-truncated at its 240pt cap).
         chip.toolTip = name
+        if drawsSidebarLayout { chip.useFileNameTruncation(maximumWidth: Self.fileTabMaximumWidth) }
         let snippet = OpenSnippet(key: key, name: name, content: content, persisted: persisted, chip: chip)
 
         chip.onSelect = { [weak self] in self?.select(key: key) }
@@ -885,6 +975,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         renderPane()
         refreshRunControls()
         refreshSidebar()
+        refreshTitleRow()
+        scheduleSyntaxCheck()
+        refreshEditorInfo()
         revealActiveSnippet()
     }
 
@@ -1008,11 +1101,15 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         snippet.chip.setName(name)
         snippet.chip.toolTip = name
         refreshSidebar()
+        refreshTitleRow()
     }
 
     private func refreshSidebar() {
+        // Dirty keys only in the sidebar layout: the floating bar's column
+        // draws exactly what it did.
+        let dirty = drawsSidebarLayout ? Set(open.filter(\.hasPendingEdit).map(\.key)) : []
         sidebar.setEntries(open.map { CodePreviewFileEntry(key: $0.key, name: $0.name) },
-                           activeKey: currentKey)
+                           activeKey: currentKey, dirtyKeys: dirty)
     }
 
     // MARK: Showing and hiding the snippet list
@@ -1051,6 +1148,16 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// before activating - two active `editorCard.leading ==` ties are a
     /// required conflict (gotcha (13)'s silent resize).
     private func applySidebarVisibility() {
+        if let workbench {
+            workbench.setSnippetColumnWanted(sidebarVisible)
+            sidebarButton.tint = sidebarVisible ? .accent : nil
+            sidebarButton.toolTip = sidebarVisible
+                ? "Hide the snippet list (\u{2318}B)"
+                : "Show the snippet list (\u{2318}B)"
+            view.layoutSubtreeIfNeeded()
+            if sidebarVisible { sidebar.revealActiveRow() }
+            return
+        }
         sidebar.isHidden = !sidebarVisible
         resizeHandle.isHidden = !sidebarVisible
         if sidebarVisible {
@@ -1070,6 +1177,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     }
 
     private func setSidebarWidth(_ width: CGFloat, remember: Bool) {
+        // The sidebar layout's column is a card at the concept's width, with
+        // no drag handle; the remembered width belongs to the floating bar.
+        guard workbench == nil else { return }
         let clamped = CodePreviewSidebarPreferences.clamp(width)
         sidebarWidth.constant = clamped
         if remember { CodePreviewSidebarPreferences.setWidth(clamped) }
@@ -1147,6 +1257,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private func snippetChanged(key: String, content: String) {
         guard let snippet = snippet(for: key) else { return }
         snippet.content = content
+        // The edit has reached this side. Whether it is then written (an
+        // empty scratch tab deliberately is not) is this method's decision,
+        // and either way nothing is waiting in the page any more.
+        clearPendingEdit(snippet)
+        defer {
+            refreshInspector()
+            scheduleSyntaxCheck()
+        }
 
         // An empty, never-saved tab stays off disk. Visiting this destination
         // must not commit a file to the captain's config repo.
@@ -1347,6 +1465,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         wrapOn.toggle()
         wrapButton.tint = wrapOn ? .accent : nil
         webView.call("setWordWrap", payload: ["on": wrapOn])
+        refreshInspector()
     }
 
     @objc private func copyTapped() {
@@ -1435,7 +1554,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     }
 
     private func copyOutput() {
-        let text = outputPane.outputText
+        let text = workbench == nil ? outputPane.outputText : dock.visibleText
         guard !text.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -1488,7 +1607,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
                 // error's line and column - so it goes in the pane rather than
                 // a toast that truncates it.
                 self.show(state: .finished(CodeRunOutcome(
-                    kind: .failed, status: 1, output: failure.combined,
+                    kind: .failed, status: 1, standardOutput: "", standardError: failure.combined,
                     duration: 0, sandboxPath: "", truncated: false,
                     toolDescription: "")), for: key)
             case .success(let formatted):
@@ -1549,7 +1668,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         content.layoutSubtreeIfNeeded()
         popover.contentSize = content.fittingSize
         runnersPopover = popover
-        popover.show(relativeTo: runnersButton.bounds, of: runnersButton, preferredEdge: .maxY)
+        let anchor: NSView = workbench == nil ? runnersButton : editorMoreMenu.button
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 
     /// Records a pane state against a snippet and shows it if that snippet is
@@ -1567,6 +1687,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// Draws whatever the selected tab's last run was - or hides the pane.
     private func renderPane() {
         let state = currentKey.flatMap { paneStates[$0] } ?? .idle
+        if let workbench {
+            dock.render(state)
+            if case .idle = state { workbench.setDockVisible(false) } else { workbench.setDockVisible(true) }
+            refreshRunStatus()
+            return
+        }
         outputPane.render(state)
         let showing: Bool
         if case .idle = state { showing = false } else { showing = true }
@@ -1603,6 +1729,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // the warm-up lands, which is a fraction of a second after the page
         // first appears.
         let known = runner.isWarm
+        defer {
+            refreshRunStatus()
+            refreshInspector()
+        }
 
         runButton.isEnabled = known && runnerPresence != nil && hasContent
             && activeRun == nil && CodeSandbox.isAvailable
@@ -1673,7 +1803,16 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         }
         languageLabel.stringValue = language.displayName
         syncLabel.stringValue = syncSummary
+        indentLabel.stringValue = Self.indentationText(cursor)
+        indentLabel.isHidden = workbench == nil || indentLabel.stringValue.isEmpty
         styleStatusLabels()
+    }
+
+    /// "Spaces: 2" or "Tab size: 4", as VS Code's status bar says it, from
+    /// the model's own options. Empty until the page has reported them.
+    static func indentationText(_ cursor: CodePreviewCursor) -> String {
+        guard cursor.tabSize > 0 else { return "" }
+        return cursor.insertSpaces ? "Spaces: \(cursor.tabSize)" : "Tab size: \(cursor.tabSize)"
     }
 
     private func report(error: String) {
@@ -1726,9 +1865,20 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         toolbar.applyTheme(theme)
-        HelmCard.applyCardSurface(to: editorCard, theme: theme,
-                                  cornerRadius: HelmMetrics.rCard,
-                                  daylightRadius: HelmMetrics.dSurface)
+        if let workbench {
+            // Inside the sidebar layout's editor card the code is a flat well
+            // on Monaco's own ground, not a second card.
+            editorCard.layer?.cornerRadius = 0
+            editorCard.layer?.borderWidth = 0
+            editorCard.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+            workbench.applyTheme(theme)
+            refreshRunStatus()
+            refreshSyncFooter()
+        } else {
+            HelmCard.applyCardSurface(to: editorCard, theme: theme,
+                                      cornerRadius: HelmMetrics.rCard,
+                                      daylightRadius: HelmMetrics.dSurface)
+        }
         statusBar.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         statusSeparator.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
         // Opaque, unlike a page's own empty-state container: this one sits
@@ -1747,7 +1897,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     private func styleStatusLabels() {
         let muted = HelmTheme.mutedInk(theme)
-        for label in [cursorLabel, languageLabel, encodingLabel, syncLabel] {
+        for label in [cursorLabel, languageLabel, encodingLabel, syncLabel, indentLabel] {
             label.font = HelmType.caption()
             label.textColor = muted
         }
@@ -1776,6 +1926,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// logged rather than surfaced as an error banner.
     private func pushTheme() {
         guard webView.isReady else { return }
+        pushPresentation()
         webView.call("setTheme", payload: ["theme": CodePreviewTheme.palette(for: theme)]) { result in
             if case .failure(let error) = result {
                 AppLog.lifecycle.error("code preview: theme push failed: \(error.message, privacy: .public)")
@@ -1788,9 +1939,282 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         webView.call("setFontSize", payload: ["size": Double(size)])
     }
 
+    // MARK: The sidebar layout
+
+    /// Moves the page from the floating bar's arrangement into the
+    /// Workbench one. Called once; the page never moves back.
+    ///
+    /// Every view keeps its controller-owned state and wiring: the snippet
+    /// list, the tab strip, the editor surface and the status bar are the
+    /// same objects, re-placed. Removing each one from the root first drops
+    /// every constraint the root held for it, so nothing of the old geometry
+    /// can fight the new one.
+    private func buildWorkbench() {
+        let root = view
+        for view in [toolbar, editorCard, outputPane, statusBar, sidebar, resizeHandle] as [NSView] {
+            view.removeFromSuperview()
+        }
+        // Out of the page toolbar: the tab strip goes to the editor card and
+        // the list toggle to the toolbar card. The tab scroller's leading
+        // edge was tied to the toggle, so it is re-tied to the strip.
+        tabStrip.removeFromSuperview()
+        sidebarButton.removeFromSuperview()
+        tabScroll.leadingAnchor.constraint(equalTo: tabStrip.leadingAnchor).isActive = true
+        for view in pageActionViews { view.removeFromSuperview() }
+        // The floating bar's column width is a constraint on the list view
+        // itself, so it survives the move and would tie with the card's own
+        // width at the same priority - measured as a 220pt column where the
+        // narrow layout asks for 200.
+        sidebarWidth.isActive = false
+
+        runButton.variant = .primary
+        runButton.size = .regular
+        runButton.title = "Run script"
+        runButton.setAccessibilityLabel("Run script")
+        sidebar.usesCardHeader = true
+        for snippet in open { snippet.chip.useFileNameTruncation(maximumWidth: Self.fileTabMaximumWidth) }
+        undoButton.isEnabled = false
+        redoButton.isEnabled = false
+        undoButton.setAccessibilityLabel("Undo")
+        redoButton.setAccessibilityLabel("Redo")
+        expandButton.setAccessibilityLabel("Expand the editor")
+        languagePicker.setAccessibilityLabel("Language")
+
+        // The status bar: position, language, encoding and indentation lead;
+        // the sync state trails - the concept's arrangement.
+        for label in [languageLabel, encodingLabel] {
+            statusTrailing.removeArrangedSubview(label)
+            label.removeFromSuperview()
+            statusLeading.addArrangedSubview(label)
+        }
+        statusLeading.addArrangedSubview(indentLabel)
+        statusLeading.spacing = HelmMetrics.s4
+
+        let slot = { CodePreviewToolbarSeparatorSlot() }
+        let parts = CodePreviewWorkbenchView.Parts(
+            snippetList: sidebar,
+            syncFooter: syncFooter,
+            quickActions: [newSnippetAction, importAction],
+            toolbarLeading: [sidebarButton, slot(), languagePicker, slot(), formatButton, undoButton, redoButton,
+                             slot(), zoomStepper],
+            runStatus: runStatus,
+            runButton: runButton,
+            tabStrip: tabStrip,
+            titleRow: titleRow,
+            codeArea: editorCard,
+            dock: dock,
+            inspectorCards: [runConfigurationCard, scriptChecksCard, editorPreferencesCard],
+            statusBar: statusBar)
+        let workbench = CodePreviewWorkbenchView(parts: parts)
+        root.addSubview(workbench)
+        NSLayoutConstraint.activate([
+            workbench.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            workbench.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            workbench.topAnchor.constraint(equalTo: root.topAnchor),
+            workbench.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+        self.workbench = workbench
+
+        dock.onStop = { [weak self] in self?.stopRun() }
+        dock.onCopy = { [weak self] in self?.copyOutput() }
+        dock.onClear = { [weak self] in self?.clearOutput() }
+
+        applySidebarVisibility()
+        applyTheme()
+        refreshStatusBar()
+        refreshTitleRow()
+        renderPane()
+        refreshRunControls()
+        refreshSyncFooter()
+        refreshInspector()
+        refreshEditorInfo()
+        pushPresentation()
+        scheduleSyntaxCheck()
+        view.layoutSubtreeIfNeeded()
+        revealActiveSnippet()
+    }
+
+    /// The editor surface's sidebar-layout look: room above the first line
+    /// and the current-line bar in the theme's accent.
+    private func pushPresentation() {
+        guard workbench != nil, webView.isReady else { return }
+        webView.call("setPresentation", payload: [
+            "paddingTop": Double(CodePreviewWorkbenchMetrics.codeTopPadding),
+            // CSS wants the `#`; a theme's hex is stored without one.
+            "currentLineBar": theme.accentHex.hasPrefix("#") ? theme.accentHex : "#" + theme.accentHex,
+        ])
+    }
+
+    private func refreshTitleRow() {
+        guard workbench != nil else { return }
+        titleRow.set(name: currentSnippet?.name ?? "", folder: Self.folderDisplay(store.root.path))
+    }
+
+    /// Where a snippet lives, short enough for the title row: the last two
+    /// folders ("…/GrandLineDocs/code-snippets/"), or the whole tilde path
+    /// when that is already short. The full path is the label's tooltip.
+    static func folderDisplay(_ path: String) -> String {
+        let tilde = (path as NSString).abbreviatingWithTildeInPath
+        let parts = tilde.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count > 3 else { return tilde.hasSuffix("/") ? tilde : tilde + "/" }
+        return "\u{2026}/" + parts.suffix(2).joined(separator: "/") + "/"
+    }
+
+    private func refreshRunStatus() {
+        guard workbench != nil else { return }
+        let language = currentSnippet?.language ?? CodePreviewLanguage.plainText
+        let state = currentKey.flatMap { paneStates[$0] } ?? .idle
+        let hasContent = !(currentSnippet?.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        runStatus.set(CodePreviewWorkbenchStatus.line(
+            pane: state, runnerKnown: runner.isWarm, hasRunner: runner.runner(for: language.id) != nil,
+            runnable: CodeRunCatalog.runRecipe(for: language.id) != nil, hasContent: hasContent,
+            sandboxAvailable: CodeSandbox.isAvailable, languageName: language.displayName), theme: theme)
+    }
+
+    private func refreshSyncFooter() {
+        guard workbench != nil else { return }
+        let failed: Bool
+        if case .failed = syncStatus { failed = true } else { failed = false }
+        let synced: Bool
+        if case .synced = syncStatus { synced = true } else { synced = false }
+        syncFooter.set(text: syncSummary, synced: synced, failed: failed,
+                       onThisMachine: store.gitSync == nil, theme: theme)
+    }
+
+    private var inspectorInput: CodePreviewInspectorModel.Input {
+        let language = currentSnippet?.language ?? CodePreviewLanguage.plainText
+        let content = currentSnippet?.content ?? ""
+        var syntax: CodeSyntaxCheck?
+        if let result = syntaxResult, result.key == currentKey, result.content == content,
+           result.language == language.id {
+            syntax = result.check
+        }
+        return CodePreviewInspectorModel.Input(
+            language: language, content: content, runnerKnown: runner.isWarm,
+            runner: runner.runner(for: language.id), sandboxAvailable: CodeSandbox.isAvailable,
+            syntax: syntax, lineNumbers: editorLineNumbers, wordWrap: wrapOn,
+            fontFamily: editorFontFamily, fontSize: FontSizeManager.shared.size)
+    }
+
+    private func refreshInspector() {
+        guard workbench != nil else { return }
+        let input = inspectorInput
+        runConfigurationCard.setRows(CodePreviewInspectorModel.runConfiguration(input),
+                                     note: CodePreviewInspectorModel.safetyNote(sandboxAvailable: input.sandboxAvailable))
+        scriptChecksCard.setChecks(CodePreviewInspectorModel.checks(input))
+        editorPreferencesCard.setRows(CodePreviewInspectorModel.editorPreferences(input))
+    }
+
+    /// Asks Monaco what it is really drawing with.
+    private func refreshEditorInfo() {
+        guard workbench != nil, webView.isReady else { return }
+        webView.call("editorInfo") { [weak self] result in
+            guard let self, case .success(let body) = result else { return }
+            self.editorFontFamily = body["fontFamily"] as? String
+            self.editorLineNumbers = body["lineNumbers"] as? Bool
+            // The indentation is per model, so a tab switch re-reads it here
+            // rather than waiting for the caret to move.
+            if let tabSize = body["tabSize"] as? Int {
+                self.cursor.tabSize = tabSize
+                self.cursor.insertSpaces = (body["insertSpaces"] as? Bool) ?? true
+                self.refreshStatusBar()
+            }
+            self.refreshInspector()
+        }
+    }
+
+    /// The Script checks card's parse-only check, for the snippet on screen.
+    /// Runs when the text, the language or the tab changes - the page's own
+    /// 500ms debounce already spaces edits out - and only in the sidebar
+    /// layout, which is the only place the result is shown.
+    private func scheduleSyntaxCheck() {
+        guard workbench != nil, runner.isWarm, let snippet = currentSnippet else { return }
+        let key = snippet.key
+        let content = snippet.content
+        let language = snippet.language.id
+        if let result = syntaxResult, result.key == key, result.content == content, result.language == language { return }
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              runner.runner(for: language) != nil else { return }
+        syntaxGeneration += 1
+        let generation = syntaxGeneration
+        refreshInspector()
+        runner.checkSyntax(content: content, languageID: language) { [weak self] check in
+            guard let self, generation == self.syntaxGeneration else { return }
+            self.syntaxResult = (key, content, language, check)
+            self.refreshInspector()
+        }
+    }
+
+    private func editPending(key: String) {
+        guard workbench != nil, let snippet = snippet(for: key), !snippet.hasPendingEdit else { return }
+        snippet.hasPendingEdit = true
+        snippet.chip.showsUnsavedMarker = true
+        refreshSidebar()
+    }
+
+    private func clearPendingEdit(_ snippet: OpenSnippet) {
+        guard snippet.hasPendingEdit else { return }
+        snippet.hasPendingEdit = false
+        snippet.chip.showsUnsavedMarker = false
+        refreshSidebar()
+    }
+
+    @objc private func undoTapped() { webView.call("undo") }
+    @objc private func redoTapped() { webView.call("redo") }
+
+    @objc private func toggleExpandTapped() {
+        guard let workbench else { return }
+        workbench.setExpanded(!workbench.isExpanded)
+        expandButton.tint = workbench.isExpanded ? .accent : nil
+        expandButton.toolTip = workbench.isExpanded
+            ? "Restore the snippet list and the side cards"
+            : "Expand the editor - hide the snippet list and the side cards"
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// Quick actions' Import file: an open panel, then exactly the drop path
+    /// (`openDroppedFiles`), so the size and text limits are the same ones.
+    @objc private func importFileTapped() {
+        guard let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Import"
+        panel.message = "Each file opens as a new snippet. Text files up to 2 MB."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK else { return }
+            self?.openDroppedFiles(panel.urls)
+        }
+    }
+
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    var debugWorkbench: CodePreviewWorkbenchView? { workbench }
+    var debugDock: CodeRunResultsDock { dock }
+    var debugTitleRow: CodePreviewEditorTitleRow { titleRow }
+    var debugRunStatus: CodePreviewRunStatus { runStatus }
+    var debugSyncFooter: CodePreviewSyncFooter { syncFooter }
+    var debugInspectorCards: [CodePreviewInspectorCard] { [runConfigurationCard, scriptChecksCard, editorPreferencesCard] }
+    var debugRunButton: HelmButton { runButton }
+    var debugFormatButton: HelmButton { formatButton }
+    var debugUndoButton: HelmButton { undoButton }
+    var debugRedoButton: HelmButton { redoButton }
+    var debugExpandButton: HelmButton { expandButton }
+    var debugLanguagePicker: HelmPopUpButton { languagePicker }
+    var debugEditorMoreMenu: HelmOverflowMenu { editorMoreMenu }
+    var debugQuickActions: [CodePreviewQuickActionButton] { [newSnippetAction, importAction] }
+    var debugIndentText: String { indentLabel.isHidden ? "" : indentLabel.stringValue }
+    var debugStatusLeadingTexts: [String] {
+        statusLeading.arrangedSubviews.compactMap { ($0 as? NSTextField).flatMap { $0.isHidden ? nil : $0.stringValue } }
+    }
+    var debugStatusTrailingTexts: [String] {
+        statusTrailing.arrangedSubviews.compactMap { ($0 as? NSTextField).flatMap { $0.isHidden ? nil : $0.stringValue } }
+    }
+    var debugPageActionViews: [NSView] { pageActionViews }
+    func debugImport(_ urls: [URL]) { openDroppedFiles(urls) }
+    func debugHasPendingEdit(name: String) -> Bool { open.first(where: { $0.name == name })?.hasPendingEdit ?? false }
     var debugWebView: CodePreviewWebView { webView }
     var debugOverlayVisible: Bool { !overlay.isHidden }
     var debugTabNames: [String] { open.map(\.name) }
@@ -1953,5 +2377,6 @@ extension CodePreviewController: SidebarLayoutAdopting {
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        buildWorkbench()
     }
 }

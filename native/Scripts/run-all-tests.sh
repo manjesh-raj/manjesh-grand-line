@@ -213,6 +213,7 @@ FM_RUN_SPLIT_SIDEBAR_TESTS 32
 FM_RUN_STRAW_HAT_HANDOFF_TESTS 26
 FM_RUN_PAGE_REDESIGNS_TESTS 24
 FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 22
+FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS 30
 FM_RUN_WINDOW_CHROME_FUSION_TESTS 22
 FM_RUN_CODE_PREVIEW_VIEW_TESTS 22
 FM_RUN_DAYLIGHT_MODULE_TESTS 16
@@ -581,6 +582,14 @@ NEEDS_SESSION=(
   # the editor's width with the list shown and hidden. FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS
   # covers the logic half (order, filter, icons, preferences) and does run in CI.
   "FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"
+  # The Code page's sidebar-layout presentation (the Workbench concept):
+  # mounts the real page in a real window, adopts the layout, runs real
+  # sandboxed shell fixtures into the Run results dock, reads Monaco's own
+  # current-line bar back, and measures the cards and the right column's
+  # breakpoint. FM_RUN_CODE_PREVIEW_WORKBENCH_TESTS covers the logic half
+  # (wording, counts, the inspector's claims against the sandbox) in CI's
+  # blocking lane.
+  "FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS"
   # F11's UI half: mounts the real Code Preview page in a real window, drives
   # the real Run/Format buttons and measures the editor's own rendered height
   # with the output pane hidden and shown. Its logic half

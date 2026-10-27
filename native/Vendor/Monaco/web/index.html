@@ -63,6 +63,14 @@
       html.gl-suspended .monaco-editor .cursors-layer > .cursor {
         display: none !important;
       }
+      /* The sidebar layout's current-line bar (the bridge's
+         `setPresentation`): a 2px accent edge down the leading side of
+         Monaco's own current-line overlay. A class on the root, so the
+         floating bar's page - which never sets it - draws exactly what it
+         did before. */
+      html.gl-current-line-bar .monaco-editor .view-overlays .current-line {
+        box-shadow: inset 2px 0 0 var(--gl-current-line-bar);
+      }
     </style>
   </head>
   <body>

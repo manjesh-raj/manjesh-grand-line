@@ -25,14 +25,15 @@
 // than being one, and a selected row here reads exactly like a selected row
 // in Hosts, Notebook or Tasks.
 //
-// ## There is no unsaved-changes dot, on purpose
+// ## The unsaved dot, and how short-lived it is
 //
-// Code Preview has no dirty state to show. An edit reaches disk on the page's
-// own 500ms debounce and git a few seconds later (`CodePreviewStore`'s
-// header), and there is no Save button. The orange dot a tab chip carries is
-// `TabChipView`'s *selected* marker (E4), not an unsaved marker - so the
-// column marks the active snippet with the sidebar's selected wash instead of
-// inventing a dirty state the page does not have.
+// There is no Save button: an edit reaches disk on the page's own 500ms
+// debounce and git a few seconds later (`CodePreviewStore`'s header). So the
+// only unsaved state is that half second, and the sidebar layout marks it -
+// the editor page posts `pending` on the first keystroke of a burst and the
+// dot goes when the debounced `change` has been written. The floating bar's
+// column never receives a dirty key and draws exactly what it did. The orange
+// dot a tab chip carries is still `TabChipView`'s *selected* marker (E4).
 
 import AppKit
 
@@ -184,6 +185,16 @@ final class CodePreviewFileSidebar: NSView {
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
 
     private var allEntries: [CodePreviewFileEntry] = []
+    private var dirtyKeys: Set<String> = []
+    /// The sidebar layout's card header: "Snippets" as a card title and the
+    /// count as "8 items", rather than the floating bar's kicker and bare
+    /// number. Set once, when the page adopts that layout.
+    var usesCardHeader = false {
+        didSet {
+            countLabel.stringValue = Self.countText(allEntries.count, card: usesCardHeader)
+            applyTheme(theme)
+        }
+    }
     private var visible: [CodePreviewFileEntry] = []
     private var rows: [CodePreviewFileRow] = []
     private var activeKey: String?
@@ -304,16 +315,31 @@ final class CodePreviewFileSidebar: NSView {
     /// selection change is a repaint. The controller calls this on every
     /// select, and a hundred-row rebuild per click is the PF11 shape
     /// `HelmPageSidebar.setSections` already had to un-learn.
-    func setEntries(_ entries: [CodePreviewFileEntry], activeKey: String?) {
+    func setEntries(_ entries: [CodePreviewFileEntry], activeKey: String?, dirtyKeys: Set<String> = []) {
         let changed = entries != allEntries
         allEntries = entries
         self.activeKey = activeKey
+        self.dirtyKeys = dirtyKeys
         if changed {
             rebuildRows()
         } else {
             restyleRows()
         }
-        countLabel.stringValue = "\(entries.count)"
+        countLabel.stringValue = Self.countText(entries.count, card: usesCardHeader)
+    }
+
+    static func countText(_ count: Int, card: Bool) -> String {
+        guard card else { return "\(count)" }
+        return count == 1 ? "1 item" : "\(count) items"
+    }
+
+    /// "The list is as tall as its rows", for a container that wants to hug
+    /// them - the sidebar layout's snippet card. The caller picks the
+    /// priority, so a page-height cap can still win. Never shorter than one
+    /// row, so the empty-filter sentence has somewhere to sit.
+    func contentHeightPreference() -> NSLayoutConstraint {
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.rowHeight).isActive = true
+        return scroll.heightAnchor.constraint(equalTo: listView.heightAnchor)
     }
 
     /// Scrolls the active row into view - the list's half of "the file you are
@@ -448,8 +474,14 @@ final class CodePreviewFileSidebar: NSView {
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         let palette = HelmPageSidebar.rowPalette(theme)
-        headerLabel.attributedStringValue = HelmPageSidebar.headerString(headerLabel.placeholderString ?? "",
-                                                                         theme: theme)
+        if usesCardHeader {
+            headerLabel.stringValue = headerLabel.placeholderString ?? ""
+            headerLabel.font = HelmType.rowTitle()
+            headerLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        } else {
+            headerLabel.attributedStringValue = HelmPageSidebar.headerString(headerLabel.placeholderString ?? "",
+                                                                             theme: theme)
+        }
         countLabel.textColor = palette.muted
         emptyLabel.textColor = palette.muted
         filterField.applyTheme(theme)
@@ -463,6 +495,7 @@ final class CodePreviewFileSidebar: NSView {
             row.apply(palette: palette,
                       isActive: row.entry.key == activeKey,
                       showsKeyboardFocus: listHasFocus && index == focusedIndex)
+            row.setUnsaved(dirtyKeys.contains(row.entry.key), accent: HelmTheme.nsColor(theme.accentHex))
         }
     }
 
@@ -473,6 +506,7 @@ final class CodePreviewFileSidebar: NSView {
     var debugActiveRowName: String? { rows.first(where: \.debugIsActive)?.entry.name }
     var debugFocusedRowName: String? { focusedIndex.flatMap { $0 < rows.count ? rows[$0].entry.name : nil } }
     var debugCountText: String { countLabel.stringValue }
+    var debugHeaderText: String { headerLabel.stringValue }
     var debugEmptyMessage: String? { emptyLabel.isHidden ? nil : emptyLabel.stringValue }
     var debugRows: [CodePreviewFileRow] { rows }
     var debugListView: NSView { listView }
@@ -548,10 +582,18 @@ final class CodePreviewFileRow: HoverHighlightView {
     /// would reveal every row's close control at once - measured that way in a
     /// real render after a Daylight-to-Dusk switch.
     private let closeHost = NSView()
+    /// The unsaved dot, in the close control's place - shown while the
+    /// snippet's text is ahead of the disk and the pointer is not over the
+    /// row (hovering shows the close control instead, as in VS Code).
+    private let unsavedDot = NSView()
     private var isActive = false
     private var hovering = false
+    private var unsaved = false
 
     static let closeSide: CGFloat = 18
+    /// The unsaved dot: `TabChipView`'s own accent-dot size, so a tab and its
+    /// row mark the same state with the same mark.
+    static let unsavedDotSide: CGFloat = TabChipView.accentDotSide
 
     init(entry: CodePreviewFileEntry) {
         self.entry = entry
@@ -602,7 +644,12 @@ final class CodePreviewFileRow: HoverHighlightView {
         closeHost.alphaValue = 0
         closeHost.addSubview(closeButton)
 
-        for child in [icon, label, closeHost] as [NSView] { addSubview(child) }
+        unsavedDot.wantsLayer = true
+        unsavedDot.layer?.cornerRadius = Self.unsavedDotSide / 2
+        unsavedDot.translatesAutoresizingMaskIntoConstraints = false
+        unsavedDot.isHidden = true
+        unsavedDot.setAccessibilityElement(false)
+        for child in [icon, label, closeHost, unsavedDot] as [NSView] { addSubview(child) }
         let insets = closeButton.alignmentRectInsets
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: closeHost.leadingAnchor),
@@ -619,6 +666,10 @@ final class CodePreviewFileRow: HoverHighlightView {
             closeHost.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s1),
             closeHost.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: Self.closeSide - insets.left - insets.right),
+            unsavedDot.centerXAnchor.constraint(equalTo: closeHost.centerXAnchor),
+            unsavedDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            unsavedDot.widthAnchor.constraint(equalToConstant: Self.unsavedDotSide),
+            unsavedDot.heightAnchor.constraint(equalToConstant: Self.unsavedDotSide),
             closeButton.heightAnchor.constraint(equalToConstant: Self.closeSide - insets.top - insets.bottom),
         ])
 
@@ -635,6 +686,16 @@ final class CodePreviewFileRow: HoverHighlightView {
 
     private func refreshCloseVisibility() {
         closeHost.alphaValue = hovering ? 1 : 0
+        unsavedDot.isHidden = !unsaved || hovering
+    }
+
+    func setUnsaved(_ unsaved: Bool, accent: NSColor) {
+        self.unsaved = unsaved
+        unsavedDot.layer?.backgroundColor = accent.cgColor
+        let value = [isActive ? "open in the editor" : nil, unsaved ? "unsaved" : nil]
+            .compactMap { $0 }.joined(separator: ", ")
+        accessibilityValueOverride = value.isEmpty ? nil : value
+        refreshCloseVisibility()
     }
 
     func apply(palette: HelmPageSidebar.RowPalette, isActive: Bool, showsKeyboardFocus: Bool) {
@@ -681,6 +742,7 @@ final class CodePreviewFileRow: HoverHighlightView {
     /// the button's own alpha, so a check cannot pass by reading the wrong one.
     var debugCloseAlpha: CGFloat { closeHost.alphaValue * closeButton.alphaValue }
     var debugShowsKeyboardFocus: Bool { (layer?.borderWidth ?? 0) > 0 }
+    var debugUnsavedDotVisible: Bool { !unsavedDot.isHidden }
     func debugSetHovering(_ hovering: Bool) {
         // Through the real tracking-area handlers, never `refreshCloseVisibility`
         // directly (AGENTS.md: a hook enters where the real event enters).

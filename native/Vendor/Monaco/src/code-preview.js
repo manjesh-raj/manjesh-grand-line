@@ -327,11 +327,30 @@ function postPendingChange() {
 }
 
 editor.onDidChangeModelContent(() => {
+  postHistory();
   if (applyingRemoteEdit || currentID === null) return;
+  // The first keystroke of a burst says so at once, so the native side can
+  // mark the tab as holding text that is not on disk yet. The debounced
+  // "change" below is what clears it again.
+  if (pendingChangeID !== currentID) post({ type: "pending", id: currentID });
   pendingChangeID = currentID;
   if (changeTimer !== null) clearTimeout(changeTimer);
   changeTimer = setTimeout(postPendingChange, CHANGE_DEBOUNCE_MS);
 });
+
+/// Whether the showing snippet has anything to undo or redo, for the native
+/// toolbar's two buttons. `canUndo`/`canRedo` are on the text model itself;
+/// a build of Monaco without them reports both as available rather than
+/// disabling buttons that would still work.
+function postHistory() {
+  const model = editor.getModel();
+  if (!model) return;
+  post({
+    type: "history",
+    canUndo: typeof model.canUndo === "function" ? model.canUndo() : true,
+    canRedo: typeof model.canRedo === "function" ? model.canRedo() : true,
+  });
+}
 
 // M2 of the UI modernization audit (report.md §3M): "give Monaco's page the
 // same scroll-edge hairline treatment as native pages". A native page's edge
@@ -362,12 +381,18 @@ editor.onDidChangeCursorPosition((event) => {
   if (selection && model && !selection.isEmpty()) {
     selected = model.getValueInRange(selection).length;
   }
+  // The model's own indentation, which Monaco may have detected from the
+  // text rather than taken from the editor's default - so the status bar
+  // states what Tab will actually insert in this snippet.
+  const options = model ? model.getOptions() : null;
   post({
     type: "cursor",
     line: event.position.lineNumber,
     column: event.position.column,
     selected,
     lines: model ? model.getLineCount() : 0,
+    tabSize: options ? options.tabSize : 0,
+    insertSpaces: options ? options.insertSpaces : true,
   });
 });
 
@@ -522,6 +547,96 @@ const bridge = {
     reply(callID, { ok: true });
   },
 
+  /// The native toolbar's Undo and Redo. Monaco's own commands, so they walk
+  /// exactly the history ⌘Z and ⇧⌘Z walk inside the editor.
+  undo(callID) {
+    try {
+      editor.focus();
+      editor.trigger("grandline", "undo", null);
+      postHistory();
+      reply(callID, { ok: true });
+    } catch (err) {
+      reply(callID, { ok: false, message: describe(err) });
+    }
+  },
+
+  redo(callID) {
+    try {
+      editor.focus();
+      editor.trigger("grandline", "redo", null);
+      postHistory();
+      reply(callID, { ok: true });
+    } catch (err) {
+      reply(callID, { ok: false, message: describe(err) });
+    }
+  },
+
+  /// The sidebar layout's editor surface: a little room above the first
+  /// line, and the current line marked by a bar in the theme's accent down
+  /// its leading edge. Opt-in, so the floating bar's page keeps exactly the
+  /// surface it had.
+  setPresentation(callID, payload) {
+    try {
+      const top = Number(payload.paddingTop) || 0;
+      editor.updateOptions({ padding: { top, bottom: top } });
+      const bar = payload.currentLineBar ? String(payload.currentLineBar) : "";
+      document.documentElement.style.setProperty("--gl-current-line-bar", bar || "transparent");
+      document.documentElement.classList.toggle("gl-current-line-bar", bar !== "");
+      reply(callID, { ok: true });
+    } catch (err) {
+      reply(callID, { ok: false, message: describe(err) });
+    }
+  },
+
+  /// What the editor is really using, read back from Monaco rather than
+  /// restated from defaults: the resolved font family and size, whether line
+  /// numbers and word wrap are on, and the showing model's indentation.
+  editorInfo(callID) {
+    try {
+      const O = monaco.editor.EditorOption;
+      const font = editor.getOption(O.fontInfo);
+      const lineNumbers = editor.getOption(O.lineNumbers);
+      const model = editor.getModel();
+      const options = model ? model.getOptions() : null;
+      reply(callID, {
+        ok: true,
+        fontFamily: font ? font.fontFamily : "",
+        fontSize: font ? font.fontSize : 0,
+        lineNumbers: lineNumbers ? lineNumbers.renderType !== 0 : false,
+        wordWrap: editor.getOption(O.wordWrap),
+        tabSize: options ? options.tabSize : 0,
+        insertSpaces: options ? options.insertSpaces : true,
+      });
+    } catch (err) {
+      reply(callID, { ok: false, message: describe(err) });
+    }
+  },
+
+  /// Draws the editor now, synchronously. Monaco renders on an animation
+  /// frame, and a page whose window is off every screen never gets one - so
+  /// an off-screen render (the review tour lab, a window-backed suite) asks
+  /// for the frame it would otherwise never draw.
+  renderNow(callID) {
+    try {
+      editor.layout();
+      editor.render(true);
+      reply(callID, { ok: true });
+    } catch (err) {
+      reply(callID, { ok: false, message: describe(err) });
+    }
+  },
+
+  /// Reads back the current-line bar as drawn: the computed left inset
+  /// shadow of Monaco's own current-line overlay.
+  readCurrentLineBar(callID) {
+    const el = document.querySelector(".monaco-editor .view-overlays .current-line");
+    reply(callID, {
+      ok: true,
+      present: !!el,
+      boxShadow: el ? getComputedStyle(el).boxShadow : null,
+    });
+  },
+
   /// Opens Monaco's own find widget - the app's Edit menu routes ⌘F here
   /// while this destination is showing, the same way it routes ⌘F to the
   /// terminal's find bar on Console.
@@ -624,6 +739,7 @@ function selectModel(id) {
   editor.setModel(model);
   const state = viewStates.get(id);
   if (state) editor.restoreViewState(state);
+  postHistory();
 }
 
 const describe = (err) => String((err && err.message) || err || "unknown error");

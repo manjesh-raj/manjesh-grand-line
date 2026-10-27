@@ -3,8 +3,9 @@
 // Code Preview's bottom pane: what a run printed (F11 of full review #3 §8).
 //
 // One card under the editor, hidden until the first Run, carrying a header
-// that states the outcome and a monospaced body holding stdout and stderr as
-// the child interleaved them. It is the reviewed mockup's lower half, and it is
+// that states the outcome and a monospaced body holding stdout, then stderr
+// (`CodeRunner` captures the two apart since the sidebar layout's Run results
+// dock gave each its own tab). It is the reviewed mockup's lower half, and it is
 // also where this feature keeps its promises honest: the wall clock, the
 // scratch directory and the denials are printed rather than described in a
 // release note nobody reads.

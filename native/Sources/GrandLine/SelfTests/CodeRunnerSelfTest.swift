@@ -57,6 +57,9 @@ enum CodeRunnerSelfTest {
         checkWording(check)
         checkRealSandboxedRun(check)
         checkTemporaryRootsAreUnreadable(check)
+        checkStreamsStayApart(check)
+        checkSyntaxCheckCatalogue(check)
+        checkRealSyntaxChecks(check)
 
         print(ok ? "CodeRunnerSelfTest: OK" : "CodeRunnerSelfTest: FAILURES")
         return ok
@@ -591,7 +594,10 @@ enum CodeRunnerSelfTest {
               "output printed before a failure must still be shown")
         let traceback = waitForRun(runner, "raise SystemExit(1) if False else 1/0", "python")
         check(traceback?.output.contains("ZeroDivisionError") == true,
-              "stderr must be interleaved into the pane, got \(traceback?.output ?? "")")
+              "stderr must reach the single pane too, got \(traceback?.output ?? "")")
+        check(traceback?.standardError.contains("ZeroDivisionError") == true
+                && traceback?.standardOutput.contains("ZeroDivisionError") == false,
+              "a traceback is stderr, and must land on the Errors stream only, got \(describe(traceback))")
 
         // The write denial, in both directions - the second half is what makes
         // the first non-vacuous.
@@ -989,6 +995,98 @@ enum CodeRunnerSelfTest {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         return outcome
+    }
+
+    /// The Run results dock's two tabs are only true if the runner keeps the
+    /// two streams apart. A real sandboxed `/bin/sh` (always on macOS, so this
+    /// is never skipped) writes one line to each, and each must arrive on its
+    /// own stream and nowhere else.
+    private static func checkStreamsStayApart(_ check: (Bool, String) -> Void) {
+        guard CodeSandbox.isAvailable else {
+            check(false, "\(CodeSandbox.sandboxExecPath) is missing - every run would be refused")
+            return
+        }
+        CodeToolInventory.shared.probeEverything()
+        let runner = CodeRunner()
+        let split = waitForRun(runner, "echo to-stdout\necho to-stderr >&2\nexit 4", "shell")
+        check(split?.kind == .failed && split?.status == 4,
+              "a shell script exiting 4 should be a failed run with status 4, got \(describe(split))")
+        check(split?.standardOutput == "to-stdout\n", "stdout should hold only its own line, got \(String(reflecting: split?.standardOutput))")
+        check(split?.standardError == "to-stderr\n", "stderr should hold only its own line, got \(String(reflecting: split?.standardError))")
+        check(split?.output == "to-stdout\nto-stderr\n",
+              "the single pane reads stdout then stderr, got \(String(reflecting: split?.output))")
+
+        // The pure half: the combined reading, and GL-14's note when both
+        // streams are empty.
+        check(CodeRunOutcome.combine("a", "b") == "a\nb", "two streams without a trailing newline need one between them")
+        check(CodeRunOutcome.combine("a\n", "b") == "a\nb", "a stream ending in a newline needs no second one")
+        check(CodeRunOutcome.combine("", "b") == "b" && CodeRunOutcome.combine("a", "") == "a",
+              "an empty stream adds nothing")
+        let silent = CodeRunOutcome(kind: .ok, status: 0, standardOutput: "", standardError: "",
+                                    duration: 0, sandboxPath: "", truncated: false, toolDescription: "")
+        check(silent.output == CodeRunner.emptyOutputNote(.ok) && silent.standardOutput.isEmpty,
+              "a silent run keeps both streams empty and says so in the single pane")
+    }
+
+    /// The parse-only argv per interpreter, asserted as data: every one must
+    /// carry the script and none may be a plain run of it.
+    private static func checkSyntaxCheckCatalogue(_ check: (Bool, String) -> Void) {
+        for recipe in CodeRunCatalog.runners {
+            for tool in recipe.candidates {
+                guard let arguments = CodeRunCatalog.syntaxCheckArguments(for: tool) else { continue }
+                check(arguments.contains(CodeTool.scriptPlaceholder),
+                      "\(tool.tool)'s syntax check never names the script: \(arguments)")
+                check(arguments != tool.arguments,
+                      "\(tool.tool)'s syntax check is its plain run argv - it would execute the snippet")
+            }
+        }
+        let bash = CodeRunCatalog.runRecipe(for: "shell")?.candidates.first { $0.tool == "bash" }
+        check(bash.flatMap(CodeRunCatalog.syntaxCheckArguments) == ["-n", CodeTool.scriptPlaceholder],
+              "bash's check should be bash -n")
+        let swift = CodeRunCatalog.runRecipe(for: "swift")?.candidates.first
+        check(swift.flatMap(CodeRunCatalog.syntaxCheckArguments) == nil,
+              "swift has no parse-only mode here, so it must have no check rather than a run")
+        check(CodeRunner.firstComplaint("/x/snippet.sh: line 3: syntax error near `fi'\n", scriptPath: "/x/snippet.sh")
+                == "line 3: syntax error near `fi'",
+              "the checker's complaint should drop the scratch path")
+    }
+
+    /// A real `bash -n` through the sandbox, in both directions - the failure
+    /// is what makes the pass mean something - and proof that a check never
+    /// runs the script: the passing fixture would print if it ran, and the
+    /// check has no output to print it to.
+    private static func checkRealSyntaxChecks(_ check: (Bool, String) -> Void) {
+        guard CodeSandbox.isAvailable else { return }
+        CodeToolInventory.shared.probeEverything()
+        let runner = CodeRunner()
+        func wait(_ content: String, _ languageID: String) -> CodeSyntaxCheck? {
+            var answer: CodeSyntaxCheck?
+            runner.checkSyntax(content: content, languageID: languageID) { answer = $0 }
+            let deadline = Date().addingTimeInterval(20)
+            while answer == nil, Date() < deadline {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            }
+            return answer
+        }
+        let good = wait("#!/bin/bash\necho \"Hello\"\n", "shell")
+        if case .passed(let checker) = good {
+            check(checker.hasSuffix("-n"), "a passing shell check should name its -n checker, got \(checker)")
+        } else {
+            check(false, "a well-formed shell snippet should pass its syntax check, got \(String(describing: good))")
+        }
+        let bad = wait("if true; then\necho broken\n", "shell")
+        if case .failed(_, let message) = bad {
+            check(message.contains("syntax error") || message.contains("unexpected end"),
+                  "a broken shell snippet's complaint should be the interpreter's own, got \(message)")
+            check(!message.contains("/var/folders") && !message.contains("gl-check-"),
+                  "the complaint should not carry the scratch path, got \(message)")
+        } else {
+            check(false, "an unterminated if should fail its syntax check, got \(String(describing: bad))")
+        }
+        let yaml = wait("a: 1\n", "yaml")
+        if case .unavailable = yaml {} else {
+            check(false, "YAML is not runnable, so its check should be unavailable, got \(String(describing: yaml))")
+        }
     }
 
     private static func describe(_ outcome: CodeRunOutcome?) -> String {

@@ -98,6 +98,10 @@ enum ReviewTourLabSelfTest {
               + "4 errors, got \(breakBad)", &ok)
 
         // `demo updates` (R2-BUG-03's renders): every Updates check offline.
+        let (codeSteps, codeErrors) = ReviewTourLab.parse(tour: "code run")
+        check(codeErrors.isEmpty && codeSteps == [.codeRun], "code run parsed to \(codeSteps) \(codeErrors)", &ok)
+        let (_, codeBad) = ReviewTourLab.parse(tour: "code\ncode format")
+        check(codeBad.count == 2, "a bare or unknown code verb must fail to parse, got \(codeBad)", &ok)
         let (offline, offlineErrors) = ReviewTourLab.parse(tour: "demo updates")
         check(offlineErrors.isEmpty && offline == [.demoUpdates], "demo updates parsed to \(offline) \(offlineErrors)", &ok)
 

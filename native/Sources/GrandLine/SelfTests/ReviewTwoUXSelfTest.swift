@@ -676,12 +676,21 @@ enum ReviewTwoUXSelfTest {
         check(!console.pageToolViews.contains(where: inPage), "a Console action is still in the page's own row", &ok)
         check(console.pageToolViews.contains { $0 === console.findButton } && console.pageToolViews.contains { $0 === console.zoomStepper },
               "Console's Find or text-size stepper is missing from the toolbar", &ok)
-        // Code: the same, with its snippet tabs left in the page.
+        // Code: since the captain's Workbench concept, the page's tools are in
+        // its own toolbar card and the window toolbar carries none of them -
+        // still one toolbar, now the page's. Two do not stack: the page's old
+        // toolbar row is gone.
         shell.workspace.navigator.show(.codePreview)
         settle(shell)
+        let code = shell.workspace.codePreview
         let codeActions = shell.toolbar.debugPageActions
-        check(codeActions.count == 8 && !codeActions.contains(where: inPage),
-              "Code's toolbar carries \(codeActions.count) of its 8 actions, or some are still in the page", &ok)
+        check(codeActions.isEmpty, "Code's window toolbar carries \(codeActions.count) page actions; its tools belong to its toolbar card", &ok)
+        if let workbench = code.debugWorkbench {
+            check(inPage(workbench.toolbarCard) && inPage(code.debugRunButton) && inPage(code.debugLanguagePicker),
+                  "Code's toolbar card, Run script or language picker is not in the page", &ok)
+        } else {
+            fail("Code did not build its sidebar-layout presentation", &ok)
+        }
         // Notebook: no page row at all; its controls are up here.
         shell.workspace.navigator.show(.notebook)
         settle(shell)

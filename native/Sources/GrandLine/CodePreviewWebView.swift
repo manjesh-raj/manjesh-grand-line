@@ -53,6 +53,10 @@ struct CodePreviewCursor: Equatable {
     /// Characters in the selection, or 0 when there is none.
     var selected: Int
     var lines: Int
+    /// The showing model's indentation - what Tab inserts - which Monaco may
+    /// have detected from the text. 0 until the page first reports it.
+    var tabSize: Int = 0
+    var insertSpaces: Bool = true
 }
 
 final class CodePreviewWebView: WKWebView {
@@ -78,6 +82,11 @@ final class CodePreviewWebView: WKWebView {
     /// so that class stays the single definition of "is this away from its
     /// own top edge" for native and web-hosted pages alike.
     var onScrolledAwayFromTop: ((Bool) -> Void)?
+    /// The first keystroke of a burst: this snippet's text in the editor is
+    /// now ahead of what is on disk, until its debounced `change` lands.
+    var onEditPending: ((String) -> Void)?
+    /// Whether the showing snippet has anything to undo or redo.
+    var onHistoryChanged: ((_ canUndo: Bool, _ canRedo: Bool) -> Void)?
 
     private(set) var isReady = false
     private(set) var hasLoaded = false
@@ -254,7 +263,14 @@ final class CodePreviewWebView: WKWebView {
                 line: (body["line"] as? Int) ?? 1,
                 column: (body["column"] as? Int) ?? 1,
                 selected: (body["selected"] as? Int) ?? 0,
-                lines: (body["lines"] as? Int) ?? 0))
+                lines: (body["lines"] as? Int) ?? 0,
+                tabSize: (body["tabSize"] as? Int) ?? 0,
+                insertSpaces: (body["insertSpaces"] as? Bool) ?? true))
+        case "pending":
+            guard let id = body["id"] as? String else { return }
+            onEditPending?(id)
+        case "history":
+            onHistoryChanged?((body["canUndo"] as? Bool) ?? true, (body["canRedo"] as? Bool) ?? true)
         case "reply":
             guard let callID = body["callID"] as? Int else { return }
             guard let completion = pendingCalls.removeValue(forKey: callID) else { return }

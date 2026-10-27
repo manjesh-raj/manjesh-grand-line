@@ -118,6 +118,22 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     private(set) var isRenaming = false
     private var nameBeforeRename = ""
 
+    /// The Code page's unsaved marker (sidebar layout only): while set, the
+    /// close control's place shows a dot, and hovering turns it back into the
+    /// close control - VS Code's convention. Console never sets it.
+    var showsUnsavedMarker = false {
+        didSet { if showsUnsavedMarker != oldValue { refreshCloseButton() } }
+    }
+    private lazy var maximumWidth = widthAnchor.constraint(lessThanOrEqualToConstant: 240)
+
+    /// A file tab's truncation: the middle of the name goes, so a long hash
+    /// keeps both its start and its extension, under a narrower cap than a
+    /// terminal tab's. Used by the Code page's sidebar layout.
+    func useFileNameTruncation(maximumWidth width: CGFloat) {
+        label.lineBreakMode = .byTruncatingMiddle
+        maximumWidth.constant = width
+    }
+
     // MARK: Init
 
     init(tabID: UUID, name: String) {
@@ -209,7 +225,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 28),
-            widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+            maximumWidth,
 
             accentDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
             accentDot.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -262,7 +278,10 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     private var isSelectedChip = false
 
     override func accessibilityLabel() -> String? { label.stringValue }
-    override func accessibilityValue() -> Any? { isSelectedChip ? "selected" : "not selected" }
+    override func accessibilityValue() -> Any? {
+        let selection = isSelectedChip ? "selected" : "not selected"
+        return showsUnsavedMarker ? "\(selection), unsaved" : selection
+    }
     /// The close button stays reachable - it is the chip's other real action.
     override func accessibilityChildren() -> [Any]? { [closeButton] }
 
@@ -407,6 +426,8 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     var debugLabelColor: NSColor? { label.textColor }
     var debugAccentDotVisible: Bool { !accentDot.isHidden && accentDotWidth.constant > 0 }
     var debugCloseButtonHidden: Bool { closeButton.isHidden }
+    var debugShowsUnsavedDot: Bool { showsUnsavedMarker && !closeButton.isHidden && !isHovering && !isRenaming }
+    var debugLabelLineBreakMode: NSLineBreakMode { label.lineBreakMode }
     /// UI3: the chip's own painted surface and outline, so a suite can assert
     /// that an *unselected* chip draws something rather than nothing.
     var debugChipFill: NSColor? { layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear } }
@@ -449,9 +470,16 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// to VoiceOver through the chip's own `accessibilityChildren`, and the
     /// chip's right-click menu carries Close as well, so nothing is lost.
     private func refreshCloseButton() {
-        let visible = isHovering || isRenaming
+        let marker = showsUnsavedMarker && !isHovering && !isRenaming
+        let visible = isHovering || isRenaming || marker
         closeButton.isHidden = !visible
         closeButtonWidth.constant = visible ? Self.closeButtonSide : 0
+        closeButton.image = marker
+            ? HelmSymbol.image("circle.fill", pointSize: 7, weight: .regular,
+                               accessibilityDescription: "Unsaved changes")
+            : HelmSymbol.image("xmark", pointSize: 9, weight: HelmSymbol.weight(for: .semibold),
+                               accessibilityDescription: "Close Tab")
+        closeButton.toolTip = marker ? "Unsaved - written to disk a moment after typing stops" : "Close Tab"
     }
 
     /// Show/hide the indicator against this tab's *current*

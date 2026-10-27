@@ -248,6 +248,47 @@ enum CodeRunCatalog {
     static func formatRecipe(for languageID: String) -> CodeFormatRecipe? {
         formatters.first { $0.languageID == languageID }
     }
+
+    /// How to ask an interpreter whether a script parses, without running it -
+    /// the Code page's Script checks card. Keyed by the interpreter the run
+    /// itself would use, so the check reads the script the way the run would.
+    ///
+    /// Only interpreters with a real parse-only mode are here: `bash -n` and
+    /// `zsh -n` read and parse without executing, Python's own `ast.parse`
+    /// compiles nothing and imports nothing from the script, and
+    /// `node --check` parses without running. Swift, TypeScript and Deno have
+    /// no cheap equivalent, so a snippet in those reads "no syntax check"
+    /// rather than a check that did not happen.
+    static func syntaxCheckArguments(for tool: CodeTool) -> [String]? {
+        switch tool.tool {
+        case "bash", "zsh":
+            return ["-n", CodeTool.scriptPlaceholder]
+        case "python3":
+            return ["-c", "import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])",
+                    CodeTool.scriptPlaceholder]
+        case "node":
+            return ["--check", CodeTool.scriptPlaceholder]
+        default:
+            return nil
+        }
+    }
+}
+
+/// What a syntax check found - the Script checks card's second row.
+///
+/// Four states rather than a Bool, for GL-14's reason: "it parses", "it does
+/// not parse", "this language has no check" and "the check itself could not
+/// run" are four different sentences.
+enum CodeSyntaxCheck: Equatable {
+    /// The interpreter parsed it. Carries the command that said so ("bash -n").
+    case passed(checker: String)
+    /// The interpreter refused it. Carries its own first complaint.
+    case failed(checker: String, message: String)
+    /// No parse-only check exists for this language or interpreter.
+    case unavailable(reason: String)
+    /// The check was attempted and did not answer (a launch failure, the
+    /// wall clock, a refused sandbox).
+    case couldNotCheck(reason: String)
 }
 
 // MARK: - What is actually on this machine
@@ -798,9 +839,16 @@ struct CodeRunOutcome: Equatable {
 
     let kind: Kind
     let status: Int32
-    /// stdout and stderr, interleaved as the child produced them, capped at
-    /// `CodeRunner.maximumOutputBytes`.
+    /// Everything the run printed - stdout, then stderr - or the empty-output
+    /// note when it printed nothing, so it is never blank (GL-14). The
+    /// floating bar's pane shows this.
     let output: String
+    /// The two streams as the child wrote them, each capped at
+    /// `CodeRunner.maximumOutputBytes`. The sidebar layout's Run results dock
+    /// shows them on two tabs. A message this app wrote itself (a missing
+    /// interpreter, a refused sandbox) is `standardOutput`.
+    let standardOutput: String
+    let standardError: String
     let duration: TimeInterval
     /// The scratch directory the run used - printed in the pane, because
     /// "sandboxed to a temp dir" is a claim the captain should be able to see.
@@ -811,6 +859,38 @@ struct CodeRunOutcome: Equatable {
     let toolDescription: String
 
     var succeeded: Bool { kind == .ok }
+
+    /// A run described by one message - a refusal, a launch failure, a
+    /// formatter's complaint - with no separate streams.
+    init(kind: Kind, status: Int32, output: String, duration: TimeInterval,
+         sandboxPath: String, truncated: Bool, toolDescription: String) {
+        self.init(kind: kind, status: status, standardOutput: output, standardError: "",
+                  duration: duration, sandboxPath: sandboxPath, truncated: truncated,
+                  toolDescription: toolDescription)
+    }
+
+    init(kind: Kind, status: Int32, standardOutput: String, standardError: String,
+         duration: TimeInterval, sandboxPath: String, truncated: Bool, toolDescription: String) {
+        self.kind = kind
+        self.status = status
+        self.standardOutput = standardOutput
+        self.standardError = standardError
+        let combined = Self.combine(standardOutput, standardError)
+        self.output = combined.isEmpty ? CodeRunner.emptyOutputNote(kind) : combined
+        self.duration = duration
+        self.sandboxPath = sandboxPath
+        self.truncated = truncated
+        self.toolDescription = toolDescription
+    }
+
+    /// stdout then stderr, on separate lines. The streams are captured apart
+    /// now (the dock's two tabs), so the exact interleaving the child produced
+    /// is no longer known - this is the honest single-pane reading of them.
+    static func combine(_ stdout: String, _ stderr: String) -> String {
+        guard !stderr.isEmpty else { return stdout }
+        guard !stdout.isEmpty else { return stderr }
+        return stdout.hasSuffix("\n") ? stdout + stderr : stdout + "\n" + stderr
+    }
 }
 
 // MARK: - The executor
@@ -991,13 +1071,18 @@ final class CodeRunner {
             env: CodeSandbox.environment(writable: workPath, path: CodeSandbox.runnerPath),
             timeout: Self.wallClock,
             stdout: .capture,
-            // Interleaved, so a traceback lands where it happened rather than
-            // in a second block underneath the output it interrupted.
-            stderr: .mergeIntoStdout,
+            // Captured apart, for the sidebar layout's Standard output and
+            // Errors tabs. This gives up the exact interleaving a merged pipe
+            // kept (a traceback now reads after the output it interrupted in
+            // the single pane), which is the price of an Errors tab that is
+            // true. Both pipes are drained concurrently (GL-02).
+            stderr: .capture,
             label: "code-run \(tool.tool)",
             cancellation: cancellation)
 
-        let (text, truncated) = Self.cap(result.stdoutData)
+        let (text, stdoutTruncated) = Self.cap(result.stdoutData)
+        let (errorText, stderrTruncated) = Self.cap(result.stderrData)
+        let truncated = stdoutTruncated || stderrTruncated
         let kind: CodeRunOutcome.Kind
         if cancellation.isCancelled {
             kind = .cancelled
@@ -1009,9 +1094,106 @@ final class CodeRunner {
             }
         }
         return CodeRunOutcome(kind: kind, status: result.status,
-                              output: text.isEmpty ? Self.emptyOutputNote(kind) : text,
+                              standardOutput: text, standardError: errorText,
                               duration: result.duration, sandboxPath: workPath,
                               truncated: truncated, toolDescription: toolDescription)
+    }
+
+    // MARK: Syntax check
+
+    /// The bound on a syntax check. A parse-only pass over a snippet is
+    /// milliseconds; anything that takes this long is stuck.
+    static let syntaxCheckWallClock: TimeInterval = 5
+
+    /// Asks the interpreter a run would use whether `content` parses, without
+    /// running it - off the main thread, calling back on main exactly once.
+    ///
+    /// The same confinement as a run, deliberately: the script is written to a
+    /// fresh scratch directory and the checker runs under the untrusted-code
+    /// profile, because "it only parses" is a property of the flags, and the
+    /// sandbox is what holds if a checker ever does more than its flag says.
+    func checkSyntax(content: String,
+                     languageID: String,
+                     completion: @escaping (CodeSyntaxCheck) -> Void) {
+        let languageName = CodePreviewLanguage.named(languageID)?.displayName ?? languageID
+        guard let recipe = CodeRunCatalog.runRecipe(for: languageID) else {
+            completion(.unavailable(reason: "\(languageName) is not a language this page can run"))
+            return
+        }
+        guard CodeSandbox.isAvailable else {
+            completion(.couldNotCheck(reason: "No sandbox, so nothing is run or checked"))
+            return
+        }
+        DispatchQueue.global(qos: .utility).async {
+            let answer = self.syntaxCheck(content: content, recipe: recipe, languageName: languageName)
+            DispatchQueue.main.async { completion(answer) }
+        }
+    }
+
+    private func syntaxCheck(content: String, recipe: CodeRunRecipe, languageName: String) -> CodeSyntaxCheck {
+        guard let presence = inventory.firstPresent(among: recipe.candidates),
+              let executable = presence.path else {
+            return .unavailable(reason: "No interpreter, so nothing to check with")
+        }
+        guard let arguments = CodeRunCatalog.syntaxCheckArguments(for: presence.tool) else {
+            return .unavailable(reason: "No syntax check for \(languageName)")
+        }
+        let checker = "\(presence.tool.displayName) \(arguments.first == "-c" ? "ast.parse" : arguments[0])"
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory
+            .appendingPathComponent("gl-check-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        let work = root.appendingPathComponent("work", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        do {
+            try fm.createDirectory(at: work, withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o700])
+        } catch {
+            return .couldNotCheck(reason: "Could not make a scratch directory")
+        }
+        let workPath = CodeSandbox.realPath(work.path)
+        let homePath = CodeSandbox.realPath(fm.homeDirectoryForCurrentUser.path)
+        let scriptURL = work.appendingPathComponent("snippet.\(recipe.scriptExtension)")
+        let profileURL = root.appendingPathComponent("profile.sb")
+        let profile = CodeSandbox.profile(
+            trust: .untrustedCode, writable: workPath, home: homePath,
+            temporaryRoots: CodeSandbox.userTemporaryRoots(),
+            readablePrefixes: CodeSandbox.readablePrefixes(forExecutableAt: executable, home: homePath))
+        do {
+            try Data(content.utf8).write(to: scriptURL, options: .atomic)
+            try Data(profile.utf8).write(to: profileURL, options: .atomic)
+        } catch {
+            return .couldNotCheck(reason: "Could not write the snippet to a scratch directory")
+        }
+        let scriptPath = CodeSandbox.realPath(scriptURL.path)
+        let checkTool = CodeTool(tool: presence.tool.tool, displayName: presence.tool.displayName,
+                                 arguments: arguments, versionArguments: [])
+        let result = Subprocess.run(
+            executable: CodeSandbox.sandboxExecPath,
+            arguments: ["-f", profileURL.path, executable] + checkTool.argv(script: scriptPath, sandbox: workPath),
+            cwd: work,
+            env: CodeSandbox.environment(writable: workPath, path: CodeSandbox.runnerPath),
+            timeout: Self.syntaxCheckWallClock,
+            label: "code-check \(presence.tool.tool)")
+        switch result.outcome {
+        case .timedOut: return .couldNotCheck(reason: "The syntax check timed out")
+        case .launchFailed: return .couldNotCheck(reason: "The syntax check did not start")
+        case .exited: break
+        }
+        if result.status == 0 { return .passed(checker: checker) }
+        return .failed(checker: checker,
+                       message: Self.firstComplaint(String(decoding: result.stderrData, as: UTF8.self),
+                                                    scriptPath: scriptPath))
+    }
+
+    /// The checker's first non-empty line, with the scratch path it was handed
+    /// taken out - "snippet.sh: line 3: syntax error" reads as the captain's
+    /// own file, "/private/var/folders/…/snippet.sh: line 3" does not.
+    static func firstComplaint(_ stderr: String, scriptPath: String) -> String {
+        let line = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        let cleaned = line.replacingOccurrences(of: scriptPath + ": ", with: "")
+            .replacingOccurrences(of: scriptPath, with: "the snippet")
+        return cleaned.isEmpty ? "The interpreter refused it" : cleaned
     }
 
     // MARK: Format
