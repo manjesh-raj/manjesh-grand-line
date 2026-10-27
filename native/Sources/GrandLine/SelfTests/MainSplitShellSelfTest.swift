@@ -1154,6 +1154,15 @@ enum MainSplitShellSelfTest {
         AppSettings.shared.workspaceToolbarItems = nil
         AppSettings.shared.workspaceToolbarDisplayMode = nil
         func drain() { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+        // A captain's change is saved on the next main-queue turn
+        // (`WorkspaceToolbar.captainChangedItems`). One 50ms drain missed that
+        // turn on CI's loaded runner - "taking Recents off saved nil" and its
+        // mirror below, on main as well - so a save that must land is waited
+        // for. A save that must not happen still gets the plain drain.
+        func drain(until saved: () -> Bool) {
+            let deadline = Date().addingTimeInterval(2)
+            while !saved(), Date() < deadline { drain() }
+        }
         func ids(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbar.items.map(\.itemIdentifier) }
 
         let toolbar = shell.toolbar!
@@ -1174,8 +1183,8 @@ enum MainSplitShellSelfTest {
             return
         }
         toolbar.toolbar.removeItem(at: recents)
-        drain()
         let expected = WorkspaceToolbar.defaultCustomizedIdentifiers.filter { $0 != WorkspaceToolbar.ItemID.recents }
+        drain { AppSettings.shared.workspaceToolbarItems == expected.map(\.rawValue) }
         check(AppSettings.shared.workspaceToolbarItems == expected.map(\.rawValue),
               "taking Recents off saved \(String(describing: AppSettings.shared.workspaceToolbarItems))", &ok)
         check(UserDefaults.standard.object(forKey: "NSToolbar Configuration \(toolbar.toolbar.identifier)") == nil,
@@ -1210,7 +1219,7 @@ enum MainSplitShellSelfTest {
         // Recents back where it was is the default, which clears the setting.
         let at = (toolbar.toolbar.items.firstIndex { $0.itemIdentifier == WorkspaceToolbar.ItemID.navigation } ?? 1) + 1
         toolbar.toolbar.insertItem(withItemIdentifier: WorkspaceToolbar.ItemID.recents, at: at)
-        drain()
+        drain { AppSettings.shared.workspaceToolbarItems == nil }
         check(AppSettings.shared.workspaceToolbarItems == nil,
               "the default toolbar again did not clear the setting: \(String(describing: AppSettings.shared.workspaceToolbarItems))", &ok)
 
