@@ -352,9 +352,13 @@ A customised sidebar, either profile's starting set, and even a sidebar with Tas
 Nothing stores sidebar order, and page tabs are not persisted.
 `SplitShellModelSelfTest.checkSavedSidebarsGetTheCalendar` fails on the plausible-looking rewrite to a list of modules to show.
 
-**The number chords moved.** ⌘1 to ⌘9 are the first nine sidebar items by position (R2-UX-03).
-So Calendar takes ⌘3, every module below it moves down one, and Logs no longer has ⌘9.
-That is the existing rule applied, not a new one.
+**The Calendar takes no number chord.** ⌘1 to ⌘9 are the first nine sidebar items by position (R2-UX-03).
+Numbering the new row would have moved Crew off ⌘3, shifted every module below it, and taken ⌘9 from Logs, which CI's `FM_RUN_REVIEW2_UX_TESTS` caught as ⌘3 opening the Calendar.
+So `WorkspaceGoMenu.unnumbered` skips it, every chord a captain already knows stays put, and the Calendar's one-click route is the toolbar's calendar button.
+
+**The Calendar's native label floor is 1**, `.whiteboard`'s reason: its body is one web view, and `FM_RUN_DESTINATION_MOUNTING_TESTS` counts native labels.
+The page's own text is read back from its DOM by the view suite.
+`FM_RUN_SETTINGS_SIDEBAR_TESTS`' guard against the retired Google calendar integration now allows exactly the Calendar module's own title in Appearance's show-or-hide list.
 
 ### What the renders showed
 

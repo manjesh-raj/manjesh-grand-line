@@ -211,8 +211,12 @@ enum SplitShellModelSelfTest {
         } else {
             fail("the Go menu has no Calendar row", &ok)
         }
-        check(WorkspaceGoMenu.chord(for: .calendar) == 3 && WorkspaceGoMenu.chord(for: .crew) == 4,
-              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar) ?? 0) and Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0)", &ok)
+        // The Calendar takes no number, so the chords the captain already
+        // knows stay put: Crew keeps ⌘3 and Logs keeps ⌘9.
+        check(WorkspaceGoMenu.chord(for: .calendar) == nil && WorkspaceGoMenu.chord(for: .crew) == 3
+                && WorkspaceGoMenu.chord(for: .logs) == 9,
+              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar) ?? 0), Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0) "
+              + "and Logs ⌘\(WorkspaceGoMenu.chord(for: .logs) ?? 0)", &ok)
     }
 
     /// A captain who has customised the sidebar - hidden modules of their own,
@@ -238,8 +242,9 @@ enum SplitShellModelSelfTest {
               "a customised sidebar's Work lists \(work.map(\.rawValue)), want Calendar after Tasks", &ok)
         check(WorkspaceGoMenu.entries(hidden: hidden).contains(.module(.calendar)),
               "a customised sidebar's Go menu has no Calendar", &ok)
-        check(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == 3,
-              "with Crew hidden Calendar should still be ⌘3, got \(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) ?? 0)", &ok)
+        check(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == nil
+                && WorkspaceGoMenu.chord(for: .connections, hidden: hidden) == 3,
+              "with Crew hidden its ⌘3 should pass to Connections, not the Calendar", &ok)
 
         // Even Tasks hidden leaves Calendar where the captain can find it.
         defaults.set(["tasks"], forKey: key)
