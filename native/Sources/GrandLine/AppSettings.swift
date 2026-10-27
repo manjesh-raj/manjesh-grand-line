@@ -481,7 +481,14 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: Keys.followSystemAppearance) }
     }
 
-    /// The light half of the pair `followSystemAppearance` switches between.
+    /// The light half of the pair `followSystemAppearance` used to switch
+    /// between, when the app's theme was one of the 26 terminal schemes.
+    ///
+    /// **Read only by the theme split's one-time move now**
+    /// (`ThemeManager.migrateToSplitThemes`), which turns a pair that is not
+    /// the new family's companions into the terminal's own light and dark
+    /// schemes. Following the system picks the app family's register
+    /// (`SystemAppearanceFollower.resolvedAppTheme`).
     ///
     /// Defaults to the app's own light theme rather than to the *active*
     /// theme, so the stored pair is a real pair from the first read - a

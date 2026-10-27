@@ -862,3 +862,57 @@ Confirmed by injection: the default 250 holding priority, no yield, a dead Toggl
 Renders of Home and the seven pages at 960x620, 1100x720 and 1512x950 in Daylight and Dusk, against `f3a552f`: all 34 at 1100 and 1512, and Home at 960, are pixel-identical.
 The 14 page renders at 960 differ in size because `main`'s Schedules defect leaves the window at 1055pt; on this branch every one is 960pt.
 Not verified: dragging the divider with a real mouse, and the collapse animation on a real display.
+
+## The app theme and the terminal's colours split apart (`fm/grandline-theme-split-app-terminal`)
+
+Until this branch Grand Line had one theme setting, and it was a terminal colour scheme.
+Picking Catppuccin Mocha painted the terminal and also the sidebar, the cards, the buttons and every status chip.
+The captain chose option C of the scout report: linked by default, with an independent terminal override.
+He approved a prototype whose `APP` table and `COMPANION` map are reproduced verbatim in `AppTheme.swift`.
+
+### Two catalogues on one struct
+
+`HelmTheme.allThemes` is still the 26 palettes, with their values untouched, and they are now the terminal's schemes.
+`HelmTheme.appThemes` is fourteen app registers: seven families (Daylight with Dusk, Graphite, Paper with Ink, Harbor with Night Watch, Grove with Moss, Ember with Cinder, High Contrast), each light and dark.
+Daylight and Dusk are in both catalogues and are the same values they always were.
+An app theme is still a `HelmTheme`, because roughly six hundred call sites read `ThemeManager.shared.theme` for chrome, ground, cards, accent and `HelmTint`, and all of them keep working.
+
+Three decisions shaped that:
+
+- **Every app theme speaks the Daylight design language.** `isDaylight` is true for all fourteen, each with its own `DaylightTokens`.
+  Without that, the twelve new registers would have rendered with the flat, border-only recipes the K1 audit called the legacy half of the app.
+  The tokens the prototype does not specify (`hairRow`, `rowHover`, `faint`, `shadowInk`, the terminal well) are derived by rules that reproduce Dusk's hand-picked values, and `AppTheme.swift` states each rule.
+- **An app theme's `ansiHex` is not a terminal palette.** Slots 1 to 5 are the app's status vocabulary (critical, good, warn, info, violet), which is what `HelmTint` and the twenty direct readers use.
+  Violet is not in the prototype, so it is the Daylight family's own violet for the register.
+- **The side value is used verbatim.** `sidePanelFill` returns the prototype's `side` for an app theme.
+  Those values sit 1.05 to 1.14 from their ground, below the 1.08 floor `sidePanelSeparation` sets for a *derived* tone, so for them the hairline edge carries the boundary.
+  `SettingsSidebarNavigationSelfTest` asserts that split: the floor for derived fills, and for a published side value the value itself plus an edge that stands clear of both regions.
+  This is a visible change on Daylight and Dusk (their Settings band is a lighter step than before) and is called out for the captain.
+
+### The terminal's own colours
+
+`TerminalColorsSettings` (stored as JSON under `fm.terminalColors`) is "Match app theme" or a chosen scheme, optionally as a light and dark pair that follows the app's appearance.
+`ThemeManager.terminalScheme` is the resolved scheme, and `observeTerminalScheme` fires when it moves and whenever the choice changes.
+Only the terminal follows it: the console's cells, cursor and selection, new tabs, the keyword highlighter and its Settings swatches, and `HerdrThemeSync`.
+The console draws the terminal as a card whenever the scheme's cells differ from the app's page ground, which is the prototype's rule and the one Daylight already followed.
+
+### Moving a saved theme
+
+`fm.themeModel` records which model the stored keys are in, and the move runs once at launch (`ThemeManager.migrateToSplitThemes`).
+Each old id maps to an app register of the same mode (`AppThemeMigration.legacyMap`).
+Twelve of the 26 are a family's companion and move with nothing else; the rest get the terminal override as a light and dark pair, so the terminal looks exactly as it did and the light/dark toggle still moves it the way it did.
+Following the system, the old pair becomes the terminal's pair unless it is already the family's companions.
+The legacy `fm.themeMode` key is read as Helm Light or Helm Dark and moved the same way.
+A fresh install has nothing written for it, so `followSystemAppearance` still reads it as fresh.
+A `.glbackup` carries the terminal choice as an optional field, and an old bundle's terminal-scheme `themeID` is moved the same way on restore.
+
+### Proof
+
+`FM_RUN_THEME_SPLIT_TESTS` (pure logic, blocking lane) checks the registers against a literal copy of the prototype, their text and status contrast, the move for all 26 ids in both registers, the once-only and fresh-install rules, that an override fires no app observer, and the backup round trip.
+`FM_RUN_THEME_SPLIT_CONSOLE_TESTS` (window-backed) reads a real `TerminalView` and the real page layers, and presses the real Settings controls.
+Confirmed by injection: painting panes from the app theme, a move that never overrides, a restore that drops the moved override, and a terminal change that re-fires the app observers each fail by name.
+`FM_RUN_CONTRAST_TESTS` sweeps the fourteen registers in every chrome check.
+
+Not verified: terminal glyph colours in a render (an off-screen `TerminalView` paints no glyphs; the console suite reads the colours from the live view instead), and the real system appearance switch.
+
+Follow-ups noted rather than done: the sidebar shell's main column is the system sidebar material, so it does not take the `side` value; Block view still paints its ground from the app theme; Code Preview and the Notebook stay on the app theme by design.

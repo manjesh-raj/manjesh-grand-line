@@ -76,8 +76,11 @@ enum SettingsSidebarNavigationSelfTest {
     /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
     /// Twenty-nine since T2 added the Terminal page's Keyword highlighting
     /// card and its Preview card, and thirty since T3 added its Custom rules
-    /// card.
-    private static let expectedCardCount = 30
+    /// card. Thirty-three since the theme split added the Terminal page's
+    /// Terminal colours card, its light and dark pair card and its Schemes
+    /// card (Appearance's follow-system card became the Appearance control's,
+    /// so that page's count did not move).
+    private static let expectedCardCount = 33
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
@@ -612,10 +615,31 @@ enum SettingsSidebarNavigationSelfTest {
     private static func checkEveryThemeSeparatesTheBandFromTheGround(_ ok: inout Bool) {
         print("\n-- every palette's side-panel tone is a real step off its own page ground --")
         var worst = (id: "", ratio: Double.greatestFiniteMagnitude)
-        for theme in HelmTheme.allThemes {
+        let appOnly = HelmTheme.appThemes.filter { app in !HelmTheme.allThemes.contains { $0.id == app.id } }
+        for theme in HelmTheme.allThemes + appOnly {
             let ground = HelmTheme.nsColor(theme.backgroundHex)
             let band = HelmTheme.sidePanelFill(theme)
             let ratio = HelmContrast.ratio(band, ground)
+            // The theme split: an app theme publishes its own `side` (the
+            // approved prototype's value, 1.05-1.14 off its ground), and that
+            // value is used verbatim. The floor below is the rule for a
+            // *derived* tone; for a published one the hairline carries the
+            // boundary, so what is asserted is that the band is the value and
+            // that the edge stands clear of both regions it divides.
+            if let side = theme.app?.sideHex {
+                let edge = HelmTheme.sidePanelEdge(theme)
+                let edgeSeparation = min(HelmContrast.ratio(edge, band), HelmContrast.ratio(edge, ground))
+                if HelmContrast.ratio(band, HelmTheme.nsColor(side)) > 1.001 {
+                    print("  FAIL \(theme.id): the band is not the theme's own side value \(side)")
+                    ok = false
+                }
+                if ratio <= 1.0 || edgeSeparation < HelmTheme.sidePanelSeparation {
+                    print(String(format: "  FAIL %@: band %.4f off its ground, edge %.4f off the band and ground"
+                                 + " - nothing carries the boundary", theme.id, ratio, edgeSeparation))
+                    ok = false
+                }
+                continue
+            }
             if ratio < worst.ratio { worst = (theme.id, ratio) }
             // A hair under the floor, because the bisection lands *on* it and
             // the last step is a float.
@@ -634,8 +658,8 @@ enum SettingsSidebarNavigationSelfTest {
                 ok = false
             }
         }
-        print(String(format: "  ok   %d palettes; the closest is %@ at %.4f (floor %.2f)",
-                     HelmTheme.allThemes.count, worst.id, worst.ratio, HelmTheme.sidePanelSeparation))
+        print(String(format: "  ok   %d palettes; the closest derived band is %@ at %.4f (floor %.2f)",
+                     HelmTheme.allThemes.count + appOnly.count, worst.id, worst.ratio, HelmTheme.sidePanelSeparation))
     }
 
     /// The painted half: a real Settings page rendered off-screen, with the
@@ -657,13 +681,13 @@ enum SettingsSidebarNavigationSelfTest {
         // Dusk, so a fix that only works in one register or one family fails
         // here. Not all twenty-six: each entry is a full page render, and the
         // token sweep above already covers every palette.
-        let sampled = ["daylight", "dusk", "helm-dark", "helm-light",
+        let sampled = ["daylight", "dusk", "graphite-light", "night-watch", "helm-dark", "helm-light",
                        "nord-polar", "nord-snow", "dracula", "alucard",
                        "one-dark", "one-light", "oxocarbon-dark", "oxocarbon-light",
                        "gruvbox-light", "tokyo-night-dark", "tokyo-night-light"]
         var measured = 0
         for id in sampled {
-            guard let theme = HelmTheme.theme(id: id) else {
+            guard let theme = HelmTheme.appTheme(id: id) ?? HelmTheme.theme(id: id) else {
                 print("  FAIL no such theme: \(id)")
                 ok = false
                 continue
@@ -791,7 +815,13 @@ enum SettingsSidebarNavigationSelfTest {
                     (Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent))
                 }
                 let ratio = HelmContrast.ratio(raw(bandPixel), raw(contentPixel))
-                if ratio < HelmTheme.sidePanelSeparation - 0.01 {
+                // A theme publishing its own side value is held to that
+                // value's own separation; see the token sweep above.
+                let floor = theme.app.map { info in
+                    min(HelmTheme.sidePanelSeparation,
+                        HelmContrast.ratio(HelmTheme.nsColor(info.sideHex), HelmTheme.nsColor(theme.backgroundHex)))
+                } ?? HelmTheme.sidePanelSeparation
+                if ratio < floor - 0.01 {
                     print(String(format: "  FAIL %@: the painted band and the painted content measure %.4f apart,"
                                  + " below the %.2f floor - they read as one flat surface",
                                  id, ratio, HelmTheme.sidePanelSeparation))

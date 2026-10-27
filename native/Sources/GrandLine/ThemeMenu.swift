@@ -62,9 +62,11 @@ enum ThemeMenu {
     /// theme's id is read back via `NSMenuItem.representedObject`.
     static func build(target: AnyObject, action: Selector) -> NSMenu {
         let menu = NSMenu()
-        appendGroup("DARK", HelmTheme.allThemes.filter { $0.mode == .dark }, to: menu, target: target, action: action)
+        // The app's own themes since the theme split; the 26 terminal
+        // schemes are chosen on Settings > Terminal.
+        appendGroup("DARK", HelmTheme.appThemes.filter { $0.mode == .dark }, to: menu, target: target, action: action)
         menu.addItem(.separator())
-        appendGroup("LIGHT", HelmTheme.allThemes.filter { $0.mode == .light }, to: menu, target: target, action: action)
+        appendGroup("LIGHT", HelmTheme.appThemes.filter { $0.mode == .light }, to: menu, target: target, action: action)
         return menu
     }
 
@@ -86,7 +88,7 @@ enum ThemeMenu {
     /// Read a theme item's id back and apply it - the shared action body for
     /// both the topbar button and Settings' Appearance popup.
     static func apply(from sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let theme = HelmTheme.theme(id: id) else { return }
+        guard let id = sender.representedObject as? String, let theme = HelmTheme.appTheme(id: id) else { return }
         ThemeManager.shared.setTheme(theme)
     }
 }

@@ -196,6 +196,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// every window that needs to match (Hosts/Keys/Snippets) observes the
     /// same manager instead of tracking its own copy.
     var theme: HelmTheme = ThemeManager.shared.theme
+    /// Mirrors `ThemeManager.shared.terminalScheme`: what every terminal on
+    /// this page paints its cells in. Not `theme` - since the theme split the
+    /// page around the terminal is the app theme and the cells are the
+    /// terminal's own scheme (`TerminalColors.swift`).
+    var terminalScheme: HelmTheme = ThemeManager.shared.terminalScheme
     /// Mirrors `FontSizeManager.shared.size` (`fm/cockpit-tools-page-ui-polish`) -
     /// same "local var kept live via `observe`" convention as `theme` above,
     /// so every open tab's font stays in sync with Settings' presets and the
@@ -676,7 +681,15 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // dead closure into `ThemeManager` forever (see `shutdown()`).
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
             self?.theme = theme
+            self?.terminalScheme = ThemeManager.shared.terminalScheme
             self?.applyTheme()
+        }
+        // A terminal colours change moves the cells and the card and nothing
+        // else on the page, so it repaints just those.
+        terminalSchemeObservation = ThemeManager.shared.observeTerminalScheme { [weak self] scheme in
+            guard let self, scheme.id != self.terminalScheme.id else { return }
+            self.terminalScheme = scheme
+            self.applyTerminalScheme()
         }
 
         // Follow the shared font size (`fm/cockpit-tools-page-ui-polish`) the
@@ -713,6 +726,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     }
 
     var themeObservation: ThemeObservation?
+    var terminalSchemeObservation: ThemeObservation?
     var fontSizeObservation: FontSizeObservation?
     var scrollbackObservation: TerminalScrollbackObservation?
     /// 3.2's push half for the *backgrounded* half of the condition. The

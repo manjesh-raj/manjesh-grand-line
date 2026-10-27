@@ -67,8 +67,9 @@ final class WelcomeSheetController: NSViewController {
         var blurb: String {
             switch self {
             case .theme:
-                return "Grand Line ships fourteen palettes. Pick one now - it applies as you click, "
-                    + "and you can change it any time from the bar or from \(PlaceName.of(.settings))."
+                return "Grand Line ships seven themes, each with a light and a dark look. Pick one now - it "
+                    + "applies as you click, and you can change it any time from \(PlaceName.of(.settings)) "
+                    + "\u{203A} Appearance. The terminal's own colours are on the Terminal page."
             case .profile:
                 return "Pick the modules your sidebar starts with. You can show or hide any of them later in "
                     + "\(PlaceName.of(.settings)) \u{203A} Appearance, and nothing you hide is deleted."
@@ -244,17 +245,19 @@ final class WelcomeSheetController: NSViewController {
         themeGrid.alignment = .leading
         themeGrid.spacing = HelmMetrics.s2
         themeGrid.translatesAutoresizingMaskIntoConstraints = false
-        // The whole palette, four to a row. Applied on click rather than on
-        // finish: a theme picker that does not show you the theme is a list of
-        // words, and this app already applies a theme instantly everywhere.
-        for chunk in stride(from: 0, to: HelmTheme.allThemes.count, by: 4) {
+        // The app's seven families, four to a row, each in the register the
+        // app is in. Applied on click rather than on finish: a theme picker
+        // that does not show you the theme is a list of words, and this app
+        // already applies a theme instantly everywhere.
+        let families = AppThemeFamily.allCases
+        for chunk in stride(from: 0, to: families.count, by: 4) {
             let row = NSStackView()
             row.orientation = .horizontal
             row.spacing = HelmMetrics.s2
-            for theme in HelmTheme.allThemes[chunk..<min(chunk + 4, HelmTheme.allThemes.count)] {
-                let button = HelmButton(title: theme.name, variant: .secondary, size: .small,
+            for family in families[chunk..<min(chunk + 4, families.count)] {
+                let button = HelmButton(title: family.title, variant: .secondary, size: .small,
                                         target: self, action: #selector(themePicked(_:)))
-                button.identifier = NSUserInterfaceItemIdentifier(theme.id)
+                button.identifier = NSUserInterfaceItemIdentifier(family.rawValue)
                 themeButtons.append(button)
                 row.addArrangedSubview(button)
             }
@@ -263,9 +266,8 @@ final class WelcomeSheetController: NSViewController {
     }
 
     @objc private func themePicked(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue else { return }
-        guard let theme = HelmTheme.theme(id: id) else { return }
-        ThemeManager.shared.setTheme(theme)
+        guard let id = sender.identifier?.rawValue, let family = AppThemeFamily(rawValue: id) else { return }
+        ThemeManager.shared.setTheme(family.register(ThemeManager.shared.theme.mode))
         render()
     }
 
@@ -337,7 +339,7 @@ final class WelcomeSheetController: NSViewController {
         HelmField.applySunken(to: commandWell, theme: theme)
         // The chosen palette reads as chosen.
         for button in themeButtons {
-            button.variant = button.identifier?.rawValue == theme.id ? .primary : .secondary
+            button.variant = button.identifier?.rawValue == theme.app?.family.rawValue ? .primary : .secondary
         }
         let chosen = WorkspaceProfile.matching(AppSettings.shared.hiddenModules)
         for (profile, button) in profileButtons { button.variant = profile == chosen ? .primary : .secondary }

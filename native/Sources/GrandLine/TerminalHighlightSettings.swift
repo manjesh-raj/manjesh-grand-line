@@ -27,7 +27,11 @@ final class TerminalHighlightSettingsSections: NSObject {
     /// What the live terminals use. Updated on every change, so an open tab
     /// repaints without a relaunch.
     private let highlighter: TerminalKeywordHighlighter
+    /// The app theme: this section's own switches, rows and text.
     private var theme: HelmTheme
+    /// The terminal's effective scheme: every highlight colour, swatch and
+    /// the preview, because those are what a terminal paints.
+    private var terminalScheme: HelmTheme
 
     private let masterSwitch = HelmToggle()
     private var masterRow: SettingsRow?
@@ -47,10 +51,12 @@ final class TerminalHighlightSettingsSections: NSObject {
 
     init(store: AppSettings = .shared,
          highlighter: TerminalKeywordHighlighter = .shared,
-         theme: HelmTheme = ThemeManager.shared.theme) {
+         theme: HelmTheme = ThemeManager.shared.theme,
+         terminalScheme: HelmTheme = ThemeManager.shared.terminalScheme) {
         self.store = store
         self.highlighter = highlighter
         self.theme = theme
+        self.terminalScheme = terminalScheme
         super.init()
     }
 
@@ -71,8 +77,10 @@ final class TerminalHighlightSettingsSections: NSObject {
     ]
 
     static func defaultTitle(for cls: KeywordHighlightClass) -> String {
-        let name = ansiNames.first { $0.index == cls.defaultANSIIndex }?.name ?? "Theme"
-        return "Theme \(name.lowercased())"
+        let name = ansiNames.first { $0.index == cls.defaultANSIIndex }?.name ?? "Scheme"
+        // "Scheme", not "Theme": these are the terminal colour scheme's own
+        // slots, which since the theme split can differ from the app theme.
+        return "Scheme \(name.lowercased())"
     }
 
     static func choices(for cls: KeywordHighlightClass) -> [(title: String, choice: Choice)] {
@@ -181,8 +189,21 @@ final class TerminalHighlightSettingsSections: NSObject {
         repaintColors(settings)
     }
 
+    /// A terminal colours change: only the colours this section shows for the
+    /// terminal move.
+    func applyTerminalScheme(_ scheme: HelmTheme) {
+        terminalScheme = scheme
+        let settings = store.terminalHighlighting
+        for cls in KeywordHighlightClass.allCases {
+            classRows[cls]?.descriptionLabel?.stringValue = description(for: cls, settings: settings)
+        }
+        repaintColors(settings)
+        themeRules()
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        terminalScheme = ThemeManager.shared.terminalScheme
         masterSwitch.applyTheme(theme)
         for toggle in classSwitches.values { toggle.applyTheme(theme) }
         let settings = store.terminalHighlighting
@@ -195,12 +216,12 @@ final class TerminalHighlightSettingsSections: NSObject {
 
     private func repaintColors(_ settings: KeywordHighlightSettings) {
         for cls in KeywordHighlightClass.allCases {
-            let color = TerminalKeywordHighlighter.resolvedColor(for: cls, settings: settings, theme: theme)
+            let color = TerminalKeywordHighlighter.resolvedColor(for: cls, settings: settings, theme: terminalScheme)
             swatches[cls]?.layer?.backgroundColor = color.cgColor
             swatches[cls]?.layer?.borderWidth = 1
             swatches[cls]?.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
         }
-        preview.render(settings: settings, theme: theme)
+        preview.render(settings: settings, theme: terminalScheme)
     }
 
     /// The row's sample words, plus what happened to a custom colour.
@@ -210,7 +231,7 @@ final class TerminalHighlightSettingsSections: NSObject {
             return cls.sample
         }
         let raw = HelmTheme.nsColor(hex)
-        let background = TerminalKeywordHighlighter.terminalBackground(theme)
+        let background = TerminalKeywordHighlighter.terminalBackground(terminalScheme)
         let ratio = HelmContrast.ratio(raw, background)
         if ratio >= HelmContrast.textTarget {
             return "\(cls.sample). Custom colour, \(String(format: "%.1f", ratio)):1 on this theme\u{2019}s terminal."
@@ -253,7 +274,7 @@ final class TerminalHighlightSettingsSections: NSObject {
         case .custom:
             openColorPanel(target: .highlightClass(cls),
                            starting: TerminalKeywordHighlighter.resolvedColor(
-                               for: cls, settings: store.terminalHighlighting, theme: theme))
+                               for: cls, settings: store.terminalHighlighting, theme: terminalScheme))
         }
     }
 
@@ -518,12 +539,12 @@ final class TerminalHighlightSettingsSections: NSObject {
         let hair = theme.isDaylight ? HelmTheme.nsColor(theme.daylightTokens.hairRow) : line.withAlphaComponent(0.5)
         for view in ruleHairlines { view.layer?.backgroundColor = hair.cgColor }
         for (view, color) in ruleSwatches {
-            view.layer?.backgroundColor = TerminalKeywordHighlighter.resolvedColor(color, fallbackANSIIndex: 5, theme: theme).cgColor
+            view.layer?.backgroundColor = TerminalKeywordHighlighter.resolvedColor(color, fallbackANSIIndex: 5, theme: terminalScheme).cgColor
             view.layer?.borderColor = line.cgColor
         }
         if let editorSwatch, let draft {
             editorSwatch.layer?.backgroundColor = TerminalKeywordHighlighter.resolvedColor(
-                draft.rule.color, fallbackANSIIndex: 5, theme: theme).cgColor
+                draft.rule.color, fallbackANSIIndex: 5, theme: terminalScheme).cgColor
             editorSwatch.layer?.borderColor = line.cgColor
         }
         editorKindTabs?.applyTheme(theme)
@@ -621,7 +642,7 @@ final class TerminalHighlightSettingsSections: NSObject {
         case .custom:
             captureEditorText()
             openColorPanel(target: .ruleDraft, starting: TerminalKeywordHighlighter.resolvedColor(
-                draft?.rule.color ?? .ansi(5), fallbackANSIIndex: 5, theme: theme))
+                draft?.rule.color ?? .ansi(5), fallbackANSIIndex: 5, theme: terminalScheme))
         case .classDefault:
             break
         }

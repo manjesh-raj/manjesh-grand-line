@@ -44,7 +44,8 @@ enum TerminalHighlightSettingsSelfTest {
 
         store.terminalHighlighting = .defaults
         let highlighter = TerminalKeywordHighlighter(settings: .defaults, theme: .dusk)
-        let card = TerminalHighlightSettingsSections(store: store, highlighter: highlighter, theme: .dusk)
+        let card = TerminalHighlightSettingsSections(store: store, highlighter: highlighter, theme: .dusk,
+                                                     terminalScheme: .dusk)
         let sections = card.sections()
         check(sections.count >= 2, "the card built \(sections.count) sections; expected the class group and the preview", &ok)
         card.applyTheme(.dusk)
@@ -138,7 +139,9 @@ enum TerminalHighlightSettingsSelfTest {
     private static func checkEveryPalette(_ card: TerminalHighlightSettingsSections, _ ok: inout Bool) {
         var measured = 0
         for theme in HelmTheme.allThemes {
-            card.applyTheme(theme)
+            // The theme split: these colours follow the terminal's scheme,
+            // and a terminal colours change reaches the card through this.
+            card.applyTerminalScheme(theme)
             let background = TerminalKeywordHighlighter.terminalBackground(theme)
             for cls in KeywordHighlightClass.allCases {
                 guard let swatch = card.debugSwatchColor(cls) else {
@@ -157,7 +160,7 @@ enum TerminalHighlightSettingsSelfTest {
         }
         check(measured == HelmTheme.allThemes.count * KeywordHighlightClass.allCases.count,
               "measured \(measured) swatches; the sweep did not cover every palette and class", &ok)
-        card.applyTheme(.dusk)
+        card.applyTerminalScheme(.dusk)
     }
 
     private static func checkRestoreDefaults(_ card: TerminalHighlightSettingsSections, _ store: AppSettings,

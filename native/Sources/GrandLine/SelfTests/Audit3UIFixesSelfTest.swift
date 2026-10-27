@@ -566,14 +566,13 @@ enum Audit3UIFixesSelfTest {
                                                   snippetStore: SnippetStore(),
                                                   dictationStore: DictationStore())
                 laidOut(settings, width: width, height: 900)
-                // UI-57: the grid opens on the current family; the disclosure
-                // shows every palette, which is what this case measures.
-                settings.debugThemeDisclosure.performClick(nil)
+                // The theme split: the grid is the seven app families, all
+                // showing at once.
                 settings.view.layoutSubtreeIfNeeded()
                 let labels = settings.debugThemeNameLabels
-                check(labels.count == HelmTheme.allThemes.count,
-                      "at \(Int(width)): the grid renders every theme "
-                      + "(\(labels.count) of \(HelmTheme.allThemes.count))",
+                check(labels.count == AppThemeFamily.allCases.count,
+                      "at \(Int(width)): the grid renders every family "
+                      + "(\(labels.count) of \(AppThemeFamily.allCases.count))",
                       &ok)
                 var truncated: [String] = []
                 for label in labels {

@@ -1191,19 +1191,21 @@ noted.
   is Daylight's own card-over-paper). `SettingsController`'s band is the worked
   example, and note it is the *page's* view: `HelmPageSidebar.Surface.panel`
   paints the nav list as a card, which is a smaller region than the column.
-- **A new palette is one surface step, and the step is the family's own
-  canonical editor background.** `backgroundHex` is simultaneously the page
-  ground *and* the terminal background, so a palette whose card differs from
-  its page reopens the seam
-  `fm/grand-line-legacy-terminal-canvas-chrome-match` closed - unless it
-  carries a real `terminalCard`, which only the Daylight family does.
+- **A new terminal scheme is one surface step, and the step is the family's
+  own canonical editor background.** In a scheme `backgroundHex` is the
+  terminal background, so a scheme whose card differs from its page reopens
+  the seam `fm/grand-line-legacy-terminal-canvas-chrome-match` closed - unless
+  it carries a real `terminalCard`, which only the Daylight family does. The
+  app's own themes are a separate catalogue (`HelmTheme.appThemes`,
+  `AppTheme.swift`): there `backgroundHex` is only the page ground, and the
+  terminal paints in `ThemeManager.terminalScheme`.
   `ThemeFamilySelfTest.checkPaletteShape` fails the run on one that does not,
   and also on a `pairId` that is one-way (`ThemeManager.toggle()` *silently*
   falls back to the plain Helm swap, so a broken pair drops the captain out of
   their family on a keystroke and nothing else notices).
   [`44-new-theme-families.md`](docs/history/44-new-theme-families.md).
-- A Daylight-family restyle branches on `theme.isDaylight` and leaves the other
-  twelve palettes byte-identical. Branch **colour and geometry recipes** that
+- A Daylight-family restyle branches on `theme.isDaylight` (true for every app
+  theme) and leaves the 24 other terminal schemes byte-identical. Branch **colour and geometry recipes** that
   way - never *structure*: a page whose column count depends on the theme is a
   bug, and shipped as one.
 

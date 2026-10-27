@@ -271,9 +271,12 @@ enum SettingsRedesignSelfTest {
     // MARK: 3. The theme grid
 
     private static func checkTheThemeGridRendersFiltersAndSelects(_ ok: inout Bool) {
-        print("\n-- the theme grid draws the real catalogue, filters it, and selects --")
+        print("\n-- the app theme grid draws the seven families, and selects --")
         // A known starting palette, so "selecting changed the theme" cannot
         // pass by accident because the grid happened to start there.
+        let followBefore = AppSettings.shared.followSystemAppearance
+        AppSettings.shared.followSystemAppearance = false
+        defer { AppSettings.shared.followSystemAppearance = followBefore }
         ThemeManager.shared.setTheme(.dusk)
         let settings = makeSettings()
         let window = mount(settings)
@@ -281,111 +284,79 @@ enum SettingsRedesignSelfTest {
         settings.select(.appearance)
         settings.view.layoutSubtreeIfNeeded()
 
-        // UI-57: at rest the grid shows the current family only - the active
-        // palette and its pair - and the disclosure opens the rest.
-        let atRest = settings.debugThemeCards
-        let family = SettingsController.themeFamilies(current: ThemeManager.shared.theme).first ?? []
-        if atRest.map(\.theme.id) != family.map(\.id) || !atRest.contains(where: \.isActive) {
-            print("  FAIL at rest the grid shows \(atRest.map(\.theme.id)), want the current family "
-                  + "\(family.map(\.id)) with the active palette in it")
-            ok = false
-        }
-        if family.count != 2 {
-            print("  FAIL Dusk's family is \(family.map(\.id)) - the pairing the grid groups by is broken")
-            ok = false
-        }
-        settings.debugThemeDisclosure.performClick(nil)
-        settings.view.layoutSubtreeIfNeeded()
-
+        // The theme split: one card per family, each drawn in the register
+        // the app is in (dark, here), in the prototype's order.
         let all = settings.debugThemeCards
-        // The current family still leads once everything is showing.
-        if Array(all.prefix(family.count)).map(\.theme.id) != family.map(\.id) {
-            print("  FAIL with every family showing, the current one is not first: "
-                  + "\(all.prefix(2).map(\.theme.id))")
+        let wantIDs = AppThemeFamily.allCases.map(\.darkID)
+        if all.map({ $0.theme.id }) != wantIDs {
+            print("  FAIL the grid drew \(all.map { $0.theme.id }), want each family's dark register "
+                  + "\(wantIDs)")
             ok = false
         }
-        if all.count != HelmTheme.allThemes.count {
-            print("  FAIL the grid drew \(all.count) cards for "
-                  + "\(HelmTheme.allThemes.count) themes")
+        if all.map({ $0.nameLabel.stringValue }) != AppThemeFamily.allCases.map(\.title) {
+            print("  FAIL the cards are titled \(all.map { $0.nameLabel.stringValue }), want the family names")
             ok = false
         }
-        // Every card is a *real* palette, not a placeholder - the reference's
-        // own 26 colours are illustrative and this is what says the grid is
-        // reading the catalogue instead.
-        for card in all where HelmTheme.theme(id: card.theme.id) == nil {
-            print("  FAIL the grid drew a card for unknown theme \(card.theme.id)")
+        // Every card previews a real app theme, never a terminal scheme.
+        for card in all where !card.theme.isAppTheme {
+            print("  FAIL the grid drew a card for \(card.theme.id), which is not an app theme")
             ok = false
             break
         }
-        // Exactly one card is the active one, and it is the active theme.
         let active = all.filter(\.isActive)
-        if active.count != 1 || active.first?.theme.id != ThemeManager.shared.theme.id {
-            print("  FAIL \(active.count) cards marked active, for "
-                  + "\(active.map { $0.theme.id }) against \(ThemeManager.shared.theme.id)")
+        if active.count != 1 || active.first?.theme.id != "dusk" {
+            print("  FAIL \(active.count) cards marked active, for \(active.map { $0.theme.id }) against dusk")
             ok = false
         }
-        // The cards really rendered: a grid of zero-sized cards would satisfy
-        // every count above.
         if all.contains(where: { $0.frame.height < 1 || $0.frame.width < 1 }) {
             print("  FAIL some theme cards laid out at zero size")
             ok = false
         }
 
-        // The filter really partitions the catalogue, and the two halves add
-        // back up to it.
-        settings.debugSetThemeFilter("dark")
-        settings.view.layoutSubtreeIfNeeded()
-        let dark = settings.debugThemeCards
-        settings.debugSetThemeFilter("light")
-        settings.view.layoutSubtreeIfNeeded()
-        let light = settings.debugThemeCards
-        if dark.contains(where: { $0.theme.mode != .dark }) {
-            print("  FAIL the Dark filter showed a light palette")
-            ok = false
-        }
-        if light.contains(where: { $0.theme.mode != .light }) {
-            print("  FAIL the Light filter showed a dark palette")
-            ok = false
-        }
-        if dark.count + light.count != HelmTheme.allThemes.count {
-            print("  FAIL Dark (\(dark.count)) + Light (\(light.count)) != "
-                  + "\(HelmTheme.allThemes.count)")
-            ok = false
-        }
-        if dark.isEmpty || light.isEmpty {
-            print("  FAIL a filter emptied the grid - the check above would pass vacuously")
-            ok = false
-        }
-
-        settings.debugSetThemeFilter("all")
-        settings.view.layoutSubtreeIfNeeded()
-
-        // Selecting: a real activation, not an assignment. The target is a
-        // palette that is definitely not the current one.
-        guard let target = settings.debugThemeCards
-            .first(where: { $0.theme.id != ThemeManager.shared.theme.id }) else {
-            print("  FAIL no card to select other than the active theme")
+        // Selecting: a real activation, not an assignment.
+        guard let target = all.first(where: { $0.theme.id == "graphite-dark" }) else {
+            print("  FAIL no Graphite card to select")
             ok = false
             return
         }
-        let wanted = target.theme.id
         _ = target.hoverView.accessibilityPerformPress()
-        if ThemeManager.shared.theme.id != wanted {
-            print("  FAIL pressing the \(wanted) card left the theme on "
-                  + "\(ThemeManager.shared.theme.id)")
+        if ThemeManager.shared.theme.id != "graphite-dark" {
+            print("  FAIL pressing Graphite left the theme on \(ThemeManager.shared.theme.id), "
+                  + "want graphite-dark - the register the app was in")
             ok = false
         }
         settings.view.layoutSubtreeIfNeeded()
-        // And the grid repainted: the checkmark has to move with the theme,
-        // or the page shows one palette and claims another.
         let nowActive = settings.debugThemeCards.filter(\.isActive)
-        if nowActive.count != 1 || nowActive.first?.theme.id != wanted {
-            print("  FAIL after selecting \(wanted) the grid marks "
-                  + "\(nowActive.map { $0.theme.id }) active")
+        if nowActive.count != 1 || nowActive.first?.theme.id != "graphite-dark" {
+            print("  FAIL after selecting Graphite the grid marks \(nowActive.map { $0.theme.id }) active")
             ok = false
         }
+
+        // The Appearance control: Light moves to the family's light register
+        // and the grid redraws every family in it.
+        _ = settings.debugAppearanceModeTabs.debugPillsForAccessibilityTests()[0].accessibilityPerformPress()  // Light
+        settings.view.layoutSubtreeIfNeeded()
+        if ThemeManager.shared.theme.id != "graphite-light" {
+            print("  FAIL Light left the theme on \(ThemeManager.shared.theme.id), want graphite-light")
+            ok = false
+        }
+        if settings.debugThemeCards.map({ $0.theme.id }) != AppThemeFamily.allCases.map(\.lightID) {
+            print("  FAIL after Light the grid shows \(settings.debugThemeCards.map { $0.theme.id })")
+            ok = false
+        }
+        _ = settings.debugAppearanceModeTabs.debugPillsForAccessibilityTests()[2].accessibilityPerformPress()  // Match macOS
+        if !AppSettings.shared.followSystemAppearance {
+            print("  FAIL Match macOS did not switch following the system on")
+            ok = false
+        }
+        let note = settings.debugAppearanceNote.stringValue
+        if !note.contains("Terminal:") || !note.contains(ThemeManager.shared.theme.name) {
+            print("  FAIL the note under the grid reads \"\(note)\" - it has to name the theme and the terminal")
+            ok = false
+        }
+        ThemeManager.shared.setTheme(.dusk)
         if ok {
-            print("  ok   \(all.count) real palettes, a partitioning filter, and a real selection")
+            print("  ok   seven families in the current register, a real selection, and the Appearance control")
         }
     }
 
@@ -457,35 +428,29 @@ enum SettingsRedesignSelfTest {
             ok = false
         }
 
-        // The same mechanism on the Appearance page's own pair, which is the
-        // row the reference actually draws greyed out. A second dependency
-        // key, so this is the registry rather than one hard-coded row.
-        settings.select(.appearance)
-        let pair = settings.debugDependentRows(of: "followSystemAppearance")
-        guard pair.count == 1 else {
-            print("  FAIL \"Follow system appearance\" has \(pair.count) dependent rows, want 1")
+        // The same dimming on Settings > Terminal's light and dark pair, which
+        // follows "Change with appearance". It is owned by the terminal
+        // colours section rather than the page's registry.
+        settings.select(.terminal)
+        let colorsBefore = ThemeManager.shared.terminalColors
+        defer { ThemeManager.shared.setTerminalColors(colorsBefore) }
+        ThemeManager.shared.setTerminalColors(TerminalColorsSettings(mode: .custom, schemeID: "dracula",
+                                                                     changesWithAppearance: true))
+        let section = settings.debugTerminalColors
+        section.refresh()
+        guard let pair = section.pairRow else {
+            print("  FAIL the terminal colours section built no light/dark pair row")
             ok = false
             return
         }
-        let followBefore = AppSettings.shared.followSystemAppearance
-        defer {
-            AppSettings.shared.followSystemAppearance = followBefore
-            settings.debugFollowSystemSwitch.isOn = followBefore
-        }
-        AppSettings.shared.followSystemAppearance = true
-        settings.debugFollowSystemSwitch.isOn = true
-        _ = settings.debugFollowSystemSwitch.accessibilityPerformPress()  // -> off
-        if pair[0].isRowEnabled {
-            print("  FAIL the light/dark pair stays live with Follow system appearance off")
+        _ = section.changeSwitch.accessibilityPerformPress()  // -> off
+        if pair.isRowEnabled || section.lightCard.isEnabled {
+            print("  FAIL the light/dark scheme pair stays live with Change with appearance off")
             ok = false
         }
-        if settings.debugSystemLightPopUp.isEnabled || settings.debugSystemDarkPopUp.isEnabled {
-            print("  FAIL the pair's popups are still enabled inside a disabled row")
-            ok = false
-        }
-        _ = settings.debugFollowSystemSwitch.accessibilityPerformPress()  // -> on
-        if !pair[0].isRowEnabled || !settings.debugSystemLightPopUp.isEnabled {
-            print("  FAIL the pair did not come back with Follow system appearance on")
+        _ = section.changeSwitch.accessibilityPerformPress()  // -> on
+        if !pair.isRowEnabled || !section.lightCard.isEnabled {
+            print("  FAIL the pair did not come back with Change with appearance on")
             ok = false
         }
         if ok { print("  ok   two dependency keys, dimmed and inert in both directions") }

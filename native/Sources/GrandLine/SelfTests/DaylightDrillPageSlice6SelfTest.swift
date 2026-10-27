@@ -110,8 +110,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// the Terminal page's three shortcut cards (Tabs, Split the terminal,
     /// Split panes) with one Keyboard shortcuts card that links to Shortcuts.
     /// Thirty since T2 and T3 added the Terminal page's Keyword highlighting,
-    /// Custom rules and Preview cards.
-    private static let expectedCardCount = 30
+    /// Custom rules and Preview cards. Thirty-three since the theme split
+    /// added the Terminal page's Terminal colours, light and dark pair, and
+    /// Schemes cards.
+    private static let expectedCardCount = 33
 
 
     static func run() -> Bool {

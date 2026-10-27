@@ -508,11 +508,10 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Command snippets & dictation` | Settings row: Command snippets & dictation | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Currently saved` | Settings row: Currently saved | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Default font size` | Settings row: Default font size | Settings > Terminal | Settings › Terminal (unchanged row) |  |
-| `settings.row.Follow system appearance` | Settings row: Follow system appearance | Settings > Appearance | Settings › Appearance (unchanged row) |  |
+| `settings.row.Appearance` | Settings row: Appearance - Light, Dark or Match macOS | Settings > Appearance, as the Follow system appearance switch and its light and dark pair | Settings › Appearance (the theme split: Match macOS is the old Follow system appearance, and each app theme family carries its own light and dark register; the terminal's own light and dark pair lives in Settings › Terminal's Terminal colours, as Change with appearance) |  |
 | `settings.row.Hide the Dock icon` | Settings row: Hide the Dock icon | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Hosts, SSH keys, jump hosts` | Settings row: Hosts, SSH keys, jump hosts | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Interface text size` | Settings row: Interface text size | Settings > Appearance | Settings › Appearance (unchanged row) |  |
-| `settings.row.Light and dark pair` | Settings row: Light and dark pair | Settings > Appearance | Settings › Appearance (unchanged row) |  |
 | `settings.row.Live in the menu bar` | Settings row: Live in the menu bar | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Lock after a full session` | Settings row: Lock after a full session | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Profile` | Settings row: Profile - Personal, Operator or Custom, with a switch per module that can be hidden (R2-UX-01) | Settings > Appearance > Sidebar | Settings › Appearance |  |
@@ -569,9 +568,12 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.LogAnalyzerController.Evidence` | Log Analyzer result tab: Evidence | Log Analyzer results | Logs (result tab, unchanged) |  |
 | `tab.LogAnalyzerController.Timeline` | Log Analyzer result tab: Timeline | Log Analyzer results | Logs (result tab, unchanged) |  |
 | `tab.SettingsController.Custom` | Sidebar profile: Custom (a hidden set neither profile starts with, R2-UX-01) | Settings > Appearance > Sidebar | Settings › Appearance |  |
-| `tab.SettingsController.All` | Theme filter: All | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
-| `tab.SettingsController.Dark` | Theme filter: Dark | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
-| `tab.SettingsController.Light` | Theme filter: Light | Settings > Appearance theme grid | Settings › Appearance (theme filter, unchanged) |  |
+| `tab.SettingsController.Dark` | Appearance: Dark | Settings > Appearance, as the theme grid's Dark filter | Settings › Appearance (the theme split: the app's dark register; the 26-palette filter moved to the terminal's scheme grid) |  |
+| `tab.SettingsController.Light` | Appearance: Light | Settings > Appearance, as the theme grid's Light filter | Settings › Appearance (the theme split: the app's light register) |  |
+| `tab.SettingsController.Match macOS` | Appearance: Match macOS | Settings > Appearance's Follow system appearance switch | Settings › Appearance (the theme split: follows macOS, sunrise and sunset included) |  |
+| `tab.SettingsTerminalColors.All` | Terminal scheme filter: All | Settings > Appearance's theme grid filter, which listed the same 26 palettes | Settings › Terminal (Terminal colours › Schemes) |  |
+| `tab.SettingsTerminalColors.Dark` | Terminal scheme filter: Dark | Settings > Appearance's theme grid filter | Settings › Terminal (Terminal colours › Schemes) |  |
+| `tab.SettingsTerminalColors.Light` | Terminal scheme filter: Light | Settings > Appearance's theme grid filter | Settings › Terminal (Terminal colours › Schemes) |  |
 | `tab.ShiftController.Board` | Tasks view: Board | Tasks page view tabs | Tasks › Board |  |
 | `tab.ShiftController.Calendar` | Tasks view: Calendar | Tasks page view tabs | Tasks › Calendar |  |
 | `tab.ShiftController.List` | Tasks view: List | Tasks page view tabs | Tasks › List |  |
@@ -828,7 +830,8 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SchedulesController` | SchedulesController controls | `addExampleScheduleTapped`, `refreshTapped` | Schedules |  |
 | `action.SessionStripView` | SessionStripView controls | `addClicked`, `closeClicked`, `pillClicked` | Console (the Sessions strip; live sessions are also sidebar children of Console) |  |
 | `action.SettingsShortcutsPage` | SettingsShortcutsPage controls | `resetRowClicked`, `restoreAllDefaults` | Settings › Shortcuts (T6: a configurable row's own reset to its default, and Restore All Defaults, which asks first) |  |
-| `action.SettingsController` | SettingsController controls | `chooseShellCwd`, `disableSudoTouchIDClicked`, `enableSudoTouchIDClicked`, `exportBackupClicked`, `fontPresetClicked`, `goBack`, `goForward`, `importBackupClicked`, `lockThresholdPicked`, `openAccessibilitySettings`, `openShortcutsApp`, `openShortcutsPage`, `openVault`, `recheckSudoTouchIDClicked`, `relaunchTapped`, `resetQuickCaptureShortcut`, `textFieldChanged`, `themeDisclosureClicked`, `uiScaleClicked` | Settings (R2-UX-08: `goBack` and `goForward` are the floating bar's header arrows; in the sidebar layout the window's Back and Forward walk the categories instead. `relaunchTapped` is the Relaunch Grand Line button beside Window layout and Interface text size) |  |
+| `action.SettingsController` | SettingsController controls | `chooseShellCwd`, `disableSudoTouchIDClicked`, `enableSudoTouchIDClicked`, `exportBackupClicked`, `fontPresetClicked`, `goBack`, `goForward`, `importBackupClicked`, `lockThresholdPicked`, `openAccessibilitySettings`, `openShortcutsApp`, `openShortcutsPage`, `openVault`, `recheckSudoTouchIDClicked`, `relaunchTapped`, `resetQuickCaptureShortcut`, `textFieldChanged`, `uiScaleClicked` | Settings (R2-UX-08: `goBack` and `goForward` are the floating bar's header arrows; in the sidebar layout the window's Back and Forward walk the categories instead. `relaunchTapped` is the Relaunch Grand Line button beside Window layout and Interface text size) |  |
+| `action.SettingsTerminalColors` | Settings › Terminal's Terminal colours choices | `clicked` | Settings › Terminal (the theme split: Match app theme and Choose a scheme, each a selectable card; the scheme cards and the light and dark pair use the shared theme card and field card) |  |
 | `action.TerminalHighlightSettings` | Settings › Terminal's keyword highlighting cards | `addRule`, `cancelRule`, `colorPicked`, `deleteRule`, `editRule`, `restoreDefaults`, `ruleColorPicked`, `saveRule` | Settings › Terminal (T2: a colour per highlight class and Restore Defaults, beside the card's switches; T3: Add Rule, and each custom rule's Edit and Delete, with Save, Cancel and the colour in the rule editor inside the Custom rules card) |  |
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `chipClicked`, `clearFilterTapped`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
@@ -978,7 +981,9 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.workspaceProfile` | Saved preference `fm.workspaceProfile` | declared in AppSettings | Settings › Appearance (the profile the sidebar started from - Personal on a fresh install, Operator on an existing one, R2-UX-01) |  |
 | `state.fm.workspaceToolbar.items` | Saved preference `fm.workspaceToolbar.items` | declared in AppSettings | Window toolbar (R2-ARCH-06: the customised toolbar's items in order, saved to `AppDefaults` instead of AppKit's autosave; unset is the shipped default) |  |
 | `state.fm.workspaceToolbar.displayMode` | Saved preference `fm.workspaceToolbar.displayMode` | declared in AppSettings | Window toolbar (R2-ARCH-06: the display mode the customisation sheet chose; unset is icons only) |  |
-| `state.fm.themeID` | Saved preference `fm.themeID` | declared in ThemeManager | Settings › Appearance |  |
+| `state.fm.terminalColors` | Saved preference `fm.terminalColors` (Match app theme, or a chosen scheme and its optional light and dark pair) | new (the theme split) | Settings › Terminal |  |
+| `state.fm.themeID` | Saved preference `fm.themeID` | declared in ThemeManager | Settings › Appearance (the theme split: names one of the fourteen app registers; a saved terminal-scheme id is moved once, keeping the terminal as it looked) |  |
+| `state.fm.themeModel` | Saved preference `fm.themeModel` (which theme model the stored keys are in) | new (the theme split) | System (read once at launch to run the move) |  |
 | `state.fm.themeMode` | Saved preference `fm.themeMode` | declared in ThemeManager | Settings › Appearance (legacy key, migrated) |  |
 | `state.fm.todayCalendarRetired` | Saved preference `fm.todayCalendarRetired` | declared in TodayCalendarRetirement | System (one-time cleanup of the retired Today page's keys, unchanged) |  |
 | `state.fm.uiTextScale` | Saved preference `fm.uiTextScale` | declared in AppSettings | Settings › Appearance |  |

@@ -678,7 +678,14 @@ extension RailDestination {
 
 extension HelmTheme {
     /// Is this a **Daylight-family** palette - Daylight or its dark companion
-    /// Dusk?
+    /// Dusk - or another app theme speaking the same design language?
+    ///
+    /// **The theme split widened this once more**, the same way Phase 6 did
+    /// for Dusk: every app theme (`AppTheme.swift`) carries its own
+    /// `designTokens`, and that is the whole mechanism by which Graphite,
+    /// Paper and the rest get the modern recipes rather than the flat,
+    /// border-only ones. The 24 terminal schemes still answer false, which is
+    /// what a self-test that puts the app on one of them directly measures.
     ///
     /// The one switch behind every §2.8 fallback in the app. A component asks
     /// this rather than comparing hexes, so the fallback stays in one place
@@ -695,7 +702,7 @@ extension HelmTheme {
     /// moves. A `isDaylightLight`-style split would have meant auditing all
     /// ~90 to decide which half each belonged in; there is no such split,
     /// because "is this the Daylight design language" is one question.
-    var isDaylight: Bool { id == "daylight" || id == "dusk" }
+    var isDaylight: Bool { id == "daylight" || id == "dusk" || designTokens != nil }
 
     /// Is this specifically the dark register?
     ///
@@ -715,7 +722,7 @@ extension HelmTheme {
     /// inside an `isDaylight` branch (the tokens have no meaning outside it -
     /// a `gruvbox-light` card resolves through `HelmTheme`'s own fields, not
     /// through here).
-    var daylightTokens: DaylightTokens { isDusk ? .dusk : .light }
+    var daylightTokens: DaylightTokens { designTokens ?? (isDusk ? .dusk : .light) }
 
     /// **Daylight** - the captain-approved design language's own palette, and
     /// the 13th theme.
@@ -788,7 +795,8 @@ extension HelmTheme {
         ],
         // K2 / §6.13: the cells are NOT painted in the palette above - they
         // are painted on a dark card. See `daylightTerminalCard`.
-        terminalCard: DaylightPalette.daylightTerminalCard
+        terminalCard: DaylightPalette.daylightTerminalCard,
+        app: AppThemeRegister.register(id: "daylight")?.themeInfo
     )
 
     /// **Dusk** - Daylight's dark companion (Phase 6), and the 14th theme.
@@ -850,6 +858,7 @@ extension HelmTheme {
         ansiHex: DaylightPalette.darkRegisterAnsi,
         // K2: the same 16 slots this theme's page already uses, on the
         // deeper `termBackground` well - see `duskTerminalCard`.
-        terminalCard: DaylightPalette.duskTerminalCard
+        terminalCard: DaylightPalette.duskTerminalCard,
+        app: AppThemeRegister.register(id: "dusk")?.themeInfo
     )
 }

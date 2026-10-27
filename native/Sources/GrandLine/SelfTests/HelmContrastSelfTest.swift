@@ -64,9 +64,21 @@ enum HelmContrastSelfTest {
         ("neutral", { $0.chromeInkHex }),
     ]
 
+    /// Every palette the app's chrome can be painted in: the 26 terminal
+    /// schemes (which a suite can still put the app on directly) plus the
+    /// twelve app registers the theme split added that are not also schemes.
+    /// The chrome sweeps below run over this; the terminal-only sweeps (the
+    /// terminal's own text and selection, the terminal card) stay on
+    /// `allThemes`, because no terminal is ever painted from an app theme.
+    static var everyChromePalette: [HelmTheme] {
+        HelmTheme.allThemes + HelmTheme.appThemes.filter { app in
+            !HelmTheme.allThemes.contains { $0.id == app.id }
+        }
+    }
+
     static func run() -> Bool {
         var ok = true
-        print("== Helm contrast self-test: \(HelmTheme.allThemes.count) themes x \(hues.count) hues ==")
+        print("== Helm contrast self-test: \(everyChromePalette.count) palettes x \(hues.count) hues ==")
         checkPills(&ok)
         checkIconTiles(&ok)
         checkMutedInk(&ok)
@@ -165,7 +177,7 @@ enum HelmContrastSelfTest {
                          theme.id as NSString, normal, selected, visible))
         }
 
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             let resolved = HelmSelection.resolve(theme)
             let fill = resolved.background
             let ink = resolved.foreground
@@ -405,7 +417,7 @@ enum HelmContrastSelfTest {
     private static func checkPills(_ ok: inout Bool) {
         print("\n-- pills (target \(HelmContrast.textTarget):1, label vs its own fill) --")
         var unchanged = 0, adjusted = 0
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             var cells: [String] = []
             for (name, hue) in hues {
                 let hex = hue(theme)
@@ -436,7 +448,7 @@ enum HelmContrastSelfTest {
     /// `IconTileView.applyTheme` routes through the same helper.
     private static func checkIconTiles(_ ok: inout Bool) {
         print("\n-- icon tiles (target \(HelmContrast.nonTextTarget):1, glyph vs its own tile fill) --")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             var cells: [String] = []
             for (name, hue) in hues {
                 let hex = hue(theme)
@@ -464,7 +476,7 @@ enum HelmContrastSelfTest {
     /// sourced-family themes landed.
     private static func checkMutedInk(_ ok: inout Bool) {
         print("\n-- HelmTheme.mutedInk (target \(HelmContrast.textTarget):1, on chrome + page background) --")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             let muted = HelmTheme.mutedInk(theme)
             let onChrome = flattenedRatio(muted, over: theme.chromeBackgroundHex)
             let onPage = flattenedRatio(muted, over: theme.backgroundHex)
@@ -556,7 +568,7 @@ enum HelmContrastSelfTest {
         // variant fill must never resolve to one of these in any theme.
         let systemChrome = [NSColor.controlAccentColor,
                             NSColor.selectedContentBackgroundColor].map(HelmContrast.components)
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             var cells: [String] = []
             for variant in HelmButtonVariantsUnderTest.all {
                 let p = HelmButton.palette(variant: variant.variant, tint: nil, theme: theme)
@@ -624,7 +636,7 @@ enum HelmContrastSelfTest {
         // A tinted label (the "\u{2606} Favorite" / "Install in Bootstrap"
         // emphasis three pages used to hand-roll) has to clear the floor too.
         print("  -- tinted labels on .secondary / .quiet --")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             for (name, hue) in hues {
                 for variant in [HelmButton.Variant.secondary, .quiet] {
                     let p = HelmButton.palette(variant: variant, tint: tint(named: name), theme: theme)
@@ -706,7 +718,7 @@ enum HelmContrastSelfTest {
     /// with no border and a hue-coloured kicker.
     private static func checkAccentRowRecipe(_ ok: inout Bool) {
         print("\n-- accent rows (one recipe, all themes) --")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             for (name, _) in hues.prefix(3) {
                 let tint: HelmTint = name == "red" ? .critical : (name == "green" ? .good : .warn)
                 // The two structural variants both callers use.
@@ -1201,7 +1213,7 @@ enum HelmContrastSelfTest {
     private static func checkStatTileRecipe(_ ok: inout Bool) {
         print("\n-- stat tiles (one recipe + legible tinted metric, all themes) --")
         var worst = (ratio: Double.greatestFiniteMagnitude, label: "")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             for tint in [nil, HelmTint.good, .warn, .critical, .accent, .info, .violet] as [HelmTint?] {
                 let tile = HelmStatTile(symbol: "checkmark.circle", value: "12", caption: "a caption", tint: tint)
                 tile.applyTheme(theme)
@@ -1262,7 +1274,7 @@ enum HelmContrastSelfTest {
     /// fix for), and a title only where one was asked for.
     private static func checkEmptyStateRecipe(_ ok: inout Bool) {
         print("\n-- empty states (one recipe, both sizes, all themes) --")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             for size in [HelmEmptyState.Size.compact, .standard] {
                 for boxed in [false, true] {
                     let empty = HelmEmptyState(symbol: "tray",
@@ -1319,7 +1331,7 @@ enum HelmContrastSelfTest {
     private static func checkSegmentedTabsRecipe(_ ok: inout Bool) {
         print("\n-- segmented tabs (one recipe + legible active label, all themes) --")
         var worst = (ratio: Double.greatestFiniteMagnitude, label: "")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             for size in [HelmSegmentedTabs.Size.standard, .compact] {
                 let tabs = HelmSegmentedTabs(items: [.init(id: "a", title: "First"),
                                                      .init(id: "b", title: "Second"),
@@ -1406,7 +1418,7 @@ enum HelmContrastSelfTest {
         var worstInk = (ratio: Double.greatestFiniteMagnitude, label: "")
         var worstMuted = (ratio: Double.greatestFiniteMagnitude, label: "")
         var worstEdge = (ratio: Double.greatestFiniteMagnitude, label: "")
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             let text = HelmTextField(placeholder: "Placeholder")
             let secure = HelmSecureTextField(placeholder: "Placeholder")
             let multi = HelmTextView(height: 80)
@@ -1670,7 +1682,7 @@ enum HelmContrastSelfTest {
         // A real width, so the two slots resolve to real frames.
         bar.frame = NSRect(x: 0, y: 0, width: 900, height: HelmPageToolbar.height)
 
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             bar.applyTheme(theme)
             let g = bar.debugGeometry()
             var problems: [String] = []
@@ -2354,7 +2366,7 @@ enum HelmContrastSelfTest {
         }
         print("  OK   seven distinct hues on daylight, every h2 lighter than its h1")
 
-        for theme in HelmTheme.allThemes {
+        for theme in everyChromePalette {
             var cells: [String] = []
             for hue in HelmDomainHue.allCases {
                 let pair = hue.pair(in: theme)
