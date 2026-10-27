@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// The Tasks page calendar's `WKWebView` host: the native half of the bridge to
+// The Calendar page's `WKWebView` host: the native half of the bridge to
 // the vendored Schedule-X bundle (`Vendor/ScheduleX/src/task-calendar.js` is
 // the other half), and the display gating that keeps a calendar nobody is
 // looking at from costing anything.
@@ -45,10 +45,17 @@ final class ShiftCalendarWebView: WKWebView {
     var onRangeChanged: ((_ view: String, _ start: String, _ end: String) -> Void)?
     /// An event was clicked. The id is the task's, also for a projection.
     var onOpenTask: ((String) -> Void)?
+    /// A follow-up's event was clicked.
+    var onOpenFollowUp: ((String) -> Void)?
     /// A day (or, in week and day view, a time slot) was double-clicked.
     var onAddTask: ((_ day: String, _ time: String?) -> Void)?
     /// An event was dropped on a new day or time.
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
+    /// A follow-up's event was dropped on a new day or time.
+    var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// The day the page is focused on (`YYYY-MM-DD`), as its last range
+    /// report said: what a New Task from the toolbar is dated to.
+    private(set) var focusedDay: String?
 
     private(set) var isReady = false
     private(set) var hasLoaded = false
@@ -186,16 +193,25 @@ final class ShiftCalendarWebView: WKWebView {
         case "range":
             guard let view = body["view"] as? String, let start = body["start"] as? String,
                   let end = body["end"] as? String else { return }
+            if let date = body["date"] as? String { focusedDay = date }
             onRangeChanged?(view, start, end)
         case "open":
             guard let id = body["taskID"] as? String else { return }
-            onOpenTask?(id)
+            if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
+                onOpenFollowUp?(id)
+            } else {
+                onOpenTask?(id)
+            }
         case "add":
             guard let day = body["day"] as? String else { return }
             onAddTask?(day, body["time"] as? String)
         case "move":
             guard let id = body["taskID"] as? String, let day = body["day"] as? String else { return }
-            onMoveTask?(id, day, body["time"] as? String)
+            if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
+                onMoveFollowUp?(id, day, body["time"] as? String)
+            } else {
+                onMoveTask?(id, day, body["time"] as? String)
+            }
         case "reply":
             guard let callID = body["callID"] as? Int,
                   let completion = pendingCalls.removeValue(forKey: callID) else { return }
@@ -212,7 +228,7 @@ final class ShiftCalendarWebView: WKWebView {
 
     // MARK: Display gating
     //
-    // `CodePreviewWebView`'s three layers: never loaded until the Calendar tab
+    // `CodePreviewWebView`'s three layers: never loaded until the Calendar page
     // is first shown, WebKit's own visibility state for a hidden view, and an
     // explicit `suspend` so the page's one timer (the now-line's minute tick)
     // stops while nobody can see it.

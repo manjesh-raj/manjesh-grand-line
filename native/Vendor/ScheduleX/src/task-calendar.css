@@ -1,9 +1,31 @@
 /* Grand Line's layer over Schedule-X's default theme.
  *
- * Kept small on purpose. The colours come from the app theme through the
- * CSS variables `task-calendar.js`'s `applyTheme` writes, so nothing here
- * names a colour. What is here is the handful of things a task calendar
- * needs that a meeting calendar does not. */
+ * The colours come from the app theme through the CSS variables
+ * `task-calendar.js`'s `applyTheme` writes (`ShiftCalendarPalette`), so
+ * nothing here names a colour. What is here is the captain's design - a
+ * raised card, each day its own raised cell, today as a filled pill, chips
+ * with an accent edge - and the handful of things a task calendar needs
+ * that a meeting calendar does not.
+ *
+ * Depth is drawn with two shadows, and their strength is the one thing that
+ * differs between the registers: a dark page needs a deeper shadow to read
+ * at all, and a light one a softer one to not look dirty. */
+
+:root {
+  --gl-radius-card: 16px;
+  --gl-radius-cell: 12px;
+  --gl-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.07);
+  --gl-shadow-cell: 0 1px 1.5px rgba(0, 0, 0, 0.07);
+  --gl-cell-highlight: rgba(255, 255, 255, 0.7);
+  --gl-shadow-chip: 0 1px 1px rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme='dark'] {
+  --gl-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px rgba(0, 0, 0, 0.35);
+  --gl-shadow-cell: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --gl-cell-highlight: rgba(255, 255, 255, 0.045);
+  --gl-shadow-chip: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
 
 html,
 body {
@@ -12,25 +34,397 @@ body {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: var(--sx-color-background);
+  /* The page ground, so the card's shadow falls on the same colour the
+   * native page around the web view paints. */
+  background: var(--gl-ground);
+  color: var(--gl-ink);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-#calendar {
+body {
+  box-sizing: border-box;
+  /* Room for the card's shadow inside the web view's own bounds. */
+  padding: 4px 6px 14px;
+}
+
+/* MARK: The card */
+
+.gl-card {
+  box-sizing: border-box;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--gl-card);
+  border: 1px solid var(--gl-card-edge);
+  border-radius: var(--gl-radius-card);
+  box-shadow: var(--gl-shadow-card);
+  padding: 16px 16px 12px;
+  overflow: hidden;
+}
+
+.gl-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 14px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.gl-title {
+  margin: 0 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--gl-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.gl-spacer {
+  flex: 1;
+}
+
+.gl-head button {
+  font: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.gl-round {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--gl-control-edge);
+  background: var(--gl-card);
+  color: var(--gl-ink);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--gl-shadow-chip), inset 0 1px 0 var(--gl-cell-highlight);
+}
+
+.gl-pill {
+  flex: none;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 17px;
+  border: 1px solid var(--gl-control-edge);
+  background: var(--gl-card);
+  color: var(--gl-ink);
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: var(--gl-shadow-chip), inset 0 1px 0 var(--gl-cell-highlight);
+}
+
+.gl-views {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.gl-pill.is-active {
+  background: var(--sx-color-primary);
+  border-color: var(--sx-color-primary);
+  color: var(--sx-color-on-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.gl-round:hover,
+.gl-pill:not(.is-active):hover {
+  background: var(--gl-control-hover);
+}
+
+.gl-head button:focus-visible {
+  outline: 2px solid var(--sx-color-primary);
+  outline-offset: 2px;
+}
+
+/* The weekday row belongs to the month grid only: the week and day views
+ * draw their own date axis. */
+.gl-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 0 0 6px;
+  color: var(--gl-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.gl-weekdays span {
+  padding: 0 14px;
+}
+
+html:not([data-view='month-grid']) .gl-weekdays {
+  display: none;
+}
+
+.gl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 6px 0;
+  color: var(--gl-muted);
+  font-size: 12px;
+}
+
+.gl-legend:empty {
+  display: none;
+}
+
+.gl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-legend-item i {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  border-inline-start: 3px solid transparent;
+  box-sizing: border-box;
+}
+
+/* MARK: Schedule-X inside the card */
+
+#calendar {
+  flex: 1;
+  min-height: 0;
   width: 100%;
 }
 
 #calendar .sx__calendar-wrapper {
   height: 100%;
   border-radius: 0;
+  background: transparent;
 }
 
 #calendar .sx__calendar {
   border: none;
   border-radius: 0;
+  background: transparent;
 }
+
+/* The card's header replaces Schedule-X's own. */
+#calendar .sx__calendar-header {
+  display: none;
+}
+
+/* MARK: The month grid - each day its own raised cell
+ *
+ * The visible cell is a pseudo-element inset inside the day, never a margin
+ * between days. The drag plugin finds the day under the pointer with
+ * `closest('.sx__month-grid-day')`, so a real gap between two days would be
+ * a strip of the grid where a drop lands on nothing. */
+
+.sx__month-grid-wrapper {
+  height: 100%;
+}
+
+.sx__month-grid-week {
+  border-top: none;
+}
+
+.sx__month-grid-day {
+  position: relative;
+  padding: 11px 9px 6px;
+  border: none !important;
+  min-width: 0;
+}
+
+.sx__month-grid-day::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: var(--gl-radius-cell);
+  background: var(--gl-cell);
+  box-shadow: var(--gl-shadow-cell), inset 0 1px 0 var(--gl-cell-highlight);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.sx__month-grid-day > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Days outside the month: present, so the weeks stay whole, but quiet. */
+.sx__month-grid-day.is-leading-or-trailing::before {
+  background: var(--gl-cell-dim);
+  box-shadow: none;
+}
+
+.sx__month-grid-day.is-leading-or-trailing .sx__month-grid-day__header-date {
+  color: var(--gl-faint);
+}
+
+.sx__month-grid-day--dragover {
+  background: transparent;
+}
+
+.sx__month-grid-day--dragover::before {
+  background: var(--sx-color-primary-container);
+  box-shadow: inset 0 0 0 2px var(--sx-color-primary);
+}
+
+.sx__month-grid-day__header {
+  align-items: flex-start;
+  padding: 0 4px 4px;
+}
+
+/* The weekday names are the card's own row above the grid. */
+.sx__month-grid-day__header-day-name {
+  display: none;
+}
+
+.sx__month-grid-day__header-date {
+  width: auto;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  justify-content: flex-start;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gl-muted);
+}
+
+/* Today: a filled accent pill rather than Schedule-X's small circle. */
+.sx__month-grid-day__header-date.sx__is-today {
+  min-width: 34px;
+  padding: 0 9px;
+  margin-inline-start: -3px;
+  justify-content: center;
+  border-radius: 12px;
+  font-weight: 700;
+  background-color: var(--sx-color-primary);
+  color: var(--sx-color-on-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.sx__month-grid-day__events {
+  grid-gap: 5px;
+  padding: 0 2px;
+}
+
+.sx__month-grid-cell {
+  height: 24px;
+}
+
+/* Chips: a soft tinted fill with the category's colour as a left edge. */
+.sx__month-grid-event {
+  border-radius: 7px;
+  border-inline-start-width: 4px !important;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--gl-shadow-chip);
+}
+
+.sx__month-grid-event-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sx__month-grid-day__events-more {
+  color: var(--gl-muted);
+  font-weight: 500;
+}
+
+/* MARK: Week and day */
+
+.sx__week-grid__date-number {
+  font-size: 18px;
+}
+
+.sx__week-grid__date--is-today .sx__week-grid__date-number {
+  border-radius: 12px;
+  width: auto;
+  min-width: 2em;
+  padding: 0 6px;
+}
+
+.sx__time-grid-event,
+.sx__date-grid-event {
+  border-radius: 7px;
+  box-shadow: var(--gl-shadow-chip);
+}
+
+/* MARK: Agenda */
+
+.sx__list-wrapper,
+.sx__list-day,
+.sx__list-day-events {
+  background: transparent;
+}
+
+.sx__list-day-header {
+  background: var(--gl-card);
+  padding: 10px 6px 6px;
+}
+
+.sx__list-day-date {
+  color: var(--gl-muted);
+}
+
+.sx__list-day-events {
+  padding: 0 2px;
+  display: grid;
+  gap: 6px;
+}
+
+.sx__list-event {
+  padding: 10px 12px;
+  border-radius: var(--gl-radius-cell);
+  background: var(--gl-cell);
+  box-shadow: var(--gl-shadow-cell), inset 0 1px 0 var(--gl-cell-highlight);
+  cursor: pointer;
+}
+
+.sx__list-event:not(:first-child) {
+  border-top: none;
+}
+
+.sx__list-event-title {
+  color: var(--gl-ink);
+  font-weight: 500;
+}
+
+.sx__list-event-start-time {
+  color: var(--gl-ink);
+}
+
+/* A task due on a day, not at a time, has no times to list: Schedule-X
+ * would print midnight to midnight. */
+.sx__list-event.gl-all-day .sx__list-event-times {
+  display: none;
+}
+
+/* "No events" names the wrong thing: this calendar holds tasks. */
+.sx__list-no-events {
+  font-size: 0;
+  padding: 40px 16px;
+  text-align: center;
+}
+
+.sx__list-no-events::after {
+  content: 'Nothing is due this month.';
+  font-size: 14px;
+  color: var(--gl-muted);
+}
+
+/* MARK: Task states */
 
 /* A repeat rule's later dates are projections, not records (GL-14): drawn
  * faint and marked, the same treatment the native grid gave them. */
@@ -40,13 +434,15 @@ body {
 
 .sx__event.gl-projected .sx__month-grid-event-title::after,
 .sx__event.gl-projected .sx__date-grid-event-text::after,
-.sx__event.gl-projected .sx__time-grid-event-title::after {
+.sx__event.gl-projected .sx__time-grid-event-title::after,
+.sx__event.gl-projected .sx__list-event-title::after {
   content: ' \21BB';
 }
 
 .sx__event.gl-completed .sx__month-grid-event-title,
 .sx__event.gl-completed .sx__date-grid-event-text,
-.sx__event.gl-completed .sx__time-grid-event-title {
+.sx__event.gl-completed .sx__time-grid-event-title,
+.sx__event.gl-completed .sx__list-event-title {
   text-decoration: line-through;
 }
 
@@ -60,9 +456,9 @@ body {
   -webkit-user-drag: none;
 }
 
-/* Set by the bridge's `suspend()` while the Tasks page is hidden. WebKit has
- * already stopped compositing a hidden WKWebView; this covers the transitions
- * it cannot know about. */
+/* Set by the bridge's `suspend()` while the calendar is hidden. WebKit has
+ * already stopped compositing a hidden WKWebView; this covers the
+ * transitions it cannot know about. */
 html.gl-suspended *,
 html.gl-suspended *::before,
 html.gl-suspended *::after {
@@ -83,13 +479,4 @@ html.gl-suspended *::after {
 
 .sx__week-grid__date--is-today .sx__week-grid__day-name {
   color: var(--gl-accent-ink);
-}
-
-/* The default theme hides the View and Date field labels in its dark
- * register, presumably because its own label ground did not match there.
- * Ours is the theme's surface in both registers, so the labels stay, and a
- * light and a dark theme show the same header. */
-.is-dark .sx__date-input-label,
-.is-dark .sx__view-selection-label {
-  display: block;
 }

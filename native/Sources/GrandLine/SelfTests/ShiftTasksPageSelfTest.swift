@@ -604,8 +604,8 @@ enum ShiftTasksPageSelfTest {
             _ = seed(store, title: "Anything", status: .todo, due: nil)
             let controller = ShiftController(store: store)
             _ = controller.view
-            check(!controller.debugCalendarIsVisible,
-                  "UI-31: the Calendar is not mounted under the Board on first paint")
+            check(controller.debugTasksViewID == "board",
+                  "UI-31: the first paint shows the Board, got \(controller.debugTasksViewID)")
             controller.debugRender()
             check(controller.debugBoardView?.debugColumn(.backlog)?.debugSkeletonVisible == false,
                   "UI-31: the skeleton goes once the board has rendered")

@@ -654,7 +654,7 @@ NEEDS_SESSION=(
   # a drag session needs a window to drag in. Its pure-logic half
   # (FM_RUN_SHIFT_BOARD_TESTS) is deliberately not here and runs in CI.
   "FM_RUN_SHIFT_BOARD_VIEW_TESTS"
-  # Tasks › Calendar: mounts the real Tasks page in a real window, loads the
+  # The Calendar page: mounts the real Calendar page in a real window, loads the
   # real Schedule-X page in a live web content process and drives a real drag
   # into the store. Its pure-logic half (FM_RUN_SHIFT_CALENDAR_TESTS) is
   # deliberately not here.

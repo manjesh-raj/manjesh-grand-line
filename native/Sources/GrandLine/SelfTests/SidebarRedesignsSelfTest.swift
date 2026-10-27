@@ -83,7 +83,7 @@ enum SidebarRedesignsSelfTest {
                 resize(window, width: 1512, shell)
                 ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
-                for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksCalendarAndReview,
+                for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
                     var ok = true
                     check(shell, window, &ok)
@@ -372,12 +372,13 @@ enum SidebarRedesignsSelfTest {
               "the sort left the filter row", &ok)
     }
 
-    private static func checkTasksCalendarAndReview(_ shell: MainSplitShellController, _ window: NSWindow,
-                                                    _ ok: inout Bool) {
+    /// The Calendar is its own sidebar row now (`TaskCalendarSelfTest`), so
+    /// Tasks' tabs are three.
+    private static func checkTasksReview(_ shell: MainSplitShellController, _ window: NSWindow,
+                                         _ ok: inout Bool) {
         let tasks = shell.workspace.shift
-        clickTab("Calendar", shell)
-        check(tasks.debugCalendarIsVisible && tasks.debugCalendarView.usesWorkspaceStyle,
-              "the calendar is not the prototype's month card", &ok)
+        check(tasks.moduleTabNames == ["Board", "List", "Weekly review"],
+              "Tasks' tabs are \(tasks.moduleTabNames)", &ok)
         clickTab("Weekly review", shell)
         check(tasks.debugWorkspaceFilterRow.isHidden, "the filter row shows over Weekly review", &ok)
         let cards = tasks.debugReviewCards

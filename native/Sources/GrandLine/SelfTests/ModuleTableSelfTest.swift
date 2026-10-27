@@ -21,8 +21,9 @@
 //      one is a deliberate edit in two places (it was captured from the old
 //      switches and passed against them before they were deleted),
 //   3. the shape of the workspace: every destination in exactly one row,
-//      every module reached by at least one destination, and the eighteen
-//      sidebar items in the groups the captain's prototype draws.
+//      every module reached by at least one destination, and the nineteen
+//      sidebar items in the groups the captain's prototype draws, with the
+//      Calendar row the captain added after it.
 //
 // Pure logic, no window.
 //
@@ -136,13 +137,14 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// Eighteen sidebar items: Home on its own, then six Work, four Observe,
-    /// five Workbench and two Machine - the prototype's Version 2 sidebar,
-    /// typed out so a change to the plan is a deliberate edit here too.
+    /// Nineteen sidebar items: Home on its own, then seven Work, four Observe,
+    /// five Workbench and two Machine - the prototype's Version 2 sidebar plus
+    /// the Calendar row the captain's later mockup puts after Tasks, typed
+    /// out so a change to the plan is a deliberate edit here too.
     private static func checkWorkspaceShape(_ ok: inout Bool) {
         let expected: [WorkspaceGroup?: [WorkspaceModule]] = [
             nil: [.home],
-            .work: [.tasks, .crew, .connections, .console, .knowledge, .secrets],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .secrets],
             .observe: [.kubernetes, .logs, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
@@ -151,7 +153,7 @@ enum ModuleTableSelfTest {
             let actual = WorkspaceModule.allCases.filter { $0.group == group }
             check(actual == modules, "group \(group?.title ?? "none") holds \(actual) but the plan is \(modules)", &ok)
         }
-        check(WorkspaceModule.allCases.count == 18, "the sidebar has \(WorkspaceModule.allCases.count) items, not 18", &ok)
+        check(WorkspaceModule.allCases.count == 19, "the sidebar has \(WorkspaceModule.allCases.count) items, not 19", &ok)
         for module in WorkspaceModule.allCases {
             check(!ModuleTable.routes(in: module).isEmpty, "\(module.title) has no destination moving into it", &ok)
         }
@@ -177,6 +179,7 @@ enum ModuleTableSelfTest {
         (.console, "Console", "terminal", .teal, "Terminals, hosts and the shared Firstmate session", .command, .console, nil),
         (.hosts, "Hosts", "server.rack", .teal, "Saved hosts, SSH keys and snippets", .operations, .connections, "Hosts"),
         (.shift, "Tasks", "checkmark.circle", .rose, "A task board, follow-ups and projects", .command, .tasks, nil),
+        (.calendar, "Calendar", "calendar.badge.checkmark", .rose, "Tasks and follow-ups by the day they are due", .command, .calendar, nil),
         (.review, "Review", "arrow.triangle.branch", .green, "Open pull requests, ready to merge", .command, .crew, "Review"),
         (.logAnalyzer, "Log Analyzer", "text.magnifyingglass", .teal, "Collect, analyse and explain captured output", .operations, .logs, nil),
         (.kubernetes, "Kubernetes", "cube.transparent", .teal, "Read-only cluster browsing and multi-pod log tailing", .operations, .kubernetes, nil),
@@ -220,12 +223,13 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// The same for the eighteen sidebar items: each one's title, group,
+    /// The same for the nineteen sidebar items: each one's title, group,
     /// children, symbol, the page that draws its own tabs, and whether the
     /// content column opens with its header.
     static let pinnedModules: [(WorkspaceModule, String, WorkspaceGroup?, [String], String, RailDestination?, Bool)] = [
         (.home, "Home", nil, [], "sailboat.fill", nil, true),
-        (.tasks, "Tasks", .work, ["Board", "List", "Calendar", "Weekly review"], "checkmark.circle", .shift, true),
+        (.tasks, "Tasks", .work, ["Board", "List", "Weekly review"], "checkmark.circle", .shift, true),
+        (.calendar, "Calendar", .work, ["Month", "Week", "Day", "Agenda"], "calendar.badge.checkmark", .calendar, false),
         (.crew, "Crew", .work, ["Needs you", "In flight", "Review", "Ask the crew", "Log"], "person.3.fill", .overview, true),
         (.connections, "Connections", .work, ["Hosts", "Keys", "Snippets", "Commands"], "server.rack", .hosts, false),
         (.console, "Console", .work, [], "terminal", nil, false),

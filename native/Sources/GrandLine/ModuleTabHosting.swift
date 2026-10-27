@@ -6,7 +6,8 @@
 // Four pages draw a tab control of their own that the module table lists as
 // the module's children (`WorkspaceModule.pageTabHost`):
 //
-//   - Shift's Board, List, Calendar and Review are Tasks' four tabs,
+//   - Shift's Board, List and Review are Tasks' three tabs,
+//   - the Calendar page's Month, Week, Day and Agenda are its own four,
 //   - the Fleet page's Dashboard and Log are Crew's In flight and Log, and
 //     its sidebar-only Needs you is Crew's first tab,
 //   - the Hosts page's Hosts, SSH Keys and Snippets are Connections' Hosts,

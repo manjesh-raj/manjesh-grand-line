@@ -469,12 +469,10 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onQuickConnectHosts = { [weak self] in self?.workspace.navigator.revealHostsQuickConnect() }
         toolbar.onToggleTheme = { ThemeManager.shared.toggle() }
         toolbar.onNotifications = { [weak self] anchor in self?.notificationCenter.togglePanel(under: anchor) }
-        // The same route Go › Tasks › Calendar takes, so the button lands on
-        // the tab exactly as the menu and the tab strip do.
-        toolbar.onCalendar = { [weak self] in
-            guard let tab = ModuleTable.tab(for: .shift, pageTab: "Calendar") else { return }
-            self?.openModuleTab(tab)
-        }
+        // The Calendar's own page, the one route to it since it left Tasks'
+        // tabs for a sidebar row of its own - the same path that row's click
+        // takes, so the button reopens the view the calendar last showed.
+        toolbar.onCalendar = { [weak self] in self?.openModule(.calendar) }
         notificationCenter.onOpenHome = { [weak self] in self?.openModule(.home) }
         toolbar.onToggleInspector = { [weak self] in
             guard let self else { return }

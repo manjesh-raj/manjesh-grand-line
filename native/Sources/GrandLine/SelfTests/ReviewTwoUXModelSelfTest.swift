@@ -180,8 +180,10 @@ enum ReviewTwoUXModelSelfTest {
 
     // MARK: R2-UX-01 (b) - Personal and Operator
 
-    static let personalModules: [WorkspaceModule] = [.home, .tasks, .knowledge, .secrets, .tools, .whiteboard,
-                                                     .stickyBoard, .code, .dictation, .settings]
+    /// The review's ten, plus the Calendar row the captain added after Tasks:
+    /// it is Shift's own data, so it is a Personal module like Tasks.
+    static let personalModules: [WorkspaceModule] = [.home, .tasks, .calendar, .knowledge, .secrets, .tools,
+                                                     .whiteboard, .stickyBoard, .code, .dictation, .settings]
 
     /// A scratch settings store, removed after `body`.
     static func withScratchSettings(_ name: String, _ body: (AppSettings) -> Void) {
@@ -194,7 +196,7 @@ enum ReviewTwoUXModelSelfTest {
 
     private static func checkTheProfiles(_ ok: inout Bool) {
         check(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules) == personalModules,
-              "the Personal sidebar is \(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules).map(\.rawValue)), want the review's ten", &ok)
+              "the Personal sidebar is \(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules).map(\.rawValue)), want the review's ten and the Calendar", &ok)
         check(WorkspaceProfile.operator.hiddenModules.isEmpty, "the Operator profile hides something", &ok)
         check(!WorkspaceModule.home.canBeHidden && !WorkspaceModule.settings.canBeHidden,
               "Home or Settings can be hidden - then nothing could bring a module back", &ok)
@@ -331,14 +333,18 @@ enum ReviewTwoUXModelSelfTest {
 
     private static func checkTheModuleChords(_ ok: inout Bool) {
         // The first nine sidebar items, in its order, whatever is hidden.
+        let numbered = WorkspaceSidebarModel.listedModules().filter { !WorkspaceGoMenu.unnumbered.contains($0) }
         let operatorChords = WorkspaceSidebarModel.listedModules().compactMap { module in
             WorkspaceGoMenu.chord(for: module).map { (module, $0) }
         }
-        check(operatorChords.map(\.0) == Array(WorkspaceSidebarModel.listedModules().prefix(9))
+        check(operatorChords.map(\.0) == Array(numbered.prefix(9))
                 && operatorChords.map(\.1) == Array(1...9),
               "the Operator chords are \(operatorChords.map { "\($0.0.rawValue)=\($0.1)" })", &ok)
         let hidden = WorkspaceProfile.personal.hiddenModules
+        // The Calendar row takes no number, so Personal's chords are the ones
+        // they were before it existed.
         check(WorkspaceGoMenu.chord(for: .tools, hidden: hidden) == 5 && WorkspaceGoMenu.chord(for: .dictation, hidden: hidden) == 9
+                && WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == nil
                 && WorkspaceGoMenu.chord(for: .settings, hidden: hidden) == nil && WorkspaceGoMenu.chord(for: .crew, hidden: hidden) == nil,
               "a hidden module does not hand its number to the next one down", &ok)
         // The real menus: every module row in the first nine carries its
@@ -349,8 +355,13 @@ enum ReviewTwoUXModelSelfTest {
             return
         }
         let rows = sidebar.items.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
-        for (index, row) in rows.enumerated() {
-            let want = index < 9 ? "\(index + 1)" : ""
+        // Counted by hand, skipping the one row that takes no number (the
+        // Calendar, `WorkspaceGoMenu.unnumbered`), so Crew is still ⌘3.
+        var number = 1
+        for row in rows {
+            let skipped = row.representedObject as? String == WorkspaceModule.calendar.rawValue
+            let want = !skipped && number <= 9 ? "\(number)" : ""
+            if !skipped { number += 1 }
             check(row.keyEquivalent == want && (want.isEmpty || row.keyEquivalentModifierMask == [.command]),
                   "the Go menu's \(row.title) row carries \"\(row.keyEquivalent)\", want \u{2318}\(want)", &ok)
         }

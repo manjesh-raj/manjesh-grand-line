@@ -120,7 +120,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
-    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
+    case overview, strawHat, console, hosts, shift, calendar, review, logAnalyzer, kubernetes
     case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, poneglyph, settings
     /// The four Engineering setup pages. One slot each since
     /// `fm/grandline-separate-setup-destinations`; they shared a single
@@ -138,6 +138,7 @@ extension RailDestination {
         case .console: return .console
         case .hosts: return .hosts
         case .shift: return .shift
+        case .calendar: return .calendar
         case .review: return .review
         case .logAnalyzer: return .logAnalyzer
         case .kubernetes: return .kubernetes

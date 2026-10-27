@@ -293,3 +293,102 @@ Each was confirmed to catch a regression:
 - No resize: a task has no duration.
 - No completion affordance on an event, for the reason the section above gives.
 - The floating bar layout gets the same calendar, since both layouts share `ShiftCalendarView`; it is the sidebar layout's card radius that differs.
+
+## The Calendar becomes its own sidebar row, in the captain's card (`fm/grandline-calendar-sidebar-and-schedulex-ui-1793087315`)
+
+The captain tested PR 542 and reported two things, each with an expected screenshot.
+There was no Calendar in the sidebar, and the page was Schedule-X's plain default look inside the Tasks page.
+The mockup puts Calendar in Work between Tasks and Crew, and draws it as a raised card with a raised cell per day.
+
+### What shipped
+
+- **A destination and a module of its own.** `RailDestination.calendar`, its slot, its `ModuleTable` row and its `WorkspaceModule` row, in Work right after Tasks.
+  `TaskCalendarController` is the page, and it hosts the same `ShiftCalendarView` on the shell's one `ShiftStore` (GL-23).
+  Its tabs are Month, Week, Day and Agenda, which the page draws through `ModuleTabHosting`.
+- **One route.** Tasks lost its Calendar tab in both layouts, and the toolbar's calendar button opens the Calendar page through the same `openModule(.calendar)` the sidebar row uses.
+  It reopens the view the calendar last showed, as a row does.
+  The button now draws the Calendar row's own glyph, `calendar.badge.checkmark`, because the plain `calendar` glyph is Schedules' a few rows down.
+  In the floating bar the page is reached from the Go menu, All Destinations and ⌘K, since that layout is frozen and gets no new pill.
+- **The editors are shared, not copied.** `ShiftRecordSheets` holds the task editor, the follow-up editor, the delete confirmation and the completed-task notice.
+  Tasks and the Calendar both present them, and each redraws itself afterwards.
+- **The captain's card**, drawn by the page in `task-calendar.css` and `index.html`.
+  It has round previous and next buttons, the period's title, a Today pill and Day, Week, Month and Agenda pills with the active one filled in the accent.
+  Below that are a weekday row, a raised cell per day, dimmed days outside the month, today as a filled accent pill, chips with a left accent edge, and a legend.
+  Schedule-X's own header is hidden.
+  In the sidebar layout the page draws the mockup's "Calendar" heading with the period's count beside it, so the module declares `showsHeader: false`, like Connections and Console.
+  In the floating bar its drill header carries that count instead.
+- **Agenda** is Schedule-X's open-source list view (`createViewList` in `@schedule-x/calendar` 4.9.1), so no paid package was needed.
+  A record with no time hides the midnight-to-midnight times Schedule-X would print.
+- **Colour by kind, from real fields.** `ShiftCalendarCategory` maps a task's priority to the theme's red, violet or green, and a follow-up to its amber.
+  Each one is a `HelmContrast.tintedSurface` chip with the hue as its edge, and the legend names all four.
+  Colouring by project was dropped here, because most tasks carry no project and nearly every chip came out the same no-project grey.
+- **Follow-ups are on the calendar too.** A pending, dated follow-up is drawn, opens its own editor, and drags to a new date with Undo (`ShiftCalendarReschedule.apply(followUp:)`).
+- **New task** is the toolbar's primary action and ⌘N on this page.
+  It opens the same New Task sheet dated to today when today is on screen, and otherwise to the day the calendar is focused on.
+
+### Decisions
+
+**The raised cells are drawn inside each day, never as a gap between days.**
+The drag plugin finds the drop day with `closest('.sx__month-grid-day')`, so a margin between two days would be a strip where a drop lands on nothing and throws.
+Each day keeps its full box, and the visible cell is an inset `::before`.
+
+**A cell steps from its card toward the page ground**, which is the mockup's sunk-in cell.
+Where a palette paints the two the same, the cell takes the smallest step that clears `HelmTheme.sidePanelSeparation`.
+On High contrast dark the card is too close to black to sink from (black can only give it 1.05:1), so there the cell rises toward ink instead.
+
+**An outside day's number is held to 3:1, not 4.5:1.**
+It is muted ink stepped toward the dimmed cell for as long as it clears the large-text floor, which is what makes it read as not this month's.
+`FM_RUN_SHIFT_CALENDAR_TESTS` also asserts it reads fainter than the month's own numbers, and that a dimmed cell sits flatter on the card than a month cell.
+
+**Week and day re-scroll to the working morning on every switch.**
+The scroll controller's `initialScroll` applies only the first time a time grid mounts, so a later switch from the month opened at midnight.
+
+**The card's pills stay in the sidebar layout**, beside the toolbar's tabs, because the captain's mockup draws both.
+They are one path: a pill posts the range with its view, and the toolbar follows through `onModuleTabChanged`.
+
+**Saved settings needed no migration, and a test pins why.**
+`fm.hiddenModules` stores the modules to *hide*, so an id the list has never heard of is shown.
+A customised sidebar, either profile's starting set, and even a sidebar with Tasks hidden all show the Calendar row.
+Nothing stores sidebar order, and page tabs are not persisted.
+`SplitShellModelSelfTest.checkSavedSidebarsGetTheCalendar` fails on the plausible-looking rewrite to a list of modules to show.
+
+**The Calendar takes no number chord.** ⌘1 to ⌘9 are the first nine sidebar items by position (R2-UX-03).
+Numbering the new row would have moved Crew off ⌘3, shifted every module below it, and taken ⌘9 from Logs, which CI's `FM_RUN_REVIEW2_UX_TESTS` caught as ⌘3 opening the Calendar.
+So `WorkspaceGoMenu.unnumbered` skips it, every chord a captain already knows stays put, and the Calendar's one-click route is the toolbar's calendar button.
+
+**The Calendar's native label floor is 1**, `.whiteboard`'s reason: its body is one web view, and `FM_RUN_DESTINATION_MOUNTING_TESTS` counts native labels.
+The page's own text is read back from its DOM by the view suite.
+`FM_RUN_SETTINGS_SIDEBAR_TESTS`' guard against the retired Google calendar integration now allows exactly the Calendar module's own title in Appearance's show-or-hide list.
+
+### What the renders showed
+
+Rendered with the tour lab's new `calendar <month|week|day|agenda>` verb, in the sidebar layout and the floating bar.
+The themes were Dusk, Daylight, Graphite, Graphite Dark, Paper, Ink, Harbor, Night Watch, both High contrast palettes, Ember, Cinder, Grove and Moss.
+Two defects were found that way and fixed before the PR, and one difference turned out not to be one:
+
+- At 1512pt the crumb dropped "Work ›". That is the toolbar's existing compact rule at that width, not a defect; a wider window shows "Work › Calendar" as the mockup does.
+- The shell's module header draws only a subtitle in this layout, so the mockup's "Calendar" heading had nowhere to come from, and the floating bar printed the count twice. The page now draws its own heading in the sidebar layout and nothing in the floating bar.
+- Out-of-month days were three levels off a month day on Dusk. They are dimmed much harder now, and the palette suite checks both the separation and the fainter number.
+
+### Verification
+
+- `FM_RUN_SHIFT_CALENDAR_TESTS` (pure, CI's blocking lane) adds the card's shell (every control and every view pill in the committed bundle, the hidden Schedule-X header, the inside-the-day cell), the categories and the legend, the follow-up payload and drop rule, the cell and faint-number contrast on every app theme, and the four scales against the module's tabs.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (window-backed) now mounts `TaskCalendarController`.
+  It reads the title, the filled pill, the weekday row, the legend, the hidden header, a filled cell, a dimmed day and the today pill back from the page, along with each chip's category edge.
+  It also checks a follow-up's click and drag, the Week pill moving the toolbar, the card's Next button, and the toolbar's Agenda tab.
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS` adds the row's position, routing, glyph, the single route, the Go menu order and chords, and the saved-settings case.
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS` checks that the toolbar's calendar button lands on the Calendar page with its row lit and the page's own view tab selected.
+
+Each was confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| `case calendar` moved after `case crew` in `WorkspaceModule` | "Work lists ... want Calendar between Tasks and Crew", the sidebar tree's Work rows, the Go menu order |
+| The stored hidden set always unioned with `.calendar` | "a customised sidebar's Work lists ...", its Go menu, its ⌘3 |
+| The toolbar button sent back to `openModule(.tasks)` | "the calendar button went to shift", the lit row and the lit tab |
+
+### Left out
+
+- The Schedules page, outside calendar sync and other pages were out of scope.
+- No resize: a task has no duration.
+- The New task button says "New task", not the mockup's "New event", because it opens the New Task sheet and makes a task.

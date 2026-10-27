@@ -219,6 +219,10 @@ enum SettingsSidebarNavigationSelfTest {
 
         let needles = ["calendar", "google", "gmail", "oauth", "daily review"]
         for (category, text) in strings {
+            // The Calendar module's own row in Appearance's show-or-hide
+            // list: the app's task calendar, not the retired integration.
+            // Exactly its title, so any other calendar wording still fails.
+            if category == SettingsController.Category.appearance.rawValue, text == WorkspaceModule.calendar.title { continue }
             let lowered = text.lowercased()
             for needle in needles where lowered.contains(needle) {
                 print("  FAIL \(category) still says \"\(text)\" (\(needle))")
