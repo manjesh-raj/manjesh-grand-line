@@ -604,6 +604,7 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebarItem.minimumThickness = width
         sidebarItem.maximumThickness = width
         splitController.splitView.layoutSubtreeIfNeeded()
+        holdDividerAtSidebarWidth(width)
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.sidebarItem.isCollapsed else { return }
             self.sidebarItem.minimumThickness = Self.sidebarMinimum
@@ -643,6 +644,7 @@ final class MainSplitShellController: WorkspaceShellController {
         guard animate else {
             sidebarItem.isCollapsed = collapsed
             splitController.splitView.layoutSubtreeIfNeeded()
+            if !collapsed { holdDividerAtSidebarWidth(expandWidth) }
             // The pin holds for one more main-queue turn. A page re-lays out
             // for the narrower column on that turn (Home's grid,
             // `HomeCanvasController`'s clip-view observer), and until it has,
@@ -665,12 +667,25 @@ final class MainSplitShellController: WorkspaceShellController {
         // and the release then waits the same one turn the plain path does.
         WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true) { [weak self] in
             guard !collapsed, let self else { release(); return }
-            self.splitController.splitView.setPosition(expandWidth + self.sidebarInset, ofDividerAt: 0)
+            self.holdDividerAtSidebarWidth(expandWidth)
             self.splitController.splitView.layoutSubtreeIfNeeded()
             DispatchQueue.main.async(execute: release)
         }
     }
 
+    /// Make the pinned width the position the split view holds once the pin
+    /// comes off. A pane resized by its min/max pin leaves the split's held
+    /// divider position where it was, and the sidebar's holding priority
+    /// (489) beats the column's (250), so releasing the range put the sidebar
+    /// straight back there. Measured on CI's macOS 15 runner: narrowed to
+    /// 247pt, then widened to 1512, the sidebar was 264 while pinned and 247
+    /// one layout pass after the release, and still 247 a second later, in
+    /// 28 of 30 replays of `ReviewTwoUXSelfTest`'s sidebar check.
+    /// R2-BUG-02 found the same for the animated expand. The plain expand
+    /// and `holdSidebar` need it just as much.
+    private func holdDividerAtSidebarWidth(_ width: CGFloat) {
+        splitController.splitView.setPosition(width + sidebarInset, ofDividerAt: 0)
+    }
 
 
     /// Widen the window, inside its screen, so the column keeps
