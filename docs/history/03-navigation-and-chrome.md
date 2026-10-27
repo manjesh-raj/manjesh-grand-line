@@ -1371,3 +1371,28 @@ Tests: `FM_RUN_SPLIT_SHELL_MODEL_TESTS` covers the sizes, their snapping and ran
 Injected regressions (the migration mapping, the kept card, the fixed height) each failed a named case.
 Verified visually with an off-screen render of the sidebar shell through the tour lab, in Daylight and Dusk.
 A real pointer drag in a composited window was not verified, because screen capture is not granted on this machine.
+
+### One sidebar width on every page
+
+The captain reported the sidebar narrower on Home than on Console.
+In their screenshots it was the 200pt minimum on Home and their stored 273.5pt on Console.
+Home holds its grid's last width as a constant at `contentTie` (499), and the shell's sidebar held its width at 489, so a page's tie won.
+Whenever Home had last been laid out for a wider column, it squeezed the sidebar to its minimum on every visit, and the next page's pin put it back.
+Two ways in reproduced it on main: putting the sidebar away on Home and bringing it back on another page, and narrowing the window while another page showed.
+Both stayed broken for the session, because Home then re-laid out for the squeezed column and held that.
+
+The sidebar now holds at `MainSplitShellController.sidebarRestingPriority`, which is 499.5.
+That is above every page's ties and still below the window's 500, so it cannot hold the window's size (gotcha (13)).
+A divider drag and `setPosition(_:ofDividerAt:)` both place the divider at 490, which the resting priority would beat.
+`WorkspaceShellSplitView` reports both, and the shell drops back to 489 only while a divider is being placed.
+A synthetic drag in the off-screen shell moved the sidebar from 220pt to 260pt with the fix, and recorded 260 as the captain's width.
+
+The same work found the split view's own held divider position coming back after a pin was released.
+`fm/grandline-flaky-sidebar-width-test-1793096163` fixed that independently for its CI flake (`holdDividerAtSidebarWidth`), and this branch is rebased onto it.
+Without that fix, a sidebar placed at 224pt on Console and pinned back to 264 by the next page returned to 224 on Home in five runs of six.
+
+Not fixed here: dragging the divider wider while Home is showing still does nothing, on main and with this change.
+Every Home card width is at 499, which beats the drag's 490, so it needs Home's own priorities reworked.
+
+`MainSplitShellSelfTest.checkTheSidebarKeepsOneWidthOnEveryPage` covers both ways in, a placement, and a real press on the divider through the window's event dispatch.
+Reverting the resting priority fails it on Home at 200pt, and removing the `mouseDown` hook fails the press check.

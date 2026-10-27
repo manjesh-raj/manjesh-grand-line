@@ -35,6 +35,8 @@
 //      timer's chip, with its ring popover, in the toolbar.
 //  10. **The account menu** is Log Out only, under a rule that sets the
 //      header apart from Home.
+//  11. **The sidebar keeps one width on every page.** A page laid out for a
+//      wider column no longer squeezes it, and a divider can still be placed.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -71,7 +73,7 @@ enum MainSplitShellSelfTest {
                       checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
-                      checkToastsLandInTheColumn,
+                      checkTheSidebarKeepsOneWidthOnEveryPage, checkToastsLandInTheColumn,
                       checkTheAccountMenu, checkNotebookLeavesTheToolbarRoomAtNarrowWidths] {
             var ok = true
             check(shell, window, &ok)
@@ -1372,6 +1374,116 @@ enum MainSplitShellSelfTest {
               "a drag in another window counts as a divider drag", &ok)
         check(!MainSplitShellController.isDividerDrag(event(.leftMouseDown, in: window), in: window),
               "a mouse-down counts as a divider drag", &ok)
+    }
+
+    // MARK: 11 - one sidebar width on every page
+
+    /// The captain's report: the sidebar was narrower on Home than on Console.
+    /// Home holds its grid's last width as a constant at `contentTie` (499),
+    /// which beat the sidebar's old 489 hold. So a Home laid out for a wider
+    /// column squeezed the sidebar to its 200pt minimum on every visit, and
+    /// the next page put it back. Two ways in, both reproduced on main: the
+    /// sidebar put away on Home and brought back elsewhere, and the window
+    /// narrowed while another page showed.
+    private static func checkTheSidebarKeepsOneWidthOnEveryPage(_ shell: MainSplitShellController,
+                                                               _ window: NSWindow, _ ok: inout Bool) {
+        let resting = MainSplitShellController.sidebarRestingPriority
+        check(resting.rawValue > HelmDaylightPriority.contentTie.rawValue && resting.rawValue < NSLayoutConstraint.Priority.windowSizeStayPut.rawValue,
+              "the sidebar rests at \(resting.rawValue), want above a page's ties (499) and below the window's 500", &ok)
+        let width = window.frame.width
+        defer { resize(window, width: width, shell) }
+        resize(window, width: 1512, shell)
+        shell.debugOpenModule(.home)
+        settle(shell)
+        let chosen = shell.debugSidebarWidth
+        check(!shell.debugSidebarIsCollapsed && shell.debugSidebarHoldingPriority == resting,
+              "at rest the sidebar holds at \(shell.debugSidebarHoldingPriority.rawValue), want \(resting.rawValue)", &ok)
+
+        // 1: Home laid out with the sidebar away, which is a wider column
+        // than the one it comes back to.
+        shell.toggleWorkspaceSidebar()
+        settle(shell)
+        let sidebarAway = shell.debugContentPane.frame.width
+        shell.debugOpenModule(.console)
+        settle(shell)
+        shell.toggleWorkspaceSidebar()
+        settle(shell)
+        check(!shell.debugSidebarIsCollapsed && shell.debugContentPane.frame.width < sidebarAway - 100,
+              "fixture: with the sidebar back the column is \(shell.debugContentPane.frame.width)pt, "
+                + "not narrower than the \(sidebarAway)pt Home was laid out for", &ok)
+        for module in ReviewTwoUXSelfTest.sidebarModules(shell) + [.home, .console, .home] {
+            shell.debugOpenModule(module)
+            settle(shell)
+            check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - chosen) < 0.5,
+                  "after the sidebar came back, on \(module.title) it is "
+                    + "\(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want \(chosen)", &ok)
+        }
+
+        // 2: the window narrowed while Home was hidden. At 1100 every page's
+        // floor still leaves the sidebar its own width.
+        shell.debugOpenModule(.console)
+        settle(shell)
+        resize(window, width: 1100, shell)
+        for module in [WorkspaceModule.home, .tasks, .home] {
+            shell.debugOpenModule(module)
+            settle(shell)
+            check(!shell.debugSidebarIsCollapsed && abs(shell.debugSidebarWidth - chosen) < 0.5,
+                  "at 1100 on \(module.title) the sidebar is "
+                    + "\(shell.debugSidebarIsCollapsed ? "collapsed" : "\(shell.debugSidebarWidth)pt"), want \(chosen)", &ok)
+        }
+        resize(window, width: 1512, shell)
+
+        // A divider can still be placed: the hold drops for the placement and
+        // comes back after, and the new width is the one every page keeps.
+        guard let split = shell.debugSplitView, let pane = shell.debugSidebarPane else {
+            fail("the shell's split view is not a WorkspaceShellSplitView", &ok)
+            return
+        }
+        let inset = pane.frame.width - shell.debugSidebarWidth
+        shell.debugOpenModule(.console)
+        settle(shell)
+        split.setPosition(chosen - 40 + inset, ofDividerAt: 0)
+        settle(shell)
+        check(abs(shell.debugSidebarWidth - (chosen - 40)) < 0.5 && shell.debugSidebarHoldingPriority == resting,
+              "setPosition left the sidebar at \(shell.debugSidebarWidth)pt holding at "
+                + "\(shell.debugSidebarHoldingPriority.rawValue), want \(chosen - 40) at \(resting.rawValue)", &ok)
+        // Only a drag is the captain's choice (`checkOnlyADividerDragIsAChosenWidth`),
+        // so the next page shows the chosen width again.
+        shell.debugOpenModule(.home)
+        settle(shell)
+        check(abs(shell.debugSidebarWidth - chosen) < 0.5,
+              "after a placement that was not a drag, Home's sidebar is \(shell.debugSidebarWidth)pt, want \(chosen)", &ok)
+
+        // And a press on the divider reaches the same path, through the
+        // window's real event dispatch: lowered for the drag, back after it.
+        var holds: [Float] = []
+        let placing = split.onPlacingDivider
+        split.onPlacingDivider = { isPlacing in
+            placing?(isPlacing)
+            holds.append(shell.debugSidebarHoldingPriority.rawValue)
+        }
+        defer { split.onPlacingDivider = placing }
+        let onDivider = split.convert(NSPoint(x: pane.frame.maxX + split.dividerThickness / 2, y: split.bounds.midY), to: nil)
+        func press(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: onDivider, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        let hit = window.contentView.flatMap { $0.hitTest($0.convert(onDivider, from: nil)) }
+        check(hit === split, "the point between the panes hits \(hit.map { "\(type(of: $0))" } ?? "nothing"), not the divider", &ok)
+        guard let down = press(.leftMouseDown), let up = press(.leftMouseUp) else {
+            fail("could not build the divider press", &ok)
+            return
+        }
+        // Queued first: the split view's drag loop takes it, and ends there.
+        window.postEvent(up, atStart: false)
+        window.sendEvent(down)
+        settle(shell)
+        let want = [HelmSplitPage.sidebarHoldingPriority.rawValue, resting.rawValue]
+        check(holds == want, "a press on the divider held the sidebar at \(holds), want \(want)", &ok)
+        check(abs(shell.debugSidebarWidth - chosen) < 0.5,
+              "a press on the divider with no drag moved the sidebar to \(shell.debugSidebarWidth)pt", &ok)
+        shell.debugOpenModule(.home)
+        settle(shell)
     }
 
     /// At 1100 the narrow toolbar drops the chip's task name, and a running
