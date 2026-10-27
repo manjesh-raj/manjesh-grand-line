@@ -430,8 +430,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // card and its Preview card, and thirty since T3 added its Custom
         // rules card. Thirty-three since the theme split added the Terminal
         // page's Terminal colours, light and dark pair, and Schemes cards.
-        guard daylightFP.cardCount == 33 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 33")
+        // Thirty-four since the Capture page gained its Clipboard history
+        // card (the switch that turns the history on, off by default).
+        guard daylightFP.cardCount == 34 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 34")
             ok = false
             return
         }
