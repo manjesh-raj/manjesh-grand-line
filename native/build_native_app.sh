@@ -172,6 +172,16 @@ else
   echo "    \"no bundle\" empty state. Run Scripts/build-monaco-web.sh to build it."
 fi
 
+# The Tasks page's Calendar view - the vendored Schedule-X bundle, found the
+# same three ways (ShiftCalendarAssets.swift). Its THIRD-PARTY-LICENSES.txt
+# travels inside the directory, so the notices ship with the code they cover.
+if [ -d "Vendor/ScheduleX/web" ]; then
+  cp -R "Vendor/ScheduleX/web" "$APP_DIR/Contents/Resources/ScheduleXWeb"
+else
+  echo "⚠️  No Vendor/ScheduleX/web - Tasks › Calendar will show its"
+  echo "    \"no bundle\" empty state. Run Scripts/build-schedule-x-web.sh to build it."
+fi
+
 # R2: `appintentsmetadataprocessor` writes semantically-identical JSON in a
 # different order on every run - array order in `extract.actionsdata`, and
 # object-key order in the `version.json` beside it. Those files are sealed into

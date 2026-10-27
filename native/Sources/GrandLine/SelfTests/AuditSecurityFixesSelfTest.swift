@@ -212,15 +212,22 @@ enum AuditSecurityFixesSelfTest {
         } else {
             print("[AuditSecurityFixesSelfTest] NOTE: no Monaco bundle on this machine - real-index check skipped")
         }
+        if let dir = ShiftCalendarAssets.webDirectory(), let index = ShiftCalendarAssets.indexURL() {
+            check(WebNavigationPolicy.allowsFileURL(index, under: dir),
+                  "the real Schedule-X index.html is allowed under its own bundle dir")
+        } else {
+            print("[AuditSecurityFixesSelfTest] NOTE: no Schedule-X bundle on this machine - real-index check skipped")
+        }
     }
 
-    /// Source guard: all three web-view hosts route through the one policy,
+    /// Source guard: all four web-view hosts route through the one policy,
     /// and neither bundle host has drifted back to a `hasPrefix` of its own.
     /// A behavioural check cannot see a *fourth* host added without one.
     private static func case_5_3_bothWebViewsUseThePolicy(_ check: (Bool, String) -> Void) {
         print("- 5.3: every WKWebView host routes through WebNavigationPolicy")
 
-        for file in ["WhiteboardWebView.swift", "CodePreviewWebView.swift", "DocsController.swift"] {
+        for file in ["WhiteboardWebView.swift", "CodePreviewWebView.swift", "ShiftCalendarWebView.swift",
+                     "DocsController.swift"] {
             guard let source = read(file) else {
                 check(false, "could not read \(file)")
                 continue
@@ -252,7 +259,7 @@ enum AuditSecurityFixesSelfTest {
         // return, refuse -> reload -> refuse spins a web content process
         // forever. Nothing in a headless test can observe that loop, so the
         // guard is asserted at the source.
-        for file in ["WhiteboardWebView.swift", "CodePreviewWebView.swift"] {
+        for file in ["WhiteboardWebView.swift", "CodePreviewWebView.swift", "ShiftCalendarWebView.swift"] {
             guard let source = read(file) else { continue }
             check(source.contains("NSURLErrorCancelled"),
                   "\(file) does not treat its own cancelled navigation as page loss")

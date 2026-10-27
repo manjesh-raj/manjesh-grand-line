@@ -1,0 +1,19 @@
+{
+  "name": "grandline-schedule-x-web",
+  "private": true,
+  "description": "Pinned manifest for native/Scripts/build-schedule-x-web.sh. Not installed by the app - see ../README.md.",
+  "dependencies": {
+    "@preact/signals": "2.3.1",
+    "@schedule-x/calendar": "4.9.1",
+    "@schedule-x/calendar-controls": "4.9.1",
+    "@schedule-x/current-time": "4.9.1",
+    "@schedule-x/drag-and-drop": "3.7.3",
+    "@schedule-x/scroll-controller": "4.9.1",
+    "@schedule-x/theme-default": "4.9.1",
+    "preact": "10.27.2",
+    "temporal-polyfill": "0.3.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}

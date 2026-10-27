@@ -213,3 +213,83 @@ a caller-supplied calendar shifts the bound by the offset between the two.
 - **No completion affordance on a calendar chip.** A chip opens the task. A
   projected chip has no record to complete at all, and offering the gesture on
   one and not the other is worse than offering it on neither.
+
+## The calendar becomes a Schedule-X page (`fm/grandline-calendar-schedule-x-1793081267`)
+
+The captain chose [Schedule-X](https://github.com/schedule-x/schedule-x) for Tasks › Calendar, after the open-source calendar options review proposed it as the most modern option.
+This replaces the hand-drawn month and week grid described above.
+The model half of this file still holds: `ShiftCalendarModel.entries`, the one-live-instance rule and the projection rule are unchanged, and they are what the page is fed.
+
+### What shipped
+
+- The vendored bundle in `native/Vendor/ScheduleX/`, built by `native/Scripts/build-schedule-x-web.sh` the way the Monaco bundle is built.
+  It is copied into the `.app` as `Contents/Resources/ScheduleXWeb`, and found by `ShiftCalendarAssets` in the same three steps as the other two web bundles.
+- `ShiftCalendarWebView`, the `WKWebView` host, in `CodePreviewWebView`'s shape: call ids, a weak message proxy, page-loss recovery, the shared `WebNavigationPolicy`, and display gating.
+- `ShiftCalendarView` is now a caption plus the page in a card.
+  The page is not loaded until the tab is first shown.
+- Month, week and day views, today highlighted, a now-line in the theme's own red, and the week and day views opening at 8 AM.
+- A click on an event opens its task through the same `openBoardTask` the board uses.
+  A double-click on a day, or on a time slot in week and day view, opens New Task pre-dated (and pre-timed) to it.
+- **Drag to reschedule, which the grid never had.** A drop posts `move`, `ShiftController.rescheduleTask` applies `ShiftCalendarReschedule` and writes through `ShiftStore.updateTask`, and the toast offers Undo, which restores the date and time the controller held (GL-33).
+  A projection, a completed task and a cancelled task cannot be dragged, and the page refuses a drop on one a second time in `onBeforeEventUpdate`.
+  An all-day task stays all-day wherever it lands, and a timed task keeps its time when dropped in the month grid.
+- The palette (`ShiftCalendarPalette`) maps the **app** theme onto Schedule-X's CSS variables in both registers, and is re-sent on every theme change.
+
+### Decisions
+
+**Drag and drop uses the last MIT release of the official plugin.**
+Schedule-X 4.0.0 removed drag and drop and resize from the open-source repository and sells them as `@sx-premium` packages.
+The 4.x core still calls a drag plugin through a three-method interface, and `@schedule-x/drag-and-drop@3.7.3` (MIT, released the day before 4.0.0) implements that interface under its 3.x method names.
+4.0.1 renamed the hooks (`create*DragHandler` became `start*Drag`) with identical arguments, so the bundle adapts the names and nothing else.
+The two alternatives were pinning the whole calendar at 3.7.3, which freezes the core on a dead major for one feature, or writing our own drag on Schedule-X's DOM, which is more code against less stable structure than the plugin interface.
+`native/Vendor/ScheduleX/README.md` has the trade-off and the upgrade checklist.
+
+**The native side decides; the page draws.**
+A drop is a request, and the events are always re-pushed from the store afterwards, so a refused drop snaps back.
+Every rule about what can move lives in Swift, where `FM_RUN_SHIFT_CALENDAR_TESTS` checks it in CI's blocking lane without a web view.
+
+**Events are pushed for the visible period only.**
+The page reports its range on every navigation, and the native side recomputes entries for exactly that range.
+That keeps the recurrence projection bounded (GL-35), and it is what makes the caption's count true for the period on screen.
+
+**A timed task is a half-hour block that ends by 23:59.**
+A task has a due time but no duration, and a block that crossed midnight would turn into a two-day event in the week view's all-day row.
+
+**Schedule-X's locale shape.**
+It throws on anything that is not `ll-RR`, so `ShiftCalendarPayload.scheduleXLocale` reduces the captain's locale to that shape and falls back to `en-US`.
+
+### What the renders showed
+
+Rendered with the tour lab in the sidebar layout, across Daylight, Dusk, Graphite light, Night Watch, High contrast dark and Ember, in month, week and day.
+Three defects were found that way and fixed before the PR:
+
+- Schedule-X's own dark theme hides the View and Date field labels (`display: none` under `.is-dark`), so a dark theme had a different header from a light one.
+  Our label ground is the theme's surface in both registers, so the labels stay.
+- The default now-line is a literal `#f00`; it now takes the theme's own red.
+- Week and day view opened at midnight, an empty screen for any task during the working day.
+  The open-source `@schedule-x/scroll-controller` opens them at 07:50 instead.
+
+The palette suite found one more: seven themes' text on the accent fill measured 4.47-4.49:1 once both colours were rounded to the `#rrggbb` the page receives.
+It is the same quantisation trap `CodePreviewTheme.legibleHex` documents, and every text-on-fill pair is now measured against the quantised fill.
+
+### Verification
+
+- `FM_RUN_SHIFT_CALENDAR_TESTS` (pure, CI's blocking lane): the bundle's digests, the CSP, the licences and the `@sx-premium` ban, the bridge in the committed bundle including the drag adapter, the event payload, the locale and first weekday, the palette on all fourteen app themes, the reschedule rule, and the caption.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (window-backed): lazy load, events rendered from the store, today highlighted, a projection faint and real tasks opaque, a click opening its task, a real month-grid drag and a real week-view time drag read back from the store, a projection refusing to move, paging re-reading the store, a live theme change reaching the page's CSS variables and Schedule-X's own dark class, and suspension when hidden.
+
+Each was confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| `calendarView.onMoveTask` wiring deleted from `ShiftController` | both drag cases: the store kept the old date and time |
+| `isMovable` no longer excluding projections | "dragging a projection must not move the real task", plus two pure cases |
+| The drag adapter removed from the bundle | all three drag cases in the view suite, and the three adapter cases in the pure suite |
+| The live `setTheme` push skipped | "a theme change should repaint the page", the dark register and the dark class |
+| Text on fills measured against the unquantised fill | eight palette cases on seven themes |
+
+### Left out, and follow-ups
+
+- The Schedules page's week view, Home's date cards and outside calendar sync were out of scope for this change.
+- No resize: a task has no duration.
+- No completion affordance on an event, for the reason the section above gives.
+- The floating bar layout gets the same calendar, since both layouts share `ShiftCalendarView`; it is the sidebar layout's card radius that differs.

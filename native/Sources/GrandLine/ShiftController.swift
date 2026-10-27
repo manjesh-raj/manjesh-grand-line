@@ -1171,7 +1171,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         boardView.setLoading(true)
 
         calendarView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
-        calendarView.onAddTask = { [weak self] day in self?.addTask(on: day) }
+        calendarView.onAddTask = { [weak self] day, time in self?.addTask(on: day, time: time) }
+        calendarView.onMoveTask = { [weak self] id, day, time in self?.rescheduleTask(id: id, to: day, time: time) }
 
         boardSection.orientation = .vertical
         boardSection.alignment = .leading
@@ -1304,11 +1305,50 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     /// A double-click on a calendar day: the same New Task sheet every other
-    /// affordance opens, with that day already filled in.
-    private func addTask(on day: String) {
+    /// affordance opens, with that day already filled in - and the time too,
+    /// when the click landed on a slot in the week or day view.
+    private func addTask(on day: String, time: String? = nil) {
         var prefill = ShiftTask.fresh()
         prefill.dueDate = day
+        prefill.dueTime = time
         presentTaskEditor(for: nil, prefill: prefill, defaultProjectID: projectFilter)
+    }
+
+    /// A task dropped on a new day (or a new time) in the calendar.
+    ///
+    /// The same shape as `pushDueDate`: the store is written, the page is
+    /// redrawn from it, and a real Undo restores the date and time this
+    /// method already held (GL-33). A refused or no-op drop writes nothing,
+    /// and `render()` pushes the store's events back so the page drops the
+    /// position it drew optimistically.
+    func rescheduleTask(id: String, to day: String, time: String?) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        switch ShiftCalendarReschedule.apply(task: task, day: day, time: time) {
+        case .unchanged:
+            render()
+        case .refused(let reason):
+            render()
+            Toast.show(in: view, message: reason)
+        case .moved(let moved):
+            let previousDue = task.dueDate
+            let previousTime = task.dueTime
+            store.updateTask(moved)
+            render()
+            let phrase = ShiftDateFormatting.friendly(day, time: moved.dueTime)
+            Toast.showUndo(in: view, message: "\u{201C}\(task.title)\u{201D} moved to \(phrase)") { [weak self] in
+                // Re-read first, as `pushDueDate`'s Undo does, so an edit made
+                // while the toast was up is not reverted along with the date.
+                guard let self,
+                      var current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+                current.dueDate = previousDue
+                current.dueTime = previousTime
+                self.store.updateTask(current)
+                self.render()
+            }
+        }
     }
 
     private func matchesProjectFilter(_ task: ShiftTask) -> Bool {

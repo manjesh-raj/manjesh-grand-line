@@ -654,9 +654,10 @@ NEEDS_SESSION=(
   # a drag session needs a window to drag in. Its pure-logic half
   # (FM_RUN_SHIFT_BOARD_TESTS) is deliberately not here and runs in CI.
   "FM_RUN_SHIFT_BOARD_VIEW_TESTS"
-  # F5's calendar: mounts the real Tasks page in a real window, clicks the
-  # Calendar pill and reads the month grid's own laid-out cell frames. Its
-  # pure-logic half (FM_RUN_SHIFT_RECURRENCE_TESTS) is deliberately not here.
+  # Tasks › Calendar: mounts the real Tasks page in a real window, loads the
+  # real Schedule-X page in a live web content process and drives a real drag
+  # into the store. Its pure-logic half (FM_RUN_SHIFT_CALENDAR_TESTS) is
+  # deliberately not here.
   "FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"
   # F7's render half: a real bar with the chip actually laid out on it, the
   # popover's ring gauge, and Weekly Review's chart. Its pure-logic sibling

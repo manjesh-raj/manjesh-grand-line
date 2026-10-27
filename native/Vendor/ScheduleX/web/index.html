@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grand Line Task Calendar</title>
+    <!-- Offline by construction, the same posture and the same mechanism as
+         the Code Preview and Whiteboard page shells. The calendar is drawn
+         from the captain's own tasks, so nothing on this page may reach the
+         network: no font, no stylesheet, no script from anywhere but this
+         directory.
+
+           - `style-src 'unsafe-inline'`: Schedule-X positions every event
+             with an inline style, and the theme arrives as one injected
+             <style> element (task-calendar.js's `applyTheme`).
+           - `img-src data:`: the default theme's chevrons and the date
+             picker's icons are data: SVGs in the stylesheet.
+           - `connect-src 'none'` is what makes the rest a guarantee rather
+             than a claim: this page has nothing to fetch, so it may open no
+             connection at all, not even to itself.
+
+         There is no worker, no WebAssembly and no frame, so none of
+         `worker-src`, `wasm-unsafe-eval` or `frame-src` is granted. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; worker-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <link rel="stylesheet" href="./task-calendar.css" />
+  </head>
+  <body>
+    <div id="calendar"></div>
+    <!-- A classic script, not `type="module"`, for the reason the other two
+         page shells give: a module graph on a file:// origin is a needless
+         portability question, and the bundle is one self-contained IIFE. -->
+    <script src="./task-calendar.js"></script>
+  </body>
+</html>

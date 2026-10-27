@@ -114,7 +114,9 @@ enum ReviewTourLab {
         /// page that overflows really holds below the fold.
         case renderDoc(String)
         /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
-        /// through its own segmented control.
+        /// through its own segmented control. `calendar month|week|day` also
+        /// puts the calendar's page in that view, through its own bridge -
+        /// give it a `wait` before the next `render`, the page is async.
         case tasksView(String)
         /// Put one top-bar square into a state a click or a pointer would:
         /// `bar hover <target>`, `bar press <target>`, or `bar rest` to put
@@ -386,7 +388,11 @@ enum ReviewTourLab {
             guard !argument.isEmpty else { return .failure(.missingArgument("renderdoc")) }
             return .success(.renderDoc(argument))
         case "tasks":
-            guard ["board", "list", "calendar", "review"].contains(argument) else {
+            let words = argument.split(separator: " ").map(String.init)
+            guard let first = words.first, ["board", "list", "calendar", "review"].contains(first),
+                  words.count == 1 || (first == "calendar" && words.count == 2
+                                       && ShiftCalendarScale.allCases.map(\.title).map { $0.lowercased() }
+                                           .contains(words[1])) else {
                 return .failure(.badArgument(argument))
             }
             return .success(.tasksView(argument))
@@ -585,8 +591,13 @@ enum ReviewTourLab {
                     log.append("renderdoc FAILED \(name) - the document has no bitmap to cache")
                 }
             case .tasksView(let id):
-                shell.debugShift.debugShowView(id)
+                let words = id.split(separator: " ").map(String.init)
+                shell.debugShift.debugShowView(words[0])
                 shell.view.layoutSubtreeIfNeeded()
+                if words.count == 2,
+                   let scale = ShiftCalendarScale.allCases.first(where: { $0.title.lowercased() == words[1] }) {
+                    shell.debugShift.debugCalendarView.debugWebView.call("setView", payload: ["view": scale.rawValue])
+                }
                 log.append("tasks \(id)")
             case .barState(let state, let target):
                 guard let classic = shell as? AppShellController else {
