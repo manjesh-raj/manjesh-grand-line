@@ -1,46 +1,52 @@
 // Grand Line - native macOS app.
 //
-// One cell of the Appearance page's theme grid: a miniature of the app drawn
-// in a palette's own tokens, its name, and a checkmark when it is the active
-// one.
+// One cell of a theme grid: a miniature drawn in a theme's own tokens, its
+// name, an optional second line, and a checkmark when it is the active one.
 //
-// `fm/grandline-settings-page-redesign`. The card this replaces was three
-// equal-width swatches (`backgroundHex` / `chromeBackgroundHex` /
-// `accentHex`) in a strip, which tells a captain what colours a theme
-// contains but not what the app *looks like* in it - and the difference
-// between two palettes with the same three hues in different roles is exactly
-// what a picker has to show. The captain's reference draws a small window
-// instead: a sidebar column with a selected row, two lines of content, and a
-// card with an accent chip. Every value below is read from the `HelmTheme`
-// being previewed, so the miniature is the palette rather than a picture of
-// one.
+// `fm/grandline-settings-page-redesign` drew a small window instead of three
+// swatches, because what a picker has to show is what the app *looks like*
+// in a palette, not which colours it contains. The theme split
+// (`fm/grandline-theme-split-app-terminal`) gave the card two kinds of
+// preview, one per catalogue, both from the approved prototype:
 //
-// **Five tokens, in the roles the app really puts them in**:
+//   `.app`       Settings > Appearance's family cards. The page ground, the
+//                nav column in the theme's `side` value with an accent row
+//                and three muted rows, an ink line and a muted line, and a
+//                card on its hairline carrying the ok, warn and accent chips.
+//   `.terminal`  Settings > Terminal's scheme cards. The scheme's own cells:
+//                a prompt, an error and a warning line in its ANSI colours,
+//                the cursor, and six swatches.
 //
-//   `backgroundHex`        the page ground, behind everything
-//   `chromeBackgroundHex`  the sidebar and the card - the app's own surfaces
-//   `chromeInkHex`         the text lines
-//   `accentHex`            the selected sidebar row and the card's chip
-//   `chromeLineHex`        the card's hairline against the ground
-//
-// Which is also why this is a view rather than a `layer.contents` image: the
-// grid re-flows on a window resize (`HelmResponsiveGrid`), and a raster would
-// have to be re-rendered per column count.
+// Every value is read from the `HelmTheme` being previewed, so the miniature
+// is the palette rather than a picture of one. It is a view rather than an
+// image because the grid re-flows on a resize (`HelmResponsiveGrid`).
 
 import AppKit
 
 final class SettingsThemeCard: NSView {
+
+    enum PreviewKind {
+        /// An app theme: a miniature of the window.
+        case app
+        /// A terminal scheme: a miniature of a terminal session.
+        case terminal
+    }
 
     /// The preview's height. Enough for a sidebar column, two content lines
     /// and a card to read as three distinct things at this width - below
     /// about 56 the card and the second line merge.
     static let previewHeight: CGFloat = 68
     let theme: HelmTheme
+    let kind: PreviewKind
     private(set) var isActive: Bool
 
     let nameLabel = NSTextField(labelWithString: "")
+    /// The second line ("Dark: Dusk", "dark card"), when there is one.
+    let detailLabel = NSTextField(labelWithString: "")
     private let check = NSImageView()
     private let preview = NSView()
+    private let title: String
+    private let detail: String?
 
     /// Fired on a real click, a keyboard press or a VoiceOver activation.
     /// The card's chrome is a `HoverHighlightView`, so the hover fill, the
@@ -51,9 +57,13 @@ final class SettingsThemeCard: NSView {
 
     let hoverView = HoverHighlightView()
 
-    init(theme: HelmTheme, isActive: Bool) {
+    init(theme: HelmTheme, isActive: Bool, kind: PreviewKind = .app,
+         title: String? = nil, detail: String? = nil) {
         self.theme = theme
         self.isActive = isActive
+        self.kind = kind
+        self.title = title ?? theme.name
+        self.detail = detail
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -66,92 +76,13 @@ final class SettingsThemeCard: NSView {
         preview.layer?.cornerRadius = HelmMetrics.rControl
         preview.layer?.masksToBounds = true
         preview.translatesAutoresizingMaskIntoConstraints = false
-        preview.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        switch kind {
+        case .app: buildAppPreview()
+        case .terminal: buildTerminalPreview()
+        }
+        preview.heightAnchor.constraint(equalToConstant: Self.previewHeight).isActive = true
 
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-
-        // The sidebar column: the app's chrome surface, with a selected row in
-        // the accent and three resting rows in damped ink. 30% of the width,
-        // which is what the reference draws and roughly what this app's own
-        // 208pt column is against a page.
-        let sidebar = NSView()
-        sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = surface.cgColor
-        sidebar.translatesAutoresizingMaskIntoConstraints = false
-        preview.addSubview(sidebar)
-
-        let sidebarRows = NSStackView(views: (0..<4).map { index in
-            Self.bar(color: index == 0 ? accent : ink.withAlphaComponent(0.35), height: 3)
-        })
-        sidebarRows.orientation = .vertical
-        sidebarRows.alignment = .leading
-        sidebarRows.distribution = .fillEqually
-        sidebarRows.spacing = 4
-        sidebarRows.translatesAutoresizingMaskIntoConstraints = false
-        sidebar.addSubview(sidebarRows)
-
-        // The content column: two text lines and a card carrying an accent
-        // chip, which is what every page in this app actually is.
-        let line1 = Self.bar(color: ink.withAlphaComponent(0.85), height: 3)
-        let line2 = Self.bar(color: ink.withAlphaComponent(0.4), height: 3)
-
-        let miniCard = NSView()
-        miniCard.wantsLayer = true
-        miniCard.layer?.backgroundColor = surface.cgColor
-        miniCard.layer?.cornerRadius = 3
-        miniCard.layer?.borderWidth = 1
-        miniCard.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
-        miniCard.translatesAutoresizingMaskIntoConstraints = false
-
-        let chip = Self.bar(color: accent, height: 6)
-        chip.layer?.cornerRadius = 3
-        miniCard.addSubview(chip)
-
-        let content = NSView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(line1)
-        content.addSubview(line2)
-        content.addSubview(miniCard)
-        preview.addSubview(content)
-
-        NSLayoutConstraint.activate([
-            sidebar.leadingAnchor.constraint(equalTo: preview.leadingAnchor),
-            sidebar.topAnchor.constraint(equalTo: preview.topAnchor),
-            sidebar.bottomAnchor.constraint(equalTo: preview.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalTo: preview.widthAnchor, multiplier: 0.3),
-
-            sidebarRows.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 5),
-            sidebarRows.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -5),
-            sidebarRows.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 7),
-
-            content.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
-            content.trailingAnchor.constraint(equalTo: preview.trailingAnchor),
-            content.topAnchor.constraint(equalTo: preview.topAnchor),
-            content.bottomAnchor.constraint(equalTo: preview.bottomAnchor),
-
-            line1.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 7),
-            line1.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
-            line1.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.66),
-
-            line2.leadingAnchor.constraint(equalTo: line1.leadingAnchor),
-            line2.topAnchor.constraint(equalTo: line1.bottomAnchor, constant: 5),
-            line2.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.42),
-
-            miniCard.leadingAnchor.constraint(equalTo: line1.leadingAnchor),
-            miniCard.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -7),
-            miniCard.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -7),
-            miniCard.heightAnchor.constraint(equalToConstant: 17),
-
-            chip.trailingAnchor.constraint(equalTo: miniCard.trailingAnchor, constant: -4),
-            chip.centerYAnchor.constraint(equalTo: miniCard.centerYAnchor),
-            chip.widthAnchor.constraint(equalToConstant: 12),
-
-            preview.heightAnchor.constraint(equalToConstant: Self.previewHeight),
-        ])
-
-        nameLabel.stringValue = theme.name
+        nameLabel.stringValue = title
         nameLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: isActive ? .semibold : .regular)
         nameLabel.lineBreakMode = .byTruncatingTail
         // Otherwise the longest name's own compression resistance beats the
@@ -179,7 +110,7 @@ final class SettingsThemeCard: NSView {
         hoverView.cornerRadius = HelmMetrics.rControl
         hoverView.translatesAutoresizingMaskIntoConstraints = false
         hoverView.accessibilityRoleOverride = .radioButton
-        hoverView.accessibilityLabelOverride = theme.name
+        hoverView.accessibilityLabelOverride = detail.map { "\(title), \($0)" } ?? title
         // A real click recognizer plus the accessibility press hook, which is
         // this app's established shape for a clickable `HoverHighlightView` -
         // the recognizer covers the mouse, `onAccessibilityPress` covers
@@ -188,7 +119,13 @@ final class SettingsThemeCard: NSView {
                                                                 action: #selector(cardClicked)))
         hoverView.onAccessibilityPress = { [weak self] in self?.onSelect?() }
 
-        let column = NSStackView(views: [preview, nameRow])
+        detailLabel.stringValue = detail ?? ""
+        detailLabel.font = HelmType.caption()
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detailLabel.isHidden = detail == nil
+
+        let column = NSStackView(views: [preview, nameRow, detailLabel])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s1 + 1
@@ -207,7 +144,136 @@ final class SettingsThemeCard: NSView {
             column.bottomAnchor.constraint(equalTo: hoverView.bottomAnchor, constant: -4),
             preview.widthAnchor.constraint(equalTo: column.widthAnchor),
             nameRow.widthAnchor.constraint(equalTo: column.widthAnchor),
+            detailLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
+    }
+
+    // MARK: The two previews
+
+    /// The prototype's `.mini`: ground, a nav column in the theme's `side`,
+    /// two text lines, and a card with the ok, warn and accent chips.
+    private func buildAppPreview() {
+        let tokens = theme.isDaylight ? theme.daylightTokens : nil
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        preview.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+
+        let sidebar = NSView()
+        sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = HelmTheme.sidePanelFill(theme).cgColor
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        preview.addSubview(sidebar)
+
+        let sidebarRows = NSStackView(views: (0..<4).map { index in
+            Self.bar(color: index == 0 ? accent : muted, height: 3)
+        })
+        sidebarRows.orientation = .vertical
+        sidebarRows.alignment = .leading
+        sidebarRows.distribution = .fillEqually
+        sidebarRows.spacing = HelmMetrics.s1
+        sidebarRows.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sidebarRows)
+
+        let line1 = Self.bar(color: ink, height: 3)
+        let line2 = Self.bar(color: muted, height: 3)
+
+        let miniCard = NSView()
+        miniCard.wantsLayer = true
+        miniCard.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        miniCard.layer?.cornerRadius = HelmMetrics.s1
+        miniCard.layer?.borderWidth = 1
+        miniCard.layer?.borderColor = HelmTheme.nsColor(tokens?.hair ?? theme.chromeLineHex).cgColor
+        miniCard.translatesAutoresizingMaskIntoConstraints = false
+
+        let chips = NSStackView(views: [HelmTint.good, HelmTint.warn, HelmTint.accent].map { tint in
+            let chip = Self.bar(color: HelmTheme.nsColor(tint.hex(in: theme)), height: 6)
+            chip.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            return chip
+        })
+        chips.orientation = .horizontal
+        chips.spacing = HelmMetrics.s1
+        chips.translatesAutoresizingMaskIntoConstraints = false
+        miniCard.addSubview(chips)
+
+        let content = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(line1)
+        content.addSubview(line2)
+        content.addSubview(miniCard)
+        preview.addSubview(content)
+
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: preview.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: preview.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: preview.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalTo: preview.widthAnchor, multiplier: 0.3),
+
+            sidebarRows.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 5),
+            sidebarRows.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -5),
+            sidebarRows.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 8),
+
+            content.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            content.trailingAnchor.constraint(equalTo: preview.trailingAnchor),
+            content.topAnchor.constraint(equalTo: preview.topAnchor),
+            content.bottomAnchor.constraint(equalTo: preview.bottomAnchor),
+
+            line1.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 7),
+            line1.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
+            line1.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.66),
+
+            line2.leadingAnchor.constraint(equalTo: line1.leadingAnchor),
+            line2.topAnchor.constraint(equalTo: line1.bottomAnchor, constant: 5),
+            line2.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.42),
+
+            miniCard.leadingAnchor.constraint(equalTo: line1.leadingAnchor),
+            miniCard.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -7),
+            miniCard.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -7),
+            miniCard.heightAnchor.constraint(equalToConstant: 18),
+
+            chips.trailingAnchor.constraint(equalTo: miniCard.trailingAnchor, constant: -5),
+            chips.centerYAnchor.constraint(equalTo: miniCard.centerYAnchor),
+        ])
+    }
+
+    /// The prototype's `.tmini`: the scheme's own cells, never the page's.
+    private func buildTerminalPreview() {
+        let cells = theme.terminalCells
+        preview.layer?.backgroundColor = HelmTheme.nsColor(cells.backgroundHex).cgColor
+
+        let sample = NSTextField(labelWithAttributedString: TerminalSessionSample.miniature(cells))
+        sample.maximumNumberOfLines = 3
+        sample.translatesAutoresizingMaskIntoConstraints = false
+        preview.addSubview(sample)
+
+        let swatches = NSStackView(views: (1...6).map { index in
+            Self.swatch(HelmTheme.nsColor(cells.ansiHex[index]))
+        })
+        swatches.orientation = .horizontal
+        swatches.spacing = HelmMetrics.s0
+        swatches.translatesAutoresizingMaskIntoConstraints = false
+        preview.addSubview(swatches)
+
+        NSLayoutConstraint.activate([
+            sample.leadingAnchor.constraint(equalTo: preview.leadingAnchor, constant: 8),
+            sample.trailingAnchor.constraint(lessThanOrEqualTo: preview.trailingAnchor, constant: -4),
+            sample.topAnchor.constraint(equalTo: preview.topAnchor, constant: 6),
+            swatches.leadingAnchor.constraint(equalTo: sample.leadingAnchor),
+            swatches.bottomAnchor.constraint(equalTo: preview.bottomAnchor, constant: -7),
+        ])
+    }
+
+    private static func swatch(_ color: NSColor) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = color.cgColor
+        view.layer?.cornerRadius = HelmMetrics.s0
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.widthAnchor.constraint(equalToConstant: 12),
+            view.heightAnchor.constraint(equalToConstant: 7),
+        ])
+        return view
     }
 
     @objc private func cardClicked() { onSelect?() }
@@ -243,5 +309,6 @@ final class SettingsThemeCard: NSView {
             ? HelmTheme.nsColor(current.daylightTokens.rowHover)
             : HelmTheme.nsColor(current.chromeLineHex).withAlphaComponent(0.22)
         nameLabel.textColor = HelmTheme.nsColor(current.chromeInkHex)
+        detailLabel.textColor = HelmTheme.mutedInk(current)
     }
 }

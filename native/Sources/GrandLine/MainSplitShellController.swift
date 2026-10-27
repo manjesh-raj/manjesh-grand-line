@@ -205,6 +205,7 @@ final class MainSplitShellController: WorkspaceShellController {
     private var lockOverlayIsShown = false
     private var didSettleInitialSidebarWidth = false
     private var themeToken: ThemeObservation?
+    private var terminalToken: ThemeObservation?
     private var windowResizeObserver: NSObjectProtocol?
     /// F7's ring popover, hanging off the toolbar's focus chip.
     private var focusPopover: NSPopover?
@@ -299,6 +300,11 @@ final class MainSplitShellController: WorkspaceShellController {
         workspace.lock.install(in: self, over: root)
         workspace.lock.onOverlayVisibilityChanged = { [weak self] shown in self?.lockOverlayDidChange(shown) }
 
+        // The light/dark item's tooltip says what the terminal does, which
+        // is the terminal colours choice's to decide.
+        terminalToken = ThemeManager.shared.observeTerminalScheme { [weak self] _ in
+            self?.toolbar?.applyThemeSymbol(ThemeManager.shared.theme)
+        }
         themeToken = ThemeManager.shared.observe { [weak self] theme in
             self?.toolbar?.applyThemeSymbol(theme)
             // R2-UX-10: a text scale change re-fires the theme, and the
@@ -335,6 +341,7 @@ final class MainSplitShellController: WorkspaceShellController {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let terminalToken { ThemeManager.shared.unobserve(terminalToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
         if let dividerDragObserver { NotificationCenter.default.removeObserver(dividerDragObserver) }
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }

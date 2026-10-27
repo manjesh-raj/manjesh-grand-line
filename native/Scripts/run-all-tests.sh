@@ -467,6 +467,10 @@ NEEDS_SESSION=(
   "FM_RUN_CLAUDE_STATUS_CARD_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"
+  # The theme split: a real console's terminal against its real page, and the
+  # real Settings > Terminal controls. Its pure-logic half
+  # (FM_RUN_THEME_SPLIT_TESTS) is deliberately not here - that one runs in CI.
+  "FM_RUN_THEME_SPLIT_CONSOLE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"
   # Mounts the real Schedules page in a real window.
   "FM_RUN_SCHEDULES_REDESIGN_TESTS"

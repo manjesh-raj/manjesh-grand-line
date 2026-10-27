@@ -335,6 +335,17 @@ extension ConsoleController {
 
     // MARK: Theme
 
+    /// The terminal half of `applyTheme()`: every pane's cells in the
+    /// effective terminal scheme, and the card, whose visibility depends on
+    /// whether those cells differ from the page. Nothing else on the page
+    /// reads the terminal scheme, so a terminal colours change stops here.
+    func applyTerminalScheme() {
+        for tab in tabs {
+            for pane in tab.splits.panes { terminalScheme.apply(to: pane.terminal) }
+        }
+        refreshTerminalCardChrome()
+    }
+
     func applyTheme() {
         // `ThemeManager.swift`'s checklist item 2 - see the identical note in
         // `HomeCanvasController.applyTheme`. This page is mostly opaque
@@ -349,7 +360,7 @@ extension ConsoleController {
             // Every pane, not just the primary one: a split pane is a real
             // terminal and a theme change that reached only the tab's first
             // one would leave the others on the previous palette.
-            for pane in tab.splits.panes { theme.apply(to: pane.terminal) }
+            for pane in tab.splits.panes { terminalScheme.apply(to: pane.terminal) }
             tab.splits.applyTheme(theme)
             tab.blockContainer?.applyTheme(theme)
         }

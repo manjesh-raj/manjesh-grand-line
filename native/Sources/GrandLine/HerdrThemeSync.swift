@@ -736,17 +736,22 @@ final class HerdrThemeSync {
         // loop turn, not a background queue: `syncNow` writes a file this app
         // owns the only writer for, and moving it off the main thread would
         // buy nothing and cost the ordering.
+        //
+        // The theme split: herdr runs inside a terminal tab, so it follows the
+        // **terminal's** effective scheme (Settings > Terminal > Terminal
+        // colours), not the app theme. Under "Match app theme" that is the app
+        // theme's companion scheme, so an app theme change still reaches it.
         var isRegistrationFire = true
-        themeToken = ThemeManager.shared.observe { [weak self] theme in
+        themeToken = ThemeManager.shared.observeTerminalScheme { [weak self] scheme in
             guard let self else { return }
             guard !isRegistrationFire else {
                 isRegistrationFire = false
                 DispatchQueue.main.async { [weak self] in
-                    self?.syncNow(theme: ThemeManager.shared.theme)
+                    self?.syncNow(theme: ThemeManager.shared.terminalScheme)
                 }
                 return
             }
-            self.syncNow(theme: theme)
+            self.syncNow(theme: scheme)
         }
     }
 

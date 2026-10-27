@@ -432,6 +432,9 @@ extension ConsoleController {
     /// (`fm/grandline-sre-lead-app-feel`). Daylight §6.13 is the second: that
     /// palette's page ground is warm `paper`, so a terminal with no card has
     /// no boundary at all, and the spec asks for the card permanently there.
+    /// The theme split made that rule general: the card shows whenever the
+    /// terminal scheme's cells differ from the app theme's page ground, which
+    /// is every app theme with its companion and most overrides.
     /// `terminalInset > 0` is what keeps the shared Firstmate console out of
     /// it in every palette - it has no margin for a card to live in, by
     /// design, so its own Shell tab stays flush at full column count.
@@ -454,7 +457,8 @@ extension ConsoleController {
     func refreshTerminalCardChrome() {
         cardChrome.pad = cardMargin
         cardChrome.paneStripWidth = sreLeadPaneIsOpen ? sreLeadPaneWidth : nil
-        cardChrome.isHidden = !(sreLeadPaneIsOpen || (theme.isDaylight && terminalInset > 0))
+        cardChrome.isHidden = !(sreLeadPaneIsOpen
+            || (theme.drawsTerminalCard(for: terminalScheme) && terminalInset > 0))
         cardChrome.needsDisplay = true
     }
 

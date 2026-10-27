@@ -64,7 +64,15 @@ struct HelmTerminalCard {
 }
 
 /// A complete terminal colour scheme: the 16 ANSI colours plus foreground,
-/// background, cursor, and selection.
+/// background, cursor, and selection - and, for the fourteen app themes, the
+/// app's own chrome (`AppTheme.swift`).
+///
+/// **Two catalogues share this struct since the theme split.** `allThemes` is
+/// the 26 terminal schemes Settings > Terminal offers, and `appThemes` is the
+/// fourteen app registers Settings > Appearance offers. Daylight and Dusk are
+/// in both. `ThemeManager.theme` is always an app theme in the running app and
+/// `ThemeManager.terminalScheme` is always a terminal scheme; a terminal is
+/// only ever painted from the second.
 struct HelmTheme {
     enum Mode { case dark, light }
 
@@ -108,6 +116,15 @@ struct HelmTheme {
     /// four parallel optional fields, and `HelmDaylight.swift`'s
     /// `darkRegisterTerminalCard` for where the values come from.
     let terminalCard: HelmTerminalCard?
+
+    /// Set on the fourteen app themes (`AppTheme.swift`) and on nothing else.
+    /// A theme with this is one the Appearance page offers; a theme without it
+    /// is one of the 26 terminal schemes.
+    var app: AppThemeInfo? = nil
+
+    /// The Daylight design language's token set for an app theme that is not
+    /// Daylight or Dusk themselves - see `daylightTokens`.
+    var designTokens: DaylightTokens? = nil
 
     // MARK: Apply
 
@@ -234,6 +251,13 @@ struct HelmTheme {
     /// The result is a *fill*, never text. Anything drawn on it goes through
     /// `HelmContrast` like any other surface (AGENTS.md's colour rules).
     static func sidePanelFill(_ theme: HelmTheme) -> NSColor {
+        // An app theme publishes its own (the prototype's `side`), and it is
+        // used verbatim. Those values sit 1.05-1.14 from their ground, so for
+        // them the column's edge (`sidePanelEdge`, the theme's hairline) is
+        // what carries the boundary where the step alone is under
+        // `sidePanelSeparation`; the derivation below stays the rule for a
+        // theme that has no side value of its own.
+        if let side = theme.app?.sideHex { return nsColor(side) }
         if let cached = sidePanelCache.value(for: theme.id) { return cached }
         let resolved = computeSidePanelFill(theme)
         sidePanelCache.store(resolved, for: theme.id)

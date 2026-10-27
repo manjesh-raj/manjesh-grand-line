@@ -62,10 +62,26 @@ final class SystemAppearanceFollower {
 
     // MARK: The decision
 
-    /// Which theme the app should be on, given the system's mode and the
-    /// captain's pair. `nil` means "leave the theme alone" - either the
-    /// captain is not following the system, or the stored pair names a theme
-    /// that no longer exists.
+    /// Which app theme the app should be on, given the system's mode: the
+    /// current family's register for that mode.
+    ///
+    /// The theme split made this the whole of "Match macOS". An app family
+    /// is a light and dark pair by construction, so there is no second pair
+    /// to store and nothing that can be miscast. A terminal scheme a
+    /// self-test set directly has no family and resolves to the Daylight
+    /// family's register, never to nothing.
+    static func resolvedAppTheme(isSystemDark: Bool, current: HelmTheme) -> HelmTheme {
+        let family = current.app?.family ?? .daylight
+        return family.register(isSystemDark ? .dark : .light)
+    }
+
+    /// Which **terminal scheme** a stored light/dark pair names for the
+    /// system's mode - the old model's "Follow system appearance".
+    ///
+    /// Since the theme split this is read only by the one-time move
+    /// (`ThemeManager.migrateToSplitThemes`), which needs to know what the
+    /// terminal showed in each mode so it can keep showing it. `nil` means the
+    /// stored pair named nothing usable.
     ///
     /// A pure function on purpose: it is the whole of the feature's
     /// behaviour, and everything around it is plumbing. A suite drives it
@@ -124,9 +140,7 @@ final class SystemAppearanceFollower {
     /// nothing would flash the whole window.
     func applyIfFollowing() {
         guard AppSettings.shared.followSystemAppearance else { return }
-        guard let wanted = Self.resolvedTheme(isSystemDark: isSystemDark(),
-                                              lightID: AppSettings.shared.systemLightThemeID,
-                                              darkID: AppSettings.shared.systemDarkThemeID) else { return }
+        let wanted = Self.resolvedAppTheme(isSystemDark: isSystemDark(), current: ThemeManager.shared.theme)
         guard wanted.id != ThemeManager.shared.theme.id else { return }
         ThemeManager.shared.setTheme(wanted)
     }

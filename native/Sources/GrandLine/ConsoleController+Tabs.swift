@@ -47,7 +47,7 @@ extension ConsoleController {
         // vendored SwiftTerm patch. Attached before the theme so the first
         // paint already has the right colours.
         TerminalKeywordHighlighter.shared.attach(term)
-        theme.apply(to: term)
+        terminalScheme.apply(to: term)
         return term
     }
 
@@ -884,6 +884,10 @@ extension ConsoleController {
         if let themeObservation {
             ThemeManager.shared.unobserve(themeObservation)
             self.themeObservation = nil
+        }
+        if let terminalSchemeObservation {
+            ThemeManager.shared.unobserve(terminalSchemeObservation)
+            self.terminalSchemeObservation = nil
         }
         if let activityObservation {
             AppActivityState.shared.unobserve(activityObservation)

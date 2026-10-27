@@ -1176,6 +1176,15 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"] == "1" {
             exit(DaylightDrillPageSlice2SelfTest.run() ? 0 : 1)
         }
+        // `fm/grandline-theme-split-app-terminal`: the app's own themes, the terminal's
+        // own colours and the move between the two models. See ThemeSplitSelfTest.swift's
+        // header; its window-backed half is ThemeSplitConsoleSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_THEME_SPLIT_TESTS"] == "1" {
+            exit(ThemeSplitSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_THEME_SPLIT_CONSOLE_TESTS"] == "1" {
+            exit(ThemeSplitConsoleSelfTest.run() ? 0 : 1)
+        }
         // Daylight Phase 4 slice 6: the last two destinations in §7's table, Tools and
         // Settings. See DaylightDrillPageSlice6SelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == "1" {

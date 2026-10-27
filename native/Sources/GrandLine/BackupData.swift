@@ -99,6 +99,11 @@ struct BackupSettings: Codable {
     var fontSize: Double?
     var autoReconnect: Bool?
     var notifyOnNeedsDecision: Bool?
+    /// The theme split's Settings > Terminal > Terminal colours. Optional like
+    /// every field here, so a bundle from before the split decodes (GL-01) and
+    /// restores as "Match app theme" - or, when its `themeID` names one of
+    /// the 26 terminal schemes, as the same move an install makes on upgrade.
+    var terminalColors: TerminalColorsSettings?
 
     static func fromCurrent() -> BackupSettings {
         let s = AppSettings.shared
@@ -107,8 +112,22 @@ struct BackupSettings: Codable {
             themeID: ThemeManager.shared.theme.id,
             fontSize: Double(s.fontSize),
             autoReconnect: s.autoReconnect,
-            notifyOnNeedsDecision: s.notifyOnNeedsDecision
+            notifyOnNeedsDecision: s.notifyOnNeedsDecision,
+            terminalColors: ThemeManager.shared.terminalColors
         )
+    }
+
+    /// What `apply()` puts the app on: the bundle's app theme and terminal
+    /// colours, with a pre-split bundle's terminal-scheme `themeID` moved the
+    /// way `ThemeManager` moves a saved one. `nil` for either half means the
+    /// bundle does not say.
+    var resolvedThemes: (theme: HelmTheme?, terminalColors: TerminalColorsSettings?) {
+        guard let themeID else { return (nil, terminalColors) }
+        if let app = HelmTheme.appTheme(id: themeID) { return (app, terminalColors) }
+        guard let old = HelmTheme.theme(id: themeID) else { return (nil, terminalColors) }
+        let moved = AppThemeMigration.outcome(oldTheme: old, followPair: nil)
+        return (HelmTheme.appTheme(id: moved.appThemeID),
+                terminalColors ?? moved.terminalColors ?? TerminalColorsSettings())
     }
 
     /// Applied unconditionally on import confirm - the diff preview already
@@ -116,7 +135,9 @@ struct BackupSettings: Codable {
     func apply() {
         let s = AppSettings.shared
         if let defaultShellCwd { s.defaultShellCwd = defaultShellCwd }
-        if let themeID, let theme = HelmTheme.theme(id: themeID) { ThemeManager.shared.setTheme(theme) }
+        let themes = resolvedThemes
+        if let theme = themes.theme { ThemeManager.shared.setTheme(theme) }
+        if let terminalColors = themes.terminalColors { ThemeManager.shared.setTerminalColors(terminalColors) }
         if let fontSize { s.fontSize = CGFloat(fontSize) }
         if let autoReconnect { s.autoReconnect = autoReconnect }
         if let notifyOnNeedsDecision { s.notifyOnNeedsDecision = notifyOnNeedsDecision }
@@ -129,6 +150,7 @@ struct BackupSettings: Codable {
         var bits: [String] = []
         if defaultShellCwd != nil { bits.append("working directory") }
         if themeID != nil { bits.append("theme") }
+        if terminalColors != nil { bits.append("terminal colours") }
         if fontSize != nil { bits.append("font size") }
         if autoReconnect != nil { bits.append("auto-reconnect") }
         if notifyOnNeedsDecision != nil { bits.append("notifications") }

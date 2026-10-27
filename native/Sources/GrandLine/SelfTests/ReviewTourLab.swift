@@ -259,6 +259,9 @@ enum ReviewTourLab {
         /// the captain sees after the relaunch Settings offers. Anywhere else
         /// it is a live change.
         case textScale(CGFloat)
+        /// The theme split: `terminal match`, `terminal <scheme>`, or
+        /// `terminal <light>/<dark>` for a pair that changes with appearance.
+        case terminalColors(String)
         /// `settings <category>`: show one Settings page, by its
         /// `SettingsController.Category` raw value (`terminal`, `shortcuts`),
         /// through the page's own `select`. Settings' categories are its own
@@ -322,7 +325,9 @@ enum ReviewTourLab {
             return .success(.goto(dest))
         case "theme":
             guard !argument.isEmpty else { return .failure(.missingArgument("theme")) }
-            guard HelmTheme.theme(id: argument) != nil else { return .failure(.unknownTheme(argument)) }
+            guard HelmTheme.appTheme(id: argument) ?? HelmTheme.theme(id: argument) != nil else {
+                return .failure(.unknownTheme(argument))
+            }
             return .success(.theme(argument))
         case "resize":
             guard !argument.isEmpty else { return .failure(.missingArgument("resize")) }
@@ -451,6 +456,13 @@ enum ReviewTourLab {
                 return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
             }
             return .success(.codeRun)
+        case "terminal":
+            guard !argument.isEmpty else { return .failure(.missingArgument("terminal")) }
+            let ids = argument.split(separator: "/").map(String.init)
+            guard argument == "match" || ids.allSatisfy({ HelmTheme.theme(id: $0) != nil }) else {
+                return .failure(.unknownTheme(argument))
+            }
+            return .success(.terminalColors(argument))
         case "textscale":
             guard !argument.isEmpty else { return .failure(.missingArgument("textscale")) }
             guard let step = ChromeTextScale.steps.first(where: { $0.title.lowercased() == argument.lowercased() }) else {
@@ -503,8 +515,21 @@ enum ReviewTourLab {
             switch step {
             case .comment:
                 continue
+            case .terminalColors(let argument):
+                let ids = argument.split(separator: "/").map(String.init)
+                let colors: TerminalColorsSettings
+                if argument == "match" {
+                    colors = TerminalColorsSettings()
+                } else if ids.count == 2 {
+                    colors = TerminalColorsSettings(mode: .custom, schemeID: ids[1], changesWithAppearance: true,
+                                                    lightSchemeID: ids[0], darkSchemeID: ids[1])
+                } else {
+                    colors = TerminalColorsSettings(mode: .custom, schemeID: argument)
+                }
+                ThemeManager.shared.setTerminalColors(colors)
+                log.append("terminal \(argument) -> \(ThemeManager.shared.terminalScheme.id)")
             case .theme(let id):
-                if let theme = HelmTheme.theme(id: id) {
+                if let theme = HelmTheme.appTheme(id: id) ?? HelmTheme.theme(id: id) {
                     ThemeManager.shared.setTheme(theme)
                     log.append("theme \(id)")
                 }

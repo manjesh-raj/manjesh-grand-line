@@ -181,8 +181,12 @@ enum ThemeMotionWebIslandsSelfTest {
             print("  NOTE could not read ThemeManager.swift - skipping the precedence guard")
             return
         }
-        let storedFirst = source.range(of: "AppDefaults.store.string(forKey: Self.defaultsKey)")
-        let fallbackUse = source.range(of: "theme = Self.fallbackTheme")
+        // The theme split changed the shape, not the order: `init` reads
+        // `fm.themeID` from its local `store` (after the one-time move, which
+        // reads the same key first) and only then reaches the fallback.
+        // `ThemeSplitSelfTest` drives the same path behaviourally.
+        let storedFirst = source.range(of: "theme = store.string(forKey: Self.defaultsKey)")
+        let fallbackUse = source.range(of: "?? Self.fallbackTheme")
         guard let storedFirst, let fallbackUse, storedFirst.lowerBound < fallbackUse.lowerBound else {
             print("  FAIL ThemeManager.init must read the saved fm.themeID BEFORE falling back, or a new default silently discards the captain's own past choice")
             ok = false

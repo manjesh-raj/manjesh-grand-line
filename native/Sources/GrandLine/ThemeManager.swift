@@ -104,8 +104,21 @@ final class ThemeManager {
     private(set) var theme: HelmTheme
     private var observers: [(token: ThemeObservation, fn: (HelmTheme) -> Void)] = []
 
+    /// The terminal's colour choice (Settings > Terminal > Terminal colours).
+    private(set) var terminalColors: TerminalColorsSettings
+    /// The scheme every terminal paints in right now: `terminalColors`
+    /// resolved against the app theme. Recomputed whenever either moves.
+    private(set) var terminalScheme: HelmTheme
+    private var terminalObservers: [(token: ThemeObservation, fn: (HelmTheme) -> Void)] = []
+
     private static let defaultsKey = "fm.themeID"
     private static let legacyModeKey = "fm.themeMode"
+    static let terminalColorsKey = "fm.terminalColors"
+    /// Which theme model this install's stored keys are in. Absent is the
+    /// model before the theme split, where `fm.themeID` named one of the 26
+    /// terminal schemes and painted the whole app with it.
+    static let themeModelKey = "fm.themeModel"
+    static let currentThemeModel = 2
 
     /// K3: the 200ms crossfade, injected once the app has a real window.
     ///
@@ -145,17 +158,13 @@ final class ThemeManager {
     private init() {
         // P10: `AppDefaults.store` is `UserDefaults.standard` in the real app
         // and a per-process suite domain in a self-test process.
-        if let id = AppDefaults.store.string(forKey: Self.defaultsKey), let match = HelmTheme.theme(id: id) {
-            theme = match
-        } else if let legacyMode = AppDefaults.store.string(forKey: Self.legacyModeKey) {
-            // A pre-`fm.themeID` install: honour the dark/light bit it
-            // recorded rather than the new default. That captain expressed a
-            // preference too, just in an older vocabulary, and the migration's
-            // whole point is not to reset it.
-            theme = legacyMode == "light" ? .light : .dark
-        } else {
-            theme = Self.fallbackTheme
+        let store = AppDefaults.store
+        if store.integer(forKey: Self.themeModelKey) < Self.currentThemeModel {
+            Self.migrateToSplitThemes(store)
         }
+        theme = store.string(forKey: Self.defaultsKey).flatMap(HelmTheme.appTheme(id:)) ?? Self.fallbackTheme
+        terminalColors = Self.loadTerminalColors(store)
+        terminalScheme = terminalColors.scheme(for: theme)
         // P7: Increase Contrast and Reduce Transparency change what the
         // shared edge and bar helpers return without changing the theme, so
         // a change re-fires every theme observer - the same "repaint
@@ -173,6 +182,60 @@ final class ThemeManager {
     /// first-run default from this, and the legacy key is part of the
     /// question for the same reason `init` consults it - a pre-`fm.themeID`
     /// captain expressed a preference too, in an older vocabulary.
+    // MARK: The theme split's one-time move
+
+    /// Move an install's saved theme from the old model (one of the 26
+    /// terminal schemes painting the whole app) onto an app theme, keeping
+    /// the terminal exactly as it looked.
+    ///
+    /// Runs once, before anything reads the theme. A fresh install has
+    /// nothing to move and only records the model, so `fm.themeID` stays
+    /// absent and `followSystemAppearance` still reads it as a fresh install.
+    ///
+    /// The old model's three ways of choosing all keep working:
+    ///   - a stored `fm.themeID`;
+    ///   - the legacy `fm.themeMode` dark/light key, which meant Helm Dark or
+    ///     Helm Light;
+    ///   - following the system, whose light and dark ids become the
+    ///     terminal's pair whenever they are not the new family's companions.
+    private static func migrateToSplitThemes(_ store: UserDefaults) {
+        defer { store.set(currentThemeModel, forKey: themeModelKey) }
+        let old: HelmTheme
+        if let id = store.string(forKey: defaultsKey), let match = HelmTheme.theme(id: id) {
+            old = match
+        } else if let legacyMode = store.string(forKey: legacyModeKey) {
+            old = legacyMode == "light" ? .light : .dark
+        } else {
+            return
+        }
+        // Read before `fm.themeID` is written: its first-read default asks
+        // whether a theme was ever stored, and it was.
+        let settings = AppSettings(defaults: store)
+        var followPair: (light: HelmTheme, dark: HelmTheme)?
+        if settings.followSystemAppearance,
+           let light = SystemAppearanceFollower.resolvedTheme(isSystemDark: false,
+                                                              lightID: settings.systemLightThemeID,
+                                                              darkID: settings.systemDarkThemeID),
+           let dark = SystemAppearanceFollower.resolvedTheme(isSystemDark: true,
+                                                             lightID: settings.systemLightThemeID,
+                                                             darkID: settings.systemDarkThemeID) {
+            followPair = (light, dark)
+        }
+        let outcome = AppThemeMigration.outcome(oldTheme: old, followPair: followPair)
+        store.set(outcome.appThemeID, forKey: defaultsKey)
+        if let terminal = outcome.terminalColors, let data = try? JSONEncoder().encode(terminal) {
+            store.set(data, forKey: terminalColorsKey)
+        }
+    }
+
+    private static func loadTerminalColors(_ store: UserDefaults) -> TerminalColorsSettings {
+        guard let data = store.data(forKey: terminalColorsKey),
+              let decoded = try? JSONDecoder().decode(TerminalColorsSettings.self, from: data) else {
+            return TerminalColorsSettings()
+        }
+        return decoded
+    }
+
     static var hasStoredThemeChoice: Bool {
         AppDefaults.store.string(forKey: defaultsKey) != nil
             || AppDefaults.store.string(forKey: legacyModeKey) != nil
@@ -190,6 +253,9 @@ final class ThemeManager {
             self.theme = theme
             AppDefaults.store.set(theme.id, forKey: Self.defaultsKey)
             self.observers.forEach { $0.fn(theme) }
+            // Under "Match app theme", or a light and dark pair, the app
+            // theme decides the terminal's scheme too.
+            self.refreshTerminalScheme()
         }
         if let transitionCoordinator {
             transitionCoordinator.performThemeChange(apply)
@@ -224,6 +290,44 @@ final class ThemeManager {
         observers.forEach { $0.fn(theme) }
     }
 
+    // MARK: Terminal colours
+
+    /// Store a new terminal colour choice and repaint every terminal.
+    func setTerminalColors(_ colors: TerminalColorsSettings) {
+        guard colors != terminalColors else { return }
+        terminalColors = colors
+        if let data = try? JSONEncoder().encode(colors) {
+            AppDefaults.store.set(data, forKey: Self.terminalColorsKey)
+        }
+        // Fired even when the scheme did not move ("Choose a scheme" starts on
+        // the scheme already showing): what the light/dark toggle's tooltip
+        // says depends on the choice, not only on the colours.
+        refreshTerminalScheme(choiceChanged: true)
+    }
+
+    /// Re-resolve the effective scheme and tell the terminal observers when it
+    /// moved. Only when it moved, for an app theme change: one under a fixed
+    /// scheme leaves every terminal (and herdr's config file) alone.
+    private func refreshTerminalScheme(choiceChanged: Bool = false) {
+        let resolved = terminalColors.scheme(for: theme)
+        guard choiceChanged || resolved.id != terminalScheme.id else { return }
+        terminalScheme = resolved
+        terminalObservers.forEach { $0.fn(resolved) }
+    }
+
+    /// Register for the effective terminal scheme. Like `observe`, `fn` runs
+    /// at once and then on every change - whether the captain chose a new
+    /// scheme or an app theme change moved a matched one - and on every
+    /// change to the choice itself, so an observer that repaints only on a
+    /// new scheme compares ids.
+    @discardableResult
+    func observeTerminalScheme(_ fn: @escaping (HelmTheme) -> Void) -> ThemeObservation {
+        let token = ThemeObservation()
+        terminalObservers.append((token, fn))
+        fn(terminalScheme)
+        return token
+    }
+
     /// The quick dark/light flip (View menu, ⌘⌥T, the console's own theme
     /// button) - flips to the *active theme's own* light/dark counterpart
     /// (`pairId`), e.g. Catppuccin Mocha <-> Latte, Solarized Dark <-> Light.
@@ -233,7 +337,10 @@ final class ThemeManager {
     /// theme in `HelmTheme.allThemes` has one - but kept as a safety net
     /// rather than force-unwrapping the lookup).
     func toggle() {
-        if let pair = HelmTheme.theme(id: theme.pairId) {
+        // An app theme's pair is its family's other register; a terminal
+        // scheme a self-test set directly flips within its own family, as
+        // before.
+        if let pair = HelmTheme.appTheme(id: theme.pairId) ?? HelmTheme.theme(id: theme.pairId) {
             setTheme(pair)
         } else {
             setTheme(theme.mode == .dark ? .light : .dark)
@@ -257,6 +364,7 @@ final class ThemeManager {
     /// `ConsoleController.shutdown()` for a deleted host's dedicated page).
     func unobserve(_ token: ThemeObservation) {
         observers.removeAll { $0.token === token }
+        terminalObservers.removeAll { $0.token === token }
     }
 
     /// How many observers are registered right now.
@@ -271,6 +379,14 @@ final class ThemeManager {
     /// asserts this count is stable across repeated space switches.
     #if FM_SELFTESTS
     var observerCountForTests: Int { observers.count }
+
+    /// Run the one-time move against `store` as a fresh launch would, for
+    /// `ThemeSplitSelfTest`. Returns what `init` would then load.
+    static func debugMigrate(_ store: UserDefaults) -> (theme: HelmTheme, terminal: TerminalColorsSettings) {
+        if store.integer(forKey: themeModelKey) < currentThemeModel { migrateToSplitThemes(store) }
+        let theme = store.string(forKey: defaultsKey).flatMap(HelmTheme.appTheme(id:)) ?? fallbackTheme
+        return (theme, loadTerminalColors(store))
+    }
     #endif
 }
 

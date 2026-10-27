@@ -582,7 +582,7 @@ extension KeywordMatcher.PackedWord {
 final class TerminalKeywordHighlighter: TerminalRowHighlighter {
 
     static let shared = TerminalKeywordHighlighter(settings: AppSettings.shared.terminalHighlighting,
-                                                   theme: ThemeManager.shared.theme)
+                                                   theme: ThemeManager.shared.terminalScheme)
 
     private(set) var settings: KeywordHighlightSettings
     private(set) var theme: HelmTheme
