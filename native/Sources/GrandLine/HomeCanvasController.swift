@@ -331,7 +331,13 @@ final class HomeCanvasController: NSViewController {
     var cardLayout: HomeCardLayout? {
         didSet {
             guard cardLayout != oldValue, isViewLoaded else { return }
-            render()
+            // Mid-drag only the grid moves: the greeting and the attention
+            // card cannot have changed, and the drag's own card is kept.
+            if cardResize != nil {
+                resizeArrangedGrid()
+            } else {
+                render()
+            }
         }
     }
     /// Every arrangement the captain makes in Customize, for the shell to keep.
@@ -369,6 +375,10 @@ final class HomeCanvasController: NSViewController {
     /// Set by the shell, which owns Customize's toolbar button.
     var onCustomizingChanged: ((Bool) -> Void)?
     private var cardStrips: [DaylightModule: HomeCardCustomizeStrip] = [:]
+    /// The grips on every card while Customize is on.
+    private var resizeHandles: [DaylightModule: [HomeCardResizeHandle]] = [:]
+    /// The size a card is being dragged to, on that card.
+    private let sizeBadge = HomeCardSizeBadge()
     private var themeToken: ThemeObservation?
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
@@ -1435,10 +1445,34 @@ final class HomeCanvasController: NSViewController {
     /// Whether Home's own space is showing the captain's arranged cards.
     private var showsArrangedCards: Bool { space == .overview && cardLayout != nil }
 
-    /// A card's grid span: its own, or the size the captain gave it on Home.
+    /// A card's grid span: its own, or - on Home's arranged cards, which
+    /// are laid out in `HomeCardGrid.columns` - the width the captain gave
+    /// it, widened where the window has made it too narrow to read.
     private func cardSpan(_ module: DaylightModule) -> Int {
         guard showsArrangedCards, let cardLayout else { return module.gridSpan }
-        return cardLayout.size(of: module).span
+        return HomeCardGrid.effectiveColumns(cardLayout.size(of: module).columns,
+                                             minimum: arrangedMinimumColumns(available: gridContainerWidth()))
+    }
+
+    /// The fewest of `HomeCardGrid.columns` a card may take at this width:
+    /// the canvas's own minimum card width (§6.1's 255).
+    private func arrangedMinimumColumns(available: CGFloat) -> Int {
+        HomeCardGrid.minimumColumns(containerWidth: available, minWidth: Self.minModuleWidth, spacing: Self.gridSpacing)
+    }
+
+    /// The height a card on Home's arranged grid is drawn at, `width` wide:
+    /// the captain's, but never less than its content needs - or nil for a
+    /// card that takes its row's height. Measured the way the shelf measures
+    /// an exempt card's floor, after a real layout pass (gotcha (22)).
+    private func arrangedHeight(of module: DaylightModule, width: CGFloat) -> CGFloat? {
+        guard showsArrangedCards, let height = cardLayout?.size(of: module).height else { return nil }
+        return max(min(height, HomeCardGrid.maximumHeight), naturalHeight(of: module, width: width))
+    }
+
+    /// How tall a card's content needs it to be at `width`.
+    private func naturalHeight(of module: DaylightModule, width: CGFloat) -> CGFloat {
+        let probe = Self.probeCard(content(for: module, placement: .shelf(width: width)))
+        return max(Self.fittingHeight(of: probe, width: width), HelmModuleCard.minimumHeight)
     }
 
     // MARK: Customize
@@ -1483,18 +1517,148 @@ final class HomeCanvasController: NSViewController {
         customizeTray.hiddenCards = cardLayout?.hidden ?? []
     }
 
-    /// A card's controls while Customize is on: its size, earlier, later and
-    /// hide, over the card's own header actions.
+    /// A card's controls while Customize is on: reset its size, earlier,
+    /// later and hide, over the card's own header actions - and the grips on
+    /// its edges that size it.
     private func attachCustomizeStrip(to card: HelmModuleCard, module: DaylightModule) {
         guard isCustomizing, showsArrangedCards, let layout = cardLayout else { return }
-        let strip = HomeCardCustomizeStrip(cardTitle: module.title, size: layout.size(of: module),
+        let strip = HomeCardCustomizeStrip(cardTitle: module.title, hasCustomSize: layout.hasCustomSize(module),
                                            canMoveEarlier: layout.canMove(module, by: -1),
                                            canMoveLater: layout.canMove(module, by: 1))
-        strip.onSize = { [weak self] size in self?.arrange { $0.setSize(size, for: module) } }
+        strip.onResetSize = { [weak self] in self?.arrange { $0.resetSize(of: module) } }
         strip.onMove = { [weak self] offset in self?.arrange { $0.move(module, by: offset) } }
         strip.onHide = { [weak self] in self?.arrange { $0.hide(module) } }
         card.setHeaderAccessory(strip)
         cardStrips[module] = strip
+        attachResizeHandles(to: card, module: module)
+    }
+
+    /// The trailing, bottom and corner grips. A card kept through a rebuild
+    /// mid-drag already has its own, and keeps them - they are the views the
+    /// drag's events are going to.
+    private func attachResizeHandles(to card: HelmModuleCard, module: DaylightModule) {
+        let existing = card.subviews.compactMap { $0 as? HomeCardResizeHandle }
+        let handles = existing.isEmpty
+            ? HomeCardResizeHandle.Edge.allCases.map { edge -> HomeCardResizeHandle in
+                let handle = HomeCardResizeHandle(edge: edge, cardTitle: module.title)
+                handle.install(in: card)
+                handle.onBegin = { [weak self] edge, point in self?.beginCardResize(module, edge: edge, at: point) }
+                handle.onDrag = { [weak self] _, point in self?.dragCardResize(to: point) }
+                handle.onEnd = { [weak self] _ in self?.endCardResize() }
+                handle.onReset = { [weak self] edge in self?.resetCardSize(module, edge: edge) }
+                handle.onStep = { [weak self] edge, step in self?.stepCardSize(module, edge: edge, by: step) }
+                return handle
+            }
+            : existing
+        for handle in handles { handle.isActive = cardResize?.module == module }
+        resizeHandles[module] = handles
+    }
+
+    // MARK: Sizing a card by dragging it
+
+    /// A drag in progress: which card and grip, and where it started.
+    private struct CardResize {
+        let module: DaylightModule
+        let edge: HomeCardResizeHandle.Edge
+        /// The pointer, in the document's (flipped) coordinates, so a scroll
+        /// during the drag does not read as a resize.
+        let start: NSPoint
+        let startWidth: CGFloat
+        let startHeight: CGFloat
+        /// The arrangement before the drag, to tell whether it changed.
+        let startLayout: HomeCardLayout
+    }
+
+    private var cardResize: CardResize?
+
+    private func beginCardResize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, at windowPoint: NSPoint) {
+        guard isCustomizing, showsArrangedCards, let layout = cardLayout, let card = cardsByModule[module] else { return }
+        cardResize = CardResize(module: module, edge: edge, start: document.convert(windowPoint, from: nil),
+                                startWidth: card.frame.width, startHeight: card.frame.height, startLayout: layout)
+        for handle in resizeHandles[module] ?? [] { handle.isActive = true }
+        sizeBadge.removeFromSuperview()
+        card.addSubview(sizeBadge, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            sizeBadge.trailingAnchor.constraint(equalTo: card.trailingAnchor,
+                                                constant: -(HomeCardResizeHandle.cornerSize + HelmMetrics.s1)),
+            sizeBadge.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -HelmMetrics.s2),
+        ])
+        updateSizeBadge()
+    }
+
+    /// The pointer moved: the size it now asks for, on the grid. The card is
+    /// the preview - Home is laid out again at that size, so its neighbours
+    /// reflow under the pointer - and nothing is kept until the drag ends.
+    private func dragCardResize(to windowPoint: NSPoint) {
+        guard let resize = cardResize, var layout = cardLayout else { return }
+        if let event = NSApp?.currentEvent, event.type == .leftMouseDragged { document.autoscroll(with: event) }
+        let point = document.convert(windowPoint, from: nil)
+        let available = gridContainerWidth()
+        var size = resize.startLayout.size(of: resize.module)
+        if resize.edge.resizesWidth {
+            let wanted = HomeCardGrid.columns(nearestWidth: resize.startWidth + point.x - resize.start.x,
+                                              containerWidth: available, spacing: Self.gridSpacing)
+            size.columns = max(wanted, arrangedMinimumColumns(available: available))
+        }
+        if resize.edge.resizesHeight {
+            let span = HomeCardGrid.effectiveColumns(size.columns, minimum: arrangedMinimumColumns(available: available))
+            let width = HomeCardGrid.width(columns: span, containerWidth: available, spacing: Self.gridSpacing)
+            // Never below what the content needs: dragging past it would
+            // store a height the card cannot be drawn at.
+            size.height = max(HomeCardGrid.storedHeight(resize.startHeight + point.y - resize.start.y),
+                              naturalHeight(of: resize.module, width: width))
+        }
+        layout.setSize(size, for: resize.module)
+        guard layout != cardLayout else { return }
+        cardLayout = layout
+    }
+
+    /// The drag ended: keep the size it settled on.
+    private func endCardResize() {
+        guard let resize = cardResize else { return }
+        cardResize = nil
+        sizeBadge.removeFromSuperview()
+        for handle in resizeHandles[resize.module] ?? [] { handle.isActive = false }
+        guard let layout = cardLayout, layout != resize.startLayout else { return }
+        cardStrips[resize.module]?.setHasCustomSize(layout.hasCustomSize(resize.module))
+        onCardLayoutChanged?(layout)
+    }
+
+    /// A double-click on a grip: the width back to the card's own, the
+    /// height back to its content's, or both from the corner.
+    private func resetCardSize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge) {
+        arrange { layout in
+            var size = layout.size(of: module)
+            let own = HomeCardLayout.ownSize(of: module)
+            if edge.resizesWidth { size.columns = own.columns }
+            if edge.resizesHeight { size.height = nil }
+            if size == own { layout.resetSize(of: module) } else { layout.setSize(size, for: module) }
+        }
+    }
+
+    /// VoiceOver's increment and decrement on a grip: a column wider or
+    /// narrower, or four height steps taller or shorter.
+    private func stepCardSize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, by step: Int) {
+        guard let card = cardsByModule[module] else { return }
+        let available = gridContainerWidth()
+        arrange { layout in
+            var size = layout.size(of: module)
+            if edge.resizesWidth {
+                size.columns = min(max(size.columns + step, arrangedMinimumColumns(available: available)),
+                                   HomeCardGrid.columns)
+            }
+            if edge.resizesHeight {
+                let height = (size.height ?? card.frame.height) + CGFloat(step) * HomeCardGrid.heightStep * 4
+                size.height = max(HomeCardGrid.storedHeight(height), naturalHeight(of: module, width: card.frame.width))
+            }
+            layout.setSize(size, for: module)
+        }
+    }
+
+    /// The badge on the card being dragged: the size it is drawn at.
+    private func updateSizeBadge() {
+        guard let resize = cardResize, let card = cardsByModule[resize.module] else { return }
+        sizeBadge.show(width: card.frame.width, height: card.frame.height)
     }
 
     /// What a built grid depends on besides its cards' data. Two renders with
@@ -1505,6 +1669,8 @@ final class HomeCanvasController: NSViewController {
         var modules: [DaylightModule]
         /// Each card's span, which the captain can change on Home.
         var spans: [Int]
+        /// Each card's own height on Home, -1 for one that takes its row's.
+        var heights: [CGFloat] = []
         /// Customize puts controls on every card, so toggling it rebuilds.
         var customizing: Bool
         var dashboard: Bool
@@ -1536,6 +1702,9 @@ final class HomeCanvasController: NSViewController {
         #if FM_SELFTESTS
         debugGridRebuilds += 1
         #endif
+        // A card being dragged to a new size survives the rebuild its drag
+        // causes: its grips are the views the drag's events are going to.
+        let kept = cardResize.flatMap { resize in cardsByModule[resize.module].map { (resize.module, $0) } }
         for row in gridStack.arrangedSubviews {
             gridStack.removeArrangedSubview(row)
             row.removeFromSuperview()
@@ -1547,6 +1716,7 @@ final class HomeCanvasController: NSViewController {
         cardPlacements.removeAll()
         dashboardOwnHeights.removeAll()
         cardStrips.removeAll()
+        resizeHandles.removeAll()
         gridLayoutKey = nil
 
         placeCustomizeTray()
@@ -1568,6 +1738,11 @@ final class HomeCanvasController: NSViewController {
             }
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: [], customizing: false, dashboard: true,
                                           width: available, height: lastGridHeight, exemptHeights: [])
+            return
+        }
+
+        if showsArrangedCards {
+            buildArrangedGrid(available: available, modules: modules, keeping: kept)
             return
         }
 
@@ -1640,6 +1815,104 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
+    /// Home's arranged cards: the captain's widths, in `HomeCardGrid.columns`
+    /// across the whole width, and their heights. The same row builder as
+    /// the shelf below, at a fixed column count, so a card left at its own
+    /// size draws exactly as it did when sizes were fixed.
+    ///
+    /// The content is not composed into fewer columns (C1): the captain sized
+    /// these cards against the full width, and a row they left short is
+    /// theirs to leave.
+    private func buildArrangedGrid(available: CGFloat, modules: [DaylightModule],
+                                   keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
+        contentWidthConstraint?.constant = available
+        attentionCard.setLayoutWidth(available)
+        let spans = Dictionary(modules.map { ($0, cardSpan($0)) }, uniquingKeysWith: { first, _ in first })
+        let widths = spans.mapValues { HomeCardGrid.width(columns: $0, containerWidth: available, spacing: Self.gridSpacing) }
+        let heights = Dictionary(modules.map { ($0, arrangedHeight(of: $0, width: widths[$0] ?? 0)) },
+                                 uniquingKeysWith: { first, _ in first })
+        let rows = HelmResponsiveGrid.spanningRows(
+            modules,
+            spans: { spans[$0] ?? 1 },
+            containerWidth: available,
+            minItemWidth: Self.minModuleWidth,
+            columnCount: HomeCardGrid.columns,
+            spacing: Self.gridSpacing,
+            equalHeights: true,
+            exemptsHeightTie: { $0.sizesToOwnContent },
+            fixedHeight: { heights[$0] ?? nil }
+        ) { [weak self] module, cardWidth in
+            guard let self else { return NSView() }
+            let placement = CardPlacement.shelf(width: cardWidth)
+            let card: HelmModuleCard
+            if let kept, kept.module == module {
+                // Off its old row, and without the width and height that row
+                // gave it; the new row gives it its own.
+                let own = kept.card.constraints.filter {
+                    $0.identifier == HelmResponsiveGrid.cellConstraintIdentifier
+                        || $0.identifier == HelmResponsiveGrid.fixedHeightIdentifier
+                }
+                NSLayoutConstraint.deactivate(own)
+                kept.card.removeFromSuperview()
+                kept.card.configureIfChanged(self.content(for: module, placement: placement))
+                card = kept.card
+                self.cards.append(card)
+                self.cardsByModule[module] = card
+                self.cardPlacements[module] = placement
+            } else {
+                card = self.makeCard(for: module, placement: placement)
+            }
+            self.attachCustomizeStrip(to: card, module: module)
+            return card
+        }
+        let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
+        builtShelfColumns = HomeCardGrid.columns
+        for row in rows {
+            gridStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+            gridWidthPins += row.arrangedSubviews.compactMap { cell in
+                Self.widthPin(of: cell).map {
+                    ($0, max(1, Int((($0.constant + Self.gridSpacing) / (unit + Self.gridSpacing)).rounded())))
+                }
+            }
+        }
+        if Set(cardsByModule.keys) == Set(modules) {
+            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map { spans[$0] ?? 1 },
+                                          heights: modules.map { heights[$0].flatMap { $0 } ?? -1 },
+                                          customizing: isCustomizing, dashboard: false,
+                                          width: available, height: 0,
+                                          exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
+        }
+        view.layoutSubtreeIfNeeded()
+        updateSizeBadge()
+    }
+
+    /// The arrangement changed mid-drag. A height on a card that already has
+    /// one moves in place; anything that can change which row a card is on
+    /// lays the grid out again, keeping the dragged card.
+    private func resizeArrangedGrid() {
+        guard let resize = cardResize, let built = gridLayoutKey, built.space == space, !built.dashboard,
+              let card = cardsByModule[resize.module] else {
+            rebuildGrid()
+            return
+        }
+        let modules = visibleModules()
+        let available = gridContainerWidth()
+        let spans = modules.map(cardSpan)
+        if built.modules == modules, built.spans == spans, abs(built.width - available) <= 0.5,
+           let index = modules.firstIndex(of: resize.module), built.heights.indices.contains(index),
+           built.heights[index] >= 0,
+           let height = arrangedHeight(of: resize.module, width: card.frame.width),
+           let pin = card.constraints.first(where: { $0.identifier == HelmResponsiveGrid.fixedHeightIdentifier }) {
+            pin.constant = height
+            gridLayoutKey?.heights[index] = height
+            view.layoutSubtreeIfNeeded()
+            updateSizeBadge()
+            return
+        }
+        rebuildGrid()
+    }
+
     /// P2: reconfigure the grid's existing cards when nothing about the
     /// layout changed. `false` when the grid has to be rebuilt instead.
     ///
@@ -1650,6 +1923,7 @@ final class HomeCanvasController: NSViewController {
     private func refreshGridInPlace(available: CGFloat, modules: [DaylightModule], dashboard: Bool) -> Bool {
         guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
               previous.spans == (dashboard ? [] : modules.map(cardSpan)),
+              previous.heights == (dashboard ? [] : arrangedHeightKey(modules)),
               previous.customizing == (dashboard ? false : isCustomizing),
               previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
               Set(cardsByModule.keys) == Set(modules) else { return false }
@@ -1679,6 +1953,18 @@ final class HomeCanvasController: NSViewController {
             if let content = contents[module] { cardsByModule[module]?.configure(content) }
         }
         return true
+    }
+
+    /// The heights a built arranged grid is keyed on: -1 for a card that
+    /// takes its row's height, and nothing at all off Home's arranged cards.
+    private func arrangedHeightKey(_ modules: [DaylightModule]) -> [CGFloat] {
+        guard showsArrangedCards, let cardLayout else { return [] }
+        let available = gridContainerWidth()
+        return modules.map { module in
+            guard cardLayout.size(of: module).height != nil else { return -1 }
+            let width = HomeCardGrid.width(columns: cardSpan(module), containerWidth: available, spacing: Self.gridSpacing)
+            return arrangedHeight(of: module, width: width) ?? -1
+        }
     }
 
     /// The fitting height of each shelf card exempt from its row's height
@@ -2192,6 +2478,17 @@ final class HomeCanvasController: NSViewController {
             for (module, ownHeight) in plan.ownHeights {
                 dashboardOwnHeights[module]?.constant = ownHeight
             }
+        } else if showsArrangedCards {
+            // Home's arranged grid keeps its 24 columns at every width, so a
+            // frame can only move the constants - unless a card crossed the
+            // width it is widened at, which moves it between rows.
+            guard built.spans == modules.map(cardSpan) else { return false }
+            let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
+            for (pin, span) in gridWidthPins {
+                pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
+            }
+            contentWidthConstraint?.constant = available
+            attentionCard.setLayoutWidth(available)
         } else {
             let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
             let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
@@ -3849,6 +4146,10 @@ final class HomeCanvasController: NSViewController {
     var customizeTrayForTests: HomeCustomizeTray? { customizeTray.superview == nil ? nil : customizeTray }
     /// The controls each card wears while Customize is on.
     var cardStripsForTests: [DaylightModule: HomeCardCustomizeStrip] { cardStrips }
+    /// The grips each card wears while Customize is on.
+    var resizeHandlesForTests: [DaylightModule: [HomeCardResizeHandle]] { resizeHandles }
+    /// The size badge, which is in the page only while a card is dragged.
+    var sizeBadgeForTests: HomeCardSizeBadge { sizeBadge }
     func cardForTests(_ module: DaylightModule) -> HelmModuleCard? { cardsByModule[module] }
     /// The captain's Needs Attention card, so a suite can drive the real card
     /// on the real page rather than a card it built itself - which is what
