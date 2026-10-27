@@ -67,7 +67,7 @@ enum MainSplitShellSelfTest {
                       checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
-                      checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheInspector,
+                      checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
@@ -890,6 +890,32 @@ enum MainSplitShellSelfTest {
         _ = navigation.sendAction(navigation.action, to: navigation.target)
         navigation.trackingMode = .momentary
         check(shell.debugCurrentDestination == .shift, "the Back segment went to \(String(describing: shell.debugCurrentDestination))", &ok)
+    }
+
+    /// The toolbar's calendar button, after the bell on every page: from a
+    /// page far from Tasks, its own target and action land on Tasks with the
+    /// Calendar tab lit and the calendar showing - not merely on Tasks.
+    private static func checkTheCalendarButton(_ shell: MainSplitShellController, _ window: NSWindow,
+                                               _ ok: inout Bool) {
+        shell.workspace.navigator.show(.hosts)
+        settle(shell)
+        guard let item = shell.toolbar.toolbar.items.first(where: { $0.itemIdentifier == WorkspaceToolbar.ItemID.calendar }),
+              let action = item.action else {
+            fail("the toolbar has no calendar button on Hosts", &ok)
+            return
+        }
+        check(item.visibilityPriority != .low, "the calendar button is among the first to overflow", &ok)
+        _ = NSApplication.shared.sendAction(action, to: item.target, from: item)
+        settle(shell)
+        check(shell.debugCurrentDestination == .shift,
+              "the calendar button went to \(String(describing: shell.debugCurrentDestination))", &ok)
+        check(selectedTabName(shell) == "Calendar",
+              "the calendar button lit \(selectedTabName(shell) ?? "no tab") instead of Calendar", &ok)
+        // The page's own view, not the calendar's visibility: this suite's
+        // Tasks store is empty, so the page draws its "start here" state in
+        // place of every view (R2-UX-07), the calendar included.
+        check(shell.workspace.shift.debugTasksViewID == "calendar",
+              "the calendar button left the Tasks page on \(shell.workspace.shift.debugTasksViewID)", &ok)
     }
 
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

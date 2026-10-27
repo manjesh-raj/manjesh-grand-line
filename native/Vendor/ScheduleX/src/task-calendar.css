@@ -1,0 +1,95 @@
+/* Grand Line's layer over Schedule-X's default theme.
+ *
+ * Kept small on purpose. The colours come from the app theme through the
+ * CSS variables `task-calendar.js`'s `applyTheme` writes, so nothing here
+ * names a colour. What is here is the handful of things a task calendar
+ * needs that a meeting calendar does not. */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--sx-color-background);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#calendar {
+  height: 100%;
+  width: 100%;
+}
+
+#calendar .sx__calendar-wrapper {
+  height: 100%;
+  border-radius: 0;
+}
+
+#calendar .sx__calendar {
+  border: none;
+  border-radius: 0;
+}
+
+/* A repeat rule's later dates are projections, not records (GL-14): drawn
+ * faint and marked, the same treatment the native grid gave them. */
+.sx__event.gl-projected {
+  opacity: 0.55;
+}
+
+.sx__event.gl-projected .sx__month-grid-event-title::after,
+.sx__event.gl-projected .sx__date-grid-event-text::after,
+.sx__event.gl-projected .sx__time-grid-event-title::after {
+  content: ' \21BB';
+}
+
+.sx__event.gl-completed .sx__month-grid-event-title,
+.sx__event.gl-completed .sx__date-grid-event-text,
+.sx__event.gl-completed .sx__time-grid-event-title {
+  text-decoration: line-through;
+}
+
+/* Nothing that cannot move should look like it can. The core marks every
+ * month-grid event `draggable` once a drag plugin is installed, whatever its
+ * own `disableDND` says, so the browser would still lift a ghost of a
+ * projection; this stops the lift itself. */
+.sx__event.gl-projected,
+.sx__event.gl-completed {
+  cursor: pointer;
+  -webkit-user-drag: none;
+}
+
+/* Set by the bridge's `suspend()` while the Tasks page is hidden. WebKit has
+ * already stopped compositing a hidden WKWebView; this covers the transitions
+ * it cannot know about. */
+html.gl-suspended *,
+html.gl-suspended *::before,
+html.gl-suspended *::after {
+  animation-play-state: paused !important;
+  transition: none !important;
+}
+
+/* Two places the default theme hard-codes a colour or uses the primary as
+ * text. The now-line is a literal red there, so it takes the theme's own red
+ * (`--gl-now-line`). Today's weekday name is drawn in the primary, which is
+ * the accent *fill*; an accent is safe as a fill and not automatically as
+ * text, so it takes the contrast-checked `--gl-accent-ink` instead. Both
+ * variables come from ShiftCalendarPalette. */
+.sx__current-time-indicator,
+.sx__current-time-indicator::before {
+  background-color: var(--gl-now-line);
+}
+
+.sx__week-grid__date--is-today .sx__week-grid__day-name {
+  color: var(--gl-accent-ink);
+}
+
+/* The default theme hides the View and Date field labels in its dark
+ * register, presumably because its own label ground did not match there.
+ * Ours is the theme's surface in both registers, so the labels stay, and a
+ * light and a dark theme show the same header. */
+.is-dark .sx__date-input-label,
+.is-dark .sx__view-selection-label {
+  display: block;
+}

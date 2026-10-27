@@ -1,44 +1,49 @@
 // Grand Line - native macOS app.
 //
-// The Tasks page's calendar - the third view beside Board and List (F5 of
-// full review #3 §8, `docs/history/34-recurrence-and-calendar.md`).
+// The Tasks page's calendar - the third view beside Board and List.
 //
-// **Month is the default, deliberately.** The report left week-vs-month open
-// and the mockup the captain reviewed draws a month grid, for a reason worth
-// keeping here: the thing a recurrence rule needs a person to *see* is the
-// pattern. Five chips in a row across a week, repeated down four weeks, is
-// "every weekday" verified by eye - and that is exactly the check a week view
-// cannot offer. Week is still here, because a day with six tasks on it is
-// unreadable at month density.
+// **It is a Schedule-X calendar in a web view** (the captain's choice, after
+// the open-source calendar options review): month, week and day views, today's
+// highlight, a now-line, and dragging a task to a new day or time. The bundle
+// is vendored and offline (`Vendor/ScheduleX/README.md`); this file decides
+// what goes into it and what comes back out.
 //
-// **A projected occurrence is drawn differently from a real task.** Only one
-// instance of a recurring task exists in `active.yaml` at a time
-// (`ShiftStore.nextOccurrence`'s header says why); everything after it is a
-// *projection* of the rule, not a record. Drawing the two identically would
-// be GL-14's own failure in a new place - a thing that does not exist yet
-// rendered as a thing that does. So a projection is drawn at reduced alpha
-// with no completion affordance, and its chip says so in its accessibility
-// label.
+// Three rules carry over from the hand-drawn grid this replaced
+// (`docs/history/34-recurrence-and-calendar.md`), and all three are enforced
+// here on the native side, where a self-test can see them without a page:
 //
-// **The grid lays itself out by hand.** 42 cells x up to 4 chips is ~200
-// views, and putting that in the window's constraint graph is precisely
-// AGENTS.md gotcha (15)'s measured cost - a full re-solve of every required
-// constraint in the window on any invalidation. `layout()` computing frames
-// costs nothing when nothing changes and cannot reach the window's own size
-// derivation at all.
+//   - **A projected occurrence is not a task.** Only one instance of a
+//     recurring task exists in `active.yaml` at a time
+//     (`ShiftStore.nextOccurrence`'s header says why); later dates are a
+//     projection of the rule. The page draws them faint and marked, and they
+//     cannot be dragged - `ShiftCalendarPayload` marks them immovable, and the
+//     page refuses a drop on anything not marked movable a second time.
+//   - **A completed task is shown and cannot be moved.** `updateTask` only
+//     touches `active.yaml`, so a dropped completed task would save nothing.
+//   - **What is on screen is stated** (GL-14). The caption above the calendar
+//     counts the tasks in the visible period, and says so when there are none
+//     rather than leaving an empty grid to be interpreted.
+//
+// A drop is a request. The page posts `move`, `ShiftController.rescheduleTask`
+// applies `ShiftCalendarReschedule` and writes through the store, and the
+// events are pushed back - so a drop the store refuses snaps back to where it
+// was, and Undo restores the date the controller already held (GL-33).
 
 import AppKit
 
 // MARK: - The model
 
-/// How much of the calendar is on screen.
+/// The three views the calendar offers, by Schedule-X's own view names.
 enum ShiftCalendarScale: String, CaseIterable {
-    case month, week
+    case month = "month-grid"
+    case week
+    case day
 
     var title: String {
         switch self {
         case .month: return "Month"
         case .week: return "Week"
+        case .day: return "Day"
         }
     }
 }
@@ -59,13 +64,19 @@ struct ShiftCalendarEntry: Equatable {
     /// exists for yet - see this file's header.
     var isProjected: Bool
     var isCompleted: Bool
+    /// A cancelled task is still drawn (it is on the board too) but, like a
+    /// completed one, it is not something a drag should reschedule.
+    var isCancelled: Bool = false
+
+    /// Whether a drag may move this entry. Only a real, open task.
+    var isMovable: Bool { !isProjected && !isCompleted && !isCancelled }
 }
 
 /// What lands on which day. Pure; no AppKit.
 enum ShiftCalendarModel {
 
     /// Every entry falling inside `[from, through]`, sorted by time then
-    /// title so two runs of the same data produce the same grid.
+    /// title so two runs of the same data produce the same calendar.
     ///
     /// A task contributes its own due date when that date is in range, and -
     /// if it carries a rule - every occurrence the rule produces in range
@@ -88,7 +99,8 @@ enum ShiftCalendarModel {
             // A completed task's rule has already been advanced by
             // `ShiftStore.nextOccurrence` into a real successor record, so
             // projecting it again would double every repeated task on the
-            // grid for as long as the completed one stays in the Done window.
+            // calendar for as long as the completed one stays in the Done
+            // window.
             guard task.status != .completed, task.status != .cancelled else { continue }
             let projected = rule.occurrences(anchor: anchor, from: max(from, anchor.addingTimeInterval(1)),
                                              through: through, calendar: calendar, limit: perTaskLimit)
@@ -115,19 +127,19 @@ enum ShiftCalendarModel {
         ShiftCalendarEntry(taskID: task.id, title: task.title, day: day, time: time,
                            projectID: task.projectID, priority: task.priority,
                            isProjected: projected,
-                           isCompleted: task.status == .completed)
+                           isCompleted: task.status == .completed,
+                           isCancelled: task.status == .cancelled)
     }
 
-    /// The grid's own date range: whole weeks covering `anchor`'s month (six
-    /// rows, always - a five-row month that becomes six the next month makes
-    /// the page jump), or the single week containing it.
-    ///
-    /// Always starts on the captain's own locale's first weekday, which is
-    /// also the order the editor's weekday chips use.
+    /// The month grid's own date range around `anchor`: whole weeks covering
+    /// its month, six rows. Used for the events pushed before the page has
+    /// reported its first real range, which is the same period it opens on.
     static func range(for anchor: Date, scale: ShiftCalendarScale,
                       calendar: Calendar = .current) -> (start: Date, days: Int) {
         let startOfDay = calendar.startOfDay(for: anchor)
         switch scale {
+        case .day:
+            return (startOfDay, 1)
         case .week:
             return (weekStart(of: startOfDay, calendar: calendar), 7)
         case .month:
@@ -145,53 +157,354 @@ enum ShiftCalendarModel {
     }
 }
 
+// MARK: - What crosses the bridge
+
+/// The page's wire shapes. Pure functions from the store's values to JSON-ready
+/// dictionaries, so the rules about what can move and how a task is drawn are
+/// tested without WebKit.
+enum ShiftCalendarPayload {
+
+    /// One Schedule-X event for one entry.
+    ///
+    /// The id is the task's own for a real record, and the task id plus the
+    /// day for a projection, so the many projections of one rule stay distinct
+    /// while every one of them still opens the same task (`taskID`).
+    ///
+    /// A task has a due time but no duration, so a timed task is drawn as a
+    /// half-hour block. It ends at 23:59 at the latest: a block that crossed
+    /// midnight would become a two-day event in the week view's all-day row.
+    static func event(for entry: ShiftCalendarEntry) -> [String: Any] {
+        let start: String
+        let end: String
+        if let time = entry.time, let minutes = minutes(of: time) {
+            start = "\(entry.day) \(time)"
+            end = "\(entry.day) \(clock(min(minutes + timedBlockMinutes, 23 * 60 + 59)))"
+        } else {
+            start = entry.day
+            end = entry.day
+        }
+        return [
+            "id": entry.isProjected ? "\(entry.taskID)@\(entry.day)" : entry.taskID,
+            "taskID": entry.taskID,
+            "title": entry.title,
+            "start": start,
+            "end": end,
+            "calendarId": calendarID(forProjectID: entry.projectID),
+            "projected": entry.isProjected,
+            "completed": entry.isCompleted,
+            "movable": entry.isMovable,
+        ]
+    }
+
+    static let timedBlockMinutes = 30
+
+    /// A task's colour is its project's, through the same palette the board's
+    /// cards use, so one project reads as one colour on every Tasks view.
+    static func calendarID(forProjectID id: String?) -> String {
+        "tint-\(ShiftProjectPalette.tint(forProjectID: id))"
+    }
+
+    /// Every calendar id `calendarID(forProjectID:)` can produce.
+    static var allCalendarIDs: [String] {
+        (ShiftProjectPalette.tints + [.neutral]).map { "tint-\($0)" }
+    }
+
+    /// Schedule-X accepts a locale only in `ll-RR` form and throws on
+    /// anything else ("en", "zh-Hans-CN"), so the captain's locale is reduced
+    /// to that shape, and falls back to `en-US` when it has no region.
+    static func scheduleXLocale(_ locale: Locale) -> String {
+        guard let language = locale.language.languageCode?.identifier,
+              let region = locale.region?.identifier,
+              language.count == 2, region.count == 2,
+              language.allSatisfy(\.isLowercase), region.allSatisfy(\.isUppercase) else { return "en-US" }
+        return "\(language)-\(region)"
+    }
+
+    /// Schedule-X numbers weekdays Monday = 1 ... Sunday = 7; `Calendar`
+    /// numbers them Sunday = 1 ... Saturday = 7.
+    static func scheduleXFirstDayOfWeek(_ calendar: Calendar) -> Int {
+        calendar.firstWeekday == 1 ? 7 : calendar.firstWeekday - 1
+    }
+
+    /// The first call the page gets, once it reports ready.
+    static func configuration(theme: HelmTheme, scale: ShiftCalendarScale,
+                              calendar: Calendar = .current, locale: Locale = .current,
+                              timeZone: TimeZone = .current) -> [String: Any] {
+        [
+            "timeZone": timeZone.identifier,
+            "locale": scheduleXLocale(locale),
+            "firstDayOfWeek": scheduleXFirstDayOfWeek(calendar),
+            "view": scale.rawValue,
+            "dark": theme.mode == .dark,
+            "theme": ShiftCalendarPalette.themePayload(for: theme),
+            "calendars": ShiftCalendarPalette.calendars(for: theme),
+        ]
+    }
+
+    private static func minutes(of hhmm: String) -> Int? {
+        let parts = hhmm.split(separator: ":")
+        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]),
+              (0..<24).contains(h), (0..<60).contains(m) else { return nil }
+        return h * 60 + m
+    }
+
+    private static func clock(_ minutes: Int) -> String {
+        String(format: "%02d:%02d", minutes / 60, minutes % 60)
+    }
+}
+
+// MARK: - The palette
+
+/// The app theme, as Schedule-X's CSS variables.
+///
+/// Schedule-X themes itself through Material-style roles (`primary`,
+/// `surface`, `on-surface`, `outline` ...), declared once for light and again
+/// under `.is-dark`. The page writes these over both registers, so the
+/// calendar follows the *app* theme (never the terminal's colours) and has no
+/// purple left in it. Every text role goes through the same quantised contrast
+/// correction Code Preview's palette uses (`CodePreviewTheme.legibleHex`), so a
+/// colour that clears the floor as an `NSColor` and misses it as the shipped
+/// `#rrggbb` cannot reach the page.
+enum ShiftCalendarPalette {
+
+    /// The roles the page must receive; `ShiftCalendarSelfTest` asserts every
+    /// one is present, so a role dropped here cannot quietly fall back to
+    /// Schedule-X's default purple.
+    static let requiredVariables: [String] = [
+        "--sx-color-primary", "--sx-color-on-primary",
+        "--sx-color-primary-container", "--sx-color-on-primary-container",
+        "--sx-color-secondary", "--sx-color-on-secondary",
+        "--sx-color-secondary-container", "--sx-color-on-secondary-container",
+        "--sx-color-tertiary", "--sx-color-on-tertiary",
+        "--sx-color-tertiary-container", "--sx-color-on-tertiary-container",
+        "--sx-color-surface", "--sx-color-surface-dim", "--sx-color-surface-bright",
+        "--sx-color-on-surface",
+        "--sx-color-surface-container", "--sx-color-surface-container-low",
+        "--sx-color-surface-container-high",
+        "--sx-color-background", "--sx-color-on-background",
+        "--sx-color-outline", "--sx-color-outline-variant",
+        "--sx-color-neutral", "--sx-color-neutral-variant",
+        "--sx-color-shadow", "--sx-color-surface-tint",
+        "--sx-internal-color-gray-ripple-background", "--sx-internal-color-light-gray",
+        "--sx-internal-color-text",
+        "--gl-now-line", "--gl-accent-ink",
+    ]
+
+    /// Every CSS variable, resolved from `theme`.
+    static func variables(for theme: HelmTheme) -> [String: String] {
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let inkColor = HelmTheme.nsColor(theme.chromeInkHex)
+        let ink = CodePreviewTheme.legibleHex(inkColor, on: surface)
+        let muted = CodePreviewTheme.legibleHex(opaque(HelmTheme.mutedInk(theme), over: surface), on: surface)
+        let well = HelmField.fill(theme)
+        let wellHex = CodePreviewTheme.hex(well)
+        let line = CodePreviewTheme.hex(opaque(HelmField.border(theme), over: surface))
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        // Text on a fill is measured against the fill *as shipped*: both
+        // sides cross the bridge as 8-bit hex, and `legibleOn`'s answer lands
+        // just over the floor by construction, so rounding either side can
+        // take it under (measured 4.47-4.49:1 on seven themes).
+        let onAccent = CodePreviewTheme.legibleHex(inkColor, on: accent)
+        let accentWash = HelmContrast.tintedSurface(tintHex: theme.accentHex, theme: theme,
+                                                   target: HelmContrast.textTarget)
+        let washFill = CodePreviewTheme.hex(accentWash.fill)
+        let washInk = CodePreviewTheme.legibleHex(accentWash.foreground, on: quantised(accentWash.fill))
+        let surfaceHex = CodePreviewTheme.hex(surface)
+        func toward(_ fraction: CGFloat) -> String {
+            CodePreviewTheme.hex(surface.blended(withFraction: fraction, of: inkColor) ?? surface)
+        }
+        return [
+            "--sx-color-primary": "#" + theme.accentHex,
+            "--sx-color-on-primary": onAccent,
+            "--sx-color-primary-container": washFill,
+            "--sx-color-on-primary-container": washInk,
+            // Secondary and tertiary are barely used by the views this page
+            // offers (the date picker, the view menu). They take the quiet
+            // well and the accent wash rather than inventing two more hues.
+            "--sx-color-secondary": muted,
+            "--sx-color-on-secondary": surfaceHex,
+            "--sx-color-secondary-container": wellHex,
+            "--sx-color-on-secondary-container": ink,
+            "--sx-color-tertiary": "#" + theme.accentHex,
+            "--sx-color-on-tertiary": onAccent,
+            "--sx-color-tertiary-container": washFill,
+            "--sx-color-on-tertiary-container": washInk,
+            "--sx-color-surface": surfaceHex,
+            "--sx-color-surface-dim": wellHex,
+            "--sx-color-surface-bright": surfaceHex,
+            "--sx-color-on-surface": ink,
+            // The month grid's drag-over day and the menus' hover.
+            "--sx-color-surface-container": wellHex,
+            "--sx-color-surface-container-low": toward(0.04),
+            "--sx-color-surface-container-high": toward(0.12),
+            "--sx-color-background": surfaceHex,
+            "--sx-color-on-background": ink,
+            "--sx-color-outline": muted,
+            "--sx-color-outline-variant": line,
+            "--sx-color-neutral": muted,
+            "--sx-color-neutral-variant": line,
+            "--sx-color-shadow": "#000000",
+            "--sx-color-surface-tint": "#" + theme.accentHex,
+            "--sx-internal-color-gray-ripple-background": wellHex,
+            "--sx-internal-color-light-gray": wellHex,
+            "--sx-internal-color-text": ink,
+            // The default theme draws the now-line in a literal red. This is
+            // the theme's own red, used as a line rather than as text.
+            "--gl-now-line": "#" + theme.ansiHex[1],
+            // Today's weekday name in the week view is text, so it takes the
+            // accent corrected for legibility, not the raw fill colour.
+            "--gl-accent-ink": CodePreviewTheme.legibleHex(accent, on: surface),
+        ]
+    }
+
+    /// `setTheme`'s payload: the variables plus the register.
+    static func themePayload(for theme: HelmTheme) -> [String: Any] {
+        ["vars": variables(for: theme), "dark": theme.mode == .dark,
+         "calendars": calendars(for: theme)]
+    }
+
+    /// One Schedule-X calendar per project hue, plus one for a task with no
+    /// project.
+    ///
+    /// A project's events are a tinted surface: the fill and the label come
+    /// from `HelmContrast.tintedSurface` rather than being picked, because a
+    /// `HelmTint` hue is safe as a fill and not automatically as text. The
+    /// no-project calendar takes the quiet well with ink text instead, because
+    /// `.neutral` is page ink and washing it produces a near-black chip
+    /// (AGENTS.md's colour rules record that defect). Both registers get the
+    /// same values: the page is re-themed on every theme change, so the
+    /// light/dark pair Schedule-X asks for is always the active theme's.
+    static func calendars(for theme: HelmTheme) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for tint in ShiftProjectPalette.tints + [.neutral] {
+            let colours: [String: String]
+            if tint == .neutral {
+                let well = HelmField.fill(theme)
+                colours = [
+                    "main": CodePreviewTheme.hex(opaque(HelmTheme.mutedInk(theme),
+                                                        over: HelmTheme.nsColor(theme.chromeBackgroundHex))),
+                    "container": CodePreviewTheme.hex(well),
+                    "onContainer": CodePreviewTheme.legibleHex(HelmTheme.nsColor(theme.chromeInkHex),
+                                                               on: quantised(well)),
+                ]
+            } else {
+                let surface = HelmContrast.tintedSurface(tintHex: tint.hex(in: theme), theme: theme,
+                                                        target: HelmContrast.textTarget)
+                colours = [
+                    "main": "#" + tint.hex(in: theme),
+                    "container": CodePreviewTheme.hex(surface.fill),
+                    "onContainer": CodePreviewTheme.legibleHex(surface.foreground, on: quantised(surface.fill)),
+                ]
+            }
+            let id = "tint-\(tint)"
+            out[id] = ["colorName": id, "lightColors": colours, "darkColors": colours]
+        }
+        return out
+    }
+
+    /// `color` as the page will receive it: rounded to 8 bits per channel.
+    static func quantised(_ color: NSColor) -> NSColor {
+        HelmTheme.nsColor(String(CodePreviewTheme.hex(color).dropFirst()))
+    }
+
+    /// A translucent colour composited over an opaque one, as an opaque
+    /// colour - what the page needs, since a CSS variable's alpha would be
+    /// composited over whatever happens to be underneath it.
+    static func opaque(_ color: NSColor, over base: NSColor) -> NSColor {
+        let rgb = color.usingColorSpace(.sRGB) ?? color
+        let alpha = rgb.alphaComponent
+        guard alpha < 1 else { return rgb }
+        return base.blended(withFraction: alpha, of: rgb.withAlphaComponent(1)) ?? base
+    }
+}
+
+// MARK: - Rescheduling
+
+/// What a drop does to a task. Pure, so the rule is tested without a page.
+enum ShiftCalendarReschedule {
+
+    enum Outcome: Equatable {
+        /// Write this task.
+        case moved(ShiftTask)
+        /// Nothing to write: the drop landed where the task already was.
+        case unchanged
+        /// The drop is refused, and the page is told by being redrawn.
+        case refused(String)
+    }
+
+    /// A drop of `task` on `day`, at `time` when it landed in a time grid.
+    ///
+    /// An all-day task stays all-day wherever it lands: a time is only
+    /// adopted by a task that already had one. That keeps a drop in the month
+    /// grid (which carries no time of its own) from inventing one, and keeps
+    /// "due on this day" from silently becoming "due at 9:00".
+    static func apply(task: ShiftTask, day: String, time: String?) -> Outcome {
+        guard task.status != .completed, task.status != .cancelled else {
+            return .refused("A finished task can't be moved.")
+        }
+        guard ShiftDateFormatting.date(from: day) != nil, day.count == 10 else {
+            return .refused("That isn't a day the calendar can save.")
+        }
+        let newTime: String? = task.dueTime == nil ? nil : (time ?? task.dueTime)
+        if let newTime, !isClock(newTime) {
+            return .refused("That isn't a time the calendar can save.")
+        }
+        guard day != task.dueDate || newTime != task.dueTime else { return .unchanged }
+        var moved = task
+        moved.dueDate = day
+        moved.dueTime = newTime
+        return .moved(moved)
+    }
+
+    private static func isClock(_ text: String) -> Bool {
+        let parts = text.split(separator: ":")
+        guard parts.count == 2, parts.allSatisfy({ $0.count == 2 }),
+              let h = Int(parts[0]), let m = Int(parts[1]) else { return false }
+        return (0..<24).contains(h) && (0..<60).contains(m)
+    }
+}
+
 // MARK: - The view
 
+/// The calendar tab: a caption stating what is in the visible period, and the
+/// Schedule-X page in a card. The page is not loaded until the tab is first
+/// shown, so a session that never opens the calendar pays nothing for it.
 final class ShiftCalendarView: NSView {
 
-    /// Opens the task behind a chip - the same `ShiftController.openBoardTask`
+    /// Opens the task behind an event - the same `ShiftController.openBoardTask`
     /// path the board's cards use, so there is one "open a task" in this page.
     var onOpenTask: ((String) -> Void)?
-    /// A new task on a clicked day, pre-dated to it.
-    var onAddTask: ((String) -> Void)?
+    /// A new task on a double-clicked day, at a time when one was clicked.
+    var onAddTask: ((_ day: String, _ time: String?) -> Void)?
+    /// A dropped event. The controller decides; see this file's header.
+    var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
 
     private(set) var scale: ShiftCalendarScale = .month
-    private(set) var anchor: Date = Date()
 
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
-    private let scaleTabs = HelmSegmentedTabs(items: ShiftCalendarScale.allCases.map {
-        .init(id: $0.rawValue, title: $0.title)
-    }, selected: ShiftCalendarScale.month.rawValue, size: .compact)
-    private lazy var previousButton = HelmButton(symbol: "chevron.left", variant: .secondary, size: .small,
-                                                 target: self, action: #selector(goPrevious))
-    private lazy var todayButton = HelmButton(title: "Today", variant: .secondary, size: .small,
-                                              target: self, action: #selector(goToday))
-    private lazy var nextButton = HelmButton(symbol: "chevron.right", variant: .secondary, size: .small,
-                                             target: self, action: #selector(goNext))
-
-    private let weekdayHeader = ShiftCalendarWeekdayHeader()
-    private let grid = ShiftCalendarGridView()
-    private var gridHeight: NSLayoutConstraint?
-    private var toolbarStack: NSStackView?
-    private var titleStackView: NSStackView?
-    private var navStackView: NSStackView?
-    private var outerStack: NSStackView?
-    /// The sidebar layout's month (stage 7) - see `adoptWorkspaceStyle`.
+    private let captionLabel = NSTextField(labelWithString: "")
+    private let card = NSView()
+    private let webView = ShiftCalendarWebView()
+    /// Built only when this machine has no bundle, which is never on a
+    /// normal install.
+    private var missingBundleState: HelmEmptyState?
+    /// The sidebar layout's card radius - see `adoptWorkspaceStyle`.
     private(set) var usesWorkspaceStyle = false
-    /// The weekday row and the grid in one bordered card.
-    private let workspaceCard = NSView()
 
     private var tasks: [ShiftTask] = []
     private var projects: [ShiftProject] = []
+    /// The period the page last reported, as `YYYY-MM-DD` strings. Until the
+    /// first report it is the month grid around today, which is what the page
+    /// opens on.
+    private var visibleRange: (start: String, end: String)?
+    private var isConfigured = false
+    private(set) var lastEventsPayload: [[String: Any]] = []
 
-    /// The grid's own height, per scale. A required constant is safe here in
-    /// a way a required *width* is not (AGENTS.md gotcha (13) is about a
-    /// content minimum reaching the window through a page's width): this page
-    /// is inside a vertical scroll view, so a tall grid scrolls rather than
-    /// growing the window.
-    private static let monthHeight: CGFloat = 588
-    private static let weekHeight: CGFloat = 340
+    /// The calendar's own height. A required constant is safe here in a way
+    /// a required *width* is not (gotcha (13) is about a width reaching the
+    /// window): the page is inside a vertical scroll view, so a tall card
+    /// scrolls rather than growing the window. Month view fits six weeks in
+    /// it, and week and day view scroll their hours inside it.
+    static let calendarHeight: CGFloat = 720
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -203,125 +516,106 @@ final class ShiftCalendarView: NSView {
     private func build() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = HelmType.sectionTitle()
-        subtitleLabel.font = HelmType.captionSmall()
-        subtitleLabel.lineBreakMode = .byTruncatingTail
+        captionLabel.font = HelmType.captionSmall()
+        captionLabel.lineBreakMode = .byTruncatingTail
+        captionLabel.translatesAutoresizingMaskIntoConstraints = false
+        captionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let titleStack = NSStackView(views: [titleLabel, subtitleLabel])
-        titleStack.orientation = .vertical
-        titleStack.alignment = .leading
-        titleStack.spacing = 1
-        titleStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        card.wantsLayer = true
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(webView)
 
-        scaleTabs.onSelect = { [weak self] id in
-            guard let self, let scale = ShiftCalendarScale(rawValue: id) else { return }
-            self.setScale(scale)
-        }
-        for control in [previousButton, todayButton, nextButton] {
-            control.setContentHuggingPriority(.required, for: .horizontal)
-            control.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-        previousButton.setAccessibilityLabel("Previous")
-        nextButton.setAccessibilityLabel("Next")
-
-        let navStack = NSStackView(views: [previousButton, todayButton, nextButton])
-        navStack.orientation = .horizontal
-        navStack.spacing = HelmMetrics.s1 + 2
-        navStack.distribution = .fill
-        navStack.setHuggingPriority(.required, for: .horizontal)
-
-        titleStackView = titleStack
-        navStackView = navStack
-        let toolbar = NSStackView(views: [titleStack, navStack, scaleTabs])
-        toolbarStack = toolbar
-        toolbar.orientation = .horizontal
-        toolbar.alignment = .centerY
-        toolbar.spacing = HelmMetrics.s3
-        // AGENTS.md gotcha (10)/(12): `.fill` plus stack-level hugging on the
-        // nested stacks, because content-priority APIs are no-ops on a view
-        // with no intrinsic size and an `NSStackView` has none.
-        toolbar.distribution = .fill
-        toolbar.translatesAutoresizingMaskIntoConstraints = false
-
-        grid.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
-        grid.onAddTask = { [weak self] day in self?.onAddTask?(day) }
-
-        let stack = NSStackView(views: [toolbar, weekdayHeader, grid])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = HelmMetrics.s2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        outerStack = stack
-        addSubview(stack)
-
-        let height = grid.heightAnchor.constraint(equalToConstant: Self.monthHeight)
-        gridHeight = height
+        addSubview(captionLabel)
+        addSubview(card)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            toolbar.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            weekdayHeader.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            height,
+            captionLabel.topAnchor.constraint(equalTo: topAnchor),
+            captionLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            captionLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            card.topAnchor.constraint(equalTo: captionLabel.bottomAnchor, constant: HelmMetrics.s2),
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+            card.heightAnchor.constraint(equalToConstant: Self.calendarHeight),
+            webView.topAnchor.constraint(equalTo: card.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: card.bottomAnchor),
         ])
+
+        webView.onReady = { [weak self] in self?.pageDidBecomeReady() }
+        webView.onPageError = { message in
+            AppLog.lifecycle.error("task calendar page error: \(message, privacy: .public)")
+        }
+        webView.onRangeChanged = { [weak self] view, start, end in
+            guard let self else { return }
+            self.scale = ShiftCalendarScale(rawValue: view) ?? self.scale
+            self.visibleRange = (start, end)
+            self.pushEvents()
+        }
+        webView.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
+        webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
+        webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
+
+        applyTheme(ThemeManager.shared.theme)
+        refreshCaption()
+    }
+
+    /// The sidebar layout's card: the prototype's 12pt corners. Once, the
+    /// first time the sidebar layout shows the page; never undone.
+    func adoptWorkspaceStyle() {
+        guard !usesWorkspaceStyle else { return }
+        usesWorkspaceStyle = true
         applyTheme(ThemeManager.shared.theme)
     }
 
-    /// The prototype's month: the period's name on the left with its Month
-    /// and Week switch and the arrows on the right, then one bordered card
-    /// holding the weekday row (in the grid's own tint) and the days, a day's
-    /// number at its top-left with today's in the accent, and each task a
-    /// quiet chip with its project's bar. Once, the first time the sidebar
-    /// layout shows the page; never undone.
-    func adoptWorkspaceStyle() {
-        guard !usesWorkspaceStyle, let toolbar = toolbarStack, let stack = outerStack,
-              let titleStack = titleStackView, let navStack = navStackView else { return }
-        usesWorkspaceStyle = true
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(17), weight: .bold)
-        for view in toolbar.arrangedSubviews {
-            toolbar.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        let spacerWidth = spacer.widthAnchor.constraint(equalToConstant: 0)
-        spacerWidth.priority = .defaultLow
-        spacerWidth.isActive = true
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        for view in [titleStack, spacer, scaleTabs, navStack] as [NSView] { toolbar.addArrangedSubview(view) }
-        // Gotcha (12): neither the switch nor a stack has an intrinsic width,
-        // so content hugging on them is a no-op and the switch took the
-        // slack (measured: its pills drawn beside the title). Their own
-        // widths, so the spacer takes it.
-        scaleTabs.widthAnchor.constraint(equalToConstant: ceil(scaleTabs.fittingSize.width)).isActive = true
-        titleStack.setHuggingPriority(.required, for: .horizontal)
+    // MARK: Loading
 
-        stack.removeArrangedSubview(weekdayHeader)
-        weekdayHeader.removeFromSuperview()
-        stack.removeArrangedSubview(grid)
-        grid.removeFromSuperview()
-        workspaceCard.wantsLayer = true
-        workspaceCard.translatesAutoresizingMaskIntoConstraints = false
-        workspaceCard.addSubview(weekdayHeader)
-        workspaceCard.addSubview(grid)
-        weekdayHeader.usesWorkspaceStyle = true
-        grid.usesWorkspaceStyle = true
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        activateIfShowing()
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        activateIfShowing()
+    }
+
+    /// Loads the page the first time the tab is genuinely on screen, or puts
+    /// up the "no bundle" state when this machine has none.
+    private func activateIfShowing() {
+        guard window != nil, !isHiddenOrHasHiddenAncestor, !webView.hasLoaded else { return }
+        if !webView.activate() { showMissingBundle() }
+    }
+
+    private func showMissingBundle() {
+        webView.isHidden = true
+        guard missingBundleState == nil else { return }
+        let state = HelmEmptyState(symbol: "calendar.badge.exclamationmark",
+                                   title: "Calendar unavailable",
+                                   body: ShiftCalendarAssets.missingBundleMessage)
+        state.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(state)
         NSLayoutConstraint.activate([
-            weekdayHeader.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
-            weekdayHeader.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
-            weekdayHeader.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
-            grid.topAnchor.constraint(equalTo: weekdayHeader.bottomAnchor),
-            grid.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
-            grid.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+            state.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            state.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            state.widthAnchor.constraint(lessThanOrEqualTo: card.widthAnchor, constant: -48),
         ])
-        stack.addArrangedSubview(workspaceCard)
-        stack.setCustomSpacing(HelmMetrics.s3, after: toolbar)
-        workspaceCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        rebuild()
+        missingBundleState = state
+    }
+
+    private func pageDidBecomeReady() {
+        isConfigured = false
+        let theme = ThemeManager.shared.theme
+        webView.call("configure", payload: ShiftCalendarPayload.configuration(theme: theme, scale: scale)) {
+            [weak self] result in
+            guard let self else { return }
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: configure failed: \(error.message, privacy: .public)")
+                return
+            }
+            self.isConfigured = true
+            self.pushEvents()
+        }
     }
 
     // MARK: Data
@@ -329,588 +623,86 @@ final class ShiftCalendarView: NSView {
     func configure(tasks: [ShiftTask], projects: [ShiftProject]) {
         self.tasks = tasks
         self.projects = projects
-        rebuild()
+        pushEvents()
     }
 
-    func setScale(_ scale: ShiftCalendarScale) {
-        guard scale != self.scale else { return }
-        self.scale = scale
-        scaleTabs.select(scale.rawValue)
-        gridHeight?.constant = scale == .month ? Self.monthHeight : Self.weekHeight
-        rebuild()
-    }
-
-    /// Moves the window to the period containing `date` - how the page jumps
-    /// to a task's own month when something else selects it.
-    func show(date: Date) {
-        anchor = date
-        rebuild()
-    }
-
-    @objc private func goPrevious() { step(-1) }
-    @objc private func goNext() { step(1) }
-    @objc private func goToday() {
-        anchor = Date()
-        rebuild()
-    }
-
-    private func step(_ direction: Int) {
-        let calendar = Calendar.current
-        let unit: Calendar.Component = scale == .month ? .month : .weekOfYear
-        anchor = calendar.date(byAdding: unit, value: direction, to: anchor) ?? anchor
-        rebuild()
-    }
-
-    private func rebuild() {
-        let calendar = Calendar.current
-        let (start, days) = ShiftCalendarModel.range(for: anchor, scale: scale, calendar: calendar)
-        let end = calendar.date(byAdding: .day, value: days, to: start) ?? start
-        let entries = ShiftCalendarModel.entries(tasks: tasks, from: start,
-                                                 through: end.addingTimeInterval(-1), calendar: calendar)
-        var byDay: [String: [ShiftCalendarEntry]] = [:]
-        for entry in entries { byDay[entry.day, default: []].append(entry) }
-
-        titleLabel.stringValue = Self.periodTitle(anchor: anchor, scale: scale, start: start, days: days)
-        let projected = entries.filter(\.isProjected).count
-        subtitleLabel.stringValue = Self.subtitle(total: entries.count, projected: projected)
-
-        grid.configure(start: start, days: days, anchorMonth: anchor, scale: scale,
-                       entriesByDay: byDay, projects: projects)
-        weekdayHeader.configure(start: start)
-        applyTheme(ThemeManager.shared.theme)
-    }
-
-    /// "September 2026", or "14 - 20 Sep 2026" for a week.
-    static func periodTitle(anchor: Date, scale: ShiftCalendarScale, start: Date, days: Int,
-                            calendar: Calendar = .current) -> String {
-        switch scale {
-        case .month:
-            return monthYearFormatter.string(from: anchor)
-        case .week:
-            let last = calendar.date(byAdding: .day, value: days - 1, to: start) ?? start
-            return "\(dayMonthFormatter.string(from: start)) - \(monthDayYearFormatter.string(from: last))"
+    /// Recomputes the visible period's entries, states them in the caption,
+    /// and hands them to the page when it is up.
+    private func pushEvents() {
+        let entries = visibleEntries()
+        lastEventsPayload = entries.map(ShiftCalendarPayload.event(for:))
+        refreshCaption(entries: entries)
+        guard isConfigured else { return }
+        webView.call("setEvents", payload: ["events": lastEventsPayload]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setEvents failed: \(error.message, privacy: .public)")
+            }
         }
     }
 
-    /// GL-14: "no tasks in this month" is a real, stated answer, never a
+    private func visibleEntries() -> [ShiftCalendarEntry] {
+        let calendar = Calendar.current
+        let start: Date
+        let end: Date
+        if let visibleRange,
+           let s = ShiftDateFormatting.date(from: visibleRange.start),
+           let e = ShiftDateFormatting.date(from: visibleRange.end) {
+            start = s
+            end = calendar.date(byAdding: .day, value: 1, to: e) ?? e
+        } else {
+            let (s, days) = ShiftCalendarModel.range(for: Date(), scale: .month, calendar: calendar)
+            start = s
+            end = calendar.date(byAdding: .day, value: days, to: s) ?? s
+        }
+        return ShiftCalendarModel.entries(tasks: tasks, from: start, through: end.addingTimeInterval(-1),
+                                          calendar: calendar)
+    }
+
+    private func refreshCaption(entries: [ShiftCalendarEntry]? = nil) {
+        let list = entries ?? visibleEntries()
+        captionLabel.stringValue = Self.subtitle(total: list.count, projected: list.filter(\.isProjected).count)
+    }
+
+    /// GL-14: "no tasks in this period" is a real, stated answer, never a
     /// blank grid the reader has to interpret. The projected count is stated
-    /// separately because a month showing 40 chips of which 35 are
+    /// separately because a month showing 40 events of which 35 are
     /// projections is a different fact from a month with 40 real tasks.
     static func subtitle(total: Int, projected: Int) -> String {
         guard total > 0 else { return "Nothing scheduled in this period." }
         let real = total - projected
         var text = real == 1 ? "1 task" : "\(real) tasks"
         if projected > 0 { text += ", \(projected) projected from a repeat rule" }
-        return text
+        return text + " in this period. Drag a task to move its due date."
     }
-
-    private static let monthYearFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMMMy")
-        return f
-    }()
-
-    private static let dayMonthFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMMd")
-        return f
-    }()
-
-    private static let monthDayYearFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("MMMdy")
-        return f
-    }()
 
     // MARK: Theme
 
+    /// GL-24: a repaint, never a fetch - the events are already in the page,
+    /// and only their colours change.
     func applyTheme(_ theme: HelmTheme) {
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
-        scaleTabs.applyTheme(theme)
-        weekdayHeader.applyTheme(theme)
-        grid.applyTheme(theme)
-        if usesWorkspaceStyle {
-            HelmCard.applyCardSurface(to: workspaceCard, theme: theme, cornerRadius: 12, daylightRadius: 12)
-            workspaceCard.layer?.masksToBounds = true
+        captionLabel.textColor = HelmTheme.mutedInk(theme)
+        let radius = usesWorkspaceStyle ? 12 : HelmMetrics.rCard
+        HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: radius, daylightRadius: radius)
+        card.layer?.masksToBounds = true
+        // AGENTS.md's theming rule: a themed view forces its appearance, or
+        // anything resolving a system colour (the web view's own scrollers)
+        // follows the OS instead of the theme.
+        card.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        guard isConfigured else { return }
+        webView.call("setTheme", payload: ShiftCalendarPalette.themePayload(for: theme)) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setTheme failed: \(error.message, privacy: .public)")
+            }
         }
     }
 
     // MARK: Debug hooks (GL-27)
 
     #if FM_SELFTESTS
-    var debugScale: ShiftCalendarScale { scale }
-    var debugTitle: String { titleLabel.stringValue }
-    var debugSubtitle: String { subtitleLabel.stringValue }
-    var debugCells: [ShiftCalendarDayCell] { grid.debugCells }
-    func debugCell(day: String) -> ShiftCalendarDayCell? { grid.debugCells.first { $0.day == day } }
-    func debugSelectScale(_ scale: ShiftCalendarScale) { setScale(scale) }
-    func debugStep(_ direction: Int) { step(direction) }
+    var debugWebView: ShiftCalendarWebView { webView }
+    var debugCaption: String { captionLabel.stringValue }
+    var debugIsConfigured: Bool { isConfigured }
+    var debugShowsMissingBundle: Bool { missingBundleState != nil }
+    var debugEventIDs: [String] { lastEventsPayload.compactMap { $0["id"] as? String } }
     #endif
-}
-
-// MARK: - The weekday header
-
-/// The seven column headings, in the captain's own locale's week order.
-final class ShiftCalendarWeekdayHeader: NSView {
-    private var labels: [NSTextField] = []
-    private var height: NSLayoutConstraint?
-    /// The sidebar layout's row: "Mon" at each column's leading edge, in the
-    /// card's tinted header band.
-    var usesWorkspaceStyle = false {
-        didSet {
-            for label in labels {
-                label.alignment = usesWorkspaceStyle ? .left : .center
-                label.font = usesWorkspaceStyle ? HelmType.caption() : HelmType.kicker()
-            }
-            height?.constant = usesWorkspaceStyle ? 30 : 22
-            needsLayout = true
-        }
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        for _ in 0..<7 {
-            let label = NSTextField(labelWithString: "")
-            label.font = HelmType.kicker()
-            label.alignment = .center
-            addSubview(label)
-            labels.append(label)
-        }
-        let height = heightAnchor.constraint(equalToConstant: 22)
-        height.isActive = true
-        self.height = height
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    func configure(start: Date) {
-        let calendar = Calendar.current
-        for (index, label) in labels.enumerated() {
-            guard let date = calendar.date(byAdding: .day, value: index, to: start) else { continue }
-            let heading = Self.headingFormatter.string(from: date)
-            label.stringValue = usesWorkspaceStyle ? heading : heading.uppercased()
-        }
-        needsLayout = true
-    }
-
-    override var isFlipped: Bool { true }
-
-    override func layout() {
-        super.layout()
-        let width = bounds.width / 7
-        for (index, label) in labels.enumerated() {
-            if usesWorkspaceStyle {
-                label.frame = NSRect(x: CGFloat(index) * width + 9, y: 8, width: width - 12, height: 16)
-            } else {
-                label.frame = NSRect(x: CGFloat(index) * width, y: 4, width: width, height: 14)
-            }
-        }
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        for label in labels { label.textColor = HelmTheme.mutedInk(theme) }
-        if usesWorkspaceStyle {
-            layer?.backgroundColor = HelmField.fill(theme).cgColor
-        }
-    }
-
-    private static let headingFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.setLocalizedDateFormatFromTemplate("EEE")
-        return f
-    }()
-}
-
-// MARK: - The grid
-
-/// The 7-column grid of day cells. Lays its own cells out - see this file's
-/// header for why this is not Auto Layout.
-final class ShiftCalendarGridView: NSView {
-
-    var onOpenTask: ((String) -> Void)?
-    var onAddTask: ((String) -> Void)?
-
-    private var cells: [ShiftCalendarDayCell] = []
-    private var rows = 6
-    /// Inside the sidebar layout's card: square corners (the card rounds
-    /// them), and the cells and chips in the prototype's style.
-    var usesWorkspaceStyle = false
-
-    /// The gap between two cells, which is where the grid's own background
-    /// is seen. One point, not `HelmMetrics.s1`: this is a rule between two
-    /// days, not spacing between two cards.
-    private static let hairline: CGFloat = 1
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    override var isFlipped: Bool { true }
-
-    func configure(start: Date, days: Int, anchorMonth: Date, scale: ShiftCalendarScale,
-                   entriesByDay: [String: [ShiftCalendarEntry]], projects: [ShiftProject]) {
-        let calendar = Calendar.current
-        rows = max(1, days / 7)
-        // Cells are reused rather than rebuilt: a month step is a re-fill of
-        // 42 existing views, not 42 teardowns and 42 constructions, which is
-        // what keeps paging through a year from churning the view tree.
-        while cells.count < days {
-            let cell = ShiftCalendarDayCell()
-            cell.usesWorkspaceStyle = usesWorkspaceStyle
-            cell.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
-            cell.onAddTask = { [weak self] day in self?.onAddTask?(day) }
-            addSubview(cell)
-            cells.append(cell)
-        }
-        for (index, cell) in cells.enumerated() {
-            guard index < days else {
-                cell.isHidden = true
-                continue
-            }
-            cell.isHidden = false
-            let date = calendar.date(byAdding: .day, value: index, to: start) ?? start
-            let day = ShiftDateFormatting.components(from: date).0
-            cell.configure(date: date, day: day,
-                           inFocusMonth: scale == .week
-                               || calendar.isDate(date, equalTo: anchorMonth, toGranularity: .month),
-                           isToday: calendar.isDateInToday(date),
-                           entries: entriesByDay[day] ?? [],
-                           projects: projects,
-                           maxChips: scale == .month ? 3 : 8)
-        }
-        needsLayout = true
-    }
-
-    override func layout() {
-        super.layout()
-        let visible = cells.filter { !$0.isHidden }
-        guard !visible.isEmpty else { return }
-        let columnWidth = bounds.width / 7
-        let rowHeight = bounds.height / CGFloat(rows)
-        for (index, cell) in visible.enumerated() {
-            let column = index % 7
-            let row = index / 7
-            // Integral frames: a fractional column width on a non-retina
-            // scale leaves a visible seam between two cells that both round
-            // their own edges independently.
-            let x = (CGFloat(column) * columnWidth).rounded()
-            let nextX = (CGFloat(column + 1) * columnWidth).rounded()
-            let y = (CGFloat(row) * rowHeight).rounded()
-            let nextY = (CGFloat(row + 1) * rowHeight).rounded()
-            // Inset by the hairline so the grid's own background shows
-            // *between* the cells rather than only around them. Measured in a
-            // real render (`docs/history/34-recurrence-and-calendar.md`): with
-            // the cells tiled edge to edge, a light theme's card and page
-            // tones are close enough that the whole month read as one
-            // undifferentiated field with no day boundaries at all.
-            cell.frame = NSRect(x: x, y: y,
-                                width: nextX - x - Self.hairline,
-                                height: nextY - y - Self.hairline)
-        }
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        // The grid is the line colour and the cells are drawn on top of it,
-        // so the 1pt gaps between them read as the rules of the calendar.
-        layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(theme.isDaylight ? 1 : 0.5).cgColor
-        layer?.cornerRadius = usesWorkspaceStyle ? 0 : HelmMetrics.rCard
-        layer?.masksToBounds = true
-        for cell in cells {
-            cell.usesWorkspaceStyle = usesWorkspaceStyle
-            cell.applyTheme(theme)
-        }
-    }
-
-    #if FM_SELFTESTS
-    var debugCells: [ShiftCalendarDayCell] { cells.filter { !$0.isHidden } }
-    #endif
-}
-
-// MARK: - One day
-
-/// One day of the grid: its number, its chips, and an overflow count.
-final class ShiftCalendarDayCell: HoverHighlightView {
-
-    var onOpenTask: ((String) -> Void)?
-    var onAddTask: ((String) -> Void)?
-
-    private(set) var day: String = ""
-    private(set) var entries: [ShiftCalendarEntry] = []
-
-    private let numberLabel = NSTextField(labelWithString: "")
-    private let todayPill = NSView()
-    private let overflowLabel = NSTextField(labelWithString: "")
-    private var chips: [ShiftCalendarChipView] = []
-    private var inFocusMonth = true
-    private var isToday = false
-    private var maxChips = 3
-    private var projects: [ShiftProject] = []
-    /// The sidebar layout's day: the number at the top-left, today's in an
-    /// accent circle, and quiet chips.
-    var usesWorkspaceStyle = false
-
-    /// The cell's own inner inset, and the chip height. Constants rather than
-    /// `HelmMetrics` spacings because the grid's rhythm is a cell size, not
-    /// the page's stack spacing.
-    private static let inset: CGFloat = 5
-    private static let chipHeight: CGFloat = 17
-    private static let headerHeight: CGFloat = 19
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        // GL-16: a clickable surface is a `HoverHighlightView`, which supplies
-        // the role, the focus ring and the keyboard press.
-        setAccessibilityRole(.button)
-        numberLabel.font = HelmType.captionSmall()
-        numberLabel.alignment = .center
-        todayPill.wantsLayer = true
-        overflowLabel.font = HelmType.captionSmall()
-        addSubview(todayPill)
-        addSubview(numberLabel)
-        addSubview(overflowLabel)
-
-        let click = NSClickGestureRecognizer(target: self, action: #selector(cellClicked))
-        click.numberOfClicksRequired = 2
-        addGestureRecognizer(click)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    override var isFlipped: Bool { true }
-
-    func configure(date: Date, day: String, inFocusMonth: Bool, isToday: Bool,
-                   entries: [ShiftCalendarEntry], projects: [ShiftProject], maxChips: Int) {
-        self.day = day
-        self.entries = entries
-        self.inFocusMonth = inFocusMonth
-        self.isToday = isToday
-        self.maxChips = maxChips
-        self.projects = projects
-
-        numberLabel.stringValue = "\(Calendar.current.component(.day, from: date))"
-        todayPill.isHidden = !isToday
-
-        let shown = Array(entries.prefix(maxChips))
-        while chips.count < shown.count {
-            let chip = ShiftCalendarChipView()
-            chip.usesWorkspaceStyle = usesWorkspaceStyle
-            chip.onClick = { [weak self] id in self?.onOpenTask?(id) }
-            addSubview(chip)
-            chips.append(chip)
-        }
-        for (index, chip) in chips.enumerated() {
-            guard index < shown.count else {
-                chip.isHidden = true
-                continue
-            }
-            chip.isHidden = false
-            chip.configure(entry: shown[index])
-        }
-        let hidden = entries.count - shown.count
-        overflowLabel.isHidden = hidden <= 0
-        overflowLabel.stringValue = hidden > 0 ? "+\(hidden) more" : ""
-
-        // The whole day is one accessible element: its date and what is on
-        // it, so a screen reader is not asked to walk 42 unlabelled boxes.
-        setAccessibilityLabel(Self.accessibilityLabel(day: day, entries: entries))
-        needsLayout = true
-        applyTheme(ThemeManager.shared.theme)
-    }
-
-    /// Spelled out rather than derived at read time so the projected chips
-    /// are *named* as projections - the one fact a sighted reader gets from
-    /// the reduced alpha and nobody else would.
-    static func accessibilityLabel(day: String, entries: [ShiftCalendarEntry]) -> String {
-        let date = ShiftDateFormatting.friendly(day)
-        guard !entries.isEmpty else { return "\(date), nothing scheduled" }
-        let described = entries.map { $0.isProjected ? "\($0.title), repeats" : $0.title }
-        return "\(date), \(entries.count) item\(entries.count == 1 ? "" : "s"): " + described.joined(separator: ", ")
-    }
-
-    @objc private func cellClicked() {
-        onAddTask?(day)
-    }
-
-    override func layout() {
-        super.layout()
-        let width = bounds.width - Self.inset * 2
-        if usesWorkspaceStyle {
-            todayPill.frame = NSRect(x: Self.inset + 1, y: Self.inset - 1, width: 24, height: 17)
-            numberLabel.frame = NSRect(x: Self.inset + 1, y: Self.inset, width: 24, height: 14)
-            numberLabel.alignment = isToday ? .center : .left
-            if !isToday { numberLabel.frame.origin.x = Self.inset + 3 }
-        } else {
-            todayPill.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset - 1, width: 22, height: 16)
-            numberLabel.frame = NSRect(x: bounds.width - Self.inset - 22, y: Self.inset, width: 22, height: 14)
-        }
-        todayPill.layer?.cornerRadius = 8
-
-        var y = Self.headerHeight
-        for chip in chips where !chip.isHidden {
-            chip.frame = NSRect(x: Self.inset, y: y, width: width, height: Self.chipHeight)
-            y += Self.chipHeight + 2
-        }
-        overflowLabel.frame = NSRect(x: Self.inset + 2, y: y, width: width, height: 13)
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        // An out-of-month day is the page's own background rather than a
-        // card: the grid is a single surface with hairlines between cells,
-        // so a day outside the month recedes into the page instead of
-        // becoming a second card colour.
-        let fill = inFocusMonth ? surface : HelmTheme.nsColor(theme.backgroundHex)
-        normalColor = fill
-        hoverColor = fill.hoverShifted(by: 0.08, forMode: theme.mode)
-        cornerRadius = 0
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let muted = HelmTheme.mutedInk(theme)
-        if isToday {
-            let accent = HelmTheme.nsColor(theme.accentHex)
-            todayPill.layer?.backgroundColor = accent.cgColor
-            // GL-16 / the tint rule: an accent *fill* is safe, an accent
-            // label is not - the number on the pill goes through the
-            // contrast helper rather than being assumed readable.
-            numberLabel.textColor = HelmContrast.legibleOn(fill: accent, preferring: ink)
-        } else {
-            numberLabel.textColor = inFocusMonth ? ink : muted
-        }
-        overflowLabel.textColor = muted
-        for chip in chips {
-            chip.usesWorkspaceStyle = usesWorkspaceStyle
-            chip.applyTheme(theme, projects: projects)
-        }
-    }
-
-    #if FM_SELFTESTS
-    var debugChipTitles: [String] { chips.filter { !$0.isHidden }.map(\.title) }
-    var debugProjectedFlags: [Bool] { chips.filter { !$0.isHidden }.map(\.isProjected) }
-    var debugOverflowText: String { overflowLabel.isHidden ? "" : overflowLabel.stringValue }
-    var debugIsToday: Bool { isToday }
-    var debugInFocusMonth: Bool { inFocusMonth }
-    var debugChipAlphas: [CGFloat] { chips.filter { !$0.isHidden }.map(\.alphaValue) }
-    #endif
-}
-
-// MARK: - One chip
-
-/// One task on one day.
-final class ShiftCalendarChipView: HoverHighlightView {
-
-    var onClick: ((String) -> Void)?
-
-    private(set) var taskID: String = ""
-    private(set) var title: String = ""
-    private(set) var isProjected = false
-
-    private let bar = NSView()
-    private let label = NSTextField(labelWithString: "")
-    private let repeatIcon = NSImageView()
-    private var tint: HelmTint = .neutral
-    private var isCompleted = false
-    /// The prototype's chip: the app's quiet well with the project's bar,
-    /// ink text - one surface for every project, the bar says which.
-    var usesWorkspaceStyle = false
-
-    /// How faint a projected occurrence is drawn. Low enough to read as
-    /// "not yet real" beside a solid chip, high enough to stay legible -
-    /// the chip's own label still goes through `HelmContrast`, so this only
-    /// moves the whole chip, never its contrast against its own fill.
-    static let projectedAlpha: CGFloat = 0.55
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        setAccessibilityRole(.button)
-        bar.wantsLayer = true
-        label.font = HelmType.captionSmall()
-        label.lineBreakMode = .byTruncatingTail
-        repeatIcon.image = HelmSymbol.image("repeat", pointSize: 8, weight: .semibold)
-        addSubview(bar)
-        addSubview(label)
-        addSubview(repeatIcon)
-        let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
-        addGestureRecognizer(click)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    override var isFlipped: Bool { true }
-
-    func configure(entry: ShiftCalendarEntry) {
-        taskID = entry.taskID
-        title = entry.title
-        isProjected = entry.isProjected
-        isCompleted = entry.isCompleted
-        tint = ShiftProjectPalette.tint(forProjectID: entry.projectID)
-        let prefix = entry.time.map { "\(ShiftDateFormatting.clock($0)) " } ?? ""
-        label.stringValue = prefix + entry.title
-        repeatIcon.isHidden = !entry.isProjected
-        alphaValue = entry.isProjected ? Self.projectedAlpha : 1
-        setAccessibilityLabel(entry.isProjected ? "\(entry.title), repeats on this day" : entry.title)
-        needsLayout = true
-    }
-
-    @objc private func clicked() {
-        onClick?(taskID)
-    }
-
-    override func layout() {
-        super.layout()
-        bar.frame = NSRect(x: 0, y: 0, width: 3, height: bounds.height)
-        let iconWidth: CGFloat = repeatIcon.isHidden ? 0 : 13
-        label.frame = NSRect(x: 6, y: 1, width: max(0, bounds.width - 8 - iconWidth), height: bounds.height - 2)
-        repeatIcon.frame = NSRect(x: bounds.width - iconWidth - 1, y: 3, width: max(0, iconWidth - 2),
-                                  height: bounds.height - 6)
-    }
-
-    func applyTheme(_ theme: HelmTheme, projects: [ShiftProject]) {
-        _ = projects
-        // A tinted chip is a tinted *surface*, so the fill and the label both
-        // come from `HelmContrast.tintedSurface` rather than being picked -
-        // AGENTS.md's colour rule: a `HelmTint` hue is safe as a fill and is
-        // not automatically safe as text.
-        //
-        // `.neutral` is the exception, and it has to be: `ShiftProjectPalette`
-        // resolves a task with **no project** to `.neutral`, which is
-        // `chromeInkHex` - full page ink. Washed as a surface that produces a
-        // near-black bar on a light page, which is what a real render showed:
-        // the commonest chip on the grid was also its heaviest. An
-        // unprojected task gets the app's own well fill instead, which is the
-        // same "no identity signal" treatment the board's cards already use.
-        let fill: NSColor
-        let foreground: NSColor
-        if usesWorkspaceStyle || tint == .neutral {
-            fill = HelmField.fill(theme)
-            foreground = HelmTheme.nsColor(theme.chromeInkHex)
-        } else {
-            let surface = HelmContrast.tintedSurface(tintHex: tint.hex(in: theme), theme: theme,
-                                                     target: HelmContrast.textTarget)
-            fill = surface.fill
-            foreground = surface.foreground
-        }
-        normalColor = fill
-        hoverColor = fill.hoverShifted(by: 0.12, forMode: theme.mode)
-        cornerRadius = HelmMetrics.rChip - 2
-        bar.layer?.backgroundColor = tint == .neutral
-            ? HelmTheme.mutedInk(theme).cgColor
-            : HelmTheme.nsColor(tint.hex(in: theme)).cgColor
-        label.textColor = foreground
-        repeatIcon.contentTintColor = foreground
-        if isCompleted {
-            label.attributedStringValue = NSAttributedString(
-                string: label.stringValue,
-                attributes: [.font: HelmType.captionSmall(), .foregroundColor: foreground,
-                             .strikethroughStyle: NSUnderlineStyle.single.rawValue])
-        }
-    }
 }
