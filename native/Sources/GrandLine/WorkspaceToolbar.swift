@@ -29,7 +29,8 @@
 //     capsule of their own (stage 7 drew them with a caption on Console only;
 //     U-02, the captain's call, took the caption out and put them everywhere),
 //   - the trailing cluster: the light/dark toggle and the notifications
-//     button (the captain kept both), the inspector toggle, then Search,
+//     button (the captain kept both), the calendar button (Tasks › Calendar
+//     from any page, the captain's ask), the inspector toggle, then Search,
 //   - and last, at the far right after Search, the page's one primary action
 //     where it has one (Add Host, Analyze, Copy diagnostics), as the
 //     prototype draws it (stage 6, `WorkspacePrimaryActionProviding`).
@@ -40,7 +41,7 @@
 // **The captain can customise it (R2-ARCH-06).** View > Customize Toolbar…
 // (or a right click on the toolbar) moves, removes and adds back the items
 // that are always there - Back and Forward, Recents, the crumb, the
-// light/dark toggle, the bell, the inspector button and Search - plus spaces,
+// light/dark toggle, the bell, the calendar, the inspector button and Search - plus spaces,
 // and picks the display mode. The items that come and go with the showing
 // page - its tabs, its actions, the module's action, Quick Connect, the focus
 // chip and the primary action - are not in the palette and cannot be dragged:
@@ -68,6 +69,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let moduleAction = NSToolbarItem.Identifier("workspace.moduleAction")
         static let theme = NSToolbarItem.Identifier("workspace.theme")
         static let notifications = NSToolbarItem.Identifier("workspace.notifications")
+        static let calendar = NSToolbarItem.Identifier("workspace.calendar")
         static let inspector = NSToolbarItem.Identifier("workspace.inspector")
         static let search = NSToolbarItem.Identifier("workspace.search")
         static let primaryAction = NSToolbarItem.Identifier("workspace.primaryAction")
@@ -96,6 +98,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let hostsHelp = "Quick Connect to a host: pick a saved host, or type ssh user@host"
     }
 
+    /// The calendar button's glyph, shared by its live item and its palette
+    /// copy.
+    static let calendarSymbol = "calendar"
+
     /// AppKit keeps every live toolbar with the same identifier in step -
     /// items and display mode alike - so a suite that stands a second one up
     /// beside the shell's (a "next launch") gives it an identifier of its own.
@@ -115,6 +121,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var onQuickConnectHosts: (() -> Void)?
     var onToggleTheme: (() -> Void)?
     var onNotifications: ((NSView) -> Void)?
+    /// The calendar button: Tasks › Calendar, from whichever page is showing.
+    var onCalendar: (() -> Void)?
     var onToggleInspector: (() -> Void)?
     var onSearch: (() -> Void)?
     /// R2-UX-10: the crumb's overflow form - show where you are in the sidebar.
@@ -227,8 +235,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// The items the captain can move, remove and add back. Always present
     /// by default, and each one's own view or image.
     static let customizableItems: [NSToolbarItem.Identifier] = [
-        ItemID.navigation, ItemID.recents, ItemID.crumb, ItemID.theme, ItemID.notifications, ItemID.inspector,
-        ItemID.search,
+        ItemID.navigation, ItemID.recents, ItemID.crumb, ItemID.theme, ItemID.notifications, ItemID.calendar,
+        ItemID.inspector, ItemID.search,
     ]
 
     /// The items the page and the module bring and take away. Placed only by
@@ -464,7 +472,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// middle rather than against the trailing cluster.
     static let defaultIdentifiers: [NSToolbarItem.Identifier] = [
         ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, ItemID.crumb, .flexibleSpace,
-        .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.inspector, ItemID.search,
+        .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.calendar, ItemID.inspector, ItemID.search,
     ]
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -599,6 +607,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let item = viewItem(identifier, view: bellButton, label: "Notifications")
             notificationsItem = item
             return item
+        case ItemID.calendar:
+            let item = imageItem(identifier, symbol: Self.calendarSymbol, label: "Calendar",
+                                 help: "Open Tasks › Calendar", action: #selector(calendarClicked))
+            item.image?.accessibilityDescription = "Calendar"
+            return item
         case ItemID.inspector:
             let item = imageItem(identifier, symbol: inspectorSymbolName, label: inspectorLabel,
                                  help: inspectorHelp, action: #selector(inspectorClicked))
@@ -631,6 +644,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             ItemID.crumb: ("signpost.right", "Location"),
             ItemID.theme: (DaylightThemeToggleButton.lightSymbol, "Appearance"),
             ItemID.notifications: ("bell", "Notifications"),
+            ItemID.calendar: (Self.calendarSymbol, "Calendar"),
             ItemID.inspector: (Self.inspectorOnSymbol, "Inspector"),
             ItemID.search: ("magnifyingglass", "Search"),
         ]
@@ -1047,6 +1061,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     @objc private func recentsFromOverflow() { onRecents?(navigation) }
     @objc private func themeClicked() { onToggleTheme?() }
     @objc private func notificationsClicked() { onNotifications?(bellButton) }
+    @objc private func calendarClicked() { onCalendar?() }
     @objc private func inspectorClicked() { onToggleInspector?() }
     @objc private func searchClicked() { onSearch?() }
     @objc private func moduleActionClicked() { onModuleAction?() }

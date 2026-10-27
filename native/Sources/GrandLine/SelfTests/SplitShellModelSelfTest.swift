@@ -495,6 +495,11 @@ enum SplitShellModelSelfTest {
         }
         check(lastFlexible < theme && theme < bell && bell < search,
               "the light/dark toggle and the notifications button are no longer the trailing cluster: \(ids.map(\.rawValue))", &ok)
+        // The captain's ask: a calendar button right after the bell.
+        check(ids.firstIndex(of: WorkspaceToolbar.ItemID.calendar) == bell + 1,
+              "the calendar button does not follow the notifications button: \(ids.map(\.rawValue))", &ok)
+        check(WorkspaceToolbar.customizableItems.contains(WorkspaceToolbar.ItemID.calendar),
+              "the calendar button cannot be moved or removed in Customize Toolbar", &ok)
         check(ids.first == WorkspaceToolbar.ItemID.sidebar && ids.contains(.sidebarTrackingSeparator),
               "the sidebar button no longer sits over the sidebar", &ok)
         // R2-ARCH-06: customisable, and still never autosaved by AppKit -
