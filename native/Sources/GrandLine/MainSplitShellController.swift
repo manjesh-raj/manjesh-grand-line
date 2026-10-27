@@ -351,6 +351,12 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func buildSplitView(in root: NSView) {
+        let splitView = WorkspaceShellSplitView()
+        splitView.isVertical = true
+        splitView.dividerStyle = splitController.splitView.dividerStyle
+        splitView.onPlacingDivider = { [weak self] placing in self?.placingDividerDidChange(placing) }
+        splitController.splitView = splitView
+
         sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
         // Opens at the prototype's width; `viewDidLayout` relaxes the range
         // once the split view has a real size.
@@ -360,11 +366,10 @@ final class MainSplitShellController: WorkspaceShellController {
         sidebarItem.canCollapseFromWindowResize = true
         // The content column takes every change in the window's width; the
         // sidebar keeps the width it has, and the inspector its fixed one.
-        // `HelmSplitPage`'s measured priority, for its reason: held at the
-        // default 260, a page's own grow ties (480) won and the sidebar
-        // swung out to its 320pt maximum as pages changed; and held above
-        // 489, the divider can no longer be dragged.
-        sidebarItem.holdingPriority = HelmSplitPage.sidebarHoldingPriority
+        // Held above every page's own ties, so no page can move it
+        // (`sidebarRestingPriority`), and lowered only while a divider is
+        // being placed (`placingDividerDidChange`).
+        sidebarItem.holdingPriority = Self.sidebarRestingPriority
 
         contentItem = NSSplitViewItem(viewController: contentPane)
         contentItem.minimumThickness = Self.contentMinimum(for: currentRoute)
@@ -410,6 +415,38 @@ final class MainSplitShellController: WorkspaceShellController {
             split.topAnchor.constraint(equalTo: root.topAnchor),
             split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
+    }
+
+    /// The sidebar's holding priority while nobody is placing a divider: just
+    /// above `HelmDaylightPriority.contentTie` (499), and still below the
+    /// window's own 500, so it can never hold the window's size (gotcha (13)).
+    ///
+    /// At `HelmSplitPage.sidebarHoldingPriority` (489) a page's ties won, and
+    /// the sidebar's width depended on which page was showing. Measured: Home
+    /// holds its grid's last width as a constant at 499
+    /// (`HomeCanvasController`'s `contentWidthConstraint`), so a Home laid out
+    /// for a wider column - the sidebar collapsed, or the window narrowed
+    /// while another page showed - squeezed the sidebar to its 200pt minimum
+    /// on every visit, and the next page put it back at the captain's width.
+    /// Above 499 a stale page gives way instead, and re-lays out for the
+    /// column it has.
+    static let sidebarRestingPriority = NSLayoutConstraint.Priority(HelmDaylightPriority.contentTie.rawValue + 0.5)
+
+    /// A divider drag, or `setPosition(_:ofDividerAt:)`, is about to place a
+    /// divider, or has finished. Both place it at the split view's drag
+    /// priority (490), which the resting priority would beat, so the sidebar
+    /// holds at `HelmSplitPage.sidebarHoldingPriority` (489) only while one
+    /// is being placed, and then holds wherever it was put.
+    ///
+    /// The placement is laid out before the hold comes back. On macOS 26 the
+    /// divider has moved by the time `setPosition` returns. On CI's macOS 15
+    /// runner a `setPosition` to 224pt left the sidebar at 264 without this
+    /// layout, which reads as the move waiting for the next layout pass, by
+    /// when the resting hold was back.
+    private func placingDividerDidChange(_ placing: Bool) {
+        guard let sidebarItem else { return }
+        if !placing { splitController.splitView.layoutSubtreeIfNeeded() }
+        sidebarItem.holdingPriority = placing ? HelmSplitPage.sidebarHoldingPriority : Self.sidebarRestingPriority
     }
 
     override func viewDidLayout() {
@@ -595,9 +632,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// itself (the column's holding priority is the lower one, so it takes
     /// every point a widening window adds), and on the way in it squeezed the
     /// sidebar to its 200pt minimum - measured, at 1196pt - because a page
-    /// still holds the wider column's widths at `contentTie` (499), above the
-    /// sidebar's 489, until it re-lays out on the next turn. So the width is
-    /// pinned for that one turn, exactly as an expand pins it.
+    /// still held the wider column's widths at `contentTie` (499), above the
+    /// sidebar's old 489, until it re-laid out on the next turn. So the width
+    /// is pinned for that one turn, exactly as an expand pins it.
     private func holdSidebar(at width: CGFloat, evenIfUnchanged: Bool = false) {
         guard didSettleInitialSidebarWidth, !sidebarItem.isCollapsed,
               evenIfUnchanged || abs(sidebar.view.frame.width - width) > 0.5 else { return }
@@ -649,8 +686,8 @@ final class MainSplitShellController: WorkspaceShellController {
             // for the narrower column on that turn (Home's grid,
             // `HomeCanvasController`'s clip-view observer), and until it has,
             // its cards still hold the wider column's widths at `contentTie`
-            // (499) - above the sidebar's own 489. Released at once, the
-            // sidebar came back squeezed to its 200pt minimum (measured on
+            // (499) - which was above the sidebar's old 489. Released at once,
+            // the sidebar came back squeezed to its 200pt minimum (measured on
             // Home after a 1100-to-1512 round trip).
             if collapsed { release() } else { DispatchQueue.main.async(execute: release) }
             return
@@ -676,7 +713,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// Make the pinned width the position the split view holds once the pin
     /// comes off. A pane resized by its min/max pin leaves the split's held
     /// divider position where it was, and the sidebar's holding priority
-    /// (489) beats the column's (250), so releasing the range put the sidebar
+    /// beats the column's (250), so releasing the range put the sidebar
     /// straight back there. Measured on CI's macOS 15 runner: narrowed to
     /// 247pt, then widened to 1512, the sidebar was 264 while pinned and 247
     /// one layout pass after the release, and still 247 a second later, in
@@ -1366,6 +1403,8 @@ final class MainSplitShellController: WorkspaceShellController {
     /// the sidebar beside the showing page's own floor.
     var debugNarrowestWidthKeepingSidebar: CGFloat { columnFloor + sidebarStepsAsideBelow + sidebarChrome }
     var debugDividerThickness: CGFloat { splitController.splitView.dividerThickness }
+    var debugSplitView: WorkspaceShellSplitView? { splitController.splitView as? WorkspaceShellSplitView }
+    var debugSidebarHoldingPriority: NSLayoutConstraint.Priority { sidebarItem.holdingPriority }
     /// The inspector back at its launch state: wanted, not held open.
     func debugResetInspectorPreference() {
         inspectorWanted = true
@@ -1495,5 +1534,34 @@ final class WorkspaceShellRootView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         onWindowChange?(window)
+    }
+}
+
+/// The shell's split view, which says when one of its dividers is being
+/// placed: for the whole of a drag (`mouseDown` tracks it until the mouse
+/// comes up), and for a `setPosition(_:ofDividerAt:)`. The shell holds the
+/// sidebar above every page's ties the rest of the time, which would also
+/// hold it against the drag (`MainSplitShellController.sidebarRestingPriority`).
+final class WorkspaceShellSplitView: NSSplitView {
+    var onPlacingDivider: ((Bool) -> Void)?
+    /// Counted, so a `setPosition` made inside a drag does not end it early.
+    private var placings = 0
+
+    override func mouseDown(with event: NSEvent) {
+        placingDivider { super.mouseDown(with: event) }
+    }
+
+    override func setPosition(_ position: CGFloat, ofDividerAt dividerIndex: Int) {
+        placingDivider { super.setPosition(position, ofDividerAt: dividerIndex) }
+    }
+
+    private func placingDivider(_ body: () -> Void) {
+        placings += 1
+        if placings == 1 { onPlacingDivider?(true) }
+        defer {
+            placings -= 1
+            if placings == 0 { onPlacingDivider?(false) }
+        }
+        body()
     }
 }
