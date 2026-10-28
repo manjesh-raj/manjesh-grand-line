@@ -148,7 +148,32 @@ enum HostStoreSelfTest {
         checkLastConnectedAt(tmp: tmp, oldFormatJSON: oldFormatJSON, &ok)
         checkKeyLastUsedAt(tmp: tmp, &ok)
         checkConnectRecordsUse(&ok)
+        checkBulkAdd(tmp: tmp, &ok)
         return ok
+    }
+
+    // MARK: R4-BUG-05 - an import is one write
+
+    /// `add(contentsOf:)` appends every host in order with one `persist()`,
+    /// which is one atomic write and one round of observers. SSH config
+    /// import goes through it; `ConnectionsCardsSelfTest` asserts that end to
+    /// end through the preview's Import button.
+    private static func checkBulkAdd(tmp: URL, _ ok: inout Bool) {
+        let url = tmp.appendingPathComponent("bulk-add-hosts.json")
+        setenv("FM_HOSTS_FILE", url.path, 1)
+        defer { unsetenv("FM_HOSTS_FILE") }
+        let store = HostStore()
+        var notifications = 0
+        let token = store.observe { notifications += 1 }
+        defer { store.unobserve(token) }
+        let batch = (1...40).map { Host(label: "bulk-\($0)", address: "10.0.1.\($0)") }
+        store.add(contentsOf: batch)
+        check(notifications == 1, "R4-BUG-05: 40 hosts added at once notified \(notifications) time(s), want 1", &ok)
+        check(store.hosts.map(\.label) == batch.map(\.label), "R4-BUG-05: add(contentsOf:) keeps the hosts in order", &ok)
+        let reread = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([Host].self, from: $0) }
+        check(reread?.count == 40, "R4-BUG-05: all 40 reach hosts.json, got \(reread?.count ?? -1)", &ok)
+        store.add(contentsOf: [])
+        check(notifications == 1, "R4-BUG-05: an empty import writes nothing", &ok)
     }
 
     // MARK: X2 and K5 - the two "when" fields (Termius-style plan)

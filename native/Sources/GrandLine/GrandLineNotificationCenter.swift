@@ -256,6 +256,22 @@ final class GrandLineNotificationCenter {
     /// `persistSnoozes()`.
     private var snoozedUntil: [String: Date] = [:]
 
+    /// One timer, armed for the earliest entry in `snoozedUntil`. `entries`
+    /// is derived on read, so an expired snooze is already visible to anyone
+    /// who asks - but the bell and the panel only ask when observers are
+    /// told, and a source whose text has not changed never tells them
+    /// (`set` returns early on an identical entry). Without this, a snooze
+    /// over a notification nobody re-publishes (a finished schedule run, a
+    /// crew reply) stayed hidden past its own deadline (R4-BUG-02). Every
+    /// write to `snoozedUntil` goes through `persistSnoozes()`, which re-arms
+    /// it.
+    private var snoozeExpiryTimer: Timer?
+    /// The deadline the timer is armed for, on `clock`'s timeline.
+    private var snoozeExpiryDeadline: Date?
+    /// A snooze is a "back at 6:00 PM" promise to the minute, not to the
+    /// millisecond, so the system may coalesce the wake-up.
+    static let snoozeExpiryTolerance: TimeInterval = 5
+
     /// How long a read mark for an id that never comes back is kept. A
     /// source that mints a fresh id per event (a crew reply, a schedule run)
     /// would otherwise grow the stored map for ever, because nothing calls
@@ -322,12 +338,47 @@ final class GrandLineNotificationCenter {
         // something from memory.
         if snoozedUntil.count != storedSnoozes.count { AppSettings.shared.notificationSnoozedUntil = snoozedUntil }
         if readDetail.count != storedReads.count { AppSettings.shared.notificationReadDetail = readDetail }
+        armSnoozeExpiry()
     }
 
     private func persistSnoozes() {
         let now = clock()
         snoozedUntil = snoozedUntil.filter { $0.value > now }
         AppSettings.shared.notificationSnoozedUntil = snoozedUntil
+        armSnoozeExpiry()
+    }
+
+    /// Points the one expiry timer at the earliest snooze, or stops it when
+    /// nothing is snoozed. Cheap when the deadline has not moved, so `set`
+    /// can call it on every publish.
+    private func armSnoozeExpiry() {
+        let deadline = snoozedUntil.values.min()
+        guard deadline != snoozeExpiryDeadline || (deadline != nil && snoozeExpiryTimer == nil) else { return }
+        snoozeExpiryTimer?.invalidate()
+        snoozeExpiryTimer = nil
+        snoozeExpiryDeadline = deadline
+        guard let deadline else { return }
+        // `clock` may be a suite's fixed instant, so the timer is armed for
+        // the remaining interval rather than for the deadline itself.
+        let fireAt = Date().addingTimeInterval(max(0, deadline.timeIntervalSince(clock())))
+        let timer = Timer(fire: fireAt, interval: 0, repeats: false) { [weak self] _ in
+            self?.snoozeExpiryFired()
+        }
+        timer.tolerance = Self.snoozeExpiryTolerance
+        RunLoop.main.add(timer, forMode: .common)
+        snoozeExpiryTimer = timer
+    }
+
+    /// Drops every snooze that has run out and tells the observers, so the
+    /// bell and the Snoozed list repaint with no source involved. A fire that
+    /// lands before the deadline (the clock moved back, or the machine slept
+    /// across a clock change) only re-arms.
+    private func snoozeExpiryFired() {
+        snoozeExpiryTimer = nil
+        snoozeExpiryDeadline = nil
+        let before = snoozedUntil.count
+        persistSnoozes()
+        if snoozedUntil.count != before { notifyObservers() }
     }
 
     private func persistRead() {
@@ -388,6 +439,7 @@ final class GrandLineNotificationCenter {
             return
         }
         dismissedDetail.removeValue(forKey: id)
+        armSnoozeExpiry()
         if let idx = stored.firstIndex(where: { $0.id == id }) {
             guard stored[idx] != notification else { return }
             stored[idx] = notification
@@ -626,10 +678,13 @@ final class GrandLineNotificationCenter {
         observers.forEach { $0.fn() }
     }
 
-    /// Test-only reset - not used by production code. Lets
-    /// `GrandLineNotificationCenterSelfTest` start from a clean slate
-    /// without disturbing the app-lifetime singleton's observers.
-    func resetForTesting() {
+    #if FM_SELFTESTS
+    /// Lets a suite start from a clean slate without disturbing the
+    /// app-lifetime singleton's observers. It wipes persisted state, so it is
+    /// a debug hook (GL-27) and named like one: it was `resetForTesting()`,
+    /// outside the guard, in the release binary, and `check-release-symbols.sh`
+    /// looked only for `debug*` and `*ForTests` (R4-BUG-04).
+    func debugReset() {
         stored.removeAll()
         dismissedDetail.removeAll()
         readDetail.removeAll()
@@ -642,9 +697,18 @@ final class GrandLineNotificationCenter {
         quietWhileFocusing = true
         AppSettings.shared.notificationQuietWhileFocusing = true
         clock = { Date() }
+        armSnoozeExpiry()
     }
 
-    #if FM_SELFTESTS
+    /// The deadline the snooze-expiry timer is armed for, or nil when none is.
+    var debugSnoozeExpiryDeadline: Date? { snoozeExpiryTimer == nil ? nil : snoozeExpiryDeadline }
+    var debugSnoozeExpiryTolerance: TimeInterval? { snoozeExpiryTimer?.tolerance }
+
+    /// Fires the real timer, the way the run loop does at its deadline.
+    func debugFireSnoozeExpiryTimer() {
+        snoozeExpiryTimer?.fire()
+    }
+
     /// Re-reads what a relaunch would read, so a suite can prove a mute
     /// survives one without starting a second process.
     func debugReloadPersistedMutes() {

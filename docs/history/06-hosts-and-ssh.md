@@ -112,3 +112,13 @@ The captain's report: with three hosts in two groups, each group got its own hea
 - **Verified** by `ConnectionsCardsSelfTest` and `ConnectionsLogicSelfTest`, each new case confirmed to fail with its change reverted.
   Tour-lab renders cover three hosts, twelve hosts and the demo groups, in Dusk and Daylight, at 1512 and 1100, with the inspector open and closed, and at the Larger text scale.
   The tour lab gained `demo hosts three`, `demo hosts many` and `grouped on|off` for them.
+
+## SSH config import is one write (R4-BUG-05)
+
+Full review #4 noted that Import from SSH Config called `HostStore.add(_:)` once per host.
+A 40-host `~/.ssh/config` was 40 atomic writes of `hosts.json` and 40 observer fan-outs, each re-rendering the card grid.
+`HostStore.add(contentsOf:)` appends them in order with one `persist()`, and the import uses it.
+
+`HostStoreSelfTest.checkBulkAdd` adds 40 hosts and counts one notification and 40 hosts in the file.
+`ConnectionsCardsSelfTest` counts the store's notifications around the preview's real Import button.
+Confirmed to fail with the import back on one `add` per host (two writes for two hosts).

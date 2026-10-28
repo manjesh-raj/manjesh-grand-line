@@ -1432,3 +1432,28 @@ It also drags Fleet a column narrower beside the sidebar.
 Restoring the per-card widening failed both suites by name (the captain's 1512 case among them), and removing the drag's starting row failed the drag check with Morning briefing back at 12 columns.
 Verified visually with tour-lab renders of the captain's arrangement before and after, at 1512, 1280 and 1100.
 Not addressed: at 1280 with the sidebar open, Fleet's 7-column card truncates "Done today" in its stat strip, which is the card's own content at that width.
+
+### Home stays in sight at the top of the sidebar (R4-BUG-03)
+
+Full review #4 found Home half hidden under the sidebar's header in several renders at 1512×950, always on pages whose module sits low in the list.
+With Console holding one session the default list is 24 rows.
+Measured in the off-screen shell, that is 836pt against an 823pt clip view.
+Selecting a bottom row ran `scrollRowToVisible`, which lifted the whole column by the 13pt overflow, and nothing scrolled it back on the next page.
+A rebuild (a session arriving or leaving) also ran `scrollRowToVisible` on the lit row, which threw away any scroll the captain had made.
+
+Three changes:
+
+- `WorkspaceSidebarMetrics.sectionRowHeight` is 30 rather than 34.
+  The heading's label is pinned to the row's bottom, so only the gap above each group heading gives, and the list is 820pt.
+  The default set now fits the 950pt window with nothing to scroll.
+- A selection whose row is below the fold, in a list that overflows by less than one row, scrolls the list to the top rather than to the row.
+  The lit row is then at most that overflow short of fully visible.
+- A rebuild that does not change what is lit restores the previous scroll origin, clamped to the new list.
+
+Not done: the review also asked for the default set to fit at the window's minimum height.
+That is 620pt, which leaves about 490pt of clip view for 24 rows at the Large source-list size (32pt).
+No group spacing reaches that, so below about 950pt the list still scrolls, and the two scroll rules above are what keep Home in sight there.
+
+`SidebarRedesignsSelfTest.checkHomeStaysInSight` visits every module at 950pt with one session and asserts row 0 stays inside the clip view and the list does not overflow.
+It also shortens the window so the list overflows by 10pt and visits the last module, and scrolls a 700pt sidebar to 40pt and adds a session.
+Confirmed to fail with the 34pt heading (13pt overflow, Home clipped on Settings), with a plain `scrollRowToVisible` (Home scrolled 20pt under the header), and with the rebuild revealing the lit row again (the scroll moved from 40 to 0).

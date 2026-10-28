@@ -40,9 +40,15 @@ final class ShiftCalendarWebView: WKWebView {
     var onReady: (() -> Void)?
     /// A page-level script error. Never fatal; reported and logged.
     var onPageError: ((String) -> Void)?
-    /// The visible period changed: Schedule-X's view name and the first and
-    /// last day it covers, as `YYYY-MM-DD`.
-    var onRangeChanged: ((_ view: String, _ start: String, _ end: String) -> Void)?
+    /// The visible period changed: the first and last day it covers, as
+    /// `YYYY-MM-DD`. Deliberately not the view: Schedule-X reports a range
+    /// for things the captain did not do (it used to switch itself to Day
+    /// when a hidden page collapsed, R4-BUG-01), so a range report never
+    /// changes the scale. `onViewSelected` does.
+    var onRangeChanged: ((_ start: String, _ end: String) -> Void)?
+    /// The page's own view handler ran - a pill in the card, or "+N more" on
+    /// a crowded day - with Schedule-X's view name.
+    var onViewSelected: ((String) -> Void)?
     /// An event was clicked. The id is the task's, also for a projection.
     var onOpenTask: ((String) -> Void)?
     /// A follow-up's event was clicked.
@@ -191,10 +197,12 @@ final class ShiftCalendarWebView: WKWebView {
         case "error":
             onPageError?((body["message"] as? String) ?? "the calendar reported an error")
         case "range":
-            guard let view = body["view"] as? String, let start = body["start"] as? String,
-                  let end = body["end"] as? String else { return }
+            guard let start = body["start"] as? String, let end = body["end"] as? String else { return }
             if let date = body["date"] as? String { focusedDay = date }
-            onRangeChanged?(view, start, end)
+            onRangeChanged?(start, end)
+        case "view":
+            guard let view = body["view"] as? String else { return }
+            onViewSelected?(view)
         case "open":
             guard let id = body["taskID"] as? String else { return }
             if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {

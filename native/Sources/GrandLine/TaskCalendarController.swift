@@ -36,8 +36,8 @@ final class TaskCalendarController: NSViewController {
 
     /// The shell's header line follows the visible period's count.
     var onDrillSubtitleChanged: (() -> Void)?
-    /// The toolbar follows a view the page switched by itself (a pill, a
-    /// click on a day's number).
+    /// The toolbar follows a view the captain switched in the page (a pill,
+    /// "+N more" on a crowded day).
     var onModuleTabChanged: (() -> Void)?
 
     init(store: ShiftStore) {

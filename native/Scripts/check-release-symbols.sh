@@ -14,7 +14,9 @@
 #
 # So this reads the symbol table rather than trusting the compiler to drop
 # anything. It fails on any symbol in the `GrandLine` module whose name has a
-# `debug<Upper>` member or ends in `ForTests`, and prints each one. Two
+# `debug<Upper>` member or ends in `ForTests` or `ForTesting`, and prints each
+# one. (`ForTesting` joined after review #4 found `resetForTesting()`, which
+# wiped persisted notification state, outside the guard - R4-BUG-04.) Two
 # families are deliberately allowed, because neither is test code:
 #
 #   - `debugDescription`, which is `CustomDebugStringConvertible` - every
@@ -40,11 +42,11 @@ fi
 # `nm` lists every symbol, `swift-demangle` turns the mangled Swift names into
 # `GrandLine.Type.member` form, and the module prefix keeps vendored code out.
 # The member pattern needs a `.` before `debug` so `isDebugBuild`-style names
-# in the middle of an identifier are not caught, and the `ForTests` pattern is
-# anchored to the end of an identifier.
+# in the middle of an identifier are not caught, and the `ForTests` /
+# `ForTesting` pattern is anchored to the end of an identifier.
 found=$(nm "$BIN" | xcrun swift-demangle \
   | grep -E 'GrandLine\.' \
-  | grep -oE '[A-Za-z_][A-Za-z0-9_.]*\.(debug[A-Z][A-Za-z0-9_]*|[A-Za-z0-9_]*ForTests)\b' \
+  | grep -oE '[A-Za-z_][A-Za-z0-9_.]*\.(debug[A-Z][A-Za-z0-9_]*|[A-Za-z0-9_]*ForTest(s|ing))\b' \
   | grep -vE '\.debugDescription$' \
   | sort -u || true)
 
@@ -55,4 +57,4 @@ if [ -n "$found" ]; then
   exit 1
 fi
 
-echo "release binary: no debug* or *ForTests symbols of this app's own ($BIN)"
+echo "release binary: no debug*, *ForTests or *ForTesting symbols of this app's own ($BIN)"

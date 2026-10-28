@@ -41,7 +41,7 @@ enum NotificationBridgePanelSelfTest {
         defer {
             ThemeManager.shared.setTheme(captainTheme)
             ChromeTextScale.shared.setScale(captainScale)
-            GrandLineNotificationCenter.shared.resetForTesting()
+            GrandLineNotificationCenter.shared.debugReset()
         }
         for check in [checkCardsFollowTheStoreKinds,
                       checkActionsAreVisibleAtRest,
@@ -70,7 +70,7 @@ enum NotificationBridgePanelSelfTest {
 
     private static func seed() {
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         center.clock = { now }
         performed = []
         presentedMenus = []
@@ -136,7 +136,7 @@ enum NotificationBridgePanelSelfTest {
     /// them (the Dotfiles detail through the real `shortDetail`).
     private static func seedScreenshot() {
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         center.clock = { now }
         performed = []
         presentedMenus = []
@@ -546,7 +546,7 @@ enum NotificationBridgePanelSelfTest {
 
     private static func checkEmptyStates(_ ok: inout Bool) {
         print("\n-- the empty states --")
-        GrandLineNotificationCenter.shared.resetForTesting()
+        GrandLineNotificationCenter.shared.debugReset()
         let (content, _) = mount()
         check(content.debugCards.isEmpty && content.debugEmptyState?.debugTitle == "You\u{2019}re all caught up",
               "an empty inbox shows \(content.debugEmptyState?.debugTitle ?? "no empty state")", &ok)

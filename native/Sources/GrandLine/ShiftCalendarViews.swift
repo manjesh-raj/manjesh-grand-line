@@ -775,12 +775,19 @@ final class ShiftCalendarView: NSView {
         webView.onPageError = { message in
             AppLog.lifecycle.error("task calendar page error: \(message, privacy: .public)")
         }
-        webView.onRangeChanged = { [weak self] view, start, end in
+        // The page reports, the native side decides: a range report moves
+        // the period and nothing else, and only the page's own view handler
+        // (a pill, "+N more") or `show(scale:)` changes `scale` (R4-BUG-01).
+        webView.onRangeChanged = { [weak self] start, end in
             guard let self else { return }
-            self.scale = ShiftCalendarScale(rawValue: view) ?? self.scale
             self.visibleRange = (start, end)
             self.focusedDay = self.webView.focusedDay
             self.pushEvents()
+            self.onPeriodChanged?()
+        }
+        webView.onViewSelected = { [weak self] view in
+            guard let self, let scale = ShiftCalendarScale(rawValue: view), scale != self.scale else { return }
+            self.scale = scale
             self.onPeriodChanged?()
         }
         webView.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }

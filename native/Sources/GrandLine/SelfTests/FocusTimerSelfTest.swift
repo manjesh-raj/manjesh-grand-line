@@ -283,8 +283,8 @@ enum FocusTimerSelfTest {
     private static func checkASessionQuietsTheBell(_ ok: inout Bool) {
         withScratchStore { store in
             let center = GrandLineNotificationCenter.shared
-            center.resetForTesting()
-            defer { center.resetForTesting() }
+            center.debugReset()
+            defer { center.debugReset() }
             var task = ShiftTask.fresh()
             task.title = "Rotate the staging certificate"
             store.addTask(task)

@@ -1635,3 +1635,25 @@ The old `1`-`4` preset keys went with the inline preset row, because the menu ta
   It stays because it makes that outcome a stated priority rather than a solver tie-break.
 - An off-screen render of the panel (the captain's four items, expanded, Snoozed and many items, in Graphite, Graphite Dark, Daylight and Dusk) was compared against the board's option D mock.
   It was a scratch hook that was removed before commit.
+
+## An expired snooze comes back on its own, and the reset hook is debug-only (R4-BUG-02, R4-BUG-04)
+
+Full review #4 found two things in `GrandLineNotificationCenter`.
+
+**R4-BUG-02.** `entries` is derived on read, so a snooze that has run out is already visible to anyone who asks.
+Nothing asked.
+The bell and the panel repaint when observers are told, and a source whose text has not changed never tells them, because `set` returns early on an identical entry.
+So a snoozed notification nobody re-publishes (a finished schedule run, a crew reply) stayed hidden, with the badge wrong, until some other source changed something.
+The store now keeps one `Timer`, with a 5s tolerance, armed for the earliest `snoozedUntil`.
+It is re-armed from `persistSnoozes()`, which every snooze write goes through, from `loadPersistedState()` and from `set`.
+On fire it drops the expired entries, persists, and notifies observers.
+The timer is armed for the remaining interval on `clock`'s timeline, so a suite's fixed clock still works.
+
+**R4-BUG-04.** `resetForTesting()` wiped every persisted snooze, read mark and mute, and it sat outside `#if FM_SELFTESTS`.
+`check-release-symbols.sh` looked only for `debug*` and `*ForTests`, so it shipped in the release binary.
+It is now `debugReset()` inside the guard, and the script's pattern also catches `*ForTesting`.
+
+`GrandLineNotificationCenterSelfTest` snoozes two entries on an injected clock, registers an observer, and fires the real timer through `debugFireSnoozeExpiryTimer()`.
+A fire before the deadline brings nothing back.
+After the deadline the observer sees the badge and the Snoozed list change with no `set` call, the expired entry leaves `AppDefaults.store`, and the timer re-arms for the second snooze.
+Confirmed to fail with the arming removed from `persistSnoozes()` (six checks, the badge stuck at 0).

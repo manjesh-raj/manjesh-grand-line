@@ -82,6 +82,16 @@ final class HostStore {
         persist()
     }
 
+    /// Several hosts at once, in order: one write of `hosts.json` and one
+    /// round of observers. SSH config import used to call `add(_:)` per host,
+    /// so a 40-host `~/.ssh/config` was 40 atomic writes and 40 re-renders of
+    /// the card grid (R4-BUG-05, GL-35's shape).
+    func add(contentsOf newHosts: [Host]) {
+        guard !newHosts.isEmpty else { return }
+        hosts.append(contentsOf: newHosts)
+        persist()
+    }
+
     /// Replace the host with the same id in place (keeps ordering).
     func update(_ host: Host) {
         guard let idx = hosts.firstIndex(where: { $0.id == host.id }) else {

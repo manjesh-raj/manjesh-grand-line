@@ -32,7 +32,7 @@ enum GrandLineNotificationCenterSelfTest {
         }
 
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
 
         func note(_ id: String, title: String = "Title", subtext: String,
                   kind: AppNotificationKind, source: String = "") -> AppNotification {
@@ -317,7 +317,7 @@ enum GrandLineNotificationCenterSelfTest {
         check("unobserved token no longer receives updates", fireCount == 3)
         center.set(nil, id: "h")
 
-        center.resetForTesting()
+        center.debugReset()
 
         // MARK: PF3 - the store is capped, and sheds informational rows first
 
@@ -352,7 +352,7 @@ enum GrandLineNotificationCenterSelfTest {
 
         // MARK: snooze and read state survive a relaunch (F2)
 
-        center.resetForTesting()
+        center.debugReset()
         var persistNow = Date(timeIntervalSince1970: 1_750_000_000)
         center.clock = { persistNow }
         center.set(note("ps1", subtext: "one", kind: .informational, source: "Updates"), id: "ps1")
@@ -400,6 +400,48 @@ enum GrandLineNotificationCenterSelfTest {
         for id in ["ps1", "ps2", "ps3", "ps4"] { center.set(nil, id: id) }
         check("a resolved condition takes its persisted state with it",
               AppSettings.shared.notificationSnoozedUntil.isEmpty && AppSettings.shared.notificationReadDetail.isEmpty)
+
+        // MARK: an expired snooze comes back on its own timer (R4-BUG-02)
+
+        // `entries` is derived on read, so the badge's number is right the
+        // moment the clock passes the deadline - but nobody re-reads it.
+        // The bell and the Snoozed list repaint only when observers are told,
+        // and a source whose text does not change never tells them (`set`
+        // returns early on an identical entry). So the assertions read what
+        // an observer was last handed, and nothing calls `set` in between.
+        var expiryNow = Date(timeIntervalSince1970: 1_760_000_000)
+        center.clock = { expiryNow }
+        center.set(note("ex1", subtext: "one", kind: .informational), id: "ex1")
+        center.set(note("ex2", subtext: "two", kind: .actionNeeded), id: "ex2")
+        center.snooze(id: "ex2", until: expiryNow.addingTimeInterval(1800))
+        center.snooze(id: "ex1", until: expiryNow.addingTimeInterval(600))
+        check("the expiry timer is armed for the earliest snooze",
+              center.debugSnoozeExpiryDeadline == expiryNow.addingTimeInterval(600))
+        check("the expiry timer carries a tolerance", (center.debugSnoozeExpiryTolerance ?? 0) > 0)
+        var heardBadge = -1
+        var heardSnoozed: [String] = []
+        let expiryToken = center.observe {
+            heardBadge = center.badgeCount
+            heardSnoozed = center.snoozedEntries.map(\.entry.id)
+        }
+        check("the fixture starts with both entries snoozed (\(heardBadge), \(heardSnoozed))",
+              heardBadge == 0 && heardSnoozed == ["ex1", "ex2"])
+        center.debugFireSnoozeExpiryTimer()
+        check("a timer that fires before the deadline brings nothing back", heardBadge == 0 && heardSnoozed == ["ex1", "ex2"])
+        expiryNow = expiryNow.addingTimeInterval(601)
+        center.debugFireSnoozeExpiryTimer()
+        check("the expired snooze reaches the bell with no source re-publishing (badge \(heardBadge))", heardBadge == 1)
+        check("the Snoozed list loses the expired entry (\(heardSnoozed))", heardSnoozed == ["ex2"])
+        check("the expired snooze is dropped from AppDefaults.store",
+              AppSettings.shared.notificationSnoozedUntil["ex1"] == nil
+                  && AppSettings.shared.notificationSnoozedUntil["ex2"] != nil)
+        check("the timer re-arms for the next snooze",
+              center.debugSnoozeExpiryDeadline == expiryNow.addingTimeInterval(1800 - 601))
+        center.unsnooze(id: "ex2")
+        check("with nothing snoozed no timer is armed", center.debugSnoozeExpiryDeadline == nil)
+        center.unobserve(expiryToken)
+        for id in ["ex1", "ex2"] { center.set(nil, id: id) }
+        center.clock = { Date() }
 
         // MARK: a detail is shortened by path and word, not mid-word (F4)
 
@@ -449,7 +491,7 @@ enum GrandLineNotificationCenterSelfTest {
         NotificationSources.setGitHubSync(count: 0, navigate: {})
         PlaceName.layout = savedLayout
 
-        center.resetForTesting()
+        center.debugReset()
 
         if failures.isEmpty {
             print("GrandLineNotificationCenterSelfTest: all checks passed")

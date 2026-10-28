@@ -905,10 +905,16 @@ enum ConnectionsCardsSelfTest {
         // Untick one, and Import saves exactly the ticked two.
         preview.debugSetTicked("web-02", false)
         check(preview.debugImportButton.title == "Import 2 Hosts", "X1: unticking did not update the count", &ok)
+        // R4-BUG-05: the import is one write of hosts.json, so the store's
+        // observers (the card grid among them) hear about it once.
+        var storeNotifications = 0
+        let storeToken = store.observe { storeNotifications += 1 }
         preview.debugImportButton.performClick(nil)
+        store.unobserve(storeToken)
         settle(shell)
         let added = store.hosts.dropFirst(before).map(\.label)
         check(added == ["web-01", "db-replica"], "X1: Import saved \(added)", &ok)
+        check(storeNotifications == 1, "R4-BUG-05: importing two hosts wrote the store \(storeNotifications) times, want 1", &ok)
         check(store.hosts.first { $0.label == "db-replica" }?.portForwards.count == 2, "X1: db-replica's forwards were not saved", &ok)
         check(hosts.importPanel == nil && shell.inspector.debugTitle == "web-01",
               "X1: after Import the panel shows \(shell.inspector.debugTitle)", &ok)
