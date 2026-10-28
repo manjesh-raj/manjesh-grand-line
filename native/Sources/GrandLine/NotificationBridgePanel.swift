@@ -1,36 +1,45 @@
 // Grand Line - native macOS app.
 //
-// The Bridge notification panel (`fm/grandline-notification-bridge`), the
-// captain-approved style A from the notification-styles board. It is what the
-// sidebar layout's bell opens. The floating bar is frozen (R2-ARCH-01), so it
-// keeps `NotificationPanelViewController` exactly as it was, and the two
-// panels read the one store.
+// The sidebar layout's notification panel - what its bell opens. The floating
+// bar is frozen (R2-ARCH-01), so it keeps `NotificationPanelViewController`
+// exactly as it was, and the two panels read the one store.
 //
-// **The shape.** One hero "Now" card for the single most urgent item that
-// needs the captain, with its buttons visible at rest. Then "Up next" for the
-// other action-needed items, and "When you have a minute" for the
-// informational ones. The store's own `AppNotificationKind` split is the whole
-// classification, so there is no new data and no second rule that could drift
-// from the first (`NotificationBridgeSections`).
+// **The shape: triage cards** (`fm/grandline-notification-ui-designs-scout-
+// 1793150000`, option D on the captain's redesign board). It replaced the
+// Bridge layout (a hero "Now" card and flat rows), whose buttons crowded one
+// line under each row: the snooze was a bare moon glyph after the pill and
+// the "Show N" link, and a long primary label pushed it out of the row
+// altogether. Now every item is its own small card on a tinted ground:
 //
-// **What it fixes, from the before renders.** Titles truncated at about four
-// words because the classic row's trailing column reserved room for a
-// hover-only button. Here titles and details wrap, and every row carries its
-// action at rest, under the text, where it never competes with the title for
-// width. One item gets visual priority instead of every row weighing the same.
+// - a top line with the source's tile, the source as a kicker, the unread
+//   dot, the age, and - for an informational item - a Hide control;
+// - the title, which wraps, and the detail, clamped to two lines with the
+//   whole text in the tooltip and the VoiceOver label;
+// - a footer bar: the item's own action first, "Show N" beside it, and a
+//   labelled Snooze at the right that opens a native menu of the presets
+//   with the time each one resolves to.
 //
-// **Keyboard.** The list's document view is the first responder, the same as
-// the classic panel: ↑ ↓ select (the Now card counts as the first item), → ←
-// expand and collapse, Return runs the selected item's primary action, and
-// Escape is `HelmBarPanel`'s. Every button is also a real key view, so Tab
-// reaches the Now card's buttons, each row's buttons, then the footer.
+// The card boundary is what tells the captain which item a button belongs
+// to, which the flat list never quite did. Action-needed items come first
+// with an accent edge (`NotificationBridgeSections` is still the whole
+// ordering rule); a segment at the top switches between the inbox and a
+// Snoozed list, which is the first place a snooze can be seen or undone one
+// item at a time.
 //
-// **VoiceOver.** The Now card and each row are groups whose label reads the
-// whole item ("Now: Tasks, 2 tasks due or overdue, 1 is overdue, overdue"),
-// and whose children stay reachable - unlike an activatable
-// `HoverHighlightView`, which hides its children because it *is* the button.
-// Every button names its subject ("Answer 1 task needs your decision"), since
-// a list of five "Open" buttons is no list at all.
+// **Nothing can be pushed off a card's footer bar** (F6). The bar is pinned to
+// the card's width, the snooze collapses to its glyph when its label would
+// not fit, and the primary is the one control allowed to give up width.
+//
+// **Keyboard.** The list's document view is the first responder: ↑ ↓ select a
+// card, → ← expand and collapse, Return runs the selected card's action, S
+// opens its snooze menu, Delete hides an informational card, and ⌘[ ⌘]
+// switch the segment. Escape is `HelmBarPanel`'s. Every button is a real key
+// view, so Tab reaches each card's buttons and then the footer.
+//
+// **VoiceOver.** A card is a group whose label reads the whole item and whose
+// buttons stay reachable inside it, and it carries custom actions (the
+// primary, Snooze, Mark as read, Hide, Mute) so the rotor reaches every action
+// without tabbing through the card (F8). Every button names its subject.
 
 import AppKit
 
@@ -38,7 +47,8 @@ import AppKit
 enum NotificationPanelStyle {
     /// The floating bar's panel, frozen with the floating bar (R2-ARCH-01).
     case classic
-    /// The sidebar layout's Bridge panel.
+    /// The sidebar layout's triage-card panel. The case keeps the name the
+    /// shell and the suites already use for it.
     case bridge
 }
 
@@ -55,7 +65,7 @@ struct NotificationBridgeSections {
     init(_ entries: [AppNotification]) {
         // Overdue (a warning) first, then the oldest: what has waited longest
         // is what the captain most needs to see, and a fresh arrival does not
-        // push an overdue task out of the hero slot.
+        // push an overdue task off the top.
         let action = entries.filter { $0.kind == .actionNeeded }.sorted { a, b in
             if a.isWarning != b.isWarning { return a.isWarning }
             return a.date < b.date
@@ -81,26 +91,55 @@ enum NotificationBridgeTimeText {
         return formatter.string(from: date)
     }
 
-    /// An Up next row's leading time: what the source states ("overdue"),
-    /// else the time of day it arrived, in the locale's own clock.
-    static func leading(for entry: AppNotification, locale: Locale = .current) -> String {
-        if let stated = entry.timeText { return stated }
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.setLocalizedDateFormatFromTemplate("jmm")
-        return formatter.string(from: entry.date)
+    /// A card's age: what the source states ("overdue"), else how long ago
+    /// it arrived.
+    static func age(for entry: AppNotification, now: Date) -> String {
+        entry.timeText ?? NotificationTimeText.relative(entry.date, now: now)
     }
 
-    /// The Now card's pill: the source's own time if it states one, else how
-    /// long ago it arrived.
-    static func nowPill(for entry: AppNotification, now: Date) -> String {
-        entry.timeText ?? NotificationTimeText.relative(entry.date, now: now)
+    /// When a snooze ends, as short as it can be said: the time alone for
+    /// today ("6:00 PM"), the weekday within a week ("Thu 9:00 AM"), and the
+    /// date beyond that ("Mon 2 Nov, 9:00 AM"), in the locale's own clock.
+    static func snoozeTime(_ date: Date, now: Date, calendar: Calendar = .current,
+                           locale: Locale = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        switch days {
+        case ...0: formatter.setLocalizedDateFormatFromTemplate("jmm")
+        case 1...6: formatter.setLocalizedDateFormatFromTemplate("EEEjmm")
+        default: formatter.setLocalizedDateFormatFromTemplate("EEEdMMMjmm")
+        }
+        return formatter.string(from: date)
+    }
+
+    /// A Snoozed row's line: "Back at 6:00 PM", "Back tomorrow, 9:00 AM",
+    /// "Back Mon 2 Nov, 9:00 AM".
+    static func returns(_ date: Date, now: Date, calendar: Calendar = .current,
+                        locale: Locale = .current) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        let time = snoozeTime(date, now: now, calendar: calendar, locale: locale)
+        switch days {
+        case ...0: return "Back at \(time)"
+        case 1:
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.setLocalizedDateFormatFromTemplate("jmm")
+            return "Back tomorrow, \(formatter.string(from: date))"
+        default: return "Back \(time)"
+        }
     }
 }
 
-/// The inline snooze presets (a Bridge extra): each item's snooze opens these
-/// under its buttons rather than snoozing for a fixed hour. Pure, so the dates
-/// are asserted against a fixed instant rather than the wall clock.
+/// The snooze presets. Every card's Snooze opens these as a menu, each with
+/// the time it resolves to. Pure, so the dates are asserted against a fixed
+/// instant rather than the wall clock.
 enum NotificationSnoozePreset: CaseIterable {
     case oneHour
     case tonight
@@ -116,8 +155,8 @@ enum NotificationSnoozePreset: CaseIterable {
         }
     }
 
-    /// What the footer says afterwards, and the tail of the button's
-    /// VoiceOver label.
+    /// What the footer says afterwards, and the tail of the menu item's
+    /// plain title (which is what VoiceOver reads).
     var phrase: String {
         switch self {
         case .oneHour: return "for 1 hour"
@@ -156,19 +195,31 @@ enum NotificationSnoozePreset: CaseIterable {
     }
 }
 
+/// The panel's two lists.
+enum NotificationBridgeSegment: String {
+    case inbox
+    case snoozed
+}
+
 /// The geometry, named once because the wrapping labels' widths are computed
 /// from it rather than read back from their own frames (gotcha (22)).
 enum NotificationBridgeMetrics {
     static let sideInset: CGFloat = 16
-    static let gutter: CGFloat = 10
-    static let tileSide: CGFloat = 28
+    /// Between the panel's edge and a card.
+    static let listInset: CGFloat = 10
+    static let cardSpacing: CGFloat = 8
+    static let cardPadding: CGFloat = 12
+    /// `HelmMetrics.dTileLarge` - one step tighter than a page card, because
+    /// these sit inside a 16pt-radius panel.
+    static let cardRadius: CGFloat = HelmMetrics.dTileLarge
+    static let tileSide: CGFloat = 22
     static let dotSide: CGFloat = 7
-    static let nowCardMargin: CGFloat = 12
-    static let nowCardPadding: CGFloat = 14
-    static let nowCardRadius: CGFloat = 14
-    /// The Up next time column's floor, scaled. It grows to fit a longer
-    /// locale clock ("11:21 AM") rather than truncating it.
-    static var timeColumn: CGFloat { HelmType.scaled(52) }
+    /// The accent edge on an action-needed card.
+    static let edgeWidth: CGFloat = 3
+    /// Past this many inbox cards, informational cards drop their detail line
+    /// so the list stays scannable rather than becoming a column of cards
+    /// three to a screen.
+    static let compactThreshold = 6
 }
 
 // MARK: - The panel
@@ -177,40 +228,52 @@ final class NotificationBridgePanelViewController: NSViewController {
     private var theme = ThemeManager.shared.theme
 
     static let width: CGFloat = 384
-    /// The footer at rest. Shorter than the classic panel's "Updated just
-    /// now", which truncated beside the two buttons at the Larger text size.
-    static let restingFooter = "Up to date"
-    /// The list scrolls past this. Scaled, because at the Larger text size the
-    /// same five items are 30% taller and a fixed cap would scroll sooner for
-    /// exactly the captain who asked for bigger text.
-    static var maxListHeight: CGFloat { HelmType.scaled(520) }
+    /// The list scrolls past this. Sized so the four cards of an ordinary day
+    /// fit without scrolling - the captain's own screenshot measured 584pt as
+    /// cards - and scaled, because at the Larger text size the same cards are
+    /// 30% taller and a fixed cap would scroll sooner for exactly the captain
+    /// who asked for bigger text.
+    static var maxListHeight: CGFloat { HelmType.scaled(600) }
+    /// What the list leaves of the screen's visible height: the bar above the
+    /// panel, the panel's own header and footer, and a margin. A panel taller
+    /// than the room below its bell would flip above it (`HelmBarPanel`), so
+    /// the cap gives way to the screen rather than the other way round.
+    static let screenReserve: CGFloat = 260
+
+    /// `maxListHeight`, or less on a screen too short for it.
+    private var listHeightLimit: CGFloat {
+        guard let screen = view.window?.screen ?? NSScreen.main else { return Self.maxListHeight }
+        return max(HelmType.scaled(240), min(Self.maxListHeight, screen.visibleFrame.height - Self.screenReserve))
+    }
 
     private let titleLabel = NSTextField(labelWithString: "Waiting for you")
     private let dateLabel = NSTextField(labelWithString: "")
-    private let needYouPill = HelmStatusPill(style: .pill)
-    private let laterLabel = NSTextField(labelWithString: "")
+    /// Holds the segment, which is rebuilt when a count changes - the
+    /// component's titles are fixed at construction.
+    private let segmentHost = NSView()
+    private var segmentTabs: HelmSegmentedTabs?
+    private var segmentTitles: [String] = []
     private let headerSeparator = NSView()
 
     private let scroll = NSScrollView()
     private let listStack = NSStackView()
     private let listDocument = NotificationListDocumentView()
     private var listHeight: NSLayoutConstraint?
-
-    private let emptyState = NotificationBridgeEmptyView()
+    private var emptyState: NotificationBridgeEmptyView?
 
     private let footerSeparator = NSView()
     /// Wraps to a second line rather than truncating: at the Larger text size
     /// a toast plus Undo, Mark all read and Open Home do not fit on one.
-    private let footerLabel = NSTextField(wrappingLabelWithString: NotificationBridgePanelViewController.restingFooter)
+    private let footerLabel = NSTextField(wrappingLabelWithString: "")
     private let undoButton = HelmButton(title: "Undo", variant: .quiet, size: .small)
-    private let restoreButton = HelmButton(title: "", variant: .quiet, size: .small)
-    private let markAllReadButton = HelmButton(title: "Mark all read", variant: .quiet, size: .small)
-    private let openHomeButton = HelmButton(title: "Open Home", variant: .primary, size: .small)
+    private let markAllReadButton = HelmButton(title: "Mark all read", variant: .quiet, size: .small,
+                                               symbol: "checkmark.circle")
+    private let openHomeButton = HelmButton(title: "Open Home", variant: .quiet, size: .small,
+                                            symbol: "chevron.right")
 
+    private(set) var segment: NotificationBridgeSegment = .inbox
     private var selectedID: String?
     private var expandedIDs: Set<String> = []
-    /// Which item's snooze presets are open - one at a time.
-    private var snoozeOpenID: String?
     private var toastTimer: Timer?
     private var undoAction: (() -> Void)?
     private var toastMessage: String?
@@ -219,10 +282,18 @@ final class NotificationBridgePanelViewController: NSViewController {
     /// Injectable, as on the classic panel.
     var clock: () -> Date = { Date() }
 
+    /// How a snooze menu is shown: popped up under the button that asked for
+    /// it. A suite swaps this to read the menu, because a real pop-up enters
+    /// AppKit's modal menu tracking and would never return.
+    var presentMenu: (NSMenu, NSView) -> Void = { menu, view in
+        let y = view.isFlipped ? view.bounds.maxY + 4 : -4
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: y), in: view)
+    }
+
     var onSizeChanged: ((NSSize) -> Void)?
     var onRequestClose: (() -> Void)?
-    /// The footer's main action. Set by the sidebar shell; the button hides
-    /// when nothing is wired, rather than offering a button that does nothing.
+    /// The footer's way home. Set by the sidebar shell; the button hides when
+    /// nothing is wired, rather than offering a button that does nothing.
     var onOpenHome: (() -> Void)? {
         didSet { openHomeButton.isHidden = onOpenHome == nil }
     }
@@ -232,7 +303,7 @@ final class NotificationBridgePanelViewController: NSViewController {
         root.wantsLayer = true
         view = root
 
-        for label in [titleLabel, dateLabel, laterLabel, footerLabel] {
+        for label in [titleLabel, dateLabel, footerLabel] {
             label.translatesAutoresizingMaskIntoConstraints = false
         }
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -243,17 +314,8 @@ final class NotificationBridgePanelViewController: NSViewController {
         titleStack.alignment = .leading
         titleStack.spacing = HelmMetrics.s0
         titleStack.translatesAutoresizingMaskIntoConstraints = false
-        titleStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        titleStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        laterLabel.setContentHuggingPriority(.required, for: .horizontal)
-        laterLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let headerRow = NSStackView(views: [titleStack, needYouPill, laterLabel])
-        headerRow.orientation = .horizontal
-        headerRow.distribution = .fill
-        headerRow.alignment = .centerY
-        headerRow.spacing = HelmMetrics.s2
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        segmentHost.translatesAutoresizingMaskIntoConstraints = false
 
         headerSeparator.wantsLayer = true
         headerSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -261,8 +323,9 @@ final class NotificationBridgePanelViewController: NSViewController {
 
         listStack.orientation = .vertical
         listStack.alignment = .leading
-        listStack.spacing = 0
-        listStack.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 10, right: 0)
+        listStack.spacing = NotificationBridgeMetrics.cardSpacing
+        listStack.edgeInsets = NSEdgeInsets(top: NotificationBridgeMetrics.listInset, left: 0,
+                                            bottom: NotificationBridgeMetrics.listInset, right: 0)
         listStack.translatesAutoresizingMaskIntoConstraints = false
         listDocument.translatesAutoresizingMaskIntoConstraints = false
         listDocument.addSubview(listStack)
@@ -273,12 +336,10 @@ final class NotificationBridgePanelViewController: NSViewController {
 
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        scroll.drawsBackground = false
+        scroll.drawsBackground = true
         scroll.borderType = .noBorder
         scroll.documentView = listDocument
         scroll.translatesAutoresizingMaskIntoConstraints = false
-
-        emptyState.translatesAutoresizingMaskIntoConstraints = false
 
         footerSeparator.wantsLayer = true
         footerSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -288,8 +349,8 @@ final class NotificationBridgePanelViewController: NSViewController {
         footerLabel.isSelectable = false
         footerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         footerLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        openHomeButton.symbolTrailing = true
         for (button, action) in [(undoButton, #selector(undoClicked)),
-                                 (restoreButton, #selector(restoreClicked)),
                                  (markAllReadButton, #selector(markAllReadClicked)),
                                  (openHomeButton, #selector(openHomeClicked))] {
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -300,20 +361,20 @@ final class NotificationBridgePanelViewController: NSViewController {
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
         undoButton.isHidden = true
-        restoreButton.isHidden = true
         openHomeButton.isHidden = onOpenHome == nil
         openHomeButton.accessibilityLabelOverride = "Open Home"
-        let footerRow = NSStackView(views: [footerLabel, undoButton, restoreButton, markAllReadButton, openHomeButton])
+        markAllReadButton.accessibilityLabelOverride = "Mark every notification as read"
+        let footerRow = NSStackView(views: [markAllReadButton, footerLabel, undoButton, openHomeButton])
         footerRow.orientation = .horizontal
         footerRow.distribution = .fill
         footerRow.alignment = .centerY
         footerRow.spacing = HelmMetrics.s2
         footerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(headerRow)
+        root.addSubview(titleStack)
+        root.addSubview(segmentHost)
         root.addSubview(headerSeparator)
         root.addSubview(scroll)
-        root.addSubview(emptyState)
         root.addSubview(footerSeparator)
         root.addSubview(footerRow)
 
@@ -324,11 +385,15 @@ final class NotificationBridgePanelViewController: NSViewController {
         NSLayoutConstraint.activate([
             root.widthAnchor.constraint(equalToConstant: Self.width),
 
-            headerRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-            headerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
-            headerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -inset),
+            titleStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
+            titleStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
+            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -inset),
 
-            headerSeparator.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 12),
+            segmentHost.topAnchor.constraint(equalTo: titleStack.bottomAnchor, constant: 10),
+            segmentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
+            segmentHost.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -inset),
+
+            headerSeparator.topAnchor.constraint(equalTo: segmentHost.bottomAnchor, constant: 12),
             headerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             headerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
 
@@ -337,18 +402,13 @@ final class NotificationBridgePanelViewController: NSViewController {
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             listHeight,
 
-            emptyState.topAnchor.constraint(equalTo: scroll.topAnchor),
-            emptyState.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
-            emptyState.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -inset),
-            emptyState.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
-
             footerSeparator.topAnchor.constraint(equalTo: scroll.bottomAnchor),
             footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
 
             footerRow.topAnchor.constraint(equalTo: footerSeparator.bottomAnchor, constant: 10),
-            footerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
-            footerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -inset),
+            footerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset - 6),
+            footerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -(inset - 6)),
             footerRow.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
 
             // Gotcha (4): the document view pins to the clip view.
@@ -365,8 +425,7 @@ final class NotificationBridgePanelViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // Tab walks the Now card's buttons, each row's buttons, then the
-        // footer, in the order they are drawn.
+        // Tab walks each card's buttons, then the footer, in drawn order.
         view.window?.autorecalculatesKeyViewLoop = true
         view.window?.makeFirstResponder(listDocument)
     }
@@ -381,27 +440,34 @@ final class NotificationBridgePanelViewController: NSViewController {
         return clip > 0 ? clip : Self.width
     }
 
-    private func renderSignature(_ sections: NotificationBridgeSections,
+    private var cardWidth: CGFloat { contentWidth - 2 * NotificationBridgeMetrics.listInset }
+
+    private func renderSignature(_ inbox: [AppNotification],
+                                 snoozed: [(entry: AppNotification, until: Date)],
                                  center: GrandLineNotificationCenter) -> String {
+        let now = clock()
         var parts = [
             "theme:\(theme.id)", "scale:\(ChromeTextScale.shared.scale)",
-            "width:\(contentWidth)",
-            "unread:\(center.unreadCount)", "snoozed:\(center.snoozedCount)", "held:\(center.heldCount)",
-            "selected:\(selectedID ?? "-")", "snoozeOpen:\(snoozeOpenID ?? "-")",
-            "presets:\(NotificationSnoozePreset.offered(at: clock()).map(\.title))",
-            "day:\(NotificationBridgeTimeText.headerDate(clock()))",
+            "width:\(contentWidth)", "segment:\(segment.rawValue)",
+            "unread:\(center.unreadCount)", "held:\(center.heldCount)",
+            "muted:\(center.mutedSourceNames)",
+            "selected:\(selectedID ?? "-")",
+            "day:\(NotificationBridgeTimeText.headerDate(now))",
         ]
-        let now = clock()
-        for (index, entry) in sections.ordered.enumerated() {
+        for (index, entry) in inbox.enumerated() {
             let children = entry.children
                 .map { "\($0.id)/\($0.name)/\($0.meta)/\($0.actionLabel ?? "-")/\($0.isMonospaced)" }
                 .joined(separator: ",")
             parts.append([
                 "\(index)", entry.id, entry.title, entry.subtext, entry.source, entry.clearCondition,
-                "\(entry.kind)", "\(entry.tint)", entry.timeText ?? NotificationTimeText.relative(entry.date, now: now),
+                "\(entry.kind)", "\(entry.tint)", NotificationBridgeTimeText.age(for: entry, now: now),
                 "\(entry.isWarning)", "\(center.isRead(entry))", "\(expandedIDs.contains(entry.id))",
                 entry.primaryAction?.label ?? "-", children,
             ].joined(separator: "\u{1f}"))
+        }
+        for item in snoozed {
+            parts.append("snoozed\u{1f}\(item.entry.id)\u{1f}\(item.entry.title)\u{1f}"
+                         + NotificationBridgeTimeText.returns(item.until, now: now))
         }
         return parts.joined(separator: "\u{1e}")
     }
@@ -409,27 +475,21 @@ final class NotificationBridgePanelViewController: NSViewController {
     func reload() {
         guard isViewLoaded else { return }
         let center = GrandLineNotificationCenter.shared
-        let sections = NotificationBridgeSections(center.entries)
-        let liveIDs = Set(sections.ordered.map(\.id))
+        let inbox = NotificationBridgeSections(center.entries).ordered
+        let snoozed = center.snoozedEntries
+        let liveIDs = Set(inbox.map(\.id))
         expandedIDs.formIntersection(liveIDs)
         if let selectedID, !liveIDs.contains(selectedID) { self.selectedID = nil }
-        if let snoozeOpenID, !liveIDs.contains(snoozeOpenID) { self.snoozeOpenID = nil }
 
-        let signature = renderSignature(sections, center: center)
+        let signature = renderSignature(inbox, snoozed: snoozed, center: center)
         if signature == lastRenderSignature { return }
         lastRenderSignature = signature
 
-        dateLabel.stringValue = NotificationBridgeTimeText.headerDate(clock())
-        let actionCount = sections.upNext.count + (sections.now == nil ? 0 : 1)
-        needYouPill.isHidden = actionCount == 0
-        needYouPill.configure(text: "\(actionCount) need\(actionCount == 1 ? "s" : "") you", tint: .warn, theme: theme)
-        laterLabel.stringValue = "\(sections.later.count) later"
-        laterLabel.isHidden = sections.later.isEmpty
+        let now = clock()
+        dateLabel.stringValue = NotificationBridgeTimeText.headerDate(now)
+        updateSegment(inbox: inbox.count, snoozed: snoozed.count)
+        markAllReadButton.isHidden = segment != .inbox || inbox.isEmpty
         markAllReadButton.isEnabled = center.unreadCount > 0
-        markAllReadButton.isHidden = sections.isEmpty
-
-        emptyState.isHidden = !sections.isEmpty
-        scroll.isHidden = sections.isEmpty
 
         // Rebuilt rather than reconciled: the list is a handful of items by
         // design, and the signature above already skips every reload that
@@ -438,30 +498,71 @@ final class NotificationBridgePanelViewController: NSViewController {
             listStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        let width = contentWidth
-        if let now = sections.now {
-            let card = NotificationBridgeNowCard(entry: now, theme: theme, contentWidth: width,
-                                                 isRead: center.isRead(now),
-                                                 isSelected: selectedID == now.id,
-                                                 isExpanded: expandedIDs.contains(now.id),
-                                                 isSnoozeOpen: snoozeOpenID == now.id,
-                                                 presets: NotificationSnoozePreset.offered(at: clock()),
-                                                 pillText: NotificationBridgeTimeText.nowPill(for: now, now: clock()))
-            wire(card.actions, entry: now)
-            add(card, inset: NotificationBridgeMetrics.nowCardMargin)
-        }
-        if !sections.upNext.isEmpty {
-            add(NotificationBridgeSectionHeader(title: "Up next", theme: theme), inset: 0)
-            for entry in sections.upNext { addRow(entry, timed: true, width: width, center: center) }
-        }
-        if !sections.later.isEmpty {
-            add(NotificationBridgeSectionHeader(title: "When you have a minute", theme: theme), inset: 0)
-            for entry in sections.later { addRow(entry, timed: false, width: width, center: center) }
+        emptyState = nil
+        switch segment {
+        case .inbox:
+            if inbox.isEmpty {
+                addEmptyState(title: "You\u{2019}re all caught up", body: "Nothing needs you right now.",
+                              symbol: "checkmark", tint: .good)
+            }
+            let compact = inbox.count > NotificationBridgeMetrics.compactThreshold
+            for entry in inbox { addCard(entry, compact: compact, center: center, now: now) }
+        case .snoozed:
+            if snoozed.isEmpty {
+                addEmptyState(title: "Nothing snoozed",
+                              body: "A snoozed notification comes back here on its own.",
+                              symbol: "moon.zzz", tint: .info)
+            }
+            for item in snoozed {
+                let row = NotificationSnoozedRow(entry: item.entry, theme: theme, width: cardWidth,
+                                                 returnText: NotificationBridgeTimeText.returns(item.until, now: now))
+                let id = item.entry.id
+                row.onUnsnooze = { [weak self] in self?.unsnooze(id) }
+                add(row, inset: NotificationBridgeMetrics.listInset)
+            }
+            let muted = center.mutedSourceNames
+            if !muted.isEmpty {
+                let note = NotificationMutedNote(sources: muted, theme: theme,
+                                                 width: contentWidth - 2 * NotificationBridgeMetrics.sideInset)
+                add(note, inset: NotificationBridgeMetrics.sideInset)
+            }
         }
 
         renderFooter()
         applyTheme(theme)
         updateSize()
+    }
+
+    private func updateSegment(inbox: Int, snoozed: Int) {
+        let titles = [inbox > 0 ? "Inbox \(inbox)" : "Inbox", snoozed > 0 ? "Snoozed \(snoozed)" : "Snoozed"]
+        guard titles != segmentTitles || segmentTabs == nil else {
+            segmentTabs?.select(segment.rawValue)
+            return
+        }
+        segmentTitles = titles
+        segmentTabs?.removeFromSuperview()
+        let tabs = HelmSegmentedTabs(items: [.init(id: NotificationBridgeSegment.inbox.rawValue, title: titles[0]),
+                                             .init(id: NotificationBridgeSegment.snoozed.rawValue, title: titles[1])],
+                                     selected: segment.rawValue, size: .compact)
+        tabs.onSelect = { [weak self] id in
+            self?.switchSegment(to: NotificationBridgeSegment(rawValue: id) ?? .inbox)
+        }
+        segmentHost.addSubview(tabs)
+        NSLayoutConstraint.activate([
+            tabs.topAnchor.constraint(equalTo: segmentHost.topAnchor),
+            tabs.leadingAnchor.constraint(equalTo: segmentHost.leadingAnchor),
+            tabs.trailingAnchor.constraint(equalTo: segmentHost.trailingAnchor),
+            tabs.bottomAnchor.constraint(equalTo: segmentHost.bottomAnchor),
+        ])
+        tabs.applyTheme(theme)
+        segmentTabs = tabs
+    }
+
+    private func addEmptyState(title: String, body: String, symbol: String, tint: HelmTint) {
+        let empty = NotificationBridgeEmptyView(title: title, body: body, symbol: symbol, tint: tint)
+        empty.applyTheme(theme)
+        emptyState = empty
+        add(empty, inset: NotificationBridgeMetrics.sideInset)
     }
 
     private func add(_ view: NSView, inset: CGFloat) {
@@ -470,32 +571,27 @@ final class NotificationBridgePanelViewController: NSViewController {
         view.trailingAnchor.constraint(equalTo: listStack.trailingAnchor, constant: -inset).isActive = true
     }
 
-    private func addRow(_ entry: AppNotification, timed: Bool, width: CGFloat, center: GrandLineNotificationCenter) {
-        let row = NotificationBridgeRowView(entry: entry, timed: timed, theme: theme, contentWidth: width,
-                                            isRead: center.isRead(entry),
-                                            isSelected: selectedID == entry.id,
-                                            isExpanded: expandedIDs.contains(entry.id),
-                                            isSnoozeOpen: snoozeOpenID == entry.id,
-                                            presets: NotificationSnoozePreset.offered(at: clock()),
-                                            timeText: timed
-                                                ? NotificationBridgeTimeText.leading(for: entry)
-                                                : (entry.timeText ?? NotificationTimeText.relative(entry.date, now: clock())))
-        wire(row.actions, entry: entry)
+    private func addCard(_ entry: AppNotification, compact: Bool, center: GrandLineNotificationCenter, now: Date) {
+        let card = NotificationTriageCard(entry: entry, theme: theme, width: cardWidth,
+                                          isRead: center.isRead(entry),
+                                          isSelected: selectedID == entry.id,
+                                          isExpanded: expandedIDs.contains(entry.id),
+                                          isCompact: compact && entry.kind == .informational,
+                                          ageText: NotificationBridgeTimeText.age(for: entry, now: now))
         let id = entry.id
-        row.onSelect = { [weak self] in self?.select(id, markingRead: true) }
-        row.onBuildMenu = { [weak self] in self?.contextMenu(for: entry) }
-        add(row, inset: 0)
-    }
-
-    /// The item's buttons, wherever they are drawn. Looked up by id at click
-    /// time for the children, so a child acts on the entry as the store has it.
-    private func wire(_ actions: NotificationBridgeItemActions, entry: AppNotification) {
-        let id = entry.id
-        actions.onPrimary = { [weak self] in self?.performPrimaryAction(entry) }
-        actions.onToggleExpanded = { [weak self] in self?.toggleExpanded(id) }
-        actions.onSnooze = { [weak self] in self?.toggleSnoozePresets(id) }
-        actions.onSnoozePreset = { [weak self] preset in self?.snooze(entry, preset: preset) }
-        actions.onChildAction = { [weak self] childID in self?.performChildAction(childID: childID, ofEntryID: id) }
+        card.onSelect = { [weak self] in self?.select(id, markingRead: true) }
+        card.onBuildMenu = { [weak self] in self?.contextMenu(for: entry) }
+        card.onPrimary = { [weak self] in self?.performPrimaryAction(entry) }
+        card.onToggleExpanded = { [weak self] in self?.toggleExpanded(id) }
+        card.onSnooze = { [weak self, weak card] in
+            guard let self, let card else { return }
+            self.showSnoozeMenu(for: entry, from: card.snooze)
+        }
+        card.onHide = { [weak self] in self?.hide(entry) }
+        card.onMute = { [weak self] in self?.mute(entry) }
+        card.onMarkRead = { [weak self] in self?.toggleRead(entry) }
+        card.onChildAction = { [weak self] childID in self?.performChildAction(childID: childID, ofEntryID: id) }
+        add(card, inset: NotificationBridgeMetrics.listInset)
     }
 
     // MARK: Actions
@@ -509,21 +605,20 @@ final class NotificationBridgePanelViewController: NSViewController {
     }
 
     private func scrollSelectionIntoView() {
-        guard let selectedID,
-              let view = listStack.arrangedSubviews.first(where: { ($0 as? NotificationBridgeItemView)?.entryID == selectedID })
-        else { return }
-        view.scrollToVisible(view.bounds)
+        guard let card = card(for: selectedID) else { return }
+        card.scrollToVisible(card.bounds)
     }
 
-    private func toggleSnoozePresets(_ id: String) {
-        snoozeOpenID = snoozeOpenID == id ? nil : id
-        selectedID = id
+    private func card(for id: String?) -> NotificationTriageCard? {
+        guard let id else { return nil }
+        return listStack.arrangedSubviews.lazy.compactMap { $0 as? NotificationTriageCard }.first { $0.entryID == id }
+    }
+
+    private func switchSegment(to segment: NotificationBridgeSegment) {
+        guard segment != self.segment else { return }
+        self.segment = segment
+        selectedID = nil
         reload()
-    }
-
-    private func snooze(_ entry: AppNotification, preset: NotificationSnoozePreset) {
-        snoozeOpenID = nil
-        snooze(entry, until: preset.date(from: clock()), message: "Snoozed \(preset.phrase)")
     }
 
     private func toggleExpanded(_ id: String) {
@@ -553,27 +648,84 @@ final class NotificationBridgePanelViewController: NSViewController {
         showToast("\(child.actionLabel ?? "Started"): \(child.name)", undo: nil)
     }
 
-    /// The classic panel's menu, kept: right-click is still the place for
-    /// read/unread, copy and mute.
+    private func showSnoozeMenu(for entry: AppNotification, from button: NSView) {
+        selectedID = entry.id
+        presentMenu(snoozeMenu(for: entry), button)
+    }
+
+    /// The Snooze button's menu: the presets with the time each resolves to,
+    /// then the two ways of putting an item away for longer.
+    func snoozeMenu(for entry: AppNotification) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let header = NSMenuItem(title: "Snooze until", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        addSnoozeItems(for: entry, to: menu)
+        addPutAwayItems(for: entry, to: menu)
+        return menu
+    }
+
+    private func addSnoozeItems(for entry: AppNotification, to menu: NSMenu) {
+        let now = clock()
+        for preset in NotificationSnoozePreset.offered(at: now) {
+            // The attributed title draws the time right-aligned, the way the
+            // board showed it. It also replaces the item's plain `title`, so
+            // the preset is found by its identifier, never by its text.
+            let item = HelmMenuAction.item(preset.title) { [weak self] in
+                self?.snooze(entry, preset: preset)
+            }
+            item.attributedTitle = Self.presetTitle(
+                preset.title, time: NotificationBridgeTimeText.snoozeTime(preset.date(from: now), now: now))
+            item.identifier = Self.presetIdentifier(preset)
+            item.toolTip = "Snooze \(preset.phrase)"
+            menu.addItem(item)
+        }
+    }
+
+    private func addPutAwayItems(for entry: AppNotification, to menu: NSMenu) {
+        guard entry.kind == .informational || !entry.source.isEmpty else { return }
+        menu.addItem(.separator())
+        if entry.kind == .informational {
+            menu.addItem(HelmMenuAction.item("Hide until it changes") { [weak self] in self?.hide(entry) })
+        }
+        if !entry.source.isEmpty {
+            menu.addItem(HelmMenuAction.item("Mute \(entry.source)") { [weak self] in self?.mute(entry) })
+        }
+    }
+
+    /// How a snooze preset's menu item is found, by a suite or anything else.
+    static func presetIdentifier(_ preset: NotificationSnoozePreset) -> NSUserInterfaceItemIdentifier {
+        NSUserInterfaceItemIdentifier("notification.snooze.\(preset)")
+    }
+
+    private static func presetTitle(_ title: String, time: String) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [NSTextTab(textAlignment: .right, location: 210)]
+        let font = NSFont.menuFont(ofSize: 0)
+        let text = NSMutableAttributedString(string: "\(title)\t",
+                                             attributes: [.font: font, .paragraphStyle: paragraph])
+        // No colour of its own: the menu draws in the system's material and
+        // appearance, which a theme colour cannot know, and the system's
+        // secondary label colour fails the contrast floor (`HelmContrastSelfTest`).
+        // The right-aligned tab stop is what sets the time apart.
+        text.append(NSAttributedString(string: time, attributes: [.font: font, .paragraphStyle: paragraph]))
+        return text
+    }
+
+    /// The card's right-click menu: the same presets, then read state and
+    /// copy, then Hide and Mute.
     private func contextMenu(for entry: AppNotification) -> NSMenu {
         selectedID = entry.id
         reload()
         let center = GrandLineNotificationCenter.shared
         let menu = NSMenu()
-        // The same presets the item's own snooze offers.
-        for preset in NotificationSnoozePreset.offered(at: clock()) {
-            menu.addItem(HelmMenuAction.item("Snooze \(preset.phrase)") { [weak self] in
-                self?.snooze(entry, preset: preset)
-            })
-        }
+        menu.autoenablesItems = false
+        addSnoozeItems(for: entry, to: menu)
         menu.addItem(.separator())
         let isRead = center.isRead(entry)
         menu.addItem(HelmMenuAction.item(isRead ? "Mark as unread" : "Mark as read") { [weak self] in
-            center.setRead(!isRead, id: entry.id)
-            self?.showToast(isRead ? "Marked unread" : "Marked read", undo: {
-                center.setRead(isRead, id: entry.id)
-            })
-            self?.reload()
+            self?.toggleRead(entry)
         })
         menu.addItem(HelmMenuAction.item("Copy details") { [weak self] in
             let text = entry.subtext.isEmpty ? entry.title : "\(entry.title) - \(entry.subtext)"
@@ -581,21 +733,46 @@ final class NotificationBridgePanelViewController: NSViewController {
             NSPasteboard.general.setString(text, forType: .string)
             self?.showToast("Copied details", undo: nil)
         })
-        if !entry.source.isEmpty {
-            menu.addItem(.separator())
-            menu.addItem(HelmMenuAction.item("Mute \(entry.source)") { [weak self] in
-                center.mute(source: entry.source)
-                self?.showToast("Muted \(entry.source)", undo: { center.setMuted(false, source: entry.source) })
-                self?.reload()
-            })
-        }
+        addPutAwayItems(for: entry, to: menu)
         return menu
     }
 
-    private func snooze(_ entry: AppNotification, until date: Date, message: String) {
-        GrandLineNotificationCenter.shared.snooze(id: entry.id, until: date)
-        // The footer's "N snoozed · Restore" is the standing undo.
-        showToast(message, undo: nil)
+    private func toggleRead(_ entry: AppNotification) {
+        let center = GrandLineNotificationCenter.shared
+        let isRead = center.isRead(entry)
+        center.setRead(!isRead, id: entry.id)
+        showToast(isRead ? "Marked unread" : "Marked read", undo: { center.setRead(isRead, id: entry.id) })
+        reload()
+    }
+
+    private func snooze(_ entry: AppNotification, preset: NotificationSnoozePreset) {
+        GrandLineNotificationCenter.shared.snooze(id: entry.id, until: preset.date(from: clock()))
+        // The Snoozed list is the standing undo, one item at a time.
+        showToast("Snoozed \(preset.phrase)", undo: { GrandLineNotificationCenter.shared.unsnooze(id: entry.id) })
+        reload()
+    }
+
+    private func unsnooze(_ id: String) {
+        GrandLineNotificationCenter.shared.unsnooze(id: id)
+        showToast("Back in your inbox", undo: nil)
+        reload()
+    }
+
+    /// "Hide until it changes" - the store's `dismiss`, informational only.
+    /// No Undo (GL-33): the store keeps no way to take a dismissal back, and
+    /// the item returns by itself the moment its detail changes.
+    private func hide(_ entry: AppNotification) {
+        guard entry.kind == .informational else { return }
+        GrandLineNotificationCenter.shared.dismiss(id: entry.id)
+        showToast("Hidden until it changes", undo: nil)
+        reload()
+    }
+
+    private func mute(_ entry: AppNotification) {
+        guard !entry.source.isEmpty else { return }
+        let center = GrandLineNotificationCenter.shared
+        center.mute(source: entry.source)
+        showToast("Muted \(entry.source)", undo: { center.setMuted(false, source: entry.source) })
         reload()
     }
 
@@ -616,12 +793,6 @@ final class NotificationBridgePanelViewController: NSViewController {
         toastTimer?.invalidate()
         undoAction()
         showToast(nil, undo: nil)
-        reload()
-    }
-
-    @objc private func restoreClicked() {
-        GrandLineNotificationCenter.shared.restoreHidden()
-        showToast("Restored", undo: nil)
         reload()
     }
 
@@ -647,23 +818,17 @@ final class NotificationBridgePanelViewController: NSViewController {
         toastTimer = timer
     }
 
-    /// One line, in priority order: a toast, then what is hidden and how to
-    /// get it back, then what a focus session is holding, then the resting
-    /// "Updated just now".
+    /// One line, in priority order: a toast, then what a focus session is
+    /// holding, then nothing. There is no resting "Up to date" any more: it
+    /// was a fixed string, and beside four open items it read as "nothing to
+    /// do" (F7). What is snoozed is counted on the segment instead.
     private func renderFooter() {
         let center = GrandLineNotificationCenter.shared
-        let snoozed = center.snoozedCount
         let held = center.heldCount
         undoButton.isHidden = true
-        restoreButton.isHidden = true
         if let toastMessage {
             footerLabel.stringValue = toastMessage
             undoButton.isHidden = undoAction == nil
-        } else if snoozed > 0 {
-            footerLabel.stringValue = snoozed == 1 ? "1 snoozed" : "\(snoozed) snoozed"
-            restoreButton.title = "Restore"
-            restoreButton.accessibilityLabelOverride = "Restore \(snoozed) snoozed or muted"
-            restoreButton.isHidden = false
         } else if held > 0 {
             footerLabel.stringValue = held == 1
                 ? "1 held until your focus session ends"
@@ -671,11 +836,11 @@ final class NotificationBridgePanelViewController: NSViewController {
         } else if center.isFocusQuietActive {
             footerLabel.stringValue = "Quiet while you focus"
         } else {
-            footerLabel.stringValue = Self.restingFooter
+            footerLabel.stringValue = ""
         }
         // The label's width from the buttons beside it, never from its own
         // frame (gotcha (22)).
-        let buttons = [undoButton, restoreButton, markAllReadButton, openHomeButton].filter { !$0.isHidden }
+        let buttons = [markAllReadButton, undoButton, openHomeButton].filter { !$0.isHidden }
         let taken = buttons.reduce(CGFloat(0)) { $0 + ceil($1.fittingSize.width) + HelmMetrics.s2 }
         footerLabel.preferredMaxLayoutWidth = max(60, Self.width - 2 * NotificationBridgeMetrics.sideInset - taken)
         footerLabel.textColor = toastMessage != nil
@@ -687,6 +852,15 @@ final class NotificationBridgePanelViewController: NSViewController {
     // MARK: Keyboard
 
     private func handleListKey(_ event: NSEvent) -> Bool {
+        let command = event.modifierFlags.intersection(KeyChord.relevantModifierMask) == .command
+        if command {
+            switch event.keyCode {
+            case 33: switchSegment(to: .inbox); return true    // ⌘[
+            case 30: switchSegment(to: .snoozed); return true  // ⌘]
+            default: return false
+            }
+        }
+        guard segment == .inbox else { return false }
         let order = NotificationBridgeSections(GrandLineNotificationCenter.shared.entries).ordered
         guard !order.isEmpty else { return false }
         let index = order.firstIndex { $0.id == selectedID }
@@ -708,15 +882,12 @@ final class NotificationBridgePanelViewController: NSViewController {
         case 36, 76: // return, enter
             guard let index else { return false }
             performPrimaryAction(order[index])
-        case 1: // S - open or close the selected item's snooze presets
-            guard let index else { return false }
-            toggleSnoozePresets(order[index].id)
-        case 18, 19, 20, 21: // 1-4 - pick a preset while they are open
-            guard let index, snoozeOpenID == order[index].id else { return false }
-            let offered = NotificationSnoozePreset.offered(at: clock())
-            let pick = Int(event.keyCode) - 18
-            guard pick < offered.count else { return false }
-            snooze(order[index], preset: offered[pick])
+        case 1: // S - the selected card's snooze menu
+            guard let index, let card = card(for: order[index].id) else { return false }
+            showSnoozeMenu(for: order[index], from: card.snooze)
+        case 51, 117: // delete, forward delete - hide an informational card
+            guard let index, order[index].kind == .informational else { return false }
+            hide(order[index])
         default:
             return false
         }
@@ -728,8 +899,7 @@ final class NotificationBridgePanelViewController: NSViewController {
     private func updateSize() {
         view.layoutSubtreeIfNeeded()
         let content = listStack.fittingSize.height
-        let floor = emptyState.isHidden ? 0 : emptyState.fittingSize.height
-        listHeight?.constant = min(max(content, floor), Self.maxListHeight)
+        listHeight?.constant = min(content, listHeightLimit)
         view.layoutSubtreeIfNeeded()
         onSizeChanged?(view.fittingSize)
     }
@@ -741,17 +911,18 @@ final class NotificationBridgePanelViewController: NSViewController {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let muted = HelmTheme.mutedInk(theme)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        // The cards float on the side-panel step of the ground, which is
+        // bisected to clear `sidePanelSeparation` from the card in every
+        // palette - the ground itself equals the card in several.
+        scroll.backgroundColor = HelmTheme.sidePanelFill(theme)
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(17), weight: .bold)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         dateLabel.font = HelmType.caption()
         dateLabel.textColor = muted
-        laterLabel.font = HelmType.chip()
-        laterLabel.textColor = muted
-        needYouPill.applyTheme(theme)
+        segmentTabs?.applyTheme(theme)
         headerSeparator.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
         footerSeparator.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
         footerLabel.font = HelmType.caption()
-        emptyState.applyTheme(theme)
         for view in listStack.arrangedSubviews {
             (view as? NotificationBridgeThemed)?.applyTheme(theme)
         }
@@ -760,42 +931,38 @@ final class NotificationBridgePanelViewController: NSViewController {
     }
 
     #if FM_SELFTESTS
-    var debugItems: [NotificationBridgeItemView] {
-        listStack.arrangedSubviews.compactMap { $0 as? NotificationBridgeItemView }
+    var debugCards: [NotificationTriageCard] {
+        listStack.arrangedSubviews.compactMap { $0 as? NotificationTriageCard }
     }
-    var debugNowCard: NotificationBridgeNowCard? {
-        listStack.arrangedSubviews.compactMap { $0 as? NotificationBridgeNowCard }.first
+    var debugSnoozedRows: [NotificationSnoozedRow] {
+        listStack.arrangedSubviews.compactMap { $0 as? NotificationSnoozedRow }
     }
-    var debugRows: [NotificationBridgeRowView] {
-        listStack.arrangedSubviews.compactMap { $0 as? NotificationBridgeRowView }
-    }
-    var debugSectionHeaders: [String] {
-        listStack.arrangedSubviews.compactMap { ($0 as? NotificationBridgeSectionHeader)?.title }
+    var debugMutedNote: String? {
+        listStack.arrangedSubviews.compactMap { $0 as? NotificationMutedNote }.first?.text
     }
     var debugHeaderTitle: String { titleLabel.stringValue }
-    var debugNeedYouText: String? { needYouPill.isHidden ? nil : needYouPill.text }
-    var debugLaterText: String? { laterLabel.isHidden ? nil : laterLabel.stringValue }
+    var debugSegmentTitles: [String] { segmentTitles }
+    var debugSegmentTabs: HelmSegmentedTabs? { segmentTabs }
     var debugFooterText: String { footerLabel.stringValue }
     var debugFooterButtons: [HelmButton] {
-        [undoButton, restoreButton, markAllReadButton, openHomeButton].filter { !$0.isHidden }
+        [markAllReadButton, undoButton, openHomeButton].filter { !$0.isHidden }
     }
     var debugMarkAllReadEnabled: Bool { markAllReadButton.isEnabled }
-    var debugEmptyStateShowing: Bool { !emptyState.isHidden }
-    var debugEmptyState: NotificationBridgeEmptyView { emptyState }
+    var debugEmptyState: NotificationBridgeEmptyView? { emptyState }
     var debugSelectedID: String? { selectedID }
     var debugExpandedIDs: Set<String> { expandedIDs }
-    var debugSnoozeOpenID: String? { snoozeOpenID }
     var debugListDocument: NSView { listDocument }
+    var debugScroll: NSScrollView { scroll }
     var debugListHeight: CGFloat { listHeight?.constant ?? 0 }
     func debugContextMenu(for entry: AppNotification) -> NSMenu { contextMenu(for: entry) }
     func debugClickMarkAllRead() { markAllReadButton.performClick(nil) }
-    func debugClickRestore() { restoreButton.performClick(nil) }
+    func debugClickUndo() { undoButton.performClick(nil) }
     func debugClickOpenHome() { openHomeButton.performClick(nil) }
     /// Clears a toast the way its timer would, so a suite can read what the
     /// footer says at rest without waiting four seconds.
     func debugShowToast(_ message: String?) { showToast(message, undo: nil) }
-    func debugSendKey(_ keyCode: UInt16) -> Bool {
-        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+    func debugSendKey(_ keyCode: UInt16, modifiers: NSEvent.ModifierFlags = []) -> Bool {
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
                                            timestamp: 0, windowNumber: 0, context: nil,
                                            characters: "", charactersIgnoringModifiers: "",
                                            isARepeat: false, keyCode: keyCode) else { return false }
@@ -813,440 +980,258 @@ protocol NotificationBridgeThemed: AnyObject {
     func applyTheme(_ theme: HelmTheme)
 }
 
-/// The Now card and a row, as the list's selection and keyboard see them.
-protocol NotificationBridgeItemView: NSView, NotificationBridgeThemed {
-    var entryID: String { get }
-    var actions: NotificationBridgeItemActions { get }
-}
-
-/// A section's kicker - "UP NEXT", "WHEN YOU HAVE A MINUTE".
-final class NotificationBridgeSectionHeader: NSView, NotificationBridgeThemed {
-    private let label: NSTextField
-    /// The section's name as written; the label draws it as a kicker.
-    let title: String
-
-    init(title: String, theme: HelmTheme) {
-        self.title = title
-        label = NSTextField(labelWithString: title)
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: NotificationBridgeMetrics.sideInset),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -NotificationBridgeMetrics.sideInset),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-        ])
-        // A heading, so the VoiceOver rotor can jump between sections.
-        label.setAccessibilityRole(.staticText)
-        setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
-        setAccessibilityLabel(title)
-        applyTheme(theme)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
-
-    func applyTheme(_ theme: HelmTheme) {
-        label.attributedStringValue = NSAttributedString(
-            string: title.uppercased(),
-            attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
-    }
-
-}
-
-/// One item's buttons and the callbacks they reach, shared by the Now card
-/// and the rows so both offer the same actions the same way.
-final class NotificationBridgeItemActions {
-    let primary: HelmButton
-    let expand: HelmButton
-    let snooze: HelmButton
-    let row: NSStackView
-    /// The snooze presets, shown under the buttons while this item's snooze
-    /// is open.
-    let presetRow: NSStackView
-    let presetButtons: [HelmButton]
-    private let presets: [NotificationSnoozePreset]
-
-    var onPrimary: (() -> Void)?
-    var onToggleExpanded: (() -> Void)?
-    /// Opens or closes the presets.
-    var onSnooze: (() -> Void)?
-    var onSnoozePreset: ((NotificationSnoozePreset) -> Void)?
-    var onChildAction: ((String) -> Void)?
-
-    init(entry: AppNotification, primaryVariant: HelmButton.Variant, size: HelmButton.Size,
-         isExpanded: Bool, isSnoozeOpen: Bool, presets: [NotificationSnoozePreset]) {
-        let label = entry.primaryAction?.label ?? "Open"
-        primary = HelmButton(title: label, variant: primaryVariant, size: size)
-        primary.accessibilityLabelOverride = "\(label) \(entry.title)"
-        let count = entry.children.count
-        expand = HelmButton(title: isExpanded ? "Hide \(count)" : "Show \(count)", variant: .quiet, size: .small)
-        expand.accessibilityLabelOverride = isExpanded
-            ? "Hide the \(count) items in \(entry.title)"
-            : "Show the \(count) items in \(entry.title)"
-        expand.setAccessibilityExpanded(isExpanded)
-        expand.isHidden = entry.children.isEmpty
-        snooze = HelmButton(symbol: "moon.zzz", variant: .quiet, size: size)
-        snooze.toolTip = "Snooze"
-        snooze.accessibilityLabelOverride = "Snooze \(entry.title)"
-        snooze.setAccessibilityExpanded(isSnoozeOpen)
-        self.presets = presets
-        presetButtons = presets.map { preset in
-            let button = HelmButton(title: preset.title, variant: .secondary, size: .small)
-            button.accessibilityLabelOverride = "Snooze \(entry.title) \(preset.phrase)"
-            return button
-        }
-        presetRow = NSStackView(views: presetButtons)
-        presetRow.orientation = .horizontal
-        presetRow.alignment = .centerY
-        presetRow.spacing = HelmMetrics.s1
-        presetRow.translatesAutoresizingMaskIntoConstraints = false
-        presetRow.isHidden = !isSnoozeOpen
-        presetRow.setAccessibilityElement(true)
-        presetRow.setAccessibilityRole(.group)
-        presetRow.setAccessibilityLabel("Snooze until")
-        row = NSStackView(views: [primary, expand, snooze])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = HelmMetrics.s2
-        row.translatesAutoresizingMaskIntoConstraints = false
-        for button in [primary, expand, snooze] {
-            button.followsTextScale = true
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setContentHuggingPriority(.required, for: .horizontal)
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            button.target = self
-        }
-        primary.action = #selector(primaryClicked)
-        expand.action = #selector(expandClicked)
-        snooze.action = #selector(snoozeClicked)
-        for button in presetButtons {
-            button.followsTextScale = true
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.setContentHuggingPriority(.required, for: .horizontal)
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            button.target = self
-            button.action = #selector(presetClicked(_:))
-        }
-    }
-
-    @objc private func primaryClicked() { onPrimary?() }
-    @objc private func expandClicked() { onToggleExpanded?() }
-    @objc private func snoozeClicked() { onSnooze?() }
-    @objc private func presetClicked(_ sender: HelmButton) {
-        guard let index = presetButtons.firstIndex(where: { $0 === sender }) else { return }
-        onSnoozePreset?(presets[index])
-    }
-}
-
-/// Builds the wrapping label every Bridge item uses. `wrappingLabelWithString`
+/// Builds the wrapping label every card uses. `wrappingLabelWithString`
 /// rather than `labelWithString`, whose cell does not wrap at all (gotcha
 /// (22)'s second half), and an explicit width so the label never sizes itself
 /// from its own frame.
-private func bridgeWrappingLabel(_ text: String, width: CGFloat) -> NSTextField {
+private func bridgeWrappingLabel(_ text: String, width: CGFloat, maxLines: Int = 0) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: text)
     label.translatesAutoresizingMaskIntoConstraints = false
     label.isSelectable = false
-    label.maximumNumberOfLines = 0
+    label.maximumNumberOfLines = maxLines
     label.lineBreakMode = .byWordWrapping
+    label.cell?.truncatesLastVisibleLine = maxLines > 0
     label.preferredMaxLayoutWidth = max(40, width)
     label.setContentCompressionResistancePriority(.required, for: .vertical)
     label.setContentHuggingPriority(.defaultLow, for: .horizontal)
     return label
 }
 
-/// The hero card.
-final class NotificationBridgeNowCard: NSView, NotificationBridgeItemView {
+/// One notification as a triage card.
+///
+/// A plain view, **not** a `HoverHighlightView` and with no click recognizer:
+/// its buttons stay real, reachable children for VoiceOver and for a real
+/// click (an ancestor recognizer is gotcha (20)'s trap). A click on the card's
+/// own surface selects it through `mouseDown`, which AppKit only delivers here
+/// when no nested button was hit.
+final class NotificationTriageCard: NSView, NotificationBridgeThemed {
     let entryID: String
-    let actions: NotificationBridgeItemActions
+    let primary: HelmButton
+    let expand: HelmButton
+    let snooze: HelmButton
+    let hide: HelmButton
+
+    var onSelect: (() -> Void)?
+    var onBuildMenu: (() -> NSMenu?)?
+    var onPrimary: (() -> Void)?
+    var onToggleExpanded: (() -> Void)?
+    var onSnooze: (() -> Void)?
+    var onHide: (() -> Void)?
+    var onMute: (() -> Void)?
+    var onMarkRead: (() -> Void)?
+    var onChildAction: ((String) -> Void)?
+
     private let entry: AppNotification
-    private let kicker = NSTextField(labelWithString: "")
-    private let bolt = NSImageView()
-    private let pill = HelmStatusPill(style: .pill)
-    private let titleLabel: NSTextField
-    private let detailLabel: NSTextField
-    private let dot = NSView()
-    private var childrenView: NotificationChildrenView?
     private let isRead: Bool
     private let isSelected: Bool
+    private let isCompact: Bool
+    private let tile = IconTileView(size: NotificationBridgeMetrics.tileSide, cornerRadius: HelmMetrics.dLogoDot)
+    private let kicker = NSTextField(labelWithString: "")
+    private let dot = NSView()
+    private let ageLabel = NSTextField(labelWithString: "")
+    private let titleLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let rule = NSView()
+    private let edge = NSView()
+    private var childrenView: NotificationChildrenView?
+    /// Whether the snooze kept its label, or collapsed to its glyph (F6).
+    private(set) var snoozeIsLabelled = true
 
-    init(entry: AppNotification, theme: HelmTheme, contentWidth: CGFloat, isRead: Bool,
-         isSelected: Bool, isExpanded: Bool, isSnoozeOpen: Bool = false,
-         presets: [NotificationSnoozePreset] = NotificationSnoozePreset.allCases, pillText: String) {
+    init(entry: AppNotification, theme: HelmTheme, width: CGFloat, isRead: Bool,
+         isSelected: Bool, isExpanded: Bool, isCompact: Bool, ageText: String) {
         self.entry = entry
         self.entryID = entry.id
         self.isRead = isRead
         self.isSelected = isSelected
-        let inner = contentWidth - 2 * NotificationBridgeMetrics.nowCardMargin - 2 * NotificationBridgeMetrics.nowCardPadding
+        self.isCompact = isCompact
+        let pad = NotificationBridgeMetrics.cardPadding
+        let inner = width - 2 * pad
         titleLabel = bridgeWrappingLabel(entry.title, width: inner)
-        detailLabel = bridgeWrappingLabel(entry.subtext, width: inner)
-        detailLabel.isHidden = entry.subtext.isEmpty
-        actions = NotificationBridgeItemActions(entry: entry, primaryVariant: .primary, size: .regular,
-                                                isExpanded: isExpanded, isSnoozeOpen: isSnoozeOpen, presets: presets)
+        detailLabel = bridgeWrappingLabel(entry.subtext, width: inner, maxLines: 2)
+        detailLabel.isHidden = entry.subtext.isEmpty || isCompact
+        detailLabel.toolTip = entry.subtext.isEmpty ? nil : entry.subtext
+
+        let label = entry.primaryAction?.label ?? "Open"
+        primary = HelmButton(title: label, variant: .secondary, size: .regular)
+        primary.accessibilityLabelOverride = "\(label) \(entry.title)"
+        let count = entry.children.count
+        expand = HelmButton(title: isExpanded ? "Hide \(count)" : "Show \(count)", variant: .quiet, size: .regular,
+                            symbol: isExpanded ? "chevron.down" : "chevron.right")
+        expand.symbolTrailing = true
+        expand.accessibilityLabelOverride = isExpanded
+            ? "Hide the \(count) items in \(entry.title)"
+            : "Show the \(count) items in \(entry.title)"
+        expand.setAccessibilityExpanded(isExpanded)
+        expand.isHidden = entry.children.isEmpty
+        snooze = HelmButton(title: "Snooze", variant: .quiet, size: .regular, symbol: "moon.zzz")
+        snooze.toolTip = "Snooze (S)"
+        snooze.accessibilityLabelOverride = "Snooze \(entry.title)"
+        hide = HelmButton(symbol: "xmark", variant: .quiet, size: .small)
+        hide.toolTip = "Hide until it changes (\u{232B})"
+        hide.accessibilityLabelOverride = "Hide \(entry.title) until it changes"
+        hide.isHidden = entry.kind != .informational
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = NotificationBridgeMetrics.nowCardRadius
-        layer?.borderWidth = 1
 
+        tile.configure(symbol: NotificationRowPresentation(for: entry).icon, tint: entry.tint, pointSize: 11)
         kicker.translatesAutoresizingMaskIntoConstraints = false
-        kicker.stringValue = entry.source.isEmpty ? "NOW" : "NOW \u{00B7} \(entry.source.uppercased())"
-        kicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        kicker.stringValue = (entry.source.isEmpty ? NotificationRowPresentation(for: entry).kicker : entry.source)
+            .uppercased()
         kicker.lineBreakMode = .byTruncatingTail
-        bolt.image = HelmSymbol.image("bolt.fill", pointSize: HelmType.scaled(10), weight: .bold)
-        bolt.translatesAutoresizingMaskIntoConstraints = false
-        bolt.setContentHuggingPriority(.required, for: .horizontal)
-        pill.configure(text: pillText, tint: entry.isWarning ? .critical : .accent, theme: theme)
+        kicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        kicker.setContentHuggingPriority(.defaultLow, for: .horizontal)
         dot.wantsLayer = true
         dot.translatesAutoresizingMaskIntoConstraints = false
         dot.layer?.cornerRadius = NotificationBridgeMetrics.dotSide / 2
         dot.isHidden = isRead
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let top = NSStackView(views: [bolt, kicker, spacer, dot, pill])
+        ageLabel.translatesAutoresizingMaskIntoConstraints = false
+        ageLabel.stringValue = ageText
+        ageLabel.setContentHuggingPriority(.required, for: .horizontal)
+        ageLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let top = NSStackView(views: [tile, kicker, dot, ageLabel, hide])
         top.orientation = .horizontal
         top.distribution = .fill
         top.alignment = .centerY
         top.spacing = HelmMetrics.s2
+        top.setCustomSpacing(6, after: dot)
+        top.setCustomSpacing(HelmMetrics.s1, after: ageLabel)
         top.translatesAutoresizingMaskIntoConstraints = false
 
-        // The snooze glyph sits at the trailing end, as on the board.
-        actions.row.removeArrangedSubview(actions.snooze)
-        let actionSpacer = NSView()
-        actionSpacer.translatesAutoresizingMaskIntoConstraints = false
-        actionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        actions.row.addArrangedSubview(actionSpacer)
-        actions.row.addArrangedSubview(actions.snooze)
-        actions.row.distribution = .fill
+        for button in [primary, expand, snooze, hide] {
+            button.followsTextScale = true
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            button.target = self
+        }
+        // The primary is the one control allowed to give up width, so a
+        // label too long for the bar truncates instead of evicting the
+        // snooze (F6).
+        primary.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(740), for: .horizontal)
+        primary.action = #selector(primaryClicked)
+        expand.action = #selector(expandClicked)
+        snooze.action = #selector(snoozeClicked)
+        hide.action = #selector(hideClicked)
 
-        let stack = NSStackView(views: [top, titleLabel, detailLabel, actions.row, actions.presetRow])
+        // F6: the bar's width is known, so decide here whether the snooze
+        // keeps its label - from the buttons' own fitting widths, never from
+        // a frame.
+        let spacing = HelmMetrics.s1
+        let needed = ceil(primary.fittingSize.width)
+            + (expand.isHidden ? 0 : spacing + ceil(expand.fittingSize.width))
+            + spacing + ceil(snooze.fittingSize.width)
+        if needed > inner {
+            snooze.title = ""
+            snoozeIsLabelled = false
+        }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let footer = NSStackView(views: [primary, expand, spacer, snooze])
+        footer.orientation = .horizontal
+        footer.distribution = .fill
+        footer.alignment = .centerY
+        footer.spacing = spacing
+        footer.translatesAutoresizingMaskIntoConstraints = false
+
+        rule.wantsLayer = true
+        rule.translatesAutoresizingMaskIntoConstraints = false
+        rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
+
+        let stack = NSStackView(views: [top, titleLabel, detailLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = HelmMetrics.s2
-        stack.setCustomSpacing(10, after: top)
-        stack.setCustomSpacing(12, after: detailLabel.isHidden ? titleLabel : detailLabel)
+        stack.spacing = HelmMetrics.s0
+        stack.setCustomSpacing(7, after: top)
         stack.translatesAutoresizingMaskIntoConstraints = false
         if isExpanded, !entry.children.isEmpty {
             let children = NotificationChildrenView(entry: entry, theme: theme, leadingInset: 0, trailingInset: 0) { [weak self] id in
-                self?.actions.onChildAction?(id)
+                self?.onChildAction?(id)
             }
             childrenView = children
             stack.addArrangedSubview(children)
-            children.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            stack.setCustomSpacing(6, after: detailLabel.isHidden ? titleLabel : detailLabel)
+            children.widthAnchor.constraint(equalToConstant: max(40, inner)).isActive = true
         }
+        stack.addArrangedSubview(rule)
+        stack.addArrangedSubview(footer)
+        let lastContent: NSView = childrenView ?? (detailLabel.isHidden ? titleLabel : detailLabel)
+        stack.setCustomSpacing(9, after: lastContent)
+        stack.setCustomSpacing(8, after: rule)
+
+        edge.wantsLayer = true
+        edge.translatesAutoresizingMaskIntoConstraints = false
+        edge.isHidden = entry.kind != .actionNeeded
+        layer?.masksToBounds = true
+
         addSubview(stack)
-        let pad = NotificationBridgeMetrics.nowCardPadding
+        addSubview(edge)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: pad),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 11),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
+            stack.widthAnchor.constraint(equalToConstant: max(40, inner)),
             top.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.row.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            rule.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            // The hide glyph is drawn in the top line, so its square must not
+            // grow the line past the tile.
+            hide.heightAnchor.constraint(lessThanOrEqualToConstant: HelmType.scaledRowHeight(HelmButton.Size.small.minHeight)),
             dot.widthAnchor.constraint(equalToConstant: NotificationBridgeMetrics.dotSide),
             dot.heightAnchor.constraint(equalToConstant: NotificationBridgeMetrics.dotSide),
+            edge.leadingAnchor.constraint(equalTo: leadingAnchor),
+            edge.topAnchor.constraint(equalTo: topAnchor),
+            edge.bottomAnchor.constraint(equalTo: bottomAnchor),
+            edge.widthAnchor.constraint(equalToConstant: NotificationBridgeMetrics.edgeWidth),
         ])
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel(Self.spokenLabel(entry: entry, pillText: pillText, isRead: isRead))
+        setAccessibilityLabel(Self.spokenLabel(entry: entry, ageText: ageText, isRead: isRead))
+        setAccessibilityCustomActions(customActions())
         applyTheme(theme)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    static func spokenLabel(entry: AppNotification, pillText: String, isRead: Bool) -> String {
-        (["Now:", entry.source, entry.title, entry.subtext, pillText, isRead ? "" : "unread"])
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
-            .replacingOccurrences(of: "Now:, ", with: "Now: ")
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        // The board's recipe: a wash of the accent over the card, stronger in
-        // the dark palettes, with a border of the accent over the hairline.
-        let wash: CGFloat = theme.mode == .dark ? 0.12 : 0.08
-        let fill = card.blended(withFraction: isSelected ? wash + 0.06 : wash, of: accent) ?? card
-        layer?.backgroundColor = fill.cgColor
-        let hair = HelmTheme.nsColor(theme.chromeLineHex)
-        layer?.borderColor = (hair.blended(withFraction: isSelected ? 0.6 : 0.3, of: accent) ?? hair).cgColor
-        layer?.borderWidth = isSelected ? 1.5 : 1
-        let accentText = HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: fill, theme: theme)
-        kicker.attributedStringValue = NSAttributedString(
-            string: kicker.stringValue, attributes: HelmType.kickerAttributes(color: accentText))
-        bolt.contentTintColor = accentText
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(18), weight: .bold)
-        // Corrected against the washed fill, not the panel: a low-contrast
-        // palette's ink (Solarized Dark measured 3.98:1) loses the margin the
-        // accent wash takes.
-        titleLabel.textColor = HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: fill)
-        detailLabel.font = HelmType.body()
-        detailLabel.textColor = entry.isWarning
-            ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: fill, theme: theme)
-            : HelmContrast.legible(HelmTheme.mutedInk(theme), over: fill)
-        dot.layer?.backgroundColor = accent.cgColor
-        pill.applyTheme(theme)
-        childrenView?.applyTheme(theme)
-    }
-
-    #if FM_SELFTESTS
-    var debugTitle: String { titleLabel.stringValue }
-    var debugTitleLabel: NSTextField { titleLabel }
-    var debugDetail: String { detailLabel.stringValue }
-    var debugKicker: String { kicker.stringValue }
-    var debugPillText: String { pill.text }
-    var debugUnreadDotVisible: Bool { !dot.isHidden }
-    var debugChildRows: [NotificationChildRowView] { childrenView?.debugChildRows ?? [] }
-    #endif
-}
-
-/// One Up next or "When you have a minute" row.
-///
-/// A `HoverHighlightView` for the hover fill, but **not an activatable one**:
-/// it has no click recognizer, so its buttons stay real, reachable children
-/// for VoiceOver and for a real click (an ancestor recognizer is gotcha (20)'s
-/// trap, and an activatable `HoverHighlightView` hides its children because it
-/// is the button). A click on the row's own surface selects it through
-/// `mouseDown`, which AppKit only delivers here when no nested button was hit.
-final class NotificationBridgeRowView: HoverHighlightView, NotificationBridgeItemView {
-    let entryID: String
-    let actions: NotificationBridgeItemActions
-    private let entry: AppNotification
-    private let timed: Bool
-    private let isRead: Bool
-    private let isSelected: Bool
-    private let timeLabel = NSTextField(labelWithString: "")
-    private let tile = IconTileView(size: NotificationBridgeMetrics.tileSide, cornerRadius: 8)
-    private let titleLabel: NSTextField
-    private let detailLabel: NSTextField
-    private let dot = NSView()
-    private let trailingTime = NSTextField(labelWithString: "")
-    private var childrenView: NotificationChildrenView?
-
-    var onSelect: (() -> Void)?
-    var onBuildMenu: (() -> NSMenu?)?
-
-    init(entry: AppNotification, timed: Bool, theme: HelmTheme, contentWidth: CGFloat, isRead: Bool,
-         isSelected: Bool, isExpanded: Bool, isSnoozeOpen: Bool = false,
-         presets: [NotificationSnoozePreset] = NotificationSnoozePreset.allCases, timeText: String) {
-        self.entry = entry
-        self.entryID = entry.id
-        self.timed = timed
-        self.isRead = isRead
-        self.isSelected = isSelected
-        actions = NotificationBridgeItemActions(entry: entry, primaryVariant: .secondary, size: .small,
-                                                isExpanded: isExpanded, isSnoozeOpen: isSnoozeOpen, presets: presets)
-
-        // The text column's width, from quantities the labels do not decide:
-        // the panel's content width, the insets, the leading column and the
-        // trailing column's own fitting width (gotcha (22)).
-        let leadingColumn: CGFloat
-        if timed {
-            timeLabel.stringValue = timeText
-            timeLabel.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(12.5), weight: .bold)
-            leadingColumn = max(NotificationBridgeMetrics.timeColumn, ceil(timeLabel.fittingSize.width))
-        } else {
-            trailingTime.stringValue = timeText
-            trailingTime.font = HelmType.caption()
-            leadingColumn = NotificationBridgeMetrics.tileSide
-        }
-        let trailingColumn = NotificationBridgeMetrics.dotSide
-            + (timed ? 0 : 6 + ceil(trailingTime.fittingSize.width))
-        let textWidth = contentWidth - 2 * NotificationBridgeMetrics.sideInset - leadingColumn
-            - 2 * NotificationBridgeMetrics.gutter - trailingColumn
-        titleLabel = bridgeWrappingLabel(entry.title, width: textWidth)
-        let detail = timed && !entry.source.isEmpty
-            ? (entry.subtext.isEmpty ? entry.source : "\(entry.source) \u{00B7} \(entry.subtext)")
-            : entry.subtext
-        detailLabel = bridgeWrappingLabel(detail, width: textWidth)
-        detailLabel.isHidden = detail.isEmpty
-        super.init(frame: .zero)
-        cornerRadius = 0
-
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        timeLabel.isHidden = !timed
-        timeLabel.setContentHuggingPriority(.required, for: .horizontal)
-        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        tile.isHidden = timed
-        tile.configure(symbol: NotificationRowPresentation(for: entry).icon, tint: entry.tint, pointSize: 14)
-        trailingTime.translatesAutoresizingMaskIntoConstraints = false
-        trailingTime.isHidden = timed
-        trailingTime.setContentHuggingPriority(.required, for: .horizontal)
-        trailingTime.setContentCompressionResistancePriority(.required, for: .horizontal)
-        dot.wantsLayer = true
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        dot.layer?.cornerRadius = NotificationBridgeMetrics.dotSide / 2
-        dot.isHidden = isRead
-
-        let text = NSStackView(views: [titleLabel, detailLabel, actions.row, actions.presetRow])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = HelmMetrics.s0
-        text.setCustomSpacing(HelmMetrics.s2, after: actions.row)
-        text.setCustomSpacing(8, after: detailLabel.isHidden ? titleLabel : detailLabel)
-        text.translatesAutoresizingMaskIntoConstraints = false
-        if isExpanded, !entry.children.isEmpty {
-            let children = NotificationChildrenView(entry: entry, theme: theme, leadingInset: 0, trailingInset: 0) { [weak self] id in
-                self?.actions.onChildAction?(id)
-            }
-            childrenView = children
-            text.addArrangedSubview(children)
-            children.widthAnchor.constraint(equalToConstant: max(40, textWidth)).isActive = true
-        }
-
-        let leading: NSView = timed ? timeLabel : tile
-        addSubview(leading)
-        addSubview(text)
-        addSubview(dot)
-        addSubview(trailingTime)
-        let inset = NotificationBridgeMetrics.sideInset
-        NSLayoutConstraint.activate([
-            leading.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            leading.topAnchor.constraint(equalTo: text.topAnchor, constant: timed ? 1 : 0),
-            text.leadingAnchor.constraint(equalTo: leadingAnchor,
-                                          constant: inset + leadingColumn + NotificationBridgeMetrics.gutter),
-            text.widthAnchor.constraint(equalToConstant: max(40, textWidth)),
-            text.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            dot.widthAnchor.constraint(equalToConstant: NotificationBridgeMetrics.dotSide),
-            dot.heightAnchor.constraint(equalToConstant: NotificationBridgeMetrics.dotSide),
-            dot.trailingAnchor.constraint(equalTo: timed ? trailingAnchor : trailingTime.leadingAnchor,
-                                          constant: timed ? -inset : -6),
-            dot.centerYAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor, constant: -4),
-            trailingTime.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-            trailingTime.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor),
-        ])
-        if timed {
-            timeLabel.firstBaselineAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor).isActive = true
-        }
-
-        setAccessibilityElement(true)
-        accessibilityRoleOverride = .group
-        accessibilityLabelOverride = Self.spokenLabel(entry: entry, timeText: timeText, isRead: isRead)
-        applyTheme(theme)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not supported") }
-
-    static func spokenLabel(entry: AppNotification, timeText: String, isRead: Bool) -> String {
-        [entry.source, entry.title, entry.subtext, timeText, isRead ? "" : "unread"]
+    static func spokenLabel(entry: AppNotification, ageText: String, isRead: Bool) -> String {
+        [entry.kind == .actionNeeded ? "Needs you" : "", entry.source, entry.title, entry.subtext,
+         ageText, isRead ? "" : "unread"]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
     }
 
-    // The row is a group with reachable children, not a button: see the
-    // type's header. `HoverHighlightView` only treats an *activatable* view
-    // as an element, so this says so explicitly.
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    /// F8: every action a VoiceOver user can reach from the card itself,
+    /// without tabbing through its buttons.
+    private func customActions() -> [NSAccessibilityCustomAction] {
+        var actions = [
+            NSAccessibilityCustomAction(name: primary.title) { [weak self] in self?.onPrimary?(); return true },
+            NSAccessibilityCustomAction(name: "Snooze") { [weak self] in self?.onSnooze?(); return true },
+            NSAccessibilityCustomAction(name: isRead ? "Mark as unread" : "Mark as read") { [weak self] in
+                self?.onMarkRead?(); return true
+            },
+        ]
+        if entry.kind == .informational {
+            actions.append(NSAccessibilityCustomAction(name: "Hide until it changes") { [weak self] in
+                self?.onHide?(); return true
+            })
+        }
+        if !entry.source.isEmpty {
+            actions.append(NSAccessibilityCustomAction(name: "Mute \(entry.source)") { [weak self] in
+                self?.onMute?(); return true
+            })
+        }
+        return actions
+    }
+
+    @objc private func primaryClicked() { onPrimary?() }
+    @objc private func expandClicked() { onToggleExpanded?() }
+    @objc private func snoozeClicked() { onSnooze?() }
+    @objc private func hideClicked() { onHide?() }
 
     override func mouseDown(with event: NSEvent) {
         onSelect?()
@@ -1257,41 +1242,52 @@ final class NotificationBridgeRowView: HoverHighlightView, NotificationBridgeIte
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: NotificationBridgeMetrics.cardRadius,
+                                  daylightRadius: NotificationBridgeMetrics.cardRadius)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let accent = HelmTheme.nsColor(theme.accentHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        if isSelected {
+            let hair = HelmTheme.nsColor(theme.chromeLineHex)
+            layer?.borderColor = (hair.blended(withFraction: 0.65, of: accent) ?? accent).cgColor
+            layer?.borderWidth = 1.5
+        }
+        let edgeHex = entry.isWarning ? HelmTint.critical.hex(in: theme) : theme.accentHex
+        edge.layer?.backgroundColor = HelmTheme.nsColor(edgeHex).cgColor
+        let kickerColor = entry.kind == .actionNeeded
+            ? HelmContrast.legibleTintedText(tintHex: edgeHex, over: surface, theme: theme)
+            : muted
+        kicker.attributedStringValue = NSAttributedString(
+            string: kicker.stringValue, attributes: HelmType.kickerAttributes(color: kickerColor))
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(14), weight: isRead ? .medium : .semibold)
         titleLabel.textColor = ink
+        let warning = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: surface, theme: theme)
         detailLabel.font = HelmType.body()
-        detailLabel.textColor = entry.isWarning
-            ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: surface, theme: theme)
-            : HelmTheme.mutedInk(theme)
-        timeLabel.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(12.5), weight: .bold)
-        timeLabel.textColor = entry.isWarning
-            ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: surface, theme: theme)
-            : HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: surface, theme: theme)
-        trailingTime.font = HelmType.caption()
-        trailingTime.textColor = HelmTheme.mutedInk(theme)
-        tile.applyTheme(theme)
+        detailLabel.textColor = entry.isWarning ? warning : muted
+        ageLabel.font = HelmType.caption()
+        ageLabel.textColor = entry.isWarning ? warning : muted
         dot.layer?.backgroundColor = accent.cgColor
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        normalColor = isSelected ? accent.withAlphaComponent(0.12) : .clear
-        hoverColor = isSelected ? accent.withAlphaComponent(0.16) : line.withAlphaComponent(0.35)
+        rule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.7).cgColor
+        tile.applyTheme(theme)
         childrenView?.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }
     var debugTitleLabel: NSTextField { titleLabel }
+    var debugDetailLabel: NSTextField { detailLabel }
     var debugDetail: String { detailLabel.stringValue }
-    var debugTimeText: String { timed ? timeLabel.stringValue : trailingTime.stringValue }
-    var debugIsTimed: Bool { timed }
+    var debugKicker: String { kicker.stringValue }
+    var debugAgeText: String { ageLabel.stringValue }
+    var debugIsCompact: Bool { isCompact }
+    var debugHasAccentEdge: Bool { !edge.isHidden }
     var debugUnreadDotVisible: Bool { !dot.isHidden }
     var debugChildRows: [NotificationChildRowView] { childrenView?.debugChildRows ?? [] }
-    /// A click on the row's own surface, through the real `mouseDown` entry
+    /// A click on the card's own surface, through the real `mouseDown` entry
     /// point AppKit calls when no nested button was hit.
     func debugSelectByClick() {
-        let point = convert(NSPoint(x: bounds.maxX - 4, y: bounds.midY), to: nil)
+        let point = convert(NSPoint(x: bounds.midX, y: bounds.midY), to: nil)
         guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
                                              timestamp: 0, windowNumber: window?.windowNumber ?? 0,
                                              context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
@@ -1301,47 +1297,162 @@ final class NotificationBridgeRowView: HoverHighlightView, NotificationBridgeIte
     #endif
 }
 
-/// The empty state: a check in the good hue and two sentences.
-final class NotificationBridgeEmptyView: NSView, NotificationBridgeThemed {
-    private let tile = IconTileView(size: 46, cornerRadius: 14)
-    private let titleLabel = NSTextField(labelWithString: "You\u{2019}re all caught up")
-    private let bodyLabel = NSTextField(labelWithString: "Nothing needs you right now.")
+/// One row of the Snoozed list: what it is, when it comes back, and a way to
+/// bring it back now.
+final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
+    let entryID: String
+    let unsnoozeButton = HelmButton(title: "Unsnooze", variant: .secondary, size: .regular)
+    var onUnsnooze: (() -> Void)?
 
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        tile.configure(symbol: "checkmark", tint: .good, pointSize: 20)
-        for label in [titleLabel, bodyLabel] {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.alignment = .center
-        }
-        let stack = NSStackView(views: [tile, titleLabel, bodyLabel])
-        stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = HelmMetrics.s1
-        stack.setCustomSpacing(12, after: tile)
-        stack.edgeInsets = NSEdgeInsets(top: 28, left: 0, bottom: 26, right: 0)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+    private let entry: AppNotification
+    private let tile = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: HelmMetrics.dLogoDot)
+    private let titleLabel: NSTextField
+    private let returnLabel: NSTextField
+
+    init(entry: AppNotification, theme: HelmTheme, width: CGFloat, returnText: String) {
+        self.entry = entry
+        self.entryID = entry.id
+        let pad = NotificationBridgeMetrics.cardPadding
+        unsnoozeButton.followsTextScale = true
+        let textWidth = width - 2 * pad - HelmMetrics.tileSmall - 2 * HelmMetrics.s3
+            - ceil(unsnoozeButton.fittingSize.width)
+        titleLabel = bridgeWrappingLabel(entry.title, width: textWidth)
+        returnLabel = bridgeWrappingLabel(returnText, width: textWidth)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        tile.configure(symbol: NotificationRowPresentation(for: entry).icon, tint: entry.tint, pointSize: 12)
+        unsnoozeButton.translatesAutoresizingMaskIntoConstraints = false
+        unsnoozeButton.setContentHuggingPriority(.required, for: .horizontal)
+        unsnoozeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        unsnoozeButton.accessibilityLabelOverride = "Unsnooze \(entry.title)"
+        unsnoozeButton.target = self
+        unsnoozeButton.action = #selector(unsnoozeClicked)
+
+        let text = NSStackView(views: [titleLabel, returnLabel])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = HelmMetrics.s0
+        text.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tile)
+        addSubview(text)
+        addSubview(unsnoozeButton)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            tile.topAnchor.constraint(equalTo: text.topAnchor),
+            text.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
+            text.widthAnchor.constraint(equalToConstant: max(40, textWidth)),
+            text.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            unsnoozeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            unsnoozeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
-        setAccessibilityLabel("You\u{2019}re all caught up. Nothing needs you right now.")
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Snoozed, \(entry.title), \(returnText)")
+        applyTheme(theme)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    @objc private func unsnoozeClicked() { onUnsnooze?() }
+
+    func applyTheme(_ theme: HelmTheme) {
+        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: NotificationBridgeMetrics.cardRadius,
+                                  daylightRadius: NotificationBridgeMetrics.cardRadius)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        titleLabel.font = .systemFont(ofSize: HelmType.scaled(14), weight: .medium)
+        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        returnLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
+        returnLabel.textColor = HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: surface, theme: theme)
+        tile.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugReturnText: String { returnLabel.stringValue }
+    #endif
+}
+
+/// Under the Snoozed list: which sources are muted, and where that is
+/// changed. Mutes are a setting, so this panel lists them and leaves them
+/// alone (F3); un-snoozing never un-mutes.
+final class NotificationMutedNote: NSView, NotificationBridgeThemed {
+    let text: String
+    private let label: NSTextField
+
+    init(sources: [String], theme: HelmTheme, width: CGFloat) {
+        text = "Muted: \(sources.joined(separator: ", ")). Change this in \(PlaceName.of(.settings)) \u{203A} Notifications."
+        label = bridgeWrappingLabel(text, width: width)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+        applyTheme(theme)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     func applyTheme(_ theme: HelmTheme) {
+        label.font = HelmType.caption()
+        label.textColor = HelmContrast.legible(HelmTheme.mutedInk(theme), over: HelmTheme.sidePanelFill(theme))
+    }
+}
+
+/// An empty list: a tile and two sentences.
+final class NotificationBridgeEmptyView: NSView, NotificationBridgeThemed {
+    private let tile = IconTileView(size: 46, cornerRadius: 14)
+    private let titleLabel: NSTextField
+    private let bodyLabel: NSTextField
+
+    init(title: String, body: String, symbol: String, tint: HelmTint) {
+        titleLabel = NSTextField(labelWithString: title)
+        bodyLabel = NSTextField(wrappingLabelWithString: body)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        tile.configure(symbol: symbol, tint: tint, pointSize: 20)
+        for label in [titleLabel, bodyLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.alignment = .center
+            label.isSelectable = false
+        }
+        let stack = NSStackView(views: [tile, titleLabel, bodyLabel])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = HelmMetrics.s1
+        stack.setCustomSpacing(12, after: tile)
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 0, bottom: 16, right: 0)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bodyLabel.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+        ])
+        bodyLabel.preferredMaxLayoutWidth = NotificationBridgePanelViewController.width - 4 * NotificationBridgeMetrics.sideInset
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("\(title). \(body)")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    func applyTheme(_ theme: HelmTheme) {
+        let ground = HelmTheme.sidePanelFill(theme)
         tile.applyTheme(theme)
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(18), weight: .bold)
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        titleLabel.textColor = HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: ground)
         bodyLabel.font = HelmType.body()
-        bodyLabel.textColor = HelmTheme.mutedInk(theme)
+        bodyLabel.textColor = HelmContrast.legible(HelmTheme.mutedInk(theme), over: ground)
     }
 
     #if FM_SELFTESTS

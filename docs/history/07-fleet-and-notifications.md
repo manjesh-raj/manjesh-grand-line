@@ -1574,3 +1574,64 @@ The board and the scout's before renders live in the firstmate task `grandline-n
 - `NotificationBridgePanelSelfTest` (window-backed) covers the sections, buttons at rest, wrapping, the Larger scale, keyboard, VoiceOver, hit testing, header and footer, snooze presets, the empty state, every theme and the sidebar-only wiring.
 - `GrandLineNotificationCenterSelfTest` covers persistent mute, the focus hold, the section order and the preset dates, in CI's blocking lane.
 - Each was confirmed to fail with its fix reverted: titles truncating, actions hidden at rest, the ordering rule, the sidebar back on the classic panel, the glyph snoozing directly, a dropped subtitle, and the mute and hold not persisted or not wired.
+
+## Triage cards replace the Bridge panel (`fm/grandline-notification-ui-designs-scout-1793150000`)
+
+The captain said the Bridge popover did not feel great, and that its buttons and snooze were in the wrong places.
+A design scout drew four options on a Lavish board, and the captain picked option D, "Triage cards".
+The board and the scout report live in the firstmate task `grandline-notification-ui-designs-scout-1793150000`.
+
+### What the scout found in the Bridge panel
+
+- **The snooze was a bare moon glyph** after the primary pill and the "Show N" link, and it opened a second row of preset buttons inline.
+- **A long primary label evicted the snooze.**
+  The action line was a stack in a fixed-width text column (about 249pt) with no width of its own.
+  "Open Setup › GitHub sync" plus "Show 3" needed about 255pt, so the captain's screenshot showed the forks row with no snooze at all.
+- **A snooze and the read dots did not survive a relaunch**, because both lived in memory only.
+  "Next week" meant "until the next quit".
+- **The footer's Restore un-muted every source**, including mutes set in Settings > Notifications, because `restoreHidden()` clears both.
+- **The service-health detail was cut mid-word** after printing a full absolute path (`shortDetail(limit: 90)`), and that row had no icon of its own.
+- **"Up to date" sat beside four open items**, and "Open Home" was the panel's one filled button.
+
+### What shipped
+
+- **One card per item** on the side-panel step of the ground.
+  The top line holds the tile, the source as a kicker, the unread dot, the age, and Hide (informational only).
+  The title wraps, and the detail clamps to two lines with the whole text in the tooltip and the VoiceOver label.
+  The footer bar holds the item's action, "Show N", and a labelled Snooze at the right.
+  Action-needed cards come first with an accent edge.
+- **Snooze is a native menu** of the existing presets, each drawn with the time it resolves to.
+  The menu also offers "Hide until it changes" (the store's long-unused `dismiss`) and "Mute <source>".
+- **An Inbox and Snoozed segment.**
+  The Snoozed list shows when each item comes back and has its own Unsnooze, and it names the muted sources and where to change them.
+- **F2: snooze and read state persist** (`fm.notifications.snoozedUntil`, `fm.notifications.readDetail`).
+  Expired snoozes and read marks older than 30 days are dropped on load and written back, and the read map is capped at 400.
+- **F3: `unsnooze(id:)` and `unsnoozeAll()` leave mutes alone.**
+  `restoreHidden()` keeps its old meaning for the classic panel only, which is frozen with the floating bar.
+- **F4:** `shortDetail` turns the home directory into `~`, keeps a deep path's last two segments, and cuts on a word.
+- **F5:** `service-failing.*` and `persistence-failure` have their own icons.
+- **F6: nothing can be pushed off a card's footer.**
+  The bar is pinned to the card's width, the snooze collapses to its glyph when its label would not fit, and the primary is the one control allowed to shrink.
+- **F7:** the footer shows a toast or the focus hold, or nothing, and "Open Home" is quiet.
+- **F8:** each card carries VoiceOver custom actions (the primary, Snooze, Mark as read, Hide, Mute).
+- **F9:** the tool, fork and Vault fallbacks say "Open " plus `PlaceName.short`, not the breadcrumb.
+- **The list cap rose from 520pt to 600pt (scaled)**, so the captain's four items (584pt as cards) fit without scrolling.
+  It also gives way to the screen's visible height, because a panel taller than the room below the bell flips above it (`HelmBarPanel`).
+  Past six cards, informational cards drop their detail line.
+
+### Keyboard
+
+↑ ↓ select a card, → ← expand, Return runs the action, S opens the snooze menu, Delete hides an informational card, and ⌘[ ⌘] switch the segment.
+The old `1`-`4` preset keys went with the inline preset row, because the menu takes arrows and Return itself.
+
+### Verification
+
+- `NotificationBridgePanelSelfTest` (window-backed) was rewritten for the cards.
+  It covers order and edges, buttons at rest, the snooze staying inside its card, wrapping and clamping, the Larger scale, keyboard, VoiceOver, hit testing, header and footer, the snooze menu and Snoozed list, empty states, many items, and every palette including the app themes.
+- `GrandLineNotificationCenterSelfTest` (CI's blocking lane) covers persistence, pruning on load, `snoozedEntries`, unsnooze against mutes, `shortDetail`, the snooze time strings and the F9 label.
+- Confirmed to fail with each fix reverted: the snooze not persisted, `unsnoozeAll` clearing mutes, no path shortening, the breadcrumb label, the panel's Unsnooze going through `restoreHidden`, and the snooze collapse disabled.
+- **Not independently provable:** the primary's lowered compression resistance.
+  With it removed, AppKit's own conflict resolution squeezes the primary anyway and logs nothing, so no check can tell the two apart.
+  It stays because it makes that outcome a stated priority rather than a solver tie-break.
+- An off-screen render of the panel (the captain's four items, expanded, Snoozed and many items, in Graphite, Graphite Dark, Daylight and Dusk) was compared against the board's option D mock.
+  It was a scratch hook that was removed before commit.

@@ -30,6 +30,8 @@ final class AppSettings {
         static let notifyOnNeedsDecision = "fm.notifyOnNeedsDecision"
         static let notificationMutedSources = "fm.notifications.mutedSources"
         static let notificationQuietWhileFocusing = "fm.notifications.quietWhileFocusing"
+        static let notificationSnoozedUntil = "fm.notifications.snoozedUntil"
+        static let notificationReadDetail = "fm.notifications.readDetail"
         static let fmHome = "fm.fmHome"
         static let dictationShortcut = "fm.dictationShortcut"
         static let quickCaptureShortcut = "fm.quickCaptureShortcut"
@@ -161,6 +163,49 @@ final class AppSettings {
                 defaults.removeObject(forKey: Keys.notificationMutedSources)
             } else {
                 defaults.set(newValue.sorted(), forKey: Keys.notificationMutedSources)
+            }
+        }
+    }
+
+    /// Each snoozed notification id and when it comes back. A snooze used to
+    /// live in memory only, so "Next week" really meant "until the next
+    /// quit"; the triage-card redesign (F2) persists it here. Expired entries
+    /// are dropped by the store when it loads, not here.
+    var notificationSnoozedUntil: [String: Date] {
+        get { defaults.dictionary(forKey: Keys.notificationSnoozedUntil) as? [String: Date] ?? [:] }
+        set {
+            if newValue.isEmpty {
+                defaults.removeObject(forKey: Keys.notificationSnoozedUntil)
+            } else {
+                defaults.set(newValue, forKey: Keys.notificationSnoozedUntil)
+            }
+        }
+    }
+
+    /// Each read notification id, the detail text it was read with, and
+    /// when. The store keys read state by the exact subtext, so the text is
+    /// what matters; the date is only there so the store can prune entries
+    /// for ids that never came back. Stored as plain property-list
+    /// dictionaries, and a malformed entry is skipped rather than failing
+    /// the whole map.
+    var notificationReadDetail: [String: (detail: String, at: Date)] {
+        get {
+            let raw = defaults.dictionary(forKey: Keys.notificationReadDetail) ?? [:]
+            var result: [String: (detail: String, at: Date)] = [:]
+            for (id, value) in raw {
+                guard let record = value as? [String: Any],
+                      let detail = record["detail"] as? String,
+                      let at = record["at"] as? Date else { continue }
+                result[id] = (detail, at)
+            }
+            return result
+        }
+        set {
+            if newValue.isEmpty {
+                defaults.removeObject(forKey: Keys.notificationReadDetail)
+            } else {
+                defaults.set(newValue.mapValues { ["detail": $0.detail, "at": $0.at] as [String: Any] },
+                             forKey: Keys.notificationReadDetail)
             }
         }
     }
