@@ -269,6 +269,31 @@ enum MainSplitShellSelfTest {
 
     // MARK: 2 - the window keeps its size
 
+    /// The narrowest window that keeps the sidebar beside the showing page,
+    /// re-measured until the column floor stops moving under it.
+    ///
+    /// R4-PROC-01: "overview at 998pt: the sidebar is collapsed", twice in 22
+    /// `main` runs. A traced replay on CI showed the floor includes a legacy
+    /// scroller's track (760pt + 15 for Overview, so 1013pt), and both
+    /// failures measured 998 - the same floor without the track. CI's
+    /// runner changes `NSScroller.preferredScrollerStyle` after launch (the
+    /// same flip `HomeCanvasController`'s clip observer records), and the
+    /// shell re-fits the panes on that notification. So the floor was read
+    /// under overlay scrollers, the style turned legacy during the resize's
+    /// settle, and the shell rightly stepped the sidebar aside at a width
+    /// that no longer had room. Waiting for the floor to hold, rather than
+    /// trusting one reading, is the check measuring what it means to.
+    private static func narrowestWidthKeepingSidebar(_ shell: MainSplitShellController, _ window: NSWindow) -> CGFloat {
+        var keep = shell.debugNarrowestWidthKeepingSidebar.rounded(.up) + 1
+        for _ in 0..<3 {
+            resize(window, width: keep, shell)
+            let now = shell.debugNarrowestWidthKeepingSidebar.rounded(.up) + 1
+            if now == keep { break }
+            keep = now
+        }
+        return keep
+    }
+
     private static func checkNoPageGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         let height = window.frame.height
         func holds(_ width: CGFloat, _ what: String) {
@@ -293,7 +318,7 @@ enum MainSplitShellSelfTest {
             resize(window, width: 1512, shell)
             shell.workspace.navigator.show(destination)
             settle(shell)
-            let keep = shell.debugNarrowestWidthKeepingSidebar.rounded(.up) + 1
+            let keep = narrowestWidthKeepingSidebar(shell, window)
             for (width, sidebarShown) in [(keep, true), (keep - 3, false)] {
                 resize(window, width: width, shell)
                 check(shell.debugSidebarIsCollapsed == !sidebarShown,

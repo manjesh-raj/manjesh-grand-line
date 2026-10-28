@@ -145,7 +145,8 @@ What this branch adds is the measurement: every recorded run now carries the lan
 ### R4-PROC-01: the Home rows flake, and the re-run workflow that looked like it re-ran a test failure
 
 `MainSplitShellSelfTest` flaked 5 of the last 20 `main` runs.
-Three were the toolbar-save check #549 already fixed and one was a check #549 replaced.
+Three were the toolbar-save check #549 already fixed.
+One was "overview at 998pt: the sidebar is collapsed", covered below.
 The fifth, on #551's push, was `checkHomeRowsFillBesideTheSidebar`: "row 1 (3 cards) ends at 1217.0pt of 952.0pt".
 The row had the sidebar-open width and its cards the sidebar-away width.
 Opening the sidebar narrows Home's clip view without resizing the window, and Home reflows on the next main-queue turn after that.
@@ -159,6 +160,13 @@ How that was established rather than guessed:
 The re-run workflow had not re-run a test failure: the run for #551 has one attempt, and the workflow's log says it declined.
 It looked as if it had, because its single job started for every failed `main` run and finished green.
 It is two jobs now, and the `rerun` job only starts when `CI infrastructure` failed.
+The 998pt flake recurred on this PR's own first CI run, so it was traced too.
+`checkNoPageGrowsTheWindow` resizes to the narrowest width that keeps the sidebar, which includes a legacy scroller's track while the system draws them.
+A traced replay on CI measured 1013pt for Overview, and both failures had measured 998pt: the same sum without the track.
+CI's runner changes `NSScroller.preferredScrollerStyle` after launch, the shell re-fits on that notification, and the sidebar correctly stepped aside at a width that no longer had room.
+The check now re-measures after the resize until the floor holds.
+A simulated flip (the floor raised by a track and the notification posted during the resize) fails the old check with the same message and passes the new one.
+
 The flake rate per suite is recorded in `native/MANUAL-CHECKS.md` section 21.
 
 ### R4-PROC-03: web bundle inputs are checked in CI

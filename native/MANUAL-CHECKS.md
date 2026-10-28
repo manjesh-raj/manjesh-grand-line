@@ -504,7 +504,7 @@ Measured from the suite history that `main`'s run for #551 (run 40642363998,
 
 | Suite | Lane | Flaky | Failed | Which check, and where it stands |
 | --- | --- | --- | --- | --- |
-| `FM_RUN_MAIN_SPLIT_SHELL_TESTS` | windowed | 5 of 20 | 0 | Three were "taking Recents off saved nil", fixed in #549 by waiting for the save rather than a 50 ms drain, with none since. One was "overview at 998pt: the sidebar is collapsed", a check #549 replaced. One was "Home's own cards at 1280pt, sidebar open" (#551's push), fixed by R4-PROC-01 - see below. |
+| `FM_RUN_MAIN_SPLIT_SHELL_TESTS` | windowed | 5 of 20 | 0 | Three were "taking Recents off saved nil", fixed in #549 by waiting for the save rather than a 50 ms drain, with none since. One was "overview at 998pt: the sidebar is collapsed" (and it recurred on this PR's own first run), fixed by R4-PROC-01. One was "Home's own cards at 1280pt, sidebar open" (#551's push), also fixed by R4-PROC-01. Both are described below. |
 | `FM_RUN_REVIEW2_UX_TESTS` | windowed | 2 of 20 | 1 | "a narrowed sidebar did not grow back to 264 with the window (247.0pt)" every time, fixed by #547 (`holdDividerAtSidebarWidth`, merged 2026-10-27 11:37); none since. |
 | `FM_RUN_SIDEBAR_REDESIGNS_TESTS` | windowed | 1 of 20 | 0 | Once, 2026-10-26: the Setup and Updates summaries read "—" / "In sync" for "Synced" / "Paused", a summary read before its async load. Not recurred in the 15 runs since; unexplained, so watch it. |
 
@@ -521,6 +521,22 @@ The case now waits for `HomeCanvasController.gridIsCurrentForTests` (the grid
 was last built for the clip view's current width) before it measures, and
 fails by name if that never happens within two seconds. The injected no-turn
 variant passes with the wait in place.
+
+The 998pt flake, also traced on CI rather than guessed. The check measures the
+narrowest window that keeps the sidebar (the page's floor, plus a legacy
+scroller's track while the system draws them, plus the sidebar), resizes to
+it, and expects the sidebar to stay. A traced replay on CI measured 1013pt for
+Overview (760 + 15 + 236 + 1 + 1). Both failures measured 998pt, which is the
+same sum without the scroller track. CI's runner changes
+`NSScroller.preferredScrollerStyle` after launch, and the shell re-fits its
+panes on that notification. So the floor was read under overlay scrollers,
+the style turned legacy during the resize's settle, and the shell correctly
+stepped the sidebar aside at a width that no longer had room. The check now
+re-measures after the resize until the floor holds
+(`narrowestWidthKeepingSidebar`). Simulating the flip locally (raising the
+floor by a track and posting the notification during the resize) fails the
+old check with "overview at 1006pt: the sidebar is collapsed" and passes the
+new one.
 
 To refresh it, download the newest `main` run's histories and print each
 lane's summary:
