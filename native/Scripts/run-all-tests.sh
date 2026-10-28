@@ -367,6 +367,7 @@ NEEDS_SESSION=(
   # Stage 3 of the modular-shell migration: the sidebar shell in a real
   # window - its toolbar, its split panes and their widths.
   "FM_RUN_MAIN_SPLIT_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
+  "FM_RUN_WORKSPACE_TOOLBAR_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # The later page work: the redesigned pages in a real sidebar shell.
   "FM_RUN_PAGE_REDESIGNS_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
   # The Termius-style Hosts and Keys cards and side-panel editing.

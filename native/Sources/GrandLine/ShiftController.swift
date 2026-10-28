@@ -55,6 +55,14 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let projectsPanel = HelmCard()
     /// R2-UX-07: the dashboard's sections a start-here state stands in for.
     private var startHereReplaces: [NSView] = []
+    /// The row Follow-ups sits in under the board, and the Projects section.
+    private var followUpsRow: NSView?
+    private var projectsSectionView: NSView?
+    /// R4-UI-09: the sidebar layout's Follow-ups lane on the board.
+    let followUpLane = ShiftFollowUpLaneView()
+    /// Whether four lanes fit the board at the page's width now
+    /// (`followUpLaneMinimumBoardWidth`).
+    private var boardFitsFollowUpLane = true
     /// The app's one page-level empty state, in the shape every module's
     /// takes: its own artwork, one sentence, and one example to start from.
     /// New task is the toolbar's far-right primary already.
@@ -319,6 +327,15 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// week that looks like this" is the thing the tile is actually for. The
     /// headline keeps the tiles' own typography so the two read as one page.
     private let reviewFocusPanel = HelmCard()
+    /// R4-UI-09: next week's agenda, under Time on tasks and Pushed back
+    /// repeatedly in the sidebar layout, where the page's lower half was
+    /// blank at 1512x950.
+    private let reviewAgendaPanel = HelmCard()
+    private let reviewAgendaStack = NSStackView()
+    private let reviewAgendaList = HelmFlatList()
+    private let reviewAgendaHeader = NSTextField(labelWithString: "Coming up next week")
+    private let reviewAgendaCount = HelmCountBadge()
+    private var reviewAgendaListWidth: NSLayoutConstraint?
     private let reviewFocusHeader = NSTextField(labelWithString: "Time on tasks")
     private let reviewFocusHeadline = NSTextField(labelWithString: "")
     private let reviewFocusCaption = NSTextField(labelWithString: "")
@@ -471,6 +488,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         return button
     }()
     private let projectPopup = HelmPopUpButton()
+    /// R4-UI-08: the project and sort pop-ups as one button, while the filter
+    /// row is too narrow for both (`fitFilterRow`). Its menu drives the two
+    /// pop-ups' own selection and handlers, so the choice has one path.
+    private lazy var filterMenuButton = HelmButton(title: "Filter", variant: .secondary, size: .small,
+                                                   symbol: "line.3.horizontal.decrease", target: self,
+                                                   action: #selector(filterMenuClicked))
+    private var filterRowCollapsed = false
+    /// Whether the Follow-ups jump belongs in the row: not while Follow-ups
+    /// is a lane on the board, which is on screen already (R4-UI-09).
+    private var followUpsJumpWanted = true
     private var projectPopupSignature: String?
     /// The List tab: every task the filters keep, as one table.
     private lazy var tasksTable: HelmDataTable = {
@@ -622,6 +649,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // page than confined to half of it.
         dashboardContainer.addArrangedSubview(projectsSection)
         startHereReplaces = [tasksRow, projectsSection]
+        followUpsRow = tasksRow
+        projectsSectionView = projectsSection
         // The project *detail* is also a direct child of the dashboard: it
         // takes the whole page when open (`applyProjectDetailFullPage`), so
         // nesting it inside any column would cap it at that column's width.
@@ -1948,8 +1977,87 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
                 }
             } else {
                 for view in startHereReplaces { view.isHidden = false }
+                // R4-UI-09: on Board, Follow-ups is a lane on the board while
+                // four lanes fit, and Projects is the filter row's pop-up. The
+                // List tab keeps both under its table.
+                let board = tasksView == .board && !isProjectDetailFullPage && !failed
+                let laneOnBoard = board && boardFitsFollowUpLane
+                boardView.trailingLaneShown = laneOnBoard
+                followUpsRow?.isHidden = laneOnBoard
+                projectsSectionView?.isHidden = board
+                followUpsJumpWanted = !laneOnBoard
+                fitFilterRow()
             }
         }
+    }
+
+    /// R4-UI-09: below this, four lanes are each under the ~200pt a card's
+    /// title and its project, due date and priority need on one line, so
+    /// Follow-ups goes back under the board rather than squeezing every lane.
+    static let followUpLaneMinimumBoardWidth: CGFloat = 4 * 200 + 3 * HelmMetrics.s3
+
+    /// The page's content column changed width: decide again whether
+    /// Follow-ups fits on the board and whether the filter row collapses.
+    ///
+    /// From the column's own frame change, not `viewDidLayout`: this page's
+    /// view lays out before the scroll document under it does, so its
+    /// `viewDidLayout` read the width the column had *before* a resize -
+    /// measured in the tour lab, 1512 to 1100 left Follow-ups on a 707pt board.
+    @objc private func contentColumnDidResize() {
+        guard drawsSidebarLayout, contentStack.bounds.width > 0 else { return }
+        let fits = contentStack.bounds.width >= Self.followUpLaneMinimumBoardWidth
+        if fits != boardFitsFollowUpLane {
+            boardFitsFollowUpLane = fits
+            applyTasksViewVisibility()
+        }
+        fitFilterRow()
+    }
+
+    /// The lane's pending follow-ups: the board's project filter applies, and
+    /// the soonest due comes first, then those with no date.
+    private func followUpLaneItems() -> [ShiftFollowUp] {
+        store.followUps.filter { $0.status == .pending && (projectFilter == nil || $0.projectID == projectFilter) }
+            .sorted { a, b in
+                switch (a.followUpAt, b.followUpAt) {
+                case let (x?, y?) where x != y: return x < y
+                case (nil, _?): return false
+                case (_?, nil): return true
+                default: return a.title.localizedStandardCompare(b.title) == .orderedAscending
+                }
+            }
+    }
+
+    #if FM_SELFTESTS
+    /// R4-UI-08 and R4-UI-09, as drawn.
+    var debugFollowUpLaneOnBoard: Bool { boardView.trailingLaneShown && !boardSection.isHidden }
+    var debugFollowUpsRowHidden: Bool { followUpsRow?.isHidden ?? true }
+    var debugProjectsSectionHidden: Bool { projectsSectionView?.isHidden ?? true }
+    var debugFollowUpsJumpHidden: Bool { followUpsJump.isHidden }
+    var debugFilterRowCollapsed: Bool { !filterMenuButton.isHidden }
+    var debugFilterRow: NSStackView { workspaceFilterRow }
+    var debugFilterMenuTitles: [String] { filterMenu().items.map(\.title) }
+    var debugAgendaRowCount: Int { reviewAgendaList.superview == nil ? 0 : reviewAgendaList.rows.count }
+    var debugAgendaPanelShown: Bool { reviewAgendaPanel.superview != nil && !reviewAgendaPanel.isHiddenOrHasHiddenAncestor }
+    #endif
+
+    /// The lane card's menu: the List tab's row verbs for a pending follow-up.
+    private func followUpLaneMenu(id: String) -> NSMenu? {
+        guard let item = store.followUps.first(where: { $0.id == id }) else { return nil }
+        let menu = NSMenu()
+        func add(_ title: String, _ action: @escaping () -> Void) {
+            menu.addItem(ShiftLaneMenuItem(title: title, action: action))
+        }
+        add("Open Follow-up\u{2026}") { [weak self] in self?.presentFollowUpEditor(for: item) }
+        add("Mark Done") { [weak self] in self?.toggleFollowUpDone(id: id) }
+        menu.addItem(.separator())
+        for (title, option) in [("Snooze to Tomorrow", ShiftSnoozeOption.tomorrow),
+                                ("Snooze to Next Week", .nextWeek),
+                                ("Snooze Until\u{2026}", .custom)] {
+            add(title) { [weak self] in self?.snoozeFollowUp(item, option: option) }
+        }
+        menu.addItem(.separator())
+        add("Delete Follow-up\u{2026}") { [weak self] in self?.confirmDeleteFollowUp(id: id) }
+        return menu
     }
 
     /// The `tasksRow` column holding the flat task panel - see
@@ -2640,6 +2748,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         doneWindowNote.textColor = muted
         sidebar.applyTheme(theme)
         boardView.applyTheme(theme)
+        followUpLane.applyTheme(theme)
 
         reviewGreeting.textColor = ink
         reviewSubtitle.textColor = muted
@@ -2648,6 +2757,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         reviewStatsCard.applyTheme(theme)
         reviewPushedBackList.applyTheme(theme)
         reviewPushedBackPanel.applyTheme(theme)
+        reviewAgendaPanel.applyTheme(theme)
         reviewFocusPanel.applyTheme(theme)
         reviewFocusHeader.textColor = ink
         reviewFocusHeadline.textColor = ink
@@ -2802,6 +2912,16 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         contentStack.insertArrangedSubview(workspaceFilterRow, at: 0)
         workspaceFilterRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         boardView.adoptWorkspaceStyle()
+        boardView.setTrailingLane(followUpLane)
+        contentStack.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(contentColumnDidResize),
+                                               name: NSView.frameDidChangeNotification, object: contentStack)
+        followUpLane.onOpen = { [weak self] id in
+            guard let self, let item = self.store.followUps.first(where: { $0.id == id }) else { return }
+            self.presentFollowUpEditor(for: item)
+        }
+        followUpLane.onAdd = { [weak self] in self?.newFollowUpClicked() }
+        followUpLane.menuFor = { [weak self] id in self?.followUpLaneMenu(id: id) }
         if let index = dashboardContainer.arrangedSubviews.firstIndex(of: boardSection) {
             dashboardContainer.insertArrangedSubview(tasksTable.card, at: index + 1)
         } else {
@@ -2868,7 +2988,20 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         spacerWidth.priority = .defaultLow
         spacerWidth.isActive = true
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        for view in [scopeFilter, followUpsJump, projectPopup, spacer, sortPopup, doneWindowNote] as [NSView] {
+        // R4-UI-08: the scope tabs sit at their own width, and the spacer -
+        // not the tabs - takes the row's slack (gotcha (10)). Both were at
+        // 250 and AppKit gave the slack to the tabs, measured at 1512
+        // stretching them from 487pt to 836pt of mostly empty strip. A real
+        // `width == 0` preference one step above the spacer's, since the tabs
+        // are a stack-backed view and a hugging priority is a no-op on one
+        // (gotcha (12)).
+        let tabsNarrow = scopeFilter.widthAnchor.constraint(equalToConstant: 0)
+        tabsNarrow.priority = HelmDaylightPriority.columnHug
+        tabsNarrow.isActive = true
+        filterMenuButton.toolTip = "Show one project's tasks, or change the sort"
+        filterMenuButton.setContentHuggingPriority(.required, for: .horizontal)
+        filterMenuButton.isHidden = true
+        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup, doneWindowNote] as [NSView] {
             workspaceFilterRow.addArrangedSubview(view)
         }
         workspaceFilterRow.orientation = .horizontal
@@ -2907,9 +3040,97 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         }
         let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
         projectPopup.selectItem(at: selected)
-        doneWindowNote.isHidden = tasksView != .board
+        doneWindowNote.isHidden = tasksView != .board || filterRowCollapsed
+        refreshFilterMenuTitle()
+        let projectsByID = Dictionary(store.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        followUpLane.setFollowUps(followUpLaneItems(), projects: projectsByID, theme: theme)
         tasksTable.setRows(taskTableRows())
         followUpsTable.setRows(followUpTableRows())
+    }
+
+    /// R4-UI-08: at 960pt the filter row ran past the page's right edge and
+    /// cut "Due date" in half with nothing to say there was more. When the
+    /// row's controls at their own widths do not fit, the project and sort
+    /// pop-ups collapse into one Filter button, and the Follow-ups jump and
+    /// the Done window's note move into its menu. Measured from the expanded controls' fitting
+    /// widths whichever form shows, so it cannot flip back and forth.
+    fileprivate func fitFilterRow() {
+        let available = workspaceFilterRow.bounds.width
+        guard drawsSidebarLayout, available > 0 else { return }
+        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, doneWindowNote]
+            .filter { view in
+                view === projectPopup || view === sortPopup || view === scopeFilter
+                    || (view === followUpsJump && followUpsJumpWanted)
+                    || (view === doneWindowNote && tasksView == .board)
+            }
+        let needed = expanded.reduce(0) { $0 + $1.fittingSize.width }
+            + workspaceFilterRow.spacing * CGFloat(max(0, expanded.count - 1))
+        let collapse = needed > available
+        filterRowCollapsed = collapse
+        // Only a real change is written: a visibility change schedules
+        // another layout pass, and this runs from `viewDidLayout`.
+        let wanted: [(NSView, Bool)] = [
+            (projectPopup, collapse),
+            (sortPopup, collapse || topLevelView != .dashboard),
+            (filterMenuButton, !collapse),
+            (followUpsJump, collapse || !followUpsJumpWanted),
+            (doneWindowNote, collapse || tasksView != .board || topLevelView != .dashboard),
+        ]
+        for (view, hidden) in wanted where view.isHidden != hidden { view.isHidden = hidden }
+    }
+
+    private func refreshFilterMenuTitle() {
+        filterMenuButton.title = projectFilter == nil ? "Filter" : "Filter \u{2002}1"
+        filterMenuButton.setAccessibilityLabel(projectFilter == nil ? "Filter" : "Filter, one project")
+    }
+
+    /// The collapsed row's menu: Project and Sort by, each item ticked as its
+    /// pop-up is, and the Done window's note when the board shows.
+    func filterMenu() -> NSMenu {
+        let menu = NSMenu()
+        func header(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        if followUpsJumpWanted {
+            menu.addItem(ShiftLaneMenuItem(title: followUpsJump.title.replacingOccurrences(of: "\u{2002}", with: " ")) {
+                [weak self] in self?.followUpsJumpClicked()
+            })
+            menu.addItem(.separator())
+        }
+        header("Project")
+        for index in 0..<projectPopup.numberOfItems {
+            guard let source = projectPopup.item(at: index) else { continue }
+            let item = ShiftLaneMenuItem(title: source.title) { [weak self] in
+                self?.projectPopup.selectItem(at: index)
+                self?.projectPopupChanged()
+            }
+            item.image = source.image
+            item.state = index == projectPopup.indexOfSelectedItem ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        header("Sort by")
+        for index in 0..<sortPopup.numberOfItems {
+            guard let source = sortPopup.item(at: index) else { continue }
+            let item = ShiftLaneMenuItem(title: source.title) { [weak self] in
+                self?.sortPopup.selectItem(at: index)
+                self?.sortChanged()
+            }
+            item.state = index == sortPopup.indexOfSelectedItem ? .on : .off
+            menu.addItem(item)
+        }
+        if tasksView == .board {
+            menu.addItem(.separator())
+            header(doneWindowNote.stringValue)
+        }
+        return menu
+    }
+
+    @objc private func filterMenuClicked() {
+        filterMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: filterMenuButton.bounds.height + 4),
+                           in: filterMenuButton)
     }
 
     @objc fileprivate func projectPopupChanged() {
@@ -3151,10 +3372,72 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         reviewLowerRow.spacing = HelmMetrics.s4
         reviewLowerRow.translatesAutoresizingMaskIntoConstraints = false
         weeklyReviewContainer.addArrangedSubview(reviewLowerRow)
+        // R4-UI-09: the next-week agenda across the foot, which the
+        // "Coming up next week" tile counts and nothing used to list.
+        let headerRow = sectionHeaderRow(iconSymbol: "calendar", tint: .info, label: reviewAgendaHeader)
+        headerRow.setActions([reviewAgendaCount])
+        reviewAgendaCount.toolTip = "Open tasks and pending follow-ups due next week"
+        reviewAgendaStack.orientation = .vertical
+        reviewAgendaStack.alignment = .leading
+        reviewAgendaStack.spacing = 0
+        reviewAgendaStack.translatesAutoresizingMaskIntoConstraints = false
+        reviewAgendaPanel.setHeader(headerRow)
+        reviewAgendaPanel.setBody(reviewAgendaStack)
+        reviewAgendaPanel.translatesAutoresizingMaskIntoConstraints = false
+        weeklyReviewContainer.addArrangedSubview(reviewAgendaPanel)
         NSLayoutConstraint.activate([
             reviewLowerRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
             reviewPushedBackPanel.widthAnchor.constraint(equalTo: reviewFocusPanel.widthAnchor, multiplier: 0.5),
+            reviewAgendaPanel.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor),
         ])
+    }
+
+    /// The agenda's rows: one per task or follow-up, the day it is due as
+    /// the kicker, and a click opens it, as a search result does.
+    private func renderReviewAgenda() {
+        let items = store.nextWeekAgenda()
+        reviewAgendaCount.text = "\(items.count)"
+        reviewAgendaCount.applyTheme(theme)
+        for v in reviewAgendaStack.arrangedSubviews {
+            reviewAgendaStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        guard !items.isEmpty else {
+            let empty = HelmEmptyState(symbol: "calendar", body: "Nothing is due next week.", size: .quiet)
+            empty.applyTheme(theme)
+            reviewAgendaStack.addArrangedSubview(empty)
+            empty.widthAnchor.constraint(equalTo: reviewAgendaStack.widthAnchor).isActive = true
+            return
+        }
+        reviewAgendaList.setRows(items.map(reviewAgendaRow), theme: theme)
+        reviewAgendaStack.addArrangedSubview(reviewAgendaList)
+        if reviewAgendaListWidth == nil {
+            reviewAgendaListWidth = reviewAgendaList.widthAnchor.constraint(equalTo: reviewAgendaStack.widthAnchor)
+        }
+        reviewAgendaListWidth?.isActive = true
+    }
+
+    static let agendaDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+        return formatter
+    }()
+
+    private func reviewAgendaRow(_ item: ShiftAgendaItem) -> NSView {
+        let project = item.projectID.flatMap { id in store.projects.first { $0.id == id }?.name }
+        var meta = item.kind == .task ? "Task" : "Follow-up"
+        if let project { meta += " \u{00B7} \(project)" }
+        let row = HelmAccentRow(hover: true, style: .flat)
+        row.configure(HelmAccentRow.Content(tint: item.kind == .task ? .info : .warn,
+                                            kicker: Self.agendaDayFormatter.string(from: item.due),
+                                            title: item.title, meta: meta), theme: theme)
+        row.onClick = { [weak self] in
+            switch item.kind {
+            case .task: self?.openTask(id: item.id)
+            case .followUp: self?.openFollowUp(id: item.id)
+            }
+        }
+        return row
     }
 
     /// The five figures, each from the store's own records.
@@ -3197,6 +3480,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         reviewPushedBackHeader.stringValue = "Pushed back repeatedly"
         reviewPushedBackCount.text = "\(summary.pushedBack.count)"
         reviewPushedBackCount.applyTheme(theme)
+        renderReviewAgenda()
         for card in reviewCards { card.applyTheme(theme) }
     }
 }

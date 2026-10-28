@@ -70,7 +70,16 @@ final class WorkspaceInspectorController: NSViewController {
     private var themeToken: ThemeObservation?
 
     static let noDetailsTitle = "No details for this page"
-    static let noDetailsBody = "This page has nothing to show here. Hosts and Poneglyph show the selected item's details."
+    /// R4-UI-07: the modules whose pages fill the inspector, by the names the
+    /// sidebar gives them (`ModuleTable`), not by an older page's title. It
+    /// read "Hosts and Poneglyph" beside a sidebar that says Connections and
+    /// Secrets, and left out Setup, whose Updates and GitHub sync fill it too.
+    static let modulesWithDetails: [WorkspaceModule] = [.connections, .secrets, .setup]
+    static var noDetailsBody: String {
+        let names = modulesWithDetails.map(\.title)
+        let list = names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        return "This page has nothing to show here. \(list) show the selected item's details."
+    }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 600))

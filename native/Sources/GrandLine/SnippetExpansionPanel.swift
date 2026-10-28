@@ -32,6 +32,11 @@
 // in the place Hosts' filter row takes on its tab. The strip's subtitle is the
 // name's tooltip, and the card's paragraph is still Grant access' tooltip, so
 // nothing either of them said is lost.
+//
+// R4-UI-09 (R2-UI-09): a tooltip is not where the reason for a permission
+// prompt belongs. While access is not granted, the inline row carries the
+// card's paragraph as a caption under it, so Grant access says why before it
+// is pressed. It goes once access is granted, with the button.
 
 import AppKit
 
@@ -71,6 +76,8 @@ final class SnippetExpansionPanel: NSView {
     /// around it.
     private let inlineToggle = HelmToggle()
     private let inlineTitle = NSTextField(labelWithString: "Expand triggers while I type")
+    /// `.inline`'s reason for Grant access, under the row while it shows.
+    private let inlineWhy = NSTextField(wrappingLabelWithString: "")
 
     private var statusOK = false
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -248,14 +255,38 @@ final class SnippetExpansionPanel: NSView {
         // Gotcha (10).
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        row.heightAnchor.constraint(greaterThanOrEqualToConstant: HelmButton.Size.small.minHeight).isActive = true
+
+        inlineWhy.stringValue = bodyLabel.stringValue
+        inlineWhy.font = HelmType.caption()
+        inlineWhy.translatesAutoresizingMaskIntoConstraints = false
+        inlineWhy.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // A hidden arranged subview leaves a vertical stack's layout, so the
+        // row is its one line once access is granted.
+        let lines = NSStackView(views: [row, inlineWhy])
+        lines.orientation = .vertical
+        lines.alignment = .leading
+        lines.spacing = HelmMetrics.s1
+        lines.translatesAutoresizingMaskIntoConstraints = false
+        lines.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(lines)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: HelmButton.Size.small.minHeight),
+            lines.leadingAnchor.constraint(equalTo: leadingAnchor),
+            lines.trailingAnchor.constraint(equalTo: trailingAnchor),
+            lines.topAnchor.constraint(equalTo: topAnchor),
+            lines.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.widthAnchor.constraint(equalTo: lines.widthAnchor),
         ])
+    }
+
+    /// Gotcha (22): the reason wraps at the panel's width, which the page
+    /// decides, never at the label's own.
+    override func layout() {
+        super.layout()
+        guard style == .inline, bounds.width > 0,
+              abs(inlineWhy.preferredMaxLayoutWidth - bounds.width) > 0.5 else { return }
+        inlineWhy.preferredMaxLayoutWidth = bounds.width
+        inlineWhy.invalidateIntrinsicContentSize()
     }
 
     @objc private func requestPermission() { onRequestPermission?() }
@@ -273,6 +304,7 @@ final class SnippetExpansionPanel: NSView {
         toggleRow.isOn = enabled
         inlineToggle.isOn = enabled
         grantButton.isHidden = trusted
+        inlineWhy.isHidden = trusted
         // GL-14: the four states read differently, and "off" is not drawn as
         // "granted but idle". The armed case is the only one that claims the
         // triggers will fire.
@@ -305,6 +337,7 @@ final class SnippetExpansionPanel: NSView {
         // deliberately not re-themed here.
         statusLabel.textColor = HelmTheme.mutedInk(theme)
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
+        inlineWhy.textColor = HelmTheme.mutedInk(theme)
         // A tint is safe as a fill and is not automatically safe as text
         // (audit §5.7), so the hue lands on the dot and the label stays
         // `mutedInk` - the same split `HostsWorkspacePanel` makes.
@@ -324,6 +357,14 @@ final class SnippetExpansionPanel: NSView {
     }
     var debugUsesACard: Bool { card.superview != nil }
     var debugGrantButtonIsHidden: Bool { grantButton.isHidden }
+    /// R4-UI-09: the reason shown beside Grant access, as drawn, or `nil`.
+    var debugGrantReason: String? {
+        switch style {
+        case .inline: return inlineWhy.isHidden || inlineWhy.superview == nil ? nil : inlineWhy.stringValue
+        case .card: return bodyLabel.isHidden ? nil : bodyLabel.stringValue
+        case .strip: return nil
+        }
+    }
     var debugStatusDotColor: CGColor? { statusDot.layer?.backgroundColor }
     #endif
 }

@@ -89,7 +89,7 @@ enum ConfigurableShortcut: Hashable {
     /// Where the binding works, said under an unchanged row.
     var whereItWorks: String {
         switch self {
-        case .terminal: return "Console, host pages and Tools"
+        case .terminal: return ShortcutsTable.terminalPlaces
         case .quickCapture: return "From any app, once Accessibility is granted"
         case .dictation: return "Hold to record, from any app"
         }
@@ -168,6 +168,15 @@ struct ShortcutRow: Equatable {
 
 enum ShortcutsTable {
 
+    /// R4-UI-07: where the terminal's own shortcuts work, by the sidebar's
+    /// module names (`PlaceName`, which reads `ModuleTable`). In the sidebar
+    /// layout a host's page is one of Console's sessions, so "host pages" named
+    /// a place the sidebar does not have. The floating bar keeps its wording.
+    static var terminalPlaces: String {
+        PlaceName.layout == .sidebar ? "\(PlaceName.of(.console)) and \(PlaceName.of(.tools))"
+            : "Console, host pages and Tools"
+    }
+
     /// What the page's filter tabs choose between.
     enum Filter: String, CaseIterable {
         case all, changed, conflicts
@@ -228,13 +237,13 @@ enum ShortcutsTable {
             rows.append(ShortcutRow(id: "fixed.\(meaning)", title: title(of: meaning), section: section,
                                     keys: KeyboardShortcutCatalog.keycaps(keyEquivalent: character, modifiers: modifiers),
                                     chords: [chord], kind: .fixed, menuAction: nil,
-                                    source: "Fixed \u{00B7} Console, host pages and Tools", isChanged: false))
+                                    source: "Fixed \u{00B7} \(Self.terminalPlaces)", isChanged: false))
         }
         let digits = (1...9).compactMap { chord(keyEquivalent: "\($0)", modifiers: [.command]) }
         rows.append(ShortcutRow(id: "fixed.modules", title: "Open a sidebar module, or this page's tab",
                                 section: section, keys: [HelmKeyHint.command, "1\u{2013}9"], chords: digits,
                                 kind: .fixed, menuAction: nil,
-                                source: "Fixed \u{00B7} the first nine sidebar modules; on Console, host pages and Tools, that page's tabs",
+                                source: "Fixed \u{00B7} the first nine sidebar modules; on \(Self.terminalPlaces), that page's tabs",
                                 isChanged: false))
         rows.append(ShortcutRow(id: "fixed.openFromAnywhere", title: "Open Grand Line from anywhere",
                                 section: "Global",

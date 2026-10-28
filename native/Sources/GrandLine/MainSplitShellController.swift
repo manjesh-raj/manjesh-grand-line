@@ -312,6 +312,8 @@ final class MainSplitShellController: WorkspaceShellController {
             guard let self, self.floorScale != ChromeTextScale.shared.scale else { return }
             self.floorScale = ChromeTextScale.shared.scale
             self.applyColumnFloor()
+            // R4-UI-01: so does the compact toolbar's breakpoint.
+            self.fitPanesToWindow()
         }
         // Home's subtitle is the date, so it turns over at midnight.
         dayChangeObserver = NotificationCenter.default.addObserver(
@@ -596,7 +598,7 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let window = view.window, sidebarItem != nil else { return }
         let width = window.contentRect(forFrameRect: window.frame).width
         guard width > 0 else { return }
-        toolbar.setCompact(width < WorkspaceToolbar.compactWidth)
+        toolbar.setCompact(width < WorkspaceToolbar.compactWidth(scale: ChromeTextScale.shared.scale))
         defer { toolbar.setSidebarShown(!sidebarItem.isCollapsed) }
         // R2-UX-10: a narrower window with the sidebar still showing - which
         // the per-page floors made the usual case at laptop widths - needs
@@ -964,6 +966,7 @@ final class MainSplitShellController: WorkspaceShellController {
             }
         }
         inspectorSource = controller as? WorkspaceInspectorSource
+        toolbar?.setPageHasInspectorContent(inspectorSource != nil)
     }
 
     /// ⌘⇧D: the sidebar is the whole map, so this opens it if it was

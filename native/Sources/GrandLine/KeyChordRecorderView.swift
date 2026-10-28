@@ -45,6 +45,16 @@
 // want. Recording two modifiers with no regular key still produces a usable
 // result (the *first* modifier pressed wins, and any later modifier addition
 // is silently dropped) rather than a broken one.
+//
+// ## What it draws (R4-UI-06)
+//
+// At rest, the chord as `HelmKeyHint` keycaps - the same caps the fixed rows
+// of Settings > Shortcuts draw - with a pencil at the trailing edge. The box
+// around them and the pencil are the edit affordance; the caps are the one
+// way a chord reads anywhere in that table. It used to print the chord as
+// monospaced text, so the table showed a chord two ways and a captain read
+// the editable rows and the fixed rows as two kinds of thing. While recording
+// it shows the prompt (or why a keystroke was refused) as text instead.
 
 import AppKit
 
@@ -60,7 +70,11 @@ final class KeyChordRecorderView: NSView {
         case command
     }
 
+    /// The prompt while recording, and a refusal's reason.
     private let label = NSTextField(labelWithString: "")
+    /// The chord's keycaps at rest, rebuilt when the chord changes.
+    private var keycaps: HelmKeyHint?
+    private let pencil = NSImageView()
     private let mode: Mode
     /// Set when a keystroke was captured but refused by `mode`, so the label
     /// can say what is wrong instead of appearing to have done nothing.
@@ -85,18 +99,38 @@ final class KeyChordRecorderView: NSView {
         layer?.cornerRadius = 7
         translatesAutoresizingMaskIntoConstraints = false
 
-        label.setScaledFont(ofSize: 12.5, weight: .medium, voice: .monospaced)
+        label.setScaledFont(ofSize: 12.5, weight: .medium)
         label.alignment = .center
+        label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(label)
+        pencil.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: HelmType.scaled(11), weight: .medium))
+        pencil.translatesAutoresizingMaskIntoConstraints = false
+        pencil.setAccessibilityElement(false)
+        addSubview(pencil)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            pencil.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
+            pencil.centerYAnchor.constraint(equalTo: centerYAnchor),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 130),
             heightAnchor.constraint(equalToConstant: 28),
         ])
         updateLabel()
+    }
+
+    /// The box's inner padding, either side of the caps and the pencil.
+    static let inset: CGFloat = 10
+
+    /// The caps and the pencil are drawn, not controls: a click anywhere in
+    /// the box is the recorder's.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // `point` is in the superview's coordinates, as `frame` is.
+        guard !isHidden, frame.contains(point) else { return nil }
+        return self
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -229,11 +263,34 @@ final class KeyChordRecorderView: NSView {
     }
 
     private func updateLabel() {
+        label.isHidden = !isRecording
+        pencil.isHidden = isRecording
         guard isRecording else {
             label.stringValue = shortcut.displayString
+            showKeycaps(shortcut.keycaps)
             return
         }
+        keycaps?.isHidden = true
         label.stringValue = rejection ?? "Press a key or combo… (Esc to cancel)"
+    }
+
+    private var shownKeycaps: [String] = []
+
+    private func showKeycaps(_ caps: [String]) {
+        if let keycaps, caps == shownKeycaps {
+            keycaps.isHidden = false
+            return
+        }
+        keycaps?.removeFromSuperview()
+        let hint = HelmKeyHint(keys: caps)
+        addSubview(hint)
+        NSLayoutConstraint.activate([
+            hint.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: Self.inset),
+            hint.trailingAnchor.constraint(equalTo: pencil.leadingAnchor, constant: -HelmMetrics.s2),
+            hint.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        keycaps = hint
+        shownKeycaps = caps
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -247,5 +304,13 @@ final class KeyChordRecorderView: NSView {
         layer?.borderWidth = 1
         layer?.borderColor = HelmTheme.nsColor(isRecording ? theme.accentHex : theme.chromeLineHex).cgColor
         label.textColor = isRecording ? HelmTheme.nsColor(theme.accentHex) : HelmTheme.nsColor(theme.chromeInkHex)
+        pencil.contentTintColor = HelmTheme.mutedInk(theme)
     }
+
+    #if FM_SELFTESTS
+    /// R4-UI-06: what the box draws at rest, read off the real caps.
+    var debugKeycapGlyphs: [String]? { keycaps.flatMap { $0.isHidden ? nil : $0.debugCapGlyphs } }
+    var debugShowsEditAffordance: Bool { !pencil.isHidden && pencil.image != nil }
+    var debugShowsTextLabel: Bool { !label.isHidden }
+    #endif
 }

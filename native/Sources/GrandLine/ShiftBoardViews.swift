@@ -711,6 +711,30 @@ final class ShiftWorkspaceTaskCard: NSView {
         applyTheme(theme)
     }
 
+    /// R4-UI-09: a pending follow-up on the board's Follow-ups lane, in the
+    /// same card a task takes - its title, its project, when it is due through
+    /// the page's one due rule, and its priority chip.
+    func configure(followUp: ShiftFollowUp, project: ShiftProject?, theme: HelmTheme) {
+        titleLabel.stringValue = followUp.title
+        struck = false
+        projectTint = ShiftProjectPalette.tint(forProjectID: followUp.projectID)
+        projectLabel.stringValue = project?.name ?? "No project"
+        let caption = ShiftTaskSignals.dueCaption(date: followUp.followUpAt, time: followUp.followUpTime)
+        dueTint = caption?.tint
+        dueLabel.stringValue = caption?.text ?? ""
+        dueLabel.superview?.isHidden = caption == nil
+        subtasksLabel.isHidden = true
+        attachmentIcon.isHidden = true
+        if let chip = ShiftTaskSignals.priorityPill(followUp.priority) {
+            pill.isHidden = false
+            pill.configure(text: chip.text, tint: chip.tint, theme: theme)
+        } else {
+            pill.isHidden = true
+        }
+        toolTip = "Click to open, or right-click to mark it done or snooze it."
+        applyTheme(theme)
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: Self.radius, daylightRadius: Self.radius)
@@ -756,6 +780,182 @@ final class ShiftWorkspaceTaskCard: NSView {
     var debugDue: String? { dueLabel.superview?.isHidden == true ? nil : dueLabel.stringValue }
     var debugChip: String? { pill.isHidden ? nil : pill.text }
     var debugIsStruck: Bool { struck }
+    #endif
+}
+
+// MARK: - The Follow-ups lane (R4-UI-09)
+
+/// A menu item that runs a closure, so a page can hand the lane a menu whose
+/// verbs are its own.
+final class ShiftLaneMenuItem: NSMenuItem {
+    private let run: () -> Void
+
+    init(title: String, action run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    @objc private func fire() { run() }
+}
+
+/// The sidebar layout's Follow-ups, as a lane on the board.
+///
+/// Full review #4 (R4-UX-09, R4-UI-09, review #3's UX-05): at 1512x950 the
+/// board stacked two full-width cards under itself, Follow-ups and Projects,
+/// so the page read as a board with a report under it. Follow-ups is a lane
+/// beside the three status lanes now - the same tint, the same header and the
+/// same card a task takes - and Projects is the project pop-up in the filter
+/// row, which it already was. A follow-up is not a task with a status, so the
+/// lane is neither a drag source nor a drop target: a click opens it, and its
+/// menu marks it done, snoozes it or deletes it, as the List tab's row does.
+final class ShiftFollowUpLaneView: NSView {
+
+    /// The most cards the lane draws before its foot says how many more.
+    static let maxCards = 50
+
+    private let laneBackground = NSView()
+    private let header = HelmSectionHeader(size: .lane)
+    private let headerAdd = HelmButton(title: "", variant: .quiet, size: .small, symbol: "plus")
+    private let cardsStack = NSStackView()
+    private let moreLabel = NSTextField(labelWithString: "")
+    private let emptyState = HelmEmptyState(symbol: "bell", body: "No follow-ups waiting", size: .quiet)
+    private var cards: [(host: HoverHighlightView, card: ShiftWorkspaceTaskCard, id: String)] = []
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    var onOpen: ((String) -> Void)?
+    var onAdd: (() -> Void)?
+    /// The row menu, built by the page, which owns what each verb does.
+    var menuFor: ((String) -> NSMenu?)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        laneBackground.wantsLayer = true
+        laneBackground.layer?.cornerRadius = HelmMetrics.rPanel
+        laneBackground.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(laneBackground)
+
+        header.configure(leading: .none, title: "Follow-ups", count: "0")
+        header.translatesAutoresizingMaskIntoConstraints = false
+        headerAdd.target = self
+        headerAdd.action = #selector(addTapped)
+        headerAdd.toolTip = "New follow-up"
+        headerAdd.setAccessibilityLabel("New follow-up")
+        headerAdd.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header)
+        addSubview(headerAdd)
+
+        cardsStack.orientation = .vertical
+        cardsStack.alignment = .leading
+        cardsStack.spacing = HelmMetrics.s2
+        cardsStack.translatesAutoresizingMaskIntoConstraints = false
+        cardsStack.setHuggingPriority(.required, for: .vertical)
+        addSubview(cardsStack)
+        moreLabel.font = HelmType.caption()
+        moreLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let inset = HelmMetrics.s2
+        NSLayoutConstraint.activate([
+            laneBackground.topAnchor.constraint(equalTo: topAnchor),
+            laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            laneBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: headerAdd.leadingAnchor, constant: -HelmMetrics.s2),
+            header.heightAnchor.constraint(equalToConstant: 30),
+            headerAdd.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            cardsStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s1),
+            cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            cardsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+        ])
+        applyTheme(theme)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Pending follow-ups, in the order the page sorts them.
+    func setFollowUps(_ followUps: [ShiftFollowUp], projects: [String: ShiftProject], theme: HelmTheme) {
+        self.theme = theme
+        for view in cardsStack.arrangedSubviews {
+            cardsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        cards.removeAll()
+        header.configure(leading: .none, title: "Follow-ups", count: "\(followUps.count)")
+        guard !followUps.isEmpty else {
+            cardsStack.addArrangedSubview(emptyState)
+            emptyState.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
+            applyTheme(theme)
+            return
+        }
+        for item in followUps.prefix(Self.maxCards) {
+            let card = ShiftWorkspaceTaskCard()
+            card.translatesAutoresizingMaskIntoConstraints = false
+            card.configure(followUp: item, project: item.projectID.flatMap { projects[$0] }, theme: theme)
+            // GL-16: a clickable row is a `HoverHighlightView`, which gives
+            // it the button role, the focus ring and Return and Space.
+            let host = HoverHighlightView()
+            host.cornerRadius = ShiftWorkspaceTaskCard.radius
+            host.addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                card.topAnchor.constraint(equalTo: host.topAnchor),
+                card.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            ])
+            host.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(cardClicked(_:))))
+            host.menu = menuFor?(item.id)
+            host.setAccessibilityLabel("Follow-up: \(item.title)")
+            cardsStack.addArrangedSubview(host)
+            host.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
+            cards.append((host, card, item.id))
+        }
+        let hidden = followUps.count - Self.maxCards
+        if hidden > 0 {
+            moreLabel.stringValue = "+\(hidden) more in List"
+            cardsStack.addArrangedSubview(moreLabel)
+        }
+        applyTheme(theme)
+    }
+
+    @objc private func cardClicked(_ sender: NSClickGestureRecognizer) {
+        guard let entry = cards.first(where: { $0.host === sender.view }) else { return }
+        onOpen?(entry.id)
+    }
+
+    @objc private func addTapped() { onAdd?() }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        // The status lanes' own tint (`ShiftBoardColumnView.applyTheme`).
+        laneBackground.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
+            .withAlphaComponent(theme.mode == .dark ? 0.05 : 0.035).cgColor
+        header.applyTheme(theme)
+        emptyState.applyTheme(theme)
+        moreLabel.textColor = HelmTheme.mutedInk(theme)
+        for entry in cards { entry.card.applyTheme(theme) }
+    }
+
+    #if FM_SELFTESTS
+    var debugCardTitles: [String] { cards.map(\.card.debugTitle) }
+    var debugCardDues: [String?] { cards.map(\.card.debugDue) }
+    var debugCount: String { header.countLabel.stringValue }
+    /// A real click's path: the card host's own recognizer and its action.
+    func debugClickCard(at index: Int) -> Bool {
+        guard cards.indices.contains(index) else { return false }
+        return cards[index].host.performPrimaryAction()
+    }
+    var debugAddButton: HelmButton { headerAdd }
+    func debugMenuTitles(at index: Int) -> [String] {
+        guard cards.indices.contains(index) else { return [] }
+        return cards[index].host.menu?.items.map(\.title) ?? []
+    }
     #endif
 }
 
@@ -1587,6 +1787,30 @@ final class ShiftBoardView: NSView {
         usesWorkspaceStyle = true
         row.spacing = HelmMetrics.s3
         for columnView in columnViews { columnView.adoptWorkspaceStyle() }
+    }
+
+    /// R4-UI-09: a lane after the three status lanes, the width of each of
+    /// them - the sidebar layout's Follow-ups. Wrapped exactly as a status
+    /// lane is, so it hugs its own cards rather than taking the tallest
+    /// lane's height. Hidden, it leaves the row and the three lanes share it.
+    private var trailingLaneWrapper: NSStackView?
+
+    func setTrailingLane(_ lane: NSView) {
+        guard trailingLaneWrapper == nil, let first = row.arrangedSubviews.first else { return }
+        let wrapper = NSStackView(views: [lane])
+        wrapper.orientation = .vertical
+        wrapper.alignment = .leading
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.setHuggingPriority(.required, for: .vertical)
+        row.addArrangedSubview(wrapper)
+        lane.widthAnchor.constraint(equalTo: wrapper.widthAnchor).isActive = true
+        wrapper.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
+        trailingLaneWrapper = wrapper
+    }
+
+    var trailingLaneShown: Bool {
+        get { trailingLaneWrapper.map { !$0.isHidden } ?? false }
+        set { trailingLaneWrapper?.isHidden = !newValue }
     }
 
     func setTasks(_ byColumn: [ShiftBoardColumn: [ShiftTask]],

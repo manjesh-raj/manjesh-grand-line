@@ -37,6 +37,8 @@
 //      header apart from Home.
 //  11. **The sidebar keeps one width on every page.** A page laid out for a
 //      wider column no longer squeezes it, and a divider can still be placed.
+//  12. **Tasks fits its page** (full review #4): Follow-ups is a lane on the
+//      board, and the filter row collapses rather than running past the edge.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -74,7 +76,8 @@ enum MainSplitShellSelfTest {
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkTheSidebarKeepsOneWidthOnEveryPage, checkToastsLandInTheColumn,
-                      checkTheAccountMenu, checkNotebookLeavesTheToolbarRoomAtNarrowWidths] {
+                      checkTheAccountMenu, checkNotebookLeavesTheToolbarRoomAtNarrowWidths,
+                      checkTasksBoardAndFilterRow] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -160,6 +163,91 @@ enum MainSplitShellSelfTest {
               "R2-BUG-07: at 1700 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
         check(shown(all) == all, "at 1700 on Notebook the toolbar shows \(shown(all).map(\.rawValue))", &ok)
         resize(window, width: 1512, shell)
+    }
+
+    // MARK: R4-UI-08 and R4-UI-09 - Tasks (full review #4)
+
+    /// Follow-ups is a lane on the board while four lanes fit, Projects is the
+    /// filter row's pop-up, the filter row collapses into one Filter button
+    /// rather than running past the page, and the Weekly review lists next
+    /// week. Last in the run: it seeds the shell's Tasks store.
+
+    private static func checkTasksBoardAndFilterRow(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                    _ ok: inout Bool) {
+        let store = shell.workspace.shiftStore
+        ReviewTourLab.seedDemoTasks(store)
+        // One follow-up due in the middle of next week, so the agenda has a
+        // row whatever day the suite runs on.
+        if let week = Calendar.current.dateInterval(of: .weekOfYear, for: Date()),
+           let midNext = Calendar.current.date(byAdding: .day, value: 3, to: week.end) {
+            var followUp = ShiftFollowUp.fresh()
+            followUp.title = "Check the quarterly access review"
+            followUp.followUpAt = ShiftDateFormatting.components(from: midNext).dateStr
+            store.addFollowUp(followUp)
+        }
+        let pending = store.followUps.filter { $0.status == .pending }.count
+        let tasks = shell.workspace.shift
+        shell.workspace.navigator.show(.shift)
+        tasks.selectModuleTab(named: "Board")
+        resize(window, width: 1512, shell)
+        let deadline = Date().addingTimeInterval(3)
+        while tasks.followUpLane.debugCount != "\(pending)", Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        check(pending >= 2, "the fixture has \(pending) pending follow-ups - the lane check is vacuous", &ok)
+
+        // 1512: Follow-ups on the board, nothing stacked under it, the jump
+        // gone with them, and the whole filter row.
+        check(tasks.debugFollowUpLaneOnBoard, "R4-UI-09: at 1512 Follow-ups is not a lane on the board", &ok)
+        check(tasks.followUpLane.debugCount == "\(pending)",
+              "R4-UI-09: the lane counts \(tasks.followUpLane.debugCount) of \(pending) pending follow-ups", &ok)
+        check(tasks.debugFollowUpsRowHidden && tasks.debugProjectsSectionHidden,
+              "R4-UI-09: at 1512 Follow-ups or Projects still stacks under the board", &ok)
+        check(tasks.debugFollowUpsJumpHidden, "R4-UI-09: the Follow-ups jump shows beside the lane it would jump to", &ok)
+        check(!tasks.debugFilterRowCollapsed, "R4-UI-08: at 1512 the filter row collapsed", &ok)
+        check(tasks.followUpLane.debugMenuTitles(at: 0).contains("Mark Done"),
+              "R4-UI-09: a lane card's menu reads \(tasks.followUpLane.debugMenuTitles(at: 0))", &ok)
+        checkFilterRowFits(tasks, "1512", &ok)
+
+        // 960: the lanes are too narrow for four, so Follow-ups goes back
+        // under the board, and the row collapses into one Filter button.
+        resize(window, width: 960, shell)
+        check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden,
+              "R4-UI-09: at 960 Follow-ups is neither off the board nor under it", &ok)
+        check(tasks.debugFilterRowCollapsed, "R4-UI-08: at 960 the filter row did not collapse", &ok)
+        let menu = tasks.debugFilterMenuTitles
+        check(menu.contains("Project") && menu.contains("Sort by") && menu.contains { $0.hasPrefix("Follow-ups") },
+              "R4-UI-08: the Filter menu reads \(menu)", &ok)
+        checkFilterRowFits(tasks, "960", &ok)
+
+        // List keeps Projects under its table; Weekly review lists next week.
+        resize(window, width: 1512, shell)
+        tasks.selectModuleTab(named: "List")
+        settle(shell)
+        check(!tasks.debugProjectsSectionHidden, "R4-UI-09: the List tab lost the Projects section", &ok)
+        tasks.selectModuleTab(named: "Weekly review")
+        settle(shell)
+        let agenda = store.nextWeekAgenda()
+        check(!agenda.isEmpty, "the fixture has nothing next week - the agenda check is vacuous", &ok)
+        check(agenda.count == store.weeklySummary().upcomingCount,
+              "R4-UI-09: the agenda lists \(agenda.count) and the tile counts \(store.weeklySummary().upcomingCount)", &ok)
+        check(tasks.debugAgendaPanelShown && tasks.debugAgendaRowCount == agenda.count,
+              "R4-UI-09: the Weekly review shows \(tasks.debugAgendaRowCount) agenda rows of \(agenda.count)", &ok)
+        tasks.selectModuleTab(named: "Board")
+    }
+
+    /// Every control the Tasks filter row shows ends inside it, at its own width. Measured
+    /// on alignment rects, which is what the stack places: a label's frame
+    /// runs a couple of points past its text either side.
+    private static func checkFilterRowFits(_ tasks: ShiftController, _ width: String, _ ok: inout Bool) {
+        let row = tasks.debugFilterRow
+        row.layoutSubtreeIfNeeded()
+        for view in row.arrangedSubviews where !view.isHidden && view.fittingSize.width > 0 {
+            let placed = view.alignmentRect(forFrame: view.frame)
+            check(placed.maxX <= row.bounds.width + 0.5 && view.frame.width + 0.5 >= view.fittingSize.width,
+                  "R4-UI-08: at \(width) a \(type(of: view)) is cut at \(view.frame.width) of "
+                  + "\(view.fittingSize.width)pt, ending at \(placed.maxX) of \(row.bounds.width)", &ok)
+        }
     }
 
     private static func settle(_ shell: MainSplitShellController) {
@@ -746,6 +834,8 @@ enum MainSplitShellSelfTest {
         // since U-02: R2-UX-05 made it the one place that names the module.
         check(priority(WorkspaceToolbar.ItemID.crumb) == WorkspaceToolbar.crumbPriority,
               "the crumb left its overflow band", &ok)
+        // On Home, which fills no inspector: on a page that does, the
+        // inspector button is `.high` (R4-UI-01, `WorkspaceToolbarSelfTest`).
         for id in [WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector] {
             check(priority(id) == .low, "\(id.rawValue) is not among the first to overflow", &ok)
         }

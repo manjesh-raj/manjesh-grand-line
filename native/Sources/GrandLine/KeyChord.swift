@@ -165,5 +165,25 @@ struct KeyChord: Codable, Equatable {
         s += Self.regularKeyNames[keyCode] ?? "Key \(keyCode)"
         return s
     }
+
+    /// R4-UI-06: the chord as keycaps, one per key, in the glyphs the fixed
+    /// rows of Settings > Shortcuts draw (`KeyboardShortcutCatalog.keycaps`).
+    /// The recorder used to print `displayString` in a monospaced field, so
+    /// one table showed a chord two ways - "⌃⌘Return" in a box on an editable
+    /// row and ⌘ T as two keycaps on a fixed one. A modifier held on its own
+    /// is one cap, by the name `displayString` gives it ("Right ⌥").
+    var keycaps: [String] {
+        if isModifierOnly { return [displayString] }
+        let name = Self.regularKeyNames[keyCode] ?? "Key \(keyCode)"
+        let glyph: String
+        switch name {
+        case "Return": glyph = HelmKeyHint.returnKey
+        case "Escape": glyph = HelmKeyHint.escape
+        case "Tab": glyph = "\u{21E5}"
+        case "Delete": glyph = "\u{232B}"
+        default: glyph = name
+        }
+        return HelmKeyHint.keys(for: modifiers, key: glyph)
+    }
 }
 

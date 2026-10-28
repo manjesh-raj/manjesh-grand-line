@@ -981,7 +981,14 @@ enum E2ETestingPolicySelfTest {
     /// `SplitShellModel` and `ModuleTable` are the shape). Lowering it when a
     /// suite moves out of the lane is the point, and a count that drops below
     /// the ceiling says so, so the headroom does not quietly come back.
-    private static let windowBackedSuiteCeiling = 135
+    ///
+    /// 136 for `WorkspaceToolbarSelfTest` (R4-UI-01): what it asserts is which
+    /// `NSToolbar` items AppKit puts in the overflow menu at a given window
+    /// width, which only a real toolbar in a real window decides - no model
+    /// can answer it. Review #4's other UI checks went into a headless suite
+    /// (`ReviewFourUISelfTest`) and into `MainSplitShellSelfTest`, which
+    /// already mounts the shell.
+    private static let windowBackedSuiteCeiling = 136
 
     private static func checkTheWindowBackedLaneDoesNotGrowUnasked(_ ok: inout Bool) {
         guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),

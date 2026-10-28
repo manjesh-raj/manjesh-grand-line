@@ -152,12 +152,27 @@ enum CodePreviewViewSelfTest {
 
     // MARK: First load
 
+    /// R4-UI-09 (R2-UI-12): an empty folder opens on an invitation, not on
+    /// an untitled tab the page made up and marked unsaved. Its New snippet
+    /// button, pressed through the button's own action, opens the tab the
+    /// page used to open by itself, and closing the last tab brings the
+    /// invitation back.
     private static func checkFirstLoadOpensSomethingToPasteInto(
         _ controller: CodePreviewController, _ store: CodePreviewStore, _ check: (Bool, String) -> Void
     ) {
+        check(controller.debugTabNames.isEmpty,
+              "R4-UI-09: an empty folder opened tabs by itself: \(controller.debugTabNames)")
+        check(controller.debugStartStateVisible, "R4-UI-09: an empty folder does not show the New snippet invitation")
+        controller.debugNewSnippetInvitation.performClick(nil)
+        check(!controller.debugStartStateVisible, "R4-UI-09: the invitation stayed over the new snippet")
         check(controller.debugTabNames.count == 1,
-              "an empty folder should open exactly one tab to paste into, got \(controller.debugTabNames)")
+              "New snippet should open exactly one tab to paste into, got \(controller.debugTabNames)")
         check(controller.debugCurrentName == "snippet-1.txt", "…named snippet-1.txt")
+        controller.debugCloseCurrent()
+        check(controller.debugTabNames.isEmpty && controller.debugStartStateVisible,
+              "R4-UI-09: closing the last tab did not bring the invitation back")
+        controller.debugNewSnippet()
+        check(controller.debugCurrentName == "snippet-1.txt", "…and New snippet reopens snippet-1.txt")
         check(controller.debugCurrentLanguage == "plaintext", "…as plain text until something is pasted")
 
         // The whole point of the deferred write: looking at the destination
@@ -504,6 +519,9 @@ enum CodePreviewViewSelfTest {
             return
         }
 
+        // R4-UI-09: an empty folder opens on an invitation, so both tabs are
+        // the captain's.
+        controller.debugNewSnippet()
         controller.debugNewSnippet()
         let names = controller.debugTabNames
         check(names.count == 2, "expected two empty tabs, got \(names)")
@@ -556,8 +574,9 @@ enum CodePreviewViewSelfTest {
             check(false, "the late-clone editor never reported ready")
             return
         }
-        check(controller.debugTabNames == ["snippet-1.txt"],
-              "an empty folder gives one placeholder tab, got \(controller.debugTabNames)")
+        // R4-UI-09: an empty folder opens on the New snippet invitation.
+        check(controller.debugTabNames.isEmpty && controller.debugStartStateVisible,
+              "an empty folder should open on the invitation, got \(controller.debugTabNames)")
 
         // The clone lands.
         store.create(name: "values.yaml", content: "replicas: 2\n")
@@ -565,7 +584,7 @@ enum CodePreviewViewSelfTest {
         controller.debugRetryRestoreAfterLateClone()
         _ = waitFor(timeout: 5, until: { controller.debugTabNames.count == 2 })
         check(controller.debugTabNames == ["main.go", "values.yaml"],
-              "a late clone should replace the placeholder with the real snippets, got \(controller.debugTabNames)")
+              "a late clone should replace the invitation with the real snippets, got \(controller.debugTabNames)")
 
         // And now that there is real content, the retry must be inert - this
         // is the half that protects the captain's own work.
@@ -576,8 +595,8 @@ enum CodePreviewViewSelfTest {
 
         // The case that distinguishes the "the first read found nothing"
         // guard from the "nothing is open yet" one, and the decision it
-        // encodes: a captain who **closed every tab** is back to a lone empty
-        // placeholder, so the open-tabs guard alone would let a later git pull
+        // encodes: a captain who **closed every tab** is back to the empty
+        // invitation, so the open-tabs guard alone would let a later git pull
         // re-open files they deliberately closed. The retry exists to recover
         // from a read that was too early, not to keep the panel in sync with
         // the folder forever - so once a real read has happened, it is done.
@@ -585,13 +604,13 @@ enum CodePreviewViewSelfTest {
             controller.debugSelect(name: name)
             controller.debugCloseCurrent()
         }
-        _ = waitFor(timeout: 5, until: { controller.debugTabNames.count == 1 })
-        check(controller.debugTabNames.first?.hasPrefix("snippet-") == true,
-              "closing every tab should leave one empty placeholder, got \(controller.debugTabNames)")
+        _ = waitFor(timeout: 5, until: { controller.debugTabNames.isEmpty })
+        check(controller.debugTabNames.isEmpty && controller.debugStartStateVisible,
+              "closing every tab should leave the invitation, got \(controller.debugTabNames)")
         // Stand in for a pull landing snippets from another machine.
         store.create(name: "from-elsewhere.rs", content: "fn main() {}\n")
         controller.debugRetryRestoreAfterLateClone()
-        check(controller.debugTabNames.first?.hasPrefix("snippet-") == true,
+        check(controller.debugTabNames.isEmpty,
               "a later arrival must not re-open tabs the captain closed, got \(controller.debugTabNames)")
     }
 

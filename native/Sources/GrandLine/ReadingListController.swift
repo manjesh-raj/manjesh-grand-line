@@ -12,11 +12,13 @@
 //
 //   - a left column of inbox slices (Unread / Read / Added today) over a list
 //     of tags with counts - `HelmPageSidebar`, not a fifth hand-rolled nav;
-//   - a toolbar over the grid carrying the "drop a URL anywhere in the
-//     window" hint and the paste and refresh actions. It used to carry a
-//     segmented All / Unread / Summarised strip too - a second filter for one
-//     list beside the sidebar's own. UI-60 made the sidebar the one filter,
-//     with Summarised as one of its slices;
+//   - no toolbar row of its own. It once carried a segmented All / Unread /
+//     Summarised strip (UI-60 made the sidebar the one filter), then only a
+//     paste icon and a refresh icon at the far right of an otherwise empty
+//     band (R4-UI-05). Refresh is one of the page's own actions now, beside
+//     Paste link, and the paste icon ran the very same `pasteTapped` as Paste
+//     link, so it went rather than sitting next to its twin. Its drop hint
+//     said what the drop card under the grid says;
 //   - a responsive grid of cards, three states deep (summarised, awaiting a
 //     summary, read) - `ReadingListCardView`;
 //   - a dashed drop-zone card under the grid.
@@ -90,8 +92,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
 
     // MARK: Views
 
-    private let toolbar = HelmPageToolbar()
-
     /// UI-45: one sidebar shape across the app - `HelmPageSidebar` on the
     /// plain surface with muted counts, the Tasks sidebar the revamp kept.
     /// A boxed panel around the nav was a second bordered surface beside the
@@ -103,7 +103,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     private let gridScroll = NSScrollView()
     private let gridDocument = FlippedView()
     private let gridStack = NSStackView()
-    private let hintLabel = NSTextField(labelWithString: "Drop a URL anywhere in the window to add it.")
     private let dropHintCard = ReadingListDropHintView()
     private var emptyState: HelmEmptyState?
     /// The title the current empty state is showing, kept beside it so a suite
@@ -121,6 +120,11 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     private var readerCloseButton: HelmButton!
 
     private let pasteButton = HelmButton(title: "Paste link", variant: .primary, symbol: "plus")
+    /// R4-UI-05: re-reads titles for everything still waiting. One of the
+    /// page's actions, where the empty band under the header used to hold it.
+    private lazy var refreshButton = HelmPageToolbar.iconButton(
+        symbol: "arrow.clockwise", tooltip: "Re-read titles for everything still waiting",
+        target: self, action: #selector(refreshMetadataTapped))
 
     private var cards: [String: ReadingListCardView] = [:]
     private var lastGridWidth: CGFloat = 0
@@ -142,7 +146,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     var onDrillSubtitleChanged: (() -> Void)?
     var onDrillActionsChanged: (() -> Void)?
 
-    var drillHeaderActions: [NSView] { [pasteButton] }
+    var drillHeaderActions: [NSView] { [refreshButton, pasteButton] }
 
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
@@ -176,7 +180,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         root.onDropText = { [weak self] text in self?.capture(text, source: "drop") }
         view = root
 
-        buildToolbar(in: root)
         buildBody(in: root)
         buildReader(in: root)
         buildActions()
@@ -256,33 +259,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
 
     // MARK: Building
 
-    private func buildToolbar(in root: NSView) {
-        root.addSubview(toolbar)
-        hintLabel.font = HelmType.captionSmall()
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.lineBreakMode = .byTruncatingTail
-        hintLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        // UI-60: the toolbar carries the paste hint and the two actions. The
-        // sync line it used to lead with was the drill header's own subtitle,
-        // word for word, one row above it.
-        toolbar.setLeading(HelmPageToolbar.group([hintLabel]))
-        toolbar.setTrailing(HelmPageToolbar.group([
-            HelmPageToolbar.iconButton(symbol: "doc.on.clipboard",
-                                       tooltip: "Save the link on the clipboard (\u{2318}V)",
-                                       target: self, action: #selector(pasteTapped)),
-            HelmPageToolbar.iconButton(symbol: "arrow.clockwise",
-                                       tooltip: "Re-read titles for everything still waiting",
-                                       target: self, action: #selector(refreshMetadataTapped)),
-        ]))
-
-        NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor),
-        ])
-    }
-
     private func buildActions() {
         pasteButton.controlSize = .small
         pasteButton.target = self
@@ -343,7 +319,7 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         NSLayoutConstraint.activate([
             split.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             split.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.view.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            split.view.topAnchor.constraint(equalTo: root.topAnchor),
             split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             // Gotcha (4): the document pins to the **clip** view, never the
@@ -843,9 +819,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     /// which one they are looking at.
     ///
     /// UXP-12: with nothing listed the empty state is the page's one
-    /// instruction. The toolbar hint and the dashed drop card used to say the
-    /// same thing beside it - three copies on one screen - so both stand down
-    /// until there is a list for them to sit under. The whole page is a drop
+    /// instruction. The dashed drop card (and a toolbar hint, until R4-UI-05)
+    /// used to say the same thing beside it, so the card stands down until
+    /// there is a list for it to sit under. The whole page is a drop
     /// target (`ReadingListDropRootView`) either way.
     ///
     /// UXP-13: placed by `HelmEmptyState.placeAsPageEmptyState`, centred in
@@ -854,7 +830,6 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         emptyState?.removeFromSuperview()
         emptyState = nil
         emptyStateTitle = nil
-        hintLabel.isHidden = visibleCount == 0
         dropHintCard.isHidden = visibleCount == 0
         guard visibleCount == 0, let contentPane = splitPage?.contentPane else { return }
 
@@ -929,10 +904,8 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     private func applyTheme() {
         guard isViewLoaded else { return }
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        toolbar.applyTheme(theme)
         readerBar.applyTheme(theme)
         sidebar.applyTheme(theme)
-        hintLabel.textColor = HelmTheme.mutedInk(theme)
         readerTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         HelmCard.applyCardSurface(to: readerCard, theme: theme)
         dropHintCard.applyTheme(theme)
@@ -961,11 +934,15 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
     var debugEmptyStateTitle: String? { emptyState == nil ? nil : emptyStateTitle }
     var debugGridDocument: NSView { gridDocument }
     var debugDropHint: ReadingListDropHintView { dropHintCard }
-    /// UXP-12: the three places the page could give its paste-or-drop
-    /// instruction, as drawn.
-    var debugInstructionCopies: (toolbarHint: Bool, dropCard: Bool, emptyState: Bool) {
-        (!hintLabel.isHidden, !dropHintCard.isHidden, emptyState != nil)
+    /// UXP-12: the two places the page gives its paste-or-drop instruction,
+    /// as drawn (R4-UI-05 took out the toolbar hint, the third).
+    var debugInstructionCopies: (dropCard: Bool, emptyState: Bool) {
+        (!dropHintCard.isHidden, emptyState != nil)
     }
+    /// R4-UI-05: every subview of the page's root, which no longer holds a
+    /// toolbar row of its own.
+    var debugRootHoldsAPageToolbar: Bool { view.subviews.contains { $0 is HelmPageToolbar } }
+    var debugRefreshButton: HelmButton { refreshButton }
     var debugRoot: NSView { view }
     func debugReload() { reload() }
     func debugSelectFilter(_ filter: ReadingListFilter) {
