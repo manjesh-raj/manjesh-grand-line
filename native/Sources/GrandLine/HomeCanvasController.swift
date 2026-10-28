@@ -1447,11 +1447,51 @@ final class HomeCanvasController: NSViewController {
 
     /// A card's grid span: its own, or - on Home's arranged cards, which
     /// are laid out in `HomeCardGrid.columns` - the width the captain gave
-    /// it, widened where the window has made it too narrow to read.
+    /// it, as its row draws it at this width (`HomeCardGrid.rows`).
     private func cardSpan(_ module: DaylightModule) -> Int {
         guard showsArrangedCards, let cardLayout else { return module.gridSpan }
-        return HomeCardGrid.effectiveColumns(cardLayout.size(of: module).columns,
-                                             minimum: arrangedMinimumColumns(available: gridContainerWidth()))
+        return arrangedSpans(of: cardLayout, available: gridContainerWidth())[module]
+            ?? cardLayout.size(of: module).columns
+    }
+
+    /// Home's arranged cards in rows at this width, each placement's `index`
+    /// into `layout.shown` - the captain's rows, with room made in a row for
+    /// a card the window has made too narrow to read.
+    private func arrangedRows(of layout: HomeCardLayout, available: CGFloat) -> [[HelmResponsiveGrid.SpanPlacement]] {
+        HomeCardGrid.rows(spans: layout.shown.map { layout.size(of: $0).columns },
+                          minimum: arrangedMinimumColumns(available: available))
+    }
+
+    /// Each arranged card's columns at this width, as its row draws it.
+    private func arrangedSpans(of layout: HomeCardLayout, available: CGFloat) -> [DaylightModule: Int] {
+        let shown = layout.shown
+        var spans: [DaylightModule: Int] = [:]
+        for placement in arrangedRows(of: layout, available: available).joined() where shown.indices.contains(placement.index) {
+            spans[shown[placement.index]] = placement.span
+        }
+        return spans
+    }
+
+    /// How many cards each row of Home's arranged grid holds at this width -
+    /// nothing off Home's arranged cards, whose rows only the spans decide.
+    private func arrangedRowLengths(available: CGFloat) -> [Int] {
+        guard showsArrangedCards, let cardLayout else { return [] }
+        return arrangedRows(of: cardLayout, available: available).map(\.count)
+    }
+
+    /// `module`'s row stored at the widths it is drawn at
+    /// (`HomeCardGrid.drawnSpans`) - what sizing that card starts from, so
+    /// the captain sizes what they see.
+    private func keepDrawnRow(of module: DaylightModule, in layout: inout HomeCardLayout, available: CGFloat) {
+        let shown = layout.shown
+        guard let index = shown.firstIndex(of: module) else { return }
+        let spans = shown.map { layout.size(of: $0).columns }
+        let kept = HomeCardGrid.drawnSpans(spans, minimum: arrangedMinimumColumns(available: available), rowOf: index)
+        for (index, other) in shown.enumerated() where kept[index] != spans[index] {
+            var size = layout.size(of: other)
+            size.columns = kept[index]
+            layout.setSize(size, for: other)
+        }
     }
 
     /// The fewest of `HomeCardGrid.columns` a card may take at this width:
@@ -1567,14 +1607,20 @@ final class HomeCanvasController: NSViewController {
         let startHeight: CGFloat
         /// The arrangement before the drag, to tell whether it changed.
         let startLayout: HomeCardLayout
+        /// What each step sizes the card from: the arrangement with the
+        /// card's row stored as it is drawn (`keepDrawnRow`).
+        let base: HomeCardLayout
     }
 
     private var cardResize: CardResize?
 
     private func beginCardResize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, at windowPoint: NSPoint) {
         guard isCustomizing, showsArrangedCards, let layout = cardLayout, let card = cardsByModule[module] else { return }
+        var base = layout
+        if edge.resizesWidth { keepDrawnRow(of: module, in: &base, available: gridContainerWidth()) }
         cardResize = CardResize(module: module, edge: edge, start: document.convert(windowPoint, from: nil),
-                                startWidth: card.frame.width, startHeight: card.frame.height, startLayout: layout)
+                                startWidth: card.frame.width, startHeight: card.frame.height, startLayout: layout,
+                                base: base)
         for handle in resizeHandles[module] ?? [] { handle.isActive = true }
         sizeBadge.removeFromSuperview()
         card.addSubview(sizeBadge, positioned: .above, relativeTo: nil)
@@ -1590,18 +1636,19 @@ final class HomeCanvasController: NSViewController {
     /// the preview - Home is laid out again at that size, so its neighbours
     /// reflow under the pointer - and nothing is kept until the drag ends.
     private func dragCardResize(to windowPoint: NSPoint) {
-        guard let resize = cardResize, var layout = cardLayout else { return }
+        guard let resize = cardResize, cardLayout != nil else { return }
         if let event = NSApp?.currentEvent, event.type == .leftMouseDragged { document.autoscroll(with: event) }
         let point = document.convert(windowPoint, from: nil)
         let available = gridContainerWidth()
-        var size = resize.startLayout.size(of: resize.module)
+        var layout = resize.base
+        var size = layout.size(of: resize.module)
         if resize.edge.resizesWidth {
             let wanted = HomeCardGrid.columns(nearestWidth: resize.startWidth + point.x - resize.start.x,
                                               containerWidth: available, spacing: Self.gridSpacing)
             size.columns = max(wanted, arrangedMinimumColumns(available: available))
         }
         if resize.edge.resizesHeight {
-            let span = HomeCardGrid.effectiveColumns(size.columns, minimum: arrangedMinimumColumns(available: available))
+            let span = arrangedSpans(of: layout, available: available)[resize.module] ?? size.columns
             let width = HomeCardGrid.width(columns: span, containerWidth: available, spacing: Self.gridSpacing)
             // Never below what the content needs: dragging past it would
             // store a height the card cannot be drawn at.
@@ -1644,6 +1691,9 @@ final class HomeCanvasController: NSViewController {
         arrange { layout in
             var size = layout.size(of: module)
             if edge.resizesWidth {
+                // From the width it is drawn at, as a drag is.
+                keepDrawnRow(of: module, in: &layout, available: available)
+                size = layout.size(of: module)
                 size.columns = min(max(size.columns + step, arrangedMinimumColumns(available: available)),
                                    HomeCardGrid.columns)
             }
@@ -1671,6 +1721,9 @@ final class HomeCanvasController: NSViewController {
         var spans: [Int]
         /// Each card's own height on Home, -1 for one that takes its row's.
         var heights: [CGFloat] = []
+        /// How many cards each of Home's arranged rows holds: the same spans
+        /// can break into rows differently once the window makes room in one.
+        var rowLengths: [Int] = []
         /// Customize puts controls on every card, so toggling it rebuilds.
         var customizing: Bool
         var dashboard: Bool
@@ -1827,7 +1880,11 @@ final class HomeCanvasController: NSViewController {
                                    keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
         contentWidthConstraint?.constant = available
         attentionCard.setLayoutWidth(available)
-        let spans = Dictionary(modules.map { ($0, cardSpan($0)) }, uniquingKeysWith: { first, _ in first })
+        let placed = cardLayout.map { arrangedRows(of: $0, available: available) } ?? []
+        var spans: [DaylightModule: Int] = [:]
+        for placement in placed.joined() where modules.indices.contains(placement.index) {
+            spans[modules[placement.index]] = placement.span
+        }
         let widths = spans.mapValues { HomeCardGrid.width(columns: $0, containerWidth: available, spacing: Self.gridSpacing) }
         let heights = Dictionary(modules.map { ($0, arrangedHeight(of: $0, width: widths[$0] ?? 0)) },
                                  uniquingKeysWith: { first, _ in first })
@@ -1840,7 +1897,8 @@ final class HomeCanvasController: NSViewController {
             spacing: Self.gridSpacing,
             equalHeights: true,
             exemptsHeightTie: { $0.sizesToOwnContent },
-            fixedHeight: { heights[$0] ?? nil }
+            fixedHeight: { heights[$0] ?? nil },
+            packedRows: placed
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
             let placement = CardPlacement.shelf(width: cardWidth)
@@ -1879,6 +1937,7 @@ final class HomeCanvasController: NSViewController {
         if Set(cardsByModule.keys) == Set(modules) {
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map { spans[$0] ?? 1 },
                                           heights: modules.map { heights[$0].flatMap { $0 } ?? -1 },
+                                          rowLengths: placed.map(\.count),
                                           customizing: isCustomizing, dashboard: false,
                                           width: available, height: 0,
                                           exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
@@ -1899,7 +1958,8 @@ final class HomeCanvasController: NSViewController {
         let modules = visibleModules()
         let available = gridContainerWidth()
         let spans = modules.map(cardSpan)
-        if built.modules == modules, built.spans == spans, abs(built.width - available) <= 0.5,
+        if built.modules == modules, built.spans == spans, built.rowLengths == arrangedRowLengths(available: available),
+           abs(built.width - available) <= 0.5,
            let index = modules.firstIndex(of: resize.module), built.heights.indices.contains(index),
            built.heights[index] >= 0,
            let height = arrangedHeight(of: resize.module, width: card.frame.width),
@@ -1924,6 +1984,7 @@ final class HomeCanvasController: NSViewController {
         guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
               previous.spans == (dashboard ? [] : modules.map(cardSpan)),
               previous.heights == (dashboard ? [] : arrangedHeightKey(modules)),
+              previous.rowLengths == (dashboard ? [] : arrangedRowLengths(available: available)),
               previous.customizing == (dashboard ? false : isCustomizing),
               previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
               Set(cardsByModule.keys) == Set(modules) else { return false }

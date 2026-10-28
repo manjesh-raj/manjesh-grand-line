@@ -1351,7 +1351,8 @@ The size menu in the card's controls became Reset Size, and a double-click on a 
   A card keeps its place in the composition when the window changes size, and 24 divides by two, three and four, so halves, thirds and quarters line up across rows.
   At the sidebar layout's 1512 a column is about 50pt, which reads as a continuous drag.
 - **A card is never narrower than the canvas's 255pt minimum.**
-  When the window makes a card too narrow, it widens to the next quarter, third, half or full row rather than to the bare minimum, because the bare minimum left a sliver at the end of every row.
+  When the window makes a card too narrow, its row makes room for it (`HomeCardGrid.rows`).
+  This first shipped as widening the card on its own to the next quarter, third, half or full row, which overflowed the row; see "Home's rows fill beside the sidebar" below.
 - **The height is optional.**
   A card nobody has dragged takes its row's height (`equalHeights`), exactly as before.
   A dragged card has its own height, snapped to 8pt and held between the card's own floor and 720pt, and it is exempt from the row's tie, so its neighbours keep their own heights.
@@ -1398,3 +1399,36 @@ Every Home card width is at 499, which beats the drag's 490, so it needs Home's 
 
 `MainSplitShellSelfTest.checkTheSidebarKeepsOneWidthOnEveryPage` covers both ways in, a placement, and a real press on the divider through the window's event dispatch.
 Reverting the resting priority fails it on Home at 200pt, and removing the `mouseDown` hook fails the press check.
+
+### Home's rows fill beside the sidebar
+
+The captain reported Home's cards broken with the sidebar open, while the same Home with the sidebar closed looked right.
+Their arrangement was a row of 12, 7 and 5 columns over two halves.
+At 1512 with the sidebar open, the grid is 1192pt and the narrowest readable card is 6 columns, so the 5-column Health card was too narrow.
+Free sizing widened that one card on its own, to 6 columns, and the row became 25 columns.
+Health dropped to the second row, which pushed Merge queue onto a third row of its own at half width, and every row ended short of the right edge.
+Home's own cards broke the same way at 1280 and 1100.
+
+`HomeCardGrid.rows` now lays out a whole row at a time:
+
+- **The rows are the captain's own.**
+  The stored widths are packed onto the grid in order, so at a width where every card can be read nothing changes.
+- **A too-narrow card is held at the minimum, and its row makes room for it.**
+  The columns come from the row's spare columns first, then from the widest card in the row, one column at a time.
+  The captain's row draws as 11, 7 and 6 at 1512 with the sidebar open, and as 12, 7 and 5 with it closed.
+- **A row that cannot hold its cards at the minimum is split.**
+  It splits into as few rows as hold them, cut where the parts are most even, and each part fills the grid in proportion to its cards' widths.
+  At 1100 with the sidebar open (a 9-column minimum) Home's own 12, 6 and 6 become the 12 alone and the two 6s as halves.
+- **A drag sizes what the captain sees.**
+  A drag measures the card's drawn width, so when it starts, the dragged card's row is stored at its drawn widths (`HomeCardGrid.drawnSpans`).
+  Without that, narrowing Fleet beside the sidebar gave its column back to Morning briefing's stored 12 when the drag ended.
+  A row the window has split is left as it was saved, because storing its parts would rewrite the whole composition.
+- `HelmResponsiveGrid.spanningRows` takes the rows through `packedRows`, so where a row breaks is the caller's to say.
+
+Tests: `SplitShellModelSelfTest.checkHomeCardGrid` checks the captain's case, splitting, spare columns, the drag's starting point, and that every full row stays full at every minimum from 1 to 24.
+`MainSplitShellSelfTest.checkHomeRowsFillBesideTheSidebar` lays out Home's own cards and the captain's arrangement in a real window at 1512, 1280 and 1100, with the sidebar open and closed.
+It checks every row reaches the grid's right edge and no card is under the minimum.
+It also drags Fleet a column narrower beside the sidebar.
+Restoring the per-card widening failed both suites by name (the captain's 1512 case among them), and removing the drag's starting row failed the drag check with Morning briefing back at 12 columns.
+Verified visually with tour-lab renders of the captain's arrangement before and after, at 1512, 1280 and 1100.
+Not addressed: at 1280 with the sidebar open, Fleet's 7-column card truncates "Done today" in its stat strip, which is the card's own content at that width.

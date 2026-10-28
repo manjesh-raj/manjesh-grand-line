@@ -638,7 +638,8 @@ enum SplitShellModelSelfTest {
     }
 
     /// The grid's arithmetic: widths, the drag's nearest column, the
-    /// narrowest readable card and how a too-narrow card is widened.
+    /// narrowest readable card, and how a row makes room for a card the
+    /// window has made too narrow.
     private static func checkHomeCardGrid(_ ok: inout Bool) {
         let spacing: CGFloat = 16
         let container: CGFloat = 1200
@@ -664,18 +665,67 @@ enum SplitShellModelSelfTest {
                 && HomeCardGrid.width(columns: minimum - 1, containerWidth: container, spacing: spacing) < 255,
               "\(minimum) columns is not the narrowest 255pt card at \(container)pt", &ok)
 
-        // A card wide enough keeps its width exactly; one the window made too
-        // narrow widens to the next quarter, third, half or full row.
-        check(HomeCardGrid.effectiveColumns(7, minimum: 6) == 7, "a card wide enough was widened", &ok)
-        check(HomeCardGrid.effectiveColumns(6, minimum: 7) == 8, "a too-narrow card did not widen to a third", &ok)
-        check(HomeCardGrid.effectiveColumns(9, minimum: 10) == 12, "a too-narrow card did not widen to a half", &ok)
-        check(HomeCardGrid.effectiveColumns(3, minimum: 20) == 24, "a too-narrow card did not widen to the full row", &ok)
-        // Rows of widened cards still fill: three 6-column cards at a width
-        // that needs 7 become thirds, not three cards and a sliver.
-        let narrow = HomeCardGrid.minimumColumns(containerWidth: 1000, minWidth: 255, spacing: spacing)
-        let widened = HomeCardGrid.effectiveColumns(6, minimum: narrow)
-        check(narrow > 6 && HomeCardGrid.columns % widened == 0,
-              "at 1000pt a quarter card widened to \(widened) of \(HomeCardGrid.columns) (minimum \(narrow)), which rows do not fill", &ok)
+        // A card wide enough keeps its width exactly, and so does its row.
+        func spans(_ rows: [[HelmResponsiveGrid.SpanPlacement]]) -> [[Int]] { rows.map { $0.map(\.span) } }
+        let captains = [12, 7, 5, 12, 12]
+        check(spans(HomeCardGrid.rows(spans: captains, minimum: 5)) == [[12, 7, 5], [12, 12]],
+              "a layout every card of which can be read was redrawn: \(spans(HomeCardGrid.rows(spans: captains, minimum: 5)))", &ok)
+
+        // The captain's report: their 12, 7 and 5 with the sidebar open at
+        // 1512 (a 6-column minimum). The 5 is held at 6, and the column comes
+        // from the widest card in its row - so the row still fills the grid
+        // and nothing drops to the next one. Widening the 5 on its own made
+        // the row 25 columns, which is how Health ended up on a row of its
+        // own and Merge queue alone at half width.
+        check(spans(HomeCardGrid.rows(spans: captains, minimum: 6)) == [[11, 7, 6], [12, 12]],
+              "the captain's rows at a 6-column minimum are \(spans(HomeCardGrid.rows(spans: captains, minimum: 6)))", &ok)
+        // The same rows at every minimum a window can ask for: every row the
+        // captain filled is still full, no card is under the minimum, and
+        // every card is drawn exactly once, in order.
+        for layout in [captains, [12, 6, 6, 12, 12], [6, 6, 6, 6, 8, 8, 8], [24, 3, 3, 3, 3, 3, 3, 3, 3], [5, 5, 5, 5, 4]] {
+            for minimum in 1...HomeCardGrid.columns {
+                let rows = HomeCardGrid.rows(spans: layout, minimum: minimum)
+                let when = "\(layout) at a \(minimum)-column minimum, drawn \(spans(rows))"
+                check(rows.joined().map(\.index) == Array(layout.indices), "\(when): a card was lost or moved", &ok)
+                check(rows.joined().allSatisfy { $0.span >= minimum && $0.span <= HomeCardGrid.columns },
+                      "\(when): a card is under the minimum or past the grid", &ok)
+                let packed = HelmResponsiveGrid.packRows(spans: layout, columns: HomeCardGrid.columns)
+                let full = Set(packed.filter { $0.reduce(0) { $0 + $1.span } == HomeCardGrid.columns }.flatMap { $0.map(\.index) })
+                for row in rows where row.contains(where: { full.contains($0.index) }) {
+                    check(row.reduce(0) { $0 + $1.span } == HomeCardGrid.columns, "\(when): a full row no longer fills the grid", &ok)
+                }
+            }
+        }
+
+        // A row with more cards than fit is split where the parts are most
+        // even, and each part fills the grid: at 1100 with the sidebar open
+        // (a 9-column minimum, two to a row) Home's own 12, 6 and 6 become the
+        // 12 alone and the two 6s as halves - not 12 and 6 over a lone 6.
+        let standard = [12, 6, 6, 12, 12]
+        check(spans(HomeCardGrid.rows(spans: standard, minimum: 9)) == [[24], [12, 12], [12, 12]],
+              "Home's own cards at a 9-column minimum are \(spans(HomeCardGrid.rows(spans: standard, minimum: 9)))", &ok)
+        check(spans(HomeCardGrid.rows(spans: [6, 6, 6, 6], minimum: 7)) == [[12, 12], [12, 12]],
+              "four quarters at a 7-column minimum are \(spans(HomeCardGrid.rows(spans: [6, 6, 6, 6], minimum: 7)))", &ok)
+        // A row the captain left short stays theirs, raised only as far as
+        // its cards need.
+        check(spans(HomeCardGrid.rows(spans: [24, 5], minimum: 6)) == [[24], [6]],
+              "a short last row was stretched: \(spans(HomeCardGrid.rows(spans: [24, 5], minimum: 6)))", &ok)
+
+        // A too-narrow card takes a short row's spare columns before it takes
+        // any from a neighbour; only a full row's widest card gives.
+        check(spans(HomeCardGrid.rows(spans: [10, 7, 5], minimum: 6)) == [[10, 7, 6]],
+              "a short row took a neighbour's column: \(spans(HomeCardGrid.rows(spans: [10, 7, 5], minimum: 6)))", &ok)
+        check(spans(HomeCardGrid.rows(spans: [12, 9, 3], minimum: 6)) == [[9, 9, 6]],
+              "the widest card did not give: \(spans(HomeCardGrid.rows(spans: [12, 9, 3], minimum: 6)))", &ok)
+        // A drag starts from the row as it is drawn, so the captain sizes
+        // what they see, and the stored row draws exactly as it did.
+        let drawn = HomeCardGrid.drawnSpans(captains, minimum: 6, rowOf: 1)
+        check(drawn == [11, 7, 6, 12, 12], "a drag on Fleet starts from \(drawn)", &ok)
+        check(spans(HomeCardGrid.rows(spans: drawn, minimum: 6)) == spans(HomeCardGrid.rows(spans: captains, minimum: 6)),
+              "the drawn row stored draws differently: \(spans(HomeCardGrid.rows(spans: drawn, minimum: 6)))", &ok)
+        // A row the window split is left as the captain saved it.
+        check(HomeCardGrid.drawnSpans(standard, minimum: 9, rowOf: 1) == standard,
+              "a drag in a split row rewrote it: \(HomeCardGrid.drawnSpans(standard, minimum: 9, rowOf: 1))", &ok)
     }
 
     // MARK: 4 - the wiring
