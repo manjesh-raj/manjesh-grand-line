@@ -299,19 +299,125 @@ enum HomeCardGrid {
         return columns
     }
 
-    /// The columns a card set to `span` takes at a container whose narrowest
-    /// usable card is `minimum` columns.
+    /// Home's cards in rows, and the columns each one is drawn at, at a
+    /// container whose narrowest readable card is `minimum` columns.
+    /// `spans` are the captain's widths, in order; each placement's `index`
+    /// points back into them.
     ///
-    /// A card the captain made wide enough keeps exactly its width. One the
-    /// window has made too narrow to read is widened - and not to the bare
-    /// minimum, which would leave a ragged sliver at the end of every row,
-    /// but to the next quarter, third, half or full width, which rows still
-    /// fill.
-    static func effectiveColumns(_ span: Int, minimum: Int) -> Int {
-        let span = min(max(1, span), columns)
-        guard span < minimum else { return span }
-        let tidy = [columns / 4, columns / 3, columns / 2, columns]
-        return tidy.first { $0 >= minimum } ?? columns
+    /// The rows are the captain's own: `spans` packed onto the grid in order,
+    /// so at a width where every card can be read, every card is exactly the
+    /// width it was given. Where the window has made a card too narrow - the
+    /// sidebar open, or a narrower window than the one Home was arranged in -
+    /// the card's row makes room for it. Widening the card on its own is what
+    /// this replaced, and it overflowed the row: with the sidebar open, a row
+    /// of 12, 7 and 5 columns became 12, 7 and 6, so Health dropped to the
+    /// next row, pushed Merge queue onto a row of its own, and every row
+    /// ended short of the right edge.
+    ///
+    /// - A too-narrow card is held at the minimum. The columns it needs come
+    ///   from the row's spare columns first, then from the widest card in the
+    ///   row, one at a time - so every other card keeps its width, and a full
+    ///   row still ends at the grid's edge.
+    /// - A row with more cards than fit at the minimum is split into as few
+    ///   rows as hold them, cut where the parts are most even, and each part
+    ///   fills the grid in proportion to the widths its cards were given.
+    static func rows(spans: [Int], minimum: Int) -> [[HelmResponsiveGrid.SpanPlacement]] {
+        let minimum = min(max(1, minimum), columns)
+        let perRow = max(1, columns / minimum)
+        var rows: [[HelmResponsiveGrid.SpanPlacement]] = []
+        for row in HelmResponsiveGrid.packRows(spans: spans, columns: columns) {
+            guard row.count > perRow else {
+                let total = row.reduce(0) { $0 + $1.span }
+                let raised = row.reduce(0) { $0 + max($1.span, minimum) }
+                rows.append(fit(row, to: min(columns, max(total, raised)), minimum: minimum))
+                continue
+            }
+            var start = 0
+            for length in evenSplit(row.map(\.span), perRow: perRow) {
+                rows.append(fit(Array(row[start..<start + length]), to: columns, minimum: minimum))
+                start += length
+            }
+        }
+        return rows
+    }
+
+    /// The captain's widths with the row of the card at `index` as it is
+    /// drawn, and every other card as it was - what a drag on that card
+    /// starts from. The captain sizes what they see: a drag measures the
+    /// card's drawn width, so its row has to be stored at the widths it is
+    /// drawn at, or a column a row-mate was given would go back to the
+    /// widest card the moment the drag ends. From there a drag works exactly
+    /// as it does when nothing was too narrow.
+    ///
+    /// A row the window has split is left alone: its parts are drawn in
+    /// proportion to the stored widths, so a drag already moves the card,
+    /// and storing the parts would rewrite the whole composition.
+    static func drawnSpans(_ spans: [Int], minimum: Int, rowOf index: Int) -> [Int] {
+        let rows = rows(spans: spans, minimum: minimum)
+        guard let row = rows.first(where: { $0.contains { $0.index == index } }) else { return spans }
+        let packed = HelmResponsiveGrid.packRows(spans: spans, columns: columns)
+        guard let own = packed.first(where: { $0.contains { $0.index == index } }),
+              own.map(\.index) == row.map(\.index) else { return spans }
+        var kept = spans
+        for placement in row { kept[placement.index] = placement.span }
+        return kept
+    }
+
+    /// `row`'s cards on `target` columns, none narrower than `minimum`:
+    /// grown in proportion to their widths when the target is wider than
+    /// they are, then each too-narrow card raised to the minimum with the
+    /// columns taken from the widest card that has them to give.
+    private static func fit(_ row: [HelmResponsiveGrid.SpanPlacement], to target: Int,
+                            minimum: Int) -> [HelmResponsiveGrid.SpanPlacement] {
+        var spans = row.map(\.span)
+        let total = spans.reduce(0, +)
+        if target > total, total > 0 {
+            // Largest remainder, so the shares add up to exactly the target.
+            let shares = spans.map { Double($0) * Double(target) / Double(total) }
+            spans = shares.map { Int($0.rounded(.down)) }
+            let order = spans.indices.sorted { shares[$0] - Double(spans[$0]) > shares[$1] - Double(spans[$1]) }
+            for index in order.prefix(target - spans.reduce(0, +)) { spans[index] += 1 }
+        }
+        spans = spans.map { max($0, minimum) }
+        var excess = spans.reduce(0, +) - target
+        while excess > 0 {
+            guard let widest = spans.indices.filter({ spans[$0] > minimum }).max(by: { spans[$0] < spans[$1] }) else { break }
+            spans[widest] -= 1
+            excess -= 1
+        }
+        return zip(row, spans).map { HelmResponsiveGrid.SpanPlacement(index: $0.index, span: $1) }
+    }
+
+    /// How many cards each part of a split row takes: as few parts as hold
+    /// `perRow` cards each, cut so the widest part is as narrow as it can be
+    /// - a 12, 6 and 6 row two to a row is the 12, then the two 6s, not the
+    /// 12 and a 6 over a lone 6. On a tie the earlier part takes more.
+    private static func evenSplit(_ spans: [Int], perRow: Int) -> [Int] {
+        let count = spans.count
+        let parts = (count + perRow - 1) / perRow
+        // best[i][j]: the narrowest widest part over the first i cards in j parts.
+        var best = Array(repeating: Array(repeating: Int.max, count: parts + 1), count: count + 1)
+        var cut = Array(repeating: Array(repeating: 0, count: parts + 1), count: count + 1)
+        best[0][0] = 0
+        for i in 1...count {
+            for j in 1...min(i, parts) {
+                for start in max(0, i - perRow)..<i where best[start][j - 1] != Int.max {
+                    let widest = max(best[start][j - 1], spans[start..<i].reduce(0, +))
+                    if widest <= best[i][j] {
+                        best[i][j] = widest
+                        cut[i][j] = start
+                    }
+                }
+            }
+        }
+        var lengths: [Int] = []
+        var end = count
+        for part in stride(from: parts, to: 0, by: -1) {
+            let start = cut[end][part]
+            lengths.insert(end - start, at: 0)
+            end = start
+        }
+        return lengths
     }
 }
 

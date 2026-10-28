@@ -5103,6 +5103,9 @@ enum HelmResponsiveGrid {
     /// read. `fixedHeight` gives an item a height of its own: it is exempt
     /// from the tie exactly as `exemptsHeightTie` describes, and it prefers
     /// that height over its natural one without ever going below it.
+    /// `packedRows` replaces the greedy packing with rows the caller has
+    /// already packed - Home's arranged cards are reflowed a row at a time
+    /// (`HomeCardGrid.rows`), so where a row breaks is theirs to say.
     static func spanningRows<Item>(_ items: [Item],
                                    spans: (Item) -> Int,
                                    containerWidth: CGFloat,
@@ -5112,13 +5115,14 @@ enum HelmResponsiveGrid {
                                    equalHeights: Bool = false,
                                    exemptsHeightTie: (Item) -> Bool = { _ in false },
                                    fixedHeight: (Item) -> CGFloat? = { _ in nil },
+                                   packedRows: [[SpanPlacement]]? = nil,
                                    makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
         let columnCount = fixedColumnCount.map { max(1, $0) }
             ?? columns(containerWidth: containerWidth, minItemWidth: minItemWidth, spacing: spacing)
         let unit = itemWidth(containerWidth: containerWidth,
                              columns: columnCount,
                              spacing: spacing)
-        let placements = packRows(spans: items.map(spans), columns: columnCount)
+        let placements = packedRows ?? packRows(spans: items.map(spans), columns: columnCount)
 
         return placements.map { row in
             var views: [NSView] = []

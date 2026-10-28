@@ -69,7 +69,7 @@ enum MainSplitShellSelfTest {
                       checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
-                      checkHomeIsTheCaptainsToArrange, checkBackAndForward, checkTheCalendarButton, checkTheInspector,
+                      checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
@@ -853,6 +853,112 @@ enum MainSplitShellSelfTest {
         // Home has no other space to leave Customize by (R2-UX-02), so Done
         // is the way out, and it is checked above. End it for what follows.
         if canvas.isCustomizing { shell.debugModuleAction(); settle(shell) }
+    }
+
+    /// The captain's report: with the sidebar open, Home's cards stopped
+    /// filling their rows. A card the narrower grid made too small was
+    /// widened on its own, so a row that summed to the whole grid overflowed -
+    /// Health dropped to a row of its own, Merge queue sat alone at half
+    /// width, and every row ended short of the right edge.
+    ///
+    /// Measured on real cards in a real window: at each width, with the
+    /// sidebar open and put away, every row reaches the grid's right edge,
+    /// no card is narrower than the canvas's minimum, and nothing overlaps.
+    /// Home's own cards and the captain's own arrangement (from their
+    /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    private static func checkHomeRowsFillBesideTheSidebar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                         _ ok: inout Bool) {
+        let saved = AppSettings.shared.homeCardLayout
+        defer {
+            AppSettings.shared.homeCardLayout = saved
+            shell.debugHomeCanvas.cardLayout = saved
+            if shell.debugSidebarIsCollapsed { shell.toggleSidebarFromMenu() }
+            resize(window, width: 1512, shell)
+        }
+        let captains = HomeCardLayout(shown: [.briefing, .fleet, .health, .claudeStatus, .mergeQueue],
+                                      sizes: [.briefing: .init(columns: 12), .fleet: .init(columns: 7),
+                                              .health: .init(columns: 5), .claudeStatus: .init(columns: 12),
+                                              .mergeQueue: .init(columns: 12)])
+        shell.workspace.navigator.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        var sawANarrowedCard = false
+        for (name, layout) in [("Home's own cards", HomeCardLayout.standard), ("the captain's arrangement", captains)] {
+            AppSettings.shared.homeCardLayout = layout
+            canvas.cardLayout = layout
+            for width: CGFloat in [1512, 1280, 1100] {
+                for sidebarOpen in [true, false] {
+                    resize(window, width: width, shell)
+                    if shell.debugSidebarIsCollapsed == sidebarOpen { shell.toggleSidebarFromMenu() }
+                    settle(shell)
+                    let when = "\(name) at \(Int(width))pt, sidebar \(sidebarOpen ? "open" : "away")"
+                    guard shell.debugSidebarIsCollapsed != sidebarOpen else {
+                        fail("\(when): the sidebar would not \(sidebarOpen ? "open" : "go away") - the case is vacuous", &ok)
+                        continue
+                    }
+                    let rows = canvas.gridRowsForTests
+                    let gridWidth = rows.map(\.frame.width).max() ?? 0
+                    let cards = rows.map { $0.arrangedSubviews.compactMap { $0 as? HelmModuleCard } }
+                    check(cards.joined().count == layout.shown.count,
+                          "\(when): \(cards.joined().count) of \(layout.shown.count) cards are on Home", &ok)
+                    for (index, row) in cards.enumerated() {
+                        guard let last = row.last else { continue }
+                        let stack = rows[index]
+                        let reach = last.frame.maxX
+                        check(abs(reach - stack.bounds.width) < 1,
+                              "\(when): row \(index + 1) (\(row.count) cards) ends at \(reach)pt of \(stack.bounds.width)pt", &ok)
+                        for card in row where card.frame.width < HomeCanvasController.minModuleWidth - 1 {
+                            fail("\(when): a card in row \(index + 1) is \(card.frame.width)pt, under the minimum", &ok)
+                        }
+                    }
+                    if layout == captains, let health = canvas.cardForTests(.health),
+                       health.frame.width > HomeCardGrid.width(columns: 5, containerWidth: gridWidth,
+                                                               spacing: HomeCanvasController.gridSpacing) + 1 {
+                        sawANarrowedCard = true
+                    }
+                    checkNoCardsOverlap(canvas, when, &ok)
+                }
+            }
+        }
+        // The window really did make a saved card too narrow somewhere, or
+        // nothing above was ever asked to reflow.
+        check(sawANarrowedCard, "no width made the captain's 5-column card too narrow - the reflow is never exercised", &ok)
+
+        // Arranging beside the sidebar: at 1512 the captain's row draws as
+        // 11, 7 and 6. The captain sizes what they see - drag Fleet a column
+        // narrower and Morning briefing stays the 11 it was drawn at, rather
+        // than its stored 12 coming back to fill the column Fleet let go.
+        AppSettings.shared.homeCardLayout = captains
+        canvas.cardLayout = captains
+        resize(window, width: 1512, shell)
+        if shell.debugSidebarIsCollapsed { shell.toggleSidebarFromMenu() }
+        settle(shell)
+        shell.debugModuleAction()
+        settle(shell)
+        defer { if canvas.isCustomizing { shell.debugModuleAction(); settle(shell) } }
+        guard canvas.isCustomizing, let fleet = canvas.cardForTests(.fleet),
+              let grip = canvas.resizeHandlesForTests[.fleet]?.first(where: { $0.edge == .trailing }) else {
+            fail("Customize did not open on the captain's arrangement - the drag check is vacuous", &ok)
+            return
+        }
+        let gridWidth = canvas.gridRowsForTests.map(\.frame.width).max() ?? 0
+        let spacing = HomeCanvasController.gridSpacing
+        let unit = HomeCardGrid.unitWidth(containerWidth: gridWidth, spacing: spacing)
+        check(abs(fleet.frame.width - HomeCardGrid.width(columns: 7, containerWidth: gridWidth, spacing: spacing)) < 1,
+              "before the drag Fleet is \(fleet.frame.width)pt, not 7 columns - the drag check starts wrong", &ok)
+        let briefingWidth = canvas.cardForTests(.briefing)?.frame.width ?? 0
+        check(abs(briefingWidth - HomeCardGrid.width(columns: 11, containerWidth: gridWidth, spacing: spacing)) < 1,
+              "before the drag Morning briefing is \(briefingWidth)pt, not the 11 columns its row draws it at", &ok)
+        grip.debugDrag(dx: -(unit + spacing), dy: 0)
+        settle(shell)
+        let kept = AppSettings.shared.homeCardLayout
+        let columns = [DaylightModule.briefing, .fleet, .health].map { kept.size(of: $0).columns }
+        check(columns == [11, 6, 6], "a column-narrower drag on Fleet kept \(columns), want [11, 6, 6]", &ok)
+        for (module, span) in [(DaylightModule.briefing, 11), (.fleet, 6), (.health, 6)] {
+            let width = canvas.cardForTests(module)?.frame.width ?? 0
+            check(abs(width - HomeCardGrid.width(columns: span, containerWidth: gridWidth, spacing: spacing)) < 1,
+                  "after the drag \(module.rawValue) is \(width)pt, not \(span) columns", &ok)
+        }
+        checkNoCardsOverlap(canvas, "after a drag beside the sidebar", &ok)
     }
 
     /// Every arranged card's frame in window coordinates.
