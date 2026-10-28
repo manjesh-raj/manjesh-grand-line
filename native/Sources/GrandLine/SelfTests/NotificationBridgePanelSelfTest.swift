@@ -562,12 +562,19 @@ enum NotificationBridgePanelSelfTest {
         seedScreenshot()
         let (few, _) = mount()
         let fewContent = few.debugScroll.documentView?.frame.height ?? 0
-        check(few.debugCards.count == 4 && few.debugListHeight >= fewContent - 0.5,
-              "the screenshot's four cards are clipped: \(few.debugListHeight)pt shown of \(fewContent)pt", &ok)
+        // The cap itself must hold four real cards. Whether they all show here
+        // also depends on this machine's screen: the list gives way to a short
+        // display (CI's runner measured a 429pt limit), which is the panel
+        // doing its job, so the second check compares against the limit in
+        // force rather than assuming a tall screen.
+        check(few.debugCards.count == 4 && fewContent <= NotificationBridgePanelViewController.maxListHeight,
+              "the cap must hold the screenshot's four cards (\(fewContent)pt against \(NotificationBridgePanelViewController.maxListHeight)pt)", &ok)
+        check(few.debugListHeight >= min(fewContent, few.debugListHeightLimit) - 0.5,
+              "the list is shorter than its own limit: \(few.debugListHeight)pt shown of \(fewContent)pt, limit \(few.debugListHeightLimit)pt", &ok)
         check(few.debugCards.allSatisfy { !$0.debugIsCompact }, "four cards keep their detail lines", &ok)
         check(few.debugCards.allSatisfy { $0.snooze.title == "Snooze" },
               "every one of the screenshot's cards keeps a labelled snooze", &ok)
-        print("  (four cards measure \(fewContent)pt against a \(NotificationBridgePanelViewController.maxListHeight)pt cap)")
+        print("  (four cards measure \(fewContent)pt against a \(NotificationBridgePanelViewController.maxListHeight)pt cap; this screen allows \(few.debugListHeightLimit)pt)")
 
         seed()
 

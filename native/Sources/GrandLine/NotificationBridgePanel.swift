@@ -954,6 +954,8 @@ final class NotificationBridgePanelViewController: NSViewController {
     var debugListDocument: NSView { listDocument }
     var debugScroll: NSScrollView { scroll }
     var debugListHeight: CGFloat { listHeight?.constant ?? 0 }
+    /// The list's limit in force here: `maxListHeight`, or less on a short screen.
+    var debugListHeightLimit: CGFloat { listHeightLimit }
     func debugContextMenu(for entry: AppNotification) -> NSMenu { contextMenu(for: entry) }
     func debugClickMarkAllRead() { markAllReadButton.performClick(nil) }
     func debugClickUndo() { undoButton.performClick(nil) }
