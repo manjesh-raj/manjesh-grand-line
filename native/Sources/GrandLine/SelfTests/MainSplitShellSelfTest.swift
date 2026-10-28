@@ -168,6 +168,26 @@ enum MainSplitShellSelfTest {
         shell.view.layoutSubtreeIfNeeded()
     }
 
+    /// R4-PROC-01: wait for Home's grid to reflow for the width its page has
+    /// now, then lay it out. Opening or closing the sidebar narrows Home's
+    /// clip view without resizing the window, and Home reflows its cards on
+    /// the *next* main-queue turn after that (`HomeCanvasController`'s
+    /// clip-view observer). `settle`'s one 50 ms turn usually covered that
+    /// turn and on CI's loaded runner sometimes did not: the row then had the
+    /// new width and its cards the old one - "row 1 ends at 1217.0pt of
+    /// 952.0pt" on #551's push, 5 flaky in 20 `main` runs of this suite.
+    /// Asserting with no turn at all reproduces that shape on every step.
+    /// `false` when the grid never caught up, which is a failure in itself.
+    private static func settleHomeGrid(_ shell: MainSplitShellController, _ canvas: HomeCanvasController) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while !canvas.gridIsCurrentForTests, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            shell.view.layoutSubtreeIfNeeded()
+        }
+        shell.view.layoutSubtreeIfNeeded()
+        return canvas.gridIsCurrentForTests
+    }
+
     private static func resize(_ window: NSWindow, width: CGFloat, _ shell: MainSplitShellController) {
         var frame = window.frame
         frame.size.width = width
@@ -891,6 +911,11 @@ enum MainSplitShellSelfTest {
                     if shell.debugSidebarIsCollapsed == sidebarOpen { shell.toggleSidebarFromMenu() }
                     settle(shell)
                     let when = "\(name) at \(Int(width))pt, sidebar \(sidebarOpen ? "open" : "away")"
+                    guard settleHomeGrid(shell, canvas) else {
+                        fail("\(when): Home never reflowed for its \(canvas.gridRowsForTests.first?.bounds.width ?? 0)pt "
+                             + "grid within 2s", &ok)
+                        continue
+                    }
                     guard shell.debugSidebarIsCollapsed != sidebarOpen else {
                         fail("\(when): the sidebar would not \(sidebarOpen ? "open" : "go away") - the case is vacuous", &ok)
                         continue

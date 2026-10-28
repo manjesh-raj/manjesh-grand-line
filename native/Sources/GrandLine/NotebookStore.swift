@@ -117,8 +117,9 @@ final class NotebookGitSync {
     private let debounceInterval: TimeInterval
     private let queue: DispatchQueue
 
-    private(set) var status: Status = .synced
-    private var statusHandlers: [(Status) -> Void] = []
+    /// GL-28: written on `queue`, read on main - behind `GitSyncStatusCell`'s lock.
+    private let statusCell = GitSyncStatusCell<Status>(.synced)
+    var status: Status { statusCell.value }
     private var pendingCommit: DispatchWorkItem?
     /// R2-BUG-04: whether a debounced commit is still owed, readable off
     /// `queue` so the quit-time flush can skip a store with nothing pending.
@@ -156,15 +157,11 @@ final class NotebookGitSync {
     )
 
     func observeStatus(_ handler: @escaping (Status) -> Void) {
-        statusHandlers.append(handler)
-        let current = status
-        DispatchQueue.main.async { handler(current) }
+        statusCell.observe(handler)
     }
 
     private func setStatus(_ newStatus: Status) {
-        status = newStatus
-        let handlers = statusHandlers
-        DispatchQueue.main.async { handlers.forEach { $0(newStatus) } }
+        statusCell.set(newStatus)
     }
 
     /// GL-04/GL-12: dispatches the real work onto `queue` asynchronously,

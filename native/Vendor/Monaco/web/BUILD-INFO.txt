@@ -15,3 +15,10 @@ SHA-256 of every shipped file, asserted by CodePreviewSelfTest:
 sha256 6d76722c3ce2a49800ef8b55d77aba76f6fa44de6f3c9a8582d338dc367850ae  code-preview.css
 sha256 06dbb981112b1b596dd8e559c4f602cd6b008cf7c4e108811c255f854b0ef6e2  code-preview.js
 sha256 32463cae407af8388863fdef9f8b32b5122d52a3a0bb57bde8bfa93889599732  index.html
+SHA-256 of every input, asserted by Scripts/check-web-bundles.sh:
+input sha256 6cb52fd7fb42b3ad6fafc498af8d1d1901900095ce629329e8c195e4c1a4194f  Scripts/build-monaco-web.sh
+input sha256 93e595d3967e6268a4a75857a7e9410bfd9f68bf697e279477e1b4e942ad195f  Vendor/Monaco/src/code-preview.js
+input sha256 7b5454f71ffa66cd8d46360de9f56c5111c26f78b33018b40030ce82727ed38a  Vendor/Monaco/src/editor.worker.entry.js
+input sha256 32463cae407af8388863fdef9f8b32b5122d52a3a0bb57bde8bfa93889599732  Vendor/Monaco/src/index.html
+input sha256 979d2feb72bf991f8e9d900bc31054eda4dec2c8fadc0abc25490ad13c8f9667  Vendor/Monaco/src/package-lock.json
+input sha256 0cb4f06b3f6e694c7eadaae0e45a6b90c74ff0d82a92647c1bec45f28992902b  Vendor/Monaco/src/package.json

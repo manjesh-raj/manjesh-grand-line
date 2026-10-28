@@ -1183,6 +1183,34 @@ if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ] && [ "$SHARD_INDEX" -
   fi
 fi
 
+# --- Web bundle drift (R4-PROC-03) -----------------------------------------
+#
+# Every vendored web bundle (`Vendor/*/web`) must have been built from the
+# `src/` and build script committed beside it. `Scripts/check-web-bundles.sh`
+# recomputes the input digests each bundle's `BUILD-INFO.txt` records, with no
+# node and no network, so it runs wherever the Python suites do and for the
+# same reason: it needs no window, so it is part of `--ci`'s headless lane.
+CHECK_FAILED=()
+if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ] && [ "$SHARD_INDEX" -le 1 ]; then
+  check_out=$(mktemp)
+  started=$(now_ms)
+  if Scripts/check-web-bundles.sh >"$check_out" 2>&1; then check_status=0; else check_status=1; fi
+  elapsed=$(( $(now_ms) - started ))
+  DURATIONS+=("$elapsed check-web-bundles.sh")
+  TOTAL_SUITE_MS=$((TOTAL_SUITE_MS + elapsed))
+  echo ""
+  if [ "$check_status" -eq 0 ]; then
+    printf 'PASS  %-52s %8s\n' "check-web-bundles.sh" "$(fmt_ms "$elapsed")"
+    RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "check:web-bundles" pass "$elapsed" -)")
+  else
+    printf 'FAIL  %-52s %8s\n' "check-web-bundles.sh" "$(fmt_ms "$elapsed")"
+    CHECK_FAILED+=("check-web-bundles.sh")
+    RESULT_LINES+=("$(printf '%s\t%s\t%s\t%s' "check:web-bundles" fail "$elapsed" -)")
+  fi
+  sed 's/^/      | /' "$check_out"
+  rm -f "$check_out"
+fi
+
 echo ""
 echo "======================================================"
 if [ "$SHARD_COUNT" -gt 0 ]; then
@@ -1254,9 +1282,10 @@ if [ ${#PY_PASSED[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ] || [ ${#PY_SKIPPED[@
     "${#PY_PASSED[@]}" "${#PY_FAILED[@]}" "${#PY_SKIPPED[@]}"
   [ ${#PY_SKIPPED[@]} -gt 0 ] && printf 'python skipped: %s\n' "${PY_SKIPPED[*]}"
 fi
-if [ ${#FAILED[@]} -gt 0 ] || [ ${#TIMEDOUT[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ]; then
+if [ ${#FAILED[@]} -gt 0 ] || [ ${#TIMEDOUT[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ] || [ ${#CHECK_FAILED[@]} -gt 0 ]; then
   [ ${#FAILED[@]} -gt 0 ] && printf 'failed:  %s\n' "${FAILED[*]}"
   [ ${#PY_FAILED[@]} -gt 0 ] && printf 'python failed:  %s\n' "${PY_FAILED[*]}"
+  [ ${#CHECK_FAILED[@]} -gt 0 ] && printf 'check failed:  %s\n' "${CHECK_FAILED[*]}"
   exit 1
 fi
 echo "all good"

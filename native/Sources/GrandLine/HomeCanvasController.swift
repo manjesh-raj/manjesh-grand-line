@@ -4192,6 +4192,12 @@ final class HomeCanvasController: NSViewController {
     /// which card sits where and how wide, and `cards` is a flat list that
     /// cannot see any of it.
     var gridRowsForTests: [NSStackView] { gridStack.arrangedSubviews.compactMap { $0 as? NSStackView } }
+    /// Whether the grid was last laid out for the width the page has now.
+    /// False from the moment the clip view changes width (the sidebar
+    /// opening, a scroller appearing) until the main-queue turn on which
+    /// `containerWidthMayHaveChanged` reflows the cards - the window a suite
+    /// must wait out rather than guess at with a delay (R4-PROC-01).
+    var gridIsCurrentForTests: Bool { abs(gridContainerWidth() - lastGridWidth) <= 0.5 }
     /// Whether the hub is using the hand-placed dashboard rather than the
     /// wrapping grid. Read from the same two conditions the layout itself
     /// takes, via the row shape it produces - never a flag set alongside it,

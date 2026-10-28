@@ -269,7 +269,7 @@ decision rule and the running record are in
 vendored copy, and the scheduled check".
 
 Here because it is a network fetch plus a judgement call: the question is not
-"is there a newer tag" (there always is) but "has any of the six local patches'
+"is there a newer tag" (there always is) but "has any of the eight local patches'
 root cause been fixed upstream, or gained a `public`/`open` hook" - which needs
 reading upstream's current source and deciding, not a comparison a suite can
 make.
@@ -279,41 +279,46 @@ make.
       "stay pinned"** - a check that leaves no record is one nobody can tell was
       skipped.
 
-`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all six patches are
+`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all eight patches are
 still present in the tree, so a sync that drops one fails by name) and prints a
 NOTE - never a failure - once the recorded date is older than the interval.
 
-## 15a. Open: the vendored Excalidraw bundle does not match its inputs
+## 15a. The vendored web bundles match their inputs (was open until 2026-10-28)
 
 P11 of the 2026-09-25 review added a committed `package-lock.json` and a
-`--check` to both web-bundle generators. Monaco passes:
-`./Scripts/build-monaco-web.sh --check` reproduces
-`Vendor/Monaco/web` byte for byte. **Excalidraw does not.**
+`--check` to the web-bundle generators. Monaco passed. **Excalidraw did not**,
+and this section held that open for a month.
 
-Measured on 2026-09-25:
+What was measured on 2026-09-25, kept because it is why the fix was safe:
 
-- `Vendor/Excalidraw/web/whiteboard.js` is 8,449,843 bytes; a rebuild from the
-  now-pinned inputs is 8,451,183. Everything else in that directory - the CSS,
-  the HTML, the fonts and `BUILD-INFO.txt` - matches.
+- `Vendor/Excalidraw/web/whiteboard.js` was 8,449,843 bytes; a rebuild from the
+  pinned inputs was 8,451,183. Everything else in that directory matched.
 - The build is **deterministic**: two rebuilds from the lockfile came out
-  byte-identical to each other. So this is not build nondeterminism; the
-  committed bundle was produced from a different transitive dependency tree,
-  which is exactly the drift the lockfile now prevents and the reason the
-  review asked for one.
-- `BUILD-INFO.txt` matching means the *direct* pins agree
+  byte-identical. So the committed bundle had been produced from a different
+  transitive dependency tree, which is the drift the lockfile now prevents.
+- `BUILD-INFO.txt` matching meant the *direct* pins agreed
   (`@excalidraw/excalidraw` 0.18.1, React 19.1.0, esbuild 0.25.9). The
-  difference is below them.
+  difference was below them.
 
-Deliberately not fixed in that PR: regenerating it replaces a shipped 8MB
-artifact the Whiteboard loads, and an agent worktree cannot launch the app to
-confirm the Whiteboard still works (see AGENTS.md, "Never launch a built copy
-from a worktree"). It wants its own change with a real check.
+R4-PROC-03 of the fourth full review closed it: `./Scripts/build-excalidraw-web.sh`
+was run from the lockfile and its output committed (8,451,183 bytes, exactly
+the size measured above), and all three generators' `--check` now print
+"matches a rebuild". `FM_RUN_WHITEBOARD_TESTS` and `FM_RUN_WHITEBOARD_VIEW_TESTS`
+pass against the rebuilt bundle.
 
-- [ ] `./Scripts/build-excalidraw-web.sh`, commit the result, then open the
-      Whiteboard and confirm drawing, the DSL, image export and the annotate
-      flow still work. `FM_RUN_WHITEBOARD_VIEW_TESTS` covers the page's own
-      wiring but not Excalidraw's internals.
-- [ ] Re-run `--check` afterwards; it should print "matches a rebuild".
+The same change added `Scripts/check-web-bundles.sh`, which runs in
+`run-all-tests.sh`'s default and `--ci` selections and so in CI's blocking
+headless lane. Each build script now records a SHA-256 of every input (`src/`
+and the script itself) in `BUILD-INFO.txt`, and the check recomputes them with
+no node and no network. An edit to `src/` that was never rebuilt now fails CI
+by name. The full rebuild-and-diff is still each script's `--check`, by hand.
+
+Still the captain's, because an agent worktree cannot launch the app (AGENTS.md,
+"Never launch a built copy from a worktree"):
+
+- [ ] Open the Whiteboard and confirm drawing, the DSL, image export and the
+      annotate flow still work on the rebuilt bundle. The suites cover the
+      page's own wiring and the bundle loading, not Excalidraw's internals.
 
 ## 16. Packaging
 
@@ -418,6 +423,22 @@ so that measurement is one table rather than a call tree.
       [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
       so the next change to the launch path has a baseline to compare against.
 
+**Open as of 2026-10-28: this has never been done.** No real-data Instruments
+baseline is recorded anywhere - not in `docs/history/26-production-readiness.md`
+and not here. The only launch numbers this project has are the in-process ones
+below: a debug build, empty scratch stores, no process start, about 600 ms to
+the first frame against the 400 ms target. The fourth full review (R4-PERF-02)
+filed that as a finding, and its recommended shape for the baseline is:
+
+- one signpost interval from `main` to the first `windowDidBecomeKey`, which
+  `LaunchSignposts` does not have yet (it times the rows of the launch path,
+  not the whole of it);
+- a **release** build, on the captain's machine, against a copy of the real
+  data, recorded once with the numbers above.
+
+Until that run exists, "first frame under 400 ms" is a target nobody has
+measured against, and a change to the launch path has nothing to compare with.
+
 ### The in-process numbers (not the real-data baseline)
 
 The real-data Instruments pass above is still the captain's, and nothing below replaces it.
@@ -441,6 +462,78 @@ Five processes per layout, the first one cold and the other four warm:
   Setting the default frame takes about 125 ms, `orderFront` about 43 ms, and the display pass about 61 ms.
   The 140 ms of `appShell` outside the init interval, and the frame's own layout pass, are the follow-up.
   Both need a release-build measurement first, which this suite cannot take, because `FM_RUN_*` suites exist only in debug builds.
+
+## 20. The macOS floor: running on 13 (TEST-10)
+
+`Package.swift` declares `.macOS(.v13)`, and since R4-PROC-04 CI proves the
+release binary really is a macOS 13 binary: `Scripts/check-deployment-target.sh`
+fails the `swift build (release)` job when the binary's `minos`, the declared
+platform and the `LSMinimumSystemVersion` the packaging scripts write disagree.
+Compiling at that target is also what makes the compiler reject an API newer
+than 13 without an `#available` check.
+
+What CI cannot do is **run** anything on 13. GitHub retired its macOS 13
+runner image in December 2025, and `macos-15` is the oldest image this project
+builds on. So every `else` branch of an `#available(macOS 14, *)` or
+`#available(macOS 15, *)` check is code no suite has ever executed
+(`grep -rn '#available(macOS' Sources/GrandLine` lists them; there were three
+on 2026-10-28).
+
+The first full review's own fix for TEST-10 was to raise the floor to what is
+tested and delete those branches. That drops support for 13 and 14, which is a
+product decision rather than a process fix, so it is the captain's call.
+Until then:
+
+- [ ] On a Mac running macOS 13 (or a macOS 13 VM), install a packaged build,
+      launch it, and open Home, Tasks, Console and Settings once each.
+- [ ] Open the inspector, and the menu-bar popover's status menu - the two
+      surfaces whose macOS 13 fallbacks only run there.
+
+## 21. Flaky suites: the measured rate
+
+R4-PROC-01 of the fourth full review: a flake that the runner re-runs is a
+flake nobody sees. `run-all-tests.sh --rerun-failed` names it, CI's suite
+history (`Scripts/suite_history.py`, uploaded as `suite-history-*` artifacts)
+counts it, and this table is where the counts are written down, the same way
+`SHARD_WEIGHTS` in `run-all-tests.sh` records the measured suite times.
+
+Measured from the suite history that `main`'s run for #551 (run 40642363998,
+2026-10-28) carried: the last 20 recorded runs of each lane, 2026-10-26 to
+2026-10-28. "Flaky" means it failed and then passed on the runner's re-run;
+"failed" means it failed both times. Every suite not listed passed all 20.
+
+| Suite | Lane | Flaky | Failed | Which check, and where it stands |
+| --- | --- | --- | --- | --- |
+| `FM_RUN_MAIN_SPLIT_SHELL_TESTS` | windowed | 5 of 20 | 0 | Three were "taking Recents off saved nil", fixed in #549 by waiting for the save rather than a 50 ms drain, with none since. One was "overview at 998pt: the sidebar is collapsed", a check #549 replaced. One was "Home's own cards at 1280pt, sidebar open" (#551's push), fixed by R4-PROC-01 - see below. |
+| `FM_RUN_REVIEW2_UX_TESTS` | windowed | 2 of 20 | 1 | "a narrowed sidebar did not grow back to 264 with the window (247.0pt)" every time, fixed by #547 (`holdDividerAtSidebarWidth`, merged 2026-10-27 11:37); none since. |
+| `FM_RUN_SIDEBAR_REDESIGNS_TESTS` | windowed | 1 of 20 | 0 | Once, 2026-10-26: the Setup and Updates summaries read "—" / "In sync" for "Synced" / "Paused", a summary read before its async load. Not recurred in the 15 runs since; unexplained, so watch it. |
+
+The Home rows flake, measured rather than guessed. Opening the sidebar narrows
+Home's clip view without resizing the window, and Home reflows its cards on
+the next main-queue turn after that (its clip-view observer). The suite
+asserted after `settle`'s one 50 ms run-loop turn. On CI's loaded runner that
+turn sometimes did not include the reflow, so the row had the new width and its
+cards the old one ("row 1 ends at 1217.0pt of 952.0pt"). Twenty replays of the
+case alone on CI, and twenty more on the runner's re-run, all passed, so it
+only shows under the load of the cases before it. Asserting with no run-loop
+turn at all reproduces the exact shape on every sidebar-open step, locally.
+The case now waits for `HomeCanvasController.gridIsCurrentForTests` (the grid
+was last built for the clip view's current width) before it measures, and
+fails by name if that never happens within two seconds. The injected no-turn
+variant passes with the wait in place.
+
+To refresh it, download the newest `main` run's histories and print each
+lane's summary:
+
+```sh
+gh run download <run id> -p 'suite-history-*' -D /tmp/history
+for f in /tmp/history/*/suite-history.json; do
+  python3 Scripts/suite_history.py summary --file "$f" --lane "$(basename "$(dirname "$f")" | sed 's/^suite-history-//')"
+done
+```
+
+- [ ] Before a release, refresh this table. A suite that shows up here twice is
+      a defect to root-cause, never one to re-run.
 
 ---
 

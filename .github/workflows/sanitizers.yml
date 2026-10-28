@@ -1,0 +1,95 @@
+# TEST-07 of the first full review, carried by the fourth as R4-PROC-04: one
+# suite was named for a race (`CredentialVaultConcurrentWriteSelfTest`), the
+# threading sweeps found real data races by reading code (REL-20, REL-02, and
+# the debug-seam races #511 and #518 caught by luck as crashes), and nothing
+# ever built this app with a race detector.
+#
+# This is the ThreadSanitizer lane. It builds the debug binary with
+# `--sanitize=thread`, which instruments this app, the vendored SwiftTerm and
+# YamlSwift, and whisper.cpp's C/C++ together, then runs the same headless
+# selection CI's `self-test suites` job runs (`run-all-tests.sh --ci`). A
+# suite in which TSan reports a race exits non-zero (TSan's own exit code,
+# 66), so the runner reports it as FAIL by name and prints the report.
+#
+# Why its own workflow rather than a job in ci.yml: an instrumented binary is
+# several times slower, and this lane is far longer than the other test jobs.
+# It runs nightly on `main` and on demand, and on a pull request only when the
+# pull request changes this lane itself or the suppression file, so a change
+# to the lane is proved green before it lands. It is not a required check.
+#
+# Why only the headless selection: the window-backed suites measure AppKit
+# layout and timing on a runner already five times slower than a laptop, and
+# TSan's slowdown would turn their timing-sensitive checks into noise rather
+# than race reports. Races in model, store and subprocess code are what this
+# lane is for, and those suites are headless.
+#
+# The suppression file is `native/Scripts/tsan-suppressions.txt`. Every entry
+# there names the third-party code it covers and why it is not this app's
+# race; an entry for this app's own code is a bug to fix instead.
+
+name: Sanitizers
+
+on:
+  schedule:
+    # 03:17 UTC, outside the hours merges land.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/sanitizers.yml'
+      - 'native/Scripts/tsan-suppressions.txt'
+
+concurrency:
+  group: sanitizers-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The same assertion ci.yml makes, for the same reason - see its note.
+  EXPECTED_SWIFT_MAJOR: "6"
+
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  tsan:
+    name: ThreadSanitizer (headless suites)
+    runs-on: macos-15   # keep in sync with ci.yml's runner-image note
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            exit 1
+          fi
+
+      # The instrumented binary lands where the runner looks for it
+      # (`.build/debug/GrandLine`), so `--no-build` below runs it as is.
+      - name: Build with ThreadSanitizer
+        run: swift build --sanitize=thread 2>&1 | tail -20
+
+      - name: Prove the binary is instrumented
+        # A sanitizer flag that silently stopped applying would leave this
+        # lane green and measuring nothing.
+        run: |
+          if ! nm .build/debug/GrandLine | grep -q '___tsan_init'; then
+            echo "::error::.build/debug/GrandLine carries no ThreadSanitizer runtime - the lane would check nothing"
+            exit 1
+          fi
+          echo "ThreadSanitizer runtime present"
+
+      - name: Run the headless-safe suites under ThreadSanitizer
+        # `FM_SUITE_TIMEOUT` lifts the per-suite bound from 300s, because
+        # instrumentation slows every suite several times over; it is still a
+        # bound. `halt_on_error=0` lets a suite finish and report every race
+        # it hits rather than only the first; the non-zero exit still fails it.
+        env:
+          FM_SUITE_TIMEOUT: "1500"
+          TSAN_OPTIONS: "halt_on_error=0 second_deadlock_stack=1 suppressions=${{ github.workspace }}/native/Scripts/tsan-suppressions.txt"
+        run: ./Scripts/run-all-tests.sh --ci --no-build --rerun-failed
