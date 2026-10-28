@@ -12,3 +12,10 @@ sha256 4a110dc9f081c65a922366285cfe7518ba34dc0bb61160dbb53b1a0176fd7732  THIRD-P
 sha256 21f8c800860d07b685c3a33ad20ad6fab41e262d71abda387297b18ebb48ebdb  index.html
 sha256 5e6877e9f14126c5d14c07629a6c9390042baaa665a8d423b77f4e42291a11a3  task-calendar.css
 sha256 6f70e067fc8370468bd36b0a9d93cbf7a7a50a8680af939f1a7d9ec769561e97  task-calendar.js
+SHA-256 of every input, asserted by Scripts/check-web-bundles.sh:
+input sha256 c5fbdf708dd304f60ad61b78f6fee2b3992cbb78a92dd58f56c2b075db4e77c2  Scripts/build-schedule-x-web.sh
+input sha256 21f8c800860d07b685c3a33ad20ad6fab41e262d71abda387297b18ebb48ebdb  Vendor/ScheduleX/src/index.html
+input sha256 c1619bc51892a1e7b357437afb7b799914d94cc99ba5af7e22ddf0273be3a6c8  Vendor/ScheduleX/src/package-lock.json
+input sha256 aa65b44fd3a441858bcfb79f17496357835bd03be023b867c9ea3a6d44712d0e  Vendor/ScheduleX/src/package.json
+input sha256 2720bac1c257948255362678bc4d61043906668ce8aa6cbda8e3e24d5b499afd  Vendor/ScheduleX/src/task-calendar.css
+input sha256 258916f574881eee1049db9c38f871f564fabf5140eddcc9b9d7caa37426e457  Vendor/ScheduleX/src/task-calendar.js

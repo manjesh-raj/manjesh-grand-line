@@ -1,0 +1,16 @@
+# ThreadSanitizer suppressions for `.github/workflows/sanitizers.yml`.
+#
+# One entry per third-party race this app cannot fix, each with the code it
+# covers and the reason. A race in this app's own sources (Sources/GrandLine)
+# never goes here: it is a bug, and the fix is a lock or a queue hop (GL-28).
+#
+# Format: https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+#
+# Empty on purpose. The first run of the headless selection under TSan
+# (2026-10-28, macOS 26.7 locally) needed no suppression - including
+# whisper.cpp's ggml thread pool, which the first full review expected to need
+# `race:ggml_*` and `race:whisper_*`. It did find two real races, both in this
+# app (`DocsRunbookGitSync` and `StickyBoardGitSync` writing `status` on the
+# git queue while main read it), and those were fixed rather than suppressed
+# (`GitSyncStatusCell`). If a future vendored update brings a third-party race,
+# add the narrowest pattern that matches.

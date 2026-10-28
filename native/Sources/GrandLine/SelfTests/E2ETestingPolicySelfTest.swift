@@ -50,6 +50,8 @@ enum E2ETestingPolicySelfTest {
         checkSuitesUseTheOffScreenProbeFactory(&ok)
         checkSuitesUseTheSharedAssertions(&ok)
         checkTheScriptStillOffersBothModes(&ok)
+        checkTheWindowBackedLaneDoesNotGrowUnasked(&ok)
+        checkCIRunsTheBundleAndFloorChecks(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
         checkTheReadmeEnvTableIsComplete(&ok)
@@ -962,6 +964,68 @@ enum E2ETestingPolicySelfTest {
         check(checker.contains("ForTests") && checker.contains("debug[A-Z]") && checker.contains("swift-demangle"),
               "check-release-symbols.sh no longer reads the demangled symbol table for debug* and *ForTests", &ok)
         if ok { print("  OK   \(guardedHooks.count) test hooks are guarded and CI's release job checks the symbol table") }
+    }
+
+    /// R2-PROC-05 of the second full review, carried by the fourth: the
+    /// window-backed lane grew from 116 suites (review #1) to 124 (review #2)
+    /// to 135 (review #4), every new feature added one, and sharding was the
+    /// only answer ever applied - three shards today, four tomorrow. The
+    /// recorded fix is review #1's TEST-01 / ARCH-07 (models out of
+    /// controllers, so a page's logic is testable without a window), which is
+    /// a refactor of its own and not done here.
+    ///
+    /// What this does in the meantime is turn the growth into a decision. A
+    /// new entry in `NEEDS_SESSION` fails here until this number is raised in
+    /// the same change, and the PR says why the new suite needs a window
+    /// rather than a model with a headless suite (`WorkspaceSidebarModel`,
+    /// `SplitShellModel` and `ModuleTable` are the shape). Lowering it when a
+    /// suite moves out of the lane is the point, and a count that drops below
+    /// the ceiling says so, so the headroom does not quietly come back.
+    private static let windowBackedSuiteCeiling = 135
+
+    private static func checkTheWindowBackedLaneDoesNotGrowUnasked(_ ok: inout Bool) {
+        guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),
+              let declared = needsSessionFlags(in: script) else {
+            fail("could not read NEEDS_SESSION from \(runnerScript.path) - the lane ceiling cannot be checked", &ok)
+            return
+        }
+        // The parser's own discriminating power: an empty or tiny list means
+        // it stopped finding entries, not that the lane shrank.
+        guard declared.count > 50 else {
+            fail("NEEDS_SESSION parsed to \(declared.count) entries - the parser is broken, not the lane", &ok)
+            return
+        }
+        check(declared.count <= windowBackedSuiteCeiling,
+              "NEEDS_SESSION has \(declared.count) window-backed suites, over the ceiling of "
+                + "\(windowBackedSuiteCeiling) (R2-PROC-05). Give the new suite's logic a headless model "
+                + "suite, or raise windowBackedSuiteCeiling and say why in the PR", &ok)
+        check(declared.count >= windowBackedSuiteCeiling,
+              "NEEDS_SESSION has \(declared.count) window-backed suites, under the ceiling of "
+                + "\(windowBackedSuiteCeiling) - lower windowBackedSuiteCeiling to \(declared.count) so the "
+                + "room a suite left the lane by is not spent again unasked", &ok)
+    }
+
+    /// R4-PROC-03 and R4-PROC-04: two checks that only help while something
+    /// runs them. The runner calls `check-web-bundles.sh` (so CI's headless
+    /// lane does), and CI's release job calls `check-deployment-target.sh` on
+    /// the release binary. Comments are stripped first, so a line that only
+    /// mentions a script does not count as running it.
+    private static func checkCIRunsTheBundleAndFloorChecks(_ ok: inout Bool) {
+        let ciFile = runnerScript.deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent(".github/workflows/ci.yml")
+        guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),
+              let workflow = try? String(contentsOf: ciFile, encoding: .utf8) else {
+            fail("run-all-tests.sh or ci.yml is not readable - the guard cannot run", &ok)
+            return
+        }
+        func code(_ text: String) -> String {
+            text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+                .joined(separator: "\n")
+        }
+        check(code(script).contains("Scripts/check-web-bundles.sh >"),
+              "run-all-tests.sh no longer runs check-web-bundles.sh - web bundle drift would ship (R4-PROC-03)", &ok)
+        check(code(workflow).contains("run: Scripts/check-deployment-target.sh .build/release/GrandLine"),
+              "ci.yml's release job no longer checks the binary's macOS floor (R4-PROC-04, TEST-10)", &ok)
     }
 
     private static func checkTheScriptStillOffersBothModes(_ ok: inout Bool) {

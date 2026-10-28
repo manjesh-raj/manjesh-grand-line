@@ -139,3 +139,63 @@ That is the conservative answer, and they go once those pids are free.
 The window-backed lane is 124 suites and growing.
 The fix the review names is review #1's TEST-01 and ARCH-07, moving models out of controllers so the next suite can be headless, and that is an architecture change of its own.
 What this branch adds is the measurement: every recorded run now carries the lane's suite count and time.
+
+## Full review #4's process findings (`fm/grandline-review4-process-1793190000`)
+
+### R4-PROC-01: the Home rows flake, and the re-run workflow that looked like it re-ran a test failure
+
+`MainSplitShellSelfTest` flaked 5 of the last 20 `main` runs.
+Three were the toolbar-save check #549 already fixed.
+One was "overview at 998pt: the sidebar is collapsed", covered below.
+The fifth, on #551's push, was `checkHomeRowsFillBesideTheSidebar`: "row 1 (3 cards) ends at 1217.0pt of 952.0pt".
+The row had the sidebar-open width and its cards the sidebar-away width.
+Opening the sidebar narrows Home's clip view without resizing the window, and Home reflows on the next main-queue turn after that.
+The case asserted after `settle`'s one 50 ms turn, which on a loaded runner sometimes did not include the reflow.
+
+How that was established rather than guessed:
+- A replay of the case 20 times on CI, alone, passed every time (and 20 more on the runner's re-run), so it needs the load of the cases before it.
+- Asserting with no run-loop turn at all fails every sidebar-open step locally, with exactly CI's shape.
+- With the new wait (`settleHomeGrid`, which waits for `HomeCanvasController.gridIsCurrentForTests`), that injected variant passes.
+
+The re-run workflow had not re-run a test failure: the run for #551 has one attempt, and the workflow's log says it declined.
+It looked as if it had, because its single job started for every failed `main` run and finished green.
+It is two jobs now, and the `rerun` job only starts when `CI infrastructure` failed.
+The 998pt flake recurred on this PR's own first CI run, so it was traced too.
+`checkNoPageGrowsTheWindow` resizes to the narrowest width that keeps the sidebar, which includes a legacy scroller's track while the system draws them.
+A traced replay on CI measured 1013pt for Overview, and both failures had measured 998pt: the same sum without the track.
+CI's runner changes `NSScroller.preferredScrollerStyle` after launch, the shell re-fits on that notification, and the sidebar correctly stepped aside at a width that no longer had room.
+The check now re-measures after the resize until the floor holds.
+A simulated flip (the floor raised by a track and the notification posted during the resize) fails the old check with the same message and passes the new one.
+
+A third check in the suite failed once on this PR's second run: "setPosition left the sidebar at 264.0pt holding at 499.5, want 224.0" (the divider placement the review named as the likely suspect).
+It is **not** root-caused.
+A traced replay on CI repeated the same sequence 25 times (1100, then 1512, then Console, then `setPosition` to 224) and did not reproduce it.
+It logged the sidebar's pin range, both holding priorities, the pane widths around the placement, and every horizontal constraint at 490 or above on a miss.
+That hook (a static `debugPlacementTrace` closure called from `placingDividerDidChange`) is the place to start if it recurs.
+
+The flake rate per suite is recorded in `native/MANUAL-CHECKS.md` section 21.
+
+### R4-PROC-03: web bundle inputs are checked in CI
+
+Each `build-*-web.sh` now records a SHA-256 of every input (`src/` and the script) in `BUILD-INFO.txt`, through `Scripts/check-web-bundles.sh --record`.
+The same script without arguments recomputes them, needs no node or network, and runs in `run-all-tests.sh`'s exhaustive and `--ci` selections.
+The Excalidraw bundle was rebuilt from its lockfile, which closed `MANUAL-CHECKS.md`'s section 15a.
+The rebuild is 8,451,183 bytes, the size that section measured in September.
+
+### R4-PROC-04: a ThreadSanitizer lane, the macOS floor, and the lane ceiling
+
+- TEST-07: `.github/workflows/sanitizers.yml` builds with `--sanitize=thread` and runs the headless selection, nightly, on demand, and on a pull request that changes the lane.
+  Its first local run took 13 minutes and found two real races in the same shape: `DocsRunbookGitSync` and `StickyBoardGitSync` wrote `status` on the git queue while main read it.
+  Notebook, Reading List and Code Preview had the identical unlocked code.
+  All five now share `GitSyncStatusCell`.
+  `ShiftGitSync`, `CredentialVaultGitSync` and `DotfilesAutoSync` already had locks of their own and guard more state under them, so they were left alone.
+- TEST-10: GitHub retired its macOS 13 image, so nothing can run on the floor.
+  `Scripts/check-deployment-target.sh` proves in the release job that the binary's `minos`, `Package.swift` and `LSMinimumSystemVersion` agree.
+  The run-on-13 half is a manual check (section 20).
+- R2-PROC-05: still not fixed at the root, for the reason above.
+  `E2ETestingPolicySelfTest.checkTheWindowBackedLaneDoesNotGrowUnasked` now fails when `NEEDS_SESSION` passes 135 entries, so a new window-backed suite raises the ceiling in its own PR and says why.
+  It also fails when the count drops below the ceiling, so room a suite leaves is not spent again unasked.
+
+### R4-PROC-05
+
+#552 had already added the state assertions after the hide-and-show round trip in `ShiftCalendarViewSelfTest`, so nothing was added.

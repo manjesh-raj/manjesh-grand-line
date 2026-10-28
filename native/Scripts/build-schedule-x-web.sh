@@ -139,6 +139,14 @@ INFO
   done)
 } >> "$DEST/BUILD-INFO.txt"
 
+# R4-PROC-03: and a SHA-256 of every input (src/ and this script), so a change
+# to either that was never rebuilt fails Scripts/check-web-bundles.sh, which
+# CI's headless lane runs. That script owns the list of inputs.
+{
+  echo "SHA-256 of every input, asserted by Scripts/check-web-bundles.sh:"
+  Scripts/check-web-bundles.sh --record "${SRC%/src}" "Scripts/$(basename "$0")"
+} >> "$DEST/BUILD-INFO.txt"
+
 if [ "$CHECK_ONLY" -eq 1 ]; then
   if diff -r "$OUT" "$DEST" >/dev/null 2>&1; then
     echo ""

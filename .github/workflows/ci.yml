@@ -241,6 +241,16 @@ jobs:
       - name: Prove the release binary carries no test-only symbols
         run: Scripts/check-release-symbols.sh .build/release/GrandLine
 
+      # TEST-10 / R4-PROC-04: the release binary is the macOS 13 binary
+      # `Package.swift` declares - its `minos`, and the `LSMinimumSystemVersion`
+      # the packaging scripts write, all agree with `.macOS(.v13)`. Building at
+      # that target is what makes the compiler reject an API newer than 13
+      # without an `#available` check. Running on 13 is not possible here:
+      # GitHub retired its macOS 13 image, so see the script's header and
+      # native/MANUAL-CHECKS.md for the half this cannot cover.
+      - name: Prove the release binary targets the declared macOS floor
+        run: Scripts/check-deployment-target.sh .build/release/GrandLine
+
   # `swift build`, the check this workflow has always reported: green only
   # when the debug build (warning-clean) and the release build both are. Same
   # name and same meaning as the single job it replaces, so nothing that
@@ -708,7 +718,12 @@ jobs:
       #     pull request, for bundles that change a few times a year. The
       #     review's own suggestion is a scheduled job, and that is the
       #     captain's call; `./Scripts/build-{monaco,excalidraw}-web.sh
-      #     --check` is one command either way.
+      #     --check` is one command either way. `build-schedule-x-web.sh` is
+      #     the same shape. What CI does run for all three is the cheap half
+      #     (R4-PROC-03): `Scripts/check-web-bundles.sh`, in the `test` job's
+      #     headless run, recomputes the input digests each bundle's
+      #     BUILD-INFO.txt records, so a `src/` edit that was never rebuilt
+      #     fails with no node install at all.
       - name: Card shortcut icons
         run: python3 Scripts/build-card-shortcut-icons.py --check
 

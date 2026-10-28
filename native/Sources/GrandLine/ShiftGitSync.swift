@@ -1236,6 +1236,49 @@ final class ShiftGitSync {
     }
 }
 
+/// GL-28: a git sync's status and its observers, behind one lock.
+///
+/// Every sync writes its status from the shared serial git queue (`setStatus`
+/// runs inside a commit or a pull) and reads it from the main thread (a page's
+/// sync pill, `observeStatus`'s registration). `ShiftGitSync` guarded that
+/// with a lock of its own, and five siblings that copied its earlier shape -
+/// Notebook, Reading List, Code Preview, Runbooks and the Sticky Board - did
+/// not. The ThreadSanitizer lane (R4-PROC-04) flagged two of them on its first
+/// run: a torn read of an enum with a `String` payload, not merely a stale
+/// value. This is the one copy those five share.
+///
+/// Handlers are delivered on the main queue, and the lock is never held
+/// across one.
+final class GitSyncStatusCell<Status> {
+    private let lock = NSLock()
+    private var current: Status
+    private var handlers: [(Status) -> Void] = []
+
+    init(_ initial: Status) { current = initial }
+
+    var value: Status {
+        lock.lock(); defer { lock.unlock() }
+        return current
+    }
+
+    /// Fires on the main queue with the current status, then on every change.
+    func observe(_ handler: @escaping (Status) -> Void) {
+        lock.lock()
+        handlers.append(handler)
+        let now = current
+        lock.unlock()
+        DispatchQueue.main.async { handler(now) }
+    }
+
+    func set(_ newValue: Status) {
+        lock.lock()
+        current = newValue
+        let observers = handlers
+        lock.unlock()
+        DispatchQueue.main.async { observers.forEach { $0(newValue) } }
+    }
+}
+
 /// R2-BUG-04: whether a git sync still owes a debounced commit, readable from
 /// any thread.
 ///

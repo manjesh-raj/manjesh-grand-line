@@ -14,9 +14,24 @@
 # Once per run (`run_attempt == 1`), so an infrastructure failure that keeps
 # happening is re-run once and then left red, rather than looping.
 #
+# R4-PROC-01 of the fourth full review read this workflow as having re-run a
+# test failure on the push of #551. It had not - its log says "failed for a
+# build or suite reason, not infrastructure. Not re-running it.", and that run
+# has one attempt - but it looked exactly as if it had: the one job started
+# for every failed `main` run, declined inside a step and finished green, so
+# the Actions list showed a successful "Re-run main after an infrastructure
+# failure" beside every suite failure. (The "passed on re-run" in that run was
+# the runner's own `--rerun-failed`, which re-runs a failed suite once to name
+# it flaky and still fails the run.)
+#
+# So the decision and the re-run are two jobs now. `classify` reads the
+# verdict and only reports it; `rerun` starts only when the verdict is
+# `failure`. A suite failure leaves `rerun` skipped, so the list shows what
+# happened rather than a green re-run that never was.
+#
 # `workflow_run` only fires for a workflow file on the default branch, so this
-# takes effect from the merge that adds it and cannot be exercised by the pull
-# request that adds it.
+# takes effect from the merge that changes it and cannot be exercised by the
+# pull request that changes it.
 
 name: Re-run main after an infrastructure failure
 
@@ -31,16 +46,22 @@ permissions:
   contents: read
 
 jobs:
-  rerun:
-    name: re-run an infrastructure failure on main
+  classify:
+    name: read the CI infrastructure verdict
     if: >-
       github.event.workflow_run.conclusion == 'failure'
       && github.event.workflow_run.event == 'push'
       && github.event.workflow_run.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
-      - name: Re-run the failed jobs when the failure was infrastructure
+      - name: Read the CI infrastructure check of the failed run
+        id: verdict
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -50,9 +71,27 @@ jobs:
           verdict="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/1/jobs?per_page=100" \
             --jq '.jobs[] | select(.name == "CI infrastructure") | .conclusion')"
           echo "CI infrastructure: ${verdict:-not reported}"
+          echo "verdict=${verdict:-missing}" >> "$GITHUB_OUTPUT"
           if [ "$verdict" != failure ]; then
-            echo "Run $RUN_ID failed for a build or suite reason, not infrastructure. Not re-running it."
-            exit 0
+            echo "Run $RUN_ID failed for a build or suite reason, not infrastructure. It is not re-run."
           fi
+
+  rerun:
+    name: re-run an infrastructure failure on main
+    needs: classify
+    # Only the conclusion this workflow is named for. Anything else - a suite
+    # failure, a build failure, a verdict that could not be read - leaves this
+    # job skipped and the run red.
+    if: ${{ needs.classify.outputs.verdict == 'failure' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the failed jobs once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
           echo "Run $RUN_ID failed for an infrastructure reason. Re-running its failed jobs once."
           gh run rerun "$RUN_ID" --failed --repo "$REPO"
