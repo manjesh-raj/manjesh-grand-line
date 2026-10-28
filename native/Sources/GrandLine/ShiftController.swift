@@ -3001,8 +3001,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         filterMenuButton.toolTip = "Show one project's tasks, or change the sort"
         filterMenuButton.setContentHuggingPriority(.required, for: .horizontal)
         filterMenuButton.isHidden = true
-        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup,
-                     doneWindowNote] as [NSView] {
+        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup, doneWindowNote] as [NSView] {
             workspaceFilterRow.addArrangedSubview(view)
         }
         workspaceFilterRow.orientation = .horizontal

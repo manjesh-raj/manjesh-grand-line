@@ -351,7 +351,8 @@ enum SidebarRedesignsModelSelfTest {
         check(ShiftController.ShiftTaskScope.allCases.count == 5,
               "the scopes changed; the filter row lists \(ShiftController.ShiftTaskScope.allCases.count)", &ok)
         for needle in ["ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) }",
-                       "[scopeFilter, followUpsJump, projectPopup, spacer, sortPopup, doneWindowNote]",
+                       // R4-UI-08: the Filter button stands in for the two pop-ups when the row is narrow.
+                       "[scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup, doneWindowNote]",
                        "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
                        "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
                        "boardView.adoptWorkspaceStyle()"] {
