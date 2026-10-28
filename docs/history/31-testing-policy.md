@@ -167,6 +167,12 @@ CI's runner changes `NSScroller.preferredScrollerStyle` after launch, the shell 
 The check now re-measures after the resize until the floor holds.
 A simulated flip (the floor raised by a track and the notification posted during the resize) fails the old check with the same message and passes the new one.
 
+A third check in the suite failed once on this PR's second run: "setPosition left the sidebar at 264.0pt holding at 499.5, want 224.0" (the divider placement the review named as the likely suspect).
+It is **not** root-caused.
+A traced replay on CI repeated the same sequence 25 times (1100, then 1512, then Console, then `setPosition` to 224) and did not reproduce it.
+It logged the sidebar's pin range, both holding priorities, the pane widths around the placement, and every horizontal constraint at 490 or above on a miss.
+That hook (a static `debugPlacementTrace` closure called from `placingDividerDidChange`) is the place to start if it recurs.
+
 The flake rate per suite is recorded in `native/MANUAL-CHECKS.md` section 21.
 
 ### R4-PROC-03: web bundle inputs are checked in CI
