@@ -350,6 +350,105 @@ enum GrandLineNotificationCenterSelfTest {
         check("the oldest informational entry was the one shed",
               !center.entries.contains { $0.id == "chatter-0" })
 
+        // MARK: snooze and read state survive a relaunch (F2)
+
+        center.resetForTesting()
+        var persistNow = Date(timeIntervalSince1970: 1_750_000_000)
+        center.clock = { persistNow }
+        center.set(note("ps1", subtext: "one", kind: .informational, source: "Updates"), id: "ps1")
+        center.set(note("ps2", subtext: "two", kind: .informational), id: "ps2")
+        center.snooze(id: "ps1", until: persistNow.addingTimeInterval(7 * 86_400))
+        center.setRead(true, id: "ps2")
+        check("a snooze is written to AppDefaults.store",
+              AppDefaults.store.dictionary(forKey: "fm.notifications.snoozedUntil")?["ps1"] is Date)
+        check("a read mark is written to AppDefaults.store",
+              AppDefaults.store.dictionary(forKey: "fm.notifications.readDetail")?["ps2"] != nil)
+        center.debugReloadPersistedState()
+        check("a next-week snooze survives a relaunch", !center.entries.contains { $0.id == "ps1" })
+        check("read state survives a relaunch",
+              center.entries.first { $0.id == "ps2" }.map(center.isRead) == true)
+        center.snooze(id: "ps2", until: persistNow.addingTimeInterval(60))
+        persistNow = persistNow.addingTimeInterval(120)
+        center.debugReloadPersistedState()
+        check("a snooze that expired while the app was closed is dropped on load",
+              center.entries.contains { $0.id == "ps2" } && !center.snoozedEntries.contains { $0.entry.id == "ps2" })
+        AppSettings.shared.notificationReadDetail = ["ps2": ("two", persistNow.addingTimeInterval(-31 * 86_400))]
+        center.debugReloadPersistedState()
+        check("a read mark older than its lifetime is dropped on load",
+              center.entries.first { $0.id == "ps2" }.map(center.isRead) == false)
+
+        // MARK: the Snoozed list, and unsnooze leaves mutes alone (F3)
+
+        center.set(note("ps3", subtext: "three", kind: .informational), id: "ps3")
+        center.set(note("ps4", subtext: "four", kind: .actionNeeded), id: "ps4")
+        center.snooze(id: "ps3", until: persistNow.addingTimeInterval(7200))
+        center.snooze(id: "ps4", until: persistNow.addingTimeInterval(3600))
+        check("snoozedEntries lists what is snoozed, soonest back first",
+              center.snoozedEntries.map(\.entry.id) == ["ps4", "ps3", "ps1"])
+        center.mute(source: "Updates")
+        check("an entry that is also muted is not listed as snoozed",
+              !center.snoozedEntries.contains { $0.entry.id == "ps1" })
+        center.unsnooze(id: "ps4")
+        check("unsnooze brings one entry back now", center.entries.contains { $0.id == "ps4" }
+              && center.snoozedEntries.map(\.entry.id) == ["ps3"])
+        center.unsnoozeAll()
+        check("unsnoozeAll brings every snoozed entry back", center.entries.contains { $0.id == "ps3" }
+              && center.snoozedEntries.isEmpty)
+        check("unsnoozeAll leaves a mute alone", center.isMuted(source: "Updates"))
+        center.setMuted(false, source: "Updates")
+        check("with the mute lifted and the snooze gone, the entry is back", center.entries.contains { $0.id == "ps1" })
+        for id in ["ps1", "ps2", "ps3", "ps4"] { center.set(nil, id: id) }
+        check("a resolved condition takes its persisted state with it",
+              AppSettings.shared.notificationSnoozedUntil.isEmpty && AppSettings.shared.notificationReadDetail.isEmpty)
+
+        // MARK: a detail is shortened by path and word, not mid-word (F4)
+
+        let longDetail = "3 failures in a row \u{00B7} /Users/pat/manjesh/firstmate/projects/manjesh-config"
+            + " and origin/main have both moved on independently since then"
+        let short = NotificationSources.shortDetail(longDetail, home: "/Users/pat")
+        check("the home directory becomes ~ and a deep path keeps its last two segments",
+              short.contains("~/\u{2026}/projects/manjesh-config") && !short.contains("/Users/pat"))
+        let lastWord = short.dropLast().split(separator: " ").last.map(String.init) ?? ""
+        check("the cut lands on a word boundary: \(short)", short.hasSuffix("\u{2026}") && short.count <= 91
+              && longDetail.split(separator: " ").map(String.init).contains(lastWord))
+        check("a short detail is left alone", NotificationSources.shortDetail("Ready", home: "/Users/pat") == "Ready")
+        check("a shallow path is left alone",
+              NotificationSources.shortDetail("cannot read /etc/hosts", home: "/Users/pat") == "cannot read /etc/hosts")
+
+        // MARK: the snooze menu's and the Snoozed list's time strings
+
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let enUS = Locale(identifier: "en_US")
+        let wednesday = utc.date(from: DateComponents(year: 2026, month: 10, day: 28, hour: 10, minute: 42))!
+        func at(_ day: Int, _ hour: Int) -> Date {
+            utc.date(from: DateComponents(year: 2026, month: day < 28 ? 11 : 10, day: day, hour: hour))!
+        }
+        func plain(_ text: String) -> String {
+            text.replacingOccurrences(of: "\u{202F}", with: " ").replacingOccurrences(of: "\u{00A0}", with: " ")
+        }
+        let tonight = plain(NotificationBridgeTimeText.snoozeTime(at(28, 18), now: wednesday, calendar: utc, locale: enUS))
+        check("a snooze ending today shows the time alone: \(tonight)", tonight == "6:00 PM")
+        let thursday = plain(NotificationBridgeTimeText.snoozeTime(at(29, 9), now: wednesday, calendar: utc, locale: enUS))
+        check("a snooze ending this week shows the weekday: \(thursday)", thursday == "Thu 9:00 AM")
+        let farOff = plain(NotificationBridgeTimeText.snoozeTime(at(9, 9), now: wednesday, calendar: utc, locale: enUS))
+        check("a snooze beyond a week shows the date: \(farOff)", farOff.contains("Nov") && farOff.contains("9"))
+        check("a Snoozed row ending today says Back at",
+              plain(NotificationBridgeTimeText.returns(at(28, 18), now: wednesday, calendar: utc, locale: enUS)) == "Back at 6:00 PM")
+        check("a Snoozed row ending tomorrow says tomorrow",
+              plain(NotificationBridgeTimeText.returns(at(29, 9), now: wednesday, calendar: utc, locale: enUS)) == "Back tomorrow, 9:00 AM")
+
+        // MARK: a fallback label names the page, not its path (F9)
+
+        let savedLayout = PlaceName.layout
+        PlaceName.layout = .sidebar
+        NotificationSources.setGitHubSync(count: 3, navigate: {})
+        let forkLabel = center.entries.first { $0.id == NotificationSources.githubSyncID }?.primaryAction?.label
+        check("the fork row's fallback says \(forkLabel ?? "nothing"), not a breadcrumb",
+              forkLabel == "Open \(PlaceName.short(.githubSync))" && forkLabel?.contains("\u{203A}") == false)
+        NotificationSources.setGitHubSync(count: 0, navigate: {})
+        PlaceName.layout = savedLayout
+
         center.resetForTesting()
 
         if failures.isEmpty {

@@ -106,7 +106,7 @@ enum NotificationSources {
             AppNotificationAction(label: count == 1 ? "Update" : "Update all",
                                   doneMessage: count == 1 ? "Updating the tool" : "Updating every tool",
                                   perform: $0)
-        } ?? AppNotificationAction(label: "Open \(PlaceName.of(.updates))", doneMessage: "Opened Updates", perform: navigate)
+        } ?? AppNotificationAction(label: "Open \(PlaceName.short(.updates))", doneMessage: "Opened Updates", perform: navigate)
         GrandLineNotificationCenter.shared.set(
             AppNotification(
                 id: toolUpdatesID, title: title,
@@ -145,7 +145,7 @@ enum NotificationSources {
             AppNotificationAction(label: count == 1 ? "Sync" : "Sync all",
                                   doneMessage: count == 1 ? "Syncing the fork" : "Syncing every fork",
                                   perform: $0)
-        } ?? AppNotificationAction(label: "Open \(PlaceName.of(.githubSync))", doneMessage: "Opened GitHub Sync", perform: navigate)
+        } ?? AppNotificationAction(label: "Open \(PlaceName.short(.githubSync))", doneMessage: "Opened GitHub Sync", perform: navigate)
         GrandLineNotificationCenter.shared.set(
             AppNotification(
                 id: githubSyncID, title: title,
@@ -178,7 +178,7 @@ enum NotificationSources {
                 source: "Vault",
                 clearCondition: "Clears when each tool is hardened.",
                 kind: .informational, tint: .violet,
-                primaryAction: AppNotificationAction(label: "Open \(PlaceName.of(.vault))", doneMessage: "Opened \(PlaceName.of(.vault))",
+                primaryAction: AppNotificationAction(label: "Open \(PlaceName.short(.vault))", doneMessage: "Opened \(PlaceName.of(.vault))",
                                                     perform: navigate),
                 navigate: navigate
             ),
@@ -488,8 +488,37 @@ enum NotificationSources {
 
     /// One line, bounded - a notification subtext is a headline; the full text
     /// lives on the Health card.
-    private static func shortDetail(_ detail: String, limit: Int = 90) -> String {
+    ///
+    /// Paths are shortened before the cut, because a service-health detail
+    /// that opens with an absolute path spent most of its 90 characters on
+    /// `/Users/<name>/...` and then ended mid-word ("o\u{2026}"). The home
+    /// directory becomes `~`, a path of five or more segments (counting `~`)
+    /// keeps only its last two (`~/\u{2026}/projects/manjesh-config`), and the
+    /// cut lands on a word boundary.
+    static func shortDetail(_ detail: String, limit: Int = 90,
+                            home: String = NSHomeDirectory()) -> String {
         let firstLine = detail.split(separator: "\n").first.map(String.init) ?? detail
-        return firstLine.count <= limit ? firstLine : String(firstLine.prefix(limit)) + "\u{2026}"
+        let words = firstLine.split(separator: " ", omittingEmptySubsequences: false)
+            .map { shortPath(String($0), home: home) }
+        let line = words.joined(separator: " ")
+        guard line.count > limit else { return line }
+        let head = String(line.prefix(limit))
+        let cut = head.lastIndex(of: " ").map { String(head[..<$0]) } ?? head
+        return cut.trimmingCharacters(in: CharacterSet(charactersIn: " \u{00B7},;:")) + "\u{2026}"
+    }
+
+    private static func shortPath(_ word: String, home: String) -> String {
+        var path = word
+        if !home.isEmpty, home != "/", path == home || path.hasPrefix(home + "/") {
+            // `String(...)` explicitly: CI's pinned compiler has rejected a
+            // `String + Substring` concatenation a local build accepted.
+            path = "~" + String(path.dropFirst(home.count))
+        }
+        guard path.hasPrefix("/") || path.hasPrefix("~") else { return word }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count > 4 else { return path }
+        // `~/…/a/b`, or `/…/a/b` for a path outside the home directory.
+        let lead = path.hasPrefix("~") ? "~/" : "/"
+        return lead + "\u{2026}/" + parts.suffix(2).joined(separator: "/")
     }
 }

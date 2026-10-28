@@ -1846,7 +1846,17 @@ struct NotificationRowPresentation {
         case NotificationSources.fleetFinishedID:
             icon = "flag.checkered"
             kicker = "Task Finished"
+        case NotificationSources.persistenceFailureID:
+            icon = "externaldrive.badge.exclamationmark"
+            kicker = "Not Saved"
         default:
+            if entry.id.hasPrefix("service-failing.") {
+                // One entry per health service, so a prefix like SRE Lead's.
+                // It used to fall through to the generic bell.
+                icon = "exclamationmark.arrow.triangle.2.circlepath"
+                kicker = "Service Failing"
+                return
+            }
             if entry.id.hasPrefix("sre-lead.") {
                 icon = "bubble.left.fill"
                 kicker = "SRE Lead Reply"

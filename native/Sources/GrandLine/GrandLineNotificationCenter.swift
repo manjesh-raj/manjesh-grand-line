@@ -26,7 +26,9 @@
 // published list - `stored` holds everything a source has published, and
 // `entries` derives what is visible. (Mute started session-scoped and is a
 // setting now: it is read from and written to `AppSettings`, so it survives
-// a relaunch and Settings > Notifications can list it.) A fourth view joined
+// a relaunch and Settings > Notifications can list it. Snooze and read state
+// followed with the triage-card redesign, for the same reason: a "Next week"
+// snooze that a quit silently cancelled was not a snooze.) A fourth view joined
 // them with the Bridge redesign: while a focus session runs, an
 // `.informational` entry that arrives is *held* - published and kept, just not
 // shown or counted - until the session ends. `.actionNeeded` entries always
@@ -242,11 +244,25 @@ final class GrandLineNotificationCenter {
     /// is carrying information the captain has not seen, so it goes back to
     /// unread. That is what makes the blue dot mean something after the first
     /// time it is cleared.
-    private var readDetail: [String: String] = [:]
+    ///
+    /// Persisted (`AppSettings.notificationReadDetail`), with the time each
+    /// mark was made, so a relaunch does not light every dot again. Every
+    /// write goes through `persistRead()`.
+    private var readDetail: [String: (detail: String, at: Date)] = [:]
 
     /// `id -> when it comes back`. A snooze is not a dismissal: the entry is
-    /// still published, still true, and reappears on its own.
+    /// still published, still true, and reappears on its own. Persisted
+    /// (`AppSettings.notificationSnoozedUntil`); every write goes through
+    /// `persistSnoozes()`.
     private var snoozedUntil: [String: Date] = [:]
+
+    /// How long a read mark for an id that never comes back is kept. A
+    /// source that mints a fresh id per event (a crew reply, a schedule run)
+    /// would otherwise grow the stored map for ever, because nothing calls
+    /// `set(nil, id:)` for an id from a previous run.
+    static let readMarkLifetime: TimeInterval = 30 * 86_400
+    /// The most read marks ever persisted, newest kept.
+    static let maxReadMarks = 400
 
     /// Sources the captain has muted. This used to be session-scoped, on the
     /// reasoning that a mute which outlived a relaunch would be a setting. It
@@ -289,7 +305,38 @@ final class GrandLineNotificationCenter {
     /// `FocusTimerController.clock` uses, and for the same reason).
     var clock: () -> Date = { Date() }
 
-    private init() {}
+    private init() {
+        loadPersistedState()
+    }
+
+    /// Reads the persisted snoozes and read marks, dropping a snooze that has
+    /// already expired and a read mark older than `readMarkLifetime`.
+    private func loadPersistedState() {
+        let now = clock()
+        let storedSnoozes = AppSettings.shared.notificationSnoozedUntil
+        let storedReads = AppSettings.shared.notificationReadDetail
+        snoozedUntil = storedSnoozes.filter { $0.value > now }
+        readDetail = storedReads.filter { now.timeIntervalSince($0.value.at) < Self.readMarkLifetime }
+        // Write the pruned maps back, or what was dropped here would stay on
+        // disk for good: `forget(id:)` only persists when it removed
+        // something from memory.
+        if snoozedUntil.count != storedSnoozes.count { AppSettings.shared.notificationSnoozedUntil = snoozedUntil }
+        if readDetail.count != storedReads.count { AppSettings.shared.notificationReadDetail = readDetail }
+    }
+
+    private func persistSnoozes() {
+        let now = clock()
+        snoozedUntil = snoozedUntil.filter { $0.value > now }
+        AppSettings.shared.notificationSnoozedUntil = snoozedUntil
+    }
+
+    private func persistRead() {
+        if readDetail.count > Self.maxReadMarks {
+            let keep = readDetail.sorted { $0.value.at > $1.value.at }.prefix(Self.maxReadMarks)
+            readDetail = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })  // unique-keys-ok: a prefix of an existing Dictionary
+        }
+        AppSettings.shared.notificationReadDetail = readDetail
+    }
 
     private enum HiddenReason { case snoozedOrMuted, focusQuiet }
 
@@ -428,18 +475,19 @@ final class GrandLineNotificationCenter {
     /// text that was read against the entry's current one, so a row whose
     /// content has moved on since is unread again - see `readDetail`.
     func isRead(_ entry: AppNotification) -> Bool {
-        readDetail[entry.id] == entry.subtext
+        readDetail[entry.id]?.detail == entry.subtext
     }
 
     func setRead(_ read: Bool, id: String) {
         guard let entry = stored.first(where: { $0.id == id }) else { return }
         let wasRead = isRead(entry)
+        guard wasRead != read else { return }
         if read {
-            readDetail[id] = entry.subtext
+            readDetail[id] = (entry.subtext, clock())
         } else {
             readDetail.removeValue(forKey: id)
         }
-        guard wasRead != read else { return }
+        persistRead()
         notifyObservers()
     }
 
@@ -448,7 +496,9 @@ final class GrandLineNotificationCenter {
     func markAllRead() {
         let unread = entries.filter { !isRead($0) }
         guard !unread.isEmpty else { return }
-        for entry in unread { readDetail[entry.id] = entry.subtext }
+        let now = clock()
+        for entry in unread { readDetail[entry.id] = (entry.subtext, now) }
+        persistRead()
         notifyObservers()
     }
 
@@ -462,6 +512,39 @@ final class GrandLineNotificationCenter {
     func snooze(id: String, until date: Date) {
         guard stored.contains(where: { $0.id == id }) else { return }
         snoozedUntil[id] = date
+        persistSnoozes()
+        notifyObservers()
+    }
+
+    /// Every entry hidden by its own snooze right now, soonest back first -
+    /// what the panel's Snoozed list shows. An entry that is also muted is
+    /// left out: un-snoozing it would not bring it back, and the mute is
+    /// listed on its own.
+    var snoozedEntries: [(entry: AppNotification, until: Date)] {
+        let now = clock()
+        return stored.compactMap { entry -> (entry: AppNotification, until: Date)? in
+            guard let until = snoozedUntil[entry.id], until > now else { return nil }
+            if !entry.source.isEmpty, mutedSources.contains(entry.source) { return nil }
+            return (entry, until)
+        }
+        .sorted { $0.until < $1.until }
+    }
+
+    /// Brings one snoozed entry back now.
+    func unsnooze(id: String) {
+        guard snoozedUntil.removeValue(forKey: id) != nil else { return }
+        persistSnoozes()
+        notifyObservers()
+    }
+
+    /// Brings every snoozed entry back and **leaves mutes alone** (F3).
+    /// `restoreHidden()` clears both, which un-did mutes set in Settings >
+    /// Notifications; it stays only for the classic panel, frozen with the
+    /// floating bar.
+    func unsnoozeAll() {
+        guard !snoozedUntil.isEmpty else { return }
+        snoozedUntil.removeAll()
+        persistSnoozes()
         notifyObservers()
     }
 
@@ -526,6 +609,7 @@ final class GrandLineNotificationCenter {
         snoozedUntil.removeAll()
         mutedSources.removeAll()
         persistMutes()
+        persistSnoozes()
         notifyObservers()
     }
 
@@ -534,8 +618,8 @@ final class GrandLineNotificationCenter {
     /// pre-read and pre-snoozed.
     private func forget(id: String) {
         dismissedDetail.removeValue(forKey: id)
-        readDetail.removeValue(forKey: id)
-        snoozedUntil.removeValue(forKey: id)
+        if readDetail.removeValue(forKey: id) != nil { persistRead() }
+        if snoozedUntil.removeValue(forKey: id) != nil { persistSnoozes() }
     }
 
     private func notifyObservers() {
@@ -552,6 +636,8 @@ final class GrandLineNotificationCenter {
         snoozedUntil.removeAll()
         mutedSources.removeAll()
         persistMutes()
+        persistRead()
+        AppSettings.shared.notificationSnoozedUntil = [:]
         quietSince = nil
         quietWhileFocusing = true
         AppSettings.shared.notificationQuietWhileFocusing = true
@@ -563,6 +649,11 @@ final class GrandLineNotificationCenter {
     /// survives one without starting a second process.
     func debugReloadPersistedMutes() {
         mutedSources = AppSettings.shared.notificationMutedSources
+    }
+
+    /// The same for snoozes and read marks.
+    func debugReloadPersistedState() {
+        loadPersistedState()
     }
     #endif
 }
