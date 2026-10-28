@@ -57,10 +57,11 @@ Run it after editing anything in `src/`, or after bumping a version in `src/pack
 
 ## Upgrading
 
-Bump the version in `src/package.json`, rebuild, and check five things, because each one fails silently:
+Bump the version in `src/package.json`, rebuild, and check six things, because each one fails silently:
 
 1. **The drag plugin still works.** Run `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS=1 .build/debug/GrandLine`. It drags in the month grid and the week view and reads the task store.
 2. **The CSS variable names still exist.** `ShiftCalendarPalette.requiredVariables` names every `--sx-color-*` role the palette sets. A renamed role leaves Schedule-X's default purple behind.
-3. **The callbacks still exist.** `task-calendar.js` uses `onEventClick`, `onDoubleClickDate`, `onDoubleClickDateTime`, `onRangeUpdate`, `onRender`, `onSelectedDateUpdate`, `onBeforeEventUpdate` and `onEventUpdate`, and the scroll controller's `scrollTo`.
+3. **The callbacks still exist.** `task-calendar.js` uses `onEventClick`, `onDoubleClickDate`, `onDoubleClickDateTime`, `onClickPlusEvents`, `onRangeUpdate`, `onRender`, `onSelectedDateUpdate`, `onBeforeEventUpdate` and `onEventUpdate`, and the scroll controller's `scrollTo`.
 4. **The locale rule still holds.** Schedule-X throws on a locale that is not `ll-RR`, which is why `ShiftCalendarPayload.scheduleXLocale` normalises it.
 5. **The classes the stylesheet targets still exist.** `task-calendar.css` draws the card over `.sx__month-grid-day`, `.is-leading-or-trailing`, `.sx__month-grid-day__header-date.sx__is-today`, `.sx__month-grid-event`, `.sx__calendar-header` and the `.sx__list-*` rows. A renamed class leaves the default look behind with no error; `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` reads the cells, the dimmed days, the today pill and the hidden header back from the page, and the tour lab's `calendar` verb renders it.
+6. **Nothing switches the view by itself.** The page passes `isResponsive: false`, because Schedule-X's responsive mode switches to Day whenever the wrapper is under 700px, and a hidden page collapses to well under that (review #4's R4-BUG-01). Every view change the captain makes in the page goes through `selectView`, which posts a `view` message; a `range` report never changes the native scale. A new option or default that moves the view on its own would show the wrong view with nothing failing, so `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` hides the page at zero width, shows it again and reads the view back.

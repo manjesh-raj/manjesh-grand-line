@@ -109,7 +109,11 @@ enum WorkspaceSidebarMetrics {
     /// A live session under Console: one step down from a module.
     static let sessionRowHeight: CGFloat = 30
     /// A group heading, with the room above it that separates the groups.
-    static let sectionRowHeight: CGFloat = 34
+    /// 34 until review #4: with Console holding one session the default list
+    /// (24 rows) came out 836pt against an 823pt clip view in a 950pt window,
+    /// so the lit row's scroll left Home half under the header (R4-BUG-03).
+    /// 30 brings the list to 820pt, and only the gap above each heading gives.
+    static let sectionRowHeight: CGFloat = 30
     static let moduleTextSize: CGFloat = 15
     static let sessionTextSize: CGFloat = 14
     static let sectionTextSize: CGFloat = 13
@@ -306,6 +310,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     private func rebuild() {
+        // A rebuild (a session coming or going, a module shown or hidden)
+        // does not change what is lit, so it does not move the list either:
+        // it used to scroll to the lit row every time, undoing a scroll the
+        // captain had made (R4-BUG-03). The very first build has nothing to
+        // keep and reveals the lit row as a navigation does.
+        let isFirstBuild = roots.isEmpty
+        let origin = scrollView.contentView.bounds.origin
         roots = WorkspaceSidebarModel.roots(sessions: sessions, hidden: hidden).map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
         outlineView.reloadData()
@@ -315,10 +326,36 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             }
         }
         isApplyingSelection = false
-        applySelection()
+        applySelection(reveal: isFirstBuild)
+        if !isFirstBuild { restoreScroll(to: origin) }
     }
 
-    private func applySelection() {
+    /// Puts the list back where it was, or as near as a shorter list allows.
+    private func restoreScroll(to origin: NSPoint) {
+        let clip = scrollView.contentView
+        let furthest = max(0, outlineView.frame.height - clip.bounds.height)
+        clip.scroll(to: NSPoint(x: origin.x, y: min(max(0, origin.y), furthest)))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// Scrolls `row` into sight, except that a list taller than its clip view
+    /// by less than one row stays at the top: `scrollRowToVisible` on a
+    /// bottom row would lift the whole column by the overflow and push Home
+    /// under the header, to show a few more points of a row that is already
+    /// mostly in sight (R4-BUG-03).
+    private func reveal(row: Int) {
+        let clip = scrollView.contentView
+        let rect = outlineView.rect(ofRow: row)
+        let overflow = outlineView.frame.height - clip.bounds.height
+        if overflow > 0, overflow < rect.height, rect.maxY > clip.bounds.height {
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: 0))
+            scrollView.reflectScrolledClipView(clip)
+            return
+        }
+        outlineView.scrollRowToVisible(row)
+    }
+
+    private func applySelection(reveal shouldReveal: Bool = true) {
         guard let item = item(for: current) else {
             isApplyingSelection = true
             outlineView.deselectAll(nil)
@@ -336,7 +373,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         isApplyingSelection = true
         outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         isApplyingSelection = false
-        outlineView.scrollRowToVisible(row)
+        if shouldReveal { reveal(row: row) }
     }
 
     /// The row that stands for `kind`: a session row for a host page,

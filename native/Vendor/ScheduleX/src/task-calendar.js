@@ -151,7 +151,21 @@ function mount(config) {
       monthGridOptions: { nEventsPerDay: 4 },
       weekOptions: { gridHeight: 1200, eventOverlap: false },
       skipValidation: true,
+      // The native app owns the layout, and the view. Left on, Schedule-X
+      // switches to Day whenever its wrapper is under 700px - which is every
+      // time the shell hides this page, because a hidden page loses its pins
+      // and collapses - and the wide branch never switches back, since Day
+      // also counts as wide-screen. Leave the page, come back: Day, for good
+      // (review #4's R4-BUG-01).
+      isResponsive: false,
       callbacks: {
+        // "+N more" on a crowded day opens that day. Schedule-X would switch
+        // the view itself; going through the pill handler instead is what
+        // tells the native side, which only follows a view the captain chose.
+        onClickPlusEvents(date) {
+          controls.setDate(date)
+          selectView('day')
+        },
         onEventClick(event) {
           post({ type: 'open', taskID: event.taskID, kind: event.kind || 'task' })
         },
@@ -167,8 +181,8 @@ function mount(config) {
         onRender($app) {
           postRange($app.calendarState.range.value)
         },
-        // Clicking a day's number in the month grid opens that day; the
-        // header has to follow a view change it did not make itself.
+        // The selected date can move without the header's own buttons
+        // ("+N more" opens its day), and the header's title has to follow.
         onSelectedDateUpdate() {
           refreshHeader()
         },
@@ -227,9 +241,14 @@ function step(direction) {
   controls.setDate(next)
 }
 
+// The one place the page changes its view, for a pill, for "+N more" and for
+// the native side's `setView`. It says so in a `view` message of its own: a
+// `range` report only ever moves the period on the native side, so nothing
+// Schedule-X does by itself can change the scale behind the captain's back.
 function selectView(view) {
   if (!calendar || controls.getView() === view) return
   controls.setView(view)
+  post({ type: 'view', view })
   // The scroll controller's `initialScroll` only applies to the first time
   // a time grid mounts. Every later switch to week or day would open at
   // midnight, an empty screen for any task in the working day.

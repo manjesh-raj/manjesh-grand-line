@@ -99,10 +99,10 @@ enum AmbientSignalChildrenSelfTest {
             poller.onSyncFork = onSyncFork
             poller.debugSetCounts(counts)
             poller.debugResetReadingClock()
-            GrandLineNotificationCenter.shared.resetForTesting()
+            GrandLineNotificationCenter.shared.debugReset()
         }
         poller.debugResetReadingClock()
-        GrandLineNotificationCenter.shared.resetForTesting()
+        GrandLineNotificationCenter.shared.debugReset()
         body()
     }
 

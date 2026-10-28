@@ -392,3 +392,26 @@ Each was confirmed to catch a regression:
 - The Schedules page, outside calendar sync and other pages were out of scope.
 - No resize: a task has no duration.
 - The New task button says "New task", not the mockup's "New event", because it opens the New Task sheet and makes a task.
+
+## The Calendar keeps its view across a hide and show (R4-BUG-01, `fm/grandline-review4-bugs-1793180000`)
+
+Full review #4 reproduced it in the tour lab at 1512×950: open Calendar on Month, go to Home, come back, and it was Day for the rest of the session.
+Schedule-X's `isResponsive` defaults to true.
+On every window `resize` it checks whether the wrapper is under 700px and, if so, switches to the first view with small-screen compat, which is Day.
+The shell hides a page by deactivating its pins (gotcha (15)), so a hidden calendar collapses and the page sees that resize.
+The wide branch never switches back, because Day also counts as wide-screen.
+The native side then adopted the `view` named in the page's `range` report, so the toolbar followed a switch the captain never made.
+
+The fix has two halves, and either one alone would have hidden the symptom:
+
+- The page passes `isResponsive: false`, and the bundle is rebuilt (`BUILD-INFO.txt` changed with it; `build-schedule-x-web.sh --check` matches).
+- A `range` report moves the period and nothing else.
+  The page's `selectView` is the one place the page changes its view, and it posts a `view` message of its own.
+  `ShiftCalendarView` changes `scale` only from that message and from `show(scale:)`.
+
+Taking the view out of the range report exposed the one other view change the captain makes inside the page: "+N more" on a crowded month day opens that day.
+Schedule-X does that itself unless `onClickPlusEvents` is set, so the page now sets it and routes it through `selectView`.
+
+`ShiftCalendarViewSelfTest` hides the page, deactivates its pins the way `setDestinationVisible` does, checks the page really saw a width under 700px, shows it again, pages once, and reads the view back on both sides.
+It also posts a `range` report naming Day through the page's real message handler, and clicks "+N more" on a day with six tasks.
+Confirmed to fail with `isResponsive` turned back on in the built bundle (the page on Day), with the native side adopting the range report's view again (the scale on Day), and with "+N more" switching the view directly instead of through `selectView` (page on Day, native on Month).

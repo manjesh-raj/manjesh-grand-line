@@ -670,11 +670,11 @@ enum MainSplitShellSelfTest {
         check(shell.debugHomeCanvas.selectedSpace == .overview && shell.debugCurrentDestination == .homeCanvas,
               "a route naming the Operations space filtered Home to \(shell.debugHomeCanvas.selectedSpace)", &ok)
 
-        // The badge is the bell's own count, from the one store. (`resetForTesting`
+        // The badge is the bell's own count, from the one store. (`debugReset`
         // tells no observer, so the first real change is what the toolbar sees.)
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
-        defer { center.resetForTesting() }
+        center.debugReset()
+        defer { center.debugReset() }
         center.set(AppNotification(id: "split-shell-badge", title: "Backup failed", subtext: "test", source: "Tests",
                                    kind: .actionNeeded, tint: .warn, date: Date(), navigate: {}), id: "split-shell-badge")
         check(center.badgeCount == 1 && shell.toolbar.debugBadgeText == "1",

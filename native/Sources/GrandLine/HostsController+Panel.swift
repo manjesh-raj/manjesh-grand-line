@@ -93,12 +93,13 @@ extension HostsController {
     /// Save the ticked hosts, each a new record, and show the first.
     private func importHosts(_ hosts: [Host]) {
         importPanel = nil
-        var first: Host?
-        for var host in hosts {
+        let saved = hosts.map { host -> Host in
+            var host = host
             host.id = UUID()
-            hostStore.add(host)
-            if first == nil { first = host }
+            return host
         }
+        hostStore.add(contentsOf: saved)
+        let first = saved.first
         Toast.show(in: view, message: hosts.count == 1 ? "Imported 1 host" : "Imported \(hosts.count) hosts")
         if let first {
             hostsGrid.select(key: first.id.uuidString)

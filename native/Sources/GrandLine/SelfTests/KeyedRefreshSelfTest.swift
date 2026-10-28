@@ -258,9 +258,9 @@ enum KeyedRefreshSelfTest {
         print("\n-- P2: the notification list updates its rows in place --")
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         center.clock = { now }
-        defer { center.resetForTesting() }
+        defer { center.debugReset() }
         func publish(_ id: String, _ title: String, subtext: String, kind: AppNotificationKind = .actionNeeded,
                      children: [AppNotificationChild] = []) {
             center.set(AppNotification(id: id, title: title, subtext: subtext, source: "Tests",

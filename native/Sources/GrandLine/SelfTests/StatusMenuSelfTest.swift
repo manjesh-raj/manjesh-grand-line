@@ -28,7 +28,7 @@ enum StatusMenuSelfTest {
         let wasLocked = AppLockGate.shared.isLocked
         defer {
             AppLockGate.shared.setLocked(wasLocked)
-            GrandLineNotificationCenter.shared.resetForTesting()
+            GrandLineNotificationCenter.shared.debugReset()
         }
         for each in [checkTheClickRoute, checkTheMenuListsAndActs, checkALockedMenuCarriesNoData, checkTheControllerFeedsIt] {
             var caseOK = true
@@ -127,7 +127,7 @@ enum StatusMenuSelfTest {
     private static func checkTheControllerFeedsIt(_ ok: inout Bool) {
         print("\n-- P6: the controller builds the menu from the popover's own data --")
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         center.set(AppNotification(id: "p6", title: "Rotate the deploy key", subtext: "", kind: .actionNeeded,
                                    tint: .warn, navigate: {}), id: "p6")
         center.set(AppNotification(id: "p6-info", title: "Tools have updates", subtext: "", kind: .informational,

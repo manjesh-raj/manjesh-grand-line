@@ -85,7 +85,7 @@ enum SidebarRedesignsSelfTest {
                 resize(window, width: 1512, shell)
                 ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
-                for check in [checkTheSidebar, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
+                for check in [checkTheSidebar, checkHomeStaysInSight, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
                               checkTasksReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
                     var ok = true
@@ -202,6 +202,96 @@ enum SidebarRedesignsSelfTest {
         let visible = outline.visibleRect
         check(visible.contains(NSPoint(x: lastRow.midX, y: lastRow.maxY - 1)),
               "at 950pt the sidebar's last row is below the fold (\(lastRow.maxY) of \(visible.maxY))", &ok)
+    }
+
+    // MARK: 1b - Home stays in sight (R4-BUG-03)
+
+    /// With Console holding one session the default sidebar is 24 rows, a few
+    /// points taller than its clip view in a 950pt window. Selecting a bottom
+    /// row then scrolled the whole column up by the overflow and left Home
+    /// half under the header, on every page whose module sits low in the
+    /// list. Every module is visited, the way the captain moves between them.
+    private static func checkHomeStaysInSight(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let registry = shell.workspace.hosts.sessions
+        let session = UUID()
+        registry.register(hostID: session, label: "DEV Bastion", accentHex: nil, state: .connected)
+        defer {
+            registry.unregister(hostID: session)
+            shell.workspace.navigator.show(.homeCanvas)
+            settle(shell)
+        }
+        settle(shell)
+        let outline = shell.sidebar.outlineView
+        guard let clip = outline.enclosingScrollView?.contentView else {
+            fail("the sidebar's outline is not in a scroll view", &ok)
+            return
+        }
+        check(outline.numberOfRows == 24, "the default sidebar with one session should be 24 rows, got \(outline.numberOfRows)", &ok)
+        func homeInSight() -> Bool { clip.bounds.minY <= outline.rect(ofRow: 0).minY + 0.5 }
+        let overflow = outline.frame.height - clip.bounds.height
+        for module in WorkspaceSidebarModel.listedModules() {
+            shell.workspace.navigator.show(module.primaryRoute)
+            settle(shell)
+            check(homeInSight(), "at 950pt on \(module.title) Home is clipped: the list is scrolled to "
+                  + "\(clip.bounds.minY) of a \(outline.frame.height)pt list in a \(clip.bounds.height)pt clip view", &ok)
+            if let row = (0..<outline.numberOfRows).first(where: {
+                (outline.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == .module(module)
+            }) {
+                let lit = outline.rect(ofRow: row)
+                check(lit.maxY - clip.bounds.maxY < lit.height / 2,
+                      "at 950pt \(module.title)'s lit row is more than half below the fold", &ok)
+            }
+        }
+        // The whole default set fits the window the captain runs in, so the
+        // list does not scroll at all there.
+        check(overflow <= 0.5, "at 950pt the default sidebar overflows its clip view by \(overflow)pt", &ok)
+
+        // A window a little shorter, so the list overflows by less than one
+        // row (10pt): the bottom row is still lit and mostly in sight, and
+        // the list stays at the top rather than lifting Home by the overflow.
+        let rowsHeight = outline.rect(ofRow: outline.numberOfRows - 1).maxY
+        var frame = window.frame
+        frame.size.height -= clip.bounds.height - (rowsHeight - 10)
+        window.setFrame(frame, display: false)
+        settle(shell)
+        let shortOverflow = outline.frame.height - clip.bounds.height
+        check(shortOverflow > 5 && shortOverflow < outline.rect(ofRow: 0).height,
+              "the fixture should overflow by less than one row, got \(shortOverflow)pt", &ok)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        if let bottom = WorkspaceSidebarModel.listedModules().last {
+            shell.workspace.navigator.show(bottom.primaryRoute)
+            settle(shell)
+            let lit = outline.rect(ofRow: outline.selectedRow)
+            check(outline.selectedRow == outline.numberOfRows - 1, "the fixture's last module should be the last row", &ok)
+            check(homeInSight(), "overflowing by \(shortOverflow)pt, \(bottom.title) scrolled Home under the header "
+                  + "(scrolled to \(clip.bounds.minY))", &ok)
+            check(lit.maxY - clip.bounds.maxY < lit.height / 2,
+                  "overflowing by \(shortOverflow)pt, \(bottom.title)'s lit row is more than half below the fold", &ok)
+        }
+
+        // A rebuild that leaves the selection where it was (a session coming
+        // or going) leaves the scroll where it was too. The fixture has to
+        // scroll for that to mean anything, so the window is made short.
+        frame = window.frame
+        frame.size.height = 700
+        window.setFrame(frame, display: false)
+        settle(shell)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        clip.scroll(to: NSPoint(x: 0, y: 40))
+        outline.enclosingScrollView?.reflectScrolledClipView(clip)
+        let scrolled = clip.bounds.minY
+        check(scrolled > 30, "the short window's sidebar should scroll for the rebuild check to mean anything, got \(scrolled)", &ok)
+        let second = UUID()
+        registry.register(hostID: second, label: "PROD Web", accentHex: nil, state: .connected)
+        settle(shell)
+        check(abs(clip.bounds.minY - scrolled) < 0.5,
+              "a session arriving moved the sidebar's scroll from \(scrolled) to \(clip.bounds.minY)", &ok)
+        registry.unregister(hostID: second)
+        settle(shell)
+        resize(window, width: 1512, shell)
     }
 
     // MARK: 2 - Quick Connect

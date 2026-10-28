@@ -48,7 +48,7 @@ enum NotificationRowInteractionSelfTest {
         var allOK = true
         // AGENTS.md's hermeticity rule: nothing here sets a theme, but the
         // store is shared and must not be left holding this suite's fixture.
-        defer { GrandLineNotificationCenter.shared.resetForTesting() }
+        defer { GrandLineNotificationCenter.shared.debugReset() }
 
         for check in [checkRealClickOnChevronTogglesTheRow,
                       checkRealClickOnActionButtonRunsTheAction,
@@ -67,7 +67,7 @@ enum NotificationRowInteractionSelfTest {
 
     private static func seed() {
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         performed.removeAll()
         center.set(AppNotification(
             id: "tool-updates", title: "4 tools have updates",

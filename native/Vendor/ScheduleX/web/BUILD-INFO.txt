@@ -11,4 +11,4 @@ SHA-256 of every shipped file, asserted by ShiftCalendarSelfTest:
 sha256 4a110dc9f081c65a922366285cfe7518ba34dc0bb61160dbb53b1a0176fd7732  THIRD-PARTY-LICENSES.txt
 sha256 21f8c800860d07b685c3a33ad20ad6fab41e262d71abda387297b18ebb48ebdb  index.html
 sha256 5e6877e9f14126c5d14c07629a6c9390042baaa665a8d423b77f4e42291a11a3  task-calendar.css
-sha256 d17101c65d62a4eccaded8d2676381d72d331a4a67014f5b65f939e342d01852  task-calendar.js
+sha256 6f70e067fc8370468bd36b0a9d93cbf7a7a50a8680af939f1a7d9ec769561e97  task-calendar.js

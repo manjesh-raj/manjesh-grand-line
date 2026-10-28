@@ -27,7 +27,10 @@
 //     the other, and Agenda is the open-source list view;
 //   - the card's own Next button pages, and paging re-reads the store;
 //   - the page's CSS variables follow a live theme change, light and dark;
-//   - hiding the page suspends it.
+//   - hiding the page suspends it, and hiding it at zero width then showing
+//     it again keeps the month on both sides (R4-BUG-01): a range report
+//     moves the period and never the scale, and "+N more" opens its day
+//     through the page's own view handler.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -294,6 +297,73 @@ enum ShiftCalendarViewSelfTest {
             check(web.isSuspended, "hiding the calendar should suspend it")
             check(js(web, "document.documentElement.classList.contains('gl-suspended')") as? Bool == true,
                   "the suspend should reach the page")
+
+            // MARK: Hidden and shown again, the view survives (R4-BUG-01)
+
+            // The shell hides a page by deactivating its pins
+            // (`WorkspaceContent.setDestinationVisible`, gotcha (15)), so a
+            // hidden calendar collapses and the page sees a resize at a tiny
+            // width. Schedule-X's `isResponsive` used to answer that by
+            // switching to Day, and the native side adopted the Day the
+            // page reported. Leave Home, come back: Day, for good.
+            let month950 = state(web)
+            check(month950["view"] as? String == "month-grid" && view.scale == .month,
+                  "the hide-and-show case should start on the month, got \(month950["view"] ?? "nil") / \(view.scale)")
+            let pins = (controller.view.superview?.constraints ?? []).filter {
+                $0.firstItem === controller.view || $0.secondItem === controller.view
+            }
+            NSLayoutConstraint.deactivate(pins)
+            controller.view.superview?.layoutSubtreeIfNeeded()
+            // The fixture's own discriminating power: the page really did see
+            // a width under Schedule-X's 700pt small-screen breakpoint.
+            let narrowed = waitFor(timeout: 5) { (js(web, "window.innerWidth") as? Double ?? 9999) < 700 }
+            check(narrowed, "a hidden calendar should collapse below 700pt, the page saw "
+                  + "\(js(web, "window.innerWidth") ?? "nothing")")
+            drain(turns: 50)
+            NSLayoutConstraint.activate(pins)
+            controller.view.superview?.layoutSubtreeIfNeeded()
+            controller.view.isHidden = false
+            controller.view.layoutSubtreeIfNeeded()
+            _ = waitFor(timeout: 5) { (js(web, "window.innerWidth") as? Double ?? 0) >= 700 && !web.isSuspended }
+            // A range report after the round trip: the page pages on its own.
+            let shownRange = view.visibleDays?.start
+            _ = js(web, "document.getElementById('gl-next').click()")
+            _ = waitFor(timeout: 5) { view.visibleDays?.start != shownRange }
+            check(view.visibleDays?.start != shownRange, "paging after the round trip should report a range")
+            let back = state(web)
+            check(back["view"] as? String == "month-grid",
+                  "hiding and showing the calendar should keep the month, the page shows \(back["view"] ?? "nil")")
+            check(view.scale == .month && controller.selectedModuleTabName == "Month",
+                  "hiding and showing the calendar should keep the native scale on the month, got \(view.scale)")
+
+            // The page reports, the native side decides: a range report naming
+            // another view, through the page's real message handler, changes
+            // the period and never the scale.
+            let reportedDay = ShiftDateFormatting.components(
+                from: calendar.date(byAdding: .day, value: 3, to: today) ?? today).0
+            _ = js(web, "window.webkit.messageHandlers.\(ShiftCalendarWebView.messageHandlerName).postMessage("
+                   + "{ type: 'range', view: 'day', date: '\(reportedDay)', start: '\(reportedDay)', end: '\(reportedDay)' })")
+            _ = waitFor(timeout: 3) { view.visibleDays?.start == reportedDay }
+            check(view.visibleDays?.start == reportedDay, "a range report should still move the period")
+            check(view.scale == .month, "a range report must not change the native scale, got \(view.scale)")
+            _ = call(web, "showDate", ["date": todayDay])
+            _ = waitFor(timeout: 3) { view.visibleDays?.start != reportedDay }
+
+            // The one view change Schedule-X makes inside the month grid on
+            // the captain's click - "+N more" opens that day - goes through
+            // the page's own pill handler, so the native side still follows.
+            for index in 0..<5 {
+                _ = seed(store, title: "Busy day \(index)", due: todayDay, time: nil, rule: nil)
+            }
+            controller.render()
+            let moreButton = "document.querySelector('.sx__month-grid-day__events-more')"
+            _ = waitFor(timeout: 5) { (js(web, "!!\(moreButton)") as? Bool) == true }
+            check((js(web, "!!\(moreButton)") as? Bool) == true, "five tasks on one day should draw a \"+N more\" button")
+            _ = js(web, "\(moreButton).click()")
+            _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "day" && view.scale == .day }
+            check(state(web)["view"] as? String == "day" && view.scale == .day
+                    && controller.selectedModuleTabName == "Day",
+                  "\"+N more\" should open the day on both sides, got \(state(web)["view"] ?? "nil") / \(view.scale)")
 
             _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
             check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) bridge call(s) never got a reply")

@@ -307,8 +307,8 @@ enum NotificationActionsSelfTest {
 
         // The subtitle is the source the panel names for the same entry.
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
-        defer { center.resetForTesting() }
+        center.debugReset()
+        defer { center.debugReset() }
         NotificationSources.setFleetDecisions(count: 1, navigate: {})
         NotificationSources.setPRReady(count: 1, navigate: {})
         NotificationSources.setShiftDue(taskCount: 1, followUpCount: 0, navigate: {})

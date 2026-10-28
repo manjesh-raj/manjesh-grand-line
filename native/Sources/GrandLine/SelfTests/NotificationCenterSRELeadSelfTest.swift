@@ -41,7 +41,7 @@ enum NotificationCenterSRELeadSelfTest {
         var failures = 0
         for (name, testCase) in cases {
             SRELead.claudePathOverrideForTests = nil
-            GrandLineNotificationCenter.shared.resetForTesting()
+            GrandLineNotificationCenter.shared.debugReset()
             if let failure = testCase() {
                 print("FAIL \(name): \(failure)")
                 failures += 1
@@ -50,7 +50,7 @@ enum NotificationCenterSRELeadSelfTest {
             }
         }
         SRELead.claudePathOverrideForTests = nil
-        GrandLineNotificationCenter.shared.resetForTesting()
+        GrandLineNotificationCenter.shared.debugReset()
         print(failures == 0 ? "NotificationCenterSRELeadSelfTest: all \(cases.count) cases passed" : "NotificationCenterSRELeadSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
     }

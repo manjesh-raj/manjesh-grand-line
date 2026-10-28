@@ -42,7 +42,7 @@ enum NotificationCenterRedesignSelfTest {
         let captainTheme = ThemeManager.shared.theme
         defer {
             ThemeManager.shared.setTheme(captainTheme)
-            GrandLineNotificationCenter.shared.resetForTesting()
+            GrandLineNotificationCenter.shared.debugReset()
         }
 
         for check in [checkTwoTierGrouping,
@@ -128,7 +128,7 @@ enum NotificationCenterRedesignSelfTest {
     /// fork drift under "Available", two of them expandable.
     private static func seed() {
         let center = GrandLineNotificationCenter.shared
-        center.resetForTesting()
+        center.debugReset()
         center.clock = { now }
 
         center.set(AppNotification(
@@ -675,7 +675,7 @@ enum NotificationCenterRedesignSelfTest {
     /// visibly a widening rather than a swap.
     private static func checkDueTasksSitUnderNeedsAction(_ ok: inout Bool) {
         print("\n-- " + "X12: a task due today is waiting for you, not an FYI" + " --")
-        GrandLineNotificationCenter.shared.resetForTesting()
+        GrandLineNotificationCenter.shared.debugReset()
         let (controller, _) = mount()
         let content = controller.debugPanelContent
 
@@ -710,7 +710,7 @@ enum NotificationCenterRedesignSelfTest {
         content.debugSetFilter(.all)
         NotificationSources.setShiftDue(taskCount: 0, followUpCount: 0, overdueCount: 0, navigate: {})
         NotificationSources.setToolUpdates(count: 0, navigate: {})
-        GrandLineNotificationCenter.shared.resetForTesting()
+        GrandLineNotificationCenter.shared.debugReset()
     }
 
 }
