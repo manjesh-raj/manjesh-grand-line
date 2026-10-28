@@ -325,20 +325,31 @@ enum ReadingListViewSelfTest {
     }
 
     /// UXP-12: an empty list gives its paste-or-drop instruction once, in
-    /// the empty state. The toolbar hint and the dashed drop card said the
-    /// same thing beside it, three copies on one screen; they come back with
-    /// the list.
+    /// the empty state. The dashed drop card said the same thing beside it;
+    /// it comes back with the list.
+    ///
+    /// R4-UI-05: and the page has no toolbar row of its own, empty or not.
+    /// The band under the header held a refresh icon, a paste icon that did
+    /// what Paste link does, and the drop card's hint. Refresh is one of the
+    /// page's actions now, ahead of Paste link, and it still runs.
     private static func checkOneInstructionWhenEmpty(_ check: (Bool, String) -> Void) {
         mounted { controller, _, _, _ in
             let copies = controller.debugInstructionCopies
             check(copies.emptyState, "UXP-12: an empty list shows its empty state")
-            check(!copies.toolbarHint, "UXP-12: an empty list repeats its instruction in the toolbar hint")
             check(!copies.dropCard, "UXP-12: an empty list repeats its instruction in the dashed drop card")
+            check(!controller.debugRootHoldsAPageToolbar, "R4-UI-05: the empty page draws a toolbar band")
         }
         mounted(seed: seedThreeStates) { controller, _, _, _ in
             let copies = controller.debugInstructionCopies
-            check(!copies.emptyState && copies.toolbarHint && copies.dropCard,
-                  "UXP-12: a list with links keeps the toolbar hint and the drop card under it")
+            check(!copies.emptyState && copies.dropCard, "UXP-12: a list with links keeps the drop card under it")
+            check(!controller.debugRootHoldsAPageToolbar, "R4-UI-05: the page draws a toolbar band over its list")
+            let actions = controller.drillHeaderActions
+            check(actions.count == 2 && actions.first === controller.debugRefreshButton
+                    && actions.last === controller.workspacePrimaryAction,
+                  "R4-UI-05: the page's actions are not Refresh then Paste link")
+            let refresh = controller.debugRefreshButton
+            check(refresh.target === controller && refresh.action == NSSelectorFromString("refreshMetadataTapped"),
+                  "R4-UI-05: Refresh is not wired to re-read the titles")
         }
     }
 

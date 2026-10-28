@@ -193,3 +193,15 @@ In the sidebar layout, Tasks draws no page column.
 Its scopes, Follow-ups and projects are the filter row under the toolbar, New task is the toolbar's far-right item, the List tab is one table, and Weekly review is five cards over Time on tasks and Pushed back repeatedly.
 The floating bar's Tasks is unchanged.
 The account, the decisions and the measurements are in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md), under "The captain's second list from the sidebar layout".
+
+### Follow-ups is a lane on the board (R4-UI-09)
+
+Full review #4 (and review #3's UX-05) found the sidebar layout's Board stacking two full-width cards under the board, Follow-ups and Projects.
+On Board, pending follow-ups are now a fourth lane (`ShiftFollowUpLaneView`) in the same tint, header and card a task takes.
+A click opens a follow-up, and its menu marks it done, snoozes it or deletes it.
+It is not a drag source or a drop target, because a follow-up has no status lane to move to.
+Projects is the filter row's pop-up, which it already was, and the List tab keeps both sections under its table.
+Below about 836pt of board, four lanes are each under the 200pt a card's one meta line needs, so Follow-ups goes back under the board.
+That is decided from the content column's own frame change, because the page's `viewDidLayout` reads the column's width from before a resize.
+The floating bar's Tasks is unchanged.
+The rest of review #4's UI pass is in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md).

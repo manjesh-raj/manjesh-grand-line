@@ -232,6 +232,17 @@ struct ShiftWeeklySummary {
     var upcomingCount: Int
 }
 
+/// R4-UI-09: one line of the Weekly review's next-week agenda
+/// (`ShiftStore.nextWeekAgenda`).
+struct ShiftAgendaItem: Equatable {
+    enum Kind: Equatable { case task, followUp }
+    var id: String
+    var kind: Kind
+    var title: String
+    var projectID: String?
+    var due: Date
+}
+
 /// One task or follow-up that has been snoozed/pushed-back 2+ times within
 /// the lookback window `weeklySummary` scans - see that method's header for
 /// exactly which activity kinds count.

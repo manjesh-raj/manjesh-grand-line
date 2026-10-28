@@ -1047,6 +1047,15 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
             exit(MainSplitShellSelfTest.run() ? 0 : 1)
         }
+        // R4-UI-01: the window toolbar at the captain's 1512pt width, on every
+        // module, at Default and Larger text.
+        if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_TOOLBAR_TESTS"] == "1" {
+            exit(WorkspaceToolbarSelfTest.run() ? 0 : 1)
+        }
+        // Full review #4's other UI fixes (R4-UI-02 .. R4-UI-09).
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW4_UI_TESTS"] == "1" {
+            exit(ReviewFourUISelfTest.run() ? 0 : 1)
+        }
         // The later page work: the host, key, snippet and credential tables with the
         // shell's inspector, Knowledge with no tree (stage 7) and Crew › Needs you, in
         // a real off-screen sidebar shell - and the floating bar's same pages

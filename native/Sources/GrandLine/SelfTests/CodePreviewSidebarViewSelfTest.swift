@@ -70,6 +70,9 @@ enum CodePreviewSidebarViewSelfTest {
             fail("Monaco never reported ready", &ok)
             return false
         }
+        // R4-UI-09: an empty folder opens on an invitation now, not a tab.
+        // The checks below start from the one untitled tab it used to make.
+        controller.debugNewSnippet()
         controller.view.layoutSubtreeIfNeeded()
 
         checkShownByDefault(controller, &ok)

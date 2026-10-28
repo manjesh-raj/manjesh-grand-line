@@ -83,7 +83,9 @@ enum HealthService: String, CaseIterable {
         case .shiftDueItems:
             return "Notifies when a task or follow-up comes due."
         case .persistence:
-            return "Writes hosts, keys, snippets, tasks and commands to disk."
+            // R4-UI-07: by the sidebar's module names (`ModuleTable`).
+            return "Writes \(WorkspaceModule.connections.title) and \(WorkspaceModule.tasks.title) to disk: "
+                + "hosts, keys, snippets, commands and tasks."
         case .scheduledAutomations:
             return "Runs the schedules set up in \(PlaceName.of(.schedules))."
         }

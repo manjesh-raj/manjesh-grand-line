@@ -85,6 +85,14 @@ struct KubeSessionAccess {
 
 final class KubernetesController: NSViewController, DaylightDrillActions {
 
+    /// R4-UI-07: a host's own page is one of Console's sessions in the
+    /// sidebar layout, so the button names the module the sidebar shows it
+    /// under (`PlaceName`, which reads `ModuleTable`). The floating bar, frozen
+    /// as it is, keeps its host pages and its wording.
+    static var openHostTitle: String {
+        PlaceName.layout == .sidebar ? "Open in \(PlaceName.of(.console))" : "Open host page"
+    }
+
     // MARK: Injected
 
     let sessions: HostSessionRegistry
@@ -456,7 +464,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         duplicate.action = #selector(duplicateFeedTapped)
         duplicate.toolTip = "Duplicate this host's tab and pin the copy as the feed, so your working terminal stays clean."
 
-        let openHost = HelmButton(title: "Open host page", variant: .quiet, size: .small)
+        let openHost = HelmButton(title: Self.openHostTitle, variant: .quiet, size: .small)
         openHost.target = self
         openHost.action = #selector(revealHostTapped)
 

@@ -199,6 +199,20 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// defers the object as well.
     private lazy var webView = CodePreviewWebView()
     private let overlay = NSView()
+    /// R4-UI-09 (R2-UI-12): what the editor shows with no snippet open - an
+    /// invitation, rather than an untitled `snippet-1.txt` the page made up and
+    /// then marked unsaved before the captain had typed anything.
+    private lazy var newSnippetInvitation = HelmButton(title: "New snippet", variant: .primary, size: .small,
+                                                       symbol: "plus", target: self,
+                                                       action: #selector(newSnippetTapped))
+    private lazy var startState = HelmEmptyState(
+        symbol: "chevron.left.forwardslash.chevron.right",
+        title: "No snippets yet",
+        body: "Paste code to read it highlighted, format it or run it. A snippet is saved on this machine "
+            + "once it has something in it.",
+        size: .standard, accessory: newSnippetInvitation,
+        hue: RailDestination.codePreview.domainHue,
+        artwork: RailDestination.codePreview.drillHeaderArtwork)
     private var overlayState: HelmEmptyState?
 
     private lazy var runButton = HelmPageToolbar.labeledButton(
@@ -687,6 +701,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         root.addSubview(editorCard)
         editorCard.addSubview(webView)
 
+        startState.translatesAutoresizingMaskIntoConstraints = false
+        startState.wantsLayer = true
+        startState.isHidden = true
+        editorCard.addSubview(startState)
         overlay.translatesAutoresizingMaskIntoConstraints = false
         editorCard.addSubview(overlay)
 
@@ -722,7 +740,17 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             overlay.trailingAnchor.constraint(equalTo: editorCard.trailingAnchor),
             overlay.topAnchor.constraint(equalTo: editorCard.topAnchor),
             overlay.bottomAnchor.constraint(equalTo: editorCard.bottomAnchor),
+
+            startState.leadingAnchor.constraint(equalTo: editorCard.leadingAnchor),
+            startState.trailingAnchor.constraint(equalTo: editorCard.trailingAnchor),
+            startState.topAnchor.constraint(equalTo: editorCard.topAnchor),
+            startState.bottomAnchor.constraint(equalTo: editorCard.bottomAnchor),
         ])
+    }
+
+    /// Shown exactly while no snippet is open.
+    private func refreshStartState() {
+        startState.isHidden = !open.isEmpty
     }
 
     /// The bottom pane (F11).
@@ -889,14 +917,13 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         for snippet in saved {
             addTab(name: snippet.id, content: snippet.content, persisted: true, select: false)
         }
-        // A brand-new profile gets one empty tab to paste into rather than an
-        // empty state with a button - the whole feature is "paste code and see
-        // it", and making that one click shorter is the point. Nothing is
-        // written to disk until it has content (see `snippetChanged`).
-        if open.isEmpty {
-            addTab(name: nextUntitledName(), content: "", persisted: false, select: false)
-        }
+        // R4-UI-09 (R2-UI-12): a brand-new profile opens on an invitation, not
+        // on an empty tab. That tab used to be made here to save one click,
+        // and it read as a file called `snippet-1.txt` that already existed
+        // and already had unsaved changes. New snippet makes the same tab, and
+        // nothing is written to disk until it has content (`snippetChanged`).
         isRestoring = false
+        refreshStartState()
         refreshTabBar()
         if let first = open.first { select(key: first.key) }
         onDrillSubtitleChanged?()
@@ -948,6 +975,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         chip.onRename = { [weak self] newName in self?.renameTab(key: key, to: newName) }
 
         open.append(snippet)
+        refreshStartState()
         webView.call("openSnippet", payload: [
             "id": key,
             "language": snippet.language.id,
@@ -1013,10 +1041,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         if wasPersisted { store.delete(name: name) }
 
         if currentKey == key { currentKey = nil }
-        // Never leave the panel with nothing to paste into - the same rule
-        // Console applies when its last tab closes.
+        // The last tab closing leaves the invitation a fresh profile opens on
+        // (R4-UI-09), rather than an untitled tab nobody asked for.
         if open.isEmpty {
-            addTab(name: nextUntitledName(), content: "", persisted: false, select: true)
+            refreshStartState()
         } else if currentKey == nil, let first = open.first {
             select(key: first.key)
         }
@@ -1886,6 +1914,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // is behind it.
         overlay.wantsLayer = true
         overlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        startState.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        startState.applyTheme(theme)
         overlayState?.applyTheme(theme)
         outputPane.applyTheme(theme)
         sidebar.applyTheme(theme)
@@ -2217,6 +2247,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     func debugHasPendingEdit(name: String) -> Bool { open.first(where: { $0.name == name })?.hasPendingEdit ?? false }
     var debugWebView: CodePreviewWebView { webView }
     var debugOverlayVisible: Bool { !overlay.isHidden }
+    /// R4-UI-09: the no-snippet invitation, and its New snippet button.
+    var debugStartStateVisible: Bool { !startState.isHidden }
+    var debugNewSnippetInvitation: HelmButton { newSnippetInvitation }
     var debugTabNames: [String] { open.map(\.name) }
     var debugCurrentName: String? { currentSnippet?.name }
     var debugCurrentLanguage: String? { currentSnippet?.language.id }

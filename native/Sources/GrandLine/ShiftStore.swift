@@ -1292,15 +1292,7 @@ final class ShiftStore {
         }
         pushedBack.sort { $0.count > $1.count }
 
-        let nextWeekEnd = cal.date(byAdding: .day, value: 7, to: weekEnd) ?? weekEnd
-        let upcomingTasks = activeTasks.filter { task in
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due >= weekEnd && due < nextWeekEnd
-        }.count
-        let upcomingFollowUps = followUps.filter { $0.status == .pending }.filter { fu in
-            guard let due = fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due >= weekEnd && due < nextWeekEnd
-        }.count
+        let upcoming = nextWeekAgenda(weekEnd: weekEnd, calendar: cal)
 
         let df = Self.monthDayFormatter
         let weekEndInclusive = cal.date(byAdding: .day, value: -1, to: weekEnd) ?? weekEnd
@@ -1310,8 +1302,36 @@ final class ShiftStore {
             weekLabel: weekLabel,
             completedCount: completedTasksThisWeek + completedFollowUpsThisWeek,
             pushedBack: pushedBack,
-            upcomingCount: upcomingTasks + upcomingFollowUps
+            upcomingCount: upcoming.count
         )
+    }
+
+    /// R4-UI-09: next week's open tasks and pending follow-ups, by the day
+    /// they are due - what the Weekly review's "Coming up next week" counts
+    /// and its agenda lists. One definition, so the count and the list cannot
+    /// disagree. `reference` names the week under review, as
+    /// `weeklySummary(reference:)` takes it.
+    func nextWeekAgenda(reference: Date = Date()) -> [ShiftAgendaItem] {
+        let cal = Calendar.current
+        guard let weekInterval = cal.dateInterval(of: .weekOfYear, for: reference) else { return [] }
+        return nextWeekAgenda(weekEnd: weekInterval.end, calendar: cal)
+    }
+
+    private func nextWeekAgenda(weekEnd: Date, calendar cal: Calendar) -> [ShiftAgendaItem] {
+        let nextWeekEnd = cal.date(byAdding: .day, value: 7, to: weekEnd) ?? weekEnd
+        func inWindow(_ day: String?) -> Date? {
+            guard let due = day.flatMap(ShiftDateFormatting.date(from:)), due >= weekEnd, due < nextWeekEnd else { return nil }
+            return due
+        }
+        let tasks = activeTasks.compactMap { task in
+            inWindow(task.dueDate).map { ShiftAgendaItem(id: task.id, kind: .task, title: task.title,
+                                                         projectID: task.projectID, due: $0) }
+        }
+        let pending = followUps.filter { $0.status == .pending }.compactMap { fu in
+            inWindow(fu.followUpAt).map { ShiftAgendaItem(id: fu.id, kind: .followUp, title: fu.title,
+                                                          projectID: fu.projectID, due: $0) }
+        }
+        return (tasks + pending).sorted { ($0.due, $0.title) < ($1.due, $1.title) }
     }
 
     // MARK: Seed data (first-run convenience only - never overwrites an

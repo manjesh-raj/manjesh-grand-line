@@ -742,6 +742,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// colour registry, which is exactly what that component's header warns
     /// against.
     private var kpiStrip: HelmKPIStrip?
+    /// A `.ring` body's note, with the gauge and the spacing beside it, for
+    /// its wrap width (`applyNoteWrapWidth`).
+    private var ringNote: (label: NSTextField, ring: NSView, spacing: CGFloat)?
 
     private var content: Content?
     private var themeToken: ThemeObservation?
@@ -1296,6 +1299,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         usageDividers.removeAll()
         usageRowCells.removeAll()
         kpiStrip = nil
+        ringNote = nil
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
         peekRowViews.removeAll()
@@ -2007,7 +2011,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         // truncated mid-word ("Everything that has reported i...") while the
         // card still had vertical room. Three caption lines are still shorter
         // than the 66pt gauge beside them, so the row does not grow.
-        let text = verticalStack([titleField, noteLabel(note, maxLines: 3)], spacing: HelmMetrics.s0)
+        let noteField = noteLabel(note, maxLines: 3)
+        let text = verticalStack([titleField, noteField], spacing: HelmMetrics.s0)
         text.alignment = .leading
 
         let row = compressibleStack(NSStackView(views: [ring, text]))
@@ -2016,6 +2021,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         row.spacing = HelmMetrics.s3
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
+        ringNote = (noteField, ring, row.spacing)
         return row
     }
 
@@ -2252,8 +2258,20 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private func applyNoteWrapWidth() {
         let available = bounds.width - Self.horizontalInset * 2
         guard available > 0 else { return }
-        for label in noteLabels where abs(label.preferredMaxLayoutWidth - available) > 0.5 {
-            label.preferredMaxLayoutWidth = available
+        for label in noteLabels {
+            var width = available
+            // R4-UI-02: a ring body's note sits beside the gauge, so the body
+            // width is the wrong wrap width for it. Handed the whole body, the
+            // note laid out as one line, the row then squeezed it to its
+            // column and it read "Docs & runbooks sync needs..." on one line
+            // of three (Home's Health card at 1512 and 1280). The column is
+            // the body less the gauge's own fitting width and the row's
+            // spacing - geometry the label does not decide (gotcha (22)).
+            if let ringNote, ringNote.label === label {
+                width = floor(available - ringNote.ring.fittingSize.width - ringNote.spacing)
+            }
+            guard width > 0, abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
             label.invalidateIntrinsicContentSize()
         }
     }
@@ -2596,6 +2614,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     }
     /// A `.kpis` body's strip, so a suite reads the figures as painted.
     var debugKPIStrip: HelmKPIStrip? { kpiStrip }
+    /// R4-UI-02: a `.ring` body's note label.
+    var debugRingNote: NSTextField? { ringNote?.label }
     /// UI-12: whether the body is the one loading idiom.
     var debugBodyIsSkeleton: Bool { skeletonList != nil }
     /// UI-10: the clickable peek rows, so a suite can press one through its

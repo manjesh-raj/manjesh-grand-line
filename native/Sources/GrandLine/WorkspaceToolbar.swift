@@ -197,6 +197,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// room for Search, the bell or the light/dark toggle, and AppKit put all
     /// three in the overflow menu (measured on Knowledge).
     static let compactWidth: CGFloat = 1240
+
+    /// R4-UI-01: `compactWidth` at the chrome text scale. The breakpoint was
+    /// measured at Default text, and at Larger every labelled item is wider
+    /// (the crumb 137pt to 171pt and Search 107pt to 130pt on Connections),
+    /// so at 1512 the full toolbar ran out of room on four modules and put the
+    /// inspector button in the overflow menu. Scaled linearly, the same rule
+    /// the content column's floor follows: at Larger the compact toolbar
+    /// starts at 1612.
+    static func compactWidth(scale: CGFloat) -> CGFloat { (compactWidth * scale).rounded(.up) }
     private var shownActions: [NSView] = []
     /// R2-UX-06: the page actions' overflow form.
     private var pageActionsMenu: NSMenu?
@@ -514,7 +523,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         // keeps them over the module's action and the chip, and their menu
         // forms work in the overflow menu, where the page's actions would not.
         switch identifier {
-        case ItemID.recents, ItemID.inspector: item?.visibilityPriority = .low
+        case ItemID.recents: item?.visibilityPriority = .low
+        case ItemID.inspector: item?.visibilityPriority = inspectorPriorityNow
         case ItemID.crumb: item?.visibilityPriority = crumbPriorityNow
         case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
         case ItemID.quickConnectConsole, ItemID.quickConnectHosts: item?.visibilityPriority = quickConnectPriorityNow
@@ -1038,6 +1048,24 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     }
 
     static func inspectorLabel(shown: Bool) -> String { shown ? "Hide Inspector" : "Show Inspector" }
+
+    /// R4-UI-01: on a page that fills the inspector (Connections, Secrets,
+    /// Setup, GitHub Sync) the inspector button is how the captain gets back
+    /// to the editing surface, so it outlasts Quick Connect, the module's
+    /// action and the crumb. Measured at 1512 on Connections, it was the first
+    /// thing AppKit put in the overflow menu, ahead of Recents. On every other
+    /// page it has nothing to open and keeps `.low`.
+    private var pageHasInspectorContent = false
+    private var inspectorPriorityNow: NSToolbarItem.VisibilityPriority {
+        pageHasInspectorContent ? .high : .low
+    }
+
+    /// Whether the showing page fills the inspector.
+    func setPageHasInspectorContent(_ has: Bool) {
+        guard has != pageHasInspectorContent else { return }
+        pageHasInspectorContent = has
+        toolbar.items.first { $0.itemIdentifier == ItemID.inspector }?.visibilityPriority = inspectorPriorityNow
+    }
 
     #if FM_SELFTESTS
     var debugInspectorItem: NSToolbarItem? { inspectorItem }

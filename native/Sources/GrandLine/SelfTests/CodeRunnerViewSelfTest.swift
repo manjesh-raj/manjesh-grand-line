@@ -80,6 +80,9 @@ enum CodeRunnerViewSelfTest {
         check(waitFor(timeout: 60, until: { CodeToolInventory.shared.isWarm }),
               "the page's own tool warm-up never completed - Run and Format would "
               + "stay disabled forever")
+        // R4-UI-09: an empty folder opens on an invitation now, not a tab.
+        // The checks below start from the one untitled tab it used to make.
+        controller.debugNewSnippet()
 
         checkHiddenPaneCostsTheEditorNothing(controller, window, check)
         checkPaneIsPerTab(controller, check)

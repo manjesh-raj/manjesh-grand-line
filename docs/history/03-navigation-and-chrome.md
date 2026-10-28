@@ -1457,3 +1457,60 @@ No group spacing reaches that, so below about 950pt the list still scrolls, and 
 `SidebarRedesignsSelfTest.checkHomeStaysInSight` visits every module at 950pt with one session and asserts row 0 stays inside the clip view and the list does not overflow.
 It also shortens the window so the list overflows by 10pt and visits the last module, and scrolls a 700pt sidebar to 40pt and adds a session.
 Confirmed to fail with the 34pt heading (13pt overflow, Home clipped on Settings), with a plain `scrollRowToVisible` (Home scrolled 20pt under the header), and with the rebuild revealing the lit row again (the scroll moved from 40 to 0).
+
+### Full review #4's UI issues (R4-UI-01 to R4-UI-10)
+
+Full review #4 (`data/grandline-full-review-4-fable-1793170500/report.md`, section 7) listed ten UI issues.
+Each was reproduced in the review tour lab first, then compared before and after at 1512, 1280, 1100 and 960, in Dusk and Daylight, and at Larger text for the toolbar.
+The "before" renders came from a binary built from `main`'s sources, not from the review's own folder.
+
+**R4-UI-01, the toolbar.**
+Measured at 1512 on every module, Crew and Connections put Recents and the inspector button in the overflow menu at Default text.
+At Larger text, five modules overflowed two to four items each, the inspector button every time.
+Two changes:
+
+- The inspector button is `.high` on a page that fills the inspector (Connections, Secrets, Setup, GitHub sync) and stays `.low` everywhere else (`WorkspaceToolbar.setPageHasInspectorContent`).
+  At Default text on Connections, Recents and Activity now overflow and the inspector button stays.
+- The compact toolbar's 1240pt breakpoint follows the chrome text scale (`WorkspaceToolbar.compactWidth(scale:)`), so at Larger text it starts at 1612.
+  Nothing overflows on any module at 1512 with Larger text.
+
+`WorkspaceToolbarSelfTest` asserts both, on every module, at Default and Larger text.
+It fails by name with the inspector left at `.low` and with the fixed breakpoint.
+
+**R4-UI-03, the rainbow band, was the lab and not the app.**
+macOS 26 wraps the inspector item in its own Liquid Glass view (`NSContainerConcentricGlassEffectView`), which runs the window's full height.
+Rendered alone through `cacheDisplay`, that view comes out as the glass shader's texture: a pink panel with red, green and blue bevelled edges.
+The lab repaints the inspector only below the toolbar, so the texture's top 52pt showed as a band.
+No app view draws in that strip (walked from the frame view at the band's centre).
+`ReviewTourLab.writeSplitShellPNG` now hides that view for its one capture.
+The live window was not looked at, because this shell has no Screen Recording grant, so one live look from the captain still settles it.
+Two more lab fixes from the same pass:
+
+- A web view a visible sibling covers is no longer pasted over it.
+- The pale inspector empty-state title in Daylight renders is `cacheDisplay` again.
+  The live label reads `0.16, 0.17, 0.20` in a `VibrantLight` appearance.
+
+**The rest.**
+
+- R4-UI-02: `HelmKPIStrip` holds each column's labels at their own width, one step above the equal-column tie (`labelFloorPriority`), so "Done today" takes width from its neighbours rather than truncating.
+  The Health ring's note wraps at the column beside the gauge (gotcha (22)), not at the card's body width.
+- R4-UI-04: every clause the briefing produces is a link, so the dotted underline covered the whole paragraph.
+  The clauses keep their tint at rest, and only the clause under the pointer is underlined, as a temporary attribute.
+- R4-UI-05: the Reading list's band under the header is gone.
+  Refresh is a page action beside Paste link.
+  The band's paste icon ran the same `pasteTapped` as Paste link, so it went, and its drop hint was the drop card's.
+- R4-UI-06: an editable shortcut draws its chord as the fixed rows' keycaps (`KeyChord.keycaps`), with a pencil as the edit affordance.
+- R4-UI-07: copy that named a module by an older page's title reads `ModuleTable` (through `PlaceName` where the floating bar words it differently).
+  Names chosen: Connections, Secrets, Setup, Console and Tools.
+  Poneglyph and Automic Vault stay, as the names of the Secrets module's own tabs.
+- R4-UI-08: when Tasks' filter row does not fit, the project and sort pop-ups become one Filter button, and the Follow-ups jump and the Done window's note move into its menu.
+  It is measured from the expanded controls' fitting widths, so it cannot flip back and forth.
+  The scope tabs also stopped taking the row's slack (gotcha (10)).
+- R4-UI-09: Snippets says why it asks for Accessibility while access is not granted, and Code opens on a "No snippets yet" invitation rather than an unsaved `snippet-1.txt`.
+  The Weekly review lists next week under its lower row, from the same `ShiftStore.nextWeekAgenda` the tile counts.
+  The Tasks board is in [`08-tasks-and-shift.md`](08-tasks-and-shift.md).
+- R4-UI-10: the floating bar's uncapped Merge queue card is not changed, because the floating bar is frozen as classic (the captain's call, PR #532).
+
+`ReviewFourUISelfTest` covers R4-UI-02, 04, 06, 07, 08 and 09.
+`ReadingListViewSelfTest` covers R4-UI-05, and `CodePreviewViewSelfTest` covers the Code invitation.
+Each check was injected against: the label floor at `.defaultLow`, the ring note at the body width, an underline at rest, the lane kept off the board, the row never collapsing, and the recorder printing text.

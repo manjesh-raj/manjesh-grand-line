@@ -1640,7 +1640,23 @@ enum ReviewTourLab {
         let webSnapshots = webViewSnapshots(in: window.contentView ?? frameView)
         guard frameView.bounds.width > 0, frameView.bounds.height > 0,
               let frameRep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return false }
+        // R4-UI-03: the system wraps the inspector item in its own Liquid
+        // Glass view (`NSContainerConcentricGlassEffectView` on macOS 26),
+        // which runs the window's full height, under the title bar too. Drawn
+        // through `cacheDisplay` it comes out as the glass shader's own
+        // texture - a pink panel with red, green and blue bevelled edges,
+        // measured by rendering that view alone. The inspector is repainted
+        // below the toolbar (further down), which left the texture's top 52pt
+        // as a "rainbow band" across the toolbar whenever the inspector was
+        // open - reported by full review #4 and by PR #538's screenshots,
+        // and never app-painted. Hidden for this one capture, the strip shows
+        // the window ground behind it, as the rest of the toolbar does.
+        let inspectorGlass = sequence(first: shell.inspector.view, next: { $0.superview })
+            .first { String(describing: type(of: $0)).contains("GlassEffectView") }
+        let glassWasHidden = inspectorGlass?.isHidden ?? true
+        inspectorGlass?.isHidden = true
         frameView.cacheDisplay(in: frameView.bounds, to: frameRep)
+        inspectorGlass?.isHidden = glassWasHidden
 
         let sidebarView = shell.sidebar.view
         let sidebarRep: NSBitmapImageRep?
@@ -1754,7 +1770,16 @@ enum ReviewTourLab {
         func walk(_ view: NSView) {
             if view.isHidden { return }
             if let web = view as? WKWebView, web.visibleRect.width > 0, web.visibleRect.height > 0 {
-                found.append(web)
+                // A sibling drawn over the whole of it - Code's no-snippet
+                // invitation (R4-UI-09) - is what the window shows, and the
+                // frame's own render already has it. Pasting the page's
+                // snapshot over that would draw an editor nobody can see.
+                let covered = web.superview.map { parent in
+                    parent.subviews.drop { $0 !== web }.dropFirst().contains {
+                        !$0.isHidden && $0.alphaValue > 0 && $0.frame.contains(web.frame)
+                    }
+                } ?? false
+                if !covered { found.append(web) }
                 return
             }
             view.subviews.forEach(walk)

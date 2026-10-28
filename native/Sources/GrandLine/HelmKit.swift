@@ -691,6 +691,15 @@ final class HelmKPIStrip: NSView {
 
     static let metricSize: CGFloat = 19
     static let captionSize: CGFloat = 11
+
+    /// R4-UI-02: a column's figure and caption keep their own width ahead of
+    /// the equal-column tie, which is `columnHug`. Measured on Home's Fleet
+    /// card at 1512 and 1280: three equal columns left "Done today" about
+    /// 60pt against the 61pt it sets in, and it read "Done tod..." while
+    /// "Working" and "Queued" beside it had room to spare. Still far under
+    /// `contentTie`, which is what ties the card to its column (gotcha (13)),
+    /// so a caption can widen its column and never the card.
+    static let labelFloorPriority = NSLayoutConstraint.Priority(HelmDaylightPriority.columnHug.rawValue + 1)
     /// From a separator to the next column's figures.
     static let columnInset: CGFloat = HelmMetrics.s4
 
@@ -775,7 +784,7 @@ final class HelmKPIStrip: NSView {
             caption.lineBreakMode = .byTruncatingTail
             for label in [value, caption] {
                 label.translatesAutoresizingMaskIntoConstraints = false
-                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                label.setContentCompressionResistancePriority(Self.labelFloorPriority, for: .horizontal)
             }
             valueLabels.append(value)
             captionLabels.append(caption)
@@ -787,13 +796,19 @@ final class HelmKPIStrip: NSView {
             column.edgeInsets = NSEdgeInsets(top: HelmMetrics.s1, left: index == 0 ? 0 : Self.columnInset,
                                              bottom: HelmMetrics.s1, right: HelmMetrics.s2)
             column.translatesAutoresizingMaskIntoConstraints = false
-            column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            // At the labels' own floor, or the column clips what its labels
+            // refuse to give up (gotcha (12): the stack-level API). The row
+            // above stays `.defaultLow`, so the strip is never the card's floor.
+            column.setClippingResistancePriority(Self.labelFloorPriority, for: .horizontal)
             column.setHuggingPriority(.defaultLow, for: .horizontal)
             row.addArrangedSubview(column)
             if let first = columns.first {
-                // Equal columns, at `contentTie` (gotcha (13)).
+                // Equal columns where every label fits, at `columnHug`: above
+                // the stacks' own 250, below `labelFloorPriority`, so a
+                // caption that needs more takes it from its neighbours rather
+                // than truncating (R4-UI-02).
                 let equal = column.widthAnchor.constraint(equalTo: first.widthAnchor)
-                equal.priority = HelmDaylightPriority.contentTie
+                equal.priority = HelmDaylightPriority.columnHug
                 equal.isActive = true
             }
             columns.append(column)
@@ -832,6 +847,8 @@ final class HelmKPIStrip: NSView {
     #if FM_SELFTESTS
     var debugValues: [String] { valueLabels.map(\.stringValue) }
     var debugCaptions: [String] { captionLabels.map(\.stringValue) }
+    /// R4-UI-02: the caption labels themselves, for their laid-out widths.
+    var debugCaptionLabels: [NSTextField] { captionLabels }
     var debugValueColors: [NSColor?] { valueLabels.map(\.textColor) }
     var debugSeparatorCount: Int { separators.count }
     var debugHasBorder: Bool { (layer?.borderWidth ?? 0) > 0 }

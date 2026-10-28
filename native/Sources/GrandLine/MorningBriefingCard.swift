@@ -185,8 +185,12 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
                 // safe as text (audit §5.7, `HelmContrast`'s own rule).
                 attributes[.foregroundColor] = HelmContrast.legibleTintedText(
                     tintHex: clause.target.tint.hex(in: theme), over: surface, theme: theme)
-                // The mockup's dotted underline.
-                attributes[.underlineStyle] = NSUnderlineStyle([.single, .patternDot]).rawValue
+                // R4-UI-04: no underline at rest. Every clause the fleet and
+                // the follow-ups produce is a link, so the mockup's dotted
+                // underline ran under the whole paragraph and stopped saying
+                // which part was clickable. The tint and the pointing hand say
+                // it at rest, and the clause under the pointer takes the
+                // dotted underline (`setHoveredClause`).
                 // The clause index, not a URL: this never leaves the process,
                 // and `clickedOnLink` hands it straight back.
                 attributes[.link] = index
@@ -194,7 +198,61 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
             out.append(NSAttributedString(string: clause.text, attributes: attributes))
         }
         textView.textStorage?.setAttributedString(out)
+        hoveredRange = nil
         needsLayout = true
+    }
+
+    // MARK: Hover (R4-UI-04)
+
+    /// The mockup's dotted underline, now drawn under one clause at a time.
+    static let hoverUnderline = NSUnderlineStyle([.single, .patternDot]).rawValue
+
+    /// The linked clause under the pointer, underlined as a temporary
+    /// attribute so the storage, and with it the clause's link and tint,
+    /// stays as `rebuild()` left it.
+    private var hoveredRange: NSRange?
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited,
+                                                           .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        setHoveredClause(linkRange(at: textView.convert(event.locationInWindow, from: nil)))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHoveredClause(nil)
+    }
+
+    /// The `.link` range of the glyph under `point`, in the text view's own
+    /// coordinates, or `nil` over a separator, plain text or empty space.
+    private func linkRange(at point: NSPoint) -> NSRange? {
+        guard let manager = textView.layoutManager, let container = textView.textContainer,
+              let storage = textView.textStorage, storage.length > 0 else { return nil }
+        let glyph = manager.glyphIndex(for: point, in: container)
+        guard manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+            .contains(point) else { return nil }
+        let index = manager.characterIndexForGlyph(at: glyph)
+        guard index < storage.length else { return nil }
+        var range = NSRange()
+        return storage.attribute(.link, at: index, effectiveRange: &range) == nil ? nil : range
+    }
+
+    private func setHoveredClause(_ range: NSRange?) {
+        guard range != hoveredRange, let manager = textView.layoutManager,
+              let length = textView.textStorage?.length else { return }
+        manager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: NSRange(location: 0, length: length))
+        if let range { manager.addTemporaryAttribute(.underlineStyle, value: Self.hoverUnderline, forCharacterRange: range) }
+        hoveredRange = range
     }
 
     // MARK: Height
@@ -239,6 +297,53 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
             if value != nil { count += range.length }
         }
         return count
+    }
+
+    /// Character ranges that carry an underline, in the storage or drawn over
+    /// it as a temporary attribute (R4-UI-04: only ever the hovered clause).
+    var debugUnderlinedRanges: [NSRange] {
+        guard let storage = textView.textStorage, let manager = textView.layoutManager else { return [] }
+        var ranges: [NSRange] = []
+        var index = 0
+        while index < storage.length {
+            var stored = NSRange(), temporary = NSRange()
+            let inStorage = storage.attribute(.underlineStyle, at: index, effectiveRange: &stored) != nil
+            let drawn = manager.temporaryAttribute(.underlineStyle, atCharacterIndex: index,
+                                                   effectiveRange: &temporary) != nil
+            let step = min(stored.upperBound, temporary.upperBound) - index
+            if inStorage || drawn {
+                if let last = ranges.last, last.upperBound == index {
+                    ranges[ranges.count - 1].length += step
+                } else {
+                    ranges.append(NSRange(location: index, length: step))
+                }
+            }
+            index += max(1, step)
+        }
+        return ranges
+    }
+
+    /// The `.link` range of clause `index`, from the storage.
+    func debugLinkRange(ofClause clause: Int) -> NSRange? {
+        guard let storage = textView.textStorage else { return nil }
+        var found: NSRange?
+        storage.enumerateAttribute(.link, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+            if (value as? Int) == clause { found = range; stop.pointee = true }
+        }
+        return found
+    }
+
+    /// A point in window coordinates over the first glyph of `range`.
+    func debugWindowPoint(over range: NSRange) -> NSPoint? {
+        guard let manager = textView.layoutManager, let container = textView.textContainer else { return nil }
+        let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: range.location, length: 1),
+                                        actualCharacterRange: nil)
+        let rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+        return textView.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+    }
+
+    var debugHoverAreaTracksMoves: Bool {
+        trackingAreas.contains { $0.owner === self && $0.options.contains(.mouseMoved) }
     }
 
     /// Drives what a real click does, without a real click - the delegate
