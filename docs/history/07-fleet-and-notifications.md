@@ -1657,3 +1657,65 @@ It is now `debugReset()` inside the guard, and the script's pattern also catches
 A fire before the deadline brings nothing back.
 After the deadline the observer sees the badge and the Snoozed list change with no `set` call, the expired entry leaves `AppDefaults.store`, and the timer re-arms for the second snooze.
 Confirmed to fail with the arming removed from `persistSnoozes()` (six checks, the badge stuck at 0).
+
+## An idle fleet stops re-reading finished crews (R4-PERF-01, R4-ARCH-02, `fm/grandline-review4-archperf-1793251195`)
+
+Full review #4 measured the captain's instance at 10-14 % CPU and about 127 wakeups a second, and attributed the recurring part to the fleet sweep.
+Every 30 seconds it ran `fm-crew-state.sh` once per task, including tasks whose crew had long since stopped.
+The review's recommended fix was a cache keyed by each `.meta`'s modification date, a DispatchSource on the state folder with the timer kept as a watchdog, the modification date asked for in the listing, and the poll gated on visibility.
+
+### What shipped
+
+**A Swift reader for the one verdict the script reaches from the `.meta` alone** (`FleetCrewStateReader`, R4-ARCH-02).
+The script is about a thousand lines of bash reconciling the status log, the no-mistakes run, the worktree HEAD and the live pane.
+Porting that would be a second copy of the fleet's most load-bearing rule in a different repository.
+What is portable is its first gate: with no `remote_host`, a missing or torn-down worktree prints `state: unknown · source: none · worktree gone (torn down?)` before anything else is read.
+The reader answers exactly that case and defers everything else, including any value `grep` and bash might read differently from Swift.
+
+**Per-task readings, keyed by every file the task owns in `state/`** (`FleetTaskCache`, R4-PERF-01).
+A key of the `.meta` alone would freeze every crew's state, because the `.meta` is written once at dispatch and the state lives elsewhere.
+That is why the 3.5 audit's identical proposal was declined in 2026-09.
+So the key is the modification date and size of each `state/<id>.*` entry: the `.status` a crew appends every transition to, the `.busy-state` its hooks replace every turn, its `.inbox`, and the rest.
+Only a settled reading is reused (done, failed, no backend target, a dead pane), and it is re-verified after 5 minutes anyway.
+Every live crew is read again on every sweep, as before.
+The listing now asks for `.contentModificationDateKey` and `.fileSizeKey`, which cost 6.9 ms against 6.6 ms without them on the captain's 3,600-entry folder.
+
+**FSEvents instead of a DispatchSource** (`FleetStateWatcher`).
+Measured on one folder: a `>>` append to a file inside it raised no event on a vnode source watching the folder, and FSEvents with file events reported it by path.
+An append to `state/<id>.status` is exactly how a crew records a transition.
+The folder is also busy: its modification time moved five times in 30 seconds with no crew doing anything, from firstmate's own dot-files.
+So a delivery only wakes the notifier when it names a known task's file or a new `.meta`.
+That asks for a sweep that re-reads only the tasks whose files changed.
+The 30-second tick stays, because the run ledger and the pane live outside `state/`, and it is what bounds how late an unwritten transition is seen.
+A state-change sweep waits for `start()`'s baseline, or it would banner every decision already open at launch.
+
+**The tick slows down when no window is on screen** (GL-13).
+`AppActivityState.hasWindowOnScreen` counts only windows that can become main, so a menu-bar item's window never reads as visible.
+It folds into the existing backgrounded gate, so the tick runs one in four.
+
+### Measured
+
+A probe build (`Scripts/build-probe-app.sh`) reading the captain's real firstmate home, three tasks (one working, one done, one with its pane gone), 90 seconds to settle, then 60 seconds of `top -c d -l 31 -s 2` on the probe's pid and a 50 ms `ps` scan for `fm-crew-state.sh` children.
+The captain's own instance was not touched.
+
+| | Before | After |
+| --- | --- | --- |
+| Mean CPU, app pid | 0.64 % | 0.60 % |
+| Idle wakeups | 0.05/s | 0.0/s |
+| Script runs in 60 s | 6 | 1 |
+
+Each script run costs 0.15 to 0.23 s of CPU in its children (`/usr/bin/time`, the three real tasks), which the app pid's own line never shows.
+That is where the saving is, and it grows with the number of finished tasks in the folder.
+
+The probe did **not** reproduce the review's 10-14 % or 127 wakeups a second.
+Its app pid still spikes to 6-12 % for one sample every 30 seconds after the change, so the spawn fan-out was not what drives that spike.
+A 32-second `sample` of the after probe, 60 to 92 seconds after launch, had the main thread idle in `mach_msg` throughout and the watcher's callback in 1 of 27,805 samples; the spike did not land in that window, so it is not attributed here.
+The review's own `sample` attributed the rest of the captain's number to live `TerminalView` drawing in their open sessions, which a scratch probe has none of.
+Re-measuring the captain's instance with this build is their own check.
+
+### Verification
+
+- `FleetIdleSweepSelfTest` (CI's blocking lane) runs the real sweep against a scratch home whose script is a stub, and names every spawn.
+  Confirmed to fail with the key cut down to the `.meta` alone (an append to `.status` and a `.busy-state` replace both missed), with settled reuse switched off, with the watcher's filter cut to `.meta`, with the debounce removed (five sweeps for one burst), with the tick handed `windowOnScreen: true`, and with the baseline guard removed.
+- `FleetCrewStateReaderSelfTest` (CI's blocking lane) holds 21 real-shaped fixtures with the script's verdict for each, and, where the script is installed, runs a temporary copy of it on every fixture the reader answers and compares the lines byte for byte.
+  Confirmed to fail with values trimmed the way `parseMetaFile` trims them, and with `remote_host` ignored.

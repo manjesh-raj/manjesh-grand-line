@@ -415,3 +415,29 @@ Schedule-X does that itself unless `onClickPlusEvents` is set, so the page now s
 `ShiftCalendarViewSelfTest` hides the page, deactivates its pins the way `setDestinationVisible` does, checks the page really saw a width under 700px, shows it again, pages once, and reads the view back on both sides.
 It also posts a `range` report naming Day through the page's real message handler, and clicks "+N more" on a day with six tasks.
 Confirmed to fail with `isResponsive` turned back on in the built bundle (the page on Day), with the native side adopting the range report's view again (the scale on Day), and with "+N more" switching the view directly instead of through `selectView` (page on Day, native on Month).
+
+## The native side owns every web island's view state (R4-ARCH-01, `fm/grandline-review4-archperf-1793251195`)
+
+Full review #4 turned R4-BUG-01 into a rule for all three web islands: the page reports, the native side decides, and a report that would change a native-owned value is logged and dropped.
+The behaviour was already right after R4-BUG-01's fix, so this round changed no behaviour and made the rule visible and checked.
+
+- `ShiftCalendarWebView`, `WhiteboardWebView` and `CodePreviewWebView` each state the rule in their header, with the values that island owns.
+- The Calendar's `range` report still names the view Schedule-X is showing.
+  The native side used to ignore it silently.
+  It now passes it to `ShiftCalendarView`, which logs it when it disagrees with the scale and then drops it.
+- The `view` report no longer assigns `scale` inside its callback.
+  It goes through `adoptSelectedView(_:)`, which also logs and drops a view name with no scale.
+- Code Preview logs a `change` for a snippet key it does not hold, where it used to drop it silently.
+
+`WebIslandOwnershipSelfTest` (CI's blocking lane) reads each header for the rule and fails on any `on*` callback in the wiring files whose body assigns `scale`.
+It checks its own detector on a planted callback first.
+`ShiftCalendarViewSelfTest`'s existing range-report case now also asserts the report's view was counted as dropped exactly once.
+Confirmed to fail with the old inline assignment put back in `onViewSelected`, and with the `logDroppedView` call removed.
+
+The PR's first CI run then failed `MainSplitShellSelfTest` once with "Calendar › Agenda left the page on Week".
+Clicking Month, Week, Day and Agenda in a row sends four `setView` calls, and the page answers each with a `view` report.
+On a slow runner the report for Week arrived after the Agenda click, and `adoptSelectedView` took it, so for a moment the scale was Week again until the page's own `list` report put it back.
+The toolbar check landed in that moment.
+`show(scale:)` now remembers the scale it asked for until the page confirms it or the call completes, and a `view` report naming anything else in that window is logged and dropped as stale.
+`ShiftCalendarViewSelfTest` requests Week then Agenda, delivers a stale `view: week` through the page's message entry before the page answers, and reads the scale at once.
+Confirmed to fail with the guard disabled ("a stale view report pulled the scale back to week").

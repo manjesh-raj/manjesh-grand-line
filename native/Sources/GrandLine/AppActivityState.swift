@@ -51,6 +51,31 @@ final class AppActivityState {
         return Date().timeIntervalSince(lastActiveAt) >= Self.backgroundThreshold
     }
 
+    /// What `hasWindowOnScreen` needs to know about one window.
+    struct WindowPresence {
+        let isVisible: Bool
+        let canBecomeMain: Bool
+        let isUnoccluded: Bool
+    }
+
+    /// GL-13 (R4-PERF-01): whether any window of this app is on screen right
+    /// now - ordered in, not minimised, and not fully covered by other apps.
+    ///
+    /// Unlike `isBackgrounded` there is no threshold, because nothing here is
+    /// a guess about whether the captain is away: a window that is not on
+    /// screen is seen by nobody. Only windows that can become main count, so
+    /// a menu-bar item's own window and a popover never read as "visible".
+    var hasWindowOnScreen: Bool {
+        Self.anyWindowOnScreen(NSApplication.shared.windows.map {
+            WindowPresence(isVisible: $0.isVisible, canBecomeMain: $0.canBecomeMain,
+                           isUnoccluded: $0.occlusionState.contains(.visible))
+        })
+    }
+
+    static func anyWindowOnScreen(_ windows: [WindowPresence]) -> Bool {
+        windows.contains { $0.isVisible && $0.canBecomeMain && $0.isUnoccluded }
+    }
+
     /// Registered once at launch from `main.swift`. Idempotent.
     func start() {
         guard !started else { return }

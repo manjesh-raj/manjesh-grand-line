@@ -13,6 +13,10 @@
 //
 // What is covered, in launch order:
 //
+//   - the whole launch, from the first line of `main.swift` to the first
+//     window that becomes key (`Launch.mainToFirstKeyWindow`, R4-PERF-02 of the
+//     fourth full review). This is the "first frame" row MANUAL-CHECKS §19
+//     sets its 400 ms target against; every interval below is a part of it
 //   - each store `AppDelegate` builds in its property initialisers
 //     (`HostStore.init`, `ShiftStore.init`, ...)
 //   - `WorkspaceShellController.init`, and each store its workspace builds
@@ -28,8 +32,16 @@
 // An interval costs a few hundred nanoseconds when nothing is recording, so
 // these are not compiled out of a release build - a release build is exactly
 // what a launch baseline should be taken against.
+//
+// The whole-launch interval also writes its length to the unified log
+// (`lifecycle`, notice level), so a release build's baseline can be read
+// without Instruments:
+//
+//     log show --last 5m --predicate \
+//       'subsystem == "com.manjesh.grandline.native" && category == "lifecycle"' \
+//       | grep "main to first key window"
 
-import Foundation
+import AppKit
 import os
 
 enum LaunchSignposts {
@@ -66,6 +78,53 @@ enum LaunchSignposts {
         debugEnd(name)
         #endif
     }
+
+    // MARK: The whole launch (R4-PERF-02)
+
+    private static let launchIntervalName: StaticString = "Launch.mainToFirstKeyWindow"
+    private static var launchInterval: OSSignpostIntervalState?
+    private static var launchBegan = false
+    private static var launchStartedAt: UInt64 = 0
+    private static var firstKeyObserver: NSObjectProtocol?
+
+    /// Opens the whole-launch interval. Called once, from the first line of
+    /// `main.swift`; any later call does nothing, so a second window becoming
+    /// key is never measured as a launch.
+    static func beginLaunch() {
+        guard !launchBegan else { return }
+        launchBegan = true
+        launchStartedAt = DispatchTime.now().uptimeNanoseconds
+        launchInterval = signposter.beginInterval(launchIntervalName)
+        firstKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { _ in endLaunch() }
+    }
+
+    /// Closes it, at the first `didBecomeKey` of any window, and logs how
+    /// long it was.
+    private static func endLaunch() {
+        if let observer = firstKeyObserver {
+            NotificationCenter.default.removeObserver(observer)
+            firstKeyObserver = nil
+        }
+        guard let state = launchInterval else { return }
+        launchInterval = nil
+        signposter.endInterval(launchIntervalName, state)
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - launchStartedAt) / 1_000_000
+        #if FM_SELFTESTS
+        debugLastLaunchMilliseconds = milliseconds
+        #endif
+        AppLog.lifecycle.notice(
+            "launch: main to first key window \(milliseconds, format: .fixed(precision: 1), privacy: .public) ms")
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the whole-launch interval is open - begun by `main.swift` and
+    /// not yet closed by a key window.
+    static var debugLaunchIntervalOpen: Bool { launchInterval != nil }
+    /// The last whole-launch interval's length, once one has closed.
+    static var debugLastLaunchMilliseconds: Double?
+    #endif
 
     #if FM_SELFTESTS
     /// R2-PERF-01: the same intervals, timed in process, for

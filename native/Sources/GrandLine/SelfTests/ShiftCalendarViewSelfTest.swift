@@ -341,13 +341,43 @@ enum ShiftCalendarViewSelfTest {
             // the period and never the scale.
             let reportedDay = ShiftDateFormatting.components(
                 from: calendar.date(byAdding: .day, value: 3, to: today) ?? today).0
+            let droppedBefore = view.debugDroppedViewReports
             _ = js(web, "window.webkit.messageHandlers.\(ShiftCalendarWebView.messageHandlerName).postMessage("
                    + "{ type: 'range', view: 'day', date: '\(reportedDay)', start: '\(reportedDay)', end: '\(reportedDay)' })")
             _ = waitFor(timeout: 3) { view.visibleDays?.start == reportedDay }
             check(view.visibleDays?.start == reportedDay, "a range report should still move the period")
             check(view.scale == .month, "a range report must not change the native scale, got \(view.scale)")
+            // R4-ARCH-01: and the view it named is logged as dropped, once.
+            check(view.debugDroppedViewReports == droppedBefore + 1,
+                  "the range report's own view should be logged and dropped once, counted "
+                  + "\(view.debugDroppedViewReports - droppedBefore)")
             _ = call(web, "showDate", ["date": todayDay])
             _ = waitFor(timeout: 3) { view.visibleDays?.start != reportedDay }
+
+            // Two tabs in quick succession: the page's `view` report for the
+            // earlier one can land after the later request. Delivered through
+            // the page's real message entry before the page has answered
+            // the Agenda request, it must not pull the scale back to Week.
+            // (Reached CI once as "Calendar > Agenda left the page on Week".)
+            view.show(scale: .week)
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "week" }
+            let staleBefore = view.debugDroppedViewReports
+            view.show(scale: .agenda)
+            web.debugHandle(message: ["type": "view", "view": "week"])
+            // Read before the page's own confirmation arrives: that is the
+            // window the toolbar check fell into, and the confirmation would
+            // otherwise put the scale right again and hide the defect.
+            check(view.scale == .agenda && controller.selectedModuleTabName == "Agenda",
+                  "a stale view report pulled the scale back to \(view.scale)")
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "list" }
+            check(view.scale == .agenda, "after the page confirmed, the scale is \(view.scale)")
+            check(state(web)["view"] as? String == "list",
+                  "the page should show the agenda list, it shows \(state(web)["view"] ?? "nil")")
+            check(view.debugDroppedViewReports == staleBefore + 1,
+                  "the stale report should be logged and dropped once, counted "
+                  + "\(view.debugDroppedViewReports - staleBefore)")
+            view.show(scale: .month)
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "month-grid" }
 
             // The one view change Schedule-X makes inside the month grid on
             // the captain's click - "+N more" opens that day - goes through

@@ -1,9 +1,10 @@
 // Grand Line - native macOS app: the entry point.
 //
-// What runs before the app delegate exists, in order: the self-test dispatch
-// (debug builds only), the legacy-name migration, the first-launch settings,
-// the single-instance guard, the diagnostics stamp, and then `NSApplication`
-// with an `AppDelegate`. Nothing else lives here.
+// What runs before the app delegate exists, in order: the whole-launch
+// signpost, the self-test dispatch (debug builds only), the legacy-name
+// migration, the first-launch settings, the single-instance guard, the
+// diagnostics stamp, and then `NSApplication` with an `AppDelegate`. Nothing
+// else lives here.
 //
 // R2-ARCH-02 (review #1's T-16): this file was 4,900 lines - the composition
 // root, the menu builder, the session coordinator, the host editor and the
@@ -14,6 +15,10 @@
 // caps this file at 150 lines and pins that order, so it cannot grow back.
 
 import AppKit
+
+// R4-PERF-02: the one interval that covers the whole launch, from here to the
+// first window that becomes key. `LaunchSignposts` says how to read it.
+LaunchSignposts.beginLaunch()
 
 // MARK: - Self-test dispatch (GL-27: debug builds only)
 //

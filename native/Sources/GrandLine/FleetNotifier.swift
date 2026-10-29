@@ -24,6 +24,16 @@
 //      The OS banner and the in-app entry are two independent presentations
 //      of the same detected event now, not one gating the other.
 //
+// R4-PERF-01 made the 30-second tick a watchdog. `FleetStateWatcher` reports a
+// change to any task's own state files as it happens, and that asks for a
+// sweep that re-reads only the tasks whose files changed
+// (`stateFilesChanged()`). The tick still runs, because two of
+// `fm-crew-state.sh`'s inputs (the no-mistakes run and the backend pane) live
+// outside `state/`, and it is what bounds how late a transition nobody wrote
+// down is seen. Its sweep costs a script run for each live crew only: a
+// settled task's reading is reused while its files are unchanged
+// (`FleetTaskCache`'s header).
+//
 // A finished task is acknowledged (and stops resurfacing in the in-app
 // center) the moment the captain opens the aggregated notification - see
 // `acknowledgeFinishedTasks(ids:)`, called from the notification's own
@@ -38,6 +48,24 @@ final class FleetNotifier {
     static let shared = FleetNotifier()
 
     private var timer: Timer?
+    private var stateWatcher: FleetStateWatcher?
+    /// R4-PERF-01: an event-driven sweep is waiting out `stateChangeSettle`.
+    private var stateChangeSweepScheduled = false
+    /// One is running, and another change arrived while it did.
+    private var stateChangeSweepRunning = false
+    private var stateChangedDuringSweep = false
+    /// `start()`'s baseline has landed. Until then a state-change sweep would
+    /// reconcile against empty "already seen" sets and banner every decision
+    /// that was already open at launch, so it waits - and the baseline itself
+    /// reads whatever changed in the meantime.
+    private var baselinePrimed = false
+    #if FM_SELFTESTS
+    /// How many state-change sweeps have started.
+    private(set) var debugStateChangeSweeps = 0
+    /// What `start()`'s baseline sets when it lands, for a suite that never
+    /// calls `start()`.
+    func debugPrimeBaseline() { baselinePrimed = true }
+    #endif
     private var seenNeedsDecision: Set<String> = []
     private var seenFinishedForBanner: Set<String> = []
     /// F4: PR URLs already banner-notified as ready to merge - see
@@ -54,9 +82,15 @@ final class FleetNotifier {
     /// stops being a coalescer and becomes a staleness cache.
     static let pollInterval: TimeInterval = 30
 
-    /// E3: while the app has been backgrounded for >5 minutes, only every 4th
-    /// tick does work - an effective 120s cadence, the report's own suggested
-    /// number. This poller is the expensive one in that table: each pass
+    /// How long a state-file change waits before its sweep, on top of
+    /// `FleetStateWatcher.latency`, so a burst of writes from one transition
+    /// costs one sweep.
+    static let stateChangeSettle: TimeInterval = 1
+
+    /// E3: while the app has been backgrounded for >5 minutes - or, since
+    /// R4-PERF-01, while no window of it is on screen at all (GL-13) - only
+    /// every 4th tick does work: an effective 120s cadence, the report's own
+    /// suggested number. This poller is the expensive one in that table: each pass
     /// spawns `fm-crew-state.sh` **serially per task** and marks Health
     /// running/success (two registry notifications, which - before P4 - meant
     /// two full Health-card rebuilds). Nothing is skipped permanently: a
@@ -102,18 +136,24 @@ final class FleetNotifier {
     func start() {
         guard timer == nil else { return }
         ServiceHealthRegistry.shared.register(.fleetTasks)
+        let watcher = FleetStateWatcher(stateDirectory: FirstmateHome.state) { [weak self] in
+            self?.stateFilesChanged()
+        }
+        if watcher.start() { stateWatcher = watcher }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let tasks = FleetDataSource.parseTasks()
             let decisionIDs = Set(tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }.map(\.id))
             let finishedIDs = Set(tasks.filter { $0.status == "done" || $0.status == "failed" }.map(\.id))
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.stateWatcher?.setKnownTaskIDs(Set(tasks.map(\.id)))
                 self.seenNeedsDecision = decisionIDs
                 self.seenFinishedForBanner = finishedIDs
                 // A task already done/failed before this launch is not
                 // "finished while you weren't looking" for the in-app
                 // center either - primed as already-acknowledged.
                 self.acknowledgedFinishedIDs = finishedIDs
+                self.baselinePrimed = true
             }
         }
         let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in self?.poll() }
@@ -139,10 +179,20 @@ final class FleetNotifier {
     private func stop() {
         timer?.invalidate()
         timer = nil
+        stateWatcher?.stop()
+        stateWatcher = nil
+    }
+
+    /// GL-13: whether nobody can see this app - backgrounded for a while, or
+    /// with no window on screen. Either one slows the watchdog tick down.
+    static func shouldSlowDown(backgrounded: Bool, windowOnScreen: Bool) -> Bool {
+        backgrounded || !windowOnScreen
     }
 
     private func poll() {
-        guard backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded) else { return }
+        let slow = Self.shouldSlowDown(backgrounded: AppActivityState.shared.isBackgrounded,
+                                       windowOnScreen: AppActivityState.shared.hasWindowOnScreen)
+        guard backgroundedGate.shouldRun(backgrounded: slow) else { return }
         // PF14: a fleet that has reported the same thing four sweeps running
         // is asked less often, until it says something different.
         guard quietGate.shouldRun() else { return }
@@ -162,12 +212,62 @@ final class FleetNotifier {
                         "Firstmate home is not readable at \(FirstmateHome.root.path) - set it in \(PlaceName.of(.bootstrap)).")
                 }
                 guard let self else { return }
+                self.stateWatcher?.setKnownTaskIDs(Set(tasks.map(\.id)))
                 // PF14: told before `reconcile`, which is what decides whether
                 // the next tick runs at all.
                 let fingerprint = Self.fingerprint(tasks)
                 self.quietGate.noteSweep(changed: fingerprint != self.lastSweepFingerprint)
                 self.lastSweepFingerprint = fingerprint
                 self.reconcile(tasks)
+            }
+        }
+    }
+
+    /// R4-PERF-01: a task's own state files changed. One sweep per burst,
+    /// after `stateChangeSettle`; a change that lands while that sweep runs
+    /// asks for one more rather than being lost.
+    ///
+    /// Not gated on the app being away: it only runs when a crew wrote
+    /// something, and it re-reads only the crews that did, so it is the cheap
+    /// path to keep while the tick backs off.
+    func stateFilesChanged() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard baselinePrimed else { return }
+        if stateChangeSweepRunning {
+            stateChangedDuringSweep = true
+            return
+        }
+        guard !stateChangeSweepScheduled else { return }
+        stateChangeSweepScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.stateChangeSettle) { [weak self] in
+            self?.runStateChangeSweep()
+        }
+    }
+
+    private func runStateChangeSweep() {
+        stateChangeSweepScheduled = false
+        stateChangeSweepRunning = true
+        #if FM_SELFTESTS
+        debugStateChangeSweeps += 1
+        #endif
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let tasks = FleetDataSource.parseTasksAfterStateChange()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.stateChangeSweepRunning = false
+                self.stateWatcher?.setKnownTaskIDs(Set(tasks.map(\.id)))
+                let fingerprint = Self.fingerprint(tasks)
+                // A change resets the quiet backoff; an identical answer is
+                // not counted as a quiet tick, because no tick asked for it.
+                if fingerprint != self.lastSweepFingerprint {
+                    self.quietGate.noteSweep(changed: true)
+                    self.lastSweepFingerprint = fingerprint
+                }
+                self.reconcile(tasks)
+                if self.stateChangedDuringSweep {
+                    self.stateChangedDuringSweep = false
+                    self.stateFilesChanged()
+                }
             }
         }
     }
