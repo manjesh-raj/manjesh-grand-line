@@ -198,7 +198,7 @@ enum PageRedesignsSelfTest {
         check(shell.inspector.debugTitle == "edge-proxy-01", "the inspector is titled \"\(shell.inspector.debugTitle)\"", &ok)
         check(panel?.debugAddressField.stringValue == edge.address && panel?.debugUsernameField.stringValue == edge.username,
               "the host form does not hold the host's address and user", &ok)
-        check(panel?.debugFooterTitles == ["Connect", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
+        check(panel?.debugFooterTitles == ["Connect", "Test", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
         check(panel?.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"],
               "the host form's menu is \(panel?.debugPanelMenuTitles ?? [])", &ok)
         check(hosts.debugSideStackIsHidden, "the page's own detail column shows beside the inspector", &ok)

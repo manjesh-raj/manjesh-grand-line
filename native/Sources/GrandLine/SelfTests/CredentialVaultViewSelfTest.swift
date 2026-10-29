@@ -251,8 +251,17 @@ enum CredentialVaultViewSelfTest {
         // The exact claim, not merely some words: "there is no recovery" and
         // "write it down" are the two things the finding asks to be stated.
         let warning = gate.debugRecoveryWarningText.lowercased()
-        check(warning.contains("no recovery"),
-              "UX8: the warning does not say there is no recovery: \"\(gate.debugRecoveryWarningText)\"")
+        // R4-UX-02: "there is no recovery" contradicted the recovery kit the
+        // same page offers. The sentence now says what is true - the vault
+        // stays sealed unless a recovery key is printed - and the claim it
+        // used to make must not come back.
+        check(!warning.contains("no recovery"),
+              "R4-UX-02: the warning still says there is no recovery: \"\(gate.debugRecoveryWarningText)\"")
+        check(warning.contains("stays sealed") && warning.contains("recovery key"),
+              "R4-UX-02: the warning does not say the vault stays sealed unless a recovery key is printed: "
+              + "\"\(gate.debugRecoveryWarningText)\"")
+        check(!gate.debugPrintRecoveryKitRow.isHidden && gate.debugPrintRecoveryKitRow.isOn,
+              "R4-UX-02: the create state should offer the recovery step, on by default")
         check(warning.contains("write it down"),
               "UX8: the warning does not tell the captain to write it down: \"\(gate.debugRecoveryWarningText)\"")
         check(gate.debugStrengthBarVisible, "UX8: the create state should show a strength meter")
@@ -292,6 +301,8 @@ enum CredentialVaultViewSelfTest {
         check(!gate.debugStrengthBarVisible, "UX8: the unlock state should not show a strength meter")
         check(gate.debugPrimaryButton.isEnabled,
               "UX8: Unlock must never be gated by the creation confirmation")
+        check(gate.debugPrintRecoveryKitRow.isHidden,
+              "R4-UX-02: the unlock state should not offer the creation-time recovery step")
     }
 
     /// REL-20: the real Create button, through the controller, creates the
@@ -327,6 +338,39 @@ enum CredentialVaultViewSelfTest {
               "REL-20: every render the create fires is on the main thread, got \(renderThreads)")
         controller.debugRender()
         check(controller.debugIsListShowing, "REL-20: the page shows the list after a real create")
+
+        // R4-UX-02: the recovery step was left on (its default), so the real
+        // Create opened the recovery kit once the vault existed.
+        check(controller.debugRecoveryKitOpens == 1,
+              "R4-UX-02: a create with the recovery step on opened the kit \(controller.debugRecoveryKitOpens) times, want 1")
+        if controller.debugPresentedSheetCount > 0 {
+            check(controller.debugPresentedRecoveryKit,
+                  "R4-UX-02: the sheet the create opened is not the recovery kit")
+        } else {
+            print("  NOTE: this process could not present a real sheet - the kit's request was counted instead")
+        }
+        controller.debugDismissSheets()
+
+        // And off means off: the step is an offer, not a gate.
+        let (declined, declinedStore) = mounted(scratch, name: "r4ux02-off", window: window, createVault: false)
+        let declinedGate = declined.debugUnlockView
+        declinedGate.debugPasswordField.stringValue = "a-long-enough-passphrase"
+        declinedGate.debugConfirmField.stringValue = "a-long-enough-passphrase"
+        declinedGate.debugSavedItRow.isOn = true
+        declinedGate.debugPrintRecoveryKitRow.isOn = false
+        declinedGate.debugFieldsChanged()
+        check(declinedGate.debugPrimaryButton.isEnabled,
+              "R4-UX-02: turning the recovery step off must not hold Create closed")
+        declinedGate.debugPrimaryButton.performClick(nil)
+        let declinedDeadline = Date().addingTimeInterval(30)
+        while !declinedStore.isUnlocked, Date() < declinedDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        check(declinedStore.isUnlocked, "R4-UX-02: the create with the recovery step off did not create the vault")
+        check(declined.debugRecoveryKitOpens == 0 && declined.debugPresentedSheetCount == 0,
+              "R4-UX-02: a create with the recovery step off still opened the kit "
+              + "(\(declined.debugRecoveryKitOpens) opens, \(declined.debugPresentedSheetCount) sheets)")
+        declined.debugDismissSheets()
     }
 
     private static func checkRevealAndCopyAreSeparate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {

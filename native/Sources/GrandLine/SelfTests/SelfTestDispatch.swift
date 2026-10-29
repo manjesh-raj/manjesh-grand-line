@@ -1056,6 +1056,10 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_REVIEW4_UI_TESTS"] == "1" {
             exit(ReviewFourUISelfTest.run() ? 0 : 1)
         }
+        // Full review #4's UX improvements (R4-UX-01 .. R4-UX-08).
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW4_UX_TESTS"] == "1" {
+            exit(ReviewFourUXSelfTest.run() ? 0 : 1)
+        }
         // The later page work: the host, key, snippet and credential tables with the
         // shell's inspector, Knowledge with no tree (stage 7) and Crew › Needs you, in
         // a real off-screen sidebar shell - and the floating bar's same pages

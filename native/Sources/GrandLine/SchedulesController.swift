@@ -397,6 +397,11 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
             ScheduleRunner.shared.runNow(schedule)
             self?.refreshSchedules()
         }
+        schedulesCard.onStopRun = { [weak self] schedule in
+            guard ScheduleRunner.shared.runningScheduleID == schedule.id else { return }
+            ScheduleRunner.shared.stopCurrentRun()
+            self?.refreshSchedules()
+        }
         schedulesCard.onToggleEnabled = { [weak self] schedule, enabled in
             guard let self else { return }
             self.scheduleStore.setEnabled(enabled, id: schedule.id)

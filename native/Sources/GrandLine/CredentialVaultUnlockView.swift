@@ -71,10 +71,18 @@ final class CredentialVaultUnlockView: NSView {
     /// own tinted card now, above the fields rather than below them, because
     /// the one moment it changes behaviour is *before* the captain has chosen
     /// a password rather than after.
+    ///
+    /// R4-UX-02 of the fourth full review: the sentence used to say "There is
+    /// no recovery", on the same page whose toolbar offers a recovery kit
+    /// (F17). Both cannot be true. What is true is that the *password* cannot
+    /// be reset by anyone, and that a printed recovery key - a second wrap of
+    /// the same vault key, see `CredentialVaultRecovery` - is the one other
+    /// way in. So the warning says that, and the step it points at is
+    /// `printRecoveryKitRow` just below.
     private var recoveryWarningCard: NSView?
     private let recoveryWarningLabel = NSTextField(wrappingLabelWithString:
-        "There is no recovery. If you forget this password, every credential in "
-        + "this vault is gone - Grand Line cannot reset it, and neither can anyone else. "
+        "Forget this password and the vault stays sealed, unless you print the recovery key now. "
+        + "Grand Line cannot reset the password, and neither can anyone else. "
         + "Write it down somewhere safe before you continue.")
     /// The meter half. The label alone said "Strength: Fair", which is a
     /// verdict rather than a meter - this is the same `HelmProgressBar` the
@@ -84,6 +92,16 @@ final class CredentialVaultUnlockView: NSView {
     /// this is on.
     private let savedItRow = HelmToggleRow(
         title: "I have written my master password down somewhere safe")
+    /// R4-UX-02: the recovery step, offered at creation. On by default and
+    /// never a gate - a captain may still decline it - because the moment a
+    /// vault is created is the one moment a printed key is free to make. It
+    /// asks nothing of this view: the controller opens the existing recovery
+    /// kit (`CredentialVaultRecoverySheetController`) once the vault exists
+    /// and is unlocked, so the code is minted, shown and copied by the same
+    /// concealed paths the toolbar's button already uses.
+    private let printRecoveryKitRow = HelmToggleRow(
+        title: "Print a recovery key next",
+        subtitle: "Opens the recovery kit as soon as the vault exists.")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let primaryButton = HelmButton(title: "Unlock", variant: .primary)
     private let touchIDButton = HelmButton(title: "Unlock with Touch ID", variant: .secondary, symbol: "touchid")
@@ -170,11 +188,11 @@ final class CredentialVaultUnlockView: NSView {
         // "there is no recovery" changes what a captain does is before they
         // choose a password, not after.
         for view in [iconTile, titleLabel, subtitleLabel, warningCard, passwordField, recoveryField, confirmField,
-                     strengthBar, strengthLabel, savedItRow, messageLabel,
+                     strengthBar, strengthLabel, savedItRow, printRecoveryKitRow, messageLabel,
                      primaryButton, orRow, touchIDButton, recoveryLinkButton] as [NSView] {
             column.addArrangedSubview(view)
         }
-        for view in [warningCard, strengthBar, savedItRow] as [NSView] {
+        for view in [warningCard, strengthBar, savedItRow, printRecoveryKitRow] as [NSView] {
             view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
         strengthBar.heightAnchor.constraint(equalToConstant: HelmProgressBar.height).isActive = true
@@ -228,7 +246,7 @@ final class CredentialVaultUnlockView: NSView {
         case .create:
             iconTile.configure(symbol: "lock.shield.fill", tint: .accent)
             titleLabel.stringValue = "Set up your vault"
-            subtitleLabel.stringValue = "Choose a master password. It encrypts every credential you store here, and it is never saved anywhere - not on disk, not in the Keychain, not in the vault file. Nobody can recover it for you."
+            subtitleLabel.stringValue = "Choose a master password. It encrypts every credential you store here, and it is never saved anywhere - not on disk, not in the Keychain, not in the vault file. Nobody can reset it for you."
             passwordField.isHidden = false
             passwordField.placeholderString = "Master password"
             confirmField.isHidden = false
@@ -239,6 +257,8 @@ final class CredentialVaultUnlockView: NSView {
             // A fresh gate every time this state is entered: a captain who
             // backed out of creation and came back has not confirmed anything.
             savedItRow.isOn = false
+            printRecoveryKitRow.isHidden = false
+            printRecoveryKitRow.isOn = true
             primaryButton.title = "Create Poneglyph"
             primaryButton.isHidden = false
             orLabel.isHidden = true
@@ -262,6 +282,7 @@ final class CredentialVaultUnlockView: NSView {
             strengthBar.isHidden = true
             recoveryWarningCard?.isHidden = true
             savedItRow.isHidden = true
+            printRecoveryKitRow.isHidden = true
             primaryButton.isEnabled = true
             primaryButton.title = "Unlock"
             primaryButton.isHidden = false
@@ -279,6 +300,7 @@ final class CredentialVaultUnlockView: NSView {
             strengthBar.isHidden = true
             recoveryWarningCard?.isHidden = true
             savedItRow.isHidden = true
+            printRecoveryKitRow.isHidden = true
             // Deliberately no primary action. See this file's header: offering
             // "create a new vault" here is how real credentials get destroyed.
             primaryButton.isHidden = true
@@ -305,6 +327,10 @@ final class CredentialVaultUnlockView: NSView {
         messageLabel.textColor = CredentialVaultInk.text(tint, in: theme)
     }
 
+    /// R4-UX-02: whether the captain asked for the recovery kit to open once
+    /// the vault they are creating exists.
+    var wantsRecoveryKitAfterCreate: Bool { printRecoveryKitRow.isOn }
+
     func clearPasswordFields() {
         passwordField.stringValue = ""
         confirmField.stringValue = ""
@@ -316,6 +342,7 @@ final class CredentialVaultUnlockView: NSView {
     var debugConfirmField: HelmSecureTextField { confirmField }
     /// UX8's "confirm you saved it" step, and the gate it drives.
     var debugSavedItRow: HelmToggleRow { savedItRow }
+    var debugPrintRecoveryKitRow: HelmToggleRow { printRecoveryKitRow }
     var debugPrimaryButton: HelmButton { primaryButton }
     var debugRecoveryWarningText: String { recoveryWarningLabel.stringValue }
     var debugRecoveryWarningVisible: Bool { recoveryWarningCard?.isHidden == false }
@@ -462,7 +489,7 @@ final class CredentialVaultUnlockView: NSView {
             }
             guard savedItRow.isOn else {
                 showMessage("Write your master password down first, then tick the box. "
-                            + "There is no way to recover it later.", tint: .warn)
+                            + "Nobody can reset it later.", tint: .warn)
                 return
             }
             onCreate?(password)
@@ -574,6 +601,7 @@ final class CredentialVaultUnlockView: NSView {
             recoveryWarningLabel.textColor = resolved.foreground
         }
         savedItRow.applyTheme(theme)
+        printRecoveryKitRow.applyTheme(theme)
         if !messageLabel.stringValue.isEmpty {
             // Re-resolve against the new theme rather than leaving a colour
             // computed against the previous one - the staleness class

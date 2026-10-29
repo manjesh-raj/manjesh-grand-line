@@ -241,6 +241,7 @@ final class ScheduleRunner {
             runStartedAt = nil
             runningScheduleID = nil
             currentRunID = nil
+            currentRunToken = nil
         }
 
         // Only the first due schedule per tick. The next tick picks up the
@@ -276,6 +277,22 @@ final class ScheduleRunner {
 
     var isBusy: Bool { isRunning }
 
+    /// R4-UX-08 of the fourth full review (WF-08 of the first): Stop on a run
+    /// that is in flight. It cancels the run's subprocesses through the same
+    /// token a confirmed quit uses (REL-05), and the run records itself as
+    /// stopped by the captain rather than as failed. Work that is not a
+    /// subprocess (a network call) finishes its current step first.
+    func stopCurrentRun() {
+        guard isRunning, let runID = currentRunID, let token = currentRunToken else { return }
+        stoppedRunID = runID
+        token.cancel()
+    }
+
+    /// The run in flight's cancellation token, and the run Stop was pressed
+    /// for.
+    private var currentRunToken: SubprocessCancellation?
+    private var stoppedRunID: UUID?
+
     /// The schedule currently running, for the card's "Running…" row state.
     private(set) var runningScheduleID: UUID?
 
@@ -295,14 +312,21 @@ final class ScheduleRunner {
         // run's subprocesses so this completion records it as stopped rather
         // than the process exiting with no record at all.
         let work = QuitGuard.shared.begin("The scheduled \(action.title.lowercased())")
+        currentRunToken = work.token
         queue.async { [weak self] in
-            var result = SubprocessCancellation.withScope(work.token) {
+            let ranResult = SubprocessCancellation.withScope(work.token) {
                 Self.runAction(action, backupStores: stores)
             }
-            if work.token.isCancelled { result = Self.stoppedAtQuit(action) }
+            let cancelled = work.token.isCancelled
             DispatchQueue.main.async {
                 defer { QuitGuard.shared.end(work.id) }
                 guard let self else { return }
+                var result = ranResult
+                if cancelled {
+                    result = self.stoppedRunID == runID ? Self.stoppedByCaptain(action) : Self.stoppedAtQuit(action)
+                }
+                if self.stoppedRunID == runID { self.stoppedRunID = nil }
+                if self.currentRunID == runID { self.currentRunToken = nil }
                 guard self.currentRunID == runID else {
                     self.recordAbandonedRun(schedule: schedule, action: action, result: result)
                     return
@@ -376,6 +400,16 @@ extension ScheduleRunner {
             actionTitle: action.title,
             log: result.log,
             failure: result.failure))
+    }
+
+    /// R4-UX-08: what a run the captain stopped records.
+    fileprivate static func stoppedByCaptain(_ action: ScheduledActionKind) -> ScheduleActionResult {
+        ScheduleActionResult(
+            failing: .failed,
+            summary: "Stopped from the Schedules page.",
+            whatFailed: "\(action.title) was stopped partway through.",
+            why: "Stop was pressed while this run was in progress, and its work was stopped.",
+            whatToDo: "Use Run now to run it again, or let it run at its next scheduled time.")
     }
 
     /// REL-05: what a run cancelled by a confirmed quit records.

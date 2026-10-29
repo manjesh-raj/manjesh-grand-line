@@ -1849,6 +1849,10 @@ struct NotificationRowPresentation {
         case NotificationSources.persistenceFailureID:
             icon = "externaldrive.badge.exclamationmark"
             kicker = "Not Saved"
+        case BackupUI.exportReportID:
+            // R4-UX-08: a finished backup is a lasting report.
+            icon = "externaldrive.badge.checkmark"
+            kicker = "Backup Saved"
         default:
             if entry.id.hasPrefix("service-failing.") {
                 // One entry per health service, so a prefix like SRE Lead's.

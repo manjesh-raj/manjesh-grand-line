@@ -156,6 +156,9 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// transition event: the shell re-reads `hasLiveSession` itself, which
     /// costs one array scan and cannot get out of step with the tabs.
     var onLiveSessionMayHaveChanged: (() -> Void)?
+    /// R4-UX-04 (WF-12): a host page's saved key could not be used and ssh
+    /// was started without it (the notice to show), or it was used (`nil`).
+    var onSavedKeyFallback: ((String?) -> Void)?
 
     /// Scrollback retained per normal-screen terminal. SwiftTerm defaults to 500
     /// lines; a shell session wants much more so history that scrolls off the top

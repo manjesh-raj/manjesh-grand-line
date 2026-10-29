@@ -735,9 +735,12 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         }
 
         // G3: themed. Return still merges, as it did here.
+        // R4-UX-06: the body names what is being merged - title, repo,
+        // branch and checks - with the URL as the last, secondary line.
+        let pr = lastRenderedPRs.first { $0.url == prURL }
         guard HelmConfirm.confirm(
             title: "Merge this PR?",
-            body: prURL,
+            body: Self.mergeConfirmBody(pr, url: prURL),
             confirmTitle: "Merge",
             symbol: "arrow.triangle.merge",
             hue: RailDestination.review.domainHue) else { return }
@@ -759,6 +762,37 @@ final class ReviewController: NSViewController, DaylightDrillActions {
                     HelmConfirm.problem(title: "Merge failed", body: result.message)
                 }
             }
+        }
+    }
+
+    /// R4-UX-06 of the fourth full review (WF-14 of the first): the merge
+    /// confirm used to show the PR's URL and nothing else. It says what the
+    /// rows already know instead: the title and number, the repo and branch,
+    /// and the check state, with the URL last as the secondary line. A PR this
+    /// page no longer has a row for still gets its URL.
+    static func mergeConfirmBody(_ pr: MergedPR?, url: String) -> String {
+        guard let pr else { return url }
+        var lines: [String] = []
+        let number = pr.number.map { "#\($0)" }
+        if pr.title.isEmpty {
+            lines.append(pr.displayTitle)
+        } else {
+            lines.append([number, pr.title].compactMap { $0 }.joined(separator: " "))
+        }
+        let place = [pr.repo.isEmpty ? nil : pr.repo, pr.branch.map { "branch \($0)" }].compactMap { $0 }
+        if !place.isEmpty { lines.append(place.joined(separator: " \u{00B7} ")) }
+        lines.append(checksSentence(pr.checks))
+        lines.append(url)
+        return lines.joined(separator: "\n")
+    }
+
+    /// The check state as the confirm says it.
+    static func checksSentence(_ checks: String) -> String {
+        switch checks {
+        case "green": return "Checks passing"
+        case "red": return "Checks failing"
+        case "pending": return "Checks still running"
+        default: return "No checks reported"
         }
     }
 

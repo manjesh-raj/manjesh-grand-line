@@ -27,6 +27,9 @@ struct FleetTask {
     var detail: String = ""
     /// working | needs_decision | blocked | done | failed | unknown
     var status: String = "unknown"
+    /// The task's branch, from its `.meta` (`branch=`). R4-UX-06: the merge
+    /// confirm names it.
+    var branch: String? = nil
 }
 
 struct WatcherHealth {
@@ -71,6 +74,9 @@ struct MergedPR {
     let title: String
     let checks: String
     let forge: String?
+    /// The head branch, when a crew task's `.meta` names it. The forge scan
+    /// does not report one.
+    var branch: String? = nil
 
     /// The one order a list of these is shown in: by repo, then by number,
     /// then by URL for two rows the first two cannot tell apart. Review
@@ -261,6 +267,7 @@ enum FleetDataSource {
                 let id = url.deletingPathExtension().lastPathComponent
                 let meta = parseMetaFile(url)
                 var task = FleetTask(id: id, repo: meta["repo"], kind: meta["kind"] ?? "ship", pr: meta["pr"])
+                task.branch = meta["branch"].flatMap { $0.isEmpty ? nil : $0 }
                 let (state, source, detail) = crewState(taskID: id)
                 task.state = state
                 task.source = source
@@ -363,7 +370,8 @@ enum FleetDataSource {
                 number: existing?.number ?? prNumber(from: pr),
                 title: existing?.title ?? "",
                 checks: existing?.checks ?? "none",
-                forge: existing?.forge
+                forge: existing?.forge,
+                branch: t.branch
             )
         }
         // Never the dictionary's own order: Swift seeds it per process, and

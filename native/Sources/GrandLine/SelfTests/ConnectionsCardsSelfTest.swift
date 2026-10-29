@@ -552,8 +552,27 @@ enum ConnectionsCardsSelfTest {
               "H6: the inspector shows \(shell.inspector.debugTitle), not the host's form", &ok)
         check(panel.presentation == .panel && (panel.view as? HelmFormSheet)?.chrome == .panel,
               "H6: the panel's form is not the panel chrome", &ok)
-        check(panel.debugFooterTitles == ["Connect", "More actions"], "H6: a clean form's footer is \(panel.debugFooterTitles)", &ok)
+        check(panel.debugFooterTitles == ["Connect", "Test", "More actions"], "H6: a clean form's footer is \(panel.debugFooterTitles)", &ok)
         check(panel.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"], "H6: the panel's menu is \(panel.debugPanelMenuTitles)", &ok)
+
+        // R4-UX-04: Test runs ssh for the stored host, through the page's
+        // runner, and the panel's header says what it found.
+        var testedWith: [String]?
+        var answer: ((SubprocessResult) -> Void)?
+        let savedRunner = hosts.connectionTestRunner
+        hosts.connectionTestRunner = { args, done in testedWith = args; answer = done }
+        panel.debugTestButton.performClick(nil)
+        check(testedWith?.prefix(4) == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+                && testedWith?.suffix(3) == ["--", edge.destination, "true"],
+              "R4-UX-04: Test ran ssh with \(testedWith ?? [])", &ok)
+        check(!panel.debugTestPill.isHidden && panel.debugTestPill.text.hasPrefix("Testing")
+                && !panel.debugTestButton.isEnabled,
+              "R4-UX-04: a test in flight reads \(panel.debugTestPill.text)", &ok)
+        answer?(SubprocessResult(outcome: .exited, status: 255,
+                                 stdoutData: Data(), stderrData: Data("Connection refused".utf8), duration: 0.1))
+        check(panel.debugTestPill.text == "Unreachable - connection refused" && panel.debugTestButton.isEnabled,
+              "R4-UX-04: a refused connection reads \(panel.debugTestPill.text)", &ok)
+        hosts.connectionTestRunner = savedRunner
         check(panel.debugAdvancedShown && !panel.debugAdvancedRowsHidden,
               "H6: Advanced is collapsed for a host with a startup snippet", &ok)
 
@@ -584,7 +603,7 @@ enum ConnectionsCardsSelfTest {
         check(saved?.lastConnectedAt == Date(timeIntervalSinceReferenceDate: 800_000_200),
               "H6: the save dropped the connect's lastConnectedAt", &ok)
         let after = hosts.hostPanel
-        check(after?.debugIsDirty == false && after?.debugFooterTitles == ["Connect", "More actions"],
+        check(after?.debugIsDirty == false && after?.debugFooterTitles == ["Connect", "Test", "More actions"],
               "C1: after a save the footer is \(after?.debugFooterTitles ?? [])", &ok)
 
         // Esc puts the stored host back.
@@ -667,7 +686,7 @@ enum ConnectionsCardsSelfTest {
         }
         check(store.hosts.count == before + 1, "H10: Create Host added \(store.hosts.count - before) hosts", &ok)
         check(hosts.hostsGrid.selectedKey == created.id.uuidString && shell.inspector.debugTitle == "scratch-box"
-                && hosts.hostPanel?.debugFooterTitles == ["Connect", "More actions"],
+                && hosts.hostPanel?.debugFooterTitles == ["Connect", "Test", "More actions"],
               "H10: after Create the panel shows \(shell.inspector.debugTitle)", &ok)
         // A new host's Cancel closes its form, and saves nothing.
         hosts.newHost()

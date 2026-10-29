@@ -627,7 +627,11 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             let item = imageItem(identifier, symbol: inspectorSymbolName, label: inspectorLabel,
                                  help: inspectorHelp, action: #selector(inspectorClicked))
             item.paletteLabel = "Inspector"
+            // R4-UX-05: enabled by the page, not by validation - see
+            // `applyInspectorEnabled`.
+            item.autovalidates = false
             inspectorItem = item
+            applyInspectorEnabled()
             return item
         case ItemID.search:
             return viewItem(identifier, view: searchButton, label: "Search")
@@ -1037,6 +1041,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// accessibility button and takes the item's `label`), so a fixed
     /// "Inspector" said nothing about what a press would do.
     func setInspectorState(shown: Bool, wanted: Bool) {
+        inspectorShown = shown
         inspectorSymbolName = wanted ? Self.inspectorOnSymbol : Self.inspectorOffSymbol
         inspectorLabel = Self.inspectorLabel(shown: shown)
         inspectorHelp = shown ? "Hide the inspector"
@@ -1045,6 +1050,23 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         inspectorItem?.image = symbol(inspectorSymbolName)
         inspectorItem?.label = inspectorLabel
         inspectorItem?.toolTip = inspectorHelp
+        applyInspectorEnabled()
+    }
+
+    /// Whether the inspector pane is showing, as the shell last said.
+    private var inspectorShown = false
+
+    /// R4-UX-05 of the fourth full review: on a page with nothing to show in
+    /// the inspector the button is disabled, rather than opening a pane that
+    /// says "No details for this page". It stays enabled while the pane is
+    /// open, so a pane can always be closed from the button that opened it.
+    static let inspectorUnavailableHelp = "This page has nothing to show in the inspector"
+
+    private func applyInspectorEnabled() {
+        guard let inspectorItem else { return }
+        let enabled = pageHasInspectorContent || inspectorShown
+        inspectorItem.isEnabled = enabled
+        inspectorItem.toolTip = enabled ? inspectorHelp : Self.inspectorUnavailableHelp
     }
 
     static func inspectorLabel(shown: Bool) -> String { shown ? "Hide Inspector" : "Show Inspector" }
@@ -1065,6 +1087,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         guard has != pageHasInspectorContent else { return }
         pageHasInspectorContent = has
         toolbar.items.first { $0.itemIdentifier == ItemID.inspector }?.visibilityPriority = inspectorPriorityNow
+        applyInspectorEnabled()
     }
 
     #if FM_SELFTESTS

@@ -60,6 +60,25 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     private let overlay = NSView()
     private var overlayState: HelmEmptyState?
 
+    /// R4-UX-07 of the fourth full review: an empty board used to be a bare
+    /// canvas while every other page's empty state said what to do and
+    /// offered one thing to press. This is the same `HelmEmptyState` shape -
+    /// one action, an example to start from, as Sticky Board and the Reading
+    /// list have - over the empty canvas. A click anywhere else on it starts
+    /// on the blank board instead, and it does not come back this session:
+    /// a captain who has seen it once needs the canvas, not the advice.
+    private let emptyBoard = NSView()
+    private var emptyBoardState: HelmEmptyState?
+    private var emptyBoardDismissed = false
+    private lazy var emptyBoardClick: NSClickGestureRecognizer = {
+        let click = NSClickGestureRecognizer(target: self, action: #selector(emptyBoardClicked))
+        click.delegate = self
+        return click
+    }()
+    /// The example the empty board's action draws: general, not an
+    /// infrastructure diagram, because a blank board is for anything.
+    static let exampleDiagram = "Idea --> Sketch\nSketch --> Review\nReview --> Ship\nReview --> Sketch: changes"
+
     private let composer = WhiteboardComposerController()
     /// The deterministic sibling of `composer` - same canvas, same sink, no
     /// model. See `WhiteboardDSLPopover.swift`'s header for why it is a second
@@ -170,6 +189,11 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         canvasCard.addSubview(webView)
 
         overlay.translatesAutoresizingMaskIntoConstraints = false
+        emptyBoard.translatesAutoresizingMaskIntoConstraints = false
+        emptyBoard.wantsLayer = true
+        emptyBoard.isHidden = true
+        emptyBoard.addGestureRecognizer(emptyBoardClick)
+        canvasCard.addSubview(emptyBoard)
         canvasCard.addSubview(overlay)
 
         NSLayoutConstraint.activate([
@@ -187,6 +211,11 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
             overlay.trailingAnchor.constraint(equalTo: canvasCard.trailingAnchor),
             overlay.topAnchor.constraint(equalTo: canvasCard.topAnchor),
             overlay.bottomAnchor.constraint(equalTo: canvasCard.bottomAnchor),
+
+            emptyBoard.leadingAnchor.constraint(equalTo: canvasCard.leadingAnchor),
+            emptyBoard.trailingAnchor.constraint(equalTo: canvasCard.trailingAnchor),
+            emptyBoard.topAnchor.constraint(equalTo: canvasCard.topAnchor),
+            emptyBoard.bottomAnchor.constraint(equalTo: canvasCard.bottomAnchor),
         ])
 
         webView.onReady = { [weak self] in self?.canvasBecameReady() }
@@ -303,10 +332,62 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         webView.call("stats") { [weak self] result in
             guard let self, case .success(let body) = result else { return }
             let count = (body["count"] as? Int) ?? 0
+            defer { self.updateEmptyBoard() }
             guard count != self.elementCount else { return }
             self.elementCount = count
             self.onDrillSubtitleChanged?()
         }
+    }
+
+    // MARK: Empty board (R4-UX-07)
+
+    /// Show the empty board's state while the ready canvas holds nothing and
+    /// the captain has not set it aside; hide it otherwise.
+    private func updateEmptyBoard() {
+        let wanted = webView.isReady && elementCount == 0 && !emptyBoardDismissed && lastError == nil
+        if wanted, emptyBoardState == nil {
+            let example = HelmButton(title: "Add an example diagram", variant: .secondary, symbol: "plus",
+                                     target: self, action: #selector(addExampleDiagramTapped))
+            example.toolTip = "Draws a four-step flowchart you can move, edit or delete."
+            let state = HelmEmptyState(
+                symbol: "scribble.variable",
+                title: "A blank board",
+                body: "Draw with the tools on the canvas, describe a diagram with Generate, or type one with "
+                    + "From text. Click anywhere to start on the blank board.",
+                size: .standard, boxed: false,
+                accessory: example,
+                hue: RailDestination.whiteboard.domainHue,
+                artwork: RailDestination.whiteboard.drillHeaderArtwork)
+            state.translatesAutoresizingMaskIntoConstraints = false
+            emptyBoard.addSubview(state)
+            NSLayoutConstraint.activate([
+                state.leadingAnchor.constraint(equalTo: emptyBoard.leadingAnchor),
+                state.trailingAnchor.constraint(equalTo: emptyBoard.trailingAnchor),
+                state.topAnchor.constraint(equalTo: emptyBoard.topAnchor),
+                state.bottomAnchor.constraint(equalTo: emptyBoard.bottomAnchor),
+            ])
+            emptyBoardState = state
+            applyEmptyBoardTheme()
+        }
+        emptyBoard.isHidden = !wanted
+    }
+
+    @objc private func addExampleDiagramTapped() {
+        emptyBoardDismissed = true
+        updateEmptyBoard()
+        guard case .success(let diagram) = DiagramDSL.build(Self.exampleDiagram, mode: .flowchart) else { return }
+        load(elements: diagram.elements, files: diagram.files, append: false) { _ in }
+    }
+
+    @objc private func emptyBoardClicked() {
+        emptyBoardDismissed = true
+        updateEmptyBoard()
+        view.window?.makeFirstResponder(webView)
+    }
+
+    private func applyEmptyBoardTheme() {
+        emptyBoard.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        emptyBoardState?.applyTheme(theme)
     }
 
     private func report(error: String) {
@@ -600,6 +681,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         // is behind it.
         overlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlayState?.applyTheme(theme)
+        applyEmptyBoardTheme()
         pushTheme()
     }
 
@@ -677,6 +759,9 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     var debugWebView: WhiteboardWebView { webView }
     var debugCanvasCard: NSView { canvasCard }
     var debugOverlayVisible: Bool { !overlay.isHidden }
+    /// R4-UX-07: the empty board's state, `nil` while hidden.
+    var debugEmptyBoardState: HelmEmptyState? { emptyBoard.isHidden ? nil : emptyBoardState }
+    var debugEmptyBoardView: NSView { emptyBoard }
     var debugComposer: WhiteboardComposerController { composer }
     /// F15: what the drill subtitle is saying about the last capture, which is
     /// also the signal `WhiteboardCaptureViewSelfTest` waits on to know a
@@ -702,4 +787,13 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         applyTheme()
     }
     #endif
+}
+
+// R4-UX-07: the empty board's click-anywhere must not swallow its own button
+// (gotcha (20)).
+extension WhiteboardController: NSGestureRecognizerDelegate {
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        HelmGestureArbitration.shouldRecognize(recognizer, with: event)
+    }
 }

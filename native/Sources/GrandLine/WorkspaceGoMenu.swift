@@ -91,14 +91,18 @@ enum WorkspaceGoMenu {
 
     /// R2-UX-03: the number chord for `module` - ⌘1 to ⌘9 for the first nine
     /// numbered items the sidebar lists, in its order, so a hidden module
-    /// gives its number to the next one down. `nil` past the ninth, and for
-    /// an `unnumbered` module.
+    /// gives its number to the next one down. `nil` past the ninth. An
+    /// `unnumbered` module takes no place in that count; the Calendar takes
+    /// ⌘0 instead (`zeroChordModule`), and `0` is what this returns for it.
     ///
     /// On Console, a host page and Tools the same chords pick that page's own
     /// tab instead (`TabKeyboardShortcuts`, which sees the key first): the
     /// captain's choice, option A. The Go menu still shows every chord, and
     /// ⌘K and ⌘⇧[ / ⌘⇧] reach any module from those pages.
     static func chord(for module: WorkspaceModule, hidden: Set<WorkspaceModule> = []) -> Int? {
+        if module == zeroChordModule {
+            return hidden.contains(module) ? nil : 0
+        }
         let numbered = WorkspaceSidebarModel.listedModules(hidden: hidden).filter { !unnumbered.contains($0) }
         guard let index = numbered.firstIndex(of: module), index < 9 else {
             return nil
@@ -106,12 +110,19 @@ enum WorkspaceGoMenu {
         return index + 1
     }
 
-    /// Rows the number chords skip. The Calendar row arrived after the
+    /// Rows the ⌘1-⌘9 count skips. The Calendar row arrived after the
     /// chords were learned, between Tasks (⌘2) and Crew (⌘3); numbering it
-    /// would have moved Crew and every module below it down one, and taken
-    /// ⌘9 away from Logs. It already has its own one-click route (the
-    /// toolbar's calendar button), so it takes no number and nothing moves.
+    /// in sidebar order would have moved Crew and every module below it down
+    /// one, and taken ⌘9 away from Logs.
     static let unnumbered: Set<WorkspaceModule> = [.calendar]
+
+    /// R4-UX-01 of the fourth full review: the module that takes ⌘0, the
+    /// digit after ⌘9. The Calendar used to be reachable only by a click or
+    /// ⌘K. ⌘0 was free in the sidebar layout (the floating bar's Home ⌘0 went
+    /// with UX issue X3, and `TabKeyboardShortcuts` passes it through on
+    /// every page), so the Calendar gets a digit and every existing one stays
+    /// where the captain learned it.
+    static let zeroChordModule: WorkspaceModule = .calendar
 
     /// The chord as the captain reads it, for a tooltip or a palette row.
     static func chordText(for module: WorkspaceModule, hidden: Set<WorkspaceModule> = []) -> String? {

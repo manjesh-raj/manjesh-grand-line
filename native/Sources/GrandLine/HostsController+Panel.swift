@@ -172,6 +172,15 @@ extension HostsController {
         }
         // Everything the inspector offered, less Edit: this is the editor.
         panel.panelMenu = hostMenuActions(host, live: session != nil).filter { !$0.title.hasPrefix("Edit") }
+        // R4-UX-04: Test, against the stored record rather than the form's
+        // draft, so only fields Save validated reach ssh.
+        panel.onTestConnection = { [weak self, weak panel] in
+            guard let self, let panel, let stored = self.hostStore.host(id: host.id) else { return }
+            panel.showConnectionTestRunning()
+            HostConnectionTest.run(stored, allHosts: self.hostStore.hosts, runner: self.connectionTestRunner) { [weak panel] outcome in
+                panel?.showConnectionTestOutcome(outcome)
+            }
+        }
         if let session {
             panel.panelStatus = (session.stateText, session.isConnected ? .good : .warn)
         } else {

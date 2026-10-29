@@ -609,6 +609,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     // MARK: Unlock / lock
 
     private func createVault(_ password: String) {
+        // R4-UX-02: read when Create is pressed. The page re-renders the
+        // create state while the vault is written, which puts the toggle
+        // back to its default before the completion runs.
+        let wantsRecoveryKit = unlockView.wantsRecoveryKitAfterCreate
         unlockView.setBusy(true)
         // The store derives off the main thread (PBKDF2 at 600k rounds is
         // hundreds of milliseconds) and makes every mutation, the write and
@@ -624,6 +628,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
                 self.noteInteraction()
                 self.render()
                 Toast.show(in: self.view, message: "Poneglyph created")
+                // R4-UX-02: the recovery step the creation copy promises.
+                // The vault was created unlocked, so this is the same sheet
+                // and the same gate as the toolbar's button.
+                if wantsRecoveryKit { self.openRecoveryKit() }
             case .failure(let error):
                 self.unlockView.showMessage(error.localizedDescription)
             }
@@ -1027,7 +1035,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// wrap behind the gate.
     @objc private func recoveryTapped() {
         noteInteraction()
+        openRecoveryKit()
+    }
+
+    private func openRecoveryKit() {
         guard store.isUnlocked else { return }
+        #if FM_SELFTESTS
+        debugRecoveryKitOpens += 1
+        #endif
         let sheet = CredentialVaultRecoverySheetController(store: store)
         sheet.onCopyCode = { [weak self] code in
             guard let self else { return }
@@ -1312,6 +1327,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// suite can assert "the lock actually dismissed the detail sheet" without
     /// reaching into AppKit's presentation bookkeeping itself.
     var debugPresentedSheetCount: Int { (presentedViewControllers ?? []).count }
+    /// R4-UX-02: how many times the recovery kit was opened, counted inside
+    /// the one function both routes reach - so a suite whose process cannot
+    /// present a real sheet still sees the request.
+    private(set) var debugRecoveryKitOpens = 0
+    var debugPresentedRecoveryKit: Bool {
+        (presentedViewControllers ?? []).contains { $0 is CredentialVaultRecoverySheetController }
+    }
+    func debugDismissSheets() { (presentedViewControllers ?? []).forEach { dismiss($0) } }
     /// The presented detail sheet, if one is up - so a suite can drive its real
     /// Reveal button and check what it does once the vault is locked.
     func debugSelectCredential(id: String) { selectCredential(id: id) }

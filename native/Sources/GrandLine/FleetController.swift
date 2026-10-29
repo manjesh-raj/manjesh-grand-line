@@ -71,6 +71,17 @@ final class FleetController: NSViewController {
     /// secondary button, because Refresh re-reads and is never what a page
     /// is for.
     private let refreshButton = HelmButton.refresh()
+    /// R4-UX-08 of the fourth full review (WF-08 of the first): Stop, beside
+    /// Refresh while a pass is in flight. The PR scan is a process per clone
+    /// and can run for tens of seconds on a slow network; until now the only
+    /// way out was to wait. Stop abandons the pass: the page is idle again at
+    /// once, what the pass would have reported is dropped, and the PR reading
+    /// says the scan was stopped rather than claiming a count (GL-14). The
+    /// children already running finish under `Subprocess`'s own bound.
+    private let stopButton = HelmButton(title: "Stop", variant: .secondary, symbol: "stop.fill")
+    private var refreshGeneration = 0
+    private var lastRenderedSnapshot: FleetSnapshot?
+    static let stoppedScanSummary = "scan stopped"
     /// Review #3 §7's replacement for the dashboard's quick-ask composer -
     /// see `onOpenCrew`. `.secondary`, so the page still has exactly one
     /// primary action (Refresh) and this reads as the navigation it is.
@@ -526,7 +537,14 @@ final class FleetController: NSViewController {
         actionsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         actionsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         tabs.setContentHuggingPriority(.required, for: .horizontal)
-        toolbarRow.setViews([tabs, actionsSpacer, crewButton, refreshButton], in: .leading)
+        stopButton.target = self
+        stopButton.action = #selector(stopTapped)
+        stopButton.toolTip = "Stop this refresh"
+        stopButton.isHidden = true
+        stopButton.setContentHuggingPriority(.required, for: .horizontal)
+        stopButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stopButton.translatesAutoresizingMaskIntoConstraints = false
+        toolbarRow.setViews([tabs, actionsSpacer, crewButton, stopButton, refreshButton], in: .leading)
         toolbarRow.orientation = .horizontal
         toolbarRow.alignment = .centerY
         toolbarRow.distribution = .fill
@@ -780,6 +798,27 @@ final class FleetController: NSViewController {
     /// answered from `FleetTaskCache`'s coalescing window (3.5).
     @objc private func refreshTapped() { refresh(forceRefresh: true) }
 
+    @objc private func stopTapped() {
+        guard isLoading else { return }
+        refreshGeneration += 1
+        setLoading(false)
+        briefingCard.setBusy(false)
+        if let lastRenderedSnapshot {
+            render(snapshot: lastRenderedSnapshot, mergedPRs: [], prFetchFailure: Self.stoppedScanSummary)
+        }
+    }
+
+    private func setLoading(_ loading: Bool) {
+        isLoading = loading
+        refreshButton.isEnabled = !loading
+        refreshButton.isHidden = loading
+        stopButton.isHidden = !loading
+        onDrillActionsChanged?()
+    }
+
+    /// The window toolbar re-reads `drillHeaderActions` when this fires.
+    var onDrillActionsChanged: (() -> Void)?
+
     /// Review #3 §7: navigation, and nothing else - this page holds no
     /// part of the crew's turn cycle and no longer composes for it.
     @objc private func crewTapped() { onOpenCrew?() }
@@ -875,8 +914,9 @@ final class FleetController: NSViewController {
         // than the Log tab having a refresh action of its own.
         if activeTab == .log { renderLog() }
         guard !isLoading else { return }
-        isLoading = true
-        refreshButton.isEnabled = false
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        setLoading(true)
         if forceBriefing { briefingCard.setBusy(true) }
         // snapshot() (~0.5s: task/backlog counts, watcher health) and
         // OpenPRsSource.fetch() (the slow, network-bound per-clone PR scan)
@@ -888,16 +928,16 @@ final class FleetController: NSViewController {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let snapshot = FleetDataSource.snapshot(forceRefresh: forceRefresh)
             DispatchQueue.main.async {
-                guard let self else { return }
+                // R4-UX-08: a stopped pass reports nothing.
+                guard let self, self.refreshGeneration == generation else { return }
                 self.render(snapshot: snapshot, mergedPRs: nil)
             }
             // P11: one scan shared with Review (`OpenPRsSource.fetchShared`).
             let fetched = OpenPRsSource.fetchShared(forceRefresh: forceRefresh)
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: snapshot.tasks)
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.isLoading = false
-                self.refreshButton.isEnabled = true
+                guard let self, self.refreshGeneration == generation else { return }
+                self.setLoading(false)
                 self.render(snapshot: snapshot, mergedPRs: merged, prFetchFailure: fetched.failureSummary)
                 // F12: only from here, never from the first (PR-less) render -
                 // a briefing built while the PR scan is still in flight would
@@ -940,6 +980,7 @@ final class FleetController: NSViewController {
         // fixture would replace it, so only the debug render gets through.
         if debugRendersPinned && !debugRenderInProgress { return }
         #endif
+        lastRenderedSnapshot = snapshot
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadingContainer.isHidden = true
@@ -1420,6 +1461,16 @@ final class FleetController: NSViewController {
         render(snapshot: snapshot, mergedPRs: mergedPRs, prFetchFailure: prFetchFailure)
     }
 
+    /// R4-UX-08: the toolbar's Stop, and the in-flight state it ends. A
+    /// suite marks a pass in flight without starting the real fetch.
+    var debugStopButton: HelmButton { stopButton }
+    var debugRefreshButton: HelmButton { refreshButton }
+    var debugIsLoading: Bool { isLoading }
+    func debugBeginPassWithoutFetching() {
+        refreshGeneration += 1
+        setLoading(true)
+    }
+
     /// The answer banner's own body line, as rendered - this is where
     /// "N PRs ready to merge" is actually spoken to the captain.
     var debugBannerMeta: String { bannerRow.debugMetaText }
@@ -1680,7 +1731,14 @@ extension FleetController {
 extension FleetController: DaylightDrillActions {
     /// R2-UX-04: Refresh is an outlined page action in the toolbar, where
     /// every other module's is, rather than a button floating in the page.
-    var drillHeaderActions: [NSView] { drawsSidebarLayout ? [refreshButton] : [] }
+    /// R4-UX-08: Stop takes Refresh's place while a pass is in flight. A
+    /// second item there pushed the breadcrumb into the overflow at Larger
+    /// text on a 1512pt window (`WorkspaceToolbarSelfTest`), and Refresh does
+    /// nothing until the pass ends anyway.
+    var drillHeaderActions: [NSView] {
+        guard drawsSidebarLayout else { return [] }
+        return isLoading ? [stopButton] : [refreshButton]
+    }
     var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
 }
 

@@ -46,9 +46,9 @@
 // matching `ShiftTaskEditorController`'s own tag chips. This is presentation
 // only: every field, every validation rule, save/cancel/delete and the inline
 // "+ New Key…" flow are unchanged. The mockup's "Test Connection" footer
-// button has no backing capability anywhere in this app (no connection-test
-// code exists to call) and was deliberately left out rather than invented -
-// see the PR description for this task.
+// button had no backing capability then and was left out rather than
+// invented. R4-UX-04 built that capability (`HostConnectionTest`), and the
+// side panel's footer carries it as Test.
 //
 // Section numbering also picked up a fifth section, "Appearance" (the icon/
 // colour pickers), that the mockup itself doesn't show - those pickers are a
@@ -102,6 +102,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// Session) - both the page's, so the panel runs exactly what a card or
     /// a row does. Set them, then `refreshPanelFooter()`.
     var panelPrimary: PanelAction?
+    /// R4-UX-04: the footer's Test, set by the page (which knows the other
+    /// saved hosts a jump chain resolves through). `nil` hides the button.
+    var onTestConnection: (() -> Void)?
     var panelMenu: [WorkspaceDetail.Action] = []
     /// The line under the host's name in the panel's header: its live state.
     var panelStatus: (text: String, tint: HelmTint)?
@@ -868,6 +871,17 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     private let panelKicker = NSTextField(labelWithString: "")
     private let panelSubtitle = NSTextField(labelWithString: "")
     private let panelStatusPill = HelmStatusPill(style: .dotWord)
+    /// R4-UX-04: what the last Test found, under the live state.
+    private let panelTestPill = HelmStatusPill(style: .dotWord)
+    private var panelTestOutcome: HostConnectionTest.Outcome?
+    private var panelTestRunning = false
+    private lazy var panelTestButton: HelmButton = {
+        let b = HelmButton(title: "Test", variant: .secondary, symbol: "antenna.radiowaves.left.and.right",
+                           target: self, action: #selector(panelTestClicked))
+        b.toolTip = "Try to reach this host with ssh, without opening a session"
+        b.setAccessibilityLabel("Test connection")
+        return b
+    }()
     private lazy var panelFooter = NSStackView()
     private lazy var panelPrimaryButton = HelmButton(title: "Connect", variant: .primary, symbol: "bolt.fill",
                                                      target: self, action: #selector(panelPrimaryClicked))
@@ -892,7 +906,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         panelKicker.lineBreakMode = .byTruncatingTail
         panelSubtitle.lineBreakMode = .byTruncatingTail
         panelSubtitle.font = HelmType.code()
-        let text = NSStackView(views: [panelKicker, panelSubtitle, panelStatusPill])
+        let text = NSStackView(views: [panelKicker, panelSubtitle, panelStatusPill, panelTestPill])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
@@ -925,6 +939,37 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         } else {
             panelStatusPill.isHidden = true
         }
+        if panelTestRunning {
+            panelTestPill.isHidden = false
+            panelTestPill.configure(text: "Testing\u{2026}", tint: .neutral, theme: theme)
+            panelTestPill.toolTip = nil
+        } else if let outcome = panelTestOutcome {
+            panelTestPill.isHidden = false
+            panelTestPill.configure(text: outcome.text, tint: outcome.tint, theme: theme)
+            panelTestPill.toolTip = outcome.text
+        } else {
+            panelTestPill.isHidden = true
+        }
+    }
+
+    /// R4-UX-04: a Test is under way.
+    func showConnectionTestRunning() {
+        panelTestRunning = true
+        panelTestButton.isEnabled = false
+        refreshPanelHeader()
+    }
+
+    /// R4-UX-04: what a Test found.
+    func showConnectionTestOutcome(_ outcome: HostConnectionTest.Outcome) {
+        panelTestRunning = false
+        panelTestOutcome = outcome
+        panelTestButton.isEnabled = true
+        refreshPanelHeader()
+    }
+
+    @objc private func panelTestClicked() {
+        guard !panelTestRunning else { return }
+        onTestConnection?()
     }
 
     private func applyPanelTheme(_ theme: HelmTheme) {
@@ -965,6 +1010,14 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
                 panelPrimaryButton.symbolName = primary.symbol
                 panelFooter.addArrangedSubview(panelPrimaryButton)
                 panelPrimaryButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            }
+            // R4-UX-04: a saved host, unchanged, can be tested. A form with
+            // edits is Cancel and Save - the test reads the saved record,
+            // whose fields passed Save's validation.
+            if onTestConnection != nil {
+                panelFooter.addArrangedSubview(panelTestButton)
+                panelTestButton.setContentHuggingPriority(.required, for: .horizontal)
+                panelTestButton.setContentCompressionResistancePriority(.required, for: .horizontal)
             }
             if !panelMenu.isEmpty {
                 panelFooter.addArrangedSubview(panelMenuButton)
@@ -1054,6 +1107,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     var debugInlineForwards: PortForwardInlineEditor? { inlineForwards }
     var debugPanelMenuTitles: [String] { makePanelMenu().items.map(\.title) }
     var debugPanelSubtitle: String { panelSubtitle.stringValue }
+    var debugTestButton: HelmButton { panelTestButton }
+    var debugTestPill: HelmStatusPill { panelTestPill }
     /// Type into a field as the captain would: the text, then the delegate's
     /// own change callback.
     func debugType(_ text: String, into field: NSTextField) {

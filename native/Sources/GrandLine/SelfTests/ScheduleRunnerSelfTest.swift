@@ -52,6 +52,7 @@ enum ScheduleRunnerSelfTest {
         checkRunLogIsRedactedOnPersist(&ok)
         checkAWedgedRunCannotEndANewerOne(&ok)
         checkAQuitStopsARunAndRecordsIt(&ok)
+        checkStopEndsARunAndRecordsIt(&ok)
         checkTheQuitGuardIsWiredToEveryInstall(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
@@ -974,6 +975,55 @@ enum ScheduleRunnerSelfTest {
         }
         if !history.allEntries().contains(where: { $0.summary.hasPrefix("Finished late") }) {
             fail("REL-06: the late run should still be kept in history, marked late", &ok)
+        }
+    }
+
+    // MARK: R4-UX-08 - Stop on a run in flight
+
+    /// R4-UX-08 of the fourth full review: the Schedules page's Stop ends the
+    /// run in flight - its child is stopped, the latch is released, and the
+    /// run records itself as stopped from the page rather than failing or
+    /// running on for the rest of its 30 seconds.
+    private static func checkStopEndsARunAndRecordsIt(_ ok: inout Bool) {
+        print("\n-- R4-UX-08: Stop ends a run in flight and records it --")
+        guard let (runner, store, history) = runnerFixture("r4ux08") else {
+            fail("R4-UX-08: could not build the runner fixture", &ok)
+            return
+        }
+        ScheduleRunner.actionOverrideForTests = { _ in
+            _ = Subprocess.run(executable: "/bin/sleep", arguments: ["30"], timeout: 60)
+            return ScheduleActionResult(verdict: .clean, summary: "slept the whole way through")
+        }
+        defer { ScheduleRunner.actionOverrideForTests = nil }
+
+        runner.stopCurrentRun()
+        if runner.isBusy { fail("R4-UX-08: Stop with nothing running started something", &ok) }
+        runner.tick(now: Date())
+        guard runner.isBusy else {
+            fail("R4-UX-08: the run should be in flight (the schedule was not due)", &ok)
+            return
+        }
+        // Let the child start before stopping it.
+        pumpMain(until: { false }, timeout: 0.3)
+        let stoppedAt = Date()
+        runner.stopCurrentRun()
+        pumpMain(until: { !runner.isBusy }, timeout: 10)
+        if runner.isBusy {
+            fail("R4-UX-08: the run was still going 10s after Stop", &ok)
+            return
+        }
+        if Date().timeIntervalSince(stoppedAt) > 8 {
+            fail("R4-UX-08: Stop did not stop the child - the run took its full time", &ok)
+        }
+        let summary = store.schedules.first?.lastRun?.summary
+        if summary != "Stopped from the Schedules page." {
+            fail("R4-UX-08: a stopped run recorded \(String(describing: summary))", &ok)
+        }
+        if store.schedules.first?.lastRun?.verdict.succeeded == true {
+            fail("R4-UX-08: a stopped run recorded itself as a success", &ok)
+        }
+        if !history.allEntries().contains(where: { $0.summary == "Stopped from the Schedules page." }) {
+            fail("R4-UX-08: the stopped run is not in the run history", &ok)
         }
     }
 

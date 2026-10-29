@@ -1514,3 +1514,41 @@ Two more lab fixes from the same pass:
 `ReviewFourUISelfTest` covers R4-UI-02, 04, 06, 07, 08 and 09.
 `ReadingListViewSelfTest` covers R4-UI-05, and `CodePreviewViewSelfTest` covers the Code invitation.
 Each check was injected against: the label floor at `.defaultLow`, the ring note at the body width, an underline at rest, the lane kept off the board, the row never collapsing, and the recorder printing text.
+
+### Full review #4's UX improvements (R4-UX-01 to R4-UX-10)
+
+Section 8 of full review #4 listed ten before/after improvements.
+R4-UX-09 (Follow-ups on the board, Projects as the filter pop-up) and R4-UX-10 (the Weekly review's lower row) had already shipped with R4-UI-09, above.
+The snooze list and its expiry timer had shipped with PR #551 and #552, so R4-UX-03 here is only the until-time.
+
+- R4-UX-01: the Calendar takes ⌘0 in the sidebar layout's Go menu (`WorkspaceGoMenu.zeroChordModule`).
+  It stays out of the ⌘1-⌘9 count, so every digit the captain already knows is where it was.
+  ⌘0 was free: the floating bar's Home ⌘0 went with UX issue X3, and `TabKeyboardShortcuts` never claims it.
+- R4-UX-02: the vault's creation warning no longer says "There is no recovery" on a page that offers a recovery kit.
+  It says the vault stays sealed unless a recovery key is printed, and that nobody can reset the password.
+  The creation form offers "Print a recovery key next", on by default and never a gate.
+  Once the new vault exists and is unlocked, it opens the existing recovery kit sheet, so the code is minted and shown by the same paths the toolbar's button uses.
+- R4-UX-03: a Snoozed row's return time is a chip ("until tomorrow, 9:00 AM"), and the footer after a snooze names the time rather than the preset ("Snoozed until 6:00 PM").
+- R4-UX-04: the Hosts side panel has a Test button beside Connect (`HostConnectionTest`).
+  It runs `ssh -o BatchMode=yes -o ConnectTimeout=5 [-J] [-p] -- <dest> true` through `Subprocess`, from the stored record, and refuses any host `Host.unsafeFieldNames` flags.
+  It leaves out agent forwarding and port forwards, and it does not unlock a saved key (a Keychain read can raise Touch ID), so a host with one reads "Connect will use the saved key" rather than "asks for a password".
+  The test is offered on a clean form only, because a form with edits is Cancel and Save.
+  When a saved key cannot be used and ssh starts without it, the session strip says "Key refused, asking for a password" for that host, as well as the terminal.
+- R4-UX-05: the inspector button is disabled on a page that fills nothing in the inspector, and such a page never opens the empty pane.
+  The captain's standing request carries to the next page that has details.
+  Home's module cards take the keyboard now (an exterior focus ring), and Return or Space opens the card's module.
+- R4-UX-06: the merge confirm reads "#42 Title", then "repo · branch", then the check state, with the URL last.
+  The branch comes from the crew task's `.meta`, which `FleetTask` now reads.
+- R4-UX-07: Sticky Board and the Reading list already had one `HelmEmptyState` with one action (R2-UX-07's shape), so they are unchanged.
+  The Whiteboard gains the same shape over an empty board: one action that draws an example flowchart through `DiagramDSL`, and a click anywhere else starts on the blank board for the rest of the session.
+  Kubernetes' scope wall is three numbered steps, and its one action is primary.
+- R4-UX-08: a finished backup is a `.lasting` report (`BackupUI.exportReportID`, kicker "Backup Saved") whose bell line says where it was saved, and a local file's row reveals it in Finder.
+  A schedule's running row has Stop, and so does its menu.
+  It cancels the run's subprocesses through the token a confirmed quit already uses, and the run records "Stopped from the Schedules page.".
+  The Fleet page shows Stop in Refresh's place while a pass is in flight, in the window toolbar in the sidebar layout.
+  Beside Refresh it was one item too many: CI's 1x runner measured the breadcrumb overflowing at Larger text and 1512pt, which a 2x Mac did not reproduce.
+  It abandons the pass rather than killing it (the PR scan's children run on other threads, outside any scope token), and the PR reading says the scan was stopped rather than claiming a count.
+
+`ReviewFourUXSelfTest` covers R4-UX-01, 04, 05, 06, 07 and 08's backup report and Fleet Stop.
+The vault, snooze, inspector, Whiteboard, host panel and schedule halves live in their pages' own suites.
+The tour lab's `ux <state>` verb puts each state on screen for a render.

@@ -431,6 +431,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var hostPanelIsSaving = false
     /// X1: the SSH config import's preview, while it is open.
     var importPanel: SSHConfigImportPanelController?
+    /// R4-UX-04: how the panel's Test runs ssh. A suite answers for it,
+    /// because a self-test process never starts the real tool.
+    var connectionTestRunner: HostConnectionTest.Runner = HostConnectionTest.subprocessRunner
     /// K7 and K8: the key form in the side panel, and which key it is for -
     /// an id, or `newKeyPanelKey`. `HostsController+KeyPanel.swift`.
     var keyPanel: KeyEditorController?

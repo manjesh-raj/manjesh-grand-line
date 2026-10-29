@@ -515,6 +515,8 @@ final class MainSplitShellController: WorkspaceShellController {
         notificationCenter.onOpenHome = { [weak self] in self?.openModule(.home) }
         toolbar.onToggleInspector = { [weak self] in
             guard let self else { return }
+            // R4-UX-05: nothing to open on a page with no details.
+            guard self.inspectorSource != nil || !self.inspectorItem.isCollapsed else { return }
             self.setInspectorShown(self.inspectorItem.isCollapsed)
         }
         toolbar.onSearch = { [weak self] in self?.workspace.onSearchTapped?() }
@@ -912,7 +914,11 @@ final class MainSplitShellController: WorkspaceShellController {
         let source = inspectorSource.map(ObjectIdentifier.init)
         let content = inspectorSource?.inspectorContent
         inspector.setContent(content, emptyText: inspectorSource?.inspectorEmptyText)
-        var shown = inspectorPinnedOpen || (inspectorWanted && content != nil)
+        // R4-UX-05: a page that fills nothing in the inspector never shows
+        // its empty pane - its toolbar button is disabled too. The captain's
+        // standing request (`inspectorPinnedOpen`) is kept for the next page
+        // that has details.
+        var shown = inspectorSource != nil && (inspectorPinnedOpen || (inspectorWanted && content != nil))
         if shown, let window = view.window {
             let floor = columnFloor(inspectorShown: true)
             let width = window.contentRect(forFrameRect: window.frame).width

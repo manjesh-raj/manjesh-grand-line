@@ -208,6 +208,10 @@ final class HostSessionCoordinator {
             self.sessions.setState(hostID: sessionHostID,
                                    controller.hasLiveSession ? .connected : .restored)
         }
+        // R4-UX-04: the session strip says when a saved key fell back.
+        controller.onSavedKeyFallback = { [weak self] notice in
+            self?.sessions.setNotice(hostID: sessionHostID, notice)
+        }
 
         // `fm/grandline-session-switcher`: this host now has a live session.
         // Idempotent, and re-called on every connect for the same reason the

@@ -98,6 +98,7 @@ enum WhiteboardViewSelfTest {
         checkKubernetesRequestPathRepro(controller, check)
         checkGating(controller, webView, check)
         checkNoLeakedBridgeCalls(webView, check)
+        checkEmptyBoardState(window, check)
 
         window.orderOut(nil)
         print(ok ? "WhiteboardViewSelfTest: OK" : "WhiteboardViewSelfTest: FAILURES")
@@ -960,6 +961,39 @@ enum WhiteboardViewSelfTest {
         while Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
+    }
+
+    // MARK: R4-UX-07 - the empty board's state
+
+    /// A fresh board says what to do and offers one action, an example to
+    /// start from; pressing it draws the example and the state goes. Its own
+    /// controller, so the board the cases above drew on is not involved.
+    private static func checkEmptyBoardState(_ window: NSWindow, _ check: (Bool, String) -> Void) {
+        let controller = WhiteboardController()
+        window.contentView = controller.view
+        window.displayIfNeeded()
+        guard waitFor(timeout: 30, until: { controller.debugWebView.isReady }) else {
+            check(false, "R4-UX-07: the second canvas never reported ready")
+            return
+        }
+        guard waitFor(timeout: 5, until: { controller.debugEmptyBoardState != nil }),
+              let state = controller.debugEmptyBoardState else {
+            check(false, "R4-UX-07: an empty board shows no empty state - it is a bare canvas")
+            return
+        }
+        check(state.debugTitle == "A blank board", "R4-UX-07: the empty board is titled \(state.debugTitle)")
+        func buttons(in view: NSView) -> [HelmButton] {
+            view.subviews.flatMap { ($0 as? HelmButton).map { [$0] } ?? buttons(in: $0) }
+        }
+        let actions = buttons(in: state)
+        check(actions.map(\.title) == ["Add an example diagram"],
+              "R4-UX-07: the empty board offers \(actions.map(\.title)), want one example action")
+        actions.first?.performClick(nil)
+        let drew = waitFor(timeout: 10) {
+            controller.debugEmptyBoardState == nil && (controller.drillHeaderSubtitle.map { !$0.hasPrefix("An empty board") } ?? false)
+        }
+        check(drew, "R4-UX-07: the example action did not draw onto the board and clear the empty state "
+              + "(subtitle \(controller.drillHeaderSubtitle ?? "none"))")
     }
 
     private static func waitFor(timeout: TimeInterval, until condition: () -> Bool) -> Bool {

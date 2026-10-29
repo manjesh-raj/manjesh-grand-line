@@ -1298,6 +1298,23 @@ enum MainSplitShellSelfTest {
         // on, so a selection opens the inspector.
         check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOnSymbol,
               "R2-BUG-10: at launch the inspector button draws \(shell.toolbar.debugInspectorSymbolName)", &ok)
+        // R4-UX-05: Home fills nothing in the inspector, so its button is
+        // disabled and a press there opens no empty pane.
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        check(shell.toolbar.debugInspectorItem?.isEnabled == false,
+              "R4-UX-05: the inspector button is enabled on Home, which has nothing to show", &ok)
+        check(shell.toolbar.debugInspectorItem?.toolTip == WorkspaceToolbar.inspectorUnavailableHelp,
+              "R4-UX-05: Home's disabled inspector button says \(shell.toolbar.debugInspectorItem?.toolTip ?? "nothing")", &ok)
+        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed, "R4-UX-05: a press on Home opened an empty inspector", &ok)
+        // A page that does fill it, with nothing selected yet, opens on its
+        // own empty text.
+        shell.workspace.navigator.show(.hosts)
+        settle(shell)
+        check(shell.toolbar.debugInspectorItem?.isEnabled == true,
+              "R4-UX-05: the inspector button is disabled on Connections, which fills it", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector item has no action", &ok)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "the inspector item did not open the inspector", &ok)

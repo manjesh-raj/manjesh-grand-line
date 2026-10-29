@@ -792,6 +792,16 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private var unitLabels: [NSTextField] = []
 
     #if FM_SELFTESTS
+    /// R4-UX-05: a key press as the window delivers it to the focused card.
+    func debugKey(_ keyCode: UInt16, characters: String = "") {
+        guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                           windowNumber: window?.windowNumber ?? 0, context: nil,
+                                           characters: characters, charactersIgnoringModifiers: characters,
+                                           isARepeat: false, keyCode: keyCode) else { return }
+        keyDown(with: event)
+    }
+
     /// `fm/grandline-daylight-shell-regressions`: a live-instance counter
     /// (incremented in `init`, decremented in `deinit`), independent of
     /// `ThemeManager.observerCountForTests` - direct evidence of whether
@@ -806,6 +816,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         buildChrome()
+        // GL-16 and R4-UX-05: a card that takes the keyboard draws a real ring.
+        focusRingType = .exterior
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         // GL-16: toggling Reduce Motion takes effect immediately rather than
         // at the next hover.
@@ -2449,6 +2461,45 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     @objc private func cardClicked() { onOpen?() }
 
     @objc private func headerActionTapped() { headerActionHandler?() }
+
+    // MARK: Keyboard (R4-UX-05)
+
+    /// R4-UX-05 of the fourth full review: a card that opens something is a
+    /// key view, and Return or Space opens it - GL-16's "the keyboard press"
+    /// for the one click target the card is. Before this a Home card could
+    /// not take the keyboard at all, so Space did nothing a captain could
+    /// see, or whatever the responder chain above it did instead.
+    override var acceptsFirstResponder: Bool { onOpen != nil }
+    override var canBecomeKeyView: Bool { onOpen != nil && !isHiddenOrHasHiddenAncestor }
+
+    override func becomeFirstResponder() -> Bool {
+        let took = super.becomeFirstResponder()
+        if took { noteFocusRingMaskChanged() }
+        return took
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let gave = super.resignFirstResponder()
+        if gave { noteFocusRingMaskChanged() }
+        return gave
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func drawFocusRingMask() {
+        let radius = Self.cornerRadius(for: ThemeManager.shared.theme)
+        NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        // 36 Return, 76 keypad Enter, 49 Space.
+        if modifiers.isEmpty, [36, 76, 49].contains(event.keyCode), let onOpen {
+            onOpen()
+            return
+        }
+        super.keyDown(with: event)
+    }
 
     // MARK: Gesture arbitration
 
