@@ -34,6 +34,18 @@
 // this app's destination hiding and any future tabbing reach the gate for free
 // rather than being wired per page.
 //
+// ## Who owns the view state (R4-ARCH-01)
+//
+// The page reports, the native side decides, and a report that would change a
+// native-owned value is logged and dropped - the rule all three web islands
+// follow (`ShiftCalendarWebView` has the instance that made it a rule,
+// R4-BUG-01). Here the native side owns which board is showing, the theme and
+// whether the canvas is suspended; the page's only unsolicited reports are
+// `ready` and `error`, neither of which changes any of them. A future report
+// that could - a page-side board switch, say - is a request the controller
+// grants or logs and drops, never a value a callback assigns.
+// `WebIslandOwnershipSelfTest` checks the callbacks.
+//
 // ## The bridge
 //
 // One `WKScriptMessageHandler` (`grandlineWhiteboard`), one message shape.

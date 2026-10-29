@@ -178,9 +178,12 @@ enum FleetDataSource {
     /// "unknown" rather than hanging `parseTasks()`'s serial loop forever.
     private static let crewStateTimeout: TimeInterval = 15
 
-    private static func crewState(taskID: String) -> (state: String, source: String, detail: String) {
+    private static func crewState(taskID: String) -> FleetCrewReading {
         let script = FirstmateHome.bin.appendingPathComponent("fm-crew-state.sh")
-        guard FileManager.default.fileExists(atPath: script.path) else { return ("unknown", "none", "") }
+        guard FileManager.default.fileExists(atPath: script.path) else { return .unavailable }
+        #if FM_SELFTESTS
+        debugNoteScriptRun(taskID)
+        #endif
         let result = Subprocess.run(
             executable: "/bin/bash", arguments: [script.path, taskID],
             cwd: FirstmateHome.root,
@@ -188,9 +191,29 @@ enum FleetDataSource {
             timeout: crewStateTimeout,
             stderr: .discard
         )
-        guard result.ok else { return ("unknown", "none", "") }
-        return parseCrewLine(result.stdout)
+        guard result.ok else { return .unavailable }
+        let parsed = parseCrewLine(result.stdout)
+        return FleetCrewReading(state: parsed.state, source: parsed.source, detail: parsed.detail)
     }
+
+    #if FM_SELFTESTS
+    private static let debugScriptRunsLock = NSLock()
+    private static var debugScriptRunIDs: [String] = []
+
+    private static func debugNoteScriptRun(_ taskID: String) {
+        debugScriptRunsLock.lock()
+        debugScriptRunIDs.append(taskID)
+        debugScriptRunsLock.unlock()
+    }
+
+    /// Every task id `crewState` spawned the script for since the last call,
+    /// in the order the spawns started. Taking it empties it.
+    static func debugTakeScriptRuns() -> [String] {
+        debugScriptRunsLock.lock()
+        defer { debugScriptRunIDs = []; debugScriptRunsLock.unlock() }
+        return debugScriptRunIDs
+    }
+    #endif
 
     /// `"state: <s> · source: <src> · <detail>"` - the one stable, parseable
     /// line `fm-crew-state.sh` promises.
@@ -219,22 +242,43 @@ enum FleetDataSource {
     /// The fleet's current tasks, with every task's authoritative crew state.
     ///
     /// Goes through `FleetTaskCache`'s short coalescing window (3.5 of
-    /// `data/grandline-full-app-audit/report.md`) - see that file for why the
-    /// window is deliberately much shorter than `FleetNotifier`'s own poll,
-    /// and why the audit's `.meta`-mtime mechanism is not what shipped.
+    /// `data/grandline-full-app-audit/report.md`) and then its per-task
+    /// readings (R4-PERF-01) - see that file for what each layer may and may
+    /// not reuse.
     ///
     /// `forceRefresh` is passed by the captain's own Refresh clicks, which
     /// must always run the real sweep.
     static func parseTasks(forceRefresh: Bool = false) -> [FleetTask] {
-        FleetTaskCache.tasks(forceRefresh: forceRefresh) { parseTasksUncached() }
+        FleetTaskCache.tasks(forceRefresh: forceRefresh) {
+            parseTasksUncached(reuse: forceRefresh ? .none : .settled)
+        }
     }
 
-    private static func parseTasksUncached() -> [FleetTask] {
+    /// The sweep `FleetStateWatcher` asks for when a task's own state files
+    /// changed (R4-PERF-01). It re-reads the tasks whose files changed and
+    /// reuses every other reading young enough for the notifier's own tick -
+    /// which is what keeps an event-driven sweep from costing a full fan-out.
+    /// It skips `FleetTaskCache`'s window on purpose: an answer from up to 5s
+    /// ago predates the very change that asked for this sweep.
+    static func parseTasksAfterStateChange() -> [FleetTask] {
+        parseTasksUncached(reuse: .unchanged(liveMaxAge: FleetNotifier.pollInterval))
+    }
+
+    private static func parseTasksUncached(reuse: FleetTaskCache.Reuse) -> [FleetTask] {
         let stateDir = FirstmateHome.state
-        guard let files = try? FileManager.default.contentsOfDirectory(at: stateDir, includingPropertiesForKeys: nil) else {
+        // R4-PERF-01: the same one bulk listing as before, now also carrying
+        // each entry's modification date and size, so the per-task
+        // fingerprints below cost no further call. Measured on the captain's
+        // 3,600-entry state folder: 6.9 ms with these keys against 6.6 ms
+        // without them.
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: stateDir, includingPropertiesForKeys: keys) else {
             return []
         }
         let metaFiles = files.filter { $0.pathExtension == "meta" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let taskIDs = metaFiles.map { $0.deletingPathExtension().lastPathComponent }
+        let fingerprints = FleetTaskFingerprint.all(in: files, taskIDs: taskIDs)
+        FleetTaskCache.retainReadings(for: Set(taskIDs))
 
         // P6 (`data/grand-line-e2e-audit/report.md`): the `fm-crew-state.sh`
         // shell-outs run concurrently, bounded, rather than strictly one after
@@ -268,11 +312,17 @@ enum FleetDataSource {
                 let meta = parseMetaFile(url)
                 var task = FleetTask(id: id, repo: meta["repo"], kind: meta["kind"] ?? "ship", pr: meta["pr"])
                 task.branch = meta["branch"].flatMap { $0.isEmpty ? nil : $0 }
-                let (state, source, detail) = crewState(taskID: id)
-                task.state = state
-                task.source = source
-                task.detail = detail
-                task.status = classify(state)
+                // R4-ARCH-02: the verdict the script reaches from the `.meta`
+                // alone is read here, then a reading the cache may reuse, and
+                // only then the script.
+                let reading = FleetCrewStateReader.reading(metaURL: url)
+                    ?? FleetTaskCache.reading(for: id, fingerprint: fingerprints[id] ?? .missing, reuse: reuse) {
+                        crewState(taskID: id)
+                    }
+                task.state = reading.state
+                task.source = reading.source
+                task.detail = reading.detail
+                task.status = classify(reading.state)
                 lock.lock()
                 tasks[index] = task
                 lock.unlock()

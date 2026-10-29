@@ -341,11 +341,16 @@ enum ShiftCalendarViewSelfTest {
             // the period and never the scale.
             let reportedDay = ShiftDateFormatting.components(
                 from: calendar.date(byAdding: .day, value: 3, to: today) ?? today).0
+            let droppedBefore = view.debugDroppedViewReports
             _ = js(web, "window.webkit.messageHandlers.\(ShiftCalendarWebView.messageHandlerName).postMessage("
                    + "{ type: 'range', view: 'day', date: '\(reportedDay)', start: '\(reportedDay)', end: '\(reportedDay)' })")
             _ = waitFor(timeout: 3) { view.visibleDays?.start == reportedDay }
             check(view.visibleDays?.start == reportedDay, "a range report should still move the period")
             check(view.scale == .month, "a range report must not change the native scale, got \(view.scale)")
+            // R4-ARCH-01: and the view it named is logged as dropped, once.
+            check(view.debugDroppedViewReports == droppedBefore + 1,
+                  "the range report's own view should be logged and dropped once, counted "
+                  + "\(view.debugDroppedViewReports - droppedBefore)")
             _ = call(web, "showDate", ["date": todayDay])
             _ = waitFor(timeout: 3) { view.visibleDays?.start != reportedDay }
 

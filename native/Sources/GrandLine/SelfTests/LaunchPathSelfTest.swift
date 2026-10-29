@@ -21,6 +21,7 @@
 // `Phase3PolishSelfTest` asserts every file in this directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 
 enum LaunchPathSelfTest {
@@ -28,6 +29,7 @@ enum LaunchPathSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("theLaunchPathCarriesItsSignposts", test_theLaunchPathCarriesItsSignposts),
+            ("theWholeLaunchRunsFromMainToTheFirstKeyWindow", test_theWholeLaunchRunsFromMainToTheFirstKeyWindow),
             ("everyGitSyncDoesItsLaunchWorkOnce", test_everyGitSyncDoesItsLaunchWorkOnce),
             ("aBackgroundLoadedStoreIsNeverReadAsEmpty", test_aBackgroundLoadedStoreIsNeverReadAsEmpty),
             ("aWriteBeforeTheFirstLoadKeepsTheFile", test_aWriteBeforeTheFirstLoadKeepsTheFile),
@@ -377,7 +379,8 @@ enum LaunchPathSelfTest {
         for declaration in ["class ", "struct ", "enum ", "extension ", "func "] where code.contains("\n" + declaration) {
             return "main.swift declares a top-level `\(declaration.trimmingCharacters(in: .whitespaces))` - it belongs in a file of its own"
         }
-        let order = ["SelfTestDispatch.run()", "LegacyNameMigration.runAtLaunch()", "settleFirstLaunch(",
+        let order = ["LaunchSignposts.beginLaunch()",
+                     "SelfTestDispatch.run()", "LegacyNameMigration.runAtLaunch()", "settleFirstLaunch(",
                      "switch SingleInstanceGuard.acquire()", "DiagnosticsLog.shared.noteLaunch(",
                      "let delegate = AppDelegate()", "app.run()"]
         var cursor = code.startIndex
@@ -386,6 +389,39 @@ enum LaunchPathSelfTest {
                 return "main.swift no longer runs `\(step)` after the step before it - the launch order changed"
             }
             cursor = found.upperBound
+        }
+        return nil
+    }
+
+    // MARK: R4-PERF-02 - the whole launch
+
+    /// `main.swift` opens one interval before anything else runs, and the
+    /// first window that becomes key closes it and logs its length.
+    ///
+    /// This process ran `main.swift` too, so the interval is already open by
+    /// the time any suite starts - unless the line that opens it was removed.
+    /// The notification is posted the way AppKit posts it, through the
+    /// default centre, so a deleted observer leaves the interval open and
+    /// this case names it.
+    private static func test_theWholeLaunchRunsFromMainToTheFirstKeyWindow() -> String? {
+        guard LaunchSignposts.debugLaunchIntervalOpen else {
+            return "the whole-launch interval was not open when the suite started - main.swift no longer begins it"
+        }
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: nil)
+        let deadline = Date().addingTimeInterval(2)
+        while LaunchSignposts.debugLaunchIntervalOpen, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        guard !LaunchSignposts.debugLaunchIntervalOpen else {
+            return "a window becoming key did not close the whole-launch interval"
+        }
+        guard let milliseconds = LaunchSignposts.debugLastLaunchMilliseconds, milliseconds > 0 else {
+            return "the whole-launch interval closed without a length to log"
+        }
+        // A second key window is not a launch.
+        LaunchSignposts.beginLaunch()
+        guard !LaunchSignposts.debugLaunchIntervalOpen else {
+            return "beginLaunch() opened a second whole-launch interval after the first had closed"
         }
         return nil
     }

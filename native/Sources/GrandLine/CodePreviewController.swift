@@ -1283,7 +1283,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// The page's debounced "this snippet changed" message - the one path from
     /// a keystroke to the disk, and to git.
     private func snippetChanged(key: String, content: String) {
-        guard let snippet = snippet(for: key) else { return }
+        // R4-ARCH-01: the open snippets are this side's. A change for one it
+        // does not hold is the page's report, not a reason to create one.
+        guard let snippet = snippet(for: key) else {
+            AppLog.ui.info("code preview: the page reported an edit to \(key, privacy: .public), which is not open - dropped")
+            return
+        }
         snippet.content = content
         // The edit has reached this side. Whether it is then written (an
         // empty scratch tab deliberately is not) is this method's decision,

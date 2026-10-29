@@ -20,6 +20,23 @@
 // period changed), `open` (an event was clicked), `add` (a day or a time slot
 // was double-clicked) and `move` (an event was dropped somewhere new).
 //
+// ## Who owns the view state (R4-ARCH-01)
+//
+// The page reports, the native side decides, and a report that would change a
+// native-owned value is logged and dropped. The same rule governs all three
+// web islands (`WhiteboardWebView` and `CodePreviewWebView` state it too).
+//
+// Here the native-owned values are the scale (month, week, day, agenda) and
+// the task list. Schedule-X changes its own view for reasons the captain did
+// not choose - it switched itself to Day when a hidden page collapsed to a
+// narrow width, which shipped as R4-BUG-01 - so a `range` report moves the
+// visible period and nothing else, and the view it also names is logged and
+// dropped when it disagrees with the native scale. The scale changes only
+// through `show(scale:)` or a `view` report, which the page sends from its own
+// pill and "+N more" handlers, and which `ShiftCalendarView` adopts through
+// one named method rather than in the callback. `WebIslandOwnershipSelfTest`
+// fails the run on an `on*` callback that assigns `scale` itself.
+//
 // `move` is a request, never a fact. The page has already drawn the event in
 // its new place, but nothing is written until `ShiftController` asks the
 // store, and the store's answer comes back as the next `setEvents` - so a drop
@@ -41,11 +58,12 @@ final class ShiftCalendarWebView: WKWebView {
     /// A page-level script error. Never fatal; reported and logged.
     var onPageError: ((String) -> Void)?
     /// The visible period changed: the first and last day it covers, as
-    /// `YYYY-MM-DD`. Deliberately not the view: Schedule-X reports a range
+    /// `YYYY-MM-DD`, and the view Schedule-X says it is showing. The view is
+    /// passed only so a disagreement can be logged: Schedule-X reports a range
     /// for things the captain did not do (it used to switch itself to Day
     /// when a hidden page collapsed, R4-BUG-01), so a range report never
     /// changes the scale. `onViewSelected` does.
-    var onRangeChanged: ((_ start: String, _ end: String) -> Void)?
+    var onRangeChanged: ((_ start: String, _ end: String, _ reportedView: String?) -> Void)?
     /// The page's own view handler ran - a pill in the card, or "+N more" on
     /// a crowded day - with Schedule-X's view name.
     var onViewSelected: ((String) -> Void)?
@@ -199,7 +217,7 @@ final class ShiftCalendarWebView: WKWebView {
         case "range":
             guard let start = body["start"] as? String, let end = body["end"] as? String else { return }
             if let date = body["date"] as? String { focusedDay = date }
-            onRangeChanged?(start, end)
+            onRangeChanged?(start, end, body["view"] as? String)
         case "view":
             guard let view = body["view"] as? String else { return }
             onViewSelected?(view)

@@ -162,8 +162,10 @@ enum AppActivityStateSelfTest {
         print("AppActivityStateSelfTest: the three pollers E3 gates still consult the gate")
         // The needle carries the *argument*, not just the call: a gate handed
         // a hardcoded `true` compiles, reads plausibly, and permanently
-        // slows a poller the captain is watching.
-        for (file, needle) in [("FleetNotifier.swift", "backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded)"),
+        // slows a poller the captain is watching. The fleet's tick folds the
+        // reading into `shouldSlowDown` with the on-screen one (R4-PERF-01);
+        // `FleetIdleSweepSelfTest` asserts that result reaches the gate.
+        for (file, needle) in [("FleetNotifier.swift", "Self.shouldSlowDown(backgrounded: AppActivityState.shared.isBackgrounded,"),
                                ("BackgroundSignalsPoller.swift", "backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded)"),
                                ("ShiftGitSync.swift", "!AppActivityState.shared.isBackgrounded")] {
             guard let text = source(file) else {

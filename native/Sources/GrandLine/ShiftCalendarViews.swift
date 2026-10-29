@@ -775,21 +775,20 @@ final class ShiftCalendarView: NSView {
         webView.onPageError = { message in
             AppLog.lifecycle.error("task calendar page error: \(message, privacy: .public)")
         }
-        // The page reports, the native side decides: a range report moves
-        // the period and nothing else, and only the page's own view handler
-        // (a pill, "+N more") or `show(scale:)` changes `scale` (R4-BUG-01).
-        webView.onRangeChanged = { [weak self] start, end in
+        // The page reports, the native side decides (R4-ARCH-01): a range
+        // report moves the period and nothing else, and only the page's own
+        // view handler (a pill, "+N more") or `show(scale:)` changes `scale`
+        // (R4-BUG-01). No callback here assigns `scale` itself;
+        // `WebIslandOwnershipSelfTest` holds that.
+        webView.onRangeChanged = { [weak self] start, end, reportedView in
             guard let self else { return }
+            self.logDroppedView(reportedView)
             self.visibleRange = (start, end)
             self.focusedDay = self.webView.focusedDay
             self.pushEvents()
             self.onPeriodChanged?()
         }
-        webView.onViewSelected = { [weak self] view in
-            guard let self, let scale = ShiftCalendarScale(rawValue: view), scale != self.scale else { return }
-            self.scale = scale
-            self.onPeriodChanged?()
-        }
+        webView.onViewSelected = { [weak self] view in self?.adoptSelectedView(view) }
         webView.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
         webView.onOpenFollowUp = { [weak self] id in self?.onOpenFollowUp?(id) }
         webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
@@ -865,6 +864,33 @@ final class ShiftCalendarView: NSView {
     }
 
     // MARK: Views
+
+    /// The page's own view handler ran - the captain picked a pill or "+N
+    /// more" inside the card - so its view becomes the scale. A view name
+    /// this side has no scale for is logged and dropped.
+    private func adoptSelectedView(_ view: String) {
+        guard let selected = ShiftCalendarScale(rawValue: view) else {
+            AppLog.ui.info("task calendar: the page selected view \(view, privacy: .public), which has no scale here - dropped")
+            return
+        }
+        guard selected != scale else { return }
+        scale = selected
+        onPeriodChanged?()
+    }
+
+    /// A range report also names the view Schedule-X is showing. When that is
+    /// not the native scale the report is not allowed to change it; it is
+    /// logged so the disagreement is visible rather than silent.
+    private func logDroppedView(_ reportedView: String?) {
+        guard let reportedView, reportedView != scale.rawValue else { return }
+        #if FM_SELFTESTS
+        debugDroppedViewReports += 1
+        #endif
+        AppLog.ui.info("""
+            task calendar: a range report named view \(reportedView, privacy: .public) \
+            while the scale is \(self.scale.rawValue, privacy: .public) - the view was dropped
+            """)
+    }
 
     /// Shows `scale`, through the page's own pill handler, so a toolbar tab
     /// and a pill in the card are one path. Before the page is up it is the
@@ -967,6 +993,9 @@ final class ShiftCalendarView: NSView {
 
     #if FM_SELFTESTS
     var debugWebView: ShiftCalendarWebView { webView }
+    /// How many range reports named a view that was logged and dropped
+    /// (R4-ARCH-01).
+    private(set) var debugDroppedViewReports = 0
     var debugCaption: String { captionLabel.stringValue }
     var debugHeading: NSTextField { headingLabel }
     var debugCaptionLabel: NSTextField { captionLabel }

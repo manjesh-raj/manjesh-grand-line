@@ -37,6 +37,19 @@
 //
 // `viewDidHide`/`viewDidUnhide` are the trigger, for the same reason
 // `CockpitTerminalView` uses them: they fire on *effective* visibility.
+//
+// ## Who owns the view state (R4-ARCH-01)
+//
+// The page reports, the native side decides, and a report that would change a
+// native-owned value is logged and dropped - the rule all three web islands
+// follow (`ShiftCalendarWebView` has the instance that made it a rule,
+// R4-BUG-01). Here the native side owns the set of open snippets, which one is
+// showing, its language and the theme. The page owns the text the captain is
+// typing, so `change` is the one report the controller adopts, and only for a
+// snippet it holds: a `change` naming a key it does not know is logged and
+// dropped (`CodePreviewController.snippetChanged`). `cursor`, `scroll`,
+// `pending` and `history` only redraw native chrome.
+// `WebIslandOwnershipSelfTest` checks the callbacks.
 
 import AppKit
 import WebKit

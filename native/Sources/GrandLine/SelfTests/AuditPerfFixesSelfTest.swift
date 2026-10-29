@@ -203,10 +203,10 @@ enum AuditPerfFixesSelfTest {
         // `parseTasks()` itself is now the thin `FleetTaskCache` wrapper in
         // front of it (3.5 of `data/grandline-full-app-audit/report.md`); the
         // bounded-concurrency contract P6 established lives here.
-        guard let range = text.range(of: "static func parseTasksUncached()") else {
+        guard let range = text.range(of: "static func parseTasksUncached(") else {
             return "parseTasks' bounded fan-out is gone"
         }
-        let body = String(text[range.lowerBound...].prefix(3000))
+        let body = String(text[range.lowerBound...].prefix(5000))
         guard body.contains("DispatchSemaphore"), body.contains("attributes: .concurrent") else {
             return "parseTasks shells out to fm-crew-state.sh strictly one task at a time again"
         }

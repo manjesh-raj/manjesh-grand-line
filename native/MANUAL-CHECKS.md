@@ -430,14 +430,39 @@ below: a debug build, empty scratch stores, no process start, about 600 ms to
 the first frame against the 400 ms target. The fourth full review (R4-PERF-02)
 filed that as a finding, and its recommended shape for the baseline is:
 
-- one signpost interval from `main` to the first `windowDidBecomeKey`, which
-  `LaunchSignposts` does not have yet (it times the rows of the launch path,
-  not the whole of it);
-- a **release** build, on the captain's machine, against a copy of the real
-  data, recorded once with the numbers above.
+- one signpost interval from `main` to the first `windowDidBecomeKey`.
+  **This exists now**: `Launch.mainToFirstKeyWindow`, opened on the first line
+  of `main.swift` and closed by the first window that becomes key
+  (`LaunchSignposts.beginLaunch()`, guarded by `FM_RUN_LAUNCH_PATH_TESTS`).
+  It also writes its length to the unified log on every launch, release
+  builds included, so the baseline no longer needs Instruments;
+- a **release** build, on the captain's machine, recorded once.
+
+The release half could not be taken from an agent shell, for two reasons.
+A release build has no Keychain isolation (`FM_KEYCHAIN_SERVICE_PREFIX` is
+debug-only), so even a separately-identified release copy would read the
+captain's real Keychain items. And the window only becomes key when the app is
+activated: two background launches of the debug probe (`open -g`) logged no
+"main to first key window" line at all. Activating a copy takes the keyboard
+focus from whatever the captain is doing, which is the captain's call rather
+than a background measurement. So it is recorded like this:
+
+- [ ] Build and install the release app as usual (`./build_native_app.sh`
+      from `native/`), quit Grand Line, then open it from the Dock or Finder.
+      Do it three times, so a cold launch and two warm ones are recorded.
+- [ ] Read the three numbers:
+
+      log show --last 10m --predicate \
+        'subsystem == "com.manjesh.grandline.native" && category == "lifecycle"' \
+        | grep "main to first key window"
+
+- [ ] Record them here, beside the in-process numbers below, and in
+      [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
+      with the date, the machine and the commit (`git describe`).
 
 Until that run exists, "first frame under 400 ms" is a target nobody has
-measured against, and a change to the launch path has nothing to compare with.
+measured a release build against, and a change to the launch path has only
+the debug numbers below to compare with.
 
 ### The in-process numbers (not the real-data baseline)
 

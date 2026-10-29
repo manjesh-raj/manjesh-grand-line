@@ -1288,6 +1288,24 @@ enum SelfTestDispatch {
             exit(LaunchPathSelfTest.run() ? 0 : 1)
         }
 
+        // R4-PERF-01 and R4-ARCH-02 of the fourth full review: what an idle
+        // fleet sweep spawns, and the proof that the Swift `.meta` reader shows
+        // what `fm-crew-state.sh` would. Pure logic plus a real FSEvents
+        // stream, no window. See each file's header.
+        if ProcessInfo.processInfo.environment["FM_RUN_FLEET_IDLE_SWEEP_TESTS"] == "1" {
+            exit(FleetIdleSweepSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_FLEET_CREW_STATE_READER_TESTS"] == "1" {
+            exit(FleetCrewStateReaderSelfTest.run() ? 0 : 1)
+        }
+
+        // R4-ARCH-01: the native side owns every web island's view state.
+        // Source guards only; the behavioural half is in the Calendar's
+        // window-backed suite. See WebIslandOwnershipSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_WEB_ISLAND_OWNERSHIP_TESTS"] == "1" {
+            exit(WebIslandOwnershipSelfTest.run() ? 0 : 1)
+        }
+
         // fm/grandline-app-lock: same convention, for `AppLockController`'s idle/
         // hard-logout timing math against a fake clock/idle-time provider - see
         // AppLockSelfTest.swift's header.
