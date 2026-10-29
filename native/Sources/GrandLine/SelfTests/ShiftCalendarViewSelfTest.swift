@@ -354,6 +354,31 @@ enum ShiftCalendarViewSelfTest {
             _ = call(web, "showDate", ["date": todayDay])
             _ = waitFor(timeout: 3) { view.visibleDays?.start != reportedDay }
 
+            // Two tabs in quick succession: the page's `view` report for the
+            // earlier one can land after the later request. Delivered through
+            // the page's real message entry before the page has answered
+            // the Agenda request, it must not pull the scale back to Week.
+            // (Reached CI once as "Calendar > Agenda left the page on Week".)
+            view.show(scale: .week)
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "week" }
+            let staleBefore = view.debugDroppedViewReports
+            view.show(scale: .agenda)
+            web.debugHandle(message: ["type": "view", "view": "week"])
+            // Read before the page's own confirmation arrives: that is the
+            // window the toolbar check fell into, and the confirmation would
+            // otherwise put the scale right again and hide the defect.
+            check(view.scale == .agenda && controller.selectedModuleTabName == "Agenda",
+                  "a stale view report pulled the scale back to \(view.scale)")
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "list" }
+            check(view.scale == .agenda, "after the page confirmed, the scale is \(view.scale)")
+            check(state(web)["view"] as? String == "list",
+                  "the page should show the agenda list, it shows \(state(web)["view"] ?? "nil")")
+            check(view.debugDroppedViewReports == staleBefore + 1,
+                  "the stale report should be logged and dropped once, counted "
+                  + "\(view.debugDroppedViewReports - staleBefore)")
+            view.show(scale: .month)
+            _ = waitFor(timeout: 5) { state(web)["view"] as? String == "month-grid" }
+
             // The one view change Schedule-X makes inside the month grid on
             // the captain's click - "+N more" opens that day - goes through
             // the page's own pill handler, so the native side still follows.

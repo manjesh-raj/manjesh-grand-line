@@ -644,8 +644,18 @@ enum ReviewTwoUXSelfTest {
                   "\(destination.rawValue)'s primary is \(primary?.title ?? "nothing"), want \(title)", &ok)
         }
         // Crew's two buttons left the page: Refresh is a page action.
+        // R4-UX-08 gave its slot to Stop while a pass is in flight, and
+        // showing the page starts one, so read the toolbar once the pass has
+        // ended - a 50ms settle read it mid-pass on a slow runner.
         shell.workspace.navigator.show(.overview)
         settle(shell)
+        if let fleet = shell.debugSlotController(.overview) as? FleetController {
+            let deadline = Date().addingTimeInterval(20)
+            while fleet.debugIsLoading, Date() < deadline { settle(shell) }
+            check(!fleet.debugIsLoading, "Crew's refresh pass was still running after 20s", &ok)
+        } else {
+            fail("Crew's page is not a FleetController - the Refresh check below cannot wait for its pass", &ok)
+        }
         check(shell.toolbar.debugPageActions.contains { ($0 as? HelmButton)?.title == "Refresh" },
               "Crew's Refresh is not in the toolbar", &ok)
         // Nothing lives in a card header: Add Secret is not in the Secrets card.

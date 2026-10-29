@@ -34,7 +34,9 @@
 // dropped when it disagrees with the native scale. The scale changes only
 // through `show(scale:)` or a `view` report, which the page sends from its own
 // pill and "+N more" handlers, and which `ShiftCalendarView` adopts through
-// one named method rather than in the callback. `WebIslandOwnershipSelfTest`
+// one named method rather than in the callback. While a `show(scale:)` request
+// is still unanswered, a `view` report naming another scale is the page
+// catching up on an earlier request, and it is dropped too. `WebIslandOwnershipSelfTest`
 // fails the run on an `on*` callback that assigns `scale` itself.
 //
 // `move` is a request, never a fact. The page has already drawn the event in

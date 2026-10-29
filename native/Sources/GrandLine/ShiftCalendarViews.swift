@@ -686,6 +686,12 @@ final class ShiftCalendarView: NSView {
     var onPeriodChanged: (() -> Void)?
 
     private(set) var scale: ShiftCalendarScale = .month
+    /// The scale `show(scale:)` asked the page for, until the page confirms
+    /// it (its own `view` report naming it) or the call completes. A `view`
+    /// report naming anything else in that window is the page catching up on
+    /// an earlier request - two toolbar tabs clicked in quick succession - and
+    /// adopting it would undo the later click (R4-ARCH-01).
+    private var requestedScale: ShiftCalendarScale?
 
     private let captionLabel = NSTextField(labelWithString: "")
     /// The sidebar layout's "Calendar" heading, the captain's mockup's. The
@@ -873,6 +879,19 @@ final class ShiftCalendarView: NSView {
             AppLog.ui.info("task calendar: the page selected view \(view, privacy: .public), which has no scale here - dropped")
             return
         }
+        if let requested = requestedScale {
+            guard selected == requested else {
+                #if FM_SELFTESTS
+                debugDroppedViewReports += 1
+                #endif
+                AppLog.ui.info("""
+                    task calendar: the page reported view \(view, privacy: .public) while \
+                    \(requested.rawValue, privacy: .public) was requested - a stale report, dropped
+                    """)
+                return
+            }
+            requestedScale = nil
+        }
         guard selected != scale else { return }
         scale = selected
         onPeriodChanged?()
@@ -900,7 +919,12 @@ final class ShiftCalendarView: NSView {
         self.scale = scale
         onPeriodChanged?()
         guard isConfigured else { return }
-        webView.call("setView", payload: ["view": scale.rawValue]) { result in
+        requestedScale = scale
+        webView.call("setView", payload: ["view": scale.rawValue]) { [weak self] result in
+            // The page has answered this request either way, so a later
+            // report is the captain's own again - unless a newer request is
+            // still out.
+            if self?.requestedScale == scale { self?.requestedScale = nil }
             if case .failure(let error) = result {
                 AppLog.lifecycle.error("task calendar: setView failed: \(error.message, privacy: .public)")
             }

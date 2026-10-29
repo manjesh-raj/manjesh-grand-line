@@ -433,3 +433,11 @@ The behaviour was already right after R4-BUG-01's fix, so this round changed no 
 It checks its own detector on a planted callback first.
 `ShiftCalendarViewSelfTest`'s existing range-report case now also asserts the report's view was counted as dropped exactly once.
 Confirmed to fail with the old inline assignment put back in `onViewSelected`, and with the `logDroppedView` call removed.
+
+The PR's first CI run then failed `MainSplitShellSelfTest` once with "Calendar › Agenda left the page on Week".
+Clicking Month, Week, Day and Agenda in a row sends four `setView` calls, and the page answers each with a `view` report.
+On a slow runner the report for Week arrived after the Agenda click, and `adoptSelectedView` took it, so for a moment the scale was Week again until the page's own `list` report put it back.
+The toolbar check landed in that moment.
+`show(scale:)` now remembers the scale it asked for until the page confirms it or the call completes, and a `view` report naming anything else in that window is logged and dropped as stale.
+`ShiftCalendarViewSelfTest` requests Week then Agenda, delivers a stale `view: week` through the page's message entry before the page answers, and reads the scale at once.
+Confirmed to fail with the guard disabled ("a stale view report pulled the scale back to week").
