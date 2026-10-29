@@ -405,18 +405,30 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     /// Scope and Feed tab, one card. See `sessionCard`'s own declaration for
     /// why they were merged; the two sections below are still shown and
     /// hidden independently, which is what `render()` drives.
+    /// The scope wall's three steps. kubectl runs inside a bastion session
+    /// the captain has already logged into, so that session is the only
+    /// cluster credential this page uses.
+    static var scopeSteps: String {
+        "1. Connect to your bastion host in \(PlaceName.of(.hosts)).\n"
+            + "2. Log in to the cluster there, as you would in any terminal.\n"
+            + "3. Come back here and pick that session. Nothing else holds a cluster credential."
+    }
+
     func buildSessionCard() {
         sessionCard = HelmCard()
         scopeTabsHost = NSView()
         scopeTabsHost.translatesAutoresizingMaskIntoConstraints = false
+        // R4-UX-07 of the fourth full review: the body was one dense
+        // paragraph. It is the three steps it described, and the one action
+        // is the first of them.
         scopeEmptyState = HelmEmptyState(
             symbol: "bolt.horizontal.circle",
             title: "No live host session",
-            body: "Every kubectl command runs inside a bastion session you have already logged into - that session is the only cluster credential there is. Connect a host first and come back.",
+            body: Self.scopeSteps,
             size: .standard,
             boxed: false,
             accessory: {
-                let button = HelmButton(title: "Open \(PlaceName.of(.hosts))", variant: .secondary)
+                let button = HelmButton(title: "Open \(PlaceName.of(.hosts))", variant: .primary)
                 button.target = self
                 button.action = #selector(openHostsTapped)
                 return button

@@ -59,6 +59,8 @@ final class SchedulesCardView: NSObject {
     var onEditSchedule: ((AutomationSchedule) -> Void)?
     var onDeleteSchedule: ((AutomationSchedule) -> Void)?
     var onRunNow: ((AutomationSchedule) -> Void)?
+    /// R4-UX-08: Stop on the row of the run in flight.
+    var onStopRun: ((AutomationSchedule) -> Void)?
     var onToggleEnabled: ((AutomationSchedule, Bool) -> Void)?
     /// "View History...", the browsable last-7-days list behind the "..."
     /// menu - see `ScheduleHistoryController`.
@@ -337,6 +339,7 @@ final class SchedulesCardView: NSObject {
         #if FM_SELFTESTS
         debugColumns.removeAll()
         debugSparklines.removeAll()
+        debugStopButtons.removeAll()
         #endif
         countBadge.stringValue = schedules.isEmpty ? "" : "\(schedules.count)"
         countBadge.textColor = HelmTheme.mutedInk(theme)
@@ -507,7 +510,21 @@ final class SchedulesCardView: NSObject {
         debugSparklines[schedule.id] = sparkline
         #endif
 
-        let controls: [NSView] = [review, sparkline, timeColumn, overflow, toggle]
+        // R4-UX-08: the run in flight carries its own Stop, first in the
+        // cluster so the columns to its right stay where they are.
+        var controls: [NSView] = [review, sparkline, timeColumn, overflow, toggle]
+        if isRunning {
+            let stop = HelmButton(title: "Stop", variant: .secondary, size: .small, symbol: "stop.fill")
+            stop.target = self
+            stop.action = #selector(stopClicked(_:))
+            stop.identifier = NSUserInterfaceItemIdentifier("schedule-stop:\(schedule.id.uuidString)")
+            stop.toolTip = "Stop this run"
+            stop.setAccessibilityLabel("Stop \(schedule.action.title)")
+            controls.insert(stop, at: 0)
+            #if FM_SELFTESTS
+            debugStopButtons[schedule.id] = stop
+            #endif
+        }
         let actions = NSStackView(views: controls)
         actions.orientation = .horizontal
         actions.alignment = .centerY
@@ -761,6 +778,13 @@ final class SchedulesCardView: NSObject {
         // silently dropped.
         runNow.isEnabled = ScheduleRunner.shared.isBusy == false
         menu.addItem(runNow)
+        // R4-UX-08: the row's Stop, in the menu too.
+        if schedule.id == runningScheduleID {
+            let stop = NSMenuItem(title: "Stop Run", action: #selector(stopPicked(_:)), keyEquivalent: "").withSymbol("stop.circle")
+            stop.target = self
+            stop.representedObject = schedule.id.uuidString
+            menu.addItem(stop)
+        }
 
         let edit = NSMenuItem(title: "Edit\u{2026}", action: #selector(editPicked(_:)), keyEquivalent: "").withSymbol("pencil")
         edit.target = self
@@ -791,6 +815,16 @@ final class SchedulesCardView: NSObject {
         delete.representedObject = schedule.id.uuidString
         menu.addItem(delete)
         return menu
+    }
+
+    @objc private func stopClicked(_ sender: NSButton) {
+        guard let schedule = schedule(from: sender.identifier?.rawValue, prefix: "schedule-stop:") else { return }
+        onStopRun?(schedule)
+    }
+
+    @objc private func stopPicked(_ sender: NSMenuItem) {
+        guard let schedule = schedule(fromID: sender.representedObject as? String) else { return }
+        onStopRun?(schedule)
     }
 
     @objc private func runNowPicked(_ sender: NSMenuItem) {
@@ -833,6 +867,8 @@ final class SchedulesCardView: NSObject {
     #if FM_SELFTESTS
     private var debugColumns: [UUID: NSTextField] = [:]
     private var debugSparklines: [UUID: ScheduleRunSparkline] = [:]
+    private var debugStopButtons: [UUID: HelmButton] = [:]
+    func debugStopButton(for id: UUID) -> HelmButton? { debugStopButtons[id] }
     var debugRowCount: Int { rowsStack.arrangedSubviews.filter { $0 is HelmAccentRow }.count }
     var debugSectionTitles: [String] {
         rowsStack.arrangedSubviews.compactMap { view -> String? in

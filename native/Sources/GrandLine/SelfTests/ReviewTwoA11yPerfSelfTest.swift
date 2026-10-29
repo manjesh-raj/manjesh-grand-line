@@ -112,7 +112,10 @@ enum ReviewTwoA11yPerfSelfTest {
         check(!shell.debugSidebarIsCollapsed, "\"Show Sidebar\" did not show the sidebar", &ok)
         sidebarMatches(shown: true, "after showing it again")
 
-        // The inspector button's label flips with its tooltip.
+        // The inspector button's label flips with its tooltip - on a page
+        // that fills the inspector, since R4-UX-05 disables it elsewhere.
+        shell.workspace.navigator.show(.hosts)
+        settle(shell)
         guard let inspector = toolbar.debugInspectorItem else {
             fail("the toolbar has no inspector item", &ok)
             return

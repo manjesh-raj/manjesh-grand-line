@@ -51,6 +51,11 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
     private let pillRow = NSStackView()
     private let addButton = HoverHighlightView()
     private let addGlyph = NSImageView()
+    /// R4-UX-04 (WF-12): a session's notice - its saved key could not be
+    /// used, so ssh is asking for a password - after the "+", so it reads as
+    /// news about the sessions rather than as one more pill.
+    private let noticeGlyph = NSImageView()
+    private let noticeLabel = NSTextField(labelWithString: "")
 
     private var pills: [Pill] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -110,6 +115,21 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         container.addSubview(pillRow)
         container.addSubview(addButton)
 
+        noticeGlyph.image = NSImage(systemSymbolName: "key.slash", accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+        noticeGlyph.symbolConfiguration = .init(pointSize: 11, weight: .semibold)
+        noticeGlyph.translatesAutoresizingMaskIntoConstraints = false
+        noticeGlyph.setContentHuggingPriority(.required, for: .horizontal)
+        noticeLabel.translatesAutoresizingMaskIntoConstraints = false
+        noticeLabel.lineBreakMode = .byTruncatingTail
+        // The one thing in the strip allowed to give up width (gotcha (5)).
+        noticeLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        noticeLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        noticeGlyph.isHidden = true
+        noticeLabel.isHidden = true
+        container.addSubview(noticeGlyph)
+        container.addSubview(noticeLabel)
+
         let inset: CGFloat = 12
         // The "+" sits immediately after the last pill (the mockup's own
         // placement - it reads as "add another" rather than as unrelated
@@ -137,6 +157,12 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
             addButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             addButton.widthAnchor.constraint(equalToConstant: 24),
             addButton.heightAnchor.constraint(equalToConstant: 24),
+
+            noticeGlyph.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: HelmMetrics.s4),
+            noticeGlyph.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            noticeLabel.leadingAnchor.constraint(equalTo: noticeGlyph.trailingAnchor, constant: HelmMetrics.s1),
+            noticeLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            noticeLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in
@@ -188,6 +214,18 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
                                   shortcut: registry.shortcutIndex(for: session.hostID)))
         }
         for pill in pills { pillRow.addArrangedSubview(pill.container) }
+        // R4-UX-04: the active session's notice first, else the first one
+        // any session has, named so it is clear which session it is about.
+        let noticed = registry.sessions.first { $0.hostID == registry.activeHostID && $0.notice != nil }
+            ?? registry.sessions.first { $0.notice != nil }
+        if let noticed, let notice = noticed.notice {
+            noticeLabel.stringValue = "\(noticed.label): \(notice)"
+            noticeLabel.toolTip = "\(noticed.label) could not use its saved key, so ssh was started without it "
+                + "and may ask for a password. Press \u{2318}R in the session to try the key again."
+            noticeLabel.setAccessibilityLabel(noticeLabel.stringValue)
+        }
+        noticeLabel.isHidden = noticed == nil
+        noticeGlyph.isHidden = noticed == nil
         applyTheme()
     }
 
@@ -382,6 +420,11 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         addButton.hoverColor = hoverFill
         addGlyph.contentTintColor = muted
 
+        let warnText = HelmContrast.legibleTintedText(tintHex: HelmTint.warn.hex(in: theme), over: surface, theme: theme)
+        noticeLabel.font = HelmType.rounded(HelmType.scaled(12), .medium)
+        noticeLabel.textColor = warnText
+        noticeGlyph.contentTintColor = warnText
+
         for pill in pills {
             // The active pill is the bar's own selected-pill recipe (a solid
             // `ink` capsule with a contrast-corrected label), so a live
@@ -452,6 +495,9 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
 
     #if FM_SELFTESTS
     func debugPillHostIDs() -> [UUID] { pills.map { $0.hostID } }
+    /// R4-UX-04: the notice line, `nil` while hidden.
+    var debugNoticeText: String? { noticeLabel.isHidden ? nil : noticeLabel.stringValue }
+    var debugNoticeLabel: NSTextField { noticeLabel }
     func debugActiveHostID() -> UUID? { pills.first { $0.isActive }?.hostID }
     func debugPillHasCloseButton(_ hostID: UUID) -> Bool {
         pills.first { $0.hostID == hostID }?.close != nil

@@ -3832,6 +3832,7 @@ final class HelmEmptyState: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
     var debugBodyText: String { bodyLabel.stringValue }
     /// UXP-13: whether this is a page-level state - a `.standard` one that
     /// is not boxed as an object in a flow - which is what the placement

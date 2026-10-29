@@ -212,11 +212,12 @@ enum SplitShellModelSelfTest {
         } else {
             fail("the Go menu has no Calendar row", &ok)
         }
-        // The Calendar takes no number, so the chords the captain already
-        // knows stay put: Crew keeps ⌘3 and Logs keeps ⌘9.
-        check(WorkspaceGoMenu.chord(for: .calendar) == nil && WorkspaceGoMenu.chord(for: .crew) == 3
+        // The Calendar takes ⌘0 (R4-UX-01) rather than a place in the count,
+        // so the chords the captain already knows stay put: Crew keeps ⌘3 and
+        // Logs keeps ⌘9.
+        check(WorkspaceGoMenu.chord(for: .calendar) == 0 && WorkspaceGoMenu.chord(for: .crew) == 3
                 && WorkspaceGoMenu.chord(for: .logs) == 9,
-              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar) ?? 0), Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0) "
+              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar).map(String.init) ?? "nothing"), Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0) "
               + "and Logs ⌘\(WorkspaceGoMenu.chord(for: .logs) ?? 0)", &ok)
     }
 
@@ -243,7 +244,7 @@ enum SplitShellModelSelfTest {
               "a customised sidebar's Work lists \(work.map(\.rawValue)), want Calendar after Tasks", &ok)
         check(WorkspaceGoMenu.entries(hidden: hidden).contains(.module(.calendar)),
               "a customised sidebar's Go menu has no Calendar", &ok)
-        check(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == nil
+        check(WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == 0
                 && WorkspaceGoMenu.chord(for: .connections, hidden: hidden) == 3,
               "with Crew hidden its ⌘3 should pass to Connections, not the Calendar", &ok)
 

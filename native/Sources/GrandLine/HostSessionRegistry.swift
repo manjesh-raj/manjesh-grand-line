@@ -85,6 +85,11 @@ struct HostSession: Equatable {
     /// established, the same contract `ServiceHealthRegistry` keeps.
     var state: HostSessionState
 
+    /// R4-UX-04 (WF-12): a line the session strip shows for this session -
+    /// today, that its saved key could not be used and ssh was started
+    /// without it. `nil` when there is nothing to say.
+    var notice: String? = nil
+
     /// `true` only for a genuinely live session. Every surface that claims
     /// "Connected" reads this rather than mere membership.
     var isConnected: Bool { state == .connected }
@@ -225,6 +230,15 @@ final class HostSessionRegistry {
     /// page this registry knows about. The predicate every "Connected" claim
     /// and every immediate-send decision uses; `isLive` remains "is there an
     /// entry at all", which is what switching and the ⌘K grouping want.
+    /// R4-UX-04: set or clear a session's notice.
+    func setNotice(hostID: UUID, _ notice: String?) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let index = sessions.firstIndex(where: { $0.hostID == hostID }),
+              sessions[index].notice != notice else { return }
+        sessions[index].notice = notice
+        notify()
+    }
+
     func isConnected(_ hostID: UUID) -> Bool {
         sessions.first(where: { $0.hostID == hostID })?.isConnected ?? false
     }

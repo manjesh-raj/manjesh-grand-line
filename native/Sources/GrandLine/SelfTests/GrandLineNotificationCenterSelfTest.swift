@@ -475,10 +475,13 @@ enum GrandLineNotificationCenterSelfTest {
         check("a snooze ending this week shows the weekday: \(thursday)", thursday == "Thu 9:00 AM")
         let farOff = plain(NotificationBridgeTimeText.snoozeTime(at(9, 9), now: wednesday, calendar: utc, locale: enUS))
         check("a snooze beyond a week shows the date: \(farOff)", farOff.contains("Nov") && farOff.contains("9"))
-        check("a Snoozed row ending today says Back at",
-              plain(NotificationBridgeTimeText.returns(at(28, 18), now: wednesday, calendar: utc, locale: enUS)) == "Back at 6:00 PM")
-        check("a Snoozed row ending tomorrow says tomorrow",
-              plain(NotificationBridgeTimeText.returns(at(29, 9), now: wednesday, calendar: utc, locale: enUS)) == "Back tomorrow, 9:00 AM")
+        // R4-UX-03: the chip's and the footer's words.
+        check("a snooze ending today says until and the time",
+              plain(NotificationBridgeTimeText.until(at(28, 18), now: wednesday, calendar: utc, locale: enUS)) == "until 6:00 PM")
+        check("a snooze ending tomorrow says tomorrow",
+              plain(NotificationBridgeTimeText.until(at(29, 9), now: wednesday, calendar: utc, locale: enUS)) == "until tomorrow, 9:00 AM")
+        check("a snooze ending this week names the weekday",
+              plain(NotificationBridgeTimeText.until(at(30, 9), now: wednesday, calendar: utc, locale: enUS)) == "until Fri 9:00 AM")
 
         // MARK: a fallback label names the page, not its path (F9)
 

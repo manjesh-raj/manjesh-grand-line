@@ -223,6 +223,13 @@ enum ReviewTourLab {
         /// and a Claude reading for Home's card. Each through its real
         /// source's own API, in this tour process.
         case demoSignals
+        /// `ux <state>`: one of full review #4's UX states (R4-UX-03 ..
+        /// R4-UX-08) put on screen through the feature's own API, so a tour
+        /// can render it. `ux snooze`, `ux bell <inbox|snoozed> <name>`,
+        /// `ux keyfallback`, `ux hosttest`, `ux fleetpass`, `ux schedulerun`,
+        /// `ux backup`, `ux merge` (logs the merge confirm's body) and
+        /// `ux focuscard`. Each says in the log what it did.
+        case ux(String)
         /// `demo focus`: start F7's focus timer on a fixture task, so a render
         /// shows its chip - the floating bar's beside its search pill, the
         /// sidebar layout's in the window toolbar. Through
@@ -381,6 +388,9 @@ enum ReviewTourLab {
             }
             guard argument == "home" else { return .failure(.badArgument(argument)) }
             return .success(.demoHome)
+        case "ux":
+            guard !argument.isEmpty else { return .failure(.missingArgument(verb)) }
+            return .success(.ux(argument))
         case "measure":
             guard !argument.isEmpty else { return .failure(.missingArgument("measure")) }
             return .success(.measure(argument))
@@ -687,6 +697,9 @@ enum ReviewTourLab {
             case .demoSignals:
                 log.append(seedDemoSignals(shell))
                 shell.view.layoutSubtreeIfNeeded()
+            case .ux(let argument):
+                log.append(applyUXState(argument, shell: shell, outputDirectory: outputDirectory))
+                shell.view.layoutSubtreeIfNeeded()
             case .demoFocus:
                 var task = ShiftTask.fresh()
                 task.title = "Rotate the staging certificate"
@@ -872,6 +885,108 @@ enum ReviewTourLab {
             }
         }
         return log
+    }
+
+    /// `ux <state>`. Returns the log line.
+    static func applyUXState(_ argument: String, shell: WorkspaceShellController, outputDirectory: URL) -> String {
+        let parts = argument.split(separator: " ").map(String.init)
+        let center = GrandLineNotificationCenter.shared
+        switch parts.first ?? "" {
+        case "snooze":
+            // One informational item snoozed until tomorrow 09:00, and one
+            // left in the inbox.
+            let snoozed = AppNotification(id: "ux.snoozed", title: "Docs & runbooks sync needs a look",
+                                          subtext: "Two runbooks changed on the remote", source: "Docs",
+                                          kind: .informational, tint: .warn, navigate: {})
+            let inbox = AppNotification(id: "ux.inbox", title: "3 tool updates are available",
+                                        subtext: "kubectl, helm, terraform", source: "Updates",
+                                        kind: .informational, tint: .info, navigate: {})
+            center.set(snoozed, id: snoozed.id)
+            center.set(inbox, id: inbox.id)
+            center.snooze(id: snoozed.id, until: NotificationSnoozePreset.tomorrow.date(from: Date()))
+            return "ux snooze (one item snoozed until tomorrow, one in the inbox)"
+        case "bell":
+            guard parts.count == 3, let split = shell as? MainSplitShellController,
+                  let segment = NotificationBridgeSegment(rawValue: parts[1]) else {
+                return "ux \(argument) FAILED - want `ux bell inbox|snoozed <name>` in the sidebar layout"
+            }
+            let content = split.notificationCenter.debugBridgeContent
+            let window = OffScreenProbe.window(width: NotificationBridgePanelViewController.width + 40, height: 760,
+                                               styleMask: [.titled])
+            let host = NSView(frame: window.contentLayoutRect)
+            host.wantsLayer = true
+            host.layer?.backgroundColor = HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex).cgColor
+            window.contentView = host
+            let panel = content.view
+            panel.removeFromSuperview()
+            panel.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(panel)
+            NSLayoutConstraint.activate([
+                panel.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
+                panel.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
+            ])
+            window.orderFront(nil)
+            content.reload()
+            content.debugSegmentTabs?.debugClickTab(id: segment.rawValue)
+            host.layoutSubtreeIfNeeded()
+            let url = outputDirectory.appendingPathComponent("\(parts[2]).png")
+            let written = writePNG(of: host, to: url)
+            window.orderOut(nil)
+            return written ? "ux bell \(segment.rawValue) \(url.path)" : "ux bell FAILED - nothing to cache"
+        case "keyfallback":
+            guard let session = shell.workspace.hosts.sessions.sessions.first else {
+                return "ux keyfallback FAILED - no session (run `demo signals` first)"
+            }
+            shell.workspace.hosts.sessions.setNotice(hostID: session.hostID, ConsoleController.savedKeyFallbackNotice)
+            return "ux keyfallback (\(session.label))"
+        case "hosttest":
+            guard let panel = shell.workspace.hostsPanel.hostPanel else {
+                return "ux hosttest FAILED - no host form open (select a host first)"
+            }
+            panel.showConnectionTestOutcome(.needsCredentials(savedKey: false))
+            return "ux hosttest (\(HostConnectionTest.Outcome.needsCredentials(savedKey: false).text))"
+        case "fleetpass":
+            shell.debugOverview.debugBeginPassWithoutFetching()
+            return "ux fleetpass (a refresh in flight, nothing fetched)"
+        case "schedulerun":
+            guard let schedule = shell.workspace.scheduleStore.schedules.first(where: \.isEnabled) else {
+                return "ux schedulerun FAILED - no enabled schedule"
+            }
+            // A stand-in action that waits, so the row stays running for
+            // the render. The tour exits long before it would finish.
+            ScheduleRunner.actionOverrideForTests = { _ in
+                Thread.sleep(forTimeInterval: 600)
+                return ScheduleActionResult(verdict: .clean, summary: "tour")
+            }
+            ScheduleRunner.shared.runNow(schedule)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            return "ux schedulerun (\(schedule.action.title) running)"
+        case "backup":
+            let bundle = GrandLineBackup(hosts: shell.workspace.hostStore.hosts, snippets: [], keys: [],
+                                         settings: BackupSettings())
+            let path = outputDirectory.appendingPathComponent("grand-line-backup.glbackup")
+            BackupUI.reportExported(bundle, to: path.path, file: path, in: shell.view)
+            return "ux backup (\(BackupUI.exportedMessage(bundle)))"
+        case "merge":
+            let url = "https://github.com/manjesh-raj/demo-app/pull/42"
+            let pr = MergedPR(source: "work", taskID: "demo-task", repo: "manjesh-raj/demo-app", url: url, number: 42,
+                              title: "Fix the snooze expiry timer", checks: "green", forge: "github",
+                              branch: "fm/demo-snooze-expiry")
+            return "ux merge body:\n" + ReviewController.mergeConfirmBody(pr, url: url)
+                .split(separator: "\n").map { "    | " + $0 }.joined(separator: "\n")
+        case "focuscard":
+            let canvas = shell.debugHomeCanvas
+            func cards(in view: NSView) -> [HelmModuleCard] {
+                view.subviews.flatMap { ($0 as? HelmModuleCard).map { [$0] } ?? cards(in: $0) }
+            }
+            guard let card = cards(in: canvas.view).first(where: { $0.acceptsFirstResponder }) else {
+                return "ux focuscard FAILED - no Home card takes the keyboard"
+            }
+            card.window?.makeFirstResponder(card)
+            return "ux focuscard (first responder: \(card.window?.firstResponder === card))"
+        default:
+            return "ux \(argument) FAILED - unknown state"
+        }
     }
 
     /// `bar hover|press|rest` against the live bar. Returns the log line,

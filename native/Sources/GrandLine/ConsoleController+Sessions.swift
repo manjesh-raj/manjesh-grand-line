@@ -213,18 +213,28 @@ extension ConsoleController {
                 case .success(let materialized):
                     tab.sshKeyTempPath = materialized.privateKeyPath
                     args = ["-i", materialized.privateKeyPath] + args
+                    self.onSavedKeyFallback?(nil)
                 case .failure(KeychainError.userCancelled):
                     tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m Unlock cancelled - not connecting.\r\n")
                     tab.terminal.feed(text: "  \u{1b}[2mPress ⌘R to try again.\u{1b}[0m\r\n")
                     return
                 case .failure(let error):
                     tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m \(error.localizedDescription)\r\n")
-                    tab.terminal.feed(text: "  \u{1b}[2mConnecting without the saved key. Press ⌘R to retry.\u{1b}[0m\r\n")
+                    tab.terminal.feed(text: "  \u{1b}[2mConnecting without the saved key, so ssh may ask for a password. "
+                                      + "Press ⌘R to retry.\u{1b}[0m\r\n")
+                    // R4-UX-04 (WF-12): said where the captain is looking as
+                    // well, the session strip, rather than only in the
+                    // scrollback above whatever ssh prints next.
+                    self.onSavedKeyFallback?(Self.savedKeyFallbackNotice)
                 }
                 self.startSSHProcess(tab, executable: executable, args: args, startupSnippetID: startupSnippetID)
             }
         }
     }
+
+    /// R4-UX-04: the session strip's line for a saved key that could not be
+    /// used, so ssh was started without it.
+    static let savedKeyFallbackNotice = "Key refused, asking for a password"
 
     /// The half of `connectSSH` that has to run on the main thread: forking
     /// the PTY and (optionally) firing the host's startup snippet.

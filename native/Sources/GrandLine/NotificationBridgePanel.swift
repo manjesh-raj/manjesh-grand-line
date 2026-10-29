@@ -116,23 +116,25 @@ enum NotificationBridgeTimeText {
         return formatter.string(from: date)
     }
 
-    /// A Snoozed row's line: "Back at 6:00 PM", "Back tomorrow, 9:00 AM",
-    /// "Back Mon 2 Nov, 9:00 AM".
-    static func returns(_ date: Date, now: Date, calendar: Calendar = .current,
-                        locale: Locale = .current) -> String {
+    /// When a snooze ends, as its chip and the footer say it (R4-UX-03):
+    /// "until 6:00 PM", "until tomorrow, 9:00 AM", "until Mon 2 Nov, 9:00 AM".
+    /// The preset's own phrase ("for 1 hour", "until tonight") said how long,
+    /// not when, and the review's after is the time itself.
+    static func until(_ date: Date, now: Date, calendar: Calendar = .current,
+                      locale: Locale = .current) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
                                            to: calendar.startOfDay(for: date)).day ?? 0
         let time = snoozeTime(date, now: now, calendar: calendar, locale: locale)
         switch days {
-        case ...0: return "Back at \(time)"
+        case ...0: return "until \(time)"
         case 1:
             let formatter = DateFormatter()
             formatter.locale = locale
             formatter.calendar = calendar
             formatter.timeZone = calendar.timeZone
             formatter.setLocalizedDateFormatFromTemplate("jmm")
-            return "Back tomorrow, \(formatter.string(from: date))"
-        default: return "Back \(time)"
+            return "until tomorrow, \(formatter.string(from: date))"
+        default: return "until \(time)"
         }
     }
 }
@@ -467,7 +469,7 @@ final class NotificationBridgePanelViewController: NSViewController {
         }
         for item in snoozed {
             parts.append("snoozed\u{1f}\(item.entry.id)\u{1f}\(item.entry.title)\u{1f}"
-                         + NotificationBridgeTimeText.returns(item.until, now: now))
+                         + NotificationBridgeTimeText.until(item.until, now: now))
         }
         return parts.joined(separator: "\u{1e}")
     }
@@ -515,7 +517,7 @@ final class NotificationBridgePanelViewController: NSViewController {
             }
             for item in snoozed {
                 let row = NotificationSnoozedRow(entry: item.entry, theme: theme, width: cardWidth,
-                                                 returnText: NotificationBridgeTimeText.returns(item.until, now: now))
+                                                 untilText: NotificationBridgeTimeText.until(item.until, now: now))
                 let id = item.entry.id
                 row.onUnsnooze = { [weak self] in self?.unsnooze(id) }
                 add(row, inset: NotificationBridgeMetrics.listInset)
@@ -746,9 +748,14 @@ final class NotificationBridgePanelViewController: NSViewController {
     }
 
     private func snooze(_ entry: AppNotification, preset: NotificationSnoozePreset) {
-        GrandLineNotificationCenter.shared.snooze(id: entry.id, until: preset.date(from: clock()))
-        // The Snoozed list is the standing undo, one item at a time.
-        showToast("Snoozed \(preset.phrase)", undo: { GrandLineNotificationCenter.shared.unsnooze(id: entry.id) })
+        let now = clock()
+        let until = preset.date(from: now)
+        GrandLineNotificationCenter.shared.snooze(id: entry.id, until: until)
+        // The Snoozed list is the standing undo, one item at a time. The
+        // footer names the time the card comes back (R4-UX-03), the same
+        // words its chip in that list carries.
+        showToast("Snoozed \(NotificationBridgeTimeText.until(until, now: now))",
+                  undo: { GrandLineNotificationCenter.shared.unsnooze(id: entry.id) })
         reload()
     }
 
@@ -1300,7 +1307,9 @@ final class NotificationTriageCard: NSView, NotificationBridgeThemed {
 }
 
 /// One row of the Snoozed list: what it is, when it comes back, and a way to
-/// bring it back now.
+/// bring it back now. When it comes back is a chip (R4-UX-03), the same
+/// `HelmStatusPill` a status takes everywhere else, with a moon glyph so it
+/// reads as the snooze it is rather than as a state.
 final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
     let entryID: String
     let unsnoozeButton = HelmButton(title: "Unsnooze", variant: .secondary, size: .regular)
@@ -1309,9 +1318,11 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
     private let entry: AppNotification
     private let tile = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: HelmMetrics.dLogoDot)
     private let titleLabel: NSTextField
-    private let returnLabel: NSTextField
+    private let untilChip = HelmStatusPill()
+    private let untilGlyph = NSImageView()
+    private let untilText: String
 
-    init(entry: AppNotification, theme: HelmTheme, width: CGFloat, returnText: String) {
+    init(entry: AppNotification, theme: HelmTheme, width: CGFloat, untilText: String) {
         self.entry = entry
         self.entryID = entry.id
         let pad = NotificationBridgeMetrics.cardPadding
@@ -1319,7 +1330,7 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
         let textWidth = width - 2 * pad - HelmMetrics.tileSmall - 2 * HelmMetrics.s3
             - ceil(unsnoozeButton.fittingSize.width)
         titleLabel = bridgeWrappingLabel(entry.title, width: textWidth)
-        returnLabel = bridgeWrappingLabel(returnText, width: textWidth)
+        self.untilText = untilText
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -1331,10 +1342,18 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
         unsnoozeButton.target = self
         unsnoozeButton.action = #selector(unsnoozeClicked)
 
-        let text = NSStackView(views: [titleLabel, returnLabel])
+        untilGlyph.image = NSImage(systemSymbolName: "moon.zzz", accessibilityDescription: nil)
+        untilGlyph.translatesAutoresizingMaskIntoConstraints = false
+        untilGlyph.setContentHuggingPriority(.required, for: .horizontal)
+        let chipRow = NSStackView(views: [untilGlyph, untilChip])
+        chipRow.orientation = .horizontal
+        chipRow.alignment = .centerY
+        chipRow.spacing = HelmMetrics.s1
+        chipRow.translatesAutoresizingMaskIntoConstraints = false
+        let text = NSStackView(views: [titleLabel, chipRow])
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = HelmMetrics.s0
+        text.spacing = HelmMetrics.s1
         text.translatesAutoresizingMaskIntoConstraints = false
         addSubview(tile)
         addSubview(text)
@@ -1351,7 +1370,7 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Snoozed, \(entry.title), \(returnText)")
+        setAccessibilityLabel("Snoozed, \(entry.title), \(untilText)")
         applyTheme(theme)
     }
 
@@ -1366,13 +1385,14 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(14), weight: .medium)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        returnLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
-        returnLabel.textColor = HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: surface, theme: theme)
+        untilChip.configure(text: untilText, tint: .accent, theme: theme)
+        untilGlyph.contentTintColor = HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: surface, theme: theme)
         tile.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
-    var debugReturnText: String { returnLabel.stringValue }
+    var debugUntilText: String { untilChip.text }
+    var debugUntilChip: HelmStatusPill { untilChip }
     #endif
 }
 

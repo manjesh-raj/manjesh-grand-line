@@ -82,7 +82,7 @@ enum BackupUI {
             // who wants to hand this file to another account can chmod it -
             // that is a deliberate act, which is the right way round.
             SensitiveFile.restrict(url)
-            Toast.show(in: viewController.view, message: "Exported \(bundle.hosts.count) host(s), \(bundle.snippets.count) snippet(s)")
+            reportExported(bundle, to: url.path, file: url, in: viewController.view)
         } catch {
             presentError(error, in: viewController)
         }
@@ -99,12 +99,31 @@ enum BackupUI {
             do {
                 try GitHubBackupSource.export(bundle)
                 DispatchQueue.main.async {
-                    Toast.show(in: viewController.view, message: "Exported \(bundle.hosts.count) host(s), \(bundle.snippets.count) snippet(s) to \(GitHubBackupSource.destinationLabel)")
+                    reportExported(bundle, to: GitHubBackupSource.destinationLabel, file: nil, in: viewController.view)
                 }
             } catch {
                 DispatchQueue.main.async { presentError(error, in: viewController) }
             }
         }
+    }
+
+    /// R4-UX-08 of the fourth full review (WF-07 of the first): a finished
+    /// backup used to be a toast, gone before a captain who looked away could
+    /// read where the file went. It is a `.lasting` report now - still true
+    /// after the toast fades, which is GL-30's dividing line - and the bell's
+    /// second line is where it was written. One id, so a later export
+    /// replaces the entry rather than stacking another. A local file's row
+    /// reveals it in Finder.
+    static let exportReportID = "backup.export"
+
+    static func exportedMessage(_ bundle: GrandLineBackup) -> String {
+        "Backup exported: \(bundle.hosts.count) host(s), \(bundle.snippets.count) snippet(s)"
+    }
+
+    static func reportExported(_ bundle: GrandLineBackup, to location: String, file: URL?, in view: NSView?) {
+        Feedback.report(exportedMessage(bundle), kind: .done, persistence: .lasting, in: view,
+                        id: exportReportID, detail: "Saved to \(location)",
+                        navigate: file.map { url in { NSWorkspace.shared.activateFileViewerSelecting([url]) } })
     }
 
     /// What this specific bundle carries, counted from the bundle itself -

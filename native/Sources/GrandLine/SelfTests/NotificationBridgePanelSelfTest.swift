@@ -516,7 +516,12 @@ enum NotificationBridgePanelSelfTest {
         }
         HelmMenuAction.debugPerform(pick)
         check(!center.entries.contains { $0.id == "tool-updates" }, "Tomorrow did not snooze the card", &ok)
-        check(content.debugFooterText == "Snoozed until tomorrow", "the footer said \(content.debugFooterText)", &ok)
+        // R4-UX-03: the footer names the time the card comes back, not only
+        // the preset's "until tomorrow".
+        let footer = content.debugFooterText.replacingOccurrences(of: "\u{202F}", with: " ")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+        check(footer.hasPrefix("Snoozed until tomorrow, ") && footer.contains("9:00"),
+              "the footer said \(content.debugFooterText), want the time it comes back", &ok)
         check(content.debugSegmentTitles == ["Inbox 4", "Snoozed 1"], "the segment counts it: \(content.debugSegmentTitles)", &ok)
 
         // A muted source must survive the Snoozed list's unsnooze (F3).
@@ -527,7 +532,13 @@ enum NotificationBridgePanelSelfTest {
             fail("the Snoozed list is empty", &ok); return
         }
         check(row.entryID == "tool-updates", "the Snoozed list shows \(row.entryID)", &ok)
-        check(row.debugReturnText.hasPrefix("Back tomorrow"), "the row says \(row.debugReturnText)", &ok)
+        // R4-UX-03: when it comes back is a chip on the row.
+        check(row.debugUntilText.hasPrefix("until tomorrow, ") && !row.debugUntilChip.isHidden,
+              "the row's until chip says \(row.debugUntilText)", &ok)
+        row.layoutSubtreeIfNeeded()
+        check(row.debugUntilChip.frame.width >= ceil(row.debugUntilChip.fittingSize.width) - 0.5,
+              "the until chip is squeezed to \(row.debugUntilChip.frame.width)pt of its "
+              + "\(row.debugUntilChip.fittingSize.width)pt", &ok)
         check(content.debugMutedNote?.contains("Schedules") == true,
               "the Snoozed list names the muted sources: \(content.debugMutedNote ?? "nothing")", &ok)
         row.unsnoozeButton.performClick(nil)

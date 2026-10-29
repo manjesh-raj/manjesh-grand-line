@@ -237,7 +237,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Ask the crew` | Go > Ask the crew | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Crew › Ask the crew, indented under Crew) |  |
 | `menu.Go/Automic Vault` | Go > Automic Vault | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Secrets › Automic Vault, indented under Secrets) |  |
 | `menu.Go/Board` | Go > Board | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Tasks › Board, indented under Tasks) |  |
-| `menu.Go/Calendar` | Go > Calendar | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Calendar module, which opens it as its sidebar row does) |  |
+| `menu.Go/Calendar` | Go > Calendar | shortcut ⌘0 | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Calendar module, which opens it as its sidebar row does; R4-UX-01 gives it ⌘0) |  |
 | `menu.Go/Cluster` | Go > Cluster | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Kubernetes › Cluster, indented under Kubernetes) |  |
 | `menu.Go/Code` | Go > Code | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for the Code module, which opens it as its sidebar row does) |  |
 | `menu.Go/Commands` | Go > Commands | no shortcut | Main menu › Go (R2-UX-02: the sidebar layout's Go menu row for Connections › Commands, indented under Connections) |  |
@@ -349,6 +349,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.⌘7` | ⌘7 - the seventh sidebar item | Go menu (sidebar layout) | Main menu › Go (R2-UX-03: ⌘1-⌘9 open the first nine sidebar items in its order; a hidden module gives its number to the next one down) |  |
 | `key.⌘8` | ⌘8 - the eighth sidebar item | Go menu (sidebar layout) | Main menu › Go (R2-UX-03: ⌘1-⌘9 open the first nine sidebar items in its order; a hidden module gives its number to the next one down) |  |
 | `key.⌘9` | ⌘9 - the ninth sidebar item | Go menu (sidebar layout) | Main menu › Go (R2-UX-03: ⌘1-⌘9 open the first nine sidebar items in its order; a hidden module gives its number to the next one down) |  |
+| `key.⌘0` | ⌘0 - Calendar | Go menu (sidebar layout) | Main menu › Go (R4-UX-01: the Calendar takes the digit after ⌘9, so ⌘1-⌘9 stay where they were; nothing on Console, a host page or Tools claims it) |  |
 | `key.⌘{` | ⇧⌘[ - Previous Tab | Go menu (sidebar layout) | Main menu › Go (R2-UX-03: the showing module's previous tab; Console's and Tools' own tabs keep the chord while they show) |  |
 | `key.⌘}` | ⇧⌘] - Next Tab | Go menu (sidebar layout) | Main menu › Go (R2-UX-03: the showing module's next tab; Console's and Tools' own tabs keep the chord while they show) |  |
 | `key.⌥⇧⌘S` | ⌥⇧⌘S - Toggle Page Column | Go menu (sidebar layout) | Main menu › Go (R2-UX-09: a page's own column, now that ⌥⌘S is always the sidebar) |  |
@@ -773,7 +774,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.DictationHistoryAndVocabularyViews` | DictationHistoryAndVocabularyViews controls | `deleteClicked`, `removeTapped` | Dictation |  |
 | `action.DiffResultView` | DiffResultView controls | `clicked` | Tools (Diff tool) |  |
 | `action.DocsController` | DocsController controls | `backTapped`, `forwardTapped`, `openLiveTapped`, `reloadTapped`, `syncNowTapped` | Knowledge › Docs |  |
-| `action.FleetController` | FleetController controls | `crewTapped`, `needsYouSetupTapped`, `refreshTapped` | Crew › In flight (and Needs you's Open Setup, when no firstmate home is set) |  |
+| `action.FleetController` | FleetController controls | `crewTapped`, `needsYouSetupTapped`, `refreshTapped`, `stopTapped` | Crew › In flight (and Needs you's Open Setup, when no firstmate home is set) |  |
 | `action.FleetController+Reply` | FleetController+Reply controls | `replyTapped` | Crew › Needs you (the Needs your call list; the floating bar's dashboard keeps it) |  |
 | `action.FleetMessageComposer` | FleetMessageComposer controls | `cancelTapped`, `sendTapped` | Crew › Needs you (the Needs your call list's composer) |  |
 | `action.FocusTimerViews` | FocusTimerViews controls | `extendTapped`, `finishTapped`, `pauseTapped` | Toolbar (the focus timer chip's ring popover - Pause, +5 min, Finish - opened from the window toolbar's chip; the floating bar's chip opens the same popover) |  |
@@ -794,7 +795,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HelmZoomStepper` | HelmZoomStepper controls | `larger`, `reset`, `smaller` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HomeCanvasController` | HomeCanvasController controls | `refreshTapped` | Home |  |
 | `action.HomeCardLayout` | HomeCardLayout controls | `WorkspaceSidebarMenuItem.fire`, `addClicked`, `doneClicked`, `earlierClicked`, `hideClicked`, `laterClicked`, `resetClicked`, `resetSizeClicked` | Home (Customize: the tray's Add a Card, Reset Layout and Done, and each card's Reset Size, earlier, later and hide; the size itself is dragged from the card's edges) |  |
-| `action.HostEditorController` | HostEditorController controls | `advancedToggled`, `deleteHost`, `editPortForwarding`, `panelCancelClicked`, `panelMenuClicked`, `panelMenuItemPicked`, `panelPrimaryClicked`, `panelSaveClicked`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
+| `action.HostEditorController` | HostEditorController controls | `advancedToggled`, `deleteHost`, `editPortForwarding`, `panelCancelClicked`, `panelMenuClicked`, `panelMenuItemPicked`, `panelPrimaryClicked`, `panelSaveClicked`, `panelTestClicked`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
 | `action.HelmCardGrid` | HelmCardGrid controls | `HelmGridCardMenuBox.fire`, `actionClicked`, `emptyActionClicked` | Connections › Hosts and Keys (H1, K1: a card's bolt and pencil, its context menu and the empty state's action) |  |
 | `action.PortForwardInlineEditor` | PortForwardInlineEditor controls | `addClicked`, `kindChanged`, `removeClicked` | Connections › Hosts (H6: a host's port forwards, edited inline in the side panel's form; the floating bar keeps its rules sheet) |  |
 | `action.SSHConfigImportPanel` | SSHConfigImportPanel controls | `cancelClicked`, `importClicked` | Connections › Hosts (X1: Add Host's Import from SSH Config previews the hosts `~/.ssh/config` names in the side panel, each ticked or not, and saves exactly the ticked ones) |  |
@@ -832,7 +833,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ScheduleEditorController` | ScheduleEditorController controls | `deleteSchedule` | Schedules |  |
 | `action.ScheduleHistoryController` | ScheduleHistoryController controls | `closeClicked`, `viewLogClicked` | Schedules |  |
 | `action.ScheduleRunLogController` | ScheduleRunLogController controls | `closeClicked`, `copyLogClicked`, `copyReportClicked`, `toggleRawClicked` | Schedules |  |
-| `action.SchedulesCardView` | SchedulesCardView controls | `deletePicked`, `editPicked`, `newScheduleClicked`, `openDestinationPicked`, `overflowClicked`, `reviewClicked`, `runNowPicked`, `viewHistoryPicked` | Schedules |  |
+| `action.SchedulesCardView` | SchedulesCardView controls | `deletePicked`, `editPicked`, `newScheduleClicked`, `openDestinationPicked`, `overflowClicked`, `reviewClicked`, `runNowPicked`, `stopClicked`, `stopPicked`, `viewHistoryPicked` | Schedules |  |
 | `action.SchedulesController` | SchedulesController controls | `addExampleScheduleTapped`, `refreshTapped` | Schedules |  |
 | `action.SessionStripView` | SessionStripView controls | `addClicked`, `closeClicked`, `pillClicked` | Console (the Sessions strip; live sessions are also sidebar children of Console) |  |
 | `action.SettingsShortcutsPage` | SettingsShortcutsPage controls | `resetRowClicked`, `restoreAllDefaults` | Settings › Shortcuts (T6: a configurable row's own reset to its default, and Restore All Defaults, which asks first) |  |
@@ -873,7 +874,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.VaultController` | VaultController controls | `addSecretTapped`, `cancel`, `checkBackupTapped`, `closeTapped`, `confirm`, `copyNameTapped`, `exportRecipeTapped`, `refreshTapped`, `runInjectedTapped` | Secrets › Automic Vault |  |
 | `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `profilePicked`, `skipTapped`, `themePicked` | Window (first-run welcome sheet; the profile step is the sidebar layout's, R2-UX-01) |  |
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
-| `action.WhiteboardController` | WhiteboardController controls | `dslTapped`, `generateTapped` | Whiteboard |  |
+| `action.WhiteboardController` | WhiteboardController controls | `addExampleDiagramTapped`, `dslTapped`, `emptyBoardClicked`, `generateTapped` | Whiteboard |  |
 | `action.WhiteboardDSLPopover` | WhiteboardDSLPopover controls | `appendToggled`, `componentMenuPicked`, `componentsButtonClicked`, `insertClicked` | Whiteboard |  |
 | `action.WorkspaceInspector` | WorkspaceInspector controls | `closeClicked` | Inspector (its own close button; the toolbar's inspector button opens it) |  |
 | `action.WorkspaceDetailView` | WorkspaceDetailView controls | `actionClicked` | Inspector (a selected host's, key's or snippet's actions) |  |
