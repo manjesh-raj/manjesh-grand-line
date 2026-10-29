@@ -943,13 +943,20 @@ enum ReviewTourLab {
             guard let panel = shell.workspace.hostsPanel.hostPanel else {
                 return "ux hosttest FAILED - no host form open (select a host first)"
             }
-            panel.showConnectionTestOutcome(.needsCredentials(savedKey: false))
-            return "ux hosttest (\(HostConnectionTest.Outcome.needsCredentials(savedKey: false).text))"
+            // What a refused test reads for this host, which knows whether a
+            // saved key would sign it in.
+            let outcome = HostConnectionTest.Outcome.needsCredentials(savedKey: panel.currentRecord?.keyID != nil)
+            panel.showConnectionTestOutcome(outcome)
+            return "ux hosttest (\(outcome.text))"
         case "fleetpass":
             shell.debugOverview.debugBeginPassWithoutFetching()
             return "ux fleetpass (a refresh in flight, nothing fetched)"
         case "schedulerun":
-            guard let schedule = shell.workspace.scheduleStore.schedules.first(where: \.isEnabled) else {
+            let store = shell.workspace.scheduleStore
+            if !store.schedules.contains(where: \.isEnabled) {
+                store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0)), now: Date())
+            }
+            guard let schedule = store.schedules.first(where: \.isEnabled) else {
                 return "ux schedulerun FAILED - no enabled schedule"
             }
             // A stand-in action that waits, so the row stays running for

@@ -168,6 +168,8 @@ final class Workspace {
         // Shortcuts & Siri" does.
         settings.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         overview.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        // R4-UX-08: Stop joins the window toolbar while a pass is in flight.
+        overview.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same

@@ -812,7 +812,11 @@ final class FleetController: NSViewController {
         isLoading = loading
         refreshButton.isEnabled = !loading
         stopButton.isHidden = !loading
+        onDrillActionsChanged?()
     }
+
+    /// The window toolbar re-reads `drillHeaderActions` when this fires.
+    var onDrillActionsChanged: (() -> Void)?
 
     /// Review #3 §7: navigation, and nothing else - this page holds no
     /// part of the crew's turn cycle and no longer composes for it.
@@ -1726,7 +1730,11 @@ extension FleetController {
 extension FleetController: DaylightDrillActions {
     /// R2-UX-04: Refresh is an outlined page action in the toolbar, where
     /// every other module's is, rather than a button floating in the page.
-    var drillHeaderActions: [NSView] { drawsSidebarLayout ? [refreshButton] : [] }
+    /// R4-UX-08: Stop is a toolbar item only while a pass is in flight.
+    var drillHeaderActions: [NSView] {
+        guard drawsSidebarLayout else { return [] }
+        return isLoading ? [stopButton, refreshButton] : [refreshButton]
+    }
     var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
 }
 

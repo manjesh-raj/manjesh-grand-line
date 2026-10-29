@@ -1542,10 +1542,10 @@ The snooze list and its expiry timer had shipped with PR #551 and #552, so R4-UX
 - R4-UX-07: Sticky Board and the Reading list already had one `HelmEmptyState` with one action (R2-UX-07's shape), so they are unchanged.
   The Whiteboard gains the same shape over an empty board: one action that draws an example flowchart through `DiagramDSL`, and a click anywhere else starts on the blank board for the rest of the session.
   Kubernetes' scope wall is three numbered steps, and its one action is primary.
-- R4-UX-08: a finished backup is a `.lasting` report (`BackupUI.exportReportID`) whose bell line says where it was saved, and a local file's row reveals it in Finder.
+- R4-UX-08: a finished backup is a `.lasting` report (`BackupUI.exportReportID`, kicker "Backup Saved") whose bell line says where it was saved, and a local file's row reveals it in Finder.
   A schedule's running row has Stop, and so does its menu.
   It cancels the run's subprocesses through the token a confirmed quit already uses, and the run records "Stopped from the Schedules page.".
-  The Fleet page shows Stop beside Refresh while a pass is in flight.
+  The Fleet page shows Stop beside Refresh while a pass is in flight, in the window toolbar in the sidebar layout.
   It abandons the pass rather than killing it (the PR scan's children run on other threads, outside any scope token), and the PR reading says the scan was stopped rather than claiming a count.
 
 `ReviewFourUXSelfTest` covers R4-UX-01, 04, 05, 06, 07 and 08's backup report and Fleet Stop.

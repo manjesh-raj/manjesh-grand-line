@@ -287,6 +287,8 @@ enum ReviewFourUXSelfTest {
               "R4-UX-08: the backup report reads \(entry.title)", &ok)
         check(entry.subtext == "Saved to /tmp/grand-line-backup.glbackup",
               "R4-UX-08: the backup report does not name the file: \(entry.subtext)", &ok)
+        check(NotificationRowPresentation(for: entry).kicker == "Backup Saved",
+              "R4-UX-08: the backup report reads as \(NotificationRowPresentation(for: entry).kicker)", &ok)
         // A second export replaces the entry rather than stacking another.
         BackupUI.reportExported(bundle, to: "a GitHub repo", file: nil, in: nil)
         check(center.entries.filter { $0.id == id }.count == 1,
@@ -302,7 +304,15 @@ enum ReviewFourUXSelfTest {
         fleet.debugBeginPassWithoutFetching()
         check(!fleet.debugStopButton.isHidden && !fleet.debugRefreshButton.isEnabled,
               "R4-UX-08: a pass in flight shows no Stop", &ok)
+        var actionChanges = 0
+        fleet.onDrillActionsChanged = { actionChanges += 1 }
+        fleet.adoptSidebarLayout()
+        fleet.debugBeginPassWithoutFetching()
+        check(fleet.drillHeaderActions.contains { $0 === fleet.debugStopButton } && actionChanges > 0,
+              "R4-UX-08: the sidebar layout's toolbar does not carry Stop during a pass", &ok)
         fleet.debugStopButton.performClick(nil)
+        check(!fleet.drillHeaderActions.contains { $0 === fleet.debugStopButton },
+              "R4-UX-08: Stop stayed in the toolbar after the pass ended", &ok)
         check(!fleet.debugIsLoading && fleet.debugStopButton.isHidden && fleet.debugRefreshButton.isEnabled,
               "R4-UX-08: Stop did not end the pass", &ok)
         if let source = source("FleetController.swift") {
