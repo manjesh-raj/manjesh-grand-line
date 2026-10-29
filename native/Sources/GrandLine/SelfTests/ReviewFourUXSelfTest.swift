@@ -308,11 +308,15 @@ enum ReviewFourUXSelfTest {
         fleet.onDrillActionsChanged = { actionChanges += 1 }
         fleet.adoptSidebarLayout()
         fleet.debugBeginPassWithoutFetching()
-        check(fleet.drillHeaderActions.contains { $0 === fleet.debugStopButton } && actionChanges > 0,
-              "R4-UX-08: the sidebar layout's toolbar does not carry Stop during a pass", &ok)
+        // Stop takes Refresh's place rather than joining it: one more item
+        // pushed the breadcrumb into the overflow at Larger text and 1512pt.
+        check(fleet.drillHeaderActions.count == 1 && fleet.drillHeaderActions.first === fleet.debugStopButton
+                && actionChanges > 0,
+              "R4-UX-08: during a pass the sidebar layout's toolbar carries \(fleet.drillHeaderActions.count) "
+              + "items, want Stop alone in Refresh's place", &ok)
         fleet.debugStopButton.performClick(nil)
-        check(!fleet.drillHeaderActions.contains { $0 === fleet.debugStopButton },
-              "R4-UX-08: Stop stayed in the toolbar after the pass ended", &ok)
+        check(fleet.drillHeaderActions.count == 1 && fleet.drillHeaderActions.first === fleet.debugRefreshButton,
+              "R4-UX-08: Refresh did not come back after the pass ended", &ok)
         check(!fleet.debugIsLoading && fleet.debugStopButton.isHidden && fleet.debugRefreshButton.isEnabled,
               "R4-UX-08: Stop did not end the pass", &ok)
         if let source = source("FleetController.swift") {

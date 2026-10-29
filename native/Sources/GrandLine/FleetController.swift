@@ -811,6 +811,7 @@ final class FleetController: NSViewController {
     private func setLoading(_ loading: Bool) {
         isLoading = loading
         refreshButton.isEnabled = !loading
+        refreshButton.isHidden = loading
         stopButton.isHidden = !loading
         onDrillActionsChanged?()
     }
@@ -1730,10 +1731,13 @@ extension FleetController {
 extension FleetController: DaylightDrillActions {
     /// R2-UX-04: Refresh is an outlined page action in the toolbar, where
     /// every other module's is, rather than a button floating in the page.
-    /// R4-UX-08: Stop is a toolbar item only while a pass is in flight.
+    /// R4-UX-08: Stop takes Refresh's place while a pass is in flight. A
+    /// second item there pushed the breadcrumb into the overflow at Larger
+    /// text on a 1512pt window (`WorkspaceToolbarSelfTest`), and Refresh does
+    /// nothing until the pass ends anyway.
     var drillHeaderActions: [NSView] {
         guard drawsSidebarLayout else { return [] }
-        return isLoading ? [stopButton, refreshButton] : [refreshButton]
+        return isLoading ? [stopButton] : [refreshButton]
     }
     var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
 }
