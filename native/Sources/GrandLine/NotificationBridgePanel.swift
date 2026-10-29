@@ -1342,7 +1342,7 @@ final class NotificationSnoozedRow: NSView, NotificationBridgeThemed {
         unsnoozeButton.target = self
         unsnoozeButton.action = #selector(unsnoozeClicked)
 
-        untilGlyph.image = NSImage(systemSymbolName: "moon.zzz", accessibilityDescription: nil)
+        untilGlyph.image = HelmSymbol.image("moon.zzz", pointSize: HelmType.scaled(12), weight: .semibold)
         untilGlyph.translatesAutoresizingMaskIntoConstraints = false
         untilGlyph.setContentHuggingPriority(.required, for: .horizontal)
         let chipRow = NSStackView(views: [untilGlyph, untilChip])
