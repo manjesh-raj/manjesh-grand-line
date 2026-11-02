@@ -365,8 +365,13 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// that this page learns fresh truth and the Engineering hub never hears
     /// about it, so a test that skipped the wiring and called the publish
     /// method itself would pass with the wiring deleted.
-    func debugApplyStatusesAndRender(_ statuses: [DependencyStatus]) {
-        for (row, status) in zip(rows, statuses) { row.status = status }
+    ///
+    /// Each status lands as a reading taken at `checkedAt` (now by default).
+    func debugApplyStatusesAndRender(_ statuses: [DependencyStatus], checkedAt: Date = Date()) {
+        for (row, status) in zip(rows, statuses) {
+            row.status = status
+            row.checkedAt = checkedAt
+        }
         renderStats()
     }
 
@@ -570,12 +575,13 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
         // while 13 checks are still running is a confident claim about an
         // answer this page does not have yet - GL-14. Only the two *derived*
-        // counts go unknown. "Tools installed" is the catalog's own size and
-        // is true before any check runs. R2-BUG-03: "Need attention" is the
+        // counts go unknown. "Tools tracked" is the catalog's own size and
+        // is true before any check runs - it was captioned "Tools installed",
+        // which it is not when a tool is missing. R2-BUG-03: "Need attention" is the
         // header's own count, not a second one that left out failed checks.
         let known = summary.isKnown
         summaryStrip.configure([
-            .init(.value("\(summary.total)"), caption: "Tools installed"),
+            .init(.value("\(summary.total)"), caption: "Tools tracked"),
             known ? .count(summary.upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
             known ? .count(summary.needsAttention, caption: "Need attention", tintWhenNonZero: .warn)
                   : .init(.unread, caption: "Need attention"),
@@ -598,13 +604,21 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// rule) stays in one place, so this page cannot drift from the hub over
     /// what "needs an update" means.
     ///
-    /// Gated on being on screen so that the hub agrees with what the captain
-    /// last actually saw here. A page mounted but hidden is re-rendered by
-    /// ordinary events (a theme change, a font-scale change) and its rows can
-    /// be older than the poller's own last sweep - it has no business
-    /// overwriting a fresher published number from behind another page.
+    /// A page mounted but hidden is re-rendered by ordinary events (a theme
+    /// change, a font-scale change) and its rows can be older than the
+    /// poller's own last sweep - it has no business overwriting a fresher
+    /// published number from behind another page. That used to be enforced
+    /// by publishing only while on screen.
+    ///
+    /// `fm/grandline-github-sync-counts`: no longer gated on being on screen.
+    /// The gate dropped an update that finished after the captain navigated
+    /// away, so every count kept the pre-update number. A hidden page
+    /// re-rendering *old* rows is what the gate was for, and those rows carry
+    /// the time they were really read, which `acceptsReading` refuses when a
+    /// newer reading is standing. A page with no answer at all publishes
+    /// nothing.
     private func publishToolUpdateSignal() {
-        guard isViewLoaded, !view.isHidden else { return }
+        guard isViewLoaded, let gatheredAt = rows.compactMap(\.checkedAt).max() else { return }
         // `fm/grandline-notification-center-redesign`: the notification row for
         // this page expands into the tools themselves, so the statuses travel
         // with the names and version pairs that only this page holds - plus the
@@ -629,7 +643,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             rows.map { $0.status },
             children: children,
             updateAll: pending.isEmpty ? nil : { [weak self] in self?.updateAllPending() },
-            gatheredAt: rows.compactMap(\.checkedAt).max() ?? Date()
+            gatheredAt: gatheredAt
         )
     }
 

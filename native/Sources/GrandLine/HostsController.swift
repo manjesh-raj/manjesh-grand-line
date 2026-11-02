@@ -1930,8 +1930,13 @@ extension HostsController: ModuleTabHosting {
     /// The prototype's "Hosts 7": the saved records each tab lists, read
     /// from the stores the tables render. The built-in Firstmate row is not a
     /// saved host, so it is not counted.
+    ///
+    /// A `hosts.json` that could not be read has no count: the tab shows none
+    /// rather than "Hosts 0" (GL-14), the way the toolbar omits any missing key.
     var moduleTabCounts: [String: Int] {
-        ["Hosts": hostStore.hosts.count, "Keys": keyStore.keys.count, "Snippets": snippetStore.snippets.count]
+        var counts = ["Keys": keyStore.keys.count, "Snippets": snippetStore.snippets.count]
+        if hostStore.loadStatus == .clean { counts["Hosts"] = hostStore.hosts.count }
+        return counts
     }
 
     /// A store changed under one of the three counts; the toolbar re-reads

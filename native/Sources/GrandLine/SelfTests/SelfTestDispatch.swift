@@ -2185,6 +2185,21 @@ enum SelfTestDispatch {
             exit(GitHubSyncRefreshSelfTest.run() ? 0 : 1)
         }
 
+        // `fm/grandline-github-sync-counts`: a diverged fork can be merged
+        // (confirmed, never forced, its own commits kept - proven against real
+        // local repositories), and the GitHub sync card, Home's card and the
+        // bell count what the list shows. See GitHubSyncMergeSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_GITHUB_SYNC_MERGE_TESTS"] == "1" {
+            exit(GitHubSyncMergeSelfTest.run() ? 0 : 1)
+        }
+
+        // `fm/grandline-github-sync-counts`'s audit of every other count: tool
+        // counts worded by what they count, one reading of the setup steps,
+        // scheduled checks that publish. See CountAgreementSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_COUNT_AGREEMENT_TESTS"] == "1" {
+            exit(CountAgreementSelfTest.run() ? 0 : 1)
+        }
+
         // A real, captain-reported bug on Setup > Updates: most tool rows rendered
         // an empty gap where the "Check" button should be, revealing it only on
         // hover, while other rows in the same list showed it at rest - see

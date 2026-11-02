@@ -545,7 +545,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         headerRow.isHidden = isTotalFailure
         if !isTotalFailure, failureDetailShown { toggleFailureDetail() }
 
-        onReadyToMergeCountChanged?(FleetDataSource.readyToMergeCount(prs))
+        // A scan that reached no forge says nothing about how many PRs are
+        // ready, so the bell keeps the last count it had rather than
+        // withdrawing it as if every PR had merged (GL-14).
+        if !isTotalFailure { onReadyToMergeCountChanged?(FleetDataSource.readyToMergeCount(prs)) }
         onPRsChanged?(prs)
         // F6: kept so `mergePR` can name the PR it merged (number, title,
         // repo) in the captain's log. The merge button's own identifier

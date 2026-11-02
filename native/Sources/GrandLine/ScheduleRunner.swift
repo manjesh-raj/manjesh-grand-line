@@ -501,6 +501,7 @@ enum ScheduleActions {
     /// throwaway copy of the state (the convention `SetupStepChecks.swift`'s
     /// header records - never reaching into a controller's private fields).
     private static func driftCheck() -> ScheduleActionResult {
+        let startedAt = Date()
         let repoPath = DotfilesSource.resolvedDotfilesPath()
         var state: DotfilesRepoState?
         var agentItems: [AgentInstructionsItem] = []
@@ -515,6 +516,14 @@ enum ScheduleActions {
         let dotfilesDone = SetupStepChecks.dotfilesDone(isLoading: false, repoPath: repoPath, state: state) ?? false
         let agentDone = SetupStepChecks.agentInstructionsDone(isLoading: false, items: agentItems) ?? false
         let log = driftCheckLog(repoPath: repoPath, state: state, agentItems: agentItems)
+        // `fm/grandline-github-sync-counts`: what this run read reaches the
+        // Setup steps card, Home and the bell - two of the five steps, which
+        // the per-step reading takes as two answers. A run that found no
+        // dotfiles established nothing and publishes nothing.
+        if repoPath != nil {
+            let answers: [SetupStepKind: Bool?] = [.dotfiles: dotfilesDone, .agentInstructions: agentDone]
+            DispatchQueue.main.async { BackgroundSignalsPoller.shared.publishSetupStepResults(answers, gatheredAt: startedAt) }
+        }
 
         guard repoPath != nil else {
             // `.partial`, not a finding: the check could not run at all, so it
@@ -592,9 +601,18 @@ enum ScheduleActions {
 
     // MARK: Tool update check - read-only
 
+    ///
+    /// `fm/grandline-github-sync-counts`: through the shared check cache, and
+    /// published. It used to call `UpdatesSource.check` directly and tell
+    /// nobody, so the counts kept their older number and the next poll could
+    /// serve an older cached outcome over this run's fresher one.
     private static func toolUpdateCheck() -> ScheduleActionResult {
-        let outcomes = DependencyCatalog.items.map { (item: $0, outcome: UpdatesSource.check($0)) }
+        let startedAt = Date()
+        let outcomes = DependencyCatalog.items.map {
+            (item: $0, outcome: DependencyCheckCache.shared.check($0, forceRefresh: true))
+        }
         let statuses = outcomes.map { $0.outcome.status }
+        DispatchQueue.main.async { BackgroundSignalsPoller.shared.publishToolStatuses(statuses, gatheredAt: startedAt) }
         // R2-BUG-03: the Updates page's own count. `showsUpdateButton` is
         // also true for a failed check, so "N of the M that could be checked
         // have an update" used to count the very checks that failed.
@@ -655,15 +673,29 @@ enum ScheduleActions {
     /// applies to its own button. A diverged repo is never touched, `--force` is
     /// never passed, and none of that is relaxed here: this calls that action
     /// unchanged.
+    ///
+    /// `fm/grandline-github-sync-counts`: a diverged fork now has a merge on
+    /// the GitHub sync page, and this still never runs it - a merge creates a
+    /// commit, so it is confirmed by a person, one fork at a time. What this
+    /// run learned is published, though: it used to fast-forward forks and
+    /// tell nobody, so Setup's card and the bell went on counting them as
+    /// behind until the next poll.
     private static func forkSync() -> ScheduleActionResult {
         var synced = 0
         var failed: [String] = []
         var diverged: [String] = []
         var checkFailed = 0
         var logBlocks: [String] = []
+        var readings: [BackgroundSignalsPoller.ForkReading] = []
+        defer {
+            let learned = readings
+            DispatchQueue.main.async { BackgroundSignalsPoller.shared.publishForkReadings(learned) }
+        }
 
         for repo in GitHubSyncCatalog.repos {
+            let checkedAt = Date()
             let outcome = GitHubSyncSource.check(repo)
+            var reading = BackgroundSignalsPoller.reading(repo, outcome, gatheredAt: checkedAt)
             // One block per repo, appended once below regardless of which
             // branch runs - the check's own detail/log, plus the sync's when
             // one was attempted, so a captain reading "View Log" sees exactly
@@ -683,6 +715,9 @@ enum ScheduleActions {
                     if !sync.log.isEmpty { block += "\n\(sync.log)" }
                     if sync.ok {
                         synced += 1
+                        // The check above is now out of date by definition.
+                        let recheckedAt = Date()
+                        reading = BackgroundSignalsPoller.reading(repo, GitHubSyncSource.check(repo), gatheredAt: recheckedAt)
                     } else if sync.refusedDiverged {
                         diverged.append(repo.name)
                     } else {
@@ -691,6 +726,7 @@ enum ScheduleActions {
                 }
             }
             logBlocks.append(block)
+            readings.append(reading)
         }
 
         var parts: [String] = []
@@ -908,9 +944,20 @@ enum ScheduleActions {
         var needsManualInstall = 0
         var checkFailed = 0
         var logBlocks: [String] = []
+        // What each tool reads as after this run, for the counts - see
+        // `toolUpdateCheck`. An installed tool is re-checked, because the
+        // check before the install is out of date by definition.
+        let startedAt = Date()
+        var finalStatuses: [DependencyStatus] = []
+        defer {
+            let statuses = finalStatuses
+            DispatchQueue.main.async { BackgroundSignalsPoller.shared.publishToolStatuses(statuses, gatheredAt: startedAt) }
+        }
 
         for item in DependencyCatalog.items {
-            let outcome = UpdatesSource.check(item)
+            let outcome = DependencyCheckCache.shared.check(item, forceRefresh: true)
+            var finalStatus = outcome.status
+            defer { finalStatuses.append(finalStatus) }
             var block = "\(item.name): \(outcome.detail)"
             if !outcome.log.isEmpty { block += "\n\(outcome.log)" }
             switch outcome.status {
@@ -920,6 +967,8 @@ enum ScheduleActions {
                 if !update.log.isEmpty { block += "\n\(update.log)" }
                 if update.ok {
                     installed.append(item.name)
+                    DependencyCheckCache.shared.invalidate(item.id)
+                    finalStatus = DependencyCheckCache.shared.check(item, forceRefresh: true).status
                 } else {
                     updateFailed.append(item.name)
                 }

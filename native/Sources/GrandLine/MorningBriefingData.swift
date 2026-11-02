@@ -220,6 +220,9 @@ struct BriefingInputs: Equatable {
     // Drift/updates - `BackgroundSignalsPoller.lastCounts`
     var forkDriftCount: Int?
     var toolUpdateCount: Int?
+    /// Of `toolUpdateCount`, the tools with a newer version - see
+    /// `NotificationSources.ToolAttention`.
+    var toolsWithUpdateCount: Int?
     var setupDriftCount: Int?
 
     /// Which of the four inputs actually contributed, in the order the
@@ -288,8 +291,11 @@ enum MorningBriefingLocal {
         }
 
         if let updates = inputs.toolUpdateCount, updates > 0 {
+            let allUpdates = inputs.toolsWithUpdateCount == nil || inputs.toolsWithUpdateCount == updates
             out.append(BriefingClause(
-                text: "\(updates) \(plural(updates, "tool")) \(updates == 1 ? "has" : "have") an update",
+                text: allUpdates
+                    ? "\(updates) \(plural(updates, "tool")) \(updates == 1 ? "has" : "have") an update"
+                    : "\(updates) \(plural(updates, "tool")) \(updates == 1 ? "needs" : "need") attention",
                 target: .updates))
         }
 

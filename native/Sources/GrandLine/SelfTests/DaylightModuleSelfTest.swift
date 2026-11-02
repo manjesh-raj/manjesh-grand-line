@@ -1984,7 +1984,7 @@ enum DaylightModuleSelfTest {
             // WITHOUT any visit, refresh or space switch - the observer alone.
             poller.debugSetLastCompletedPassAt(Date())
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
-                                        setupDrift: 0, vaultSecrets: 7))
+                                        setupDrift: 0, vaultSecrets: 7, forksTotal: 8, forksChecked: 8))
             // The canvas coalesces renders onto the next main-queue turn, so
             // one turn has to be drained - not a sleep, and not a re-render
             // this check performs itself.
@@ -2046,10 +2046,10 @@ enum DaylightModuleSelfTest {
             var fanouts = 0
             let probe = poller.observeCounts { _ in fanouts += 1 }
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
-                                        setupDrift: 0, vaultSecrets: 7))
+                                        setupDrift: 0, vaultSecrets: 7, forksTotal: 8, forksChecked: 8))
             if fanouts != 0 { fail("an identical counts publish fanned out \(fanouts) time(s)", &ok) }
             poller.debugSetCounts(.init(toolUpdates: 1, forkDrift: 0, vaultAttention: 2,
-                                        setupDrift: 0, vaultSecrets: 7))
+                                        setupDrift: 0, vaultSecrets: 7, forksTotal: 8, forksChecked: 8))
             if fanouts != 1 { fail("a changed counts publish fanned out \(fanouts) time(s), expected 1", &ok) }
             poller.unobserveCounts(probe)
 
@@ -2096,7 +2096,7 @@ enum DaylightModuleSelfTest {
 
             poller.debugSetLastCompletedPassAt(Date())
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
-                                        setupDrift: 0, vaultSecrets: 7))
+                                        setupDrift: 0, vaultSecrets: 7, forksTotal: 8, forksChecked: 8))
             pumpMainQueue { card(.vault)?.metricTexts.first == "7" }
 
             if let a = card(.vault) {

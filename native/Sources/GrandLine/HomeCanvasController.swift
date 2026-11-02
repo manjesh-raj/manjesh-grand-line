@@ -3656,8 +3656,12 @@ final class HomeCanvasController: NSViewController {
         content.toolTip = checking
     }
 
-    /// Updates: how many catalog tools have a newer version available. The
-    /// exact count `UpdatesController`'s own "Updates Available" tile shows.
+    /// Updates: how many catalog tools need an action - a newer version, a
+    /// missing install or a failed check - the count the sidebar's Setup
+    /// badge and the bell state. Worded as "updates" only when every one of
+    /// them really is an update (`fm/grandline-github-sync-counts`): this
+    /// said "13 updates - Ready to install" over thirteen failed checks while
+    /// Setup's own Updates card beside it said 0.
     private func fillUpdates(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own updates
         // artwork, replacing the plain `steeringwheel` glyph - matches
@@ -3675,10 +3679,20 @@ final class HomeCanvasController: NSViewController {
             content.body = .note("Every tool in the catalog is on its latest version.")
             return
         }
-        content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
+        let available = BackgroundSignalsPoller.shared.lastCounts.toolsWithUpdate
+        guard let available, available != updates else {
+            content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
+            content.body = .metric(value: "\(updates)",
+                                   unit: updates == 1 ? "update" : "updates",
+                                   note: "Ready to install from \(PlaceName.of(.updates)).")
+            return
+        }
+        content.chip = .warn("\(updates) need\(updates == 1 ? "s" : "") attention")
         content.body = .metric(value: "\(updates)",
-                               unit: updates == 1 ? "update" : "updates",
-                               note: "Ready to install from \(PlaceName.of(.updates)).")
+                               unit: updates == 1 ? "tool" : "tools",
+                               note: available == 0
+                                   ? "Missing, or could not be checked. See \(PlaceName.of(.updates))."
+                                   : "\(available) with an update, the rest missing or not checked.")
     }
 
     /// Bootstrap: how many of the five setup steps have drifted. This is the
@@ -3730,30 +3744,48 @@ final class HomeCanvasController: NSViewController {
         content.body = .note("A full run would work through \(drift) drifted step\(drift == 1 ? "" : "s") in order, stopping at the first failure.")
     }
 
-    /// GitHub Sync: how many of the captain's forks are behind upstream. The
-    /// same count `GitHubSyncController`'s own rows show a Sync button for.
+    /// GitHub Sync: how many of the captain's forks upstream is ahead of -
+    /// `SetupSummary.ForksFigure`, the same figure and words Setup's own
+    /// GitHub sync card states, so the two cannot disagree.
+    ///
+    /// `fm/grandline-github-sync-counts`: this used to say "In sync - All 8
+    /// forks match their upstream" both for a diverged fork and for a sweep
+    /// where every check failed.
     private func fillGitHubSync(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own GitHub Sync
         // artwork, replacing the plain `arrow.2.squarepath` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.githubSync` case.
         content.artwork = GithubSyncIcon.image
         content.subtitle = "forks"
-        guard let drift = BackgroundSignalsPoller.shared.lastCounts.forkDrift else {
+        let figure = SetupSummary.ForksFigure(BackgroundSignalsPoller.shared.lastCounts)
+        let label = figure.label ?? ""
+        switch figure {
+        case .unread:
             fillPendingSetupSignal(&content,
                                    checking: "Checking each fork against its upstream\u{2026}",
                                    stale: "Fork drift hasn't been checked yet this session.")
-            return
-        }
-        let total = GitHubSyncCatalog.repos.count
-        guard drift > 0 else {
-            content.chip = .ok("In sync")
+        case .toSync(let n, let diverged):
+            content.chip = diverged > 0 ? .bad(label) : .warn(label)
+            let total = GitHubSyncCatalog.repos.count
+            let note: String
+            if diverged == 0 {
+                note = "Behind upstream, of \(total) tracked."
+            } else if diverged == n {
+                note = "Diverged from upstream, of \(total) tracked."
+            } else {
+                note = "Behind upstream, \(diverged) diverged, of \(total) tracked."
+            }
+            content.body = .metric(value: "\(n)", unit: n == 1 ? "fork" : "forks", note: note)
+        case .couldNotCheck:
+            content.chip = .bad(label)
+            content.body = .note("None of the forks could be checked against upstream.")
+        case .partlyRead(let checked, let total):
+            content.chip = .warn(label)
+            content.body = .note("\(total - checked) of \(total) forks could not be checked.")
+        case .inSync(let total):
+            content.chip = .ok(label)
             content.body = .note("All \(total) forks match their upstream.")
-            return
         }
-        content.chip = .warn("\(drift) behind")
-        content.body = .metric(value: "\(drift)",
-                               unit: drift == 1 ? "fork" : "forks",
-                               note: "Behind upstream, of \(total) tracked.")
     }
 
     private func fillSchedules(_ content: inout HelmModuleCard.Content) {
@@ -3836,6 +3868,16 @@ final class HomeCanvasController: NSViewController {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
+            // `fm/grandline-github-sync-counts`: the attention count comes
+            // from the poller's `av doctor` read, which never needs the
+            // secrets count (`av list`, the Vault page's alone). It used to be
+            // hidden behind this branch, so the card said "hasn't been
+            // checked" while the bell said "2 security tools need attention".
+            if let attention = counts.vaultAttention {
+                if attention > 0 { content.chip = .warn("\(attention) need\(attention == 1 ? "s" : "") a look") }
+                content.body = .note("Open \(PlaceName.of(.vault)) to count the hardened secrets.")
+                return
+            }
             // The same two honest loading states as the four Setup modules, for
             // the same reason.
             fillPendingSetupSignal(&content,

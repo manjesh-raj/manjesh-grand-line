@@ -1289,8 +1289,11 @@ final class FleetController: NSViewController {
 
         // Read, not recomputed - see `BackgroundSignalsPoller.lastCounts`.
         let counts = BackgroundSignalsPoller.shared.lastCounts
-        inputs.forkDriftCount = counts.forkDrift
+        // Every fork upstream is ahead of, a diverged one included - the same
+        // number Setup's and Home's GitHub sync cards state.
+        inputs.forkDriftCount = counts.forksToSync
         inputs.toolUpdateCount = counts.toolUpdates
+        inputs.toolsWithUpdateCount = counts.toolsWithUpdate
         inputs.setupDriftCount = counts.setupDrift
 
         // No quota read here any more: the briefing's Claude-quota clause was

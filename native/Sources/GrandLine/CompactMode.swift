@@ -261,6 +261,11 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private let content: CompactModePopoverController
     private var themeObservation: ThemeObservation?
+    private var dayObserver: NSObjectProtocol?
+
+    deinit {
+        if let dayObserver { NotificationCenter.default.removeObserver(dayObserver) }
+    }
     private lazy var hotkey = CompactModeHotkey { [weak self] in self?.togglePopover() }
 
     /// The live policy. Re-read from `AppSettings` on every `refresh()`
@@ -363,6 +368,13 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
             self?.applyTheme(theme)
         }
+
+        // A task due today becomes overdue at midnight with no store change,
+        // so the overdue count in the title turns over on the day change -
+        // the same signal the sidebar's Tasks badge listens for.
+        dayObserver = NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged, object: nil, queue: .main
+        ) { [weak self] _ in self?.refreshBadge() }
 
         // Nothing is shown until `refresh()` decides it should be. A fresh
         // install has compact mode off, so this status item is built and

@@ -257,6 +257,13 @@ enum ReviewTourLab {
         /// render after its own first sweep (which a tour refuses) settles.
         /// Put it after `goto githubSync`.
         case demoForks
+        /// `demo forks captain`: the captain's own report
+        /// (`fm/grandline-github-sync-counts`). A poll pass that found three
+        /// forks behind, then the page's own later check: seven in sync and
+        /// automic-vault diverged, one commit of its own and 26 behind. Run it
+        /// while another page is showing, then `goto githubSync`, to land the
+        /// check the way a sync that finished behind another page lands it.
+        case demoForksCaptain
         /// `demo bitbucket` (R2-SEC-01): a fake Bitbucket identity for Fleet's
         /// open-PR scan, and the network tripwire behind the gate - so a tour
         /// against a scratch firstmate home holding a Bitbucket clone drives
@@ -372,6 +379,7 @@ enum ReviewTourLab {
             if argument == "setup" { return .success(.demoSetup) }
             if argument == "updates" { return .success(.demoUpdates) }
             if argument == "forks" { return .success(.demoForks) }
+            if argument == "forks captain" { return .success(.demoForksCaptain) }
             if argument == "bitbucket" { return .success(.demoBitbucket) }
             if argument == "focuslog" { return .success(.demoFocusLog) }
             if argument == "logs" { return .success(.demoLogs) }
@@ -781,6 +789,9 @@ enum ReviewTourLab {
                 seedDemoForks(page)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo forks")
+            case .demoForksCaptain:
+                log.append(seedCaptainForks(shell.workspace.githubSync))
+                shell.view.layoutSubtreeIfNeeded()
             case .demoLogs:
                 shell.workspace.logAnalyzer.debugRender(demoLogInvestigation())
                 shell.view.layoutSubtreeIfNeeded()
@@ -1314,6 +1325,31 @@ enum ReviewTourLab {
             page.debugApplyCheck(index: index, status: status, upstream: upstream, detail: detail,
                                  log: "demo: no gh ran", at: Date().addingTimeInterval(-Double(index) * 420))
         }
+    }
+
+    /// `demo forks captain`'s two readings - see the step's own comment.
+    static func seedCaptainForks(_ page: GitHubSyncController) -> String {
+        let repos = GitHubSyncCatalog.repos
+        let passAt = Date()
+        let behindInPass: Set<Int> = [0, 2, 4]
+        BackgroundSignalsPoller.shared.publishForkReadings(repos.enumerated().map { index, repo in
+            let upstream = repo.manualUpstreamFullName ?? "kunchenguid/\(repo.name)"
+            let status: GitHubSyncStatus = behindInPass.contains(index) ? .behind(2) : .inSync
+            return .init(fullName: repo.fullName, status: status, upstreamFullName: upstream,
+                         detail: "demo pass", log: "demo: no gh ran", gatheredAt: passAt)
+        })
+        let checkAt = passAt.addingTimeInterval(1)
+        for (index, repo) in repos.enumerated() {
+            let upstream = repo.manualUpstreamFullName ?? "kunchenguid/\(repo.name)"
+            let diverged = repo.manualUpstreamFullName != nil
+            let status: GitHubSyncStatus = diverged ? .diverged(localOnly: 1, upstreamAhead: 26) : .inSync
+            let detail = diverged
+                ? GitHubSyncStatus.detail(localOnly: 1, upstreamAhead: 26, upstream: upstream)
+                : "In sync with \(upstream)"
+            page.debugApplyCheck(index: index, status: status, upstream: upstream, detail: detail,
+                                 log: "demo: no gh ran", at: checkAt)
+        }
+        return "demo forks captain (pass: 3 behind; page: 7 in sync, 1 diverged)"
     }
 
     /// `demo vault`: a scratch vault under the tour's scratch root, created

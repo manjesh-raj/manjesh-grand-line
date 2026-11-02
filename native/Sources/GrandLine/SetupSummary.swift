@@ -103,29 +103,78 @@ enum SetupSummary {
     }
 
     /// "Paused" while the config repo is confirmed public - every push to it
-    /// is refused until it is private again - and otherwise the forks.
+    /// is refused until it is private again - and otherwise the forks, as
+    /// `ForksFigure` states them.
     static func githubCard(_ counts: BackgroundSignalsPoller.SignalCounts,
                            configRepo: ConfigRepoPrivacy.Reading?) -> Card {
         let caption = captions[4]
         if configRepo?.visibility == .publicRepo {
             return Card(caption: caption, text: "Paused", tint: .critical, signals: true, unknownReason: nil)
         }
-        guard let behind = counts.forkDrift, let total = counts.forksTotal, let checked = counts.forksChecked else {
+        let figure = ForksFigure(counts)
+        switch figure {
+        case .unread:
             return Card(caption: caption, text: nil, tint: nil, signals: false,
                         unknownReason: "The forks have not been checked yet this session.")
-        }
-        if behind > 0 {
-            return Card(caption: caption, text: "\(behind) behind", tint: .warn, signals: true, unknownReason: nil)
-        }
-        if checked == 0 {
-            return Card(caption: caption, text: "Couldn\u{2019}t check", tint: .critical, signals: true,
+        case .toSync(_, let diverged):
+            return Card(caption: caption, text: figure.label, tint: diverged > 0 ? .critical : .warn, signals: true,
                         unknownReason: nil)
+        case .couldNotCheck:
+            return Card(caption: caption, text: figure.label, tint: .critical, signals: true, unknownReason: nil)
+        case .partlyRead:
+            return Card(caption: caption, text: figure.label, tint: .warn, signals: true, unknownReason: nil)
+        case .inSync:
+            return Card(caption: caption, text: figure.label, tint: nil, signals: false, unknownReason: nil)
         }
-        if checked < total {
-            return Card(caption: caption, text: "\(checked) / \(total) read", tint: .warn, signals: true,
-                        unknownReason: nil)
+    }
+
+    /// What the forks add up to, for every surface that states it in a word
+    /// or two: Setup's GitHub sync card and Home's GitHub sync card.
+    ///
+    /// `fm/grandline-github-sync-counts`: the card counted only the forks a
+    /// fast-forward could catch up, so a page whose one problem was a diverged
+    /// fork read "In sync" above a red "Diverged" row. It counts every fork
+    /// upstream is ahead of now, and the word says which kind they are, using
+    /// the same words the list does: "behind" for forks that are only behind,
+    /// "diverged" for forks that also have commits of their own, and "to sync"
+    /// when there are some of each.
+    enum ForksFigure: Equatable {
+        /// No fork has been read this session (GL-14).
+        case unread
+        case toSync(Int, diverged: Int)
+        /// Every check failed - not "in sync" (GL-14).
+        case couldNotCheck
+        case partlyRead(checked: Int, total: Int)
+        case inSync(total: Int)
+
+        init(_ counts: BackgroundSignalsPoller.SignalCounts) {
+            guard let toSync = counts.forksToSync, let total = counts.forksTotal,
+                  let checked = counts.forksChecked else {
+                self = .unread
+                return
+            }
+            if toSync > 0 {
+                self = .toSync(toSync, diverged: counts.forksDiverged ?? 0)
+            } else if checked == 0 {
+                self = .couldNotCheck
+            } else if checked < total {
+                self = .partlyRead(checked: checked, total: total)
+            } else {
+                self = .inSync(total: total)
+            }
         }
-        return Card(caption: caption, text: "In sync", tint: nil, signals: false, unknownReason: nil)
+
+        var label: String? {
+            switch self {
+            case .unread: return nil
+            case .toSync(let n, let diverged):
+                if diverged == 0 { return "\(n) behind" }
+                return diverged == n ? "\(n) diverged" : "\(n) to sync"
+            case .couldNotCheck: return "Couldn\u{2019}t check"
+            case .partlyRead(let checked, let total): return "\(checked) / \(total) read"
+            case .inSync: return "In sync"
+            }
+        }
     }
 }
 

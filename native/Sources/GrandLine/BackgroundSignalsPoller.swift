@@ -202,9 +202,44 @@ final class BackgroundSignalsPoller {
         /// check failed (`DependencyStatus.showsUpdateButton`).
         var toolsWithUpdate: Int? = nil
         var forksTotal: Int? = nil
-        /// Forks whose check came back - in sync, behind or diverged - so a
-        /// summary can tell "all in sync" from "nothing could be read".
+        /// Forks whose check came back - in sync, ahead, behind or diverged -
+        /// so a summary can tell "all in sync" from "nothing could be read".
         var forksChecked: Int? = nil
+        /// Of `forkDrift`, the forks that also have commits of their own, so
+        /// catching up is a merge rather than a fast-forward. Written in the
+        /// same assignment as `forkDrift`.
+        var forksDiverged: Int? = nil
+
+        /// Forks that upstream is ahead of, whether a fast-forward or a merge
+        /// catches them up - the one number every "forks to sync" surface
+        /// states (Setup's GitHub sync card, Home's card, the bell, the
+        /// briefing). `nil` while the forks have not been read (GL-14).
+        var forksToSync: Int? {
+            guard let forkDrift else { return nil }
+            return forkDrift + (forksDiverged ?? 0)
+        }
+    }
+
+    /// One fork's newest settled reading, from whichever producer took it:
+    /// this poller's pass, the GitHub sync page, or a scheduled fork sync.
+    ///
+    /// `fm/grandline-github-sync-counts`: the forks used to be published as one
+    /// snapshot of every status, stamped once, with an older snapshot refused
+    /// whole. A page that re-checked one fork could then either lose its fresh
+    /// answer to an older pass or overwrite seven newer answers with its own
+    /// older rows - and the page only published while it was on screen, so a
+    /// sync that finished behind another page never reached the count at all.
+    /// That is how the captain saw "3 behind" on the card above a list where
+    /// nothing was behind. Keeping the newest reading per fork removes the
+    /// trade-off: each fork's answer is replaced only by a newer one about the
+    /// same fork, whoever took it.
+    struct ForkReading: Equatable {
+        let fullName: String
+        let status: GitHubSyncStatus
+        var upstreamFullName: String?
+        var detail: String
+        var log: String
+        let gatheredAt: Date
     }
 
     /// When the data behind each published signal was gathered - see
@@ -268,6 +303,32 @@ final class BackgroundSignalsPoller {
 
     func unobserveCounts(_ token: CountsObservation) {
         countsObservers.removeAll { $0.token === token }
+    }
+
+    /// Each fork's newest settled reading, keyed by full name - see
+    /// `ForkReading`. Main thread only, like `lastCounts`.
+    private(set) var forkReadings: [String: ForkReading] = [:]
+
+    private var forkReadingObservers: [(token: CountsObservation, fn: () -> Void)] = []
+
+    /// Hear about a fork reading that changed, including one whose count did
+    /// not (a fork going from 3 behind to 4). The GitHub sync page adopts
+    /// newer readings into its rows through this, so its list says what its
+    /// card says. Not fired at registration.
+    @discardableResult
+    func observeForkReadings(_ fn: @escaping () -> Void) -> CountsObservation {
+        let token = CountsObservation()
+        forkReadingObservers.append((token, fn))
+        return token
+    }
+
+    func unobserveForkReadings(_ token: CountsObservation) {
+        forkReadingObservers.removeAll { $0.token === token }
+    }
+
+    private func notifyForkReadingObservers() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        for observer in forkReadingObservers { observer.fn() }
     }
 
     /// Always already on the main thread: every write to `lastCounts` happens
@@ -510,32 +571,34 @@ final class BackgroundSignalsPoller {
     // MARK: #4 - GitHub Sync
 
     private func checkGitHubSync() {
-        let gatheredAt = Date()
         let repos = GitHubSyncCatalog.repos
         // The whole outcome, not just `.status` - same reason as the software
         // sweep above: `.detail` is the "12 commits behind kunchenguid/gh-axi"
         // line the expanded row shows, and this is the only place that ran the
-        // check before the GitHub Sync page has ever been opened.
-        let outcomes = repos.map { GitHubSyncSource.check($0) }
+        // check before the GitHub Sync page has ever been opened. Each fork is
+        // stamped when its own check started, since the sweep is sequential
+        // and takes tens of seconds end to end.
+        let readings = repos.map { repo -> ForkReading in
+            let gatheredAt = Date()
+            return Self.reading(repo, GitHubSyncSource.check(repo), gatheredAt: gatheredAt)
+        }
         DispatchQueue.main.async { [weak self] in
-            self?.applyForkSweep(repos: repos, outcomes: outcomes, gatheredAt: gatheredAt)
+            self?.publishForkReadings(readings)
         }
     }
 
-    /// The main-thread half of the fork pass - see `applyToolSweep`.
-    private func applyForkSweep(repos: [GitHubSyncRepoConfig],
-                                outcomes: [GitHubSyncCheckOutcome],
-                                gatheredAt: Date) {
-        publishForkStatuses(outcomes.map { $0.status },
-                            children: forkChildren(repos: repos, outcomes: outcomes),
-                            gatheredAt: gatheredAt)
+    /// A check outcome as a reading.
+    static func reading(_ repo: GitHubSyncRepoConfig, _ outcome: GitHubSyncCheckOutcome, gatheredAt: Date) -> ForkReading {
+        ForkReading(fullName: repo.fullName, status: outcome.status, upstreamFullName: outcome.upstreamFullName,
+                    detail: outcome.detail, log: outcome.log, gatheredAt: gatheredAt)
     }
 
-    private func forkChildren(repos: [GitHubSyncRepoConfig],
-                              outcomes: [GitHubSyncCheckOutcome]) -> [AppNotificationChild] {
+    private func forkChildren() -> [AppNotificationChild] {
         NotificationSignalChildren.forks(
-            zip(repos, outcomes).map {
-                .init(id: $0.fullName, name: $0.name, status: $1.status, detail: $1.detail)
+            GitHubSyncCatalog.repos.compactMap { repo in
+                forkReadings[repo.fullName].map {
+                    .init(id: repo.fullName, name: repo.name, status: $0.status, detail: $0.detail)
+                }
             },
             perform: { [weak self] id in self?.onSyncFork?(id) })
     }
@@ -702,9 +765,12 @@ extension BackgroundSignalsPoller {
     // page defaults to `Date()` because its rows are current as it renders
     // them; the poller stamps each check as it runs.
 
-    /// Signals whose freshness is tracked independently - a pass's fork check
-    /// being outrun by the GitHub Sync page says nothing about its tool check.
-    enum Signal: Hashable { case tools, forks, setup, vault }
+    /// Signals whose freshness is tracked independently - a pass's tool check
+    /// being outrun by the Updates page says nothing about its vault check.
+    /// The forks and the setup steps are not here: they are tracked per fork
+    /// (`ForkReading.gatheredAt`) and per step (`SetupStepsReading`), a finer
+    /// grain than this.
+    enum Signal: Hashable { case tools, vault }
 
     /// `true` when this reading is at least as new as whatever is published,
     /// recording it as the new high-water mark. Main thread, like every other
@@ -728,12 +794,13 @@ extension BackgroundSignalsPoller {
         return statuses.filter { $0.showsUpdateButton }.count
     }
 
-    /// How many tracked forks are behind their upstream.
+    /// How many tracked forks a fast-forward would bring up to date.
     ///
     /// `showsSyncButton` is what `GitHubSyncController`'s rows offer a Sync
-    /// button for and what its own "Sync All" filters on - a repo that is
-    /// diverged or not a fork is deliberately not counted here, because there
-    /// is nothing to pull.
+    /// button for and what its own "Sync All" filters on. A diverged fork is
+    /// counted separately (`SignalCounts.forksDiverged`), because catching it
+    /// up is a merge, and every surface that states "how many forks need
+    /// syncing" reads the two together through `SignalCounts.forksToSync`.
     static func forkDriftCount(from statuses: [GitHubSyncStatus]) -> Int? {
         guard !statuses.isEmpty else { return nil }
         guard !statuses.contains(where: { $0 == .checking || $0 == .syncing }) else { return nil }
@@ -796,48 +863,69 @@ extension BackgroundSignalsPoller {
         counts.toolsUpToDate = statuses.filter { $0 == .upToDate }.count
         counts.toolsWithUpdate = statuses.filter { $0 == .updateAvailable }.count
         lastCounts = counts
-        NotificationSources.setToolUpdates(count: count, children: children, updateAll: updateAll) {
+        NotificationSources.setToolUpdates(count: count, updates: counts.toolsWithUpdate,
+                                           children: children, updateAll: updateAll) {
             [weak self] in self?.onNavigateToUpdates?()
         }
     }
 
-    /// Publish freshly-learned fork statuses. `children`/`syncAll` divide the
-    /// same way `publishToolStatuses`' do, and for the same reasons.
-    func publishForkStatuses(_ statuses: [GitHubSyncStatus],
-                             children: [AppNotificationChild] = [],
-                             syncAll: (() -> Void)? = nil,
-                             gatheredAt: Date = Date()) {
+    /// Publish freshly-learned fork readings. Safe to call from any producer.
+    ///
+    /// Each reading replaces the one held for its fork only when it is at
+    /// least as new; an unsettled status ("not checked", "checking",
+    /// "syncing") is not an answer and is never kept. The counts are then
+    /// derived over the whole catalog from what is held, so a producer that
+    /// read one fork changes that fork's answer and nothing else.
+    ///
+    /// `syncAll` is the page's own serial fast-forward, divided the same way
+    /// `publishToolStatuses`' `updateAll` is and for the same reasons.
+    func publishForkReadings(_ readings: [ForkReading], syncAll: (() -> Void)? = nil) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard let count = Self.forkDriftCount(from: statuses) else { return }
-        guard acceptsReading(.forks, gatheredAt: gatheredAt) else { return }
-        var counts = lastCounts
-        counts.forkDrift = count
-        counts.forksTotal = statuses.count
-        counts.forksChecked = statuses.filter { status in
-            switch status {
-            case .inSync, .behind, .diverged: return true
-            default: return false
+        var changed = false
+        for reading in readings where reading.status.isSettled {
+            if let held = forkReadings[reading.fullName], held.gatheredAt > reading.gatheredAt { continue }
+            if forkReadings[reading.fullName] != reading {
+                forkReadings[reading.fullName] = reading
+                changed = true
             }
-        }.count
+        }
+        let statuses = GitHubSyncCatalog.repos.map { forkReadings[$0.fullName]?.status ?? .unknown }
+        guard let drift = Self.forkDriftCount(from: statuses) else { return }
+        // One assignment, so observers hear the count and its totals together.
+        var counts = lastCounts
+        counts.forkDrift = drift
+        counts.forksDiverged = statuses.filter(\.showsMergeUpstream).count
+        counts.forksTotal = statuses.count
+        counts.forksChecked = statuses.filter(\.isCheckedReading).count
         lastCounts = counts
-        NotificationSources.setGitHubSync(count: count, children: children, syncAll: syncAll) {
+        if changed { notifyForkReadingObservers() }
+        NotificationSources.setGitHubSync(count: drift, diverged: counts.forksDiverged ?? 0,
+                                          children: forkChildren(), syncAll: syncAll) {
             [weak self] in self?.onNavigateToGitHubSync?()
         }
     }
 
-    /// Publish freshly-learned setup-step results.
+    /// Publish freshly-learned setup-step results. Partial results are fine -
+    /// a scheduled drift check answers two of the five steps.
+    ///
+    /// `fm/grandline-github-sync-counts`: the count is derived from
+    /// `SetupStepsReading`, the per-step newest answer Setup's own "Setup
+    /// steps N / M" card reads, rather than from the results passed in. It
+    /// used to be a second reading of the same five steps, written only by
+    /// the poller and a *visible* page, so Home's Bootstrap card and the bell
+    /// could say "1 drifted" beside a Setup card reading 5 / 5.
     func publishSetupStepResults(_ results: [SetupStepKind: Bool?], gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
         SetupStepsReading.shared.record(results, gatheredAt: gatheredAt)
-        guard let count = Self.setupDriftCount(from: results) else { return }
-        guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
+        let verdicts = SetupStepsReading.shared.verdicts
+        guard let count = Self.setupDriftCount(from: verdicts) else { return }
         var counts = lastCounts
         counts.setupDrift = count
         lastCounts = counts
-        // The drifted steps name themselves - `results` is keyed by
+        // The drifted steps name themselves - the reading is keyed by
         // `SetupStepKind`, so no page has to hand them over separately.
         let children = SetupStepKind.allCases
-            .filter { results[$0] == .some(false) }
+            .filter { verdicts[$0] == .some(false) }
             .map { AppNotificationChild(id: "\($0)", name: $0.title, meta: "Not satisfied") }
         NotificationSources.setSetupDrift(count: count, children: children) {
             [weak self] in self?.onNavigateToBootstrap?()
@@ -921,7 +1009,10 @@ extension BackgroundSignalsPoller {
     /// count with `debugSetCounts` has published nothing, so without this the
     /// marks left by an earlier case would make a later one's publish look
     /// stale and be refused.
-    func debugResetReadingClock() { newestReading = [:] }
+    func debugResetReadingClock() {
+        newestReading = [:]
+        forkReadings = [:]
+    }
 
     /// Run the ambient pass's tool half synchronously: the **real**
     /// `sweepSoftware` against an injected cache and item list, then the real
@@ -937,8 +1028,9 @@ extension BackgroundSignalsPoller {
     /// is a live `gh api` call with no override of its own, so the outcomes are
     /// the fixture and everything downstream of them is real.
     func debugRunAmbientForkPass(repos: [GitHubSyncRepoConfig],
-                                 outcomes: [GitHubSyncCheckOutcome]) {
-        applyForkSweep(repos: repos, outcomes: outcomes, gatheredAt: Date())
+                                 outcomes: [GitHubSyncCheckOutcome],
+                                 gatheredAt: Date = Date()) {
+        publishForkReadings(zip(repos, outcomes).map { Self.reading($0, $1, gatheredAt: gatheredAt) })
     }
 }
 #endif
