@@ -1126,3 +1126,51 @@ The next pass then untracks the 48 snapshots and pushes.
 Each was confirmed to fail with its piece of the fix removed (the exclude pathspecs, the untracking call, the real-index update, the event filter).
 A tour render against a scratch repository shaped like the screenshot showed the list down to the one `config.toml` line.
 A second machine that fast-forwards over the untracking commit will have those tracked snapshot files removed from its disk, as git does for any file a pulled commit deletes. That was not tested on a real second machine.
+
+## GitHub sync merges a diverged fork, and every Setup count agrees with its list (`fm/grandline-github-sync-counts-1793598867`)
+
+The captain could not sync a fork with any difference from upstream, and Setup's GitHub sync card read "3 behind" above a list with seven forks up to date and one diverged.
+
+### Why a diverged fork could not be synced
+
+- Sync is `gh repo sync` (or a fast-forward from the scratch clone for a manual upstream), and both refuse a fork with commits of its own, by design.
+- `showsSyncButton` was false for `.diverged`, so the row, its ⋯ menu, the inspector and Sync all offered nothing.
+- A refusal set a placeholder `.diverged(0, 0)` and the re-check then replaced the refusal's reason with a bare "Diverged".
+- A fork with its own commits and nothing new upstream was also classified `.diverged`, an alarm with nothing to pull.
+
+### What the row offers now
+
+- `.behind`: Sync, a fast-forward, confirmed first.
+- `.diverged` with upstream ahead: Merge upstream, confirmed first, one fork at a time.
+  A real fork uses GitHub's `merge-upstream` endpoint, which merges server-side and answers 409 without changing anything on a conflict.
+  A manual-upstream repo merges with `--no-ff` in its scratch clone, checks the fork's tip is an ancestor of the result, and pushes without force.
+  A conflict aborts the merge and pushes nothing.
+- `.ahead`: nothing, because there is nothing to pull.
+- Every failed action keeps a reason and a next step on the row, in the inspector and in a notice, and the fork is re-checked.
+- "Sync all" and the scheduled fork sync stay fast-forward only. Neither can reach `mergeUpstream`.
+- Every owner, repo name and branch passes `GitHubSyncInput` before it reaches an argv.
+
+### Why the card read "3 behind"
+
+- The card counted `showsSyncButton`, so a diverged fork was not counted at all.
+- The page published only while it was on screen, as one snapshot stamped `Date()`, so a check or sync that finished behind another page never reached the card, and an older poll's count stood.
+- The scheduled fork sync published nothing.
+
+Each fork now keeps its newest reading in the poller (`ForkReading`), whoever took it, and the page adopts newer readings into its rows.
+`SignalCounts.forksToSync` is every fork upstream is ahead of, and `SetupSummary.ForksFigure` is the one figure Setup's card and Home's card state: "N behind", "N diverged", "N to sync", "Couldn't check", "x / y read" or "In sync".
+
+### The rest of the count audit
+
+Setup steps became one per-step reading (`SetupStepsReading`), and the drift count Home and the bell read is derived from it.
+The Updates page publishes behind another page, stamped with when its rows were really read.
+Tool counts say "updates" only when every tool counted has one.
+The scheduled tool check, tool install and drift check publish what they learned, through the shared check cache.
+Smaller fixes: Home's Vault card, an unreadable `hosts.json`, a failed PR scan, the menu-bar overdue count at midnight, and "Tools installed" captioned as what it is.
+`HelmMetricCard` steps a word figure down to 14pt before truncating it, because "1 diverged" did not fit a card at 1100pt.
+
+### Verified
+
+`FM_RUN_GITHUB_SYNC_MERGE_TESTS` runs the scratch-clone merge against real local repositories (clean, conflicting, and a fork that moved mid-merge) and drives the page's confirm, merge, refusal and Sync all paths through injected actions.
+`FM_RUN_COUNT_AGREEMENT_TESTS` covers the audit fixes.
+Each was confirmed to fail by name with its fix removed.
+The live `gh api merge-upstream` call was not run against a real fork: no real repository was touched, and the 200 / 409 / 422 handling is asserted from the documented responses.
