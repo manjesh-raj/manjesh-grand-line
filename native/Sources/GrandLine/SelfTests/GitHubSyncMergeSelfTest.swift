@@ -45,6 +45,7 @@ enum GitHubSyncMergeSelfTest {
         checkPageOffersTheRightAction(&ok)
         checkMergeIsConfirmedFirst(&ok)
         checkARefusalKeepsItsReason(&ok)
+        checkAnUnexplainedFailureIsStillSaid(&ok)
         checkSyncAllNeverMerges(&ok)
         checkTheCaptainsCount(&ok)
         checkEachForkKeepsItsNewestReading(&ok)
@@ -457,10 +458,34 @@ enum GitHubSyncMergeSelfTest {
                 return false
             }?.cells["fork"]
             if case .title(_, let subtitle, _, _, _, _)? = fork {
-                check(subtitle == "both change shared.txt", "the row's subtitle is the reason: \(subtitle ?? "nil")", &ok)
+                check(subtitle == "Not changed: both change shared.txt", "the row's subtitle is the reason: \(subtitle ?? "nil")", &ok)
             } else {
                 fail("the fork cell is missing", &ok)
             }
+        }
+    }
+
+    /// A failure nobody explained - the network, an expired login - still
+    /// says what happened, and the row shows the fork's real state after a
+    /// re-check rather than a placeholder that offers the wrong action.
+    private static func checkAnUnexplainedFailureIsStillSaid(_ ok: inout Bool) {
+        print("\n-- a failed merge with no reason of its own is still said, and re-checked --")
+        isolated(answer: .cancel) { asked in
+            let recorder = Recorder()
+            recorder.checkResult = { _ in outcome(.diverged(localOnly: 1, upstreamAhead: 26), "still diverged") }
+            recorder.mergeResult = GitHubSyncSyncOutcome(ok: false, refusedDiverged: false,
+                                                         detail: "gh api merge-upstream for manjesh-raj/automic-vault failed",
+                                                         log: "error connecting to api.github.com")
+            let page = page(recorder)
+            page.debugApplyCheck(index: 6, status: .diverged(localOnly: 1, upstreamAhead: 26),
+                                 upstream: "automic-vault/automic-vault")
+            page.mergeUpstream(page.rows[6])
+            pump(until: { !recorder.checked.isEmpty && !page.rows[6].isBusy })
+            check(page.rows[6].status.showsMergeUpstream,
+                  "after the failure the row is its re-checked self and still offers the merge: \(page.rows[6].status)", &ok)
+            check(page.rows[6].problem?.nextStep.hasPrefix("Nothing was changed") == true,
+                  "and it carries a reason and a next step: \(page.rows[6].problem?.nextStep ?? "nil")", &ok)
+            check(asked().contains { $0.title.hasSuffix("was not changed") }, "a notice said so: \(asked().map(\.title))", &ok)
         }
     }
 

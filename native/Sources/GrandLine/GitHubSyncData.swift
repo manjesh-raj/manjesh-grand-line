@@ -259,8 +259,11 @@ enum GitHubSyncStatus: Equatable {
     /// "not checked", "still checking", or a failed read.
     var isCheckedReading: Bool {
         switch self {
-        case .inSync, .behind, .diverged, .ahead: return true
-        case .unknown, .checking, .notAFork, .checkFailed, .syncing, .syncFailed: return false
+        // A confirmed non-fork is an answer ("nothing to sync"), and a fork
+        // whose sync failed was read before it was synced. Counting either
+        // as unread left the card on "7 / 8 read" after a clean pass.
+        case .inSync, .behind, .diverged, .ahead, .notAFork, .syncFailed: return true
+        case .unknown, .checking, .checkFailed, .syncing: return false
         }
     }
 

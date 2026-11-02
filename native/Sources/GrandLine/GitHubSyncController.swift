@@ -276,7 +276,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             row.detail = reading.detail
             row.log = reading.log
             row.checkedAt = reading.gatheredAt
-            if !(reading.status.isDiverged || reading.status == .syncFailed) { row.problem = nil }
+            if !reading.status.needsSync && reading.status != .checkFailed { row.problem = nil }
             render(row)
         }
     }
@@ -469,6 +469,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             updateSyncAllEnablement()
             return
         }
+        presentsProblems = false
         var synced = 0
         var alreadyInSync = 0
         var refused: [String] = []
@@ -476,6 +477,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         func runNext(_ index: Int) {
             guard index < targets.count else {
                 isSyncingAll = false
+                presentsProblems = true
                 updateSyncAllEnablement()
                 var parts: [String] = []
                 if synced > 0 { parts.append("\(synced) synced") }
@@ -494,6 +496,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 if ok {
                     if row.status == .inSync { alreadyInSync += 1 } else { synced += 1 }
                 } else if row.status.hasOwnCommits {
+                    // Refused because it has commits of its own after all.
                     refused.append(row.repo.fullName)
                 } else {
                     failed.append(row.repo.fullName)
@@ -593,7 +596,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 row.checkedAt = startedAt
                 // A refusal's reason stays while the fork is still in the
                 // state it was refused for; anything else has moved on.
-                if !(outcome.status.isDiverged || outcome.status == .syncFailed) { row.problem = nil }
+                // A failed action's reason stays while the fork still has
+                // something to pull; once nothing is left, it is history.
+                if !outcome.status.needsSync && outcome.status != .checkFailed { row.problem = nil }
                 self?.render(row)
                 completion?()
             }
@@ -668,18 +673,22 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             completion?(false)
             return
         }
-        run(row, actions.sync, completion: completion)
+        run(row, actions.sync, presentsProblem: presentsProblems, completion: completion)
     }
 
     /// Merge upstream into a diverged fork - `GitHubSyncSource.mergeUpstream`,
     /// unconfirmed. `requestSync` is the entry point for a person.
     func mergeUpstream(_ row: GitHubSyncRow, completion: ((Bool) -> Void)? = nil) {
-        run(row, actions.mergeUpstream, completion: completion)
+        run(row, actions.mergeUpstream, presentsProblem: presentsProblems, completion: completion)
     }
+
+    /// False while "Sync all" runs: its own summary names every fork that
+    /// failed, and a notice per fork would stack one modal on another.
+    private var presentsProblems = true
 
     /// The one busy / outcome / re-check path a sync and a merge share.
     private func run(_ row: GitHubSyncRow, _ action: @escaping (GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome,
-                     completion: ((Bool) -> Void)?) {
+                     presentsProblem: Bool, completion: ((Bool) -> Void)?) {
         guard !row.isBusy else {
             completion?(false)
             return
@@ -688,7 +697,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         row.status = .syncing
         row.problem = nil
         render(row)
-        let startedAt = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = action(row.repo)
             DispatchQueue.main.async {
@@ -698,7 +706,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 }
                 row.isBusy = false
                 row.log = outcome.log
-                row.problem = outcome.problem
+                // Every failure carries a reason. One the action did not
+                // explain (a network error, an expired login) still says what
+                // happened and that nothing changed - never a silent failure.
+                let problem = outcome.ok ? nil : outcome.problem ?? GitHubSyncProblem(
+                    reason: outcome.detail,
+                    nextStep: "Nothing was changed. The output in the fork's details has gh's or git's own reason. "
+                        + "Check the fork again, then retry.",
+                    compareURL: nil)
+                row.problem = problem
                 if outcome.ok {
                     row.detail = outcome.detail
                     self.render(row)
@@ -707,19 +723,13 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                     return
                 }
                 row.detail = outcome.detail
-                if outcome.refusedDiverged || outcome.problem != nil {
-                    // A refusal is a real, meaningful signal, not a silent
-                    // no-op - re-check right after so the row shows the
-                    // fork's actual commit counts, and keep the reason
-                    // (`problem`) beside them. Never a placeholder status.
-                    self.check(row) { completion?(false) }
-                } else {
-                    row.status = .syncFailed
-                    row.checkedAt = startedAt
-                    self.render(row)
-                    completion?(false)
-                }
-                if let problem = outcome.problem { self.presentProblem(problem, for: row) }
+                // Re-check right after, so the row shows the fork's real
+                // state and offers the action that state allows, with the
+                // reason (`problem`) beside it. Never a placeholder status:
+                // a `.syncFailed` here once offered a fast-forward on a
+                // diverged fork whose merge had failed.
+                self.check(row) { completion?(false) }
+                if presentsProblem, let problem { self.presentProblem(problem, for: row) }
             }
         }
     }
@@ -1197,7 +1207,7 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         let failed = row.status == .checkFailed || row.status == .syncFailed || row.status.isDiverged
         // The reason an action stopped outranks the status line: "Diverged"
         // is already in the Behind column, and the conflict is the news.
-        let subtitle = row.problem?.reason ?? (failed || row.status.hasOwnCommits ? row.detail : nil)
+        let subtitle = row.problem.map { "Not changed: \($0.reason)" } ?? (failed || row.status.hasOwnCommits ? row.detail : nil)
         tableRow.cells["fork"] = .title(row.repo.fullName, subtitle: subtitle, subtitleIsCode: false,
                                         symbol: "point.3.connected.trianglepath.dotted", tint: .neutral, tintHex: nil)
         if let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName {
