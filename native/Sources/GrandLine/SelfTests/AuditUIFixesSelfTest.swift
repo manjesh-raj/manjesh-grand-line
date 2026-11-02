@@ -313,10 +313,10 @@ enum AuditUIFixesSelfTest {
         guard values[1] == dash, values[2] == dash else {
             return "the Updates summary no longer distinguishes \"not checked yet\" from a real zero: \(values)"
         }
-        // "Tools installed" is the catalog's own size and must stay a real
+        // "Tools tracked" is the catalog's own size and must stay a real
         // number throughout - going unknown there would be its own bug.
         guard let total = Int(values[0]), total > 0 else {
-            return "the Tools installed figure stopped reporting the catalog size: \(values[0])"
+            return "the Tools tracked figure stopped reporting the catalog size: \(values[0])"
         }
         return nil
     }

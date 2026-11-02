@@ -317,27 +317,30 @@ enum SummaryFreshnessSelfTest {
                     return
                 }
 
-                poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: nil, vaultAttention: nil,
-                                            setupDrift: nil, vaultSecrets: nil))
-                // A hidden page re-rendering off stale rows.
+                // A poll pass's reading, published now: nothing to update.
+                poller.debugResetReadingClock()
+                poller.publishToolStatuses([DependencyStatus](repeating: .upToDate, count: DependencyCatalog.items.count))
+                // A hidden page re-rendering rows it read an hour ago.
                 updates.debugApplyStatusesAndRender(
-                    [DependencyStatus](repeating: .updateAvailable, count: DependencyCatalog.items.count))
+                    [DependencyStatus](repeating: .updateAvailable, count: DependencyCatalog.items.count),
+                    checkedAt: Date().addingTimeInterval(-3600))
 
                 if poller.lastCounts.toolUpdates != 0 {
-                    fail("a hidden page published \(String(describing: poller.lastCounts.toolUpdates)) "
-                         + "over the standing 0 - the hub would disagree with what the captain last saw", &ok)
+                    fail("a hidden page's hour-old rows published \(String(describing: poller.lastCounts.toolUpdates)) "
+                         + "over the newer 0 - the hub would go back to an answer it had already replaced", &ok)
                 }
 
-                // ...and the same page, once visible, must still publish.
-                rig.shell.workspace.navigator.show(.updates)
+                // ...but a check that really finished on the hidden page - an
+                // update that completed after the captain navigated away - is
+                // news, and must reach the counts (`fm/grandline-github-sync-counts`).
                 updates.debugApplyStatusesAndRender(
-                    [DependencyStatus](repeating: .updateAvailable, count: DependencyCatalog.items.count))
+                    [DependencyStatus](repeating: .updateAvailable, count: DependencyCatalog.items.count),
+                    checkedAt: Date().addingTimeInterval(1))
                 if poller.lastCounts.toolUpdates != DependencyCatalog.items.count {
-                    fail("a visible page published \(String(describing: poller.lastCounts.toolUpdates)), "
-                         + "expected \(DependencyCatalog.items.count) - the visibility gate is refusing "
-                         + "the case it is supposed to allow", &ok)
+                    fail("a hidden page's fresh check published \(String(describing: poller.lastCounts.toolUpdates)), "
+                         + "expected \(DependencyCatalog.items.count) - a result that lands behind another page is lost", &ok)
                 }
-                if ok { print("  OK  hidden page silent, visible page publishes") }
+                if ok { print("  OK  a hidden page's old rows lose, its fresh check wins") }
             }
         }
     }

@@ -3656,8 +3656,12 @@ final class HomeCanvasController: NSViewController {
         content.toolTip = checking
     }
 
-    /// Updates: how many catalog tools have a newer version available. The
-    /// exact count `UpdatesController`'s own "Updates Available" tile shows.
+    /// Updates: how many catalog tools need an action - a newer version, a
+    /// missing install or a failed check - the count the sidebar's Setup
+    /// badge and the bell state. Worded as "updates" only when every one of
+    /// them really is an update (`fm/grandline-github-sync-counts`): this
+    /// said "13 updates - Ready to install" over thirteen failed checks while
+    /// Setup's own Updates card beside it said 0.
     private func fillUpdates(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own updates
         // artwork, replacing the plain `steeringwheel` glyph - matches
@@ -3675,10 +3679,20 @@ final class HomeCanvasController: NSViewController {
             content.body = .note("Every tool in the catalog is on its latest version.")
             return
         }
-        content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
+        let available = BackgroundSignalsPoller.shared.lastCounts.toolsWithUpdate
+        guard let available, available != updates else {
+            content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
+            content.body = .metric(value: "\(updates)",
+                                   unit: updates == 1 ? "update" : "updates",
+                                   note: "Ready to install from \(PlaceName.of(.updates)).")
+            return
+        }
+        content.chip = .warn("\(updates) need\(updates == 1 ? "s" : "") attention")
         content.body = .metric(value: "\(updates)",
-                               unit: updates == 1 ? "update" : "updates",
-                               note: "Ready to install from \(PlaceName.of(.updates)).")
+                               unit: updates == 1 ? "tool" : "tools",
+                               note: available == 0
+                                   ? "Missing, or could not be checked. See \(PlaceName.of(.updates))."
+                                   : "\(available) with an update, the rest missing or not checked.")
     }
 
     /// Bootstrap: how many of the five setup steps have drifted. This is the
@@ -3854,6 +3868,16 @@ final class HomeCanvasController: NSViewController {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
+            // `fm/grandline-github-sync-counts`: the attention count comes
+            // from the poller's `av doctor` read, which never needs the
+            // secrets count (`av list`, the Vault page's alone). It used to be
+            // hidden behind this branch, so the card said "hasn't been
+            // checked" while the bell said "2 security tools need attention".
+            if let attention = counts.vaultAttention {
+                if attention > 0 { content.chip = .warn("\(attention) need\(attention == 1 ? "s" : "") a look") }
+                content.body = .note("Open \(PlaceName.of(.vault)) to count the hardened secrets.")
+                return
+            }
             // The same two honest loading states as the four Setup modules, for
             // the same reason.
             fillPendingSetupSignal(&content,

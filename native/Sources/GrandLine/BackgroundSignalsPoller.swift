@@ -766,10 +766,11 @@ extension BackgroundSignalsPoller {
     // them; the poller stamps each check as it runs.
 
     /// Signals whose freshness is tracked independently - a pass's tool check
-    /// being outrun by the Updates page says nothing about its setup check.
-    /// The forks are not here: they are tracked per fork, a finer grain than
-    /// this, by `ForkReading.gatheredAt`.
-    enum Signal: Hashable { case tools, setup, vault }
+    /// being outrun by the Updates page says nothing about its vault check.
+    /// The forks and the setup steps are not here: they are tracked per fork
+    /// (`ForkReading.gatheredAt`) and per step (`SetupStepsReading`), a finer
+    /// grain than this.
+    enum Signal: Hashable { case tools, vault }
 
     /// `true` when this reading is at least as new as whatever is published,
     /// recording it as the new high-water mark. Main thread, like every other
@@ -862,7 +863,8 @@ extension BackgroundSignalsPoller {
         counts.toolsUpToDate = statuses.filter { $0 == .upToDate }.count
         counts.toolsWithUpdate = statuses.filter { $0 == .updateAvailable }.count
         lastCounts = counts
-        NotificationSources.setToolUpdates(count: count, children: children, updateAll: updateAll) {
+        NotificationSources.setToolUpdates(count: count, updates: counts.toolsWithUpdate,
+                                           children: children, updateAll: updateAll) {
             [weak self] in self?.onNavigateToUpdates?()
         }
     }
@@ -903,19 +905,27 @@ extension BackgroundSignalsPoller {
         }
     }
 
-    /// Publish freshly-learned setup-step results.
+    /// Publish freshly-learned setup-step results. Partial results are fine -
+    /// a scheduled drift check answers two of the five steps.
+    ///
+    /// `fm/grandline-github-sync-counts`: the count is derived from
+    /// `SetupStepsReading`, the per-step newest answer Setup's own "Setup
+    /// steps N / M" card reads, rather than from the results passed in. It
+    /// used to be a second reading of the same five steps, written only by
+    /// the poller and a *visible* page, so Home's Bootstrap card and the bell
+    /// could say "1 drifted" beside a Setup card reading 5 / 5.
     func publishSetupStepResults(_ results: [SetupStepKind: Bool?], gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
         SetupStepsReading.shared.record(results, gatheredAt: gatheredAt)
-        guard let count = Self.setupDriftCount(from: results) else { return }
-        guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
+        let verdicts = SetupStepsReading.shared.verdicts
+        guard let count = Self.setupDriftCount(from: verdicts) else { return }
         var counts = lastCounts
         counts.setupDrift = count
         lastCounts = counts
-        // The drifted steps name themselves - `results` is keyed by
+        // The drifted steps name themselves - the reading is keyed by
         // `SetupStepKind`, so no page has to hand them over separately.
         let children = SetupStepKind.allCases
-            .filter { results[$0] == .some(false) }
+            .filter { verdicts[$0] == .some(false) }
             .map { AppNotificationChild(id: "\($0)", name: $0.title, meta: "Not satisfied") }
         NotificationSources.setSetupDrift(count: count, children: children) {
             [weak self] in self?.onNavigateToBootstrap?()

@@ -838,9 +838,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// and a non-fork) is applied in one place, so this page's rows and the
     /// hub's card cannot disagree about what "behind" means.
     ///
-    /// Gated on being on screen for the same reason as the Updates page's -
-    /// see `UpdatesController.publishToolUpdateSignal`.
-    ///
     /// `fm/grandline-github-sync-counts`: no longer gated on being on screen.
     /// That gate dropped every check and sync that finished behind another
     /// page, so the card kept an older count than the list it sat above. Each

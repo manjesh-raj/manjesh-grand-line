@@ -2193,6 +2193,13 @@ enum SelfTestDispatch {
             exit(GitHubSyncMergeSelfTest.run() ? 0 : 1)
         }
 
+        // `fm/grandline-github-sync-counts`'s audit of every other count: tool
+        // counts worded by what they count, one reading of the setup steps,
+        // scheduled checks that publish. See CountAgreementSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_COUNT_AGREEMENT_TESTS"] == "1" {
+            exit(CountAgreementSelfTest.run() ? 0 : 1)
+        }
+
         // A real, captain-reported bug on Setup > Updates: most tool rows rendered
         // an empty gap where the "Check" button should be, revealing it only on
         // hover, while other rows in the same list showed it at rest - see

@@ -86,7 +86,14 @@ enum NotificationSources {
     /// They default to empty, which is what every caller that only knows a
     /// count (the poller's own cached reading, a suite) passes: the row then
     /// renders without a disclosure triangle rather than with an empty one.
+    ///
+    /// `count` is every tool offering an action (`showsUpdateButton`) and
+    /// `updates` the ones of them with a newer version. When the two differ -
+    /// a tool not installed, a check that failed - the title says "need
+    /// attention", the sidebar badge's words, because "13 tools have updates"
+    /// over thirteen failed checks is R2-BUG-03's defect over again.
     static func setToolUpdates(count: Int,
+                               updates: Int? = nil,
                                children: [AppNotificationChild] = [],
                                updateAll: (() -> Void)? = nil,
                                navigate: @escaping () -> Void) {
@@ -94,7 +101,7 @@ enum NotificationSources {
             GrandLineNotificationCenter.shared.set(nil, id: toolUpdatesID)
             return
         }
-        let title = count == 1 ? "1 tool has an update" : "\(count) tools have updates"
+        let title = ToolAttention.phrase(attention: count, updates: updates)
         // The reference's own detail line for this row: the tools themselves,
         // which is the only part a captain reads before deciding. With no
         // names to hand, say so plainly rather than inventing a count again -
@@ -120,6 +127,17 @@ enum NotificationSources {
             ),
             id: toolUpdatesID
         )
+    }
+
+    /// How a count of tools needing an action is worded, for the bell, Home's
+    /// Updates card and the briefing - one definition.
+    enum ToolAttention {
+        static func phrase(attention: Int, updates: Int?) -> String {
+            if updates == nil || updates == attention {
+                return attention == 1 ? "1 tool has an update" : "\(attention) tools have updates"
+            }
+            return attention == 1 ? "1 tool needs attention" : "\(attention) tools need attention"
+        }
     }
 
     // MARK: #4 - A personal fork is behind/diverged from upstream

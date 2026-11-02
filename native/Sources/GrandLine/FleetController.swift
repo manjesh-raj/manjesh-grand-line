@@ -1293,6 +1293,7 @@ final class FleetController: NSViewController {
         // number Setup's and Home's GitHub sync cards state.
         inputs.forkDriftCount = counts.forksToSync
         inputs.toolUpdateCount = counts.toolUpdates
+        inputs.toolsWithUpdateCount = counts.toolsWithUpdate
         inputs.setupDriftCount = counts.setupDrift
 
         // No quota read here any more: the briefing's Claude-quota clause was

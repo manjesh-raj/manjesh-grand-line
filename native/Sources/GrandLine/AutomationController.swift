@@ -1052,17 +1052,25 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// does (deliberately - see `HomeCanvasController.fillAutomation`), so
     /// this page publishes it from its own stepper rebuild exactly the way
     /// `BootstrapController.publishSetupDriftSignal` does, through the same
-    /// shared derivation. Gated on being on screen so whichever of the two
-    /// pages the captain is actually looking at is the one that speaks.
+    /// shared derivation, and with the same "only when this page's answers
+    /// changed" rule - see Bootstrap's for why it replaced the visibility gate.
     private func publishSetupDriftSignal() {
         guard isViewLoaded else { return }
         var results: [SetupStepKind: Bool?] = [:]
         for kind in SetupStepKind.allCases { results[kind] = stepIsDone(kind) }
-        // R2-BUG-05: the module's one reading hears every page, shown or not.
-        SetupStepsReading.shared.record(results)
-        guard !view.isHidden else { return }
+        // `fm/grandline-github-sync-counts`: a re-render that learned
+        // nothing new - a theme change, a font-scale change - must not stamp
+        // this page's old answers as new ones over a newer reading. Every
+        // page publishes, shown or not (R2-BUG-05), into one per-step
+        // reading that keeps the newest answer for each step.
+        guard results != lastPublishedSteps else { return }
+        lastPublishedSteps = results
         BackgroundSignalsPoller.shared.publishSetupStepResults(results)
     }
+
+    /// What this page last published, so an unchanged re-render publishes
+    /// nothing (see above).
+    private var lastPublishedSteps: [SetupStepKind: Bool?]?
 
     private func rebuildStepper() {
         guard isViewLoaded else { return }
