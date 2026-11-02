@@ -128,20 +128,29 @@ enum NotificationSources {
 
     /// Same shape as `setToolUpdates` - `children` are the forks, furthest
     /// behind first, each carrying the GitHub Sync page's own per-row sync.
+    ///
+    /// `count` is the forks a fast-forward catches up and `diverged` the ones
+    /// that need a merge; the entry states both, because a diverged fork is
+    /// behind upstream too (`SignalCounts.forksToSync`). "Sync all" is offered
+    /// only when every fork in it is a fast-forward - it never merges - so a
+    /// set with a diverged fork in it opens the page instead.
     static func setGitHubSync(count: Int,
+                              diverged: Int = 0,
                               children: [AppNotificationChild] = [],
                               syncAll: (() -> Void)? = nil,
                               navigate: @escaping () -> Void) {
-        guard count > 0 else {
+        let total = count + diverged
+        guard total > 0 else {
             GrandLineNotificationCenter.shared.set(nil, id: githubSyncID)
             return
         }
-        let title = count == 1 ? "1 fork is behind upstream" : "\(count) forks are behind upstream"
+        let title = total == 1 ? "1 fork is behind upstream" : "\(total) forks are behind upstream"
         // The reference names the worst offender rather than listing six repo
         // names into a truncation - that is the fact that decides whether this
         // is worth opening now.
-        let detail = children.first.map { "Furthest behind: \($0.name)" } ?? "Ready to fast-forward"
-        let action = syncAll.map {
+        let detail = children.first.map { "Furthest behind: \($0.name)" }
+            ?? (diverged > 0 ? "Needs a merge" : "Ready to fast-forward")
+        let action = (diverged == 0 ? syncAll : nil).map {
             AppNotificationAction(label: count == 1 ? "Sync" : "Sync all",
                                   doneMessage: count == 1 ? "Syncing the fork" : "Syncing every fork",
                                   perform: $0)

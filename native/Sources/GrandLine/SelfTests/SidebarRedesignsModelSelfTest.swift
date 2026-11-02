@@ -274,10 +274,18 @@ enum SidebarRedesignsModelSelfTest {
               "the tool totals are \(String(describing: tools.toolsTotal)), \(String(describing: tools.toolsUpToDate)), "
                   + "\(String(describing: tools.toolsWithUpdate)), want 5, 2, 1", &ok)
         let forks: [GitHubSyncStatus] = [.inSync, .behind(3), .checkFailed, .diverged(localOnly: 1, upstreamAhead: 2)]
-        poller.publishForkStatuses(forks, gatheredAt: Date().addingTimeInterval(3600))
-        check(poller.lastCounts.forksTotal == 4 && poller.lastCounts.forksChecked == 3 && poller.lastCounts.forkDrift == 1,
-              "the fork totals are \(String(describing: poller.lastCounts.forksTotal)) and "
-                  + "\(String(describing: poller.lastCounts.forksChecked))", &ok)
+        // The four fixtures are the first four forks; the other four have no
+        // reading yet, so they count toward the total and nothing else.
+        poller.debugResetReadingClock()
+        poller.publishForkReadings(zip(GitHubSyncCatalog.repos, forks).map {
+            .init(fullName: $0.fullName, status: $1, detail: "fixture", log: "", gatheredAt: Date().addingTimeInterval(3600))
+        })
+        check(poller.lastCounts.forksTotal == GitHubSyncCatalog.repos.count && poller.lastCounts.forksChecked == 3
+                && poller.lastCounts.forkDrift == 1 && poller.lastCounts.forksDiverged == 1,
+              "the fork totals are \(String(describing: poller.lastCounts.forksTotal)), "
+                  + "\(String(describing: poller.lastCounts.forksChecked)) checked, "
+                  + "\(String(describing: poller.lastCounts.forkDrift)) behind and "
+                  + "\(String(describing: poller.lastCounts.forksDiverged)) diverged", &ok)
         var results: [SetupStepKind: Bool?] = [:]
         for (index, kind) in SetupStepKind.allCases.enumerated() { results[kind] = index != 1 }
         let reading = SetupStepsReading.shared
@@ -379,7 +387,8 @@ enum SidebarRedesignsModelSelfTest {
         }
         check(updates.contains("action: #selector(checkAllTapped)") && updates.contains("title: \"Check for updates\""),
               "Check for updates is no longer Check all", &ok)
-        check(github.contains("rows.allSatisfy({ $0.status == .inSync })"),
+        check(github.contains("rows.allSatisfy({ $0.status.isUpToDate })")
+                && GitHubSyncStatus.checkFailed.isUpToDate == false,
               "GitHub sync's subtitle can say \"all in sync\" over checks that failed again", &ok)
         check(workspace.contains("automation.scheduleStore = scheduleStore"),
               "Automation no longer lists the app's own schedule store", &ok)

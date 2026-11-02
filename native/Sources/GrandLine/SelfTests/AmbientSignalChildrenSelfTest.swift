@@ -169,16 +169,18 @@ enum AmbientSignalChildrenSelfTest {
                 fail("the ambient pass published no GitHub Sync entry at all", &ok)
                 return
             }
-            // `.diverged` and `.inSync` are the discriminating half here: a
-            // diverged repo has nothing to fast-forward, and counting it would
-            // put a child under a title that never counted it.
-            check(children.map(\.name) == ["gh-axi", "chrome-devtools-axi"],
-                  "the ambient fork pass expanded into \(children.map(\.name)) - expected the two syncable repos, furthest behind first",
+            // `.inSync` is the discriminating half here: it has nothing to
+            // pull. `.diverged` is behind upstream too, so since
+            // `fm/grandline-github-sync-counts` it is a child - the title
+            // counts it - and its button says Merge, because that is what
+            // the page does for it.
+            check(children.map(\.name) == ["gh-axi", "chrome-devtools-axi", "tasks-axi"],
+                  "the ambient fork pass expanded into \(children.map(\.name)) - expected the three forks upstream is ahead of, furthest behind first",
                   &ok)
-            check(children.map(\.meta) == ["12 commits behind upstream/x", "3 commits behind upstream/x"],
+            check(children.map(\.meta) == ["12 commits behind upstream/x", "3 commits behind upstream/x", "diverged"],
                   "the children carry \(children.map(\.meta)) rather than the real behind-by lines the check produced", &ok)
-            check(children.allSatisfy { $0.actionLabel == "Sync" && $0.perform != nil },
-                  "an ambient fork child has no live Sync button", &ok)
+            check(children.map(\.actionLabel) == ["Sync", "Sync", "Merge"] && children.allSatisfy { $0.perform != nil },
+                  "the ambient fork children's buttons are \(children.map(\.actionLabel)) - expected Sync, Sync, Merge", &ok)
             check(children.first?.id == "manjesh-raj/gh-axi",
                   "a child's id is \(children.first?.id ?? "nil") - the page keys its own by full name, and the two must match "
                       + "or the popover re-animates every row when a page takes over", &ok)
@@ -269,7 +271,15 @@ enum AmbientSignalChildrenSelfTest {
             print("  NOTE: could not resolve the app sources - skipping the one-builder guard")
             return
         }
-        for name in ["UpdatesController.swift", "GitHubSyncController.swift", "BackgroundSignalsPoller.swift"] {
+        // `fm/grandline-github-sync-counts`: the GitHub sync page no longer
+        // builds fork children at all. It publishes its rows as readings, and
+        // the poller builds the children from every fork's newest reading -
+        // so there is one fork mapping, in the poller, and the page must
+        // neither build nor hand-roll one.
+        let githubSync = (try? String(contentsOf: dir.appendingPathComponent("GitHubSyncController.swift"), encoding: .utf8)) ?? ""
+        check(githubSync.contains("publishForkReadings(") && !githubSync.contains("AppNotificationChild(id:"),
+              "GitHubSyncController.swift builds fork children of its own again instead of publishing readings", &ok)
+        for name in ["UpdatesController.swift", "BackgroundSignalsPoller.swift"] {
             let text = (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
             let code = text.split(separator: "\n", omittingEmptySubsequences: false)
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }

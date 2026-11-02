@@ -655,15 +655,29 @@ enum ScheduleActions {
     /// applies to its own button. A diverged repo is never touched, `--force` is
     /// never passed, and none of that is relaxed here: this calls that action
     /// unchanged.
+    ///
+    /// `fm/grandline-github-sync-counts`: a diverged fork now has a merge on
+    /// the GitHub sync page, and this still never runs it - a merge creates a
+    /// commit, so it is confirmed by a person, one fork at a time. What this
+    /// run learned is published, though: it used to fast-forward forks and
+    /// tell nobody, so Setup's card and the bell went on counting them as
+    /// behind until the next poll.
     private static func forkSync() -> ScheduleActionResult {
         var synced = 0
         var failed: [String] = []
         var diverged: [String] = []
         var checkFailed = 0
         var logBlocks: [String] = []
+        var readings: [BackgroundSignalsPoller.ForkReading] = []
+        defer {
+            let learned = readings
+            DispatchQueue.main.async { BackgroundSignalsPoller.shared.publishForkReadings(learned) }
+        }
 
         for repo in GitHubSyncCatalog.repos {
+            let checkedAt = Date()
             let outcome = GitHubSyncSource.check(repo)
+            var reading = BackgroundSignalsPoller.reading(repo, outcome, gatheredAt: checkedAt)
             // One block per repo, appended once below regardless of which
             // branch runs - the check's own detail/log, plus the sync's when
             // one was attempted, so a captain reading "View Log" sees exactly
@@ -683,6 +697,9 @@ enum ScheduleActions {
                     if !sync.log.isEmpty { block += "\n\(sync.log)" }
                     if sync.ok {
                         synced += 1
+                        // The check above is now out of date by definition.
+                        let recheckedAt = Date()
+                        reading = BackgroundSignalsPoller.reading(repo, GitHubSyncSource.check(repo), gatheredAt: recheckedAt)
                     } else if sync.refusedDiverged {
                         diverged.append(repo.name)
                     } else {
@@ -691,6 +708,7 @@ enum ScheduleActions {
                 }
             }
             logBlocks.append(block)
+            readings.append(reading)
         }
 
         var parts: [String] = []

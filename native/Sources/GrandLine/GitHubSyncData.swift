@@ -48,6 +48,26 @@
 // `--force`/`--rebase`/`-X ours`/`-X theirs` are never used here either, for
 // the identical reason `syncFork(_:)` never uses `gh repo sync --force`: a
 // repo with real local-only commits must be refused, never overwritten.
+//
+// `fm/grandline-github-sync-counts` added the third action, `mergeUpstream`,
+// because a fork with commits of its own had no way to catch up at all: Sync
+// is a fast-forward and refuses it, by design, so the row offered nothing and
+// the captain was left with a red "Diverged" and no next step. The merge keeps
+// every one of the fork's own commits, because it only ever adds a merge
+// commit on top of them:
+//   - a real fork goes through GitHub's own merge-upstream endpoint
+//     (`POST repos/{owner}/{repo}/merge-upstream`), the operation behind the
+//     web UI's "Sync fork". GitHub merges server-side and answers 409 when the
+//     two sides conflict, in which case nothing changed.
+//   - a manual-upstream repo merges in its scratch clone (`git merge --no-ff`),
+//     checks that the fork's current tip is an ancestor of the result, and
+//     pushes without force. A conflict aborts the merge and pushes nothing.
+// Neither path is reachable from an unattended caller: `ScheduleRunner` and
+// "Sync all" stay fast-forward only, and the page confirms every merge first.
+//
+// Every owner, repo name and branch reaches an argv only after
+// `GitHubSyncInput` has accepted it, so a value that starts with `-` can never
+// be read as an option by `gh` or `git`.
 
 import Foundation
 
@@ -99,6 +119,57 @@ enum GitHubSyncCatalog {
     ]
 }
 
+// MARK: - Input validation
+
+/// The one gate every owner, repo name and branch passes before it reaches a
+/// `gh` or `git` argv. The catalog is a fixed list today, but the default
+/// branch and the parent's name come back from GitHub's API, so they are
+/// untrusted input like anything else read off the network.
+enum GitHubSyncInput {
+
+    /// A GitHub owner or repository name: letters, digits, `.`, `_` and `-`,
+    /// never starting with `-` or `.`.
+    static func isSafeName(_ value: String) -> Bool {
+        guard let first = value.unicodeScalars.first, value.count <= 100,
+              first != "-", first != "." else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.alphanumerics.contains(scalar) && scalar.isASCII
+                || scalar == "." || scalar == "_" || scalar == "-"
+        }
+    }
+
+    /// A branch name this file will put in an argv: never leading `-`, no
+    /// `..`, no whitespace or shell-significant characters, and only the
+    /// characters a default branch realistically uses.
+    static func isSafeBranch(_ value: String) -> Bool {
+        guard let first = value.unicodeScalars.first, value.count <= 200, first != "-", first != "/",
+              !value.contains(".."), !value.hasSuffix("/"), !value.hasSuffix(".lock") else { return false }
+        return value.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.alphanumerics.contains(scalar) && scalar.isASCII
+                || scalar == "." || scalar == "_" || scalar == "-" || scalar == "/"
+        }
+    }
+
+    /// `owner/name`, both halves safe.
+    static func isSafeFullName(_ value: String) -> Bool {
+        let parts = value.split(separator: "/", omittingEmptySubsequences: false)
+        return parts.count == 2 && isSafeName(String(parts[0])) && isSafeName(String(parts[1]))
+    }
+
+    static func isSafe(_ repo: GitHubSyncRepoConfig) -> Bool {
+        guard isSafeName(repo.owner), isSafeName(repo.name) else { return false }
+        if repo.manualUpstreamOwner != nil || repo.manualUpstreamName != nil {
+            guard let upstream = repo.manualUpstreamFullName else { return false }
+            return isSafeFullName(upstream)
+        }
+        return true
+    }
+
+    static func refusal(_ repo: GitHubSyncRepoConfig) -> String {
+        "Refused - \(repo.fullName) is not a valid GitHub repository name, so nothing was run for it."
+    }
+}
+
 // MARK: - Outcomes
 
 enum GitHubSyncStatus: Equatable {
@@ -108,10 +179,16 @@ enum GitHubSyncStatus: Equatable {
     /// Behind upstream by N commits, no diverged local commits - safe to
     /// fast-forward.
     case behind(Int)
-    /// The fork has commits upstream doesn't (`compare`'s `behind_by` > 0) -
-    /// `gh repo sync` will refuse a plain fast-forward here. Never synced by
-    /// this app; see the file header.
+    /// The fork has commits upstream doesn't **and** upstream has commits the
+    /// fork doesn't - `gh repo sync` refuses a plain fast-forward here. Never
+    /// fast-forwarded; `mergeUpstream` is the one way it catches up, and only
+    /// after the captain confirms it. See the file header.
     case diverged(localOnly: Int, upstreamAhead: Int)
+    /// The fork has commits of its own and upstream has nothing new. There is
+    /// nothing to pull, so this is up to date with upstream rather than
+    /// diverged from it - it used to be reported as `.diverged`, which offered
+    /// a "Diverged" alarm with nothing anyone could do about it.
+    case ahead(Int)
     /// A real, confirmed non-fork (`.fork == false`) with no configured
     /// `manualUpstreamFullName` either - nothing to sync, and no way to know
     /// what it should track. A repo with a manual upstream configured (e.g.
@@ -137,14 +214,102 @@ enum GitHubSyncStatus: Equatable {
     var showsSyncButton: Bool {
         switch self {
         case .behind, .syncFailed: return true
-        case .unknown, .checking, .inSync, .diverged, .notAFork, .checkFailed, .syncing: return false
+        case .unknown, .checking, .inSync, .diverged, .ahead, .notAFork, .checkFailed, .syncing: return false
         }
     }
+
+    /// A diverged fork that upstream is ahead of: the one state where the row
+    /// offers "Merge upstream" instead of Sync. Never part of "Sync all" or a
+    /// schedule - a merge creates a commit, so it is always one fork at a
+    /// time, confirmed.
+    var showsMergeUpstream: Bool {
+        if case .diverged(_, let upstreamAhead) = self { return upstreamAhead > 0 }
+        return false
+    }
+
+    /// Upstream has commits this fork does not have yet: a fork that is behind,
+    /// a diverged one, or one whose sync failed and is still waiting. This is
+    /// the one definition every "N to sync" count in the app is taken from.
+    var needsSync: Bool { showsSyncButton || showsMergeUpstream }
 
     var isDiverged: Bool {
         if case .diverged = self { return true }
         return false
     }
+
+    /// Upstream has nothing this fork lacks: in sync, or ahead with commits
+    /// of its own.
+    var isUpToDate: Bool {
+        switch self {
+        case .inSync, .ahead: return true
+        default: return false
+        }
+    }
+
+    /// The fork has commits upstream does not - diverged or ahead. A
+    /// fast-forward refuses exactly these.
+    var hasOwnCommits: Bool {
+        switch self {
+        case .diverged, .ahead: return true
+        default: return false
+        }
+    }
+
+    /// A check that came back with an answer about the fork, as opposed to
+    /// "not checked", "still checking", or a failed read.
+    var isCheckedReading: Bool {
+        switch self {
+        case .inSync, .behind, .diverged, .ahead: return true
+        case .unknown, .checking, .notAFork, .checkFailed, .syncing, .syncFailed: return false
+        }
+    }
+
+    /// A status worth keeping as a fork's latest reading: anything except
+    /// "never checked" and the two in-flight states, which are not answers.
+    var isSettled: Bool {
+        switch self {
+        case .unknown, .checking, .syncing: return false
+        default: return true
+        }
+    }
+
+    /// Classify a fork from its two commit counts, the same way for the
+    /// `compare` API and for the scratch clone's `rev-list`.
+    static func from(localOnly: Int, upstreamAhead: Int) -> GitHubSyncStatus {
+        switch (localOnly > 0, upstreamAhead > 0) {
+        case (true, true): return .diverged(localOnly: localOnly, upstreamAhead: upstreamAhead)
+        case (true, false): return .ahead(localOnly)
+        case (false, true): return .behind(upstreamAhead)
+        case (false, false): return .inSync
+        }
+    }
+
+    /// The row's one-line detail for each classified state.
+    static func detail(localOnly: Int, upstreamAhead: Int, upstream: String) -> String {
+        func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
+        switch from(localOnly: localOnly, upstreamAhead: upstreamAhead) {
+        case .diverged:
+            return "Diverged - \(commits(localOnly)) of its own, \(commits(upstreamAhead)) behind \(upstream)"
+        case .ahead:
+            return "Up to date with \(upstream), plus \(commits(localOnly)) of its own"
+        case .behind:
+            return "\(commits(upstreamAhead)) behind \(upstream)"
+        default:
+            return "In sync with \(upstream)"
+        }
+    }
+}
+
+/// Why a sync or merge could not be done, and what the captain can do next.
+/// Shown in the row, in the inspector and in the notice that follows the
+/// action - never a silent failure.
+struct GitHubSyncProblem: Equatable {
+    let reason: String
+    let nextStep: String
+    /// The page that shows the two sides side by side, when GitHub can draw
+    /// one. A manual-upstream repo is not in its upstream's fork network, so
+    /// GitHub cannot compare across the two and this is `nil` for it.
+    let compareURL: URL?
 }
 
 struct GitHubSyncCheckOutcome {
@@ -168,6 +333,10 @@ struct GitHubSyncSyncOutcome {
     let refusedDiverged: Bool
     let detail: String
     let log: String
+    /// Set when the action could not be done and there is something specific
+    /// the captain can do about it - a merge conflict, a protected branch, a
+    /// fork that moved on GitHub in the meantime.
+    var problem: GitHubSyncProblem? = nil
 }
 
 // MARK: - Process plumbing
@@ -228,6 +397,10 @@ enum GitHubSyncSource {
     /// real-fork path (`checkFork`). See the file header for why these need
     /// to be two different mechanisms.
     static func check(_ repo: GitHubSyncRepoConfig) -> GitHubSyncCheckOutcome {
+        guard GitHubSyncInput.isSafe(repo) else {
+            return GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil,
+                                          detail: GitHubSyncInput.refusal(repo), log: "")
+        }
         if let upstream = repo.manualUpstreamFullName {
             // GL-35, and only on the path that actually keeps clones around.
             pruneOrphanedManualClones()
@@ -246,39 +419,41 @@ enum GitHubSyncSource {
     /// live against all 8 catalog repos before writing this (see PR
     /// description) - every one of them reported `behind_by: 0`.
     private static func checkFork(_ repo: GitHubSyncRepoConfig) -> GitHubSyncCheckOutcome {
+        readFork(repo).outcome
+    }
+
+    /// A real fork's check, plus the default branch it compared - which
+    /// `mergeFork` needs and the outcome does not carry.
+    private static func readFork(_ repo: GitHubSyncRepoConfig) -> (outcome: GitHubSyncCheckOutcome, branch: String?) {
         guard let gh = resolveExecutable("gh") else {
-            return GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil, detail: "'gh' not found on PATH", log: "")
+            return (GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil, detail: "'gh' not found on PATH", log: ""), nil)
         }
         let infoResult = run(gh, ["api", "repos/\(repo.fullName)"])
         guard infoResult.status == 0, let info = parseRepoInfo(infoResult.stdout) else {
-            return GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil, detail: "gh api repos/\(repo.fullName) failed", log: infoResult.combinedLog)
+            return (GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil, detail: "gh api repos/\(repo.fullName) failed", log: infoResult.combinedLog), nil)
         }
         guard info.isFork, let parentFullName = info.parentFullName, let parentOwner = parentFullName.split(separator: "/").first else {
-            return GitHubSyncCheckOutcome(status: .notAFork, upstreamFullName: nil, detail: "\(repo.fullName) is not a GitHub fork - nothing to sync", log: infoResult.combinedLog)
+            return (GitHubSyncCheckOutcome(status: .notAFork, upstreamFullName: nil, detail: "\(repo.fullName) is not a GitHub fork - nothing to sync", log: infoResult.combinedLog), nil)
         }
         let branch = info.defaultBranch
+        guard GitHubSyncInput.isSafeFullName(parentFullName), GitHubSyncInput.isSafeBranch(branch) else {
+            return (GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: nil,
+                                           detail: "Refused - GitHub reported an upstream or branch name that is not safe to pass to gh",
+                                           log: infoResult.combinedLog), nil)
+        }
         let compareResult = run(gh, ["api", "repos/\(repo.fullName)/compare/\(repo.owner):\(branch)...\(parentOwner):\(branch)"])
         let log = [infoResult.combinedLog, compareResult.combinedLog].filter { !$0.isEmpty }.joined(separator: "\n")
         guard compareResult.status == 0, let compare = parseCompare(compareResult.stdout) else {
-            return GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: parentFullName, detail: "Could not compare against \(parentFullName)", log: log)
+            return (GitHubSyncCheckOutcome(status: .checkFailed, upstreamFullName: parentFullName, detail: "Could not compare against \(parentFullName)", log: log), branch)
         }
-        if compare.behindBy > 0 {
-            return GitHubSyncCheckOutcome(
-                status: .diverged(localOnly: compare.behindBy, upstreamAhead: compare.aheadBy),
-                upstreamFullName: parentFullName,
-                detail: "Diverged - \(compare.behindBy) commit(s) unique to this fork, \(compare.aheadBy) behind \(parentFullName)",
-                log: log
-            )
-        }
-        if compare.aheadBy > 0 {
-            return GitHubSyncCheckOutcome(
-                status: .behind(compare.aheadBy),
-                upstreamFullName: parentFullName,
-                detail: "\(compare.aheadBy) commit(s) behind \(parentFullName)",
-                log: log
-            )
-        }
-        return GitHubSyncCheckOutcome(status: .inSync, upstreamFullName: parentFullName, detail: "In sync with \(parentFullName)", log: log)
+        // `compare`'s `behind_by` is what the fork has that upstream lacks,
+        // and `ahead_by` what upstream has that the fork lacks.
+        let outcome = GitHubSyncCheckOutcome(
+            status: .from(localOnly: compare.behindBy, upstreamAhead: compare.aheadBy),
+            upstreamFullName: parentFullName,
+            detail: GitHubSyncStatus.detail(localOnly: compare.behindBy, upstreamAhead: compare.aheadBy, upstream: parentFullName),
+            log: log)
+        return (outcome, branch)
     }
 
     // MARK: Sync
@@ -287,10 +462,118 @@ enum GitHubSyncSource {
     /// upstream path (`syncManual`) when the repo declares one, otherwise the
     /// real-fork path (`syncFork`). Same "never force" guarantee either way.
     static func sync(_ repo: GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome {
+        guard GitHubSyncInput.isSafe(repo) else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: GitHubSyncInput.refusal(repo), log: "")
+        }
         if let upstream = repo.manualUpstreamFullName {
             return syncManual(repo, upstreamFullName: upstream)
         }
         return syncFork(repo)
+    }
+
+    // MARK: Merge upstream (a diverged fork)
+
+    /// Merge upstream into a diverged fork's default branch, keeping every
+    /// commit of the fork's own. The one entry point the page calls, and only
+    /// after the captain has confirmed it - see the file header. Re-reads the
+    /// fork first and refuses unless it is still diverged, so a decision
+    /// confirmed against a stale row cannot act on a fork that has changed.
+    static func mergeUpstream(_ repo: GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome {
+        guard GitHubSyncInput.isSafe(repo) else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: GitHubSyncInput.refusal(repo), log: "")
+        }
+        if let upstream = repo.manualUpstreamFullName {
+            return mergeManual(repo, upstreamFullName: upstream)
+        }
+        return mergeFork(repo)
+    }
+
+    /// The outcome for a fork that is no longer in the state the captain
+    /// confirmed a merge for. Nothing was run.
+    private static func notDivergedAnyMore(_ repo: GitHubSyncRepoConfig, now: GitHubSyncCheckOutcome) -> GitHubSyncSyncOutcome {
+        GitHubSyncSyncOutcome(
+            ok: false, refusedDiverged: false,
+            detail: "Nothing merged - \(repo.fullName) changed since it was checked (\(now.detail)).",
+            log: now.log,
+            problem: GitHubSyncProblem(reason: "\(repo.fullName) is no longer diverged from its upstream: \(now.detail).",
+                                       nextStep: "Nothing was changed. Check the fork again and use the action it offers now.",
+                                       compareURL: nil))
+    }
+
+    /// GitHub's own merge-upstream, for a real fork. Server-side: GitHub adds
+    /// a merge commit on top of the fork's branch, or answers 409 and changes
+    /// nothing when the two sides conflict.
+    private static func mergeFork(_ repo: GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome {
+        guard let gh = resolveExecutable("gh") else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "'gh' not found on PATH", log: "")
+        }
+        let (fresh, branch) = readFork(repo)
+        guard fresh.status.showsMergeUpstream, let branch, let upstream = fresh.upstreamFullName else {
+            return notDivergedAnyMore(repo, now: fresh)
+        }
+        let result = run(gh, ["api", "--method", "POST", "repos/\(repo.fullName)/merge-upstream", "-f", "branch=\(branch)"])
+        let outcome = classifyMergeUpstream(status: result.status, stdout: result.stdout, log: result.combinedLog,
+                                            repo: repo, upstream: upstream, branch: branch)
+        let log = [fresh.log, outcome.log].filter { !$0.isEmpty }.joined(separator: "\n")
+        return GitHubSyncSyncOutcome(ok: outcome.ok, refusedDiverged: outcome.refusedDiverged,
+                                     detail: outcome.detail, log: log, problem: outcome.problem)
+    }
+
+    /// What `gh api --method POST repos/{fork}/merge-upstream` answered, as an
+    /// outcome. Pure, so every branch is asserted without a network.
+    ///
+    /// GitHub answers 200 with a `merge_type` of `merge`, `fast-forward` or
+    /// `none`; 409 when the branches conflict; and 422 when it will not merge
+    /// at all (a protected branch, for one). `gh api` exits non-zero on the
+    /// last two and prints "(HTTP 409)" / "(HTTP 422)" on stderr.
+    static func classifyMergeUpstream(status: Int32, stdout: String, log: String,
+                                      repo: GitHubSyncRepoConfig, upstream: String, branch: String) -> GitHubSyncSyncOutcome {
+        let compare = compareURL(fork: repo.fullName, upstream: upstream, branch: branch)
+        let localSteps = "merge it in a local clone: git fetch upstream, git merge upstream/\(branch), resolve the conflicts, then git push."
+        if status == 0 {
+            let mergeType = (try? JSONSerialization.jsonObject(with: Data(stdout.utf8)) as? [String: Any])?["merge_type"] as? String
+            switch mergeType {
+            case "none":
+                return GitHubSyncSyncOutcome(ok: true, refusedDiverged: false,
+                                             detail: "Already up to date with \(upstream) - nothing was merged", log: log)
+            case "fast-forward":
+                return GitHubSyncSyncOutcome(ok: true, refusedDiverged: false,
+                                             detail: "Fast-forwarded \(repo.fullName) to \(upstream)", log: log)
+            default:
+                return GitHubSyncSyncOutcome(ok: true, refusedDiverged: false,
+                                             detail: "Merged \(upstream) into \(repo.fullName)'s \(branch). Its own commits are unchanged.",
+                                             log: log)
+            }
+        }
+        if log.contains("HTTP 409") {
+            return GitHubSyncSyncOutcome(
+                ok: false, refusedDiverged: true,
+                detail: "Not merged - \(upstream) conflicts with \(repo.fullName)'s own commits. Nothing was changed.",
+                log: log,
+                problem: GitHubSyncProblem(
+                    reason: "GitHub could not merge \(upstream) into \(repo.fullName)'s \(branch): both change the same lines.",
+                    nextStep: "Nothing was changed. Open the compare page to see the two sides, or \(localSteps)",
+                    compareURL: compare))
+        }
+        if log.contains("HTTP 422") {
+            return GitHubSyncSyncOutcome(
+                ok: false, refusedDiverged: true,
+                detail: "Not merged - GitHub refused to merge \(upstream) into \(repo.fullName). Nothing was changed.",
+                log: log,
+                problem: GitHubSyncProblem(
+                    reason: "GitHub refused the merge into \(repo.fullName)'s \(branch). The branch may be protected; the output has GitHub's own reason.",
+                    nextStep: "Nothing was changed. Open the compare page, or \(localSteps)",
+                    compareURL: compare))
+        }
+        return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false,
+                                     detail: "gh api merge-upstream for \(repo.fullName) failed", log: log)
+    }
+
+    /// GitHub's cross-fork compare page: the fork's branch against upstream's.
+    static func compareURL(fork: String, upstream: String, branch: String) -> URL? {
+        let parts = upstream.split(separator: "/")
+        guard parts.count == 2 else { return nil }
+        return URL(string: "https://github.com/\(fork)/compare/\(branch)...\(parts[0]):\(parts[1]):\(branch)")
     }
 
     /// `gh repo sync {owner}/{repo}` - source defaults to the repo's real
@@ -328,7 +611,8 @@ enum GitHubSyncSource {
     private static func fetchDefaultBranch(_ fullName: String) -> RepoDefaultBranch? {
         guard let gh = resolveExecutable("gh") else { return nil }
         let result = run(gh, ["api", "repos/\(fullName)"])
-        guard result.status == 0, let info = parseRepoInfo(result.stdout) else { return nil }
+        guard result.status == 0, let info = parseRepoInfo(result.stdout),
+              GitHubSyncInput.isSafeBranch(info.defaultBranch) else { return nil }
         return RepoDefaultBranch(branch: info.defaultBranch, log: result.combinedLog)
     }
 
@@ -502,19 +786,12 @@ enum GitHubSyncSource {
         }
         logParts.append(counts.log)
         let log = logParts.filter { !$0.isEmpty }.joined(separator: "\n")
-
-        if counts.localOnly > 0 {
-            return GitHubSyncCheckOutcome(
-                status: .diverged(localOnly: counts.localOnly, upstreamAhead: counts.upstreamAhead),
-                upstreamFullName: upstreamFullName,
-                detail: "Diverged - \(counts.localOnly) commit(s) unique to this fork, \(counts.upstreamAhead) behind \(upstreamFullName)",
-                log: log
-            )
-        }
-        if counts.upstreamAhead > 0 {
-            return GitHubSyncCheckOutcome(status: .behind(counts.upstreamAhead), upstreamFullName: upstreamFullName, detail: "\(counts.upstreamAhead) commit(s) behind \(upstreamFullName)", log: log)
-        }
-        return GitHubSyncCheckOutcome(status: .inSync, upstreamFullName: upstreamFullName, detail: "In sync with \(upstreamFullName)", log: log)
+        return GitHubSyncCheckOutcome(
+            status: .from(localOnly: counts.localOnly, upstreamAhead: counts.upstreamAhead),
+            upstreamFullName: upstreamFullName,
+            detail: GitHubSyncStatus.detail(localOnly: counts.localOnly, upstreamAhead: counts.upstreamAhead,
+                                            upstream: upstreamFullName),
+            log: log)
     }
 
     /// Manual-upstream sync: fetches both remotes, re-derives ahead/behind
@@ -559,6 +836,8 @@ enum GitHubSyncSource {
             return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "Could not compare against \(upstreamFullName)", log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
         }
         log.append(counts.log)
+        // A fork with commits of its own is never fast-forwarded. One that is
+        // also behind is `mergeUpstream`'s to handle, after a confirmation.
         guard counts.localOnly == 0 else {
             return GitHubSyncSyncOutcome(
                 ok: false, refusedDiverged: true,
@@ -597,5 +876,133 @@ enum GitHubSyncSource {
             return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "git push origin failed", log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
         }
         return GitHubSyncSyncOutcome(ok: true, refusedDiverged: false, detail: "Fast-forwarded \(repo.fullName) to \(upstreamFullName) and pushed to origin", log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
+    }
+
+    /// Manual-upstream merge: the same fresh fetch and recount as
+    /// `syncManual`, then `mergeInClone` - and only while the fork is still
+    /// diverged, for the reason `mergeUpstream` gives.
+    private static func mergeManual(_ repo: GitHubSyncRepoConfig, upstreamFullName: String) -> GitHubSyncSyncOutcome {
+        guard resolveExecutable("gh") != nil else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "'gh' not found on PATH", log: "")
+        }
+        guard let originInfo = fetchDefaultBranch(repo.fullName) else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "gh api repos/\(repo.fullName) failed", log: "")
+        }
+        guard let upstreamInfo = fetchDefaultBranch(upstreamFullName) else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "gh api repos/\(upstreamFullName) failed", log: originInfo.log)
+        }
+        let clone = ensureManualClone(repo, originURL: "https://github.com/\(repo.fullName).git")
+        guard clone.ok else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "Could not clone \(repo.fullName) locally: \(clone.log)", log: clone.log)
+        }
+        let dir = localCloneDir(for: repo)
+        ensureUpstreamRemote(dir: dir, upstreamURL: "https://github.com/\(upstreamFullName).git")
+        var log: [String] = [clone.log]
+        for (remote, branch) in [("origin", originInfo.branch), ("upstream", upstreamInfo.branch)] {
+            let fetch = runGit(["fetch", remote, branch], cwd: dir, authenticated: true)
+            log.append(fetch.combinedLog)
+            guard fetch.status == 0 else {
+                return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "git fetch \(remote) failed",
+                                             log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
+            }
+        }
+        guard let counts = aheadBehindCounts(dir: dir, originRef: "origin/\(originInfo.branch)",
+                                             upstreamRef: "upstream/\(upstreamInfo.branch)") else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "Could not compare against \(upstreamFullName)",
+                                         log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
+        }
+        let now = GitHubSyncCheckOutcome(
+            status: .from(localOnly: counts.localOnly, upstreamAhead: counts.upstreamAhead),
+            upstreamFullName: upstreamFullName,
+            detail: GitHubSyncStatus.detail(localOnly: counts.localOnly, upstreamAhead: counts.upstreamAhead, upstream: upstreamFullName),
+            log: log.filter { !$0.isEmpty }.joined(separator: "\n"))
+        guard now.status.showsMergeUpstream else { return notDivergedAnyMore(repo, now: now) }
+        let merged = mergeInClone(dir: dir, branch: originInfo.branch, upstreamBranch: upstreamInfo.branch,
+                                  repoFullName: repo.fullName, upstreamFullName: upstreamFullName, authenticated: true)
+        return GitHubSyncSyncOutcome(ok: merged.ok, refusedDiverged: merged.refusedDiverged, detail: merged.detail,
+                                     log: [now.log, merged.log].filter { !$0.isEmpty }.joined(separator: "\n"),
+                                     problem: merged.problem)
+    }
+
+    /// The merge itself, in a scratch clone whose `origin/<branch>` and
+    /// `upstream/<upstreamBranch>` were just fetched. Internal rather than
+    /// private so `GitHubSyncMergeSelfTest` can run it against real local
+    /// repositories.
+    ///
+    /// Why it cannot lose the fork's commits, step by step:
+    ///   1. the local branch is recreated at `origin/<branch>`, the fork's
+    ///      current tip on GitHub;
+    ///   2. `git merge --no-ff` only ever adds a commit whose first parent is
+    ///      that tip;
+    ///   3. before pushing, `merge-base --is-ancestor` confirms the fork's tip
+    ///      really is in the result;
+    ///   4. the push has no force flag, so if the fork moved on GitHub in the
+    ///      meantime git refuses it rather than replacing anything.
+    /// A conflict runs `git merge --abort` and returns before step 3, so
+    /// nothing is pushed and the clone is left clean for the next attempt.
+    static func mergeInClone(dir: URL, branch: String, upstreamBranch: String,
+                             repoFullName: String, upstreamFullName: String,
+                             authenticated: Bool) -> GitHubSyncSyncOutcome {
+        var log: [String] = []
+        func joined() -> String { log.filter { !$0.isEmpty }.joined(separator: "\n") }
+        func step(_ args: [String], remote: Bool = false) -> GitResult {
+            let result = runGit(args, cwd: dir, authenticated: remote && authenticated)
+            log.append(result.combinedLog)
+            return result
+        }
+        let localSteps = "Merge it in a local clone: git fetch upstream, git merge upstream/\(upstreamBranch), resolve the conflicts, then git push."
+        guard GitHubSyncInput.isSafeBranch(branch), GitHubSyncInput.isSafeBranch(upstreamBranch) else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false,
+                                         detail: "Refused - a branch name is not safe to pass to git", log: "")
+        }
+        guard step(["checkout", "-B", branch, "origin/\(branch)"]).status == 0 else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false, detail: "git checkout failed", log: joined())
+        }
+        let message = "Merge \(upstreamFullName) \(upstreamBranch) into \(branch)"
+        let merge = step(["merge", "--no-ff", "--no-edit", "-m", message, "upstream/\(upstreamBranch)"])
+        if merge.status != 0 {
+            let unmerged = runGit(["diff", "--name-only", "--diff-filter=U"], cwd: dir, authenticated: false)
+                .stdout.split(separator: "\n").map(String.init)
+            _ = step(["merge", "--abort"])
+            if !unmerged.isEmpty {
+                let files = unmerged.prefix(5).joined(separator: ", ") + (unmerged.count > 5 ? " and \(unmerged.count - 5) more" : "")
+                return GitHubSyncSyncOutcome(
+                    ok: false, refusedDiverged: true,
+                    detail: "Not merged - \(upstreamFullName) conflicts with \(repoFullName)'s own commits in \(files). Nothing was pushed.",
+                    log: joined(),
+                    problem: GitHubSyncProblem(
+                        reason: "\(upstreamFullName) and \(repoFullName) both change \(files), so the merge needs a person to resolve it.",
+                        nextStep: "Nothing was pushed and the fork is unchanged. \(localSteps)",
+                        compareURL: nil))
+            }
+            return GitHubSyncSyncOutcome(
+                ok: false, refusedDiverged: false,
+                detail: "Not merged - git merge failed for \(repoFullName). Nothing was pushed.",
+                log: joined(),
+                problem: GitHubSyncProblem(
+                    reason: "git could not create the merge commit. The output has git's own reason (often a missing user.name or user.email).",
+                    nextStep: "Nothing was pushed and the fork is unchanged. Fix what the output names, then try again. \(localSteps)",
+                    compareURL: nil))
+        }
+        guard step(["merge-base", "--is-ancestor", "origin/\(branch)", "HEAD"]).status == 0,
+              step(["merge-base", "--is-ancestor", "upstream/\(upstreamBranch)", "HEAD"]).status == 0 else {
+            return GitHubSyncSyncOutcome(ok: false, refusedDiverged: false,
+                                         detail: "Not pushed - the merge result does not contain both sides. Nothing was changed.",
+                                         log: joined())
+        }
+        let push = step(["push", "origin", "HEAD:refs/heads/\(branch)"], remote: true)
+        guard push.status == 0 else {
+            return GitHubSyncSyncOutcome(
+                ok: false, refusedDiverged: false,
+                detail: "Not pushed - GitHub refused the push to \(repoFullName). Nothing was overwritten.",
+                log: joined(),
+                problem: GitHubSyncProblem(
+                    reason: "The push of the merge to \(repoFullName)'s \(branch) was refused. Usually the fork changed on GitHub while the merge ran.",
+                    nextStep: "Nothing was overwritten. Check the fork again and retry the merge.",
+                    compareURL: nil))
+        }
+        return GitHubSyncSyncOutcome(ok: true, refusedDiverged: false,
+                                     detail: "Merged \(upstreamFullName) into \(repoFullName)'s \(branch) and pushed. Its own commits are unchanged.",
+                                     log: joined())
     }
 }

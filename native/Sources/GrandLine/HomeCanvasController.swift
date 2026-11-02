@@ -3730,30 +3730,48 @@ final class HomeCanvasController: NSViewController {
         content.body = .note("A full run would work through \(drift) drifted step\(drift == 1 ? "" : "s") in order, stopping at the first failure.")
     }
 
-    /// GitHub Sync: how many of the captain's forks are behind upstream. The
-    /// same count `GitHubSyncController`'s own rows show a Sync button for.
+    /// GitHub Sync: how many of the captain's forks upstream is ahead of -
+    /// `SetupSummary.ForksFigure`, the same figure and words Setup's own
+    /// GitHub sync card states, so the two cannot disagree.
+    ///
+    /// `fm/grandline-github-sync-counts`: this used to say "In sync - All 8
+    /// forks match their upstream" both for a diverged fork and for a sweep
+    /// where every check failed.
     private func fillGitHubSync(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own GitHub Sync
         // artwork, replacing the plain `arrow.2.squarepath` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.githubSync` case.
         content.artwork = GithubSyncIcon.image
         content.subtitle = "forks"
-        guard let drift = BackgroundSignalsPoller.shared.lastCounts.forkDrift else {
+        let figure = SetupSummary.ForksFigure(BackgroundSignalsPoller.shared.lastCounts)
+        let label = figure.label ?? ""
+        switch figure {
+        case .unread:
             fillPendingSetupSignal(&content,
                                    checking: "Checking each fork against its upstream\u{2026}",
                                    stale: "Fork drift hasn't been checked yet this session.")
-            return
-        }
-        let total = GitHubSyncCatalog.repos.count
-        guard drift > 0 else {
-            content.chip = .ok("In sync")
+        case .toSync(let n, let diverged):
+            content.chip = diverged > 0 ? .bad(label) : .warn(label)
+            let total = GitHubSyncCatalog.repos.count
+            let note: String
+            if diverged == 0 {
+                note = "Behind upstream, of \(total) tracked."
+            } else if diverged == n {
+                note = "Diverged from upstream, of \(total) tracked."
+            } else {
+                note = "Behind upstream, \(diverged) diverged, of \(total) tracked."
+            }
+            content.body = .metric(value: "\(n)", unit: n == 1 ? "fork" : "forks", note: note)
+        case .couldNotCheck:
+            content.chip = .bad(label)
+            content.body = .note("None of the forks could be checked against upstream.")
+        case .partlyRead(let checked, let total):
+            content.chip = .warn(label)
+            content.body = .note("\(total - checked) of \(total) forks could not be checked.")
+        case .inSync(let total):
+            content.chip = .ok(label)
             content.body = .note("All \(total) forks match their upstream.")
-            return
         }
-        content.chip = .warn("\(drift) behind")
-        content.body = .metric(value: "\(drift)",
-                               unit: drift == 1 ? "fork" : "forks",
-                               note: "Behind upstream, of \(total) tracked.")
     }
 
     private func fillSchedules(_ content: inout HelmModuleCard.Content) {

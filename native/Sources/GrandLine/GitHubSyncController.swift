@@ -38,10 +38,18 @@ final class GitHubSyncRow {
     var upstreamFullName: String?
     var detail: String = "Not checked yet"
     var log: String = ""
-    /// When this session last heard back from a check of this fork - the
-    /// sidebar layout's Last checked column (stage 7). Nothing records when
-    /// a fork was last synced, so the table says when it was last read.
+    /// When the reading this row shows was taken - the sidebar layout's Last
+    /// checked column (stage 7), and the stamp this row's reading is
+    /// published with. Set when a check *starts*, the same way the poller
+    /// stamps its own sweep, and also by a failed sync (whose "Sync Failed"
+    /// is a reading of its own) and by adopting a newer reading another
+    /// producer took.
     var checkedAt: Date?
+    /// Why the last sync or merge could not be done, and what to do instead.
+    /// Kept across the re-check that follows a refusal, which would otherwise
+    /// replace the reason with a bare "Diverged" - and cleared by the next
+    /// action, or by a check that finds nothing left to sync.
+    var problem: GitHubSyncProblem?
     var isLogExpanded = false
     /// True while either a check or a sync is running for this row - guards
     /// against double-firing the same row from two places (a row's own
@@ -75,9 +83,20 @@ final class GitHubSyncRow {
     init(repo: GitHubSyncRepoConfig) { self.repo = repo }
 }
 
+/// The three GitHub operations this page runs, as one injectable value. The
+/// app always uses `GitHubSyncSource`; a self-test substitutes fixtures so the
+/// page's real confirm, busy, re-check and publish paths run without `gh`.
+struct GitHubSyncActions {
+    var check: (GitHubSyncRepoConfig) -> GitHubSyncCheckOutcome = GitHubSyncSource.check
+    var sync: (GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome = GitHubSyncSource.sync
+    var mergeUpstream: (GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome = GitHubSyncSource.mergeUpstream
+}
+
 final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     var rows: [GitHubSyncRow] = GitHubSyncCatalog.repos.map(GitHubSyncRow.init)
+    var actions = GitHubSyncActions()
+    private var readingsToken: BackgroundSignalsPoller.CountsObservation?
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
     private var cards: [HelmCard] = []
@@ -133,6 +152,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     deinit {
         if let configRepoToken { ConfigRepoPrivacy.unobserve(configRepoToken) }
+        if let readingsToken { BackgroundSignalsPoller.shared.unobserveForkReadings(readingsToken) }
     }
 
     override func loadView() {
@@ -234,6 +254,31 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
         for row in rows { render(row) }
         applyTheme()
+        // A reading another producer takes while this page is mounted - the
+        // poller's pass, a scheduled fork sync - lands in these rows too, so
+        // the list never disagrees with the card above it. Async so a publish
+        // this page made from inside `render` never re-enters it.
+        readingsToken = BackgroundSignalsPoller.shared.observeForkReadings { [weak self] in
+            DispatchQueue.main.async { self?.adoptNewerReadings() }
+        }
+    }
+
+    /// Take every reading the poller holds that is newer than the row's own.
+    /// A busy row is left alone: its own check or sync is about to answer.
+    func adoptNewerReadings() {
+        guard isViewLoaded else { return }
+        let held = BackgroundSignalsPoller.shared.forkReadings
+        for row in rows where !row.isBusy {
+            guard let reading = held[row.repo.fullName],
+                  reading.gatheredAt > (row.checkedAt ?? .distantPast) else { continue }
+            row.status = reading.status
+            row.upstreamFullName = reading.upstreamFullName
+            row.detail = reading.detail
+            row.log = reading.log
+            row.checkedAt = reading.gatheredAt
+            if !(reading.status.isDiverged || reading.status == .syncFailed) { row.problem = nil }
+            render(row)
+        }
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -248,6 +293,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         view.layoutSubtreeIfNeeded()
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scrollView) { scrollToTop() }
+        // Anything read while this page was hidden, and "just now" re-said
+        // as the age it really is.
+        adoptNewerReadings()
+        renderForksTable()
         if !hasCheckedOnce {
             hasCheckedOnce = true
             checkAll()
@@ -368,13 +417,47 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         syncAllSummaryLabel.isHidden = text.isEmpty
     }
 
-    @objc private func syncAllTapped() { syncAll() }
+    @objc private func syncAllTapped() { requestSyncAll() }
+
+    /// "Sync all", asked for by a person: the button, or the notification's
+    /// own "Sync all". Says which forks it will fast-forward, and that a
+    /// diverged one is left for its own row, before anything is pushed.
+    func requestSyncAll() {
+        guard !isSyncingAll else { return }
+        let targets = rows.filter { $0.status.showsSyncButton }
+        guard !targets.isEmpty else {
+            syncAll()
+            return
+        }
+        guard HelmConfirm.confirm(Self.syncAllConfirmation(targets: targets, rows: rows)) == .confirm else { return }
+        syncAll()
+    }
+
+    /// The copy for "Sync all", as a value so a self-test can assert it.
+    static func syncAllConfirmation(targets: [GitHubSyncRow], rows: [GitHubSyncRow]) -> HelmConfirm.Request {
+        let names = targets.map(\.repo.fullName)
+        let listed = names.count <= 4 ? names.joined(separator: ", ")
+            : names.prefix(3).joined(separator: ", ") + " and \(names.count - 3) more"
+        var body = "Fast-forwards \(listed) to their upstreams and pushes each one to GitHub. "
+            + "None of them has commits of its own, so nothing is replaced, and nothing is force-pushed."
+        let diverged = rows.filter { $0.status.showsMergeUpstream }.count
+        if diverged > 0 {
+            body += " \(diverged == 1 ? "The diverged fork is" : "The \(diverged) diverged forks are") left alone: "
+                + "a merge is done one fork at a time, from its own row."
+        }
+        var request = HelmConfirm.Request(title: "Sync \(targets.count) fork\(targets.count == 1 ? "" : "s")?", body: body)
+        request.confirmTitle = targets.count == 1 ? "Sync" : "Sync \(targets.count)"
+        request.symbol = "arrow.triangle.2.circlepath"
+        return request
+    }
 
     /// Syncs every repo currently showing "behind upstream" - skips a repo
     /// already in sync (nothing to do) and skips (never touches) a diverged
     /// repo, reporting it distinctly rather than silently doing nothing.
     /// Runs one at a time, matching `AutomationController.installAllMissing`'s
     /// own "never race two external-tool invocations concurrently" reasoning.
+    ///
+    /// Unconfirmed: `requestSyncAll` is the entry point for a person.
     private func syncAll() {
         guard !isSyncingAll else { return }
         isSyncingAll = true
@@ -410,7 +493,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             sync(row) { ok in
                 if ok {
                     if row.status == .inSync { alreadyInSync += 1 } else { synced += 1 }
-                } else if row.status.isDiverged {
+                } else if row.status.hasOwnCommits {
                     refused.append(row.repo.fullName)
                 } else {
                     failed.append(row.repo.fullName)
@@ -493,8 +576,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         row.status = .checking
         row.detail = "Checking\u{2026}"
         render(row)
+        let startedAt = Date()
+        let check = actions.check
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = GitHubSyncSource.check(row.repo)
+            let outcome = check(row.repo)
             DispatchQueue.main.async {
                 guard self != nil else {
                     completion?()
@@ -505,7 +590,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 row.upstreamFullName = outcome.upstreamFullName
                 row.detail = outcome.detail
                 row.log = outcome.log
-                row.checkedAt = Date()
+                row.checkedAt = startedAt
+                // A refusal's reason stays while the fork is still in the
+                // state it was refused for; anything else has moved on.
+                if !(outcome.status.isDiverged || outcome.status == .syncFailed) { row.problem = nil }
                 self?.render(row)
                 completion?()
             }
@@ -513,6 +601,61 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     }
 
     // MARK: Sync
+
+    /// A row's sync or merge, asked for by a person - its button, its menu,
+    /// the inspector, or a notification's child row. Confirms first, because
+    /// both push to GitHub, and says what will happen. The fork's state picks
+    /// the action: a fast-forward for one that is only behind, a merge for a
+    /// diverged one. Anything else has nothing to pull and does nothing.
+    func requestSync(_ row: GitHubSyncRow) {
+        guard !row.isBusy else { return }
+        if row.status.showsMergeUpstream {
+            guard HelmConfirm.confirm(Self.mergeConfirmation(row)) == .confirm else { return }
+            mergeUpstream(row)
+        } else if row.status.showsSyncButton {
+            guard HelmConfirm.confirm(Self.syncConfirmation(row)) == .confirm else { return }
+            sync(row)
+        }
+    }
+
+    private static func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
+
+    /// The copy for a fast-forward, as a value so a self-test can assert it.
+    static func syncConfirmation(_ row: GitHubSyncRow) -> HelmConfirm.Request {
+        let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName ?? "its upstream"
+        let what: String
+        if case .behind(let n) = row.status {
+            what = "Adds \(commits(n)) from \(upstream) to \(row.repo.fullName)'s default branch"
+        } else {
+            what = "Retries bringing \(row.repo.fullName)'s default branch up to date with \(upstream)"
+        }
+        var request = HelmConfirm.Request(
+            title: "Sync \(row.repo.fullName)?",
+            body: "\(what) and pushes it to GitHub. The fork has no commits of its own, so this is a "
+                + "fast-forward: nothing is replaced, and nothing is force-pushed.")
+        request.confirmTitle = "Sync"
+        request.symbol = "arrow.triangle.2.circlepath"
+        return request
+    }
+
+    /// The copy for a merge into a diverged fork.
+    static func mergeConfirmation(_ row: GitHubSyncRow) -> HelmConfirm.Request {
+        let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName ?? "its upstream"
+        var own = 0, behind = 0
+        if case .diverged(let localOnly, let upstreamAhead) = row.status { own = localOnly; behind = upstreamAhead }
+        let how = row.repo.manualUpstreamFullName == nil
+            ? "GitHub merges them on its side, the same as the \u{201c}Sync fork\u{201d} button on github.com."
+            : "Grand Line merges them in its own scratch clone and pushes the result."
+        var request = HelmConfirm.Request(
+            title: "Merge \(upstream) into \(row.repo.fullName)?",
+            body: "\(row.repo.fullName) has \(commits(own)) of its own and is \(commits(behind)) behind \(upstream). "
+                + "This adds one merge commit that brings in those \(commits(behind)) and pushes it. \(how) "
+                + "The fork's own \(commits(own)) stay exactly as they are, and nothing is force-pushed or reset. "
+                + "If the two sides conflict, nothing is changed and you get the steps to merge by hand.")
+        request.confirmTitle = "Merge"
+        request.symbol = "arrow.triangle.merge"
+        return request
+    }
 
     /// `completion(ok)` fires on the main queue once this row's sync settles;
     /// `syncAll()` uses it to sequence one repo at a time. A real Check runs
@@ -525,11 +668,29 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             completion?(false)
             return
         }
+        run(row, actions.sync, completion: completion)
+    }
+
+    /// Merge upstream into a diverged fork - `GitHubSyncSource.mergeUpstream`,
+    /// unconfirmed. `requestSync` is the entry point for a person.
+    func mergeUpstream(_ row: GitHubSyncRow, completion: ((Bool) -> Void)? = nil) {
+        run(row, actions.mergeUpstream, completion: completion)
+    }
+
+    /// The one busy / outcome / re-check path a sync and a merge share.
+    private func run(_ row: GitHubSyncRow, _ action: @escaping (GitHubSyncRepoConfig) -> GitHubSyncSyncOutcome,
+                     completion: ((Bool) -> Void)?) {
+        guard !row.isBusy else {
+            completion?(false)
+            return
+        }
         row.isBusy = true
         row.status = .syncing
+        row.problem = nil
         render(row)
+        let startedAt = Date()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = GitHubSyncSource.sync(row.repo)
+            let outcome = action(row.repo)
             DispatchQueue.main.async {
                 guard let self else {
                     completion?(false)
@@ -537,6 +698,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 }
                 row.isBusy = false
                 row.log = outcome.log
+                row.problem = outcome.problem
                 if outcome.ok {
                     row.detail = outcome.detail
                     self.render(row)
@@ -544,19 +706,43 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                     self.check(row) { completion?(true) }
                     return
                 }
-                row.status = outcome.refusedDiverged ? .diverged(localOnly: 0, upstreamAhead: 0) : .syncFailed
                 row.detail = outcome.detail
-                self.render(row)
-                if outcome.refusedDiverged {
+                if outcome.refusedDiverged || outcome.problem != nil {
                     // A refusal is a real, meaningful signal, not a silent
                     // no-op - re-check right after so the row shows the
-                    // fork's actual diverged-commit counts instead of the
-                    // placeholder zeros above.
+                    // fork's actual commit counts, and keep the reason
+                    // (`problem`) beside them. Never a placeholder status.
                     self.check(row) { completion?(false) }
                 } else {
+                    row.status = .syncFailed
+                    row.checkedAt = startedAt
+                    self.render(row)
                     completion?(false)
                 }
+                if let problem = outcome.problem { self.presentProblem(problem, for: row) }
             }
+        }
+    }
+
+    /// Say why the action stopped and what to do next, right away - the row
+    /// and the inspector keep saying it afterwards. Offers the compare page
+    /// when GitHub can draw one.
+    private func presentProblem(_ problem: GitHubSyncProblem, for row: GitHubSyncRow) {
+        var request = HelmConfirm.Request(title: "\(row.repo.fullName) was not changed",
+                                          body: "\(problem.reason)\n\n\(problem.nextStep)")
+        request.symbol = "exclamationmark.triangle.fill"
+        request.hue = .rose
+        if let url = problem.compareURL {
+            request.confirmTitle = "Open compare page"
+            request.cancelTitle = "Close"
+            request.confirmIsDefault = false
+            if HelmConfirm.confirm(request) == .confirm {
+                WebNavigationPolicy.openExternally(url, from: "GitHub sync's merge notice")
+            }
+        } else {
+            request.confirmTitle = "OK"
+            request.cancelTitle = nil
+            _ = HelmConfirm.confirm(request)
         }
     }
 
@@ -587,7 +773,11 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         if diverged > 0 { parts.append("\(diverged) diverged") }
         if failed > 0 { parts.append(failed == total ? "could not be checked" : "\(failed) could not be checked") }
         if notForks > 0 { parts.append("\(notForks) not a fork") }
-        if rows.allSatisfy({ $0.status == .inSync }) { parts.append("all in sync") }
+        // A fork that is ahead has nothing to pull, so it is in sync with
+        // upstream for every purpose this line serves.
+        if rows.allSatisfy({ $0.status.isUpToDate }) {
+            parts.append("all in sync")
+        }
         return parts.joined(separator: " \u{00B7} ")
     }
 
@@ -613,8 +803,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// page's **real** `render(_:)` choke point - see
     /// `UpdatesController.debugApplyStatusesAndRender` for why this drives the
     /// choke point rather than the publish method.
+    ///
+    /// Each status lands as a check that just answered, stamped now - an
+    /// unstamped row is not a reading and is never published.
     func debugApplyStatusesAndRender(_ statuses: [GitHubSyncStatus]) {
-        for (row, status) in zip(rows, statuses) { row.status = status }
+        let now = Date()
+        for (row, status) in zip(rows, statuses) {
+            row.status = status
+            row.checkedAt = now
+        }
         for row in rows { render(row) }
     }
     #endif
@@ -633,8 +830,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     ///
     /// Gated on being on screen for the same reason as the Updates page's -
     /// see `UpdatesController.publishToolUpdateSignal`.
+    ///
+    /// `fm/grandline-github-sync-counts`: no longer gated on being on screen.
+    /// That gate dropped every check and sync that finished behind another
+    /// page, so the card kept an older count than the list it sat above. Each
+    /// row now publishes its own reading with the time it was taken, and the
+    /// poller keeps the newest per fork - so a hidden page re-rendering old
+    /// rows cannot displace anything newer, which is what the gate was for.
     private func publishForkDriftSignal() {
-        guard isViewLoaded, !view.isHidden else { return }
+        guard isViewLoaded else { return }
         // `fm/grandline-notification-center-redesign`: the forks themselves
         // travel with the statuses so the notification row can expand into
         // them, furthest behind first - which is also what its detail line
@@ -645,15 +849,19 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // `NotificationSignalChildren`, shared with the poller's own ambient
         // pass - see `UpdatesController.publishToolUpdateSignal` for why the
         // two producers must not each own a mapping.
+        //
+        // The children are built by the poller from what it holds, through
+        // the same `NotificationSignalChildren.forks`, and their buttons reach
+        // `requestSyncFromNotification` below by way of the shell.
         let pending = rows.filter { $0.status.showsSyncButton }
-        let children = NotificationSignalChildren.forks(
-            rows.map { .init(id: $0.repo.fullName, name: $0.repo.name, status: $0.status, detail: $0.detail) },
-            perform: { [weak self] id in self?.requestSyncFromNotification(repoFullName: id) })
-        BackgroundSignalsPoller.shared.publishForkStatuses(
-            rows.map { $0.status },
-            children: children,
-            syncAll: pending.isEmpty ? nil : { [weak self] in self?.syncAll() }
-        )
+        let readings = rows.compactMap { row -> BackgroundSignalsPoller.ForkReading? in
+            guard let at = row.checkedAt, row.status.isSettled else { return nil }
+            return .init(fullName: row.repo.fullName, status: row.status, upstreamFullName: row.upstreamFullName,
+                         detail: row.detail, log: row.log, gatheredAt: at)
+        }
+        BackgroundSignalsPoller.shared.publishForkReadings(
+            readings,
+            syncAll: pending.isEmpty ? nil : { [weak self] in self?.requestSyncAll() })
     }
 
     /// Run one repo's real sync, asked for from the notification popover's
@@ -672,7 +880,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             return
         }
         guard let row = rows.first(where: { $0.repo.fullName == repoFullName }) else { return }
-        sync(row)
+        requestSync(row)
     }
 
     /// Repos whose Sync was pressed while a check sweep was in flight.
@@ -683,8 +891,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         pendingNotificationSyncs = []
         for fullName in requested {
             guard let row = rows.first(where: { $0.repo.fullName == fullName }),
-                  row.status.showsSyncButton else { continue }
-            sync(row)
+                  row.status.needsSync else { continue }
+            requestSync(row)
         }
     }
 
@@ -712,6 +920,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             syncAllButton.toolTip = "Still checking which forks are behind upstream."
         } else if rows.allSatisfy({ $0.status == .unknown }) {
             syncAllButton.toolTip = "Nothing has been checked yet - press Refresh first."
+        } else if rows.contains(where: { $0.status.showsMergeUpstream }) {
+            syncAllButton.toolTip = "Nothing can be fast-forwarded. A diverged fork is merged from its own row."
         } else {
             syncAllButton.toolTip = "Nothing is behind upstream right now."
         }
@@ -734,7 +944,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // of this method), not here - see that method's own note for why the
         // theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .syncing
-        row.syncButton.isHidden = busy || !row.status.showsSyncButton
+        row.syncButton.isHidden = busy || !row.status.needsSync
+        row.syncButton.title = row.status.showsMergeUpstream ? "Merge upstream\u{2026}" : "Sync now"
         row.statusSkeleton.isHidden = !busy
         row.progressLabel.isHidden = !busy
         row.progressLabel.stringValue = row.status == .syncing ? "Syncing\u{2026}" : "Checking\u{2026}"
@@ -775,6 +986,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         case .inSync: return ("In Sync", .good, .dotWord)
         case .behind(let n): return ("\(n) behind", .warn, .pill)
         case .diverged: return ("Diverged", .critical, .pill)
+        case .ahead: return ("Ahead", .good, .dotWord)
         case .notAFork: return ("Not a Fork", .neutral, .dotWord)
         case .checkFailed: return ("Check Failed", .critical, .pill)
         case .syncFailed: return ("Sync Failed", .critical, .pill)
@@ -792,7 +1004,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // predicates already exist; this only composes them, no new
         // detection. `.inSync`/`.notAFork`/`.unknown` (and a busy
         // `.checking`/`.syncing`) keep today's flat/compact look.
-        let needsAttention = failed || row.status.showsSyncButton
+        let needsAttention = failed || row.status.needsSync
         // UI-43: the row that asks the captain to act keeps its button at rest.
         ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
         let (pillText, pillTint, pillStyle) = pillVisuals(row.status)
@@ -983,7 +1195,10 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
     private func forkRow(_ row: GitHubSyncRow) -> HelmDataTable.Row {
         var tableRow = HelmDataTable.Row.record(row.repo.fullName)
         let failed = row.status == .checkFailed || row.status == .syncFailed || row.status.isDiverged
-        tableRow.cells["fork"] = .title(row.repo.fullName, subtitle: failed ? row.detail : nil, subtitleIsCode: false,
+        // The reason an action stopped outranks the status line: "Diverged"
+        // is already in the Behind column, and the conflict is the news.
+        let subtitle = row.problem?.reason ?? (failed || row.status.hasOwnCommits ? row.detail : nil)
+        tableRow.cells["fork"] = .title(row.repo.fullName, subtitle: subtitle, subtitleIsCode: false,
                                         symbol: "point.3.connected.trianglepath.dotted", tint: .neutral, tintHex: nil)
         if let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName {
             tableRow.cells["upstream"] = .code(upstream)
@@ -994,17 +1209,27 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         tableRow.cells["checked"] = row.checkedAt.map { .muted(Self.relative($0)) } ?? HelmDataTable.Cell.none
         let busy = row.status == .checking || row.status == .syncing
         if !busy {
-            if row.status.showsSyncButton {
-                tableRow.primary = .init(title: "Sync", symbol: "arrow.triangle.2.circlepath") { [weak self] in
-                    self?.sync(row)
+            if let action = Self.syncAction(row.status) {
+                tableRow.primary = .init(title: action.title, symbol: action.symbol) { [weak self] in
+                    self?.requestSync(row)
                 }
                 tableRow.pinsPrimary = true
             }
-            tableRow.menu = [
+            var menu: [HelmDataTable.Action] = []
+            if let action = Self.syncAction(row.status) {
+                menu.append(.init(title: action.menuTitle, symbol: action.symbol) { [weak self] in self?.requestSync(row) })
+            }
+            menu += [
                 .init(title: "Check Now", symbol: "arrow.clockwise") { [weak self] in self?.check(row) },
                 .init(title: "Show Details", symbol: "sidebar.right") { [weak self] in self?.showForkDetails(row) },
                 .init(title: "Open on GitHub", symbol: "safari") { Self.openOnGitHub(row.repo.fullName) },
             ]
+            if let url = row.problem?.compareURL {
+                menu.append(.init(title: "Open Compare Page", symbol: "arrow.left.arrow.right") {
+                    WebNavigationPolicy.openExternally(url, from: "GitHub sync's fork list")
+                })
+            }
+            tableRow.menu = menu
         }
         tableRow.activate = { [weak self] in self?.showForkDetails(row) }
         return tableRow
@@ -1013,7 +1238,7 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
     private func behindCell(_ status: GitHubSyncStatus) -> HelmDataTable.Cell {
         switch status {
         case .behind(let n): return .status("\(n) commit\(n == 1 ? "" : "s")", tint: .warn)
-        case .inSync: return .muted("Up to date")
+        case .inSync, .ahead: return .muted("Up to date")
         case .diverged: return .status("Diverged", tint: .critical)
         case .notAFork: return .muted("Not a fork")
         case .checkFailed: return .status("Check failed", tint: .critical)
@@ -1022,6 +1247,15 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         case .syncing: return .muted("Syncing\u{2026}")
         case .unknown: return .muted("Not checked")
         }
+    }
+
+    /// The one action a row offers to catch up with upstream, or `nil` when
+    /// there is nothing to pull. One definition for the table's button, its
+    /// menu and the inspector, so the three can never offer different things.
+    static func syncAction(_ status: GitHubSyncStatus) -> (title: String, menuTitle: String, symbol: String)? {
+        if status.showsMergeUpstream { return ("Merge", "Merge Upstream\u{2026}", "arrow.triangle.merge") }
+        if status.showsSyncButton { return ("Sync", "Sync\u{2026}", "arrow.triangle.2.circlepath") }
+        return nil
     }
 
     private func showForkDetails(_ row: GitHubSyncRow) {
@@ -1043,10 +1277,18 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         if let at = row.checkedAt { detail.fields.append(.init("Last checked", Self.relative(at))) }
         let lines = row.log.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         detail.sections.append(.init("Output", row.log.isEmpty ? ["No output yet."] : lines, isCode: !row.log.isEmpty))
+        if let problem = row.problem {
+            detail.sections.append(.init("Why it was not changed", [problem.reason, problem.nextStep]))
+        }
         if !(row.status == .checking || row.status == .syncing) {
-            if row.status.showsSyncButton {
-                detail.actions.append(.init("Sync", symbol: "arrow.triangle.2.circlepath", role: .primary) {
-                    [weak self] in self?.sync(row)
+            if let action = Self.syncAction(row.status) {
+                detail.actions.append(.init(action.menuTitle, symbol: action.symbol, role: .primary) {
+                    [weak self] in self?.requestSync(row)
+                })
+            }
+            if let url = row.problem?.compareURL {
+                detail.actions.append(.init("Open Compare Page", symbol: "arrow.left.arrow.right") {
+                    WebNavigationPolicy.openExternally(url, from: "GitHub sync's fork details")
                 })
             }
             detail.actions.append(.init("Check Now", symbol: "arrow.clockwise") { [weak self] in self?.check(row) })

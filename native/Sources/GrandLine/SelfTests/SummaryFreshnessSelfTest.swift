@@ -77,7 +77,7 @@ enum SummaryFreshnessSelfTest {
                 // as the poller's last pass found them.
                 poller.debugSetLastCompletedPassAt(Date())
                 poller.debugSetCounts(.init(toolUpdates: 3, forkDrift: 6, vaultAttention: 0,
-                                            setupDrift: 1, vaultSecrets: 4))
+                                            setupDrift: 1, vaultSecrets: 4, forksTotal: 8, forksChecked: 8))
                 rig.shell.selectSpace(.engineering)
                 rig.canvas.debugRenderNow()
 
@@ -135,7 +135,7 @@ enum SummaryFreshnessSelfTest {
 
                 poller.debugSetLastCompletedPassAt(Date())
                 poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 6, vaultAttention: 0,
-                                            setupDrift: 0, vaultSecrets: 4))
+                                            setupDrift: 0, vaultSecrets: 4, forksTotal: 8, forksChecked: 8))
                 rig.shell.selectSpace(.engineering)
                 rig.canvas.debugRenderNow()
 
@@ -390,7 +390,10 @@ enum SummaryFreshnessSelfTest {
 
             // Each signal tracks its own freshness: an outrun tool check says
             // nothing about the same pass's fork check.
-            poller.publishForkStatuses([.behind(1), .inSync], gatheredAt: passStarted)
+            let repos = GitHubSyncCatalog.repos
+            poller.publishForkReadings(zip(repos.prefix(2), [GitHubSyncStatus.behind(1), .inSync]).map {
+                .init(fullName: $0.fullName, status: $1, detail: "fixture", log: "", gatheredAt: passStarted)
+            })
             if poller.lastCounts.forkDrift != 1 {
                 fail("a fork reading was refused because a *tool* reading was outrun - the signals "
                      + "must track freshness independently", &ok)

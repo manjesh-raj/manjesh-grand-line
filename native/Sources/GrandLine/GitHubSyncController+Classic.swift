@@ -50,6 +50,6 @@ extension GitHubSyncController {
 
     @objc private func syncTapped(_ sender: NSButton) {
         guard let row = row(for: sender) else { return }
-        sync(row)
+        requestSync(row)
     }
 }

@@ -59,16 +59,20 @@ enum NotificationSignalChildren {
         }
     }
 
-    /// The forks that are offering a Sync, **furthest behind first** - which
+    /// The forks upstream is ahead of, **furthest behind first** - which
     /// is also what the notification's own detail line names ("Furthest
     /// behind: …"), so the ordering is load-bearing rather than cosmetic.
+    ///
+    /// A diverged fork is one of them and carries "Merge" rather than "Sync":
+    /// the page routes it to the merge, behind its own confirmation, so a
+    /// button that says Sync never quietly does something else.
     static func forks(_ forks: [Fork],
                       perform: @escaping (String) -> Void) -> [AppNotificationChild] {
-        forks.filter { $0.status.showsSyncButton }
+        forks.filter { $0.status.needsSync }
             .sorted { behindCount($0.status) > behindCount($1.status) }
             .map { fork in
                 AppNotificationChild(id: fork.id, name: fork.name, meta: fork.detail,
-                                     actionLabel: "Sync",
+                                     actionLabel: fork.status.showsMergeUpstream ? "Merge" : "Sync",
                                      perform: { perform(fork.id) })
             }
     }
@@ -77,7 +81,10 @@ enum NotificationSignalChildren {
     /// status that carries no count, which keeps the sort total without
     /// pretending a `.syncFailed` is "0 behind" anywhere else.
     static func behindCount(_ status: GitHubSyncStatus) -> Int {
-        if case .behind(let n) = status { return n }
-        return 0
+        switch status {
+        case .behind(let n): return n
+        case .diverged(_, let upstreamAhead): return upstreamAhead
+        default: return 0
+        }
     }
 }
