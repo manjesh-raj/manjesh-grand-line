@@ -35,6 +35,8 @@ final class HelmMetricCard: NSView {
     static let detailHeight: CGFloat = 108
     /// The metric's size: the prototype's summary figure.
     static let metricSize: CGFloat = 26
+    /// The smallest size `fitFigure` steps down to before it truncates.
+    static let minimumMetricSize: CGFloat = 14
 
     private let card = HelmCard()
     private let captionLabel = NSTextField(labelWithString: "")
@@ -91,11 +93,40 @@ final class HelmMetricCard: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    override func layout() {
+        super.layout()
+        fitFigure()
+    }
+
+    /// A word figure ("1 diverged", "Couldn't check") is wider than a count,
+    /// and five cards in a row at a 1100pt window leave each one about 140pt.
+    /// So a figure that would not fit steps down in size, to
+    /// `minimumMetricSize`, before it truncates - an ellipsis in the middle
+    /// of the card's one fact is the worst way to say it. A figure that fits
+    /// keeps `metricSize`, so every card that fitted before is unchanged.
+    ///
+    /// Gotcha (22): the room comes from the card's own width less its insets,
+    /// which the label does not decide, never from the label's own frame.
+    private func fitFigure() {
+        let insets = HelmCard.contentInsets
+        let room = floor(bounds.width - insets.left - insets.right)
+        guard room > 0 else { return }
+        var size = Self.metricSize
+        var font = HelmType.metric(size)
+        while size > Self.minimumMetricSize,
+              (valueLabel.stringValue as NSString).size(withAttributes: [.font: font]).width > room {
+            size -= 1
+            font = HelmType.metric(size)
+        }
+        if valueLabel.font != font { valueLabel.font = font }
+    }
+
     /// The figure, as text ("6 / 8") or a count. `signals` says whether this
     /// figure is the state worth colouring - a non-zero failure count is, a
     /// zero is not. `nil` is a reading not taken yet: a dash, never a zero.
     func configure(text: String?, signals: Bool, unknownReason: String? = nil) {
         valueLabel.stringValue = text ?? "\u{2014}"
+        fitFigure()
         self.signals = signals && text != nil
         toolTip = text == nil ? unknownReason : nil
         setAccessibilityLabel("\(captionLabel.stringValue), \(text ?? "not known yet")")
@@ -151,6 +182,13 @@ final class HelmMetricCard: NSView {
     #if FM_SELFTESTS
     var debugCaption: String { captionLabel.stringValue }
     var debugValue: String { valueLabel.stringValue }
+    var debugValuePointSize: CGFloat { valueLabel.font?.pointSize ?? 0 }
+    /// Whether the figure, at the font it is painted in, fits the label's
+    /// laid-out width - i.e. is not truncated.
+    var debugValueFits: Bool {
+        let width = (valueLabel.stringValue as NSString).size(withAttributes: [.font: valueLabel.font as Any]).width
+        return width <= valueLabel.frame.width + 0.5
+    }
     var debugValueColor: NSColor? { valueLabel.textColor }
     var debugCard: HelmCard { card }
     /// The detail line as drawn, whichever form it takes.

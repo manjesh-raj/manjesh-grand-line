@@ -577,6 +577,22 @@ enum GitHubSyncMergeSelfTest {
             let text = SetupSummary.githubCard(input, configRepo: nil).text
             check(text == expected, "\(expected ?? "a dash") - got \(text ?? "a dash")", &ok)
         }
+        // The longest words must fit a card at the narrowest width five of
+        // them share: about 140pt each beside the sidebar at 1100pt (measured on the 1100pt render). Measured
+        // off the real card after a real layout pass.
+        for word in ["1 diverged", "2 to sync", "Couldn\u{2019}t check", "12 / 12 read"] {
+            let card = HelmMetricCard(caption: "GitHub sync")
+            card.frame = NSRect(x: 0, y: 0, width: 140, height: HelmMetricCard.height)
+            card.configure(text: word, signals: true)
+            card.layoutSubtreeIfNeeded()
+            check(card.debugValueFits, "'\(word)' fits a 140pt card (\(card.debugValuePointSize)pt) rather than truncating", &ok)
+        }
+        let roomy = HelmMetricCard(caption: "GitHub sync")
+        roomy.frame = NSRect(x: 0, y: 0, width: 300, height: HelmMetricCard.height)
+        roomy.configure(text: "3 behind", signals: true)
+        roomy.layoutSubtreeIfNeeded()
+        check(roomy.debugValuePointSize == HelmType.metric(HelmMetricCard.metricSize).pointSize,
+              "a figure that fits keeps the full size: \(roomy.debugValuePointSize)pt", &ok)
         // Home's card states the same figure: one definition, asserted as a
         // source guard because Home's card is window-backed.
         if let dir = SelfTestSources.appSourceDirectory(),
