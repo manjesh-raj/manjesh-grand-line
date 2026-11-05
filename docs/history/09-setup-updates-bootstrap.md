@@ -1174,3 +1174,48 @@ Smaller fixes: Home's Vault card, an unreadable `hosts.json`, a failed PR scan, 
 `FM_RUN_COUNT_AGREEMENT_TESTS` covers the audit fixes.
 Each was confirmed to fail by name with its fix removed.
 The live `gh api merge-upstream` call was not run against a real fork: no real repository was touched, and the 200 / 409 / 422 handling is asserted from the documented responses.
+
+## The Drift check's dotfiles row (`fm/grandline-drift-check-dotfiles-1793872036`)
+
+The captain's Drift check card showed "Dotfiles & machine config - Drifted - 1 file changed: ome/.config/herdr/config.toml · 31 commits behind origin", with a "Create link" button.
+Every part of that row was wrong in a different way.
+
+### What was wrong
+
+- **"ome/".** The row cut each `git status --short` line with `dropFirst(3)`.
+  `SubprocessResult.stdout` is trimmed, so the first ` M <path>` line arrives as `M <path>` and the drop ate the path's first letter.
+  `BootstrapController.statusLinePath` already existed for exactly this, and the row was the one caller not using it.
+- **"Create link".** It ran `git pull --ff-only && ./rebuild.sh`.
+  A changed file is not a missing link.
+  The pull refuses on a diverged checkout, so nothing happened beyond a Console error, and the file stayed changed either way.
+  It could not overwrite the local change: git refuses when an incoming commit touches a modified file, and herdr's config is an out-of-store symlink that rebuild.sh does not rewrite.
+- **"31 commits behind origin".** The number was right, and it was not drift.
+  All 31 were this app's own Tasks, snippets, vault and daily-backup syncs, pushed from the app's own clone into `GrandLineDocs/` and the backup folders.
+  The checkout was really diverged: one auto-sync commit of the herdr theme, whose push lost a same-second race with the Snippets sync on 2026-10-26.
+  From then on every auto-sync pass stopped as `.diverged`, which is why `HerdrThemeSync`'s later `[theme.custom]` rewrites stayed uncommitted.
+
+### What it does now
+
+- The detail names the whole path, through `statusLinePath`, and says "diverged: 1 ahead, 31 behind" when both sides moved.
+- `DotfilesRepoState` reads `commitsAheadOfOrigin` and `behindOriginPaths` (`git diff --name-only -z HEAD...origin/<branch>`).
+- Being behind counts as drift only when a pull would change something outside the app's own data folders (`DotfilesRepoState.isBehindOnMachineConfig`, using `DotfilesAutoSync.neverAutoCommitted` and `ignoredRuntimePaths`).
+  Unknown paths still count, as before.
+  `SetupStepChecks.dotfilesDone` reads it, so the stepper, Automation, the drift schedule and the bell agree.
+- The row's button comes from `DotfilesDrift.remedy`, and every option is an action the page already had:
+  - "Sync now" for changes under `home/` while auto-sync is on and not stuck.
+  - "Run rebuild.sh" for a clean checkout that is behind on machine config.
+  - "Review" otherwise. It opens and scrolls to the Dotfiles step, whose auto-sync banner says what is wrong.
+
+The captain picked both behaviours (cause-routed action, and behind-origin counted only for machine config) through Firstmate.
+
+### Not done here
+
+- Auto-sync still cannot recover from a push race with the app's own sibling syncs. It stops at `.diverged` until someone runs `git pull --rebase` by hand. Changing how it merges was out of scope.
+- The Dotfiles step's own action button ("Sync Now" / "Run rebuild.sh") does not use `DotfilesDrift.remedy` yet, so it still offers Sync Now on a diverged checkout.
+
+### Verified
+
+`FM_RUN_DOTFILES_DRIFT_ROW_TESTS` builds the real drift row headless and reads its painted detail and its button's title and action.
+It also runs `repoState` against a real diverged repository in the captain's shape.
+Five injections each failed by name: `dropFirst(3)` restored, "Create link" restored, any-behind-is-drift restored, the ahead count removed, and Review only scrolling.
+The before and after renders came from the tour lab's new `renderdrift` verb against a fixture checkout.

@@ -55,6 +55,35 @@ struct DotfilesRepoState {
     /// captain can see *what* is behind, not just the count. `nil` under the
     /// same conditions as `commitsBehindOrigin`; empty when the count is `0`.
     let commitsBehindOriginList: [DotfilesBehindCommit]?
+    /// How many commits `HEAD` has that `origin/<branch>` doesn't, from the
+    /// same fetch. `nil` when unknown. Ahead *and* behind is a diverged
+    /// checkout, which neither `git pull --ff-only` nor auto-sync will move.
+    let commitsAheadOfOrigin: Int?
+    /// Every repo-relative path `origin/<branch>` changed since it and `HEAD`
+    /// parted (`git diff --name-only HEAD...origin/<branch>`) - what a pull
+    /// would actually bring in. `nil` when unknown.
+    let behindOriginPaths: [String]?
+
+    /// Whether this checkout is behind on anything a rebuild would apply.
+    ///
+    /// Being behind is not drift by itself. This app's own syncs (Tasks,
+    /// snippets, the vault, the daily backup) push into the same repository
+    /// from a clone of their own, so `~/.dotfiles` falls behind every day on
+    /// folders no setup step reads. Measured on the captain's machine: 31
+    /// commits behind, every one of them under `GrandLineDocs/` or a backup
+    /// folder. Only an incoming change outside those folders counts. When
+    /// the paths are unknown, being behind still counts, as it always did.
+    var isBehindOnMachineConfig: Bool {
+        guard let behind = commitsBehindOrigin, behind > 0 else { return false }
+        guard let paths = behindOriginPaths else { return true }
+        return paths.contains { !DotfilesSource.isAppDataPath($0) }
+    }
+
+    /// Ahead of origin and behind it at once. Nothing fast-forwards from
+    /// here, so auto-sync stops (`.diverged`) and rebuild.sh's pull refuses.
+    var hasDivergedFromOrigin: Bool {
+        (commitsAheadOfOrigin ?? 0) > 0 && (commitsBehindOrigin ?? 0) > 0
+    }
 }
 
 struct DotfilesBehindCommit: Equatable {
@@ -164,8 +193,38 @@ enum DotfilesSource {
             dirtyFiles: dirty,
             flakeUsername: parseFlakeUsername(repoPath: repoPath),
             commitsBehindOrigin: behind?.count,
-            commitsBehindOriginList: behind?.commits
+            commitsBehindOriginList: behind?.commits,
+            commitsAheadOfOrigin: behind.flatMap { _ in aheadOfOrigin(repoPath: repoPath, branch: branchName) },
+            behindOriginPaths: behind.flatMap { _ in incomingPaths(repoPath: repoPath, branch: branchName) }
         )
+    }
+
+    /// The folders in the dotfiles repository that this app's own syncs write,
+    /// and no setup step reads - `DotfilesAutoSync.neverAutoCommitted` - plus
+    /// the runtime churn under `home/` that is not configuration either.
+    static func isAppDataPath(_ relativePath: String) -> Bool {
+        DotfilesAutoSync.isIgnoredRuntimePath(relativePath)
+            || DotfilesAutoSync.neverAutoCommitted.contains {
+                relativePath == $0 || relativePath.hasPrefix($0 + "/")
+            }
+    }
+
+    /// Read after `behindOrigin`'s fetch, against the remote-tracking ref it
+    /// just updated. `nil` on any failure.
+    private static func aheadOfOrigin(repoPath: String, branch: String?) -> Int? {
+        guard let branch else { return nil }
+        let result = run("/usr/bin/git", ["-C", repoPath, "rev-list", "--count", "origin/\(branch)..HEAD"])
+        guard result.status == 0 else { return nil }
+        return Int(result.stdout)
+    }
+
+    /// `-z` so a path git would otherwise quote comes back verbatim. `nil` on
+    /// any failure.
+    private static func incomingPaths(repoPath: String, branch: String?) -> [String]? {
+        guard let branch else { return nil }
+        let result = run("/usr/bin/git", ["-C", repoPath, "diff", "--name-only", "-z", "HEAD...origin/\(branch)"])
+        guard result.status == 0 else { return nil }
+        return result.stdout.split(separator: "\0").map(String.init).filter { !$0.isEmpty }
     }
 
     /// Fetches `origin/<branch>` for real (updating the local remote-tracking

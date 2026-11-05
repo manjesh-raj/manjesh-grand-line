@@ -592,7 +592,8 @@ enum ReviewUIUXSelfTest {
                                                  dictationStore: DictationStore())
             let state = DotfilesRepoState(repoPath: "/tmp/dotfiles", remoteURL: nil, branch: "main",
                                           dirtyFiles: [], flakeUsername: nil,
-                                          commitsBehindOrigin: nil, commitsBehindOriginList: nil)
+                                          commitsBehindOrigin: nil, commitsBehindOriginList: nil,
+                                          commitsAheadOfOrigin: nil, behindOriginPaths: nil)
             let section = controller.debugDotfilesPresentSection(repoPath: "/tmp/dotfiles", state: state)
 
             let width: CGFloat = 900

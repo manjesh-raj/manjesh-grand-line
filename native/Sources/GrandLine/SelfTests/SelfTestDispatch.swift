@@ -1155,6 +1155,14 @@ enum SelfTestDispatch {
             exit(SetupDataLayerSelfTest.run() ? 0 : 1)
         }
 
+        // Setup's Drift check row for the dotfiles step: the whole path of a
+        // changed file, an action that matches the cause, and "behind origin"
+        // counted only when a pull would change machine config. Headless: it
+        // builds the real row without a window, plus one real-git round trip.
+        if ProcessInfo.processInfo.environment["FM_RUN_DOTFILES_DRIFT_ROW_TESTS"] == "1" {
+            exit(DotfilesDriftRowSelfTest.run() ? 0 : 1)
+        }
+
         // What the Updates page says when an update cannot finish in the background:
         // a timeout reads as one, never as the child's `Error: SIGTERM`, and a cask
         // upgrade that would run `sudo` is handed to the Terminal instead of started.

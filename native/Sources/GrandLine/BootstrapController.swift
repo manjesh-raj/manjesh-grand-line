@@ -316,6 +316,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private var driftLastChecked: Date?
     private var isDriftChecking = false
     private let driftStack = NSStackView()
+    #if FM_SELFTESTS
+    private var debugDriftCardView: NSView?
+    #endif
     private let driftDescLabel = NSTextField(wrappingLabelWithString: "Re-runs each setup step's own check to confirm nothing has drifted since setup - a dotfile that got unlinked, a tool that got uninstalled, or a config that got reverted.")
     private let driftStatusLabel = NSTextField(labelWithString: "")
     private let driftLastCheckedLabel = NSTextField(labelWithString: "")
@@ -532,6 +535,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         driftStack.alignment = .leading
         driftStack.spacing = 10
         let driftCard = card(icon: "arrow.triangle.2.circlepath", title: "Drift check", content: buildDriftSection())
+        #if FM_SELFTESTS
+        debugDriftCardView = driftCard
+        #endif
 
         notSyncedStack.orientation = .vertical
         notSyncedStack.alignment = .leading
@@ -1202,7 +1208,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             guard !isLoadingDotfiles else { return nil }
             guard dotfilesRepoPath != nil else { return ("Not found", .warn, .pill) }
             if let state = repoState, !state.dirtyFiles.isEmpty { return ("Uncommitted changes", .warn, .pill) }
-            if let state = repoState, let behind = state.commitsBehindOrigin, behind > 0 {
+            if let state = repoState, state.isBehindOnMachineConfig, let behind = state.commitsBehindOrigin {
                 return ("\(behind) behind origin", .warn, .pill)
             }
             return ("Verified", .good, .pill)
@@ -1249,22 +1255,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         switch kind {
         case .dotfiles:
             guard let state = repoState else { return stepDetail(for: kind) }
-            var bits: [String] = []
-            if !state.dirtyFiles.isEmpty {
-                let names = state.dirtyFiles.map { line -> String in
-                    // `git status --short` lines are "XY path" (or "XY old -> new"
-                    // for a rename) - drop the two-char status code + separating
-                    // space to show just the path.
-                    line.count > 3 ? String(line.dropFirst(3)) : line
-                }
-                let shown = names.prefix(3).joined(separator: ", ")
-                let more = names.count > 3 ? " +\(names.count - 3) more" : ""
-                bits.append("\(names.count) file\(names.count == 1 ? "" : "s") changed: \(shown)\(more)")
-            }
-            if let behind = state.commitsBehindOrigin, behind > 0 {
-                bits.append("\(behind) commit\(behind == 1 ? "" : "s") behind origin")
-            }
-            return bits.isEmpty ? stepDetail(for: kind) : bits.joined(separator: " \u{00B7} ")
+            return DotfilesDrift.detail(state: state) ?? stepDetail(for: kind)
         case .agentInstructions:
             let unresolved = agentItems.filter { $0.status != .linked }
             guard !unresolved.isEmpty else { return stepDetail(for: kind) }
@@ -1694,6 +1685,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             cardStyle: true
         )
         views.detailLabel.stringValue = driftDetail(for: kind)
+        // The detail is one truncating line, so the whole of it is a hover away.
+        views.detailLabel.toolTip = views.detailLabel.stringValue
         ToolRowLayout.applyTheme(
             views, theme: theme, detailFailed: true,
             cardStyle: true, attentionHex: theme.ansiHex[1], accentBar: true
@@ -1708,7 +1701,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func driftRemedy(for kind: SetupStepKind) -> (String, Selector)? {
         switch kind {
         case .firstmateHome: return ("Review", #selector(driftReviewHomeClicked))
-        case .dotfiles: return ("Create link", #selector(createLinkClicked))
+        case .dotfiles:
+            switch dotfilesDriftRemedy {
+            case .syncNow: return (DotfilesDrift.Remedy.syncNow.title, #selector(syncDotfilesNowClicked))
+            case .runRebuild: return (DotfilesDrift.Remedy.runRebuild.title, #selector(runRebuildClicked))
+            case .review: return (DotfilesDrift.Remedy.review.title, #selector(driftReviewDotfilesClicked))
+            }
         case .agentInstructions: return ("Create link", #selector(createLinkClicked))
         case .software: return ("Install missing", #selector(installAllMissingClicked))
         case .restoreConfig: return ("Import\u{2026}", #selector(importRestoreConfigClicked))
@@ -1717,6 +1715,21 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     @objc private func driftReviewHomeClicked() {
         scrollToStep(.firstmateHome)
+    }
+
+    private var dotfilesDriftRemedy: DotfilesDrift.Remedy {
+        DotfilesDrift.remedy(repoPath: dotfilesRepoPath, state: repoState,
+                             autoSyncEnabled: AppSettings.shared.dotfilesAutoCommitEnabled,
+                             autoSyncStatus: autoSyncStatus)
+    }
+
+    /// Opens the Dotfiles step's details, where the auto-sync banner and the
+    /// behind-origin list say what drifted, and scrolls to it.
+    @objc private func driftReviewDotfilesClicked() {
+        expandedSteps.insert(.dotfiles)
+        refreshSidebarSteps()
+        view.layoutSubtreeIfNeeded()
+        scrollToStep(.dotfiles)
     }
 
     private func scrollToStep(_ kind: SetupStepKind) {
@@ -2896,6 +2909,21 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         _ = view   // the builder reads `theme` and `managedItems`, both set up by `loadView`
         return buildDotfilesPresentSection(repoPath: repoPath, state: state)
     }
+
+    /// One drifted dotfiles row as the Drift check card builds it, from a
+    /// stated repo state and auto-sync status - so a check reads the painted
+    /// detail line and the button's real title and action.
+    func debugDriftedDotfilesRow(repoPath: String?, state: DotfilesRepoState?,
+                                 autoSyncStatus: DotfilesAutoSync.Status) -> NSView {
+        _ = view
+        dotfilesRepoPath = repoPath
+        repoState = state
+        self.autoSyncStatus = autoSyncStatus
+        return driftedItemRow(.dotfiles)
+    }
+
+    /// The Drift check card as mounted, for the tour lab's `renderdrift`.
+    var debugDriftCard: NSView? { debugDriftCardView }
     #endif
 
     private func track(_ labels: NSTextField...) {
