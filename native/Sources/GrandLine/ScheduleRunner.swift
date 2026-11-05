@@ -546,7 +546,7 @@ enum ScheduleActions {
             if !state.dirtyFiles.isEmpty {
                 reasons.append("\(state.dirtyFiles.count) uncommitted file\(state.dirtyFiles.count == 1 ? "" : "s")")
             }
-            if let behind = state.commitsBehindOrigin, behind > 0 {
+            if state.isBehindOnMachineConfig, let behind = state.commitsBehindOrigin {
                 reasons.append("\(behind) commit\(behind == 1 ? "" : "s") behind origin")
             }
         }

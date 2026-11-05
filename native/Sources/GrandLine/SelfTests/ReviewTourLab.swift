@@ -135,6 +135,9 @@ enum ReviewTourLab {
         /// Render only the floating bar, so a tour can compare one row of
         /// squares across pages and palettes without the page under it.
         case renderBar(String)
+        /// Render Setup's Drift check card on its own, wherever the page has
+        /// scrolled it - it sits below the fold at every window height.
+        case renderDrift(String)
         /// Put one needs-decision task on the Fleet page whose open decision
         /// is the captain's own long line (an unbroken sentence with a URL),
         /// read through the real status-file path from a scratch directory.
@@ -308,7 +311,7 @@ enum ReviewTourLab {
         var description: String {
             switch self {
             case .unknownVerb(let v):
-                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, menu, wait, "
+                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, renderdrift, menu, wait, "
                     + "demo, measure, measurewindow, orderfront, probe, tasks, calendar, bar, fleet, inspector, sidebar, "
                     + "tab, customize, select, textscale, settings, grouped, code)"
             case .badArgument(let a): return "bad argument \"\(a)\""
@@ -433,6 +436,9 @@ enum ReviewTourLab {
                 return .failure(.unknownDestination(target))
             }
             return .success(.barState(state, target: target))
+        case "renderdrift":
+            guard !argument.isEmpty else { return .failure(.missingArgument("renderdrift")) }
+            return .success(.renderDrift(argument))
         case "renderbar":
             guard !argument.isEmpty else { return .failure(.missingArgument("renderbar")) }
             return .success(.renderBar(argument))
@@ -627,6 +633,13 @@ enum ReviewTourLab {
                 }
                 log.append(applyBarState(state, target: target, bar: classic.bar))
                 shell.view.layoutSubtreeIfNeeded()
+            case .renderDrift(let name):
+                let url = outputDirectory.appendingPathComponent("\(name).png")
+                if let card = shell.workspace.bootstrap.debugDriftCard, writePNG(of: card, to: url) {
+                    log.append("renderdrift \(url.path)")
+                } else {
+                    log.append("renderdrift FAILED \(name) - Setup's drift card is not mounted")
+                }
             case .renderBar(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
                 guard let classic = shell as? AppShellController else {

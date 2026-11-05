@@ -66,8 +66,7 @@ enum SetupStepChecks {
         guard repoPath != nil else { return false }
         guard let state else { return false }
         guard state.dirtyFiles.isEmpty else { return false }
-        if let behind = state.commitsBehindOrigin, behind > 0 { return false }
-        return true
+        return !state.isBehindOnMachineConfig
     }
 
     static func agentInstructionsDone(isLoading: Bool, items: [AgentInstructionsItem]) -> Bool? {
@@ -86,6 +85,79 @@ enum SetupStepChecks {
     /// "pending" on a machine that doesn't use this feature at all.
     static func restoreConfigDone(hostCount: Int, snippetCount: Int) -> Bool {
         hostCount > 0 || snippetCount > 0
+    }
+}
+
+/// What Setup's Drift check card says about a drifted dotfiles step, and the
+/// one action it offers. Pure, so a suite can state every cause without a
+/// repository or a window.
+///
+/// The row used to offer "Create link" for every dotfiles drift. That button
+/// ran `git pull --ff-only && ./rebuild.sh`: nothing about a changed file or a
+/// diverged branch is a missing link, the pull refuses on a diverged
+/// checkout, and a changed file stays changed. Each cause now gets an action
+/// the page already has for it, and anything no single click can settle goes
+/// to the step itself, whose auto-sync banner says what is wrong.
+enum DotfilesDrift {
+    enum Remedy: Equatable {
+        /// The auto-sync banner's "Sync now": commits and pushes the changed
+        /// files under `home/`. Never discards a local edit.
+        case syncNow
+        /// "Run rebuild.sh": `git pull --ff-only`, then rebuild. Only offered
+        /// on a clean checkout that is strictly behind.
+        case runRebuild
+        /// Open the Dotfiles step and scroll to it.
+        case review
+
+        var title: String {
+            switch self {
+            case .syncNow: return "Sync now"
+            case .runRebuild: return "Run rebuild.sh"
+            case .review: return "Review"
+            }
+        }
+    }
+
+    static func remedy(repoPath: String?, state: DotfilesRepoState?,
+                       autoSyncEnabled: Bool, autoSyncStatus: DotfilesAutoSync.Status) -> Remedy {
+        guard repoPath != nil, let state else { return .review }
+        // Neither a pull nor a sync moves a diverged checkout, and resolving
+        // it by hand is a decision about whose commits win.
+        guard !state.hasDivergedFromOrigin else { return .review }
+        if !state.dirtyFiles.isEmpty {
+            // Auto-sync only ever commits `home/`, so a change anywhere else
+            // is one a sync would leave exactly where it is.
+            let split = BootstrapController.splitDirtyFiles(state.dirtyFiles)
+            guard split.flaggedOnly.isEmpty, autoSyncEnabled else { return .review }
+            switch autoSyncStatus {
+            case .synced, .localChanges, .syncing: return .syncNow
+            case .off, .noRepo, .diverged, .failed: return .review
+            }
+        }
+        return state.isBehindOnMachineConfig ? .runRebuild : .review
+    }
+
+    /// The row's detail line, or `nil` when there is nothing specific to say.
+    static func detail(state: DotfilesRepoState) -> String? {
+        var bits: [String] = []
+        if !state.dirtyFiles.isEmpty {
+            // `statusLinePath`, never a fixed-offset drop: `stdout` is
+            // trimmed, so the first ` M <path>` line arrives as `M <path>`
+            // and `dropFirst(3)` ate the first letter of the path.
+            let names = state.dirtyFiles.map { BootstrapController.statusLinePath($0) ?? $0 }
+            let shown = names.prefix(3).joined(separator: ", ")
+            let more = names.count > 3 ? " +\(names.count - 3) more" : ""
+            bits.append("\(names.count) file\(names.count == 1 ? "" : "s") changed: \(shown)\(more)")
+        }
+        if state.hasDivergedFromOrigin, let ahead = state.commitsAheadOfOrigin, let behind = state.commitsBehindOrigin {
+            // Short on purpose, in `git status`'s own words: the row is one
+            // line, and at 1100pt "diverged from origin - 1 local commit not
+            // pushed, 31 behind" truncated before the numbers.
+            bits.append("diverged: \(ahead) ahead, \(behind) behind")
+        } else if state.isBehindOnMachineConfig, let behind = state.commitsBehindOrigin {
+            bits.append("\(behind) commit\(behind == 1 ? "" : "s") behind origin")
+        }
+        return bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} ")
     }
 }
 
