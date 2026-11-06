@@ -1219,3 +1219,43 @@ The captain picked both behaviours (cause-routed action, and behind-origin count
 It also runs `repoState` against a real diverged repository in the captain's shape.
 Five injections each failed by name: `dropFirst(3)` restored, "Create link" restored, any-behind-is-drift restored, the ahead count removed, and Review only scrolling.
 The before and after renders came from the tour lab's new `renderdrift` verb against a fixture checkout.
+
+## Updates and GitHub Sync scroll over their tables (`fm/grandline-updates-page-scroll-trap-1793962002`)
+
+The captain reported that Setup > Updates would not scroll with the pointer over the Tools card.
+It scrolled over the margins either side of the card and stopped as soon as the pointer crossed into it.
+
+### What was wrong
+
+The Tools card is a `HelmDataTable` with `sizesToFitRows`, so the card grows to every row and the page does the scrolling.
+The table still sits in its own `NSScrollView`, nested inside the page's.
+AppKit has no scroll chaining between nested scroll views.
+A wheel or trackpad event goes to the innermost scroll view under the pointer, and a plain `NSScrollView` keeps it even when it has nothing to scroll.
+GitHub Sync's forks card is the same table shape, so that tab had the same trap.
+Setup steps and Automation build their rows from `ToolRowLayout` with no nested scroll view, and scroll normally.
+
+Home's Needs Attention list had already solved this for itself with a private `NeedsAttentionListScrollView`.
+
+### What it does now
+
+That class is now the shared `HelmNestedScrollView`.
+It hands a wheel event to the next responder (the page) while its document fits vertically, and keeps it while rows are below the fold.
+`HelmDataTable` and the Needs Attention list both use it.
+This also covers every other fitted `HelmDataTable` sitting in a scrolling page, such as the Tasks page's tables, Log Analyzer, Vault and the health card.
+No layout changed.
+
+### Verified
+
+`FM_RUN_HELM_DATA_TABLE_WHEEL_TESTS` loads the real Updates and GitHub Sync pages and delivers a `CGEvent`-built wheel event to the view hit-tested under the pointer.
+It records which `NSScrollView` runs `scrollWheel(with:)` by exchanging that method for the duration of each case.
+Over the margin the page receives it, which is the control.
+Over the rows the page must receive it and the table's own scroll view must not.
+A third case checks a clipped table still keeps its own wheel.
+
+Two things were measured while writing it.
+A synthetic wheel event never moves an off-screen window's scroll view, even over the margin, so no offset assertion could fail.
+And neither `window.sendEvent` nor `NSApplication.sendEvent` delivered such an event to an off-screen window at all.
+So the suite enters at the hit view, as `NSWindow` does, and builds no window, which puts it in CI's blocking headless lane.
+
+Two injections each failed by name: a plain `NSScrollView` back in `HelmDataTable` (the captain's bug, on both pages), and a scroll view that always forwards (the clipped case).
+The live scroll on a real trackpad is the captain's check: no composited window was launched from the worktree.
