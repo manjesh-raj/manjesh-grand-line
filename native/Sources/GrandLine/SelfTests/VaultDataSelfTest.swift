@@ -82,6 +82,74 @@ enum VaultDataSelfTest {
         check("tool with issues parsed", withIssues.count == 1)
         check("tool with issues status", withIssues.first?.status == .needsAttention(issueCount: 2))
 
+        // MARK: parseDoctorTools keeps the doctor's detail (not just a count)
+
+        let doctorJSON = #"""
+        {"results":[{"name":"node","commands":["npm"],"issues":[{"command":"npm","kind":"stub_wrong_type",
+        "message":"hardened launcher /usr/local/bin/npm is a symbolic link; expected a regular file",
+        "remediation":"Remove /usr/local/bin/npm after reviewing it, then run `av harden node`. Manual repair: install the launcher directly.",
+        "resolved_path":null,"stub_path":"/usr/local/bin/npm","target_path":"/opt/homebrew/bin/npm"}]},
+        {"name":"claude","commands":["claude"],"issues":[]}]}
+        """#
+        let detailed = VaultSource.parseDoctorTools(doctorJSON) ?? []
+        let nodeIssue = detailed.first?.issues.first
+        check("the doctor's kind is kept", nodeIssue?.kind == "stub_wrong_type")
+        check("the doctor's message is kept", nodeIssue?.message == "hardened launcher /usr/local/bin/npm is a symbolic link; expected a regular file")
+        check("the doctor's remediation is kept", nodeIssue?.remediation.hasPrefix("Remove /usr/local/bin/npm") == true)
+        check("stub and target paths are kept", nodeIssue?.stubPath == "/usr/local/bin/npm" && nodeIssue?.targetPath == "/opt/homebrew/bin/npm")
+        check("a null path stays nil, never an empty string", VaultSource.parseDoctorTools(
+            #"{"results":[{"name":"x","commands":[],"issues":[{"kind":"k","message":"m","remediation":"r"}]}]}"#)?.first?.issues.first?.stubPath == nil)
+        check("the count still comes from the issues array", detailed.first?.status == .needsAttention(issueCount: 1))
+        check("a hardened launcher carries no issues", detailed.last?.issues.isEmpty == true)
+        check("remediation commands are the backticked spans only", nodeIssue?.commands == ["av harden node"])
+        check("a remediation with no backticks has no commands",
+              VaultToolIssue(kind: "k", message: "m", remediation: "Reinstall it.", stubPath: nil, targetPath: nil).commands == [])
+        check("an unclosed backtick yields no command",
+              VaultToolIssue(kind: "k", message: "m", remediation: "run `av harden", stubPath: nil, targetPath: nil).commands == [])
+
+        // The launcher row's subtitle and the banner say the problem.
+        check("the row subtitle is the doctor's message", detailed.first?.issueSummary == nodeIssue?.message)
+        check("a second issue is counted, not dropped",
+              VaultTool(name: "t", commands: [], status: .needsAttention(issueCount: 2),
+                        issues: [VaultToolIssue(kind: "a", message: "first", remediation: "", stubPath: nil, targetPath: nil),
+                                 VaultToolIssue(kind: "b", message: "second", remediation: "", stubPath: nil, targetPath: nil)]).issueSummary == "first (+1 more)")
+        check("a tool with only a count has no summary", VaultTool(name: "t", commands: [], status: .needsAttention(issueCount: 1)).issueSummary == nil)
+        check("the banner names the launcher and the problem",
+              VaultSource.attentionBannerText(for: detailed)?.contains("node needs attention: hardened launcher /usr/local/bin/npm is a symbolic link") == true)
+        check("no banner when nothing needs attention", VaultSource.attentionBannerText(for: [VaultTool(name: "c", commands: [], status: .hardened)]) == nil)
+        check("the banner for several tools lists them",
+              VaultSource.attentionBannerText(for: [VaultTool(name: "a", commands: [], status: .needsAttention(issueCount: 1)),
+                                                    VaultTool(name: "b", commands: [], status: .needsAttention(issueCount: 1))])?.hasPrefix("2 tools need attention: a, b") == true)
+        check("re-check refuses a name that is not a safe token", VaultSource.recheckTool(named: "--all") == nil)
+
+        // MARK: child PATH order (Automic Vault's launchers live in /usr/local/bin)
+        //
+        // `av doctor` reports stub_not_first_on_path when a Homebrew binary
+        // resolves ahead of a hardened stub, and every command this app runs
+        // gets this PATH.
+
+        func order(_ path: String, _ a: String, _ b: String) -> Bool {
+            let parts = path.split(separator: ":").map(String.init)
+            guard let i = parts.firstIndex(of: a), let j = parts.firstIndex(of: b) else { return false }
+            return i < j
+        }
+        let bare = pathWithStandardLocations("/usr/bin:/bin:/usr/sbin:/sbin")
+        check("a bare PATH puts /usr/local/bin ahead of /opt/homebrew/bin", order(bare, "/usr/local/bin", "/opt/homebrew/bin"))
+        check("a bare PATH puts /usr/local/sbin ahead of /opt/homebrew/sbin", order(bare, "/usr/local/sbin", "/opt/homebrew/sbin"))
+        check("the standard locations lead the PATH", bare.hasPrefix("/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin"))
+        check("an empty PATH still gets all four", pathWithStandardLocations("") == "/usr/local/bin:/usr/local/sbin:/opt/homebrew/bin:/opt/homebrew/sbin")
+        let homebrewFirst = pathWithStandardLocations("/opt/homebrew/bin:/usr/bin")
+        check("a PATH that already has Homebrew gets /usr/local/bin ahead of it", order(homebrewFirst, "/usr/local/bin", "/opt/homebrew/bin"))
+        check("an entry already present is not duplicated", homebrewFirst.split(separator: ":").filter { $0 == "/opt/homebrew/bin" }.count == 1)
+        check("when both are already present the incoming order is kept",
+              pathWithStandardLocations("/opt/homebrew/bin:/usr/local/bin:/usr/bin").hasPrefix("/usr/local/sbin:/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/sbin:/usr/bin"))
+        check("a PATH with only /usr/local/bin gets Homebrew behind it",
+              order(pathWithStandardLocations("/usr/local/bin:/usr/bin"), "/usr/local/bin", "/opt/homebrew/bin"))
+        check("a PATH with only /opt/homebrew/sbin still gets /usr/local/sbin ahead of it",
+              order(pathWithStandardLocations("/opt/homebrew/sbin:/usr/bin"), "/usr/local/sbin", "/opt/homebrew/sbin"))
+        check("the child environment's PATH is built by pathWithStandardLocations",
+              (childEnvironmentDict()["PATH"] ?? "").hasSuffix(ProcessInfo.processInfo.environment["PATH"] ?? ""))
+
         // MARK: parseSecretList (B1)
 
         check("a failed `av list` is a failed read (nil), not an empty vault",

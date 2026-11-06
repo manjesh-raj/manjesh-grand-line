@@ -48,6 +48,10 @@ enum VaultLoadingStateSelfTest {
             ("realDataRendersRealRows", test_realDataRenders),
             ("aFailedReadNeverClaimsAllClear", test_failedReadDoesNotClaimAllClear),
             ("recipeExportRefusesADegradedRead", test_recipeGuardsSourceCheck),
+            ("aLauncherWithIssuesShowsTheDoctorsMessage", test_doctorDetailIsShown),
+            ("aLauncherRowOffersTheFixAndARecheck", test_launcherRowActions),
+            ("aRecheckReplacesOnlyThatLauncherAndAFailedOneKeepsTheReading", test_recheckResult),
+            ("theFixSheetShowsCopyableCommandsAndRunsNothing", test_issueSheet),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -194,6 +198,95 @@ enum VaultLoadingStateSelfTest {
         let guards = text.components(separatedBy: "guard !snapshot.isDegraded else {").count - 1
         guard guards >= 2 else {
             return "only \(guards) of the two recipe actions (Export Recipe, Check Against Backup) refuse a failed read"
+        }
+        return nil
+    }
+
+    private static let nodeIssue = VaultToolIssue(
+        kind: "stub_wrong_type",
+        message: "hardened launcher /usr/local/bin/npm is a symbolic link; expected a regular file",
+        remediation: "Remove /usr/local/bin/npm after reviewing it, then run `av harden node`.",
+        stubPath: "/usr/local/bin/npm", targetPath: "/opt/homebrew/bin/npm")
+    private static var nodeTool: VaultTool {
+        VaultTool(name: "node", commands: ["npm"], status: .needsAttention(issueCount: 1), issues: [nodeIssue])
+    }
+
+    private static func test_doctorDetailIsShown() -> String? {
+        let (window, controller) = mounted()
+        defer { window.contentView = nil }
+        controller.debugRender(secrets: [], tools: [nodeTool])
+        guard controller.debugAttentionBannerVisible,
+              controller.debugAttentionBannerText.contains("symbolic link") else {
+            return "the banner does not name the problem: \"\(controller.debugAttentionBannerText)\""
+        }
+        guard controller.debugToolRows.count == 1,
+              (controller.toolRowContent(nodeTool).meta ?? "").contains("symbolic link") else {
+            return "the launcher row does not carry the doctor's message"
+        }
+        return nil
+    }
+
+    private static func test_launcherRowActions() -> String? {
+        let (window, controller) = mounted()
+        defer { window.contentView = nil }
+        controller.debugRender(secrets: [], tools: [nodeTool, VaultTool(name: "claude", commands: ["claude"], status: .hardened)])
+        let rows = controller.debugToolTableRows
+        guard rows.count == 2 else { return "expected 2 launcher rows, got \(rows.count)" }
+        guard case .title(_, let subtitle, _, _, _, _)? = rows[0].cells["launcher"],
+              subtitle?.contains("symbolic link") == true else {
+            return "the table row's subtitle is not the doctor's message"
+        }
+        guard rows[0].primary?.title == "View Fix\u{2026}", rows[0].activate != nil else {
+            return "an issue row has no way to open its fix steps"
+        }
+        guard rows[0].menu.map(\.title) == ["Re-check"] else {
+            return "an issue row's menu is \(rows[0].menu.map(\.title)), expected only Re-check"
+        }
+        guard rows[1].primary == nil, rows[1].activate == nil, rows[1].menu.isEmpty else {
+            return "a hardened launcher grew an action it has nothing to do with"
+        }
+        return nil
+    }
+
+    private static func test_recheckResult() -> String? {
+        let (window, controller) = mounted()
+        defer { window.contentView = nil }
+        let other = VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 1))
+        controller.debugRender(secrets: [], tools: [nodeTool, other])
+        controller.debugFinishRecheck("node", nil)
+        guard controller.debugAttentionBannerText.contains("node, terraform") else {
+            return "a failed re-check cleared the reading it could not replace: \(controller.debugAttentionBannerText)"
+        }
+        controller.debugFinishRecheck("node", VaultTool(name: "node", commands: ["npm"], status: .hardened))
+        guard controller.debugToolRows.count == 2 else { return "a re-check changed the number of launchers" }
+        guard !controller.debugAttentionBannerText.contains("node") else {
+            return "node is still named in the banner after a clean re-check: \(controller.debugAttentionBannerText)"
+        }
+        guard controller.debugAttentionBannerText.hasPrefix("terraform needs attention") else {
+            return "the other launcher's reading was disturbed: \(controller.debugAttentionBannerText)"
+        }
+        return nil
+    }
+
+    private static func test_issueSheet() -> String? {
+        let sheet = VaultLauncherIssueSheetController(tool: nodeTool)
+        _ = sheet.view
+        guard sheet.debugCommandTexts == ["av harden node"] else {
+            return "the sheet offers \(sheet.debugCommandTexts) as copyable commands"
+        }
+        var rechecked = 0
+        sheet.onRecheck = { rechecked += 1 }
+        sheet.debugClickRecheck()
+        guard rechecked == 1 else { return "Re-check did not reach the page" }
+        // Nothing on the sheet may run a command: `av harden` writes a
+        // launcher. The sheet is a view onto text, a Copy and a Re-check.
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: dir.appendingPathComponent("VaultLauncherIssueSheet.swift"), encoding: .utf8) else {
+            return nil
+        }
+        let code = text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+        for forbidden in ["onRunCommand", "Subprocess", "Process(", "runInConsole", "VaultSource.run"] where code.contains(forbidden) {
+            return "the fix sheet reaches \(forbidden), which can run a command"
         }
         return nil
     }
