@@ -2216,6 +2216,13 @@ enum SelfTestDispatch {
             exit(UpdatesActionVisibilitySelfTest.run() ? 0 : 1)
         }
 
+        // A real, captain-reported bug on Setup > Updates: the page would not
+        // scroll with the pointer over the Tools card - see
+        // HelmDataTableWheelSelfTest.swift's header for the root cause.
+        if ProcessInfo.processInfo.environment["FM_RUN_HELM_DATA_TABLE_WHEEL_TESTS"] == "1" {
+            exit(HelmDataTableWheelSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"] == "1" {
             exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
         }

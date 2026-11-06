@@ -220,7 +220,9 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     private let actionsWidth: CGFloat
     private let reorderType: NSPasteboard.PasteboardType?
     private let table = HelmTableView()
-    private let scroll = NSScrollView()
+    /// Hands the wheel to the page while every row fits, so a fitted table
+    /// (`sizesToFitRows`) is not a dead zone in the page that scrolls it.
+    private let scroll = HelmNestedScrollView()
     private let header = HelmDataTableHeader()
     private let headerRule = NSView()
     private let tracking = HelmDataTableTracking()

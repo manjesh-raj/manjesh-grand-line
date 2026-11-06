@@ -139,7 +139,7 @@ final class NeedsAttentionCard: NSView {
     /// UI-1: the rows are flat, separated by hairlines, inside the one card.
     private let list = HelmFlatList()
     /// The list's own scroll view - see the file header.
-    private let listScroll = NeedsAttentionListScrollView()
+    private let listScroll = HelmNestedScrollView()
     private let listDocument = FlippedView()
     /// The list's preferred height, at `listShowsAllRows`.
     private var listShowsAll: NSLayoutConstraint?
@@ -807,7 +807,7 @@ final class NeedsAttentionCard: NSView {
         for subview in view.subviews { out.append(contentsOf: collectText(subview)) }
         return out
     }
-    var debugListScroll: NeedsAttentionListScrollView { listScroll }
+    var debugListScroll: HelmNestedScrollView { listScroll }
     /// The "+N more" pill's count, or `nil` while it is hidden.
     var debugMoreCount: Int? { morePill.isHidden ? nil : morePill.count }
     /// What the cue was last computed from, for a failure message that says
@@ -1010,27 +1010,6 @@ final class NeedsAttentionRowView: NSView {
     func debugPressAction() { actionButton.performClick(nil) }
     var debugActionButton: HelmButton { actionButton }
     #endif
-}
-
-// MARK: - The list's scroll view
-
-/// The attention list's scroll view. It only differs from a plain one in
-/// where a wheel event goes when the list has nothing to scroll: to the page,
-/// so the page's own fallback scroll (the minimum window with Larger text)
-/// still works with the pointer over this card.
-final class NeedsAttentionListScrollView: NSScrollView {
-    /// Whether a wheel event here belongs to the page rather than the list.
-    var forwardsWheelToPage: Bool {
-        (documentView?.frame.height ?? 0) <= contentView.bounds.height + 0.5
-    }
-
-    override func scrollWheel(with event: NSEvent) {
-        if forwardsWheelToPage {
-            nextResponder?.scrollWheel(with: event)
-        } else {
-            super.scrollWheel(with: event)
-        }
-    }
 }
 
 // MARK: - "+N more"
