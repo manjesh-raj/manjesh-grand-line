@@ -769,8 +769,15 @@ enum ReviewTourLab {
                 vault.debugRender(
                     secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "PAGERDUTY_API_KEY"),
                               VaultSecret(name: "STAGING_DB_PASSWORD")],
-                    tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened),
-                            VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
+                    // The shape `av doctor node --json` returned on the captain's machine:
+                    // one issue, with the doctor's own message and fix steps.
+                    tools: [VaultTool(name: "claude", commands: ["claude"], status: .hardened),
+                            VaultTool(name: "node", commands: ["npm"], status: .needsAttention(issueCount: 1), issues: [
+                                VaultToolIssue(
+                                    kind: "stub_wrong_type",
+                                    message: "hardened launcher /usr/local/bin/npm is a symbolic link; expected a regular file",
+                                    remediation: "Remove /usr/local/bin/npm after reviewing it, then run `av harden node`. Manual repair: install the documented launcher directly at /usr/local/bin/npm; do not use a symlink.",
+                                    stubPath: "/usr/local/bin/npm", targetPath: "/opt/homebrew/bin/npm")])])
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo automic")
             case .demoSetup:

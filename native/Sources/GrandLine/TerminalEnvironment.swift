@@ -79,11 +79,30 @@ func childEnvironmentDict() -> [String: String] {
     // binary, but nested subprocesses (e.g. Homebrew's `npm` script resolving
     // `node` via its own `#!/usr/bin/env node` shebang) resolve against this
     // PATH too, so they need the same locations - see UpdatesData.swift.
-    let standardPaths = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin"]
-    var existing = (env["PATH"] ?? "").split(separator: ":").map(String.init)
-    let missing = standardPaths.filter { !existing.contains($0) }
-    existing = missing + existing
-    env["PATH"] = existing.joined(separator: ":")
+    env["PATH"] = pathWithStandardLocations(env["PATH"] ?? "")
 
     return env
+}
+
+/// The locations a Finder-launched app's bare PATH is missing, in the order
+/// they must resolve.
+///
+/// `/usr/local/*` comes **before** `/opt/homebrew/*`. Automic Vault's hardened
+/// launcher stubs live in `/usr/local/bin`, and `av doctor` reports
+/// `stub_not_first_on_path` when a Homebrew binary of the same name resolves
+/// ahead of one. Homebrew first made every command this app runs see that
+/// state, so the Secrets page kept showing "1 issue found" for a machine
+/// whose own terminal PATH was fine.
+let standardPathLocations = ["/usr/local/bin", "/usr/local/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin"]
+
+/// Prepends whichever of `standardPathLocations` the incoming PATH lacks, in
+/// that order, and leaves every entry already present exactly where it was.
+///
+/// So when the incoming PATH already carries both Homebrew and `/usr/local`,
+/// its own order wins - a terminal-launched run keeps the captain's order, and
+/// only a location that was absent is added (ahead of everything else).
+func pathWithStandardLocations(_ path: String) -> String {
+    let existing = path.split(separator: ":").map(String.init)
+    let missing = standardPathLocations.filter { !existing.contains($0) }
+    return (missing + existing).joined(separator: ":")
 }

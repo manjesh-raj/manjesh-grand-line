@@ -42,10 +42,68 @@ enum VaultToolStatus: Equatable {
     }
 }
 
+/// One entry of `av doctor --json`'s `issues` array, kept whole.
+///
+/// This used to be reduced to a count, which left the page saying "1 issue
+/// found" with nothing to read or act on. Every field is metadata Automic
+/// Vault itself reported about a launcher - paths and prose, never a secret
+/// value.
+struct VaultToolIssue: Equatable {
+    /// The check that failed, e.g. `stub_wrong_type`, `stub_not_first_on_path`.
+    let kind: String
+    let message: String
+    /// Automic Vault's own fix steps, as prose. May carry backticked commands.
+    let remediation: String
+    let stubPath: String?
+    let targetPath: String?
+
+    /// The backticked spans of `remediation`, in order. Shown as copyable
+    /// text and never executed by this app: `av harden` writes launchers, and
+    /// the page offers no way to run a write.
+    var commands: [String] {
+        var result: [String] = []
+        var rest = Substring(remediation)
+        while let open = rest.firstIndex(of: "`") {
+            let afterOpen = rest.index(after: open)
+            guard let close = rest[afterOpen...].firstIndex(of: "`") else { break }
+            let span = rest[afterOpen..<close].trimmingCharacters(in: .whitespaces)
+            if !span.isEmpty { result.append(span) }
+            rest = rest[rest.index(after: close)...]
+        }
+        return result
+    }
+}
+
 struct VaultTool: Equatable {
     let name: String
     let commands: [String]
     let status: VaultToolStatus
+    /// What `av doctor --json` reported, in its own order. Empty for a
+    /// hardened launcher, and for a fixture that only supplies a count.
+    var issues: [VaultToolIssue] = []
+
+    /// What a launcher row says under its name: the doctor's own message for
+    /// the first issue, and how many more there are. `nil` when the doctor
+    /// gave no detail, so the caller falls back to the count it always had.
+    var issueSummary: String? {
+        guard let first = issues.first, !first.message.isEmpty else { return nil }
+        return issues.count > 1 ? "\(first.message) (+\(issues.count - 1) more)" : first.message
+    }
+}
+
+extension VaultSource {
+    /// The banner above the cards. It names the launcher and the problem, so
+    /// the captain does not have to find a row to learn what is wrong. `nil`
+    /// when nothing needs attention.
+    static func attentionBannerText(for tools: [VaultTool]) -> String? {
+        let needing = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }
+        guard let first = needing.first else { return nil }
+        if needing.count == 1 {
+            guard let summary = first.issueSummary else { return "\(first.name) needs attention - see Verified Launchers below." }
+            return "\(first.name) needs attention: \(summary)"
+        }
+        return "\(needing.count) tools need attention: \(needing.map(\.name).joined(separator: ", ")) - see Verified Launchers below."
+    }
 }
 
 enum VaultAvailability: Equatable {
@@ -246,8 +304,32 @@ enum VaultSource {
             let commands = (entry["commands"] as? [String]) ?? []
             let issues = (entry["issues"] as? [Any]) ?? []
             let status: VaultToolStatus = issues.isEmpty ? .hardened : .needsAttention(issueCount: issues.count)
-            return VaultTool(name: name, commands: commands, status: status)
+            let detail = issues.compactMap { ($0 as? [String: Any]).map(parseDoctorIssue) }
+            return VaultTool(name: name, commands: commands, status: status, issues: detail)
         }
+    }
+
+    /// A missing field is an empty string or `nil`, never a failure: the count
+    /// is still right, and the page should show whatever `av` did say.
+    private static func parseDoctorIssue(_ issue: [String: Any]) -> VaultToolIssue {
+        VaultToolIssue(kind: issue["kind"] as? String ?? "unknown",
+                       message: issue["message"] as? String ?? "",
+                       remediation: issue["remediation"] as? String ?? "",
+                       stubPath: issue["stub_path"] as? String,
+                       targetPath: issue["target_path"] as? String)
+    }
+
+    /// `av doctor <tool> --json` for one launcher - the per-launcher re-check.
+    ///
+    /// The same read-only call as `loadToolStatus()`, so it carries the same
+    /// guarantee (no approval-service row) and is safe to run unattended.
+    /// `nil` is a failed read, which is not the same statement as "fixed"
+    /// (GL-14). The name is argv, never a shell string, but only a safe token
+    /// is accepted so a name from a fixture or a future caller cannot be read
+    /// as an option.
+    static func recheckTool(named name: String) -> VaultTool? {
+        guard isSafeToken(name), !isolated("av"), let av = resolveExecutable("av") else { return nil }
+        return parseDoctorTools(run(av, ["doctor", name, "--json"]).stdout)?.first { $0.name == name }
     }
 
     // MARK: Command strings for the Console tab (never executed directly here)

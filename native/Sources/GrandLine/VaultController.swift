@@ -146,8 +146,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private lazy var toolsTable = HelmDataTable(columns: [
         .init(id: "launcher", title: "Launcher", width: 260, minWidth: 180, flexible: true),
         .init(id: "status", title: "Status", width: 170),
-    ], actionsWidth: HelmMetrics.s4)
+    ], actionsWidth: 172)
     private var isLoadingSnapshot = false
+    private var isRecheckingTool = false
     var hasLoadedOnce = false
     var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -503,14 +504,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         // B1: a read that failed says nothing about whether anything needs
         // attention, so the banner stays down rather than claiming all-clear.
-        let needingAttention = (tools ?? []).filter { if case .needsAttention = $0.status { return true } else { return false } }
-        attentionBanner.isHidden = notInstalled || needingAttention.isEmpty
-        if !needingAttention.isEmpty {
-            let names = needingAttention.map(\.name).joined(separator: ", ")
-            attentionLabel.stringValue = needingAttention.count == 1
-                ? "\(names) needs attention - see Verified Launchers below."
-                : "\(needingAttention.count) tools need attention: \(names)."
-        }
+        let bannerText = notInstalled ? nil : tools.flatMap(VaultSource.attentionBannerText(for:))
+        attentionBanner.isHidden = bannerText == nil
+        if let bannerText { attentionLabel.stringValue = bannerText }
 
         // B1: "?" rather than "0" for a count this page does not have.
         secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
@@ -606,7 +602,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         // line carries the real detail (`av doctor`'s own issue count).
         let meta = isHardened
             ? "Hardened, 0 issues"
-            : tool.status.label + " found"
+            : tool.issueSummary ?? tool.status.label + " found"
         return HelmAccentRow.Content(
             tint: isHardened ? .good : .warn,
             kicker: isHardened ? "Hardened" : "Needs Attention",
@@ -803,6 +799,46 @@ final class VaultController: NSViewController, DaylightDrillActions {
         presentAsSheet(sheet)
     }
 
+    // MARK: Launcher issues (the doctor's own detail)
+
+    private func presentIssueSheet(for tool: VaultTool) {
+        let sheet = VaultLauncherIssueSheetController(tool: tool)
+        sheet.onRecheck = { [weak self] in self?.recheck(tool.name) }
+        presentAsSheet(sheet)
+    }
+
+    /// `av doctor <tool> --json` for one launcher, replacing only that
+    /// launcher's reading. Read-only and approval-free (see
+    /// `VaultSource.recheckTool`), so it never needs the gates `av list` does.
+    /// A failed read keeps what the page had and says so - it is not "fixed".
+    private func recheck(_ name: String) {
+        guard !isRecheckingTool else { return }
+        isRecheckingTool = true
+        Toast.show(in: view, message: "Re-checking \u{201c}\(name)\u{201d}\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let fresh = VaultSource.recheckTool(named: name)
+            DispatchQueue.main.async { self?.finishRecheck(name, fresh) }
+        }
+    }
+
+    func finishRecheck(_ name: String, _ fresh: VaultTool?) {
+        isRecheckingTool = false
+        guard let fresh else {
+            Toast.show(in: view, message: "Couldn\u{2019}t re-check \u{201c}\(name)\u{201d} - the page still shows the last reading")
+            return
+        }
+        if var current = tools, let index = current.firstIndex(where: { $0.name == name }) {
+            current[index] = fresh
+            tools = current
+            renderAll()
+        }
+        if case .needsAttention = fresh.status {
+            Toast.show(in: view, message: "\u{201c}\(name)\u{201d} still needs attention: \(fresh.status.label)")
+        } else {
+            Toast.show(in: view, message: "\u{201c}\(name)\u{201d} is hardened - no issues")
+        }
+    }
+
     // MARK: Theme
 
     private func applyTheme() {
@@ -918,6 +954,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
     var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
+    var debugAttentionBannerText: String { attentionLabel.stringValue }
+    /// The sidebar layout's Verified Launchers rows, as the table will be given them.
+    var debugToolTableRows: [HelmDataTable.Row] { toolTableRows() }
+    /// The path a real finished re-check takes into the page, minus the subprocess.
+    func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
     var debugToolsTable: HelmDataTable { toolsTable }
     #endif
@@ -1427,6 +1468,14 @@ extension VaultController: SidebarLayoutAdopting {
                                    symbol: "checkmark.shield.fill", tint: hardened ? .good : .warn, tintHex: nil),
                 "status": .status(hardened ? "Hardened" : tool.status.label, tint: hardened ? .good : .warn),
             ]
+            if !hardened {
+                row.primary = .init(title: "View Fix\u{2026}", symbol: "wrench.and.screwdriver") { [weak self] in
+                    self?.presentIssueSheet(for: tool)
+                }
+                row.pinsPrimary = true
+                row.activate = { [weak self] in self?.presentIssueSheet(for: tool) }
+                row.menu = [.init(title: "Re-check", symbol: "arrow.clockwise") { [weak self] in self?.recheck(tool.name) }]
+            }
             return row
         }
     }
