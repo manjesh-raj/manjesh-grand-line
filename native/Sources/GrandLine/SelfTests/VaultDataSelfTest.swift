@@ -142,9 +142,13 @@ enum VaultDataSelfTest {
         check("a PATH that already has Homebrew gets /usr/local/bin ahead of it", order(homebrewFirst, "/usr/local/bin", "/opt/homebrew/bin"))
         check("an entry already present is not duplicated", homebrewFirst.split(separator: ":").filter { $0 == "/opt/homebrew/bin" }.count == 1)
         check("when both are already present the incoming order is kept",
-              pathWithStandardLocations("/opt/homebrew/bin:/usr/local/bin:/usr/bin").hasPrefix("/usr/local/sbin:/opt/homebrew/sbin:/opt/homebrew/bin:/usr/local/bin"))
-        check("the real child environment resolves /usr/local/bin first",
-              order(childEnvironmentDict()["PATH"] ?? "", "/usr/local/bin", "/opt/homebrew/bin"))
+              pathWithStandardLocations("/opt/homebrew/bin:/usr/local/bin:/usr/bin").hasPrefix("/usr/local/sbin:/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/sbin:/usr/bin"))
+        check("a PATH with only /usr/local/bin gets Homebrew behind it",
+              order(pathWithStandardLocations("/usr/local/bin:/usr/bin"), "/usr/local/bin", "/opt/homebrew/bin"))
+        check("a PATH with only /opt/homebrew/sbin still gets /usr/local/sbin ahead of it",
+              order(pathWithStandardLocations("/opt/homebrew/sbin:/usr/bin"), "/usr/local/sbin", "/opt/homebrew/sbin"))
+        check("the child environment's PATH is built by pathWithStandardLocations",
+              (childEnvironmentDict()["PATH"] ?? "").hasSuffix(ProcessInfo.processInfo.environment["PATH"] ?? ""))
 
         // MARK: parseSecretList (B1)
 

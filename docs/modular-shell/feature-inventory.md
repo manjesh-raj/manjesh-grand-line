@@ -873,6 +873,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.UnifiedSearch` | UnifiedSearch controls | `clicked` | Toolbar (the search field and its ⌘K palette) |  |
 | `action.UpdatesController` | UpdatesController controls | `checkAllTapped`, `checkTapped`, `installInBootstrapTapped`, `runInTerminalTapped`, `updateTapped` | Setup › Updates |  |
 | `action.VaultController` | VaultController controls | `addSecretTapped`, `cancel`, `checkBackupTapped`, `closeTapped`, `confirm`, `copyNameTapped`, `exportRecipeTapped`, `refreshTapped`, `runInjectedTapped` | Secrets › Automic Vault |  |
+| `action.VaultLauncherIssueSheet` | VaultLauncherIssueSheet controls | `closeTapped`, `copyTapped`, `recheckTapped` | Secrets › Automic Vault (a launcher's fix steps) |  |
 | `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `profilePicked`, `skipTapped`, `themePicked` | Window (first-run welcome sheet; the profile step is the sidebar layout's, R2-UX-01) |  |
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
 | `action.WhiteboardController` | WhiteboardController controls | `addExampleDiagramTapped`, `dslTapped`, `emptyBoardClicked`, `generateTapped` | Whiteboard |  |

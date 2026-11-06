@@ -54,12 +54,12 @@ final class VaultLauncherIssueSheetController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let bottom = NSStackView(views: [spacer, close, recheck])
         bottom.orientation = .horizontal
-        bottom.spacing = 10
+        bottom.spacing = HelmMetrics.s3
 
         let stack = NSStackView(views: [title] + sections + [bottom])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
+        stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -98,7 +98,7 @@ final class VaultLauncherIssueSheetController: NSViewController {
         let stack = NSStackView(views: views)
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 6
+        stack.spacing = HelmMetrics.s2
         for view in views where view !== kind { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         return stack
     }

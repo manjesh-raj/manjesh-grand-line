@@ -95,14 +95,21 @@ func childEnvironmentDict() -> [String: String] {
 /// whose own terminal PATH was fine.
 let standardPathLocations = ["/usr/local/bin", "/usr/local/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin"]
 
-/// Prepends whichever of `standardPathLocations` the incoming PATH lacks, in
-/// that order, and leaves every entry already present exactly where it was.
+/// Adds whichever of `standardPathLocations` the incoming PATH lacks, and
+/// leaves every entry already present in its own relative order.
 ///
-/// So when the incoming PATH already carries both Homebrew and `/usr/local`,
-/// its own order wins - a terminal-launched run keeps the captain's order, and
-/// only a location that was absent is added (ahead of everything else).
+/// A missing `/usr/local` entry goes at the front. A missing Homebrew entry
+/// goes directly behind the last `/usr/local` entry, so it can never land
+/// ahead of a launcher location - including one the incoming PATH already
+/// carried further back. When the incoming PATH already has both Homebrew and
+/// `/usr/local`, its own order wins: a terminal-launched run keeps the
+/// captain's order, and only the absent locations are added.
 func pathWithStandardLocations(_ path: String) -> String {
     let existing = path.split(separator: ":").map(String.init)
-    let missing = standardPathLocations.filter { !existing.contains($0) }
-    return (missing + existing).joined(separator: ":")
+    let local = standardPathLocations.filter { $0.hasPrefix("/usr/local/") }
+    let homebrew = standardPathLocations.filter { $0.hasPrefix("/opt/homebrew/") }
+    var result = local.filter { !existing.contains($0) } + existing
+    let anchor = (result.lastIndex { local.contains($0) } ?? -1) + 1
+    result.insert(contentsOf: homebrew.filter { !existing.contains($0) }, at: anchor)
+    return result.joined(separator: ":")
 }
