@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Permanent guard on the eight local patches carried in
+// Permanent guard on the nine local patches carried in
 // `native/Vendor/SwiftTerm` (P9 of full review #3), and on the three carried
 // in `native/Vendor/YamlSwift`. Run with:
 //
@@ -9,18 +9,19 @@
 // **What this exists for, and what it deliberately does not do.**
 //
 // The review's finding about the pin is that "every sync is a five-patch
-// re-apply"; it is an eight-patch re-apply now. The hazard in that sentence is
+// re-apply"; it is a nine-patch re-apply now. The hazard in that sentence is
 // not the pin being old - a stale pin is a decision, recorded and re-taken on a
 // schedule in that directory's own README - it is a *re-apply that silently
-// drops one of them*. Six of the eight live in two files upstream rewrites
+// drops one of them*. Six of the nine live in two files upstream rewrites
 // heavily (measured at v1.20.0:
 // `Apple/AppleTerminalView.swift` +813/-157, `Mac/MacTerminalView.swift`
 // +647/-54), so the realistic failure is a hunk lost in a merge, not a
 // deliberate removal - and every one of them then fails silently, in a way this
 // project has already paid for once each: illegible dim text on a light theme,
 // a duplicated character at a wrap boundary, 6-16% CPU while backgrounded, a
-// corrupt `kubectl` table row, ~25ms of CoreText work per background frame, and
-// terminal keyword highlighting that silently stops colouring anything.
+// corrupt `kubectl` table row, ~25ms of CoreText work per background frame,
+// terminal keyword highlighting that silently stops colouring anything, and a
+// copy that silently loses the middle of a long line after a resize.
 //
 // So this asserts *presence*, by the narrowest marker each patch cannot exist
 // without. It is not a behavioural test: each patch already has one (see the
@@ -104,6 +105,16 @@ enum VendoredPatchesSelfTest {
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "cached.highlightVersion == highlightVersion"),
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "rowHighlightColors(line: line, cols: cols)"),
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "cachedRender.highlightColors"),
+        ]),
+        (9, "a resize never changes the text", [
+            ("Sources/SwiftTerm/Terminal.swift", "public var cursorLineRedrawnOnResize"),
+            ("Sources/SwiftTerm/Terminal.swift", "keepCursorLine: cursorLineRedrawnOnResize?() ?? false"),
+            ("Sources/SwiftTerm/Buffer.swift", "public func resize (newCols : Int, newRows : Int, keepCursorLine: Bool"),
+            ("Sources/SwiftTerm/Buffer.swift", "var cursorTarget: (row: Int, col: Int)?"),
+            ("Sources/SwiftTerm/Buffer.swift", "var contentRowsBelowCursor = 0"),
+            ("Sources/SwiftTerm/Buffer.swift", "struct ReflowedCursor"),
+            ("Sources/SwiftTerm/Buffer.swift", "_lines[_y + _yBase].isWrapped = true"),
+            ("Sources/SwiftTerm/Buffer.swift", "_lines [_y + _yBase].isWrapped = true"),
         ]),
     ]
 

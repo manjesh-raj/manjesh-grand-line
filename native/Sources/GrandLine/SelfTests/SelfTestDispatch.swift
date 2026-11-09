@@ -494,6 +494,12 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"] == "1" {
             exit(TerminalWrapRedrawSelfTest.run() ? 0 : 1)
         }
+        // SwiftTerm patch 9: a resize never changes the text - the reported
+        // copy that lost the middle of nine long lines, replayed. Pure logic
+        // (a headless terminal, one /bin/sh on a PTY, one source guard).
+        if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_RESIZE_REFLOW_TESTS"] == "1" {
+            exit(TerminalResizeReflowSelfTest.run() ? 0 : 1)
+        }
 
         if ProcessInfo.processInfo.environment["FM_RUN_VENDORED_PATCHES_TESTS"] == "1" {
             exit(VendoredPatchesSelfTest.run() ? 0 : 1)

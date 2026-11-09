@@ -420,8 +420,15 @@ public final class Buffer {
         return hasScrollback
     }
     
-    public func resize (newCols : Int, newRows : Int)
+    /// Grand Line patch 9: `keepCursorLine` is upstream's behaviour for the
+    /// line the cursor is on - left unreflowed, and cut to the new width -
+    /// which is only right when the program will redraw that line itself (a
+    /// shell's line editor at its prompt). See `Terminal.cursorLineRedrawnOnResize`.
+    public func resize (newCols : Int, newRows : Int, keepCursorLine: Bool = false)
     {
+        // Grand Line patch 9: the cursor column before the clamp below, which
+        // the narrowing reflow needs to keep the cursor on its own character.
+        let cursorXBeforeResize = x
         if marginRight > newCols - 1 {
             marginRight = newCols - 1
         }
@@ -499,7 +506,12 @@ public final class Buffer {
             }
 
             // Make sure that the cursor stays on screen
-            x = min (x, newCols - 1)
+            // Grand Line patch 9: only when the width changes. A cursor one
+            // past the last column is a pending wrap, and a height-only resize
+            // that clamped it made the next character overwrite the last one.
+            if newCols != cols {
+                x = min (x, newCols - 1)
+            }
             y = min (y, newRows - 1)
             if addToY != 0 {
                 y += addToY
@@ -520,7 +532,7 @@ public final class Buffer {
         }
         
         if isReflowEnabled {
-            reflow (newCols, newRows)
+            reflow (newCols, newRows, cursorX: cursorXBeforeResize, keepCursorLine: keepCursorLine)
             // Trim the end of the line off if cols shrunk
             if cols > newCols {
                 // lines.count, not lines.maxLength (see the widen loop above).
@@ -684,11 +696,20 @@ public final class Buffer {
         return cols
     }
 
-    func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int, nullChar: CharData) -> [Int]
+    /// Grand Line patch 9: where the widening reflow put the cursor's
+    /// character - the absolute row it now sits on, counted before any row
+    /// is removed, and its column.
+    struct ReflowedCursor {
+        var row: Int
+        var col: Int
+    }
+
+    func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int, cursorX: Int, keepCursorLine: Bool, nullChar: CharData) -> (toRemove: [Int], cursor: ReflowedCursor?)
     {
         // Gather all BufferLines that need to be removed from the Buffer here so that they can be
         // batched up and only committed once
         var toRemove : [Int] = []
+        var reflowedCursor: ReflowedCursor?
 
         var y = 0
         while y < lines.count-1 {
@@ -710,23 +731,61 @@ public final class Buffer {
                 nextLine = lines [i]
             }
 
-            // If these lines contain the cursor don't touch them, the program will handle fixing up wrapped
-            // lines with the cursor
+            // Grand Line patch 9: the cursor's own line is merged like every
+            // other line, and the cursor follows its character. Upstream
+            // skipped it, which left the line split at the old width with
+            // nulls in the middle of its first row - a later narrowing then
+            // reflowed those nulls as spaces into the middle of the text.
+            // See `reflowNarrower` for the other half of this.
+            var cursorRow: Int? = nil
+            var cursorCol = 0
             if bufferAbsoluteY >= y && bufferAbsoluteY < i {
-                y += wrappedLines.count - 1
-                continue
+                if keepCursorLine {
+                    y += wrappedLines.count - 1
+                    continue
+                }
+                cursorRow = bufferAbsoluteY - y
+                cursorCol = cursorX
             }
+            // Column 0 of the line's last wrapped row: a carriage return, kept
+            // at the start of the merged line's last row (see `reflowNarrower`).
+            let cursorAfterCarriageReturn = cursorX == 0 && cursorRow == wrappedLines.count - 1
+            // The cursor can sit past the trimmed text of the last row; those
+            // cells move with it, so the cursor keeps a cell to land on.
+            func srcRowLength (_ row: Int) -> Int {
+                let trimmed = getWrappedLineTrimmedLength (wrappedLines, row, oldCols)
+                if row == wrappedLines.count - 1, row == cursorRow {
+                    return max (trimmed, min (cursorCol, oldCols))
+                }
+                return trimmed
+            }
+            if let row = cursorRow {
+                cursorCol = min (cursorCol, srcRowLength (row))
+                // A cursor parked after the last cell of a full row stands
+                // before the first cell of the next one.
+                if row < wrappedLines.count - 1, cursorCol >= srcRowLength (row) {
+                    cursorRow = row + 1
+                    cursorCol = 0
+                }
+            }
+            var cursorTarget: (row: Int, col: Int)? = cursorRow == 0 ? (0, cursorCol) : nil
 
             // Copy buffer data to new locations
             var destLineIndex = 0
-            var destCol = getWrappedLineTrimmedLength (lines, destLineIndex, oldCols)
+            // Grand Line patch 9: upstream read `lines` here, which measures
+            // the buffer's row 0 rather than this line's first row.
+            var destCol = getWrappedLineTrimmedLength (wrappedLines, destLineIndex, oldCols)
             var srcLineIndex = 1
             var srcCol = 0
             while srcLineIndex < wrappedLines.count {
-                let srcTrimmedTineLength = getWrappedLineTrimmedLength (wrappedLines, srcLineIndex, oldCols)
+                let srcTrimmedTineLength = srcRowLength (srcLineIndex)
                 let srcRemainingCells = srcTrimmedTineLength - srcCol
                 let destRemainingCells = newCols - destCol
                 let cellsToCopy = min (srcRemainingCells, destRemainingCells)
+
+                if srcLineIndex == cursorRow, cursorCol >= srcCol, cursorCol < srcCol + cellsToCopy {
+                    cursorTarget = (destLineIndex, destCol + cursorCol - srcCol)
+                }
 
                 if destLineIndex < wrappedLines.count {
                     wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol,
@@ -759,12 +818,23 @@ public final class Buffer {
             // Clear out remaining cells or fragments could remain;
             wrappedLines [destLineIndex].replaceCells (start: destCol, end: newCols, fillData: nullChar)
 
+            if cursorAfterCarriageReturn {
+                cursorTarget = destCol == 0 && destLineIndex > 0 ? (destLineIndex - 1, 0) : (destLineIndex, 0)
+            } else if cursorRow != nil, cursorTarget == nil {
+                // The cursor stood after the last character: it goes after
+                // the last cell copied, as a pending wrap when that filled a row.
+                cursorTarget = destCol == 0 && destLineIndex > 0 ? (destLineIndex - 1, newCols) : (destLineIndex, destCol)
+            }
+
             // Work backwards and remove any rows at the end that only contain null cells
             var countToRemove = 0
             var ix = wrappedLines.count-1
             
             while ix > 0 {
                 defer { ix = ix - 1 }
+                if let cursorTarget, ix <= cursorTarget.row {
+                    break
+                }
                 if ix > destLineIndex || wrappedLines [ix].getTrimmedLength () == 0 {
                     countToRemove += 1
                 } else {
@@ -776,16 +846,20 @@ public final class Buffer {
                 toRemove.append (y + wrappedLines.count - countToRemove) // index
                 toRemove.append (countToRemove)
             }
+            if let cursorTarget {
+                reflowedCursor = ReflowedCursor (row: y + cursorTarget.row, col: cursorTarget.col)
+            }
 
             y += wrappedLines.count - 1
         }
 
-        return toRemove
+        return (toRemove, reflowedCursor)
     }
     
-    func reflowWider (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int)
+    func reflowWider (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int, cursorX: Int, keepCursorLine: Bool)
     {
-        let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
+        let cursorAbsoluteRow = yBase + y
+        let (toRemove, reflowedCursor) = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: cursorAbsoluteRow, cursorX: cursorX, keepCursorLine: keepCursorLine, nullChar: CharData.Null)
         
         //print ("Lines to remove: \(toRemove) \(toRemove.count)")
         if toRemove.count > 0 {
@@ -853,6 +927,24 @@ public final class Buffer {
             }
             savedY = max (savedY - countRemovedSoFar, 0)
         }
+
+        // Grand Line patch 9: the adjustment above moves the cursor up by
+        // every removed row, as if all of them were above it - and stops at
+        // row 0. The cursor's own line lost rows below it too, so place it
+        // from where its character now is: its row, less the rows removed
+        // above it, less the top of the screen.
+        if let reflowedCursor {
+            var removedAbove = 0
+            var pair = 0
+            while pair + 1 < toRemove.count {
+                if toRemove [pair] < reflowedCursor.row {
+                    removedAbove += toRemove [pair + 1]
+                }
+                pair += 2
+            }
+            y = min (max (0, reflowedCursor.row - removedAbove - yBase), newRows - 1)
+            x = reflowedCursor.col
+        }
     }
     
     // Gets the new line lengths for a given wrapped line. The purpose of this function it to pre-
@@ -862,13 +954,23 @@ public final class Buffer {
     // `newCols - 1` (when the line does end with a wide character), except for the last value which
     // will contain the remaining items to fill the line.
     // Calling this with a `newCols` value of `1` will lock up.
-    func getNewLineLengths (wrappedLines: [BufferLine] , oldCols: Int, newCols: Int) -> [Int]
+    // Grand Line patch 9: `lastLineLength` lets the narrowing reflow count the
+    // cursor's own cells on the group's last row, which the cell copy then
+    // moves with the text. nil keeps upstream's trimmed length.
+    func getNewLineLengths (wrappedLines: [BufferLine] , oldCols: Int, newCols: Int, lastLineLength: Int? = nil) -> [Int]
     {
         var newLineLengths : [Int] = []
 
+        func trimmedLength (_ row: Int) -> Int {
+            if row == wrappedLines.count - 1, let lastLineLength {
+                return lastLineLength
+            }
+            return getWrappedLineTrimmedLength (wrappedLines, row, oldCols)
+        }
+
         var cellsNeeded = 0
         for i in 0..<wrappedLines.count {
-               cellsNeeded += getWrappedLineTrimmedLength (wrappedLines, i, oldCols)
+               cellsNeeded += trimmedLength (i)
         }
 
         // Use srcCol and srcLine to find the new wrapping point, use that to get the cellsAvailable and
@@ -884,7 +986,7 @@ public final class Buffer {
                }
 
                srcCol += newCols
-               let oldTrimmedLength = getWrappedLineTrimmedLength (wrappedLines, srcLine, oldCols)
+               let oldTrimmedLength = trimmedLength (srcLine)
                if srcCol > oldTrimmedLength {
                        srcCol -= oldTrimmedLength
                        srcLine += 1
@@ -911,12 +1013,19 @@ public final class Buffer {
         public static func Null () -> InsertionSet { InsertionSet (lines: [], start: 0, isNull: true) }
     }
     
-    func reflowNarrower (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int)
+    func reflowNarrower (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int, cursorX: Int, keepCursorLine: Bool)
     {
         // Gather all BufferLines that need to be inserted into the Buffer here so that they can be
         // batched up and only committed once
         var toInsert : [InsertionSet] = []
         var countToInsert = 0
+        // Grand Line patch 9: the cursor's row in the same, pre-insertion
+        // numbering `y` walks - the adjustments below move `yBase`/`self.y`.
+        let cursorAbsoluteRow = yBase + self.y
+        // Grand Line patch 9: rows of the cursor's own line below the cursor -
+        // the ones it already had and the ones this reflow adds - which
+        // upstream's "everything below the cursor is blank" rule must not pop.
+        var contentRowsBelowCursor = 0
 
         // Go backwards as many lines may be trimmed and this will avoid considering them
         var y = lines.count-1
@@ -925,7 +1034,11 @@ public final class Buffer {
             // Check whether this line is a problem or not, if not skip it
             var nextLine = lines [y]
             let lineLength = nextLine.getTrimmedLength ()
-            if !nextLine.isWrapped && lineLength <= newCols {
+            // Grand Line patch 9: a cursor past the new last column still needs
+            // its row reflowed, even when the text fits - `resize` clamps it
+            // onto the last character otherwise, and the next one overwrites it.
+            let cursorNeedsRoom = !keepCursorLine && y == cursorAbsoluteRow && cursorX >= newCols
+            if !nextLine.isWrapped && lineLength <= newCols && !cursorNeedsRoom {
                 continue
             }
 
@@ -938,18 +1051,58 @@ public final class Buffer {
                 wrappedLines.insert (nextLine, at: 0)
             }
 
-            // If these lines contain the cursor don't touch them, the program will handle fixing up
-            // wrapped lines with the cursor
-            let absoluteY = yBase + self.y
-
-            if absoluteY >= y && absoluteY < y + wrappedLines.count {
+            // Grand Line patch 9: the cursor's own line is reflowed like every
+            // other line. Upstream skipped it ("the program will handle fixing
+            // up wrapped lines with the cursor"), and `resize` then cut every
+            // line to `newCols` - so the skipped line lost every cell past the
+            // new width for good. A shell redraws its prompt line, but output
+            // that was still arriving (the cursor resting at the end of a long
+            // line) does not, and widening again brought those cells back as
+            // nulls that a copy trims away: the middle of the line vanished
+            // from the clipboard (`fm/grandline-selection-copy-corruption-1794208740`).
+            let cursorRow: Int? = cursorAbsoluteRow >= y && cursorAbsoluteRow < y + wrappedLines.count ? cursorAbsoluteRow - y : nil
+            if keepCursorLine, cursorRow != nil {
                 continue
             }
 
-            let lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()
-            let destLineLengths = getNewLineLengths (wrappedLines: wrappedLines, oldCols: oldCols, newCols: newCols)
+            var lastLineLength = wrappedLines [wrappedLines.count - 1].getTrimmedLength ()
+            if let cursorRow, cursorRow == wrappedLines.count - 1 {
+                // The cursor can sit past the trimmed text (after a typed
+                // space, or one cell past the last character). Count those
+                // cells, so the cursor has a cell to land on and the copy
+                // below keeps every character in place.
+                lastLineLength = max (lastLineLength, min (cursorX, oldCols))
+            }
+            let destLineLengths = getNewLineLengths (wrappedLines: wrappedLines, oldCols: oldCols, newCols: newCols, lastLineLength: lastLineLength)
             if destLineLengths.count == 0 {
                 continue
+            }
+
+            // Where the cursor lands, as a row within this group and a column,
+            // found by its distance from the group's first cell.
+            var cursorTarget: (row: Int, col: Int)?
+            if let cursorRow {
+                var offset = 0
+                for i in 0..<cursorRow {
+                    offset += getWrappedLineTrimmedLength (wrappedLines, i, oldCols)
+                }
+                let rowLength = cursorRow == wrappedLines.count - 1 ? lastLineLength : getWrappedLineTrimmedLength (wrappedLines, cursorRow, oldCols)
+                offset += min (cursorX, rowLength)
+                var row = 0
+                while row < destLineLengths.count - 1 && offset >= destLineLengths [row] {
+                    offset -= destLineLengths [row]
+                    row += 1
+                }
+                cursorTarget = (row, offset)
+                if cursorX == 0, cursorRow == wrappedLines.count - 1 {
+                    // Column 0 of a line's last row is where a carriage return
+                    // leaves the cursor - typically the CR of a CR LF whose LF
+                    // has not arrived yet. It means "the start of the line's
+                    // last row", not "on the character there": mapped by
+                    // offset, the LF would land on this line's own new
+                    // continuation row, or start the next line part-way across.
+                    cursorTarget = (destLineLengths.count - 1, 0)
+                }
             }
             let linesToAdd = destLineLengths.count - wrappedLines.count
 
@@ -1015,12 +1168,28 @@ public final class Buffer {
                 }
             }
 
+            // Grand Line patch 9: upstream moves the cursor down by every added
+            // row, which is right for a cursor below this group. Inside it,
+            // only the rows now above the cursor's character move it; the rest
+            // were added below it and are handled after this loop.
+            var rowsAddedAboveCursor = linesToAdd
+            var rowsAddedBelowCursor = 0
+            if let cursorRow, let cursorTarget {
+                rowsAddedAboveCursor = cursorTarget.row - cursorRow
+                rowsAddedBelowCursor = linesToAdd - rowsAddedAboveCursor
+                // The line's own rows already below the cursor - a cursor
+                // moved back up into a wrapped line - are not blank either.
+                contentRowsBelowCursor += wrappedLines.count - linesToAdd - 1 - cursorRow
+            }
+
             // Adjust viewport as needed
-            var viewportAdjustments = linesToAdd - trimmedLines
+            var viewportAdjustments = rowsAddedAboveCursor - trimmedLines
             while viewportAdjustments > 0 {
                 viewportAdjustments -= 1
                 if yBase == 0 {
-                    if self.y < newRows - 1 {
+                    // Grand Line patch 9: the rows below the cursor that its
+                    // own line now fills are not blank rows to give up.
+                    if self.y + contentRowsBelowCursor < newRows - 1 {
                         self.y += 1
                         lines.pop ()
                     } else {
@@ -1037,6 +1206,31 @@ public final class Buffer {
                         yBase += 1
                     }
                 }
+            }
+
+            // Grand Line patch 9: a row added below the cursor takes a blank
+            // row from the bottom of the screen while there is one, and
+            // otherwise scrolls the screen - the cursor stays on its character,
+            // one row higher on the screen.
+            for _ in 0..<max (0, rowsAddedBelowCursor) {
+                if yBase == 0 && self.y + contentRowsBelowCursor < newRows - 1 {
+                    lines.pop ()
+                } else {
+                    if yBase == 0 {
+                        yBase += 1
+                        yDisp += 1
+                    } else if yBase < min (lines.maxLength, lines.count + countToInsert) - newRows {
+                        if yBase == yDisp {
+                            yDisp += 1
+                        }
+                        yBase += 1
+                    }
+                    self.y = max (0, self.y - 1)
+                }
+                contentRowsBelowCursor += 1
+            }
+            if let cursorTarget {
+                self.x = cursorTarget.col
             }
 
             savedY = min (savedY + linesToAdd, yBase + newRows - 1)
@@ -1101,7 +1295,7 @@ public final class Buffer {
         }
     }
     
-    func reflow (_ newCols: Int, _ newRows: Int)
+    func reflow (_ newCols: Int, _ newRows: Int, cursorX: Int, keepCursorLine: Bool)
     {
         if cols == newCols {
             return
@@ -1109,9 +1303,9 @@ public final class Buffer {
         // iterate through rows, ignore the last one as it cannot be wrapped
 
         if newCols > cols {
-            reflowWider (cols, rows, newCols, newRows)
+            reflowWider (cols, rows, newCols, newRows, cursorX: cursorX, keepCursorLine: keepCursorLine)
         } else {
-            reflowNarrower (cols, rows, newCols, newRows)
+            reflowNarrower (cols, rows, newCols, newRows, cursorX: cursorX, keepCursorLine: keepCursorLine)
         }
         recalculateLinesWithImagesCount()
     }
@@ -1168,7 +1362,12 @@ public final class Buffer {
                     scroll(true)
                 } else {
                     _y += 1
-                    _lines[_y].isWrapped = true
+                    // Grand Line patch 9: `_y` is a screen row and `_lines` is
+                    // the whole buffer. Upstream marked the scrollback row
+                    // `_y` as wrapped instead of the one being written, so
+                    // with any scrollback a wrap above the bottom row joined
+                    // two unrelated history lines in a copy and split this one.
+                    _lines[_y + _yBase].isWrapped = true
                 }
             }
             let available = right - _x + 1
@@ -1208,7 +1407,9 @@ public final class Buffer {
                     // The line already exists (eg. the initial viewport), mark it as a
                     // wrapped line
                     _y += 1
-                    _lines [_y].isWrapped = true
+                    // Grand Line patch 9: the row being written, not scrollback
+                    // row `_y` - see `insertAsciiRun`.
+                    _lines [_y + _yBase].isWrapped = true
                 }
                 // row changed, get it again
             } else {

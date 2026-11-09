@@ -153,3 +153,26 @@ Settings live in `fm.terminalHighlighting` (AppDefaults JSON, choice C2) and are
   Every highlight colour goes through `HelmContrast.legibleOn` against the terminal's real cell background, theme defaults included.
 - **Not done:** a keyword split across a soft wrap is not matched, because each visible row is matched on its own.
   Underlined plain text is coloured but keeps its underline in the default ink.
+
+## A copy that lost the middle of long lines (`fm/grandline-selection-copy-corruption-1794208740`)
+
+The captain copied an IAM policy out of a Console tab and the paste had lost the middle of nine long lines.
+`...-data-production-550090841262-us-east-1/state/*` came back as `...-data-prodt-1/state/*`, and a `"Sid": "...",` line lost its closing `",`.
+Every damaged line was missing exactly columns 54..<80, which is what pinned it down: an 80-column terminal whose row-one cells 54..<80 had become nulls, which a copy trims before joining the wrapped tail on.
+
+- **Trigger: the terminal narrowed (80 to 54 columns here) while output was still arriving, with the cursor at the end of a long line.**
+  SwiftTerm's narrowing reflow skipped the cursor's line and `Buffer.resize` then cut every line to the new width, so that line lost everything past column 54 for good.
+  Widening again brought the cells back as nulls.
+  A 26-column change at the 13pt terminal font is about 209pt, the width of the window's sidebar, so a sidebar toggle or an auto-collapse during output is the likely UI cause.
+  That part is inferred, not measured - nothing in the report says what the captain did with the window.
+- **Masking: on screen the damaged line looks like an ordinary early soft wrap** (`...-prod`, then `t-1/state/*"` on the next row), so it reads as correct until the paste is compared with the source.
+- **Symptom: the copy drops the middle of the line**, and only for lines that were under the cursor at a narrowing - every second line of a block when the width changed once per printed line.
+- **The fix is the ninth vendored SwiftTerm patch** (`Vendor/SwiftTerm/README.md` has the full account): the cursor's line is reflowed like every other one and the cursor follows its character.
+  Replaying the policy under the old rule reproduces the captain's paste byte for byte, and `FM_RUN_TERMINAL_RESIZE_REFLOW_TESTS` keeps that replay.
+- **A shell at its prompt keeps the old rule**, and that is deliberate.
+  zsh redraws its prompt from the cursor's row after SIGWINCH, so a reflowed long command line left a stale copy of itself one row above the redraw - measured with a real zsh on a real PTY.
+  `CockpitTerminalView` answers `cursorLineRedrawnOnResize` from the PTY's foreground process group, so the old rule applies only while a shell owns the terminal, and an `ssh` session or any running program gets the reflow.
+- **Fuzzing the fix found a second copy defect in the same file**: autowrap above the bottom row marked scrollback row `y` as wrapped, so after a cleared screen a long line copied as two lines and two unrelated history lines copied as one.
+  Upstream fixed that one by v1.99.3, in the same shape.
+- **Other copy paths, checked and not affected:** herdr's own drag selection extracts through libghostty and writes the clipboard itself, an OSC 52 write from a program decodes straight to the pasteboard (and a dropped base64 chunk could not produce a 26-byte gap), and the AppKit text views and the WKWebView pages copy from their own text.
+- **Not done:** a height shrink still gives up rows below the cursor even when a full-screen program has text there, which is upstream behaviour for a cursor parked above real content and a separate shape from this one.
