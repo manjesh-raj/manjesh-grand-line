@@ -410,6 +410,76 @@ behavioural half: it renders a real terminal and counts red pixels with
 highlighting on and off, and checks the alternate screen, program colours, the
 buffer, the memo and the width cap.
 
+## Ninth patch: a resize never changes the text (`fm/grandline-selection-copy-corruption-1794208740`)
+
+**Files:** `Buffer.swift` (`resize`, `reflow`, `reflowNarrower`,
+`reflowWider`, `getLinesToRemove`, `getNewLineLengths`, and the two autowrap
+sites in `insertAsciiRun` / `insertCharacter`) and `Terminal.swift` (the
+`cursorLineRedrawnOnResize` hook and its one use in `resizeBuffers`).
+
+**The bug.** A captain copied an IAM policy out of a Console tab and the paste
+had lost the middle of nine long lines:
+`...-data-production-550090841262-us-east-1/state/*` came back as
+`...-data-prodt-1/state/*`. Every damaged line was missing exactly columns
+54..<80. Upstream's narrowing reflow skips the line the cursor is on ("the
+program will handle fixing up wrapped lines with the cursor"), and `resize`
+then cuts every line to the new width - so the skipped line loses every cell
+past it for good. That is fine for a shell, which redraws its prompt line after
+SIGWINCH. It is not fine for output that is still arriving: with the cursor
+resting at the end of a long line, an 80 -> 54 -> 80 round trip leaves
+`...-prod`, 26 nulls and the wrapped tail, and a copy trims the nulls and joins
+the tail on. Replaying the policy that way reproduces the captain's paste byte
+for byte. On screen the line looks like an ordinary early wrap, which is why
+nobody saw it before pasting.
+
+**What the patch does.**
+
+- Both reflows now handle the cursor's line like every other line, and put the
+  cursor on the reflowed position of the character it was on (or one past the
+  last one, as a pending wrap). Column 0 of a line's last row is treated as a
+  carriage return waiting for its LF, and stays at the start of the reflowed
+  line's last row - mapped by offset, the LF would land on the line's own new
+  continuation row.
+- A cursor past the new last column gets its row reflowed even when the text
+  fits, and a height-only resize no longer clamps a pending wrap onto the last
+  character. Both made the next character overwrite the previous one.
+- The narrowing's viewport adjustment counts the rows of the cursor's own line
+  below the cursor as text. Upstream assumes everything below the cursor is
+  blank and gives those rows up.
+- `Terminal.cursorLineRedrawnOnResize` keeps upstream's behaviour for the one
+  case it was right about. The app answers it from the PTY: true only while the
+  foreground process is a shell (`CockpitTerminalView.foregroundRedrawsCursorLine`).
+  Without that, zsh's redraw after a narrowing leaves a stale copy of a long
+  typed command one row above the real one - measured with a real zsh on a real
+  PTY.
+- Two upstream bugs found by fuzzing the fix are fixed in the same files:
+  autowrap marked scrollback row `_y` as wrapped instead of row `_y + _yBase`
+  (after any cleared screen, a long line copied as two lines and two unrelated
+  history lines copied as one), and `getLinesToRemove` measured the buffer's
+  row 0 instead of the line's first row.
+
+**Measured.** 4,000 random read/resize sequences over the policy changed the
+copied text 3,851 times before the patch with a full scrollback, and 2,320
+times with a 30-line one. After it: none, and none with wide characters in the
+text, and none with the cursor stepped back into the line before each resize.
+
+**Upstream at v1.99.3 (checked 2026-11-09):** the autowrap index and the row-0
+measurement are fixed upstream, in the same shape - drop those two hunks on a
+re-sync. The cursor-line skip, the cut, and the pending-wrap clamp are all
+still there, so the rest is still needed.
+
+**Re-applying it after a SwiftTerm upgrade:** re-add the `keepCursorLine` /
+`cursorX` parameters down `resize` -> `reflow` -> `reflowNarrower` /
+`reflowWider` -> `getLinesToRemove`, the cursor-target and `ReflowedCursor`
+blocks in both reflows, `contentRowsBelowCursor` and the split adjustment in
+`reflowNarrower`, the `newCols != cols` guard on the `x` clamp, and the hook in
+`Terminal.swift`. `VendoredPatchesSelfTest` names the patch if any of that is
+missing, and `FM_RUN_TERMINAL_RESIZE_REFLOW_TESTS` is the behavioural half: it
+replays the report, streams the policy through toggling widths, checks the
+cursor, the carriage-return case, the pending wrap, the cleared screen and the
+shell's redraw, fuzzes 1,800 seeded sequences, and reads the foreground from a
+real `/bin/sh` on a PTY.
+
 ## Updating this vendored copy, and the scheduled check
 
 **Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
@@ -417,7 +487,7 @@ buffer, the memo and the width cap.
 **Re-check:** every 183 days (six months), or sooner if upstream publishes a
 security fix.
 
-The eight patches above are the price of this pin, and the review that filed
+The nine patches above are the price of this pin, and the review that filed
 this section (P9 of full review #3) is right that the cost of a sync is
 re-applying every one of them. So the standing decision is **stay pinned and
 re-check on a schedule**, not "bump when a newer tag exists" - and the check
@@ -437,7 +507,7 @@ the next scheduled check:
 
 A newer tag on its own is **not** a reason. Nothing in this app is waiting on
 an upstream feature, and every release since the pin has to be re-diffed against
-all eight patch sites by hand.
+all nine patch sites by hand.
 
 ### The check itself
 
@@ -449,11 +519,11 @@ why it is in `native/MANUAL-CHECKS.md` rather than a suite:
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
   | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
 
-# 2. How big is the gap, and did it touch our eight patch sites?
+# 2. How big is the gap, and did it touch our nine patch sites?
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer'))]"
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer','/Buffer.swift','/Terminal.swift'))]"
 
-# 3. For each of the eight patches, read the upstream function and answer one
+# 3. For each of the nine patches, read the upstream function and answer one
 #    question: is the root cause fixed, or is there a hook now?
 curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
 
@@ -463,7 +533,7 @@ curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sourc
 ```
 
 `VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
-*other* hazard: it asserts all eight patches are still present in this tree, so a
+*other* hazard: it asserts all nine patches are still present in this tree, so a
 sync that silently drops one fails by name rather than being found in
 production. It also reads the `Last checked` date above and prints a NOTE (never
 a failure - a date cannot break somebody else's build) once it is older than the
@@ -477,7 +547,8 @@ upstream behaviour, and the same is true of the seventh, added on 2026-09-26,
 and the eighth, added on 2026-10-26:
 `buildAttributedString` and `draw(_:)` are both still `internal`/non-`open` at
 v1.20.0, so neither a per-row cache nor a highlight hook has anywhere else to
-live. The five verdicts
+live. The ninth, added on 2026-11-09, *does* have an upstream question, and its
+own section records the answer at v1.99.3. The five verdicts
 below are left exactly as they were recorded.)*
 
 Upstream is **three releases ahead** of the review that filed this (which said
@@ -508,7 +579,7 @@ scheduled check is the place to ask again.
 
 ### Re-applying the patches, if a sync does happen
 
-Replace `Sources/SwiftTerm` with the new tree, then re-apply all eight. Each
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all nine. Each
 patch's own section above ends with the specific hunks; in summary:
 
 | # | Files |
@@ -521,6 +592,7 @@ patch's own section above ends with the specific hunks; in summary:
 | 6 | `Apple/Metal/MetalTerminalRenderer.swift` (a `_ = ` on both `vertices.withUnsafeBytes` calls) |
 | 7 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the cache storage + counters), `Apple/AppleTerminalView.swift` (the cache types, `preparedLineRender`, the two `draw(_:)` call sites, the two invalidations) |
 | 8 | `Apple/RowHighlighting.swift` (new file, keep it), `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `rowHighlighter` storage), `Apple/AppleTerminalView.swift` (the two `CachedLineRender` fields, the `preparedLineRender` comparison, the glyph pass's `runIsHighlighted` branch) |
+| 9 | `Buffer.swift` (`resize`, both reflows, `getLinesToRemove`, `getNewLineLengths`; the two autowrap hunks are already upstream at v1.99.3), `Terminal.swift` (`cursorLineRedrawnOnResize` and `resizeBuffers`) |
 
 Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
 not come back - followed by the terminal suites that prove each one behaves:
@@ -528,8 +600,9 @@ not come back - followed by the terminal suites that prove each one behaves:
 `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
 `FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
 `FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5),
-`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7), and
-`FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS` (8).
+`FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7),
+`FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS` (8), and
+`FM_RUN_TERMINAL_RESIZE_REFLOW_TESTS` (9).
 Patch 6 has no behavioural suite because it has no behaviour - a warning-clean
 `swift build` is the check, and `FM_RUN_VENDORED_PATCHES_TESTS` is what makes a
 dropped re-apply fail by name rather than only in build output nobody reads.

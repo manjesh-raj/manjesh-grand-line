@@ -23,6 +23,16 @@ import SwiftTerm
 /// directly. Otherwise it defers to SwiftTerm's normal paste (real text still
 /// pastes as text).
 final class CockpitTerminalView: LocalProcessTerminalView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        installResizeReflowPolicy()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        installResizeReflowPolicy()
+    }
+
     override func paste(_ sender: Any) {
         lastUserActivity = Date()
         let pb = NSPasteboard.general
@@ -494,6 +504,50 @@ final class CockpitTerminalView: LocalProcessTerminalView {
         // for the child exactly as it would have received them.
         super.mouseDown(with: press)
         super.mouseUp(with: event)
+    }
+
+    // MARK: Resize reflow policy (`fm/grandline-selection-copy-corruption-1794208740`)
+
+    /// Shells whose line editor redraws its own prompt line after SIGWINCH.
+    static let promptRedrawingShells: Set<String> = ["zsh", "bash", "sh", "fish", "ksh", "tcsh", "csh", "dash"]
+
+    /// Whether the terminal's foreground process, named `processName`, will
+    /// redraw the line the cursor is on after a resize. Only a shell at its
+    /// prompt does: anything it runs - `cat`, `aws`, `claude`, an `ssh`
+    /// session, whatever the far side is doing - leaves already-printed output
+    /// alone. A login shell's `-zsh` is still zsh.
+    static func foregroundRedrawsCursorLine(processName: String?) -> Bool {
+        guard var name = processName, !name.isEmpty else { return false }
+        if name.hasPrefix("-") { name.removeFirst() }
+        return promptRedrawingShells.contains(name)
+    }
+
+    /// SwiftTerm patch 9's question, answered from the PTY: which process
+    /// group owns the terminal right now, and is it a shell? Anything that
+    /// cannot be read answers no, which keeps the text.
+    static func foregroundRedrawsCursorLine(ptyDescriptor fd: Int32) -> Bool {
+        guard fd >= 0 else { return false }
+        let group = tcgetpgrp(fd)
+        guard group > 0 else { return false }
+        // The kernel keeps the name in a 2 * MAXCOMLEN field and `proc_name`
+        // refuses a smaller buffer - measured on a bash child: MAXCOMLEN + 1
+        // answered 0, which reads as "not a shell" forever.
+        var name = [CChar](repeating: 0, count: 2 * Int(MAXCOMLEN) + 1)
+        guard proc_name(group, &name, UInt32(name.count)) > 0 else { return false }
+        return foregroundRedrawsCursorLine(processName: String(cString: name))
+    }
+
+    /// A shell at its prompt gets upstream's resize - its line is cut to the
+    /// new width and the shell redraws it cleanly. Anything else gets the
+    /// cursor's line reflowed with the rest, because cutting it destroyed the
+    /// text past the new width: a long line still being printed lost its
+    /// middle from every later copy. Asked once per resize, which is one
+    /// `tcgetpgrp` and one `proc_name`.
+    private func installResizeReflowPolicy() {
+        terminal?.cursorLineRedrawnOnResize = { [weak self] in
+            guard let process = self?.process, process.running else { return false }
+            return Self.foregroundRedrawsCursorLine(ptyDescriptor: process.childfd)
+        }
     }
 
     // MARK: Machine-readable geometry (`fm/grandline-k8s-ui-revamp`)

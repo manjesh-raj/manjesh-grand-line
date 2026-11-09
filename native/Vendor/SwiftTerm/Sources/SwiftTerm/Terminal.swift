@@ -834,10 +834,20 @@ open class Terminal {
         altBuffer.setupTabStops(index: index, tabStopWidth: tabStopWidth)
     }
     
+    /// Grand Line patch 9: asked on every resize, "will the program redraw the
+    /// line the cursor is on once it hears about this size?". `true` keeps
+    /// upstream's behaviour for that line - left where it is and cut to the
+    /// new width, so a shell's line editor can redraw its prompt over it
+    /// cleanly. `false` (and the default, nil) reflows it with every other
+    /// line and moves the cursor with its character, because nothing redraws
+    /// output a running program already printed: cutting it lost the middle
+    /// of a long line for good (`fm/grandline-selection-copy-corruption-1794208740`).
+    public var cursorLineRedrawnOnResize: (() -> Bool)?
+
     func resizeBuffers(newColumns: Int, newRows: Int) {
         // correct the savedY cursor to follow changes to y
         let dy = normalBuffer.savedY - normalBuffer.y
-        normalBuffer.resize (newCols: newColumns, newRows: newRows)
+        normalBuffer.resize (newCols: newColumns, newRows: newRows, keepCursorLine: cursorLineRedrawnOnResize?() ?? false)
         normalBuffer.savedY = normalBuffer.y + dy
         
         altBuffer.resize (newCols: newColumns, newRows: newRows)
