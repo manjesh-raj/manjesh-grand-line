@@ -82,7 +82,9 @@ enum SettingsSidebarNavigationSelfTest {
     /// so that page's count did not move). Thirty-four since the Capture page
     /// gained its Clipboard history card (the switch that turns the history
     /// on, off by default).
-    private static let expectedCardCount = 34
+    /// Thirty-five since the Security page gained its Power card (the
+    /// lid-closed switch).
+    private static let expectedCardCount = 35
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

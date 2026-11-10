@@ -220,7 +220,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing claude summary"
             case .intents: return "siri spotlight raycast shortcuts automation app intents"
-            case .security: return "touch id sudo pam lock vault poneglyph password credential"
+            case .security: return "touch id sudo pam lock vault poneglyph password credential lid closed sleep awake power battery pmset"
             case .backup: return "export import restore glbackup archive move machine"
             }
         }
@@ -289,11 +289,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
+    /// Security > Power's "Keep running with the lid closed" switch. The
+    /// system side is injectable so a suite can drive the row with no
+    /// administrator prompt (`LidClosedKeepAwake.swift`).
+    private let lidKeepAwake: LidClosedKeepAwakeModel
+
+    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore,
+         keepAwakeSystem: KeepAwakeSystem = PmsetKeepAwakeSystem()) {
         self.hostStore = hostStore
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         self.dictationStore = dictationStore
+        self.lidKeepAwake = LidClosedKeepAwakeModel(system: keepAwakeSystem)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -547,6 +554,14 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private let securityStackHost = NSStackView()
     private var sudoRowHost: SettingsRow?
+
+    /// Security > Power. The switch, the status beside it and the row are
+    /// built once and re-rendered in place, since the row's height must not
+    /// jump while the administrator prompt is up.
+    private let lidClosedSwitch = HelmToggle()
+    private let lidClosedPill = HelmStatusPill(style: .pill)
+    private let lidClosedStatusLabel = NSTextField(labelWithString: "")
+    private var lidClosedRow: SettingsRow?
 
     // MARK: - Dependent rows (the reference's `data-dep`)
 
@@ -1054,6 +1069,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         selectedCategory = category
         sidebar.select(category.rawValue)
         mountPage(category)
+        refreshLidClosedIfShown()
         refreshToolbar()
         // The shell owns the drill header; this page only says "re-read me".
         onDrillSubtitleChanged?()
@@ -1167,6 +1183,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             hasCheckedSudoTouchIDOnce = true
             checkSudoTouchID()
         }
+        refreshLidClosedIfShown()
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scrollView) { scrollToTop() }
     }
@@ -2099,7 +2116,85 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             SettingsSection(heading: "Poneglyph vault", group: SettingsGroup(rows: vaultRows)),
             SettingsSection(heading: "System", group: SettingsGroup(custom: securityStackHost,
                                                                     insets: NSEdgeInsets())),
+            SettingsSection(heading: "Power", group: SettingsGroup(rows: [buildLidClosedRow()]),
+                            foot: "This is a macOS setting (pmset disablesleep), not a Grand Line one. Changing it asks for an administrator through macOS's own prompt - Grand Line never sees your password."),
         ]
+    }
+
+    // MARK: - Power (lid closed)
+
+    static let lidClosedHelp = "Stops this Mac from sleeping, even with the lid closed, so agents keep running. A closed Mac in a bag gets hot and drains its battery quickly, so turn this off when you no longer need it."
+
+    /// Every time the Security page comes on screen, not once: the setting is
+    /// the system's, it outlives this app, and it can change from a terminal
+    /// behind the page's back.
+    private func refreshLidClosedIfShown() {
+        guard selectedCategory == .security else { return }
+        lidKeepAwake.refresh()
+    }
+
+    private func buildLidClosedRow() -> SettingsRow {
+        lidClosedSwitch.setAccessibilityLabel("Keep running with the lid closed")
+        lidClosedSwitch.onToggle = { [weak self] in
+            guard let self else { return }
+            self.lidKeepAwake.requestChange(to: self.lidClosedSwitch.isOn)
+        }
+        lidClosedStatusLabel.font = HelmType.caption()
+        lidClosedStatusLabel.textColor = HelmTheme.mutedInk(theme)
+        let trailing = NSStackView(views: [lidClosedStatusLabel, lidClosedPill, lidClosedSwitch])
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = HelmMetrics.s2
+        let row = SettingsRow(title: "Keep running with the lid closed",
+                              description: Self.lidClosedHelp, control: trailing)
+        lidClosedRow = row
+        lidKeepAwake.onChange = { [weak self] in self?.renderLidClosedRow() }
+        renderLidClosedRow()
+        return row
+    }
+
+    /// Paints the row from the model, and only from the model - the switch
+    /// is set here after every click, which is what snaps it back to the
+    /// real state while the prompt is up or after a cancel.
+    private func renderLidClosedRow() {
+        let state = lidKeepAwake.state
+        let changing = lidKeepAwake.isChanging
+        lidClosedSwitch.isOn = state.isOn
+        var known = false
+        if case .known = state { known = true }
+        lidClosedSwitch.isEnabled = known && !changing
+
+        let status: String?
+        switch state {
+        case _ where changing: status = "Waiting for approval\u{2026}"
+        case .checking: status = "Checking\u{2026}"
+        case .unknown: status = "Unknown"
+        case .known: status = nil
+        }
+        lidClosedStatusLabel.stringValue = status ?? ""
+        lidClosedStatusLabel.isHidden = status == nil
+        // A non-default, system-wide state, so a capsule rather than a dot
+        // and a word, and a warning tint because of the heat and the battery.
+        lidClosedPill.configure(text: "On", tint: .warn, theme: theme)
+        lidClosedPill.isHidden = !state.isOn || changing
+
+        var description = Self.lidClosedHelp
+        switch state {
+        case .known(true):
+            description += " On now - it stays on, even after Grand Line quits, until you turn it off here."
+        case .unknown(let reason):
+            description += " Could not read the current setting - \(reason)."
+        case .known(false), .checking:
+            break
+        }
+        if let message = lidKeepAwake.message { description += " " + message }
+        lidClosedRow?.descriptionLabel?.stringValue = description
+        // The status text beside the switch comes and goes, which moves the
+        // control column - and the page only re-wraps on a *page* width
+        // change. Without this, "Waiting for approval" clips the description
+        // to the line count it had before (gotcha (22)). Security is never
+        // the wide page, so the section width is the page width.
+        if lastPageWidth > 0 { lidClosedRow?.relayoutDescription(cardWidth: lastPageWidth) }
     }
 
     /// Rebuilt (not only re-themed) on every status change, since the
@@ -2765,6 +2860,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         for row in backupRows { row.applyTheme(theme) }
         sudoRowHost?.applyTheme(theme)
+        lidClosedPill.configure(text: "On", tint: .warn, theme: theme)
+        // Not in `mutedLabels`: the stack detaches it while hidden, and that
+        // list drops a label whose superview is gone.
+        lidClosedStatusLabel.textColor = muted
         shortcutsPage.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
         appearanceModeTabs?.select(currentAppearanceMode.rawValue)
@@ -2778,7 +2877,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         captureShortcutRecorder?.applyTheme(theme)
         for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        compactModeSwitch, compactDockSwitch, compactBadgeSwitch, separateMenuBarItemsSwitch,
-                       clipboardHistorySwitch] + moduleSwitches.map(\.toggle) {
+                       clipboardHistorySwitch, lidClosedSwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
         }
         profileTabs?.applyTheme(theme)
@@ -2944,8 +3043,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var debugToggles: [HelmToggle] {
         [terminalColors.changeSwitch, autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch,
          morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
-         separateMenuBarItemsSwitch, clipboardHistorySwitch]
+         separateMenuBarItemsSwitch, clipboardHistorySwitch, lidClosedSwitch]
     }
+    var debugLidClosedSwitch: HelmToggle { lidClosedSwitch }
+    var debugLidClosedRow: SettingsRow? { lidClosedRow }
+    var debugLidClosedPillShown: Bool { !lidClosedPill.isHidden }
+    var debugLidClosedStatusText: String? { lidClosedStatusLabel.isHidden ? nil : lidClosedStatusLabel.stringValue }
     /// T4's two controls. The suite types into the real field and sends its
     /// real action, so these hand out the controls rather than a commit.
     var debugScrollbackField: HelmTextField { scrollbackField }

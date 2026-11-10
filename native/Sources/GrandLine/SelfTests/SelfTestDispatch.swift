@@ -1183,6 +1183,14 @@ enum SelfTestDispatch {
             exit(SudoTouchIDDisableSelfTest.run() ? 0 : 1)
         }
 
+        // Security > Power's lid-closed switch: the fixed pmset commands, the
+        // pmset -g parser and the state machine that never shows on before a
+        // re-read says so - against a scripted system, no administrator prompt.
+        // The painted half is case 7 of FM_RUN_SETTINGS_REDESIGN_TESTS.
+        if ProcessInfo.processInfo.environment["FM_RUN_LID_CLOSED_KEEP_AWAKE_TESTS"] == "1" {
+            exit(LidClosedKeepAwakeSelfTest.run() ? 0 : 1)
+        }
+
         // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
         // Motion audit. Dusk's own colour derivation is measured by
         // FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See
