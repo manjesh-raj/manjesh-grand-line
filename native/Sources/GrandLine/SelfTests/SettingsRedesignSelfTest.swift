@@ -37,6 +37,11 @@
 //      `AppSettings` and from an armed `ClipboardHistoryController`, so the
 //      wiring from the page to the pasteboard watch is what is asserted, not
 //      the setter alone.
+//   7. **Security's lid-closed switch never runs ahead of the system.** Real
+//      presses with a scripted `pmset` behind it: the switch shows what a
+//      re-read says on every visit, stays put and inert while the
+//      administrator prompt is up, snaps back after a cancel, and shows on in
+//      the switch, a pill and the description - never while it is off.
 //
 // Window-backed on purpose (and so listed in `NEEDS_SESSION`): the search and
 // history cases drive real `HoverHighlightView` presses and read painted
@@ -65,7 +70,8 @@ enum SettingsRedesignSelfTest {
                       checkTheThemeGridRendersFiltersAndSelects,
                       checkADependentRowIsDimmedAndInert,
                       checkTheWidePageCollapsesAndComesBack,
-                      checkTheClipboardHistorySwitchDrivesCapture] {
+                      checkTheClipboardHistorySwitchDrivesCapture,
+                      checkTheLidClosedSwitchFollowsTheSystem] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -582,6 +588,163 @@ enum SettingsRedesignSelfTest {
             }
         }
         if ok { print("  ok   two columns, one, and back again across six resizes") }
+    }
+
+    // MARK: 7. Security's lid-closed switch
+
+    /// A real press on the real switch, with `ScriptedKeepAwakeSystem` behind
+    /// it so no administrator prompt is raised. The state machine itself is
+    /// `LidClosedKeepAwakeSelfTest`'s, headless; this is what the captain sees.
+    private static func checkTheLidClosedSwitchFollowsTheSystem(_ ok: inout Bool) {
+        print("\n-- Security's lid-closed switch shows the system, never ahead of it --")
+        let system = ScriptedKeepAwakeSystem(reading: .off)
+        let settings = SettingsController(hostStore: HostStore(), keyStore: SSHKeyStore(),
+                                          snippetStore: SnippetStore(), dictationStore: DictationStore(),
+                                          keepAwakeSystem: system)
+        let window = mount(settings)
+        defer { _ = window }
+        settings.select(.security)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        checkTheRowIsOnTheSecurityPage(settings, &ok)
+        checkItShowsTheSystemOnEveryVisit(settings, system, &ok)
+        checkAPressWaitsForTheSystem(settings, system, window, &ok)
+        checkACancelSnapsBack(settings, system, &ok)
+        checkTheControlsSitInsideTheCard(settings, window, &ok)
+    }
+
+    private static func lidDescription(_ settings: SettingsController) -> String {
+        settings.debugLidClosedRow?.descriptionLabel?.stringValue ?? ""
+    }
+
+    /// Leaves the Security page and comes back, which is what re-reads.
+    private static func revisitSecurity(_ settings: SettingsController) {
+        settings.select(.appearance)
+        settings.select(.security)
+    }
+
+    private static func checkTheRowIsOnTheSecurityPage(_ settings: SettingsController, _ ok: inout Bool) {
+        print("\n-- the row lives on Security, under Power --")
+        let rows = settings.debugSections(in: .security).flatMap { $0.group.rows }
+        guard let row = settings.debugLidClosedRow else {
+            fail("the lid-closed row was never built", &ok)
+            return
+        }
+        check(rows.contains { $0 === row }, "the lid-closed row is not on the Security page", &ok)
+        check(row.titleLabel.stringValue == "Keep running with the lid closed",
+              "the row is titled \(row.titleLabel.stringValue)", &ok)
+        check(settings.debugSections(in: .security).contains { $0.headingLabel?.stringValue == "Power" },
+              "the Security page has no Power section", &ok)
+        check(lidDescription(settings).contains("battery"),
+              "the help text does not mention the battery downside: \(lidDescription(settings))", &ok)
+    }
+
+    private static func checkItShowsTheSystemOnEveryVisit(_ settings: SettingsController,
+                                                         _ system: ScriptedKeepAwakeSystem, _ ok: inout Bool) {
+        print("\n-- the switch shows the system's state on every visit --")
+        let toggle = settings.debugLidClosedSwitch
+        check(!toggle.isOn && toggle.isEnabled, "an off system did not paint an enabled, off switch", &ok)
+        check(!settings.debugLidClosedPillShown, "the On pill shows while it is off", &ok)
+        check(!lidDescription(settings).contains("On now"), "the description claims on while it is off", &ok)
+
+        // Turned on from a terminal while Settings was elsewhere.
+        system.reading = .on
+        revisitSecurity(settings)
+        check(toggle.isOn, "a visit after a terminal change still shows off", &ok)
+        check(settings.debugLidClosedPillShown, "on, but no On pill", &ok)
+        check(lidDescription(settings).contains("On now"), "on, but the description does not say so", &ok)
+
+        system.reading = .unknown("pmset -g failed")
+        revisitSecurity(settings)
+        check(!toggle.isOn && !toggle.isEnabled, "an unreadable state painted a usable or on switch", &ok)
+        check(!settings.debugLidClosedPillShown, "an unreadable state shows the On pill", &ok)
+        check(settings.debugLidClosedStatusText == "Unknown",
+              "an unreadable state says \(settings.debugLidClosedStatusText ?? "nothing")", &ok)
+
+        system.reading = .off
+        revisitSecurity(settings)
+        check(!toggle.isOn && settings.debugLidClosedStatusText == nil, "back to off did not repaint", &ok)
+    }
+
+    private static func checkAPressWaitsForTheSystem(_ settings: SettingsController,
+                                                     _ system: ScriptedKeepAwakeSystem,
+                                                     _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- a press waits for the system before it shows on --")
+        let toggle = settings.debugLidClosedSwitch
+        system.outcome = .applied
+        system.holdsChanges = true
+        _ = toggle.accessibilityPerformPress()
+        check(system.changeRequests.last == true, "the press asked for no change", &ok)
+        check(!toggle.isOn, "the switch painted on while the administrator prompt was still up", &ok)
+        check(!toggle.isEnabled, "the switch stayed pressable while a change was in flight", &ok)
+        check(settings.debugLidClosedStatusText == "Waiting for approval\u{2026}",
+              "the row says \(settings.debugLidClosedStatusText ?? "nothing") while waiting", &ok)
+        window.contentView?.layoutSubtreeIfNeeded()
+        checkTheDescriptionIsNotClipped(settings, "while waiting", &ok)
+        let requests = system.changeRequests.count
+        _ = toggle.accessibilityPerformPress()
+        check(system.changeRequests.count == requests, "a press on the inert switch started a second change", &ok)
+
+        system.releasePendingChange()
+        window.contentView?.layoutSubtreeIfNeeded()
+        check(toggle.isOn && toggle.isEnabled, "an applied change did not paint on", &ok)
+        check(settings.debugLidClosedPillShown, "an applied change shows no On pill", &ok)
+        check(settings.debugLidClosedStatusText == nil, "the waiting text stayed after the change landed", &ok)
+        system.holdsChanges = false
+    }
+
+    /// The status text beside the switch changes the control column's width.
+    /// A description wrapped for the old width draws more lines than its
+    /// frame holds, and the last ones are simply not painted.
+    private static func checkTheDescriptionIsNotClipped(_ settings: SettingsController, _ when: String,
+                                                        _ ok: inout Bool) {
+        guard let label = settings.debugLidClosedRow?.descriptionLabel, let cell = label.cell else {
+            fail("no description to measure \(when)", &ok)
+            return
+        }
+        let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width,
+                                                     height: .greatestFiniteMagnitude)).height
+        check(label.frame.width > 100, "the description never laid out \(when) - the clip check would be vacuous", &ok)
+        check(label.frame.height + 0.5 >= needed,
+              "the description is clipped \(when): \(label.frame.height)pt tall, its text needs \(needed)pt", &ok)
+    }
+
+    private static func checkACancelSnapsBack(_ settings: SettingsController,
+                                              _ system: ScriptedKeepAwakeSystem, _ ok: inout Bool) {
+        print("\n-- a cancelled prompt snaps the switch back and says so --")
+        let toggle = settings.debugLidClosedSwitch
+        check(toggle.isOn, "the case needs the switch on to start with", &ok)
+        system.outcome = .cancelled
+        _ = toggle.accessibilityPerformPress()
+        check(toggle.isOn, "a cancelled turn-off left the switch painted off", &ok)
+        check(lidDescription(settings).contains("the administrator prompt was cancelled"),
+              "a cancel left no sentence: \(lidDescription(settings))", &ok)
+
+        // Put the scripted system back to off for whatever runs next.
+        system.outcome = .applied
+        _ = toggle.accessibilityPerformPress()
+        check(!toggle.isOn && !settings.debugLidClosedPillShown, "turning it off did not paint off", &ok)
+    }
+
+    private static func checkTheControlsSitInsideTheCard(_ settings: SettingsController,
+                                                         _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- the row's controls sit inside its card --")
+        guard let row = settings.debugLidClosedRow, let content = window.contentView else {
+            fail("no row to measure", &ok)
+            return
+        }
+        content.layoutSubtreeIfNeeded()
+        let rowFrame = row.convert(row.bounds, to: content)
+        let toggle = settings.debugLidClosedSwitch
+        let toggleFrame = toggle.convert(toggle.bounds, to: content)
+        // The fixture's own discriminating power: a row that never laid out
+        // contains nothing, and every frame check would be vacuous.
+        check(rowFrame.width > 300 && toggleFrame.width > 0,
+              "the row never laid out (\(rowFrame)) - the frame check would be vacuous", &ok)
+        check(rowFrame.insetBy(dx: -0.5, dy: -0.5).contains(toggleFrame),
+              "the switch \(toggleFrame) spills out of its row \(rowFrame)", &ok)
+        check(toggleFrame.maxX <= rowFrame.maxX - SettingsRow.Metrics.insetH + 0.5,
+              "the switch ignores the row's trailing inset", &ok)
     }
 }
 

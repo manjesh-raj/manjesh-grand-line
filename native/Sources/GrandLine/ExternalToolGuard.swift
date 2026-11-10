@@ -86,8 +86,11 @@ enum ExternalToolGuard {
     /// - `screencapture` captures the real screen.
     /// - `npm` reaches the registry (`npm view`, `npm outdated`) and can
     ///   change the machine's global packages (R2-SEC-01).
+    /// - `osascript` raises macOS's administrator prompt on the captain's
+    ///   screen (Settings' lid-closed switch runs `pmset` through it).
     static let protectedTools: Set<String> = [
         "av", "brew", "gh", "claude", "herdr", "no-mistakes", "quota-axi", "open", "ssh", "screencapture", "npm",
+        "osascript",
     ]
 
     /// Interpreters whose first path argument is the program actually run.

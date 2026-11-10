@@ -114,7 +114,9 @@ enum DaylightDrillPageSlice6SelfTest {
     /// added the Terminal page's Terminal colours, light and dark pair, and
     /// Schemes cards. Thirty-four since the Capture page gained its Clipboard
     /// history card (the switch that turns the history on, off by default).
-    private static let expectedCardCount = 34
+    /// Thirty-five since the Security page gained its Power card (the
+    /// lid-closed switch).
+    private static let expectedCardCount = 35
 
 
     static func run() -> Bool {
@@ -823,15 +825,16 @@ enum DaylightDrillPageSlice6SelfTest {
         // since T4 made Terminal's background scrollback trim a toggle.
         // Eleven since Menu Bar's "Separate icons" switch joined this list
         // (it was on the page but missing from the theme pass) and Capture
-        // gained the clipboard history's switch.
+        // gained the clipboard history's switch. Twelve since Security gained
+        // the lid-closed switch.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 11 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 11")
+        if settings.debugToggles.count != 12 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 12")
             ok = false
         }
         // Reached by **name**, never by an index into `debugToggles`: that

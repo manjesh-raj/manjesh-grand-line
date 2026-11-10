@@ -1259,3 +1259,44 @@ So the suite enters at the hit view, as `NSWindow` does, and builds no window, w
 
 Two injections each failed by name: a plain `NSScrollView` back in `HelmDataTable` (the captain's bug, on both pages), and a scroll view that always forwards (the clipped case).
 The live scroll on a real trackpad is the captain's check: no composited window was launched from the worktree.
+
+## Security > Power: keep running with the lid closed (`feature/lid-closed-keep-awake-toggle`)
+
+### What it does
+
+The Security page gained a Power card with one switch, "Keep running with the lid closed".
+It drives `pmset -a disablesleep`, an undocumented macOS setting that stops the Mac sleeping at all, so the crew keep running in a closed laptop.
+Turning it on runs `/usr/bin/pmset -a disablesleep 1` and turning it off runs the same with `0`.
+Both are fixed literals in `LidClosedKeepAwake.swift`, run through `osascript` with `do shell script ... with administrator privileges`, so macOS's own authorization dialog asks for an administrator at the moment of the click.
+Grand Line never sees or stores the password, installs no helper and edits no sudoers file.
+
+### Decisions
+
+There is no preference key.
+The switch shows what `pmset -g` prints, re-read every time the Security page comes on screen and after every change.
+`pmset -g` prints `SleepDisabled 1` under "System-wide power settings" when it is on, and a Mac that has never had it set prints no such line, which is off.
+Output that is not recognisably `pmset -g`'s is unknown rather than off (GL-14), and the switch is then inert.
+
+The switch never runs ahead of the system.
+A click snaps it back to the real state while the prompt is up, and only the re-read decides what it shows next.
+This matters more than it looks: an unprivileged `/usr/bin/pmset -a disablesleep 0` prints "must be run as root" and still exits 0 (measured on macOS 26.7), so an exit status alone is not evidence of a change.
+
+The setting is left alone when Grand Line quits or crashes.
+It is a system setting the captain chose, the reason to turn it on is often precisely that the app keeps running unattended, and a quit-time `osascript` prompt would block termination on a dialog.
+The row says so when it is on, and the card's foot says it is a macOS setting rather than a Grand Line one.
+
+`osascript` joined `ExternalToolGuard.protectedTools`, so no suite or tour can raise a real administrator prompt.
+
+### Verified
+
+`FM_RUN_LID_CLOSED_KEEP_AWAKE_TESTS` (headless) covers the fixed commands, the parser against this Mac's real `pmset -g` output, the cancel/failure classification and the state machine against a scripted `KeepAwakeSystem`.
+It also reads this machine's real `pmset -g` once, read-only, so a format change in `pmset` fails by name.
+Case 7 of `FM_RUN_SETTINGS_REDESIGN_TESTS` presses the real switch on a mounted page.
+It was folded there rather than given its own window-backed suite, because the window-backed lane has a ceiling and that suite already mounts Settings.
+
+Injections that each failed by name: setting the state optimistically before the re-read, dropping the refresh when the page is shown, removing `osascript` from the guard, and dropping the description re-wrap after a render.
+The last one was found in an off-screen render, not from the code: "Waiting for approval" widens the control column and the description was clipped to its old line count (gotcha (22)).
+
+Not verified: a real toggle with an approved administrator prompt, because an agent shell cannot answer that dialog.
+Both AppleScripts were compiled with `osacompile` to confirm they parse.
+Whether the setting survives a restart is disputed in public reports and was not tested here, which is the reason the switch re-reads rather than remembers.
