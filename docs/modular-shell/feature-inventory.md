@@ -518,6 +518,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Hide the Dock icon` | Settings row: Hide the Dock icon | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Hosts, SSH keys, jump hosts` | Settings row: Hosts, SSH keys, jump hosts | Settings > Backup & Restore | Settings › Backup & Restore (unchanged row) |  |
 | `settings.row.Interface text size` | Settings row: Interface text size | Settings > Appearance | Settings › Appearance (unchanged row) |  |
+| `settings.row.Keep running with the lid closed` | Settings row: Keep running with the lid closed | new - before it the only way was `sudo pmset -a disablesleep 1` in a terminal | Settings › Security › Power (a switch that runs `pmset -a disablesleep 1` or `0` through the macOS administrator prompt and always shows what `pmset -g` reports) |  |
 | `settings.row.Live in the menu bar` | Settings row: Live in the menu bar | Settings > Menu Bar | Settings › Menu Bar (unchanged row) |  |
 | `settings.row.Lock after a full session` | Settings row: Lock after a full session | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Profile` | Settings row: Profile - Personal, Operator or Custom, with a switch per module that can be hidden (R2-UX-01) | Settings > Appearance > Sidebar | Settings › Appearance |  |
