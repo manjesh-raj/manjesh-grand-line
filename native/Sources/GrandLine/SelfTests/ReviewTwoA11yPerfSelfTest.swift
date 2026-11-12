@@ -113,7 +113,7 @@ enum ReviewTwoA11yPerfSelfTest {
         sidebarMatches(shown: true, "after showing it again")
 
         // The inspector button's label flips with its tooltip - on a page
-        // that fills the inspector, since R4-UX-05 disables it elsewhere.
+        // that fills the inspector.
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         guard let inspector = toolbar.debugInspectorItem else {

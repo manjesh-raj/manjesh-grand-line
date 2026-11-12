@@ -164,6 +164,11 @@ enum ReviewTourLab {
         /// and `sidebar show|hide`, through the shell's own toggles.
         case inspector(Bool)
         case sidebar(Bool)
+        /// `inspector toggle`: a press on the toolbar's inspector button,
+        /// through its own target and action, logging whether the button is
+        /// enabled and whether the pane is open after it. A disabled button
+        /// is not pressed, because AppKit sends no action for one.
+        case inspectorToggle
         /// `tab <name>`: the sidebar shell's toolbar tab with this name - a
         /// module's tab, or one of Home's spaces - through the toolbar's own
         /// click path. In the floating bar, the showing page's own tab with
@@ -449,6 +454,8 @@ enum ReviewTourLab {
             return .success(.fleetReply)
         case "orderfront":
             return .success(.orderFront)
+        case "inspector" where argument == "toggle":
+            return .success(.inspectorToggle)
         case "inspector", "sidebar":
             guard argument == "show" || argument == "hide" else {
                 return .failure(argument.isEmpty ? .missingArgument(verb) : .badArgument(argument))
@@ -690,6 +697,18 @@ enum ReviewTourLab {
                 }
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
+            case .inspectorToggle:
+                guard let split = shell as? MainSplitShellController,
+                      let item = split.toolbar.debugInspectorItem else {
+                    log.append("inspector toggle FAILED - no toolbar inspector button")
+                    continue
+                }
+                let page = split.debugCurrentDestination?.rawValue ?? "?"
+                let enabled = item.isEnabled
+                if enabled { _ = split.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector) }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("inspector toggle on \(page): enabled=\(enabled) pressed=\(enabled) "
+                    + "open=\(!split.debugInspectorIsCollapsed) tooltip=\"\(item.toolTip ?? "")\"")
             case .moduleTab(let name):
                 if let split = shell as? MainSplitShellController {
                     guard let index = split.toolbar.debugTabNames.firstIndex(of: name) else {

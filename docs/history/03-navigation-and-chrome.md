@@ -1552,3 +1552,30 @@ The snooze list and its expiry timer had shipped with PR #551 and #552, so R4-UX
 `ReviewFourUXSelfTest` covers R4-UX-01, 04, 05, 06, 07 and 08's backup report and Fleet Stop.
 The vault, snooze, inspector, Whiteboard, host panel and schedule halves live in their pages' own suites.
 The tour lab's `ux <state>` verb puts each state on screen for a render.
+
+### The inspector opens from every page (reverses R4-UX-05's inspector half)
+
+The captain asked for the inspector on every page and every feature.
+R4-UX-05 had disabled the toolbar's inspector button on any page that is not a `WorkspaceInspectorSource`, and `reconcileInspector` closed the pane on such a page.
+Measured with the tour lab's `inspector toggle` verb before the fix, that was 26 of the 30 routes, Home and Console among them.
+Only Hosts, Poneglyph, Updates and GitHub sync enabled it.
+
+- The button is always enabled now (`WorkspaceToolbar`, `item.isEnabled = true` with `autovalidates = false`), and the shell's toolbar handler no longer checks the page.
+- On a page that fills nothing, the pane opens on its existing empty state ("No details for this page"). R4-UI-07's module-named body text is unchanged.
+- `inspectorPinnedOpen` holds on every page. An inspector the captain opened stays open across a page change, and one they closed stays closed. Only a selection still opens it unasked (`inspectorWanted`), so a page with nothing to show never opens it by itself.
+- R4-UI-01's overflow order is kept: the button is `.high` on a page that fills the inspector and `.low` elsewhere, where it is still enabled and still reachable from the overflow menu.
+- There is no menu item or key equivalent for the inspector, so the toolbar button and the pane's close button are the two routes. A comment in `setInspectorShown` that named ⌥⌘I was corrected.
+- The floating bar has no inspector, so it is unchanged.
+- The inspector item's holding priority went from 270 to `sidebarRestingPriority` (499.5), the sidebar's.
+  Opening the pane on every page exposed what 270 meant: a page that holds its own width at `contentTie` (499) won.
+  Measured in the tour lab, Home's grid kept the column at 1124-1240pt and laid the inspector out past the window's trailing edge, and in one every-page tour the split view collapsed it on Settings by itself while the shell still thought it was open (so the next press reopened it).
+  At 499.5 a stale page gives way and re-lays out over a few turns, as it does when the sidebar comes back. Home measured about 150-300ms before the column reached 920pt beside the pane.
+  A one-turn `maximumThickness` pin on the content column was tried first and rejected: it shrank the whole window from 1512 to 918 (gotcha (13)).
+- `MainSplitShellSelfTest.checkTheSidebarKeepsOneWidthOnEveryPage` was flaky on `main` (1 run in 10 measured): its `setPosition` sometimes landed while `holdSidebar`'s one-turn pin (min == max) was still in force, and was refused. It now waits for the pin to come off (`settleSidebarPin`) and fails if it never does.
+
+`MainSplitShellSelfTest.checkTheInspectorOpensOnEveryPage` walks every route and presses the button through its own target and action, only once the item reports enabled.
+It checks the pane opens, lies inside the window, and closes again.
+It also checks that the open and closed states carry across Home, Console and Settings.
+Reverting the toolbar and reconcile gates fails it on all 26 pages by name.
+Reverting the priority to 270 did not fail it in the suite, because that failure is timing-dependent, so the inside-the-window check guards the outcome rather than forcing the race.
+The tour lab's `inspector toggle` verb presses the same button and logs whether it was enabled and whether the pane is open after it.

@@ -17,7 +17,9 @@
 //
 // Elsewhere: R4-UX-02 is `CredentialVaultViewSelfTest`, R4-UX-03 is
 // `NotificationBridgePanelSelfTest` and `GrandLineNotificationCenterSelfTest`,
-// R4-UX-05's inspector half is `MainSplitShellSelfTest.checkTheInspector`,
+// R4-UX-05's inspector half (a disabled button on a page with no details)
+// was reversed at the captain's request: the button now opens the inspector
+// on every page, which is `MainSplitShellSelfTest.checkTheInspectorOpensOnEveryPage`,
 // R4-UX-07's Whiteboard overlay is `WhiteboardViewSelfTest`, and R4-UX-08's
 // schedule Stop is `ScheduleRunnerSelfTest`. R4-UX-09 and R4-UX-10 shipped
 // with R4-UI-09 and are `MainSplitShellSelfTest.checkTasksBoardAndFilterRow`.
