@@ -402,7 +402,14 @@ final class MainSplitShellController: WorkspaceShellController {
         inspectorItem.canCollapse = true
         inspectorItem.canCollapseFromWindowResize = true
         inspectorItem.isCollapsed = true
-        inspectorItem.holdingPriority = NSLayoutConstraint.Priority(rawValue: 270)
+        // Held above a page's ties, as the sidebar is (`sidebarRestingPriority`).
+        // At 270 a page that holds its own width at `contentTie` (499) won:
+        // opened on Home, whose grid holds its last width, the column stayed
+        // 1240pt wide and the inspector was laid out entirely past the
+        // window's trailing edge (measured in the tour lab). Only the four
+        // pages that fill the inspector could open it then, and they are laid
+        // out to fit beside it, so nothing showed it until every page could.
+        inspectorItem.holdingPriority = Self.sidebarRestingPriority
         inspector.onClose = { [weak self] in self?.setInspectorShown(false) }
         inspector.setContent(nil)
 
@@ -513,10 +520,9 @@ final class MainSplitShellController: WorkspaceShellController {
         // takes, so the button reopens the view the calendar last showed.
         toolbar.onCalendar = { [weak self] in self?.openModule(.calendar) }
         notificationCenter.onOpenHome = { [weak self] in self?.openModule(.home) }
+        // On every page: one with no details opens on the pane's empty state.
         toolbar.onToggleInspector = { [weak self] in
             guard let self else { return }
-            // R4-UX-05: nothing to open on a page with no details.
-            guard self.inspectorSource != nil || !self.inspectorItem.isCollapsed else { return }
             self.setInspectorShown(self.inspectorItem.isCollapsed)
         }
         toolbar.onSearch = { [weak self] in self?.workspace.onSearchTapped?() }
@@ -806,7 +812,8 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     /// The captain's own request, from the inspector button, the pane's close
-    /// button or ⌥⌘I: the only route that may widen the window for it.
+    /// button, or a page's Show in Inspector: the only route that may widen
+    /// the window for it.
     func setInspectorShown(_ shown: Bool) {
         // H11: closing the inspector over unsaved changes asks the page
         // first; a cancel leaves the inspector exactly as it was.
@@ -914,11 +921,14 @@ final class MainSplitShellController: WorkspaceShellController {
         let source = inspectorSource.map(ObjectIdentifier.init)
         let content = inspectorSource?.inspectorContent
         inspector.setContent(content, emptyText: inspectorSource?.inspectorEmptyText)
-        // R4-UX-05: a page that fills nothing in the inspector never shows
-        // its empty pane - its toolbar button is disabled too. The captain's
-        // standing request (`inspectorPinnedOpen`) is kept for the next page
-        // that has details.
-        var shown = inspectorSource != nil && (inspectorPinnedOpen || (inspectorWanted && content != nil))
+        // The captain's standing request (`inspectorPinnedOpen`) holds on
+        // every page, so an inspector they opened stays open across a page
+        // change, on the page's empty state where it fills nothing. R4-UX-05
+        // used to close it on such a page and disable the button there; the
+        // captain asked for it on every page instead. Only a selection opens
+        // it by itself (`inspectorWanted`), so a page with nothing to show
+        // never opens it unasked.
+        var shown = inspectorPinnedOpen || (inspectorWanted && content != nil)
         if shown, let window = view.window {
             let floor = columnFloor(inspectorShown: true)
             let width = window.contentRect(forFrameRect: window.frame).width
@@ -1414,6 +1424,9 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugDividerThickness: CGFloat { splitController.splitView.dividerThickness }
     var debugSplitView: WorkspaceShellSplitView? { splitController.splitView as? WorkspaceShellSplitView }
     var debugSidebarHoldingPriority: NSLayoutConstraint.Priority { sidebarItem.holdingPriority }
+    /// The sidebar is held at one width for a turn (`holdSidebar`, an
+    /// expand), so nothing can place its divider until that turn has run.
+    var debugSidebarWidthIsPinned: Bool { sidebarItem.minimumThickness == sidebarItem.maximumThickness }
     /// The inspector back at its launch state: wanted, not held open.
     func debugResetInspectorPreference() {
         inspectorWanted = true

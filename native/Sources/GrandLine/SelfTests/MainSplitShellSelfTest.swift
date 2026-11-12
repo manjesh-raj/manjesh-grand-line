@@ -276,6 +276,34 @@ enum MainSplitShellSelfTest {
         return canvas.gridIsCurrentForTests
     }
 
+    /// Wait for the open inspector to lie inside the window: a page laid out
+    /// for a wider column gives it room over the next few turns (Home's grid
+    /// measured about 200 ms). Returns where it ended either way.
+    private static func settleInspectorInsideWindow(_ shell: MainSplitShellController,
+                                                    _ window: NSWindow) -> (isInside: Bool, maxX: CGFloat) {
+        func maxX() -> CGFloat {
+            let pane = shell.inspector.view
+            return pane.convert(pane.bounds, to: nil).maxX
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while maxX() > window.frame.width + 0.5, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            shell.view.layoutSubtreeIfNeeded()
+        }
+        return (maxX() <= window.frame.width + 0.5, maxX())
+    }
+
+    /// Wait for the shell's one-turn sidebar pin to come off. `false` when it
+    /// never did, which is a failure in itself.
+    private static func settleSidebarPin(_ shell: MainSplitShellController) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while shell.debugSidebarWidthIsPinned, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            shell.view.layoutSubtreeIfNeeded()
+        }
+        return !shell.debugSidebarWidthIsPinned
+    }
+
     private static func resize(_ window: NSWindow, width: CGFloat, _ shell: MainSplitShellController) {
         var frame = window.frame
         frame.size.width = width
@@ -1298,23 +1326,14 @@ enum MainSplitShellSelfTest {
         // on, so a selection opens the inspector.
         check(shell.toolbar.debugInspectorSymbolName == WorkspaceToolbar.inspectorOnSymbol,
               "R2-BUG-10: at launch the inspector button draws \(shell.toolbar.debugInspectorSymbolName)", &ok)
-        // R4-UX-05: Home fills nothing in the inspector, so its button is
-        // disabled and a press there opens no empty pane.
-        shell.workspace.navigator.show(.homeCanvas)
-        settle(shell)
-        check(shell.toolbar.debugInspectorItem?.isEnabled == false,
-              "R4-UX-05: the inspector button is enabled on Home, which has nothing to show", &ok)
-        check(shell.toolbar.debugInspectorItem?.toolTip == WorkspaceToolbar.inspectorUnavailableHelp,
-              "R4-UX-05: Home's disabled inspector button says \(shell.toolbar.debugInspectorItem?.toolTip ?? "nothing")", &ok)
-        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
-        settle(shell)
-        check(shell.debugInspectorIsCollapsed, "R4-UX-05: a press on Home opened an empty inspector", &ok)
+        checkTheInspectorOpensOnEveryPage(shell, window, &ok)
         // A page that does fill it, with nothing selected yet, opens on its
         // own empty text.
+        resize(window, width: 1512, shell)
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         check(shell.toolbar.debugInspectorItem?.isEnabled == true,
-              "R4-UX-05: the inspector button is disabled on Connections, which fills it", &ok)
+              "the inspector button is disabled on Connections, which fills it", &ok)
         check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector item has no action", &ok)
         settle(shell)
         check(!shell.debugInspectorIsCollapsed, "the inspector item did not open the inspector", &ok)
@@ -1333,6 +1352,81 @@ enum MainSplitShellSelfTest {
               "R2-BUG-10: the closed-and-off inspector's tooltip reads \(item?.toolTip ?? "nothing")", &ok)
         check(WorkspaceToolbar.inspectorOnSymbol != WorkspaceToolbar.inspectorOffSymbol,
               "fixture: the two states draw two symbols", &ok)
+    }
+
+    /// The captain's call, reversing R4-UX-05's disabled button: the
+    /// inspector opens and closes from its toolbar button on every page,
+    /// including the 26 that fill nothing in it (Home and Console among
+    /// them), where it opens on the pane's empty state. A press goes through
+    /// the item's own target and action, and only once the item says it is
+    /// enabled, since AppKit sends no action for a disabled one. Then an
+    /// inspector the captain opened stays open across a page change, and one
+    /// they closed stays closed.
+    private static func checkTheInspectorOpensOnEveryPage(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                         _ ok: inout Bool) {
+        let walked = RailDestination.allCases
+        var sources: [RailDestination] = []
+        for destination in walked {
+            resize(window, width: 1512, shell)
+            shell.workspace.navigator.show(destination)
+            settle(shell)
+            let fillsInspector = shell.debugSlotController(destination) is WorkspaceInspectorSource
+            if fillsInspector { sources.append(destination) }
+            if !shell.debugInspectorIsCollapsed { shell.setInspectorShown(false); settle(shell) }
+            guard let item = shell.toolbar.debugInspectorItem else {
+                fail("the toolbar has no inspector button on \(destination.rawValue)", &ok)
+                return
+            }
+            check(item.isEnabled, "the inspector button is disabled on \(destination.rawValue)", &ok)
+            guard item.isEnabled else { continue }
+            check(item.toolTip == "Show the inspector" || item.toolTip?.contains("is off") == true,
+                  "the closed inspector's button on \(destination.rawValue) says \(item.toolTip ?? "nothing")", &ok)
+            _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+            settle(shell)
+            check(!shell.debugInspectorIsCollapsed, "the inspector button did not open the inspector on \(destination.rawValue)", &ok)
+            check(item.toolTip == "Hide the inspector",
+                  "the open inspector's button on \(destination.rawValue) says \(item.toolTip ?? "nothing")", &ok)
+            // Open is not enough: it must be inside the window. A page that
+            // holds its own width (Home's grid) once kept the column wide and
+            // laid the inspector out past the trailing edge. Such a page
+            // re-lays out over a few turns, as it does for the sidebar.
+            let inside = settleInspectorInsideWindow(shell, window)
+            check(inside.isInside,
+                  "the open inspector on \(destination.rawValue) ends at \(inside.maxX)pt, past the \(window.frame.width)pt window", &ok)
+            // A page that fills nothing opens on the pane's own empty state.
+            if !fillsInspector {
+                check(!shell.inspector.debugIsShowingContent && !shell.inspector.debugEmptyState.isHidden,
+                      "the inspector on \(destination.rawValue) does not show its empty state", &ok)
+            }
+            _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+            settle(shell)
+            check(shell.debugInspectorIsCollapsed, "the inspector button did not close the inspector on \(destination.rawValue)", &ok)
+        }
+        // Fixture: the walk crossed both kinds of page, so it proved the
+        // button on pages that fill nothing, not only on the four that do.
+        check(!sources.isEmpty && sources.count < walked.count && !sources.contains(.homeCanvas) && !sources.contains(.console),
+              "fixture: the pages that fill the inspector are \(sources.map(\.rawValue))", &ok)
+
+        // Opened on Home, it stays open on Console and on Settings, and
+        // closed on Console it stays closed back on Home.
+        resize(window, width: 1512, shell)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed, "the inspector button did not open the inspector on Home", &ok)
+        for destination in [RailDestination.console, .settings] {
+            shell.workspace.navigator.show(destination)
+            settle(shell)
+            check(!shell.debugInspectorIsCollapsed, "the inspector opened on Home closed on \(destination.rawValue)", &ok)
+        }
+        shell.workspace.navigator.show(.console)
+        settle(shell)
+        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+        settle(shell)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed, "the inspector closed on Console opened again on Home", &ok)
     }
 
     /// R2-ARCH-06: on macOS 14 and later the inspector is the system's
@@ -1714,6 +1808,15 @@ enum MainSplitShellSelfTest {
         let inset = pane.frame.width - shell.debugSidebarWidth
         shell.debugOpenModule(.console)
         settle(shell)
+        // The shell holds the sidebar at one width for a turn after a fit
+        // (`holdSidebar`), and a placement made inside that turn is refused,
+        // as it should be - no real drag lands in it. `settle`'s one 50 ms
+        // turn usually covered it and sometimes did not: "setPosition left
+        // the sidebar at 264.0pt" in about 1 run in 10 on `main`, with the
+        // range still pinned at 264-264 when the placement was made
+        // (measured). So the placement waits for the pin to come off, and a
+        // pin that never does is a failure in itself.
+        check(settleSidebarPin(shell), "the sidebar was still pinned at \(shell.debugSidebarWidth)pt two seconds after a fit", &ok)
         split.setPosition(chosen - 40 + inset, ofDividerAt: 0)
         settle(shell)
         check(abs(shell.debugSidebarWidth - (chosen - 40)) < 0.5 && shell.debugSidebarHoldingPriority == resting,

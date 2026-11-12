@@ -204,8 +204,8 @@ enum SidebarPolishSelfTest {
                                                _ ok: inout Bool) {
         print("\n-- the inspector slides in --")
         resize(window, width: 1512, shell)
-        // R4-UX-05: on a page that fills the inspector - Home has nothing to
-        // show there, so its button is disabled.
+        // On a page that fills the inspector, so the entrance plays for a
+        // page with details as well as for the empty state.
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         if !shell.debugInspectorIsCollapsed { shell.setInspectorShown(false) }
