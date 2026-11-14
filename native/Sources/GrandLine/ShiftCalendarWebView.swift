@@ -19,9 +19,9 @@
 // page's DOM, for a self-test). Page to native: `ready`, `error`, `range` (the
 // visible period changed), `open` (an event or a tray row was clicked), `add`
 // (a day or a time slot was double-clicked), `move` (an event was dropped
-// somewhere new), `schedule` (a tray row's Today, Tomorrow or Pick…), `tray`
-// (the tray's fold button), `newTask` and `openList` (the empty state's two
-// buttons).
+// somewhere new), `complete` (the check on a real chip or an Agenda row),
+// `schedule` (a tray row's Today, Tomorrow or Pick…), `tray` (the tray's fold
+// button), `newTask` and `openList` (the empty state's two buttons).
 //
 // `schedule` names the button, never a date: which day "Today" is belongs to
 // the native side's clock, not the page's.
@@ -49,7 +49,8 @@
 // its new place, but nothing is written until `ShiftController` asks the
 // store, and the store's answer comes back as the next `setEvents` - so a drop
 // the store refuses snaps back, and the page never shows a date the store does
-// not hold.
+// not hold. `complete` is a request in the same way: the page marks the chip
+// while it waits, and the next `setEvents` is what draws it finished.
 
 import AppKit
 import WebKit
@@ -85,6 +86,10 @@ final class ShiftCalendarWebView: WKWebView {
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
     /// A follow-up's event was dropped on a new day or time.
     var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// The check on a real, open task's chip or Agenda row was clicked.
+    var onCompleteTask: ((String) -> Void)?
+    /// The check on a pending follow-up's chip or row was clicked.
+    var onCompleteFollowUp: ((String) -> Void)?
     /// A tray row's Today, Tomorrow or Pick…: "today", "tomorrow" or "pick".
     var onScheduleFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ when: String) -> Void)?
     /// The tray's fold button asked for this state.
@@ -253,6 +258,13 @@ final class ShiftCalendarWebView: WKWebView {
                 onMoveFollowUp?(id, day, body["time"] as? String)
             } else {
                 onMoveTask?(id, day, body["time"] as? String)
+            }
+        case "complete":
+            guard let id = body["taskID"] as? String else { return }
+            if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
+                onCompleteFollowUp?(id)
+            } else {
+                onCompleteTask?(id)
             }
         case "schedule":
             guard let id = body["taskID"] as? String, let when = body["when"] as? String,

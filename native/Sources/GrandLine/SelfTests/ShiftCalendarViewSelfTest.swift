@@ -37,7 +37,14 @@
 //     in the Unscheduled tray and the first-run state over the grid rather
 //     than "Nothing scheduled", a row's real Today button writes the date to
 //     the store (read back from the store), the fold is remembered, and a
-//     past month shows the task finished in it, read from `completed/`.
+//     past month shows the task finished in it, read from `completed/`;
+//   - **a check completes from the calendar** (the captain's decision 4A):
+//     every real, open chip and Agenda row has one and no projection does,
+//     a real press on a repeating task's check completes it and spawns the
+//     next instance - read back from `active.yaml` and `completed/` through a
+//     fresh store - without opening it or starting a drag, the toast's real
+//     Undo puts the series back as it was, and a follow-up's check marks it
+//     done.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -400,6 +407,7 @@ enum ShiftCalendarViewSelfTest {
         }
 
         withScratchStore { store in checkTray(store: store, check: check) }
+        withScratchStore { store in checkComplete(store: store, check: check) }
 
         return report(failures)
     }
@@ -578,7 +586,186 @@ enum ShiftCalendarViewSelfTest {
         check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) tray bridge call(s) never got a reply")
     }
 
+    // MARK: Completing from the calendar
+
+    private static func checkComplete(store: ShiftStore, check: (Bool, String) -> Void) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let todayDay = ShiftDateFormatting.components(from: today).0
+        let tomorrowDay = ShiftDateFormatting.components(
+            from: calendar.date(byAdding: .day, value: 1, to: today) ?? today).0
+        let repeating = seed(store, title: "Rotate the on-call pager", due: todayDay, time: "09:30",
+                             rule: ShiftRecurrence(frequency: .daily))
+        let single = seed(store, title: "Renew wildcard TLS", due: todayDay, time: nil, rule: nil)
+        var followUp = ShiftFollowUp.fresh()
+        followUp.title = "Ping the registrar"
+        followUp.followUpAt = todayDay
+        store.addFollowUp(followUp)
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "the completion case's page never reported ready and configured")
+            return
+        }
+        func checks() -> Set<String> { Set((state(web)["checks"] as? [Any] ?? []).compactMap { $0 as? String }) }
+        _ = waitFor(timeout: 5) { checks().count >= 3 }
+
+        // MARK: A check on every real chip, none on a projection
+
+        check(checks() == [repeating, single, followUp.id],
+              "every real, open chip should carry a check, got \(checks())")
+        check(state(web)["projectedChecks"] as? Int == 0, "no projection may carry a check")
+        let monthEnd = state(web)["end"] as? String ?? ""
+        let projectionID = "\(repeating)@\(tomorrowDay)"
+        if tomorrowDay <= monthEnd {
+            // The fixture's own discriminating power: the projection really is
+            // on the page, so "it has no check" is not vacuous.
+            check(js(web, "!!document.querySelector('[data-event-id=\"\(projectionID)\"]')") as? Bool == true,
+                  "a daily rule should draw tomorrow's projection")
+            check(js(web, "!!document.querySelector('[data-event-id=\"\(projectionID)\"] .gl-check')") as? Bool == false,
+                  "a projection must expose no check")
+        }
+        // A chip's check waits for the pointer; it is not a column of circles.
+        let resting = js(web, "getComputedStyle(document.querySelector('[data-event-id=\"\(single)\"] > .gl-check')).opacity")
+            as? String
+        check(resting == "0", "a chip's check should be hidden until hover, got opacity \(resting ?? "nil")")
+
+        // MARK: The check completes a repeating task, and does nothing else
+
+        let openTask = view.onOpenTask
+        let addTask = view.onAddTask
+        var opened: String?
+        var added: String?
+        view.onOpenTask = { opened = $0 }
+        view.onAddTask = { day, _ in added = day }
+        // A real press, held past the core's 150ms drag timer, then a click.
+        press(web, "[data-event-id=\"\(repeating)\"] > .gl-check")
+        _ = waitFor(timeout: 5) { !store.activeTasks.contains { $0.id == repeating } }
+        drain(turns: 20)
+        check(opened == nil, "the check must not also open the task, it opened \(opened ?? "")")
+        check(added == nil, "the check must not reach the day's new task, it added on \(added ?? "")")
+
+        // Read back from both files, through a store that has only the disk.
+        let disk = ShiftStore()
+        let spawned = disk.activeTasks.first { $0.title == "Rotate the on-call pager" }
+        check(!disk.activeTasks.contains { $0.id == repeating }, "the completed instance should leave active.yaml")
+        check(disk.allCompletedTasks().first { $0.id == repeating }?.status == .completed,
+              "the completed instance should be filed in completed/")
+        check(spawned != nil && spawned?.id != repeating && spawned?.dueDate == tomorrowDay
+                && spawned?.dueTime == "09:30" && spawned?.recurrence != nil,
+              "the next instance should be in active.yaml for \(tomorrowDay) 09:30, got "
+              + "\(spawned?.dueDate ?? "nil") \(spawned?.dueTime ?? "nil")")
+
+        // The page is redrawn from the store: today's chip finished, with no
+        // check, and tomorrow's date the real chip, with one.
+        _ = waitFor(timeout: 5) {
+            js(web, "(() => { const el = document.querySelector('[data-event-id=\"\(repeating)\"]');"
+               + " return !!el && el.classList.contains('gl-completed') })()") as? Bool == true
+        }
+        check(eventIn(web, id: repeating, day: todayDay), "the finished instance should stay on its day")
+        check(js(web, "(() => { const el = document.querySelector('[data-event-id=\"\(repeating)\"]');"
+                 + " return !!el && el.classList.contains('gl-completed') && !el.querySelector('.gl-check') })()")
+                as? Bool == true,
+              "the finished instance should be drawn finished, with no check")
+        if let spawned, tomorrowDay <= monthEnd {
+            _ = waitFor(timeout: 5) { checks().contains(spawned.id) }
+            check(eventIn(web, id: spawned.id, day: tomorrowDay) && checks().contains(spawned.id),
+                  "the next instance should be a real chip with a check on \(tomorrowDay)")
+        }
+
+        // MARK: Undo puts the series back
+
+        let undo = undoButton(in: controller.view)
+        check(undo != nil, "completing from the calendar should offer Undo")
+        undo?.performClick(nil)
+        drain(turns: 10)
+        let restored = ShiftStore()
+        check(restored.activeTasks.first { $0.id == repeating }?.status == .todo,
+              "Undo should reopen the instance in active.yaml")
+        check(!restored.allCompletedTasks().contains { $0.id == repeating },
+              "Undo should take the instance out of completed/")
+        if let spawned {
+            check(!restored.activeTasks.contains { $0.id == spawned.id },
+                  "Undo should withdraw the untouched next instance, or the series has two live dates")
+        }
+        _ = waitFor(timeout: 5) { checks().contains(repeating) }
+        check(checks().contains(repeating), "the reopened instance should carry its check again")
+
+        // MARK: Agenda rows
+
+        view.show(scale: .agenda)
+        _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "list" }
+        _ = waitFor(timeout: 5) {
+            (js(web, "document.querySelectorAll('.sx__list-event > .gl-check').length") as? Int ?? 0) >= 3
+        }
+        check((js(web, "document.querySelectorAll('.sx__list-event > .gl-check').length") as? Int ?? 0) == 3,
+              "every real, open Agenda row should carry a check")
+        let projectedRows = js(web, "document.querySelectorAll('.sx__list-event.gl-projected').length") as? Int ?? 0
+        if projectedRows > 0 {
+            check(js(web, "document.querySelectorAll('.sx__list-event.gl-projected .gl-check').length") as? Int == 0,
+                  "a projected Agenda row must expose no check")
+        }
+        let row = "Array.from(document.querySelectorAll('.sx__list-event'))"
+            + ".find(r => r.querySelector('.sx__list-event-title').textContent === 'Renew wildcard TLS')"
+        let rowOpacity = js(web, "getComputedStyle(\(row).querySelector('.gl-check')).opacity") as? String
+        check(rowOpacity == "1", "an Agenda row's check is always shown, got opacity \(rowOpacity ?? "nil")")
+        _ = js(web, "\(row).querySelector('.gl-check').click()")
+        _ = waitFor(timeout: 5) { !store.activeTasks.contains { $0.id == single } }
+        check(ShiftStore().allCompletedTasks().first { $0.id == single }?.status == .completed,
+              "an Agenda row's check should complete the task into completed/")
+        check(opened == nil, "an Agenda row's check must not also open the task")
+        view.onOpenTask = openTask
+        view.onAddTask = addTask
+        view.show(scale: .month)
+        _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "month-grid" }
+
+        // MARK: A follow-up's check
+
+        // The month grid's own chip, not a leftover Agenda row: those carry
+        // no event id, so the press would find nothing.
+        let followUpCheck = "[data-event-id=\"followup:\(followUp.id)\"] > .gl-check"
+        _ = waitFor(timeout: 5) { js(web, "!!document.querySelector('\(followUpCheck)')") as? Bool == true }
+        press(web, followUpCheck)
+        _ = waitFor(timeout: 5) { store.followUps.first { $0.id == followUp.id }?.status == .done }
+        check(ShiftStore().followUps.first { $0.id == followUp.id }?.status == .done,
+              "a follow-up's check should mark it done in follow-ups.yaml")
+
+        _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
+        check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) completion bridge call(s) never got a reply")
+    }
+
+    /// The toast's Undo, found in the view it was presented in.
+    private static func undoButton(in root: NSView) -> NSButton? {
+        if let button = root as? NSButton, button.title == "Undo" { return button }
+        for sub in root.subviews {
+            if let found = undoButton(in: sub) { return found }
+        }
+        return nil
+    }
+
     // MARK: Driving the page
+
+    /// A pointer's press on one element: down, held past the core's 150ms
+    /// drag timer, up, then the click the browser would send.
+    private static func press(_ web: WKWebView, _ selector: String) {
+        let script = """
+        const el = document.querySelector(selector);
+        if (!el) return 'missing';
+        const r = el.getBoundingClientRect();
+        const at = {bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2};
+        el.dispatchEvent(new MouseEvent('mousedown', at));
+        await new Promise(resolve => setTimeout(resolve, 220));
+        el.dispatchEvent(new MouseEvent('mouseup', at));
+        el.dispatchEvent(new MouseEvent('click', at));
+        return 'ok';
+        """
+        _ = asyncJS(web, script, ["selector": selector])
+    }
 
     /// The month grid's drag is HTML5 drag and drop: a mouse-down starts the
     /// core's drag timer (150ms), the plugin then listens for `dragover` on the

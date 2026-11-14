@@ -479,6 +479,116 @@ html:not([data-view='month-grid']) .gl-weekdays {
   text-decoration: line-through;
 }
 
+.sx__event.gl-completed .sx__month-grid-event-title::after,
+.sx__event.gl-completed .sx__date-grid-event-text::after,
+.sx__event.gl-completed .sx__time-grid-event-title::after,
+.sx__event.gl-completed .sx__list-event-title::after {
+  content: ' \2713';
+}
+
+/* MARK: The check
+ *
+ * On a real, open record only (the page adds it to `gl-completable` events).
+ * On a chip it sits over the chip's trailing end and shows on hover or
+ * focus, so a crowded month does not grow a column of circles; on an agenda
+ * row it is always there, leading the row like a to-do list. The ring is the
+ * chip's own text colour, which already clears the contrast floor on the
+ * chip's fill, and its fill is the chip's, so the title it covers does not
+ * show through. */
+.gl-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  background-color: inherit;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.gl-check::after {
+  content: '\2713';
+  opacity: 0;
+}
+
+.gl-check:hover::after,
+.gl-check:focus-visible::after,
+.sx__event.is-completing .gl-check::after {
+  opacity: 1;
+}
+
+.gl-check:focus-visible {
+  outline: 2px solid var(--sx-color-primary);
+  outline-offset: 1px;
+}
+
+.sx__month-grid-event .gl-check,
+.sx__date-grid-event .gl-check,
+.sx__time-grid-event .gl-check {
+  position: absolute;
+  inset-inline-end: 4px;
+  opacity: 0;
+}
+
+.sx__month-grid-event .gl-check,
+.sx__date-grid-event .gl-check {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.sx__time-grid-event .gl-check {
+  top: 4px;
+  z-index: 1;
+}
+
+.sx__event:hover > .gl-check,
+.sx__event:focus-within > .gl-check,
+.sx__event.is-completing > .gl-check {
+  opacity: 1;
+}
+
+/* While the check shows, the chip's text gives way to it: the title ends in
+ * its ellipsis before the circle rather than running underneath it. */
+.sx__month-grid-event.gl-completable:is(:hover, :focus-within, .is-completing) {
+  padding-inline-end: 26px;
+}
+
+/* The all-day row's text is absolutely placed at a width of its own, so the
+ * chip's padding never reaches it: the text itself is narrowed instead. */
+.sx__date-grid-event.gl-completable:is(:hover, :focus-within, .is-completing) .sx__date-grid-event-text {
+  width: calc(100% - var(--sx-spacing-padding1) - 26px);
+}
+
+.sx__time-grid-event.gl-completable:is(:hover, :focus-within, .is-completing) .sx__time-grid-event-inner {
+  padding-inline-end: 22px;
+}
+
+/* After the colour line and before the title: the content moves one place
+ * on, so the check (appended last) lands between the two. */
+.sx__list-event .sx__list-event-content {
+  order: 1;
+}
+
+.sx__list-event .gl-check {
+  margin-top: 1px;
+  border-color: var(--gl-muted);
+  color: var(--gl-ink);
+}
+
+.sx__list-event .gl-check:hover {
+  border-color: var(--sx-color-primary);
+}
+
+/* Asked, not yet answered: the store's push redraws it finished. */
+.sx__event.is-completing {
+  opacity: 0.6;
+}
+
 /* Nothing that cannot move should look like it can. The core marks every
  * month-grid event `draggable` once a drag plugin is installed, whatever its
  * own `disableDND` says, so the browser would still lift a ghost of a

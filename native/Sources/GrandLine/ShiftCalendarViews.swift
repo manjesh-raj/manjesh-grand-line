@@ -21,7 +21,8 @@
 //     (`ShiftStore.nextOccurrence`'s header says why); later dates are a
 //     projection of the rule. The page draws them faint and marked, and they
 //     cannot be dragged - `ShiftCalendarPayload` marks them immovable, and the
-//     page refuses a drop on anything not marked movable a second time.
+//     page refuses a drop on anything not marked movable a second time. They
+//     carry no check either: only a real, open record is `completable`.
 //   - **A completed task is shown and cannot be moved.** `updateTask` only
 //     touches `active.yaml`, so a dropped completed task would save nothing.
 //   - **What is on screen is stated** (GL-14). The caption above the calendar
@@ -33,7 +34,9 @@
 // A drop is a request. The page posts `move`, `TaskCalendarController.rescheduleTask`
 // applies `ShiftCalendarReschedule` and writes through the store, and the
 // events are pushed back - so a drop the store refuses snaps back to where it
-// was, and Undo restores the date the controller already held (GL-33).
+// was, and Undo restores the date the controller already held (GL-33). A
+// check is the same shape: the page posts `complete`, and
+// `TaskCalendarController.completeTask` finishes the record through the store.
 
 import AppKit
 
@@ -96,6 +99,14 @@ struct ShiftCalendarEntry: Equatable {
 
     /// Whether a drag may move this entry. Only a real, open record.
     var isMovable: Bool { !isProjected && !isCompleted && !isCancelled }
+
+    /// Whether the page draws a check on this entry (the captain's decision
+    /// 4A). Only a real, open record: a projection has no record to finish
+    /// until the live instance before it is done, and a finished or cancelled
+    /// one has nothing left to finish. The same rule as `isMovable`, kept
+    /// separate because it answers a different question and the two are free
+    /// to diverge.
+    var isCompletable: Bool { !isProjected && !isCompleted && !isCancelled }
 }
 
 /// What lands on which day. Pure; no AppKit.
@@ -397,6 +408,7 @@ enum ShiftCalendarPayload {
             "projected": entry.isProjected,
             "completed": entry.isCompleted,
             "movable": entry.isMovable,
+            "completable": entry.isCompletable,
         ]
     }
 
@@ -1020,6 +1032,10 @@ final class ShiftCalendarView: NSView {
     var onPeriodChanged: (() -> Void)?
     /// A tray row's Today, Tomorrow or Pick… (`when` is the button's word).
     var onScheduleFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ when: String) -> Void)?
+    /// The check on a real chip or an Agenda row. The controller decides.
+    var onCompleteTask: ((String) -> Void)?
+    /// The check on a follow-up's chip or row.
+    var onCompleteFollowUp: ((String) -> Void)?
     /// The empty state's New task.
     var onNewTask: (() -> Void)?
     /// The empty state's Open List.
@@ -1121,6 +1137,8 @@ final class ShiftCalendarView: NSView {
         webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
         webView.onMoveFollowUp = { [weak self] id, day, time in self?.onMoveFollowUp?(id, day, time) }
         webView.onScheduleFromTray = { [weak self] id, kind, when in self?.onScheduleFromTray?(id, kind, when) }
+        webView.onCompleteTask = { [weak self] id in self?.onCompleteTask?(id) }
+        webView.onCompleteFollowUp = { [weak self] id in self?.onCompleteFollowUp?(id) }
         webView.onTrayCollapse = { [weak self] collapsed in self?.setTrayCollapsed(collapsed) }
         webView.onNewTask = { [weak self] in self?.onNewTask?() }
         webView.onOpenList = { [weak self] in self?.onOpenList?() }
