@@ -646,6 +646,14 @@ enum SelfTestDispatch {
             exit(ShiftScheduleSelfTest.run() ? 0 : 1)
         }
 
+        // Exceptions to a repeating task (tasks-calendar plan PR 6): skip, only
+        // this and this and following, one case per row of the plan's operations
+        // table, written through a scratch store and read back from disk. Pure
+        // logic; the drop dialog and the chip's menu are `ShiftCalendarViewSelfTest`'s.
+        if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_SERIES_EDIT_TESTS"] == "1" {
+            exit(ShiftSeriesEditSelfTest.run() ? 0 : 1)
+        }
+
         // The Calendar, the Schedule-X page. Split the way Code Preview's suites
         // are: `ShiftCalendarSelfTest` is pure logic (the vendored bundle's digests,
         // its offline CSP and licences, the event payload, the palette's contrast on

@@ -646,24 +646,23 @@ final class ShiftStore {
     /// occurrence, and silently deleting a future task the captain may
     /// already have edited is the worse of the two surprises.
     ///
-    /// The walk starts from the instance's rule slot (`occurrence`) when it
-    /// has one, not its due date: an occurrence moved "only this" to another
-    /// day must not drag the rest of the series along with it. The spawned
-    /// instance fills its own slot, so it carries no `occurrence`, and it
-    /// keeps the task's `seriesID` - which, like every other known key, is
-    /// written from the struct, so the record-level passthrough (keyed by the
-    /// old id) could never have carried it to the new one.
+    /// The walk starts from the instance's rule slot (`ShiftTask.ruleAnchor`)
+    /// when it has one, not its due date: an occurrence moved "only this" to
+    /// another day or time must not drag the rest of the series along with
+    /// it. The spawned instance fills its own slot, so it carries no
+    /// `occurrence` or `occurrenceTime`, and it keeps the task's `seriesID` -
+    /// which, like every other known key, is written from the struct, so the
+    /// record-level passthrough (keyed by the old id) could never have carried
+    /// it to the new one.
     static func nextOccurrence(after task: ShiftTask, now: Date = Date()) -> ShiftTask? {
-        guard let rule = task.recurrence,
-              let anchor = ShiftDateFormatting.dateTime(from: task.occurrence ?? task.dueDate, time: task.dueTime)
-        else { return nil }
+        guard let rule = task.recurrence, let anchor = task.ruleAnchor else { return nil }
         // B24, first half: `COUNT` never ran out. Each spawned instance has
         // its own due date, and that date was handed to the rule as the
         // series anchor - so the walk's "this is occurrence N" restarted at 1
         // on every completion and a `COUNT=3` task repeated for ever. The
         // remaining budget travels on the instance instead, because there is
         // no stored series to hold it in.
-        guard let remaining = rule.afterOneOccurrence else { return nil }
+        guard var remaining = rule.afterOneOccurrence else { return nil }
         // B24, second half: an overdue task caught up rather than scheduling
         // into the past. A daily task last done ten days ago used to respawn
         // for *nine* days ago - still overdue the moment it was written, and
@@ -676,6 +675,25 @@ final class ShiftStore {
         // real calendar edge rather than a budget.
         let from = max(anchor, now)
         guard let next = rule.withoutCount.next(after: from, anchor: anchor) else { return nil }
+        // A skipped date (`EXDATE`) the walk stepped over still spends its
+        // slot of the `COUNT`, as it does in a walk from one anchor
+        // (`ShiftRecurrence.exceptionDates`): skipping one date of a
+        // three-times rule leaves two. Unlike a slot that went by unnoticed,
+        // a skip was the captain's answer for that date.
+        // Each skipped date is looked up on its own day, so a series caught up
+        // across months costs one short walk per skip, not one step per day.
+        if let count = remaining.count, !rule.exceptionDates.isEmpty {
+            var unskipped = rule.withoutCount
+            unskipped.exceptionDates = []
+            let crossed = rule.exceptionDates.filter { day in
+                guard let start = ShiftDateFormatting.date(from: day), start > anchor, start < next,
+                      let end = Calendar.current.date(byAdding: .day, value: 1, to: start) else { return false }
+                return !unskipped.occurrences(anchor: anchor, from: start, through: end.addingTimeInterval(-1),
+                                              limit: 1).isEmpty
+            }.count
+            guard count - crossed >= 1 else { return nil }
+            remaining.count = count - crossed
+        }
         let iso = ShiftStore.iso8601(now)
         let (dateStr, timeStr) = ShiftDateFormatting.components(from: next)
         var spawned = task
@@ -692,6 +710,7 @@ final class ShiftStore {
         spawned.subtasks = task.subtasks.map { ShiftSubtask(id: UUID().uuidString, title: $0.title, done: false) }
         spawned.hasAttachment = false
         spawned.occurrence = nil
+        spawned.occurrenceTime = nil
         // The remaining budget, so the series really does run out (B24). An
         // unbounded rule is unchanged, so an ordinary repeating task's YAML
         // line is byte-identical to what it always was. Skipped dates the
@@ -769,6 +788,44 @@ final class ShiftStore {
             )
         }
         notify()
+    }
+
+    /// Writes one exception to a repeating task (tasks-calendar plan PR 6):
+    /// the live record as `ShiftSeriesEdit` left it, and the task it split
+    /// off, in one write of `active.yaml`. Two writes would leave a moment
+    /// (and, if the second failed, a file) where the skipped date is gone and
+    /// its one-off does not exist yet.
+    ///
+    /// Returns whether the live record was still there to change.
+    @discardableResult
+    func applySeriesEdit(_ change: ShiftSeriesEdit.Change, now: Date = Date()) -> Bool {
+        guard let idx = activeTasks.firstIndex(where: { $0.id == change.updated.id }) else { return false }
+        let previous = activeTasks[idx]
+        var updated = change.updated
+        updated.updatedAt = ShiftStore.iso8601(now)
+        activeTasks[idx] = updated
+        if let added = change.added { activeTasks.append(added) }
+        persistActiveTasks()
+        switch change.kind {
+        case .skipped:
+            logActivity(kind: "task_occurrence_skipped", summary: "Skipped a date of \"\(updated.title)\"",
+                        targetID: updated.id, now: now)
+        case .restored:
+            logActivity(kind: "task_occurrence_restored", summary: "Restored a date of \"\(updated.title)\"",
+                        targetID: updated.id, now: now)
+        case .moved:
+            // The live instance itself moved: the same "pushed back" signal
+            // `updateTask` gives Weekly Review.
+            if let oldDue = previous.dueDate, oldDue != updated.dueDate {
+                logActivity(kind: "task_due_date_changed", summary: "Pushed back due date for \"\(updated.title)\"",
+                            targetID: updated.id, now: now)
+            }
+        }
+        if let added = change.added {
+            logActivity(kind: "task_created", summary: "Created \"\(added.title)\"", targetID: added.id, now: now)
+        }
+        notify()
+        return true
     }
 
     /// Claims a backlog task from the Tasks popover's "claim to start": the

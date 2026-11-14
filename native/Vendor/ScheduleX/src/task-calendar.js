@@ -92,8 +92,17 @@ function describe(value) {
 // MARK: Events
 
 // Event id -> the record behind it, for events the store lets move. `kind`
-// is "task" or "followUp"; the native side routes on it.
+// is "task" or "followUp"; the native side routes on it. A repeat rule's
+// projection moves too, and carries its `slot` (the day the rule puts it
+// on), so a drop says which occurrence it moved rather than moving the live
+// instance.
 const movable = new Map()
+
+// A `gl-menu-N` class -> the occurrence a chip's menu acts on, for the events
+// the native side marks `menu` (a repeating task's live chip, its projections
+// and its skipped dates). A class for the same reason the check uses one:
+// agenda rows carry no `data-event-id`.
+const menus = new Map()
 
 // A `gl-ref-N` class -> the record a chip's check completes, for the events
 // the native side marks `completable` (a real, open record; never a
@@ -107,18 +116,29 @@ function toCalendarEvent(item) {
   const classes = []
   if (item.projected) classes.push('gl-projected')
   if (item.completed) classes.push('gl-completed')
+  if (item.skipped) classes.push('gl-skipped')
   if (item.allDay) classes.push('gl-all-day')
-  if (item.movable) movable.set(item.id, { id: item.taskID, kind: item.kind || 'task' })
+  if (item.movable) {
+    movable.set(item.id, { id: item.taskID, kind: item.kind || 'task', slot: item.slot || null })
+  } else {
+    classes.push('gl-fixed')
+  }
   if (item.completable) {
     const ref = 'gl-ref-' + completable.size
     completable.set(ref, { id: item.taskID, kind: item.kind || 'task', title: item.title })
     classes.push('gl-completable', ref)
+  }
+  if (item.menu) {
+    const ref = 'gl-menu-' + menus.size
+    menus.set(ref, { id: item.taskID, kind: item.kind || 'task', slot: item.slot || null, skipped: !!item.skipped })
+    classes.push(ref)
   }
   return {
     id: item.id,
     taskID: item.taskID,
     kind: item.kind || 'task',
     projected: !!item.projected,
+    skipped: !!item.skipped,
     title: item.title,
     start: toTemporal(item.start),
     end: toTemporal(item.end),
@@ -266,9 +286,16 @@ function mount(config) {
         // The chip's own rectangle rides along, so the native side can open
         // the When panel beside it. Which record gets the panel and which
         // gets its editor is the native side's call.
+        // A skipped date has no record to open: its click asks for its menu,
+        // which offers it back.
         onEventClick(event, uiEvent) {
           const target = uiEvent && uiEvent.target && uiEvent.target.closest
             ? uiEvent.target.closest('[data-event-id]') : null
+          if (event.skipped) {
+            const record = target && menus.get(menuRefOf(target))
+            if (record) postMenu(record, target)
+            return
+          }
           post({
             type: 'open',
             taskID: event.taskID,
@@ -295,7 +322,7 @@ function mount(config) {
           refreshHeader()
         },
         // The plugin already refuses to start a drag on `disableDND`; this is
-        // the second gate, so a projection or a completed task can never
+        // the second gate, so a completed task or a skipped date can never
         // reach `move` whatever the DOM was persuaded to do. A chip the tray
         // just took is refused too: the plugin would otherwise also move it
         // to the last day the pointer crossed on its way there.
@@ -303,11 +330,14 @@ function mount(config) {
           if (unscheduledChip !== null && String(oldEvent.id) === unscheduledChip) return false
           return movable.has(oldEvent.id)
         },
+        // A projection's drop names its slot. Whether a repeating task's
+        // drop moves only this occurrence or the series from here on is the
+        // native side's question to ask.
         onEventUpdate(event) {
           const record = movable.get(event.id)
           if (!record) return
           const at = describe(event.start)
-          post({ type: 'move', taskID: record.id, kind: record.kind, day: at.day, time: at.time })
+          post({ type: 'move', taskID: record.id, kind: record.kind, slot: record.slot, day: at.day, time: at.time })
         },
       },
     },
@@ -337,6 +367,31 @@ function rectOf(element) {
   const r = element.getBoundingClientRect()
   return { x: r.left, y: r.top, width: r.width, height: r.height }
 }
+
+// MARK: The chip's menu
+//
+// A right-click (or a Control-click) on a repeating task's chip or agenda
+// row, or a click on a skipped date, asks the native side for that
+// occurrence's menu beside it: "Skip this occurrence", or "Restore this
+// occurrence" on a skipped date. Which items it holds is the native side's
+// call; the page only says which occurrence and where it is.
+
+function menuRefOf(chip) {
+  for (const name of chip.classList) if (name.startsWith('gl-menu-')) return name
+  return null
+}
+
+function postMenu(record, chip) {
+  post({ type: 'menu', taskID: record.id, kind: record.kind, slot: record.slot, skipped: record.skipped, rect: rectOf(chip) })
+}
+
+document.addEventListener('contextmenu', (event) => {
+  const chip = event.target.closest && event.target.closest('.sx__event')
+  const record = chip && menus.get(menuRefOf(chip))
+  if (!record) return
+  event.preventDefault()
+  postMenu(record, chip)
+})
 
 function postRange(range) {
   refreshHeader()
@@ -628,8 +683,9 @@ wireTray()
 // chip's own drag belongs to the drag plugin - HTML5 in the month grid, mouse
 // events in the time grid - so this only notes which chip was pressed, sees
 // where the drag ended, and has `onBeforeEventUpdate` refuse the plugin's own
-// move of it. A projection or a finished task is never pressed here, because
-// only `movable` events count.
+// move of it. A finished task or a skipped date is never pressed here,
+// because only `movable` events count. A projection is, and the native side
+// refuses it, because a repeating task keeps its date.
 
 const SLOT_MINUTES = 15
 const DAY_MINUTES = 24 * 60
@@ -1023,6 +1079,7 @@ window.GrandLineTaskCalendar = {
   setEvents: guarded((payload) => {
     movable.clear()
     completable.clear()
+    menus.clear()
     const events = (payload.events || []).map(toCalendarEvent)
     if (payload.calendars) controls.setCalendars(payload.calendars)
     calendar.events.set(events)
@@ -1104,6 +1161,11 @@ window.GrandLineTaskCalendar = {
         return record ? record.id : null
       }),
       projectedChecks: document.querySelectorAll('.sx__event.gl-projected .gl-check').length,
+      // Skipped dates, and the chips that offer a menu, as drawn.
+      skipped: Array.from(document.querySelectorAll('.sx__month-grid-event.gl-skipped')).map((el) => el.dataset.eventId),
+      menuChips: Array.from(document.querySelectorAll('.sx__month-grid-event')).filter((el) => menuRefOf(el)).map(
+        (el) => el.dataset.eventId,
+      ),
       emptyVisible: visible('gl-empty'),
       emptyTitle: document.getElementById('gl-empty-title').textContent,
       // Dragging and quick add, as drawn.

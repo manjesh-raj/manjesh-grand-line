@@ -835,3 +835,88 @@ It leaves out the rest of the plan's interaction list: dragging a projection and
 - `build-schedule-x-web.sh` regenerated `web/` (and `BUILD-INFO.txt`) from `src/`.
   On this machine its `npm ci` runs through Automic Vault's `av inject`, and the rebuild waits on that approval prompt.
 - The local build used `swift build --build-system native`: Swift 6.4's default build system compiles the vendored Metal shaders, and this machine has no Metal toolchain installed.
+
+## Exceptions: skip, only this, this and following (tasks-calendar plan PR 6, `fm/grand-line-calendar-pr6-exceptions`)
+
+The last PR of the tasks-calendar plan (`data/grand-line-tasks-calendar-plan/report.md`).
+A repeating task could only be moved as a whole series, and no single date could be skipped.
+
+### What shipped
+
+- **A repeating task's drop asks first.** Dropping its live chip, or one of its projections, on another day or time opens "Move a repeating task?" with Only This Occurrence (the default on Return), This and Following, and Cancel.
+  Nothing is written until the answer, and Cancel puts the chip back.
+  A tray row's Today, Tomorrow or drag for an overdue repeating task asks the same way.
+- **A projection can be dragged.** Its drop names its slot, the day the rule puts it on, so the native side moves that occurrence and not the live instance.
+- **A right-click on a repeating task's chip or projection offers Skip This Occurrence** and Open Task….
+- **A skipped date stays on the grid** as a faint, dashed, all-day "Skipped: …" marker.
+  A click or a right-click on it offers Restore This Occurrence.
+  It is all day because it holds no time, and because in a narrow month cell a time left no room for the word.
+- Every exception has a real Undo (GL-33). It puts back the live record's schedule as it was read, and withdraws the task the exception split off only while that task is unedited.
+
+The operations table, as `ShiftSeriesEdit` writes it:
+
+| Operation | What is written |
+| --- | --- |
+| Skip a projection | The date joins `EXDATE`. |
+| Skip the live instance | The same record moves to the slot completing it would have spawned, `COUNT` - 1, its checklist reset, and `task_occurrence_skipped` is logged. The last occurrence is refused. |
+| Only this (live) | The record moves and `occurrence` keeps its slot day. `occurrence_time` keeps the slot's time when the time moved too. Moving back onto the slot drops both. |
+| Only this (projection) | The date joins `EXDATE`, and a one-off of the same `series_id` takes the new day, with `occurrence` naming the slot it fills. |
+| This and following (projection on D) | The live rule ends before D, and a new series with its own `series_id` starts on the drop. |
+| This and following (live) | The record moves, as a drop always did, with nothing pinned. |
+
+### Decisions
+
+- **`occurrence_time` is a new task key.** `occurrence` holds a day, so a 09:00 occurrence moved to 14:00 "only this" would have anchored every later instance at 14:00.
+  `ShiftTask.slotDay`, `slotTime` and `ruleAnchor` are the one derivation every walk of a rule now starts from: `nextOccurrence`, the calendar's projections and the missed repeat's reminder.
+  An older build keeps the key through the task passthrough.
+  It walks from `occurrence` plus `dueTime`, so the worst it does is drift a moved occurrence's series to the moved time.
+- **A skipped date spends its slot of a `COUNT`.** `ShiftRecurrence.exceptionDates` already said so for a walk from one anchor.
+  `nextOccurrence` carries the remaining budget per instance, though, and stepped over a skipped date without spending it, so three times with one skipped still made three instances.
+  It now subtracts each skipped slot it crosses, looked up on its own day so a long catch-up stays cheap.
+- **Splitting a counted rule shares the count out.** The live rule keeps the slots before D (skipped ones included) and the new series takes the rest.
+  A rule with no `COUNT` ends with `UNTIL=D-1`, as the plan says.
+  Setting `UNTIL` on a counted rule as well would give it two ends, which the When panel can only show as "Custom rule".
+- **"This and following" re-anchors the rule the way the When panel does** (`ShiftScheduleDraft.setDay`), from a projection and from the live chip.
+  "Every Monday" dragged to a Tuesday from here on is every Tuesday from here on.
+- **The When panel's own edits still apply from this instance on.** The plan's PR 6 scope is the drop dialog, and the panel already writes the "this and following (live)" row.
+  A time change in the panel now clears `occurrence_time`, as a date change clears `occurrence`.
+- **The page bundle had to change.** The stylesheet stopped the month grid's lift on every projection (`-webkit-user-drag: none`), so a projection could not be dragged there without a CSS change.
+  The page now marks every event the native side did not call movable as `gl-fixed`, and holds only those in place.
+  The rebuild needed the captain's Automic Vault approval for `npm ci`.
+
+### Verification
+
+- `FM_RUN_SHIFT_SERIES_EDIT_TESTS` (new, blocking lane, 53 checks): one case per row of the operations table.
+  Each case is written through a scratch `ShiftStore` and read back through a second store that has only the disk.
+  It also covers the plan's own case: move only this, then complete, and the next date is still Monday at 09:00 on the same rule.
+  Also the shared-out `COUNT`, the skipped slot spending its count, the refusals, the calendar entries each row draws, and `occurrence_time`'s round trip.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (windowed lane), through the real page and read back from the store:
+  - A projection's drop asks, and Cancel writes nothing and puts it back.
+  - A repeating chip dragged in the week view through Only This Occurrence keeps its 09:30 slot.
+  - A projection dragged through Only This Occurrence skips its date and adds the one-off. The dialog's copy and its three drawn buttons are checked, and Undo withdraws both.
+  - A real `contextmenu` on a projection offers Skip, which leaves a marker. A click on the marker offers Restore.
+  - A projection dragged through This and Following ends the live rule and starts a new daily series on the drop.
+  - Passed three runs in a row.
+- `FM_RUN_SHIFT_CALENDAR_TESTS`: the projection is movable and names its slot, the skipped date's id, flags and menu, the menu on repeating chips only, and the committed bundle's new messages, classes and stylesheet rules.
+- Also run: `FM_RUN_SHIFT_RECURRENCE_TESTS`, `FM_RUN_SHIFT_SCHEDULE_TESTS`, `FM_RUN_SHIFT_STORE_TESTS`, `FM_RUN_SHIFT_DUE_TESTS`, `FM_RUN_SHIFT_DUE_PUSH_TESTS`, `FM_RUN_SHIFT_CONFLICT_TESTS`, `FM_RUN_E2E_TESTING_POLICY_TESTS`, `FM_RUN_WEB_ISLAND_OWNERSHIP_TESTS`, `FM_RUN_AUDIT_PERF_FIXES_TESTS`, `FM_RUN_AUDIT_SECURITY_FIXES_TESTS`, `FM_RUN_PHASE2_HARDENING_TESTS`, `FM_RUN_PHASE3_POLISH_TESTS` and `FM_RUN_P3_LEFTOVERS_TESTS`, plus `Scripts/check-web-bundles.sh`.
+  `swift build -c release` is clean for these files.
+  No full local run, per the captain's standing preference; CI is the gate.
+- Rendered with `WKWebView.takeSnapshot` (month and week, Daylight and Dusk) and `cacheDisplay` (the dialog, both themes) from temporary probe code, since removed.
+  The first render showed the skipped marker as "9:00 AM Sk…", which is why it is drawn all day.
+
+Confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| `slotTime` ignores `occurrenceTime` | The projections drift to 14:00, the pin is not dropped on the slot, and the next date after "only this" is 16:30 |
+| `nextOccurrence` does not spend skipped slots | "the third is the last" and "the series ends after the third slot" |
+| Projections anchored on the due date | "the projections stay on Mondays at 09:00" |
+| Skipping a projection writes no `EXDATE` | Six checks, from "the date joins EXDATE" to the shared `COUNT` |
+| The bridge drops a projection's `slot` | Eight checks: the one-off, the marker, Undo and the split |
+| The occurrence menu unwired | All four menu checks |
+| A repeating chip's drop does not ask | "moved only this time, the instance keeps its 09:30 slot" |
+
+### Left out
+
+- The When panel asking "only this" for a date or time change. Its edits stay "this and following".
+- A context menu on one-off chips. Only a repeating task's chips get one.

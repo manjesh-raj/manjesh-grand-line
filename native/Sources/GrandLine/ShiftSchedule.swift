@@ -266,7 +266,8 @@ struct ShiftScheduleDraft: Equatable {
     ///     instance to an earlier rule slot after a move "only this", and an
     ///     edit here applies to the series from this instance on, so walking
     ///     the new rule from the old slot would put the next date in the
-    ///     wrong place.
+    ///     wrong place. A new time clears `occurrenceTime` for the same
+    ///     reason: the series takes the time from here on.
     func applied(to task: ShiftTask) -> ShiftTask {
         var out = task
         out.dueDate = day
@@ -278,6 +279,9 @@ struct ShiftScheduleDraft: Equatable {
         }
         if out.dueDate != task.dueDate || out.recurrence != task.recurrence {
             out.occurrence = nil
+            out.occurrenceTime = nil
+        } else if out.dueTime != task.dueTime {
+            out.occurrenceTime = nil
         }
         return out
     }

@@ -33,6 +33,11 @@
 // day's quick add (its +) adds a task there, read by the same title parser
 // the New Task sheet uses, with an Undo that removes it again (tasks-calendar
 // plan PR 7).
+// A repeating task's chip, or one of its projections, dropped on a new day
+// asks "Only this occurrence" or "This and following" before anything is
+// written, and a right-click on either offers "Skip this occurrence"; a
+// skipped date stays on the grid, and its menu offers it back
+// (`ShiftSeriesEdit`, tasks-calendar plan PR 6).
 //
 // Day, Week, Month and Agenda are the card's own pills, the one switcher for
 // the calendar's period: the window toolbar draws Tasks' views, not these.
@@ -98,6 +103,12 @@ final class TaskCalendarController: NSViewController {
         calendarView.onMoveTask = { [weak self] id, day, time in self?.rescheduleTask(id: id, to: day, time: time) }
         calendarView.onMoveFollowUp = { [weak self] id, day, time in
             self?.rescheduleFollowUp(id: id, to: day, time: time)
+        }
+        calendarView.onMoveOccurrence = { [weak self] id, slot, day, time in
+            self?.moveOccurrence(taskID: id, slot: slot, to: day, time: time)
+        }
+        calendarView.onOccurrenceMenu = { [weak self] id, slot, skipped, anchor in
+            self?.showOccurrenceMenu(taskID: id, slot: slot, skipped: skipped, anchor: anchor)
         }
         calendarView.onCompleteTask = { [weak self] id in self?.completeTask(id: id) }
         calendarView.onCompleteFollowUp = { [weak self] id in self?.completeFollowUp(id: id) }
@@ -462,6 +473,10 @@ final class TaskCalendarController: NSViewController {
             render()
             return
         }
+        if task.recurrence != nil, task.status != .completed, task.status != .cancelled {
+            moveOccurrence(taskID: id, slot: nil, to: day, time: time, adoptsTime: adoptsTime)
+            return
+        }
         switch ShiftCalendarReschedule.apply(task: task, day: day, time: time, adoptsTime: adoptsTime) {
         case .unchanged:
             render()
@@ -518,10 +533,236 @@ final class TaskCalendarController: NSViewController {
         }
     }
 
+    // MARK: Exceptions
+
+    /// A repeating task's live chip (`slot == nil`) or the projection on
+    /// `slot`, dropped on `day` at `time`.
+    ///
+    /// Nothing is written until the captain says which occurrences the move
+    /// reaches. A drop that lands where the occurrence already was, or that
+    /// the drop rule refuses, asks nothing. Cancel puts the chip back, because
+    /// the page is redrawn from the store either way.
+    func moveOccurrence(taskID id: String, slot: String?, to day: String, time: String?,
+                        adoptsTime: Bool = false, now: Date = Date()) {
+        guard let live = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        let preview = ShiftSeriesEdit.move(live, slot: slot, to: day, time: time, scope: .onlyThis,
+                                           adoptsTime: adoptsTime, now: now)
+        guard case .write(let change) = preview else {
+            render()
+            if case .refused(let reason) = preview { Toast.show(in: view, message: reason) }
+            return
+        }
+        let movedTo = change.added ?? change.updated
+        let from = slot ?? live.dueDate ?? day
+        let fromTime = slot == nil ? live.dueTime : (live.dueTime == nil ? nil : live.slotTime)
+        let request = Self.scopeRequest(title: live.title, rule: live.recurrence,
+                                        from: ShiftSeriesEdit.phrase(from, time: fromTime),
+                                        to: ShiftSeriesEdit.phrase(movedTo.dueDate ?? day, time: movedTo.dueTime))
+        let scope: ShiftSeriesScope
+        switch HelmConfirm.confirm(request) {
+        case .confirm: scope = .onlyThis
+        case .extra: scope = .thisAndFollowing
+        case .cancel:
+            render()
+            return
+        }
+        // Re-read: the dialog was modal, but a sync can still land under it.
+        guard let current = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        apply(ShiftSeriesEdit.move(current, slot: slot, to: day, time: time, scope: scope,
+                                   adoptsTime: adoptsTime, now: now), to: current, now: now)
+    }
+
+    /// "Only this occurrence" or "This and following". Return takes the
+    /// smaller change, and Escape cancels.
+    static func scopeRequest(title: String, rule: ShiftRecurrence?, from: String, to: String) -> HelmConfirm.Request {
+        var body = "\u{201C}\(title)\u{201D}"
+        if let pattern = rule?.patternName {
+            body += " repeats \(pattern.prefix(1).lowercased() + pattern.dropFirst())."
+        } else {
+            body += " repeats."
+        }
+        body += " Move only the occurrence on \(from) to \(to), or that one and every repeat after it?"
+        var request = HelmConfirm.Request(title: "Move a repeating task?", body: body)
+        request.confirmTitle = scopeOnlyThisTitle
+        request.extra = HelmConfirm.ExtraButton(title: scopeFollowingTitle)
+        request.cancelTitle = "Cancel"
+        request.confirmIsDefault = true
+        request.symbol = "repeat"
+        return request
+    }
+
+    static let scopeOnlyThisTitle = "Only This Occurrence"
+    static let scopeFollowingTitle = "This and Following"
+
+    /// "Skip this occurrence", from a chip's menu: a projection's date, or
+    /// the live instance (`slot == nil`).
+    func skipOccurrence(taskID id: String, slot: String?, now: Date = Date()) {
+        guard let live = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        apply(ShiftSeriesEdit.skip(live, slot: slot, now: now), to: live, now: now)
+    }
+
+    /// A skipped date's "Restore this occurrence".
+    func restoreOccurrence(taskID id: String, slot: String, now: Date = Date()) {
+        guard let live = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        apply(ShiftSeriesEdit.restore(live, slot: slot), to: live, now: now)
+    }
+
+    /// Writes an exception and offers a real Undo (GL-33): the live record's
+    /// schedule as this method read it, and the task the exception split off
+    /// withdrawn - but only while it is exactly as it was written, as the
+    /// check's Undo does for a spawned instance.
+    private func apply(_ outcome: ShiftSeriesEdit.Outcome, to live: ShiftTask, now: Date) {
+        switch outcome {
+        case .unchanged:
+            render()
+        case .refused(let reason):
+            render()
+            Toast.show(in: view, message: reason)
+        case .write(let change):
+            guard store.applySeriesEdit(change, now: now) else {
+                render()
+                return
+            }
+            render()
+            Toast.showUndo(in: view, message: Self.exceptionToast(live: live, change: change)) { [weak self] in
+                guard let self else { return }
+                if var current = self.store.activeTasks.first(where: { $0.id == live.id }) {
+                    current.dueDate = live.dueDate
+                    current.dueTime = live.dueTime
+                    current.recurrence = live.recurrence
+                    current.occurrence = live.occurrence
+                    current.occurrenceTime = live.occurrenceTime
+                    current.seriesID = live.seriesID
+                    current.subtasks = live.subtasks
+                    self.store.updateTask(current)
+                }
+                if let added = change.added,
+                   let current = self.store.activeTasks.first(where: { $0.id == added.id }) {
+                    if current == added {
+                        self.store.deleteTask(id: added.id)
+                    } else {
+                        Toast.show(in: self.view,
+                                   message: "Put back. The new \u{201C}\(added.title)\u{201D} was edited, so it stays.")
+                    }
+                }
+                self.render()
+            }
+        }
+    }
+
+    /// What an exception did, in one line.
+    static func exceptionToast(live: ShiftTask, change: ShiftSeriesEdit.Change) -> String {
+        let name = "\u{201C}\(live.title)\u{201D}"
+        let updated = change.updated
+        switch change.kind {
+        case .skipped:
+            // The live record moved on, or a date joined the skipped ones.
+            if updated.dueDate != live.dueDate, let was = live.dueDate, let next = updated.dueDate {
+                return "Skipped \(name) on \(ShiftSeriesEdit.phrase(was, time: live.dueTime)). "
+                    + "Next: \(ShiftSeriesEdit.phrase(next, time: updated.dueTime))"
+            }
+            let added = (updated.recurrence?.exceptionDates ?? []).subtracting(live.recurrence?.exceptionDates ?? [])
+            return "Skipped \(name)" + (added.first.map { " on \(ShiftSeriesEdit.phrase($0, time: nil))" } ?? "")
+        case .restored:
+            let back = (live.recurrence?.exceptionDates ?? []).subtracting(updated.recurrence?.exceptionDates ?? [])
+            return "\(name) is back" + (back.first.map { " on \(ShiftSeriesEdit.phrase($0, time: nil))" } ?? "")
+        case .moved(let scope):
+            let moved = change.added ?? updated
+            let to = ShiftSeriesEdit.phrase(moved.dueDate ?? "", time: moved.dueTime)
+            switch scope {
+            case .onlyThis: return "\(name) moved to \(to), this time only"
+            case .thisAndFollowing: return "\(name) moved to \(to), with every repeat after it"
+            }
+        }
+    }
+
+    /// A repeating task's chip menu, beside the chip: "Skip this
+    /// occurrence" on its live chip or a projection, "Restore this
+    /// occurrence" on a skipped date, and "Open task…" on all three.
+    func showOccurrenceMenu(taskID id: String, slot: String?, skipped: Bool, anchor: NSRect?) {
+        guard let menu = occurrenceMenu(taskID: id, slot: slot, skipped: skipped) else { return }
+        #if FM_SELFTESTS
+        if let debugMenuPresenter {
+            debugMenuPresenter(menu)
+            return
+        }
+        #endif
+        // At the pointer, as a context menu opens. A click the page could
+        // not place opens it under the chip instead.
+        var point = calendarView.window.map { calendarView.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
+        if let anchor, point.map({ !calendarView.bounds.contains($0) }) ?? true {
+            point = NSPoint(x: anchor.minX, y: calendarView.isFlipped ? anchor.maxY : anchor.minY)
+        }
+        menu.popUp(positioning: nil, at: point ?? .zero, in: calendarView)
+    }
+
+    /// The menu itself, or `nil` for a record that no longer repeats.
+    func occurrenceMenu(taskID id: String, slot: String?, skipped: Bool) -> NSMenu? {
+        guard let live = store.activeTasks.first(where: { $0.id == id }), live.recurrence != nil else { return nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let occurrence = OccurrenceRef(taskID: id, slot: slot)
+        if skipped, slot != nil {
+            let restore = NSMenuItem(title: "Restore This Occurrence", action: #selector(restoreClicked(_:)),
+                                     keyEquivalent: "").withSymbol("arrow.uturn.backward")
+            restore.target = self
+            restore.representedObject = occurrence
+            menu.addItem(restore)
+        } else {
+            let skip = NSMenuItem(title: "Skip This Occurrence", action: #selector(skipClicked(_:)),
+                                  keyEquivalent: "").withSymbol("forward.end")
+            skip.target = self
+            skip.representedObject = occurrence
+            menu.addItem(skip)
+        }
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open Task\u{2026}", action: #selector(openClicked(_:)),
+                              keyEquivalent: "").withSymbol("arrow.up.forward.square")
+        open.target = self
+        open.representedObject = occurrence
+        menu.addItem(open)
+        return menu
+    }
+
+    /// Which occurrence a menu item acts on.
+    private struct OccurrenceRef {
+        let taskID: String
+        let slot: String?
+    }
+
+    @objc private func skipClicked(_ sender: NSMenuItem) {
+        guard let ref = sender.representedObject as? OccurrenceRef else { return }
+        skipOccurrence(taskID: ref.taskID, slot: ref.slot)
+    }
+
+    @objc private func restoreClicked(_ sender: NSMenuItem) {
+        guard let ref = sender.representedObject as? OccurrenceRef, let slot = ref.slot else { return }
+        restoreOccurrence(taskID: ref.taskID, slot: slot)
+    }
+
+    @objc private func openClicked(_ sender: NSMenuItem) {
+        guard let ref = sender.representedObject as? OccurrenceRef else { return }
+        openTask(id: ref.taskID)
+    }
+
     // MARK: Debug hooks (GL-27)
 
     #if FM_SELFTESTS
     var debugCalendarView: ShiftCalendarView { calendarView }
     var debugSchedulePopover: ShiftSchedulePopover? { schedulePopover }
+    /// Stands in for `NSMenu.popUp`, which tracks the menu modally.
+    var debugMenuPresenter: ((NSMenu) -> Void)?
     #endif
 }
