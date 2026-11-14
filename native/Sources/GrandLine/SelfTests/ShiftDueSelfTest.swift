@@ -386,7 +386,7 @@ enum ShiftDueSelfTest {
         // makes the two anchors disagree.
         var moved = task("moved", due: "2026-11-17")
         moved.recurrence = ShiftRecurrence(frequency: .weekly)
-        var unanchored = moved
+        let unanchored = moved
         moved.occurrence = "2026-11-16"
         check(ShiftNotificationScheduler.nextDateToRemind(for: unanchored, now: instant("2026-11-20", 10))
                 == "2026-11-24",
