@@ -106,6 +106,18 @@ enum ReviewTourLab {
         /// follow-ups. Through `ShiftStore`'s own API, so the files on disk
         /// are the real format rather than a hand-written copy of it.
         case demoTasks
+        /// `demo repeat`: give the seeded "Rotate the CI deploy key" the
+        /// board's example schedule - Mon, Wed and Fri at 09:30, ten times,
+        /// reminded 15 minutes before - so the When panel has every row to
+        /// draw. Run after `demo tasks`.
+        case demoRepeat
+        /// `when popover <title>` or `when sheet <title>`: the When panel for
+        /// the open task with that title, as the calendar's popover (beside
+        /// the card's left edge) or in the task editor sheet.
+        case when(surface: String, title: String)
+        /// `renderwhen <name>`: render the When panel `when` opened, then
+        /// close it without a change.
+        case renderWhen(String)
         /// Print the Home page's geometry (`debugMeasureLines`) under a label.
         case measure(String)
         /// Print module-card heights at the widths Home's columns take.
@@ -373,6 +385,7 @@ enum ReviewTourLab {
         case "demo":
             if argument == "briefing" { return .success(.demoBriefing) }
             if argument == "tasks" { return .success(.demoTasks) }
+            if argument == "repeat" { return .success(.demoRepeat) }
             if argument == "decision" { return .success(.demoDecision) }
             if argument == "refresh" { return .success(.demoRefresh) }
             if argument == "hosts" { return .success(.demoHosts) }
@@ -421,6 +434,15 @@ enum ReviewTourLab {
                 return .failure(.badArgument(argument))
             }
             return .success(.tasksView(argument))
+        case "when":
+            let words = argument.split(separator: " ", maxSplits: 1).map(String.init)
+            guard words.count == 2, ["popover", "sheet"].contains(words[0]) else {
+                return .failure(argument.isEmpty ? .missingArgument("when") : .badArgument(argument))
+            }
+            return .success(.when(surface: words[0], title: words[1]))
+        case "renderwhen":
+            guard !argument.isEmpty else { return .failure(.missingArgument("renderwhen")) }
+            return .success(.renderWhen(argument))
         case "calendar":
             guard let scale = ShiftCalendarScale.allCases.first(where: { $0.title.lowercased() == argument }) else {
                 return .failure(.badArgument(argument))
@@ -598,6 +620,53 @@ enum ReviewTourLab {
                 seedDemoTasks(shell.workspace.shiftStore)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo tasks")
+            case .demoRepeat:
+                let store = shell.workspace.shiftStore
+                if var task = store.activeTasks.first(where: { $0.title == "Rotate the CI deploy key" }) {
+                    task.dueTime = "09:30"
+                    task.recurrence = ShiftRecurrence(frequency: .weekly, weekdays: [2, 4, 6], count: 10)
+                    task.reminderMinutesBefore = 15
+                    store.updateTask(task)
+                    shell.workspace.shift.render()
+                    log.append("demo repeat")
+                } else {
+                    log.append("demo repeat FAILED - run demo tasks first")
+                }
+            case .when(let surface, let title):
+                let shift = shell.workspace.shift
+                guard let task = shell.workspace.shiftStore.activeTasks.first(where: { $0.title == title }) else {
+                    log.append("when FAILED - no open task is called \(title)")
+                    continue
+                }
+                if surface == "sheet" {
+                    ShiftRecordSheets.presentTaskEditor(from: shift, store: shell.workspace.shiftStore, task: task,
+                                                        onSaved: {}, onDelete: { _ in })
+                } else {
+                    shift.selectModuleTab(named: "Calendar")
+                    let calendarView = shift.calendar.debugCalendarView
+                    calendarView.layoutSubtreeIfNeeded()
+                    let anchor = NSRect(x: 40, y: calendarView.bounds.midY, width: 120, height: 22)
+                    shift.calendar.editSchedule(id: task.id, anchor: anchor, edge: .maxX)
+                }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+                log.append("when \(surface) \(title)")
+            case .renderWhen(let name):
+                let url = outputDirectory.appendingPathComponent("\(name).png")
+                let shift = shell.workspace.shift
+                if let popover = shift.calendar.debugSchedulePopover, popover.isShown {
+                    let content = popover.debugContent.view
+                    let written = writePNG(of: content, to: url)
+                    popover.debugContent.cancelOperation(nil)
+                    log.append(written ? "renderwhen \(url.path)"
+                               : "renderwhen FAILED \(name) - shown \(popover.isShown), bounds \(content.bounds)")
+                } else if let sheet = shift.presentedViewControllers?.first as? ShiftTaskEditorController {
+                    let written = writePNG(of: sheet.view, to: url)
+                    shift.dismiss(sheet)
+                    log.append(written ? "renderwhen \(url.path)" : "renderwhen FAILED \(name) - nothing to cache")
+                } else {
+                    log.append("renderwhen FAILED \(name) - no When panel is open (run when first)")
+                }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             case .demoHome:
                 seedDemoHome(shell.debugHomeCanvas)
                 shell.view.layoutSubtreeIfNeeded()

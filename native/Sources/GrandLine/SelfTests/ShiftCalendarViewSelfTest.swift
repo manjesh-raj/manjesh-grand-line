@@ -178,14 +178,30 @@ enum ShiftCalendarViewSelfTest {
             check(view.debugCaption.contains("repeat dates not yet created"),
                   "a period carrying projections should say so, got \"\(view.debugCaption)\"")
 
-            // MARK: A click opens the task
+            // MARK: A click opens the When panel, or the task
+
+            // A task's own chip opens the When panel beside it (plan PR 5),
+            // with the chip's place; a projection still opens its task.
+            let editSchedule = view.onEditSchedule
+            var scheduled: (id: String, anchor: NSRect)?
+            view.onEditSchedule = { id, anchor, _ in scheduled = (id, anchor) }
+            _ = js(web, "document.querySelector('[data-event-id=\"\(single)\"]').click()")
+            _ = waitFor(timeout: 2) { scheduled != nil }
+            check(scheduled?.id == single, "clicking a task's chip should open its When panel, got \(scheduled?.id ?? "nothing")")
+            if let anchor = scheduled?.anchor {
+                check(anchor.width > 10 && anchor.height > 4 && view.bounds.contains(anchor),
+                      "the panel's anchor is the chip, inside the calendar, got \(anchor) in \(view.bounds)")
+            }
+            view.onEditSchedule = editSchedule
 
             let openTask = view.onOpenTask
             var opened: String?
             view.onOpenTask = { opened = $0 }
-            _ = js(web, "document.querySelector('[data-event-id=\"\(single)\"]').click()")
+            let projection = js(web, "(() => { const e = document.querySelector('[data-event-id^=\"\(repeating)@\"]');"
+                                + " if (!e) return null; e.click(); return e.dataset.eventId })()") as? String
             _ = waitFor(timeout: 2) { opened != nil }
-            check(opened == single, "clicking an event should open its task, got \(opened ?? "nothing")")
+            check(projection != nil, "the daily task should draw a projection to click")
+            check(opened == repeating, "clicking a projection should open its task, got \(opened ?? "nothing")")
             view.onOpenTask = openTask
 
             let openFollowUp = view.onOpenFollowUp
@@ -408,6 +424,7 @@ enum ShiftCalendarViewSelfTest {
 
         withScratchStore { store in checkTray(store: store, check: check) }
         withScratchStore { store in checkComplete(store: store, check: check) }
+        withScratchStore { store in checkWhenPanel(store: store, check: check) }
 
         return report(failures)
     }
@@ -746,6 +763,172 @@ enum ShiftCalendarViewSelfTest {
             if let found = undoButton(in: sub) { return found }
         }
         return nil
+    }
+
+    // MARK: The When panel
+
+    /// Plan PR 5: the When panel on the calendar and in the sheet. Every
+    /// control is the real one, clicked through `performClick` (a popup
+    /// through its own target/action, because `performClick` would track its
+    /// menu modally), and every result is read back from the store.
+    private static func checkWhenPanel(store: ShiftStore, check: (Bool, String) -> Void) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let todayDay = ShiftDateFormatting.components(from: today).0
+        let tomorrowDay = ShiftScheduleDraft.adding(days: 1, to: todayDay) ?? todayDay
+        let todayWeekday = calendar.component(.weekday, from: today)
+        let otherWeekday = todayWeekday % 7 + 1
+        let chip = seed(store, title: "Rotate the deploy keys", due: todayDay, time: nil, rule: nil)
+        let undated = seed(store, title: "Write the DR drill notes", due: nil, time: nil, rule: nil)
+        let stored = { (id: String) in store.activeTasks.first { $0.id == id } }
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }),
+              waitFor(timeout: 5, until: { eventIn(web, id: chip, day: todayDay) }) else {
+            check(false, "the When panel case's page never drew its chip")
+            return
+        }
+
+        // MARK: The page's rectangles land where the page drew them
+
+        // Independent of `anchorRect`'s own arithmetic: the grid's first day
+        // is above and left of its last on screen, whichever way the web
+        // view's coordinates run.
+        let cells = js(web, "(() => { const d = document.querySelectorAll('.sx__month-grid-day');"
+                       + " const f = d[0].getBoundingClientRect(), l = d[d.length - 1].getBoundingClientRect();"
+                       + " return [f.left, f.top, f.width, f.height, l.left, l.top, l.width, l.height] })()") as? [Double] ?? []
+        if cells.count == 8,
+           let first = web.anchorRect(["x": cells[0], "y": cells[1], "width": cells[2], "height": cells[3]]),
+           let last = web.anchorRect(["x": cells[4], "y": cells[5], "width": cells[6], "height": cells[7]]) {
+            let (top, bottom) = (web.convert(first, to: nil), web.convert(last, to: nil))
+            check(top.midY > bottom.midY && top.midX < bottom.midX,
+                  "the first day's anchor should sit above and left of the last day's on screen, got \(top) and \(bottom)")
+        } else {
+            check(false, "the grid's day cells could not be measured (\(cells))")
+        }
+
+        // MARK: A chip opens the panel beside it
+
+        _ = js(web, "document.querySelector('[data-event-id=\"\(chip)\"]').click()")
+        guard waitFor(timeout: 3, until: { controller.debugSchedulePopover?.isShown == true }),
+              let popover = controller.debugSchedulePopover else {
+            check(false, "clicking a task's chip should show the When panel")
+            return
+        }
+        let editor = popover.editor
+        check(popover.debugContent.debugTitle == "Rotate the deploy keys", "the panel names its task")
+        check(view.bounds.contains(popover.debugPopover.positioningRect),
+              "the panel is anchored inside the calendar, got \(popover.debugPopover.positioningRect)")
+        check(editor.debugRowHidden.weekdays && editor.debugRowHidden.ends,
+              "a task that happens once shows no repeat rows")
+        // Measured in the tour lab: a row whose controls would not give way
+        // beat the panel's own width tie, and the whole panel collapsed to
+        // its weekday row's 337pt.
+        popover.debugContent.view.layoutSubtreeIfNeeded()
+        check(abs(popover.debugContent.view.frame.width - ShiftSchedulePopoverController.width) < 0.5,
+              "the panel keeps its \(ShiftSchedulePopoverController.width)pt width, got "
+              + "\(popover.debugContent.view.frame.width) (window on screen: \(window.screen != nil))")
+
+        // Repeat, a second circle, the stepper, an end, a time, a reminder.
+        ShiftScheduleEditor.debugChoose(editor.debugRepeatPopup, title: ShiftScheduleDraft.Repeat.weekly.title)
+        check(!editor.debugRowHidden.weekdays, "Weekly on chosen days shows the circles")
+        let lit = editor.debugWeekdayButtons.filter { $0.variant == .primary }.map(\.tag)
+        check(lit == [todayWeekday], "the circles start on the date's own weekday, got \(lit)")
+        editor.debugWeekdayButtons.first { $0.tag == otherWeekday }?.performClick(nil)
+        editor.debugIntervalUp.performClick(nil)
+        check(editor.debugIntervalText == "2" && editor.debugRepeatPopup.titleOfSelectedItem == ShiftScheduleDraft.Repeat.custom.title,
+              "the stepper makes it every 2 weeks, Custom, got \(editor.debugIntervalText) / "
+              + "\(editor.debugRepeatPopup.titleOfSelectedItem ?? "nil")")
+        ShiftScheduleEditor.debugChoose(editor.debugEndPopup, title: ShiftScheduleDraft.End.afterCount.title)
+        for _ in 0..<7 { editor.debugCountDown.performClick(nil) }
+        editor.debugTimeTabs.debugClickTab(id: "atTime")
+        check(!editor.debugTimeField.isHidden, "At a time shows the time field")
+        ShiftScheduleEditor.debugChoose(editor.debugReminderPopup, title: ShiftReminderOffset.label(for: 15))
+        let expected = ShiftRecurrence(frequency: .weekly, interval: 2, weekdays: [todayWeekday, otherWeekday],
+                                       count: 3).ruleText
+        check(editor.debugRuleLine == "recurrence: \(expected)",
+              "the preview's rule line is the rule the controls make, got \(editor.debugRuleLine)")
+        check(stored(chip)?.recurrence == nil, "nothing is written while the panel is open")
+
+        popover.debugContent.debugDoneButton.performClick(nil)
+        _ = waitFor(timeout: 3) { !popover.isShown && stored(chip)?.recurrence != nil }
+        let written = stored(chip)
+        check(!popover.isShown, "Done closes the panel")
+        check(written?.recurrence?.ruleText == expected,
+              "Done writes the rule to the store, got \(written?.recurrence?.ruleText ?? "no rule")")
+        check(written?.dueDate == todayDay && written?.dueTime == ShiftScheduleEditor.defaultTime,
+              "...the date and the time, got \(written?.dueDate ?? "nil") \(written?.dueTime ?? "nil")")
+        check(written?.reminderMinutesBefore == 15 && written?.seriesID != nil,
+              "...the reminder, and a series id for the new rule")
+
+        // MARK: Escape changes nothing
+
+        _ = js(web, "document.querySelector('[data-event-id=\"\(chip)\"]').click()")
+        if waitFor(timeout: 3, until: { controller.debugSchedulePopover?.isShown == true }),
+           let again = controller.debugSchedulePopover {
+            again.editor.debugQuickButtons.last?.performClick(nil)
+            check(again.editor.draft.day == nil, "No date clears the date in the panel")
+            again.debugContent.cancelOperation(nil)
+            _ = waitFor(timeout: 3) { !again.isShown }
+            check(!again.isShown && stored(chip)?.dueDate == todayDay && stored(chip)?.recurrence?.ruleText == expected,
+                  "Escape closes the panel and writes nothing")
+        } else {
+            check(false, "a second click on the chip should show the panel again")
+        }
+
+        // MARK: The tray's Pick… opens the panel on its row
+
+        _ = js(web, "document.querySelector('.gl-tray-item[data-task-id=\"\(undated)\"] .gl-quick[data-when=\"pick\"]').click()")
+        if waitFor(timeout: 3, until: { controller.debugSchedulePopover?.isShown == true }),
+           let picked = controller.debugSchedulePopover {
+            check(picked.debugPopover.positioningRect.minX > view.bounds.midX,
+                  "Pick… anchors on the tray row, at the card's right, got \(picked.debugPopover.positioningRect)")
+            check(picked.editor.debugDateField.debugValueText == "No date" && picked.editor.debugPreviewHidden,
+                  "an undated task's panel says No date and previews nothing")
+            picked.editor.debugQuickButtons.first { $0.tag == 1 }?.performClick(nil)
+            check(picked.editor.draft.day == tomorrowDay, "Tomorrow picks tomorrow")
+            picked.debugContent.debugDoneButton.performClick(nil)
+            _ = waitFor(timeout: 3) { stored(undated)?.dueDate != nil }
+            check(stored(undated)?.dueDate == tomorrowDay && stored(undated)?.dueTime == nil,
+                  "Pick… then Tomorrow writes an all-day date, got \(stored(undated)?.dueDate ?? "nil") "
+                  + "\(stored(undated)?.dueTime ?? "nil")")
+        } else {
+            check(false, "a tray row's Pick… should show the When panel")
+        }
+
+        // MARK: Open task… opens the sheet, and the sheet's panel writes too
+
+        _ = waitFor(timeout: 3) { controller.debugSchedulePopover == nil }
+        _ = js(web, "document.querySelector('[data-event-id=\"\(chip)\"]').click()")
+        guard waitFor(timeout: 3, until: { controller.debugSchedulePopover?.isShown == true }),
+              let opener = controller.debugSchedulePopover else {
+            check(false, "the chip's panel should show for Open task…")
+            return
+        }
+        opener.debugContent.debugOpenButton.performClick(nil)
+        guard waitFor(timeout: 3, until: { controller.presentedViewControllers?.first is ShiftTaskEditorController }),
+              let sheet = controller.presentedViewControllers?.first as? ShiftTaskEditorController else {
+            check(false, "Open task… should open the task's editor sheet")
+            return
+        }
+        let sheetEditor = sheet.debugScheduleEditor
+        check(sheetEditor.draft == ShiftScheduleDraft(task: stored(chip) ?? ShiftTask.fresh()),
+              "the sheet's panel opens on the task as stored")
+        ShiftScheduleEditor.debugChoose(sheetEditor.debugRepeatPopup, title: ShiftScheduleDraft.Repeat.weekdays.title)
+        ShiftScheduleEditor.debugChoose(sheetEditor.debugEndPopup, title: ShiftScheduleDraft.End.never.title)
+        sheetEditor.debugTimeTabs.debugClickTab(id: "allDay")
+        check(sheetEditor.debugTimeField.isHidden, "All day hides the time field")
+        sheet.debugTriggerSave()
+        _ = waitFor(timeout: 3) { stored(chip)?.recurrence?.ruleText != expected }
+        check(stored(chip)?.recurrence?.ruleText == "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TU,WE,TH,FR",
+              "the sheet's Save writes the panel's rule, got \(stored(chip)?.recurrence?.ruleText ?? "no rule")")
+        check(stored(chip)?.dueTime == nil && stored(chip)?.reminderMinutesBefore == 15,
+              "...an all-day date with no time, and keeps the reminder")
     }
 
     // MARK: Driving the page

@@ -689,3 +689,87 @@ Confirmed to catch a regression:
 - PRs 5 to 8 of the plan: the When panel, exceptions, the tray drag and quick add, and completing from the calendar.
 - Weekly review's next-week list as a link into Calendar › Week.
 - A saved session restores Tasks, not its Calendar view, because the Tasks page does not persist its view.
+
+## The When panel (tasks-calendar plan PR 5, `fm/grand-line-calendar-pr5-when-panel`)
+
+PR 5 of the tasks-calendar plan (`data/grand-line-tasks-calendar-plan/report.md`).
+One component, `ShiftScheduleEditor`, edits a task's date, time, repeat rule and reminder, and it lives in two hosts.
+
+### What shipped
+
+- **The rows are the board's.**
+  Date with Today, Tomorrow, Next Mon and No date.
+  Time as All day or At a time.
+  Repeat: Does not repeat, Every day, Every weekday, Weekly on chosen days, Monthly, Every year and Custom.
+  Every N (the unit is a popup under Custom only), On (the weekday circles from the calendar's first weekday, or Day 13, The 2nd Friday and The last day for a monthly rule), Ends (Never, On a date, After N times), a preview, and Remind.
+- **The preview** is a five-week strip from the due date's week, with the rule's dates filled, the due date ringed and a skipped date struck through.
+  Under it are the rule's name and time, the next three dates, how it ends, and the literal `recurrence:` line the YAML will hold.
+- **In the task editor sheet** it replaced the "Set due date" switch and the separate Repeat and Remind cards.
+  The sheet scrolls now, at 760pt, because with a weekly rule the form measured 1,218pt.
+  A date-only task is saved with no time, which fixes the `00:00` PR 3 left for this PR.
+- **On the calendar** a click on a task's own chip, or a tray row's Pick…, opens the panel as an `NSPopover` beside the chip or the row.
+  The page reports the element's rectangle with the click, and `ShiftCalendarWebView.anchorRect` turns it into a rect in the view.
+  A projection, a finished task and a follow-up open their editor or notice as before.
+  Done or a click outside writes the change, through the store with an Undo, and Escape closes it without one.
+  "Open task…" opens the full sheet.
+- **Repeat is never greyed out.** A rule picked with no date starts today, and No date takes the rule and the reminder with it.
+- **A date-only task's Remind choices name the time they fire at** ("15 minutes before, at 8:45 AM"), from `all_day_reminder_at`, and a suite holds the wording to `ShiftDue.reminderFireInstant`.
+- **A rule set for the first time mints `series_id`**, as the plan's data model says, and a new date or a new rule clears `occurrence`, because an edit here applies from this instance on.
+
+### Decisions
+
+- **The panel edits a draft, not the rule.** `ShiftScheduleDraft` holds what the captain picked, so a circle under Every weekday can become Weekly on chosen days, and Custom's days survive a trip through another unit.
+  Every control's action is one mutation of the draft, so the sheet, the popover and the suites drive one set of rules.
+- **Opening the panel is never an edit.** A rule the panel can show writes back byte-identical: an empty weekly `BYDAY` stays empty, a plain monthly rule stays plain, an explicit `BYMONTHDAY=13` stays explicit, and `EXDATE` rides along.
+- **A rule the panel cannot show is "Custom rule"** (two ends, several month days, a carried component) and is written back unchanged unless another is picked.
+- **A rule part that only echoed the old date follows a new one**: weekly on the old weekday alone, "the 3rd Wednesday" or "day 16" of the old date.
+  Days picked apart from the date stay.
+- **The popover writes into the task as the store has it when it closes**, so an edit that arrived while it was open is kept, and Undo restores the five fields it read.
+- **Stepping the interval on a preset makes it Custom**, as the board does, and Custom at 1 reads back as the preset it equals.
+- **The rule line breaks mid-token when it wraps.** Breaking at the semicolons would need invisible characters in a line the captain can select and copy into YAML.
+
+### What the renders found
+
+Tour-lab renders (`demo repeat`, `when popover|sheet <title>`, `renderwhen`) in Daylight and Dusk, each read back before the PR.
+They found six defects, all fixed here:
+
+- `HelmDateField`'s chevron stretched to fill a field wider than its value, so the glyph sat mid-field.
+  This was pre-existing; the When panel is the first caller that makes the field wide.
+  The label is the flexible member now (gotcha (5)).
+- Under Daylight's bold control font the quick-date chips needed 324pt, and their required compression beat the popover's own width.
+  The whole panel collapsed to its weekday row's 337pt.
+  Row controls resist at 740 now, so a larger text scale truncates a chip rather than collapsing the panel.
+- The popover's root was a frame-based view with a required width, which fought its own autoresizing constraints (gotcha (11)).
+  The width is on its column now, and the window suite asserts the panel keeps it.
+- The preview's header row gave its range label a required hug, which capped the sheet's whole field column at 305pt through the card's required width ties (gotcha (13)).
+- The scrolling sheet's preferred column width (520 at 750) widened the sheet to 564pt over the window's 500 hold, so this sheet caps its content at the column it has.
+- The quick chips and the circles were added to their rows after the rows were built, so they never got the rows' hugging, and "Today" took the row's slack.
+
+### Verification
+
+- `FM_RUN_SHIFT_SCHEDULE_TESTS` (new, blocking lane, 175 checks): every preset and every Custom state to its rule and back, seven written rules opened and saved byte-identical, four custom rules kept whole, each control's edit rule, the all-day save, the series id and the rule slot, the preview strip and its sentences, the Remind wording against the scheduler, and the toast.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (windowed lane): a chip's click reaches the panel with its rectangle, and a projection's opens its task.
+  The page's rectangles land above and left of each other on screen, independent of the conversion's own arithmetic.
+  The real circles, steppers and popups are clicked and Done is pressed, and the rule, the time, the reminder and the series id are read back from the store.
+  Escape writes nothing, and the tray's Pick… opens the panel on its row and writes an all-day date.
+  "Open task…" opens the sheet on the stored task, and the sheet's own Save writes its panel's rule with no time.
+- `FM_RUN_REVIEW_UI_UX_TESTS`' U16 case follows the panel: Remind, not Repeat, is dimmed with no date and lit by a detected one.
+- Also run: `FM_RUN_SHIFT_RECURRENCE_TESTS`, `FM_RUN_SHIFT_CALENDAR_TESTS` (the rebuilt bundle's digests), `FM_RUN_SHIFT_DUE_TESTS`, `FM_RUN_WIDGET_SNAPSHOT_TESTS`, `FM_RUN_DAYLIGHT_CHROME_TESTS`, `FM_RUN_CANVAS_LISTS_CONTROLS_TESTS`, `FM_RUN_ACCESSIBILITY_TESTS`, `FM_RUN_CONTRAST_TESTS`, `FM_RUN_LOCK_GATE_COVERAGE_TESTS` and `FM_RUN_E2E_TESTING_POLICY_TESTS`.
+  `swift build -c release` is clean for these files.
+
+Confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| The draft's rule drops `EXDATE` | Seven checks, from "opening and closing the panel ... changes nothing" to the preview's struck date and rule line |
+| An all-day date saved as `00:00` | "an all-day date is saved with no time" and the custom-rule "not an edit" cases |
+| The calendar's `onEditSchedule` unwired | "clicking a task's chip should show the When panel" |
+| The sheet's Save skips the panel | "the sheet's Save writes the panel's rule" and the U16 case |
+| The popover's width on its frame-based root | "the panel keeps its 424pt width" (found by the render, then asserted) |
+
+### Left out
+
+- PRs 6 to 8: exceptions (the "only this or this and following" dialog, Skip), the tray drag and quick add, and completing from the calendar.
+  The panel's edits to a repeating task apply from this instance on, which is the plan's "this and following (live)" row.
+- No UI for `all_day_reminder_at`; the Remind wording names it.
+- Follow-ups keep their own sheet, with no repeat to edit.

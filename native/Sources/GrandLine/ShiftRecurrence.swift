@@ -511,10 +511,20 @@ struct ShiftRecurrence: Equatable {
 
     // MARK: Presentation
 
-    /// The one-line description shown on the editor's Repeat card, on a task
+    /// The one-line description shown in the When panel's preview, on a task
     /// row's repeat chip and in the calendar's own rule panel. One
     /// derivation, so those three can never word the same rule differently.
     var displayName: String {
+        let rule = normalized
+        let base = rule.patternName
+        if let count = rule.count { return "\(base), \(count) times" }
+        if let until = rule.until { return "\(base), until \(ShiftDateFormatting.friendly(until))" }
+        return base
+    }
+
+    /// `displayName` without how the rule ends: "Every Mon, Wed, Fri". The
+    /// When panel's preview says the end in its own sentence.
+    var patternName: String {
         let rule = normalized
         let base: String
         switch rule.frequency {
@@ -539,8 +549,6 @@ struct ShiftRecurrence: Equatable {
         case .yearly:
             base = rule.interval == 1 ? "Every year" : "Every \(rule.interval) years"
         }
-        if let count = rule.count { return "\(base), \(count) times" }
-        if let until = rule.until { return "\(base), until \(ShiftDateFormatting.friendly(until))" }
         return base
     }
 
@@ -580,23 +588,6 @@ struct ShiftRecurrence: Equatable {
         guard (1...symbols.count).contains(weekday) else { return weekdayCodes[max(0, min(6, weekday - 1))] }
         return symbols[weekday - 1]
     }
-
-    // MARK: The editor's presets
-
-    /// What the Repeat card offers. Deliberately a short list of named rules
-    /// rather than a frequency picker plus an interval stepper: the mockup
-    /// the captain reviewed shows one popup reading "Every weekday", and
-    /// five presets cover every recurrence this app's own task data has ever
-    /// carried. The weekday chips underneath are the one escape hatch, and
-    /// they refine the weekly presets rather than replacing the list.
-    static let presets: [(title: String, rule: ShiftRecurrence?)] = [
-        ("Does not repeat", nil),
-        ("Every day", ShiftRecurrence(frequency: .daily)),
-        ("Every weekday", ShiftRecurrence(frequency: .weekly, weekdays: weekdaySet)),
-        ("Every week", ShiftRecurrence(frequency: .weekly)),
-        ("Every 2 weeks", ShiftRecurrence(frequency: .weekly, interval: 2)),
-        ("Every month", ShiftRecurrence(frequency: .monthly)),
-    ]
 }
 
 /// One ordinal `BYDAY` entry of a monthly rule: "the 2nd Friday" is
