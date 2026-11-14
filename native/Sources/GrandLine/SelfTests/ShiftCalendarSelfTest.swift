@@ -12,8 +12,9 @@
 //      lockfile, every bundled package on the licence allow-list, and the
 //      licence notices shipping inside the bundle.
 //   4. **What crosses the bridge.** A projection or a finished task is never
-//      movable, a timed task is a half-hour block that never crosses midnight,
-//      and Schedule-X gets a locale shape it does not throw on.
+//      movable and never carries a check, a timed task is a half-hour block
+//      that never crosses midnight, and Schedule-X gets a locale shape it does
+//      not throw on.
 //   5. **The palette is the app theme's**, every role present, every text
 //      role clearing the contrast floor as the hex the page actually receives,
 //      on every app theme.
@@ -201,7 +202,8 @@ enum ShiftCalendarSelfTest {
                       "state"] {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
-        for message in ["ready", "error", "range", "open", "add", "move", "schedule", "tray", "newTask", "openList"] {
+        for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "tray", "newTask",
+                        "openList"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
         // The captain's card: its header, weekday row and legend are this
@@ -218,6 +220,11 @@ enum ShiftCalendarSelfTest {
             check(false, "could not read the bundle's index.html")
         }
         check(js.contains("\"list\""), "the bundle does not register Schedule-X's list view (Agenda)")
+        // The check on a real chip: added only to `gl-completable` events,
+        // and stopping the chip's own press so a click does not also open the
+        // task or start a drag.
+        check(js.contains("gl-completable") && js.contains("gl-check"),
+              "the committed bundle draws no check on a completable event - rebuild it")
         if let css = try? String(contentsOf: dir.appendingPathComponent("task-calendar.css"), encoding: .utf8) {
             // The raised cells are drawn inside each day, never as a margin
             // between days: the drag plugin finds the drop day with
@@ -275,6 +282,15 @@ enum ShiftCalendarSelfTest {
         check(ShiftCalendarPayload.event(for: entry(cancelled: true))["movable"] as? Bool == false,
               "a cancelled task must never be movable")
 
+        // The check (the captain's decision 4A): on a real, open record, and
+        // on nothing else.
+        check(allDay["completable"] as? Bool == true, "an open task carries a check")
+        check(projection["completable"] as? Bool == false, "a projection must never carry a check")
+        check(ShiftCalendarPayload.event(for: entry(completed: true))["completable"] as? Bool == false,
+              "a finished task has nothing left to complete")
+        check(ShiftCalendarPayload.event(for: entry(cancelled: true))["completable"] as? Bool == false,
+              "a cancelled task must not carry a check")
+
         // A task's colour is its priority's category, a follow-up's is its
         // own, and every category has colours in the palette and a line in
         // the legend.
@@ -308,6 +324,7 @@ enum ShiftCalendarSelfTest {
         let followUpEvent = ShiftCalendarPayload.event(for: followUp)
         check(followUpEvent["id"] as? String == "followup:t1" && followUpEvent["kind"] as? String == "followUp",
               "a follow-up's event id is prefixed and its kind crosses, got \(followUpEvent)")
+        check(followUpEvent["completable"] as? Bool == true, "a pending follow-up carries a check")
         check(allDay["allDay"] as? Bool == true
               && ShiftCalendarPayload.event(for: entry(time: "09:30"))["allDay"] as? Bool == false,
               "the page is told which records have no time (the agenda hides theirs)")
@@ -324,6 +341,8 @@ enum ShiftCalendarSelfTest {
               "a daily rule should give one real entry and its projections, got \(entries.map(\.day))")
         check(entries.filter(\.isMovable).map(\.day) == ["2026-10-27"],
               "only the real instance of a repeating task is movable")
+        check(entries.filter(\.isCompletable).map(\.day) == ["2026-10-27"],
+              "only the real instance of a repeating task carries a check, got \(entries.filter(\.isCompletable).map(\.day))")
     }
 
     private static func checkLocaleAndWeekStart(_ check: (Bool, String) -> Void) {

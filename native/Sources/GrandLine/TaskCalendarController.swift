@@ -21,8 +21,10 @@
 // overdue ones, so no open task the filters keep is invisible here (GL-14).
 // It owns none of them. A click opens the same editor the Tasks page opens
 // (`ShiftRecordSheets`), a double-click or New task opens New Task dated to
-// that day, and a drop writes the new date through the store with an Undo
-// that restores the date this controller already held (GL-33).
+// that day, a drop writes the new date through the store with an Undo that
+// restores the date this controller already held (GL-33), and the check on a
+// real chip or an Agenda row completes the record (the captain's decision
+// 4A) with an Undo that puts it back.
 //
 // Day, Week, Month and Agenda are the card's own pills, the one switcher for
 // the calendar's period: the window toolbar draws Tasks' views, not these.
@@ -85,6 +87,8 @@ final class TaskCalendarController: NSViewController {
         calendarView.onMoveFollowUp = { [weak self] id, day, time in
             self?.rescheduleFollowUp(id: id, to: day, time: time)
         }
+        calendarView.onCompleteTask = { [weak self] id in self?.completeTask(id: id) }
+        calendarView.onCompleteFollowUp = { [weak self] id in self?.completeFollowUp(id: id) }
         calendarView.onScheduleFromTray = { [weak self] id, kind, when in
             self?.scheduleFromTray(id: id, kind: kind, when: when)
         }
@@ -214,6 +218,77 @@ final class TaskCalendarController: NSViewController {
             rescheduleFollowUp(id: id, to: day, time: nil)
         } else {
             rescheduleTask(id: id, to: day, time: nil)
+        }
+    }
+
+    // MARK: Completing
+
+    /// The check on a real chip or an Agenda row (the captain's decision 4A).
+    ///
+    /// It takes the one path every other surface takes,
+    /// `ShiftStore.setTaskCompleted`: the record moves to this month's
+    /// `completed/` file and, for a repeating task, the next instance is
+    /// written to `active.yaml`. The page is redrawn from the store, so the
+    /// chip is struck through on its day and the next date becomes the real
+    /// chip. A projection never reaches here, because the page draws no check
+    /// on one (`ShiftCalendarEntry.isCompletable`), and a record that is no
+    /// longer open is left alone.
+    ///
+    /// Undo is a real restore (GL-33). The task is reopened with the status
+    /// it had, and the instance this completion spawned is withdrawn - but
+    /// only while it is exactly as it was spawned. Reopening alone would
+    /// leave two live instances of one series, which is why the store's own
+    /// reopen does not withdraw anything (`ShiftStore.nextOccurrence`'s
+    /// header). An instance edited since the check keeps its edits, and the
+    /// toast says so rather than pretending the series is back as it was.
+    func completeTask(id: String, now: Date = Date()) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }),
+              task.status != .completed, task.status != .cancelled else {
+            render()
+            return
+        }
+        let before = Set(store.activeTasks.map(\.id))
+        store.setTaskCompleted(id: id, completed: true, now: now)
+        render()
+        // A refused write is already reported, and the task is still live.
+        guard !store.activeTasks.contains(where: { $0.id == id }) else { return }
+        let spawned = store.activeTasks.first { !before.contains($0.id) }
+        var message = "\u{201C}\(task.title)\u{201D} completed"
+        if let spawned, let next = spawned.dueDate {
+            message += ", next \(ShiftDateFormatting.friendly(next, time: spawned.dueTime))"
+        }
+        Toast.showUndo(in: view, message: message) { [weak self] in
+            guard let self else { return }
+            self.store.setTaskCompleted(id: id, completed: false)
+            if var reopened = self.store.activeTasks.first(where: { $0.id == id }), reopened.status != task.status {
+                reopened.status = task.status
+                self.store.updateTask(reopened)
+            }
+            if let spawned, let current = self.store.activeTasks.first(where: { $0.id == spawned.id }) {
+                if current == spawned {
+                    self.store.deleteTask(id: spawned.id)
+                } else {
+                    Toast.show(in: self.view,
+                               message: "Reopened. The next \u{201C}\(spawned.title)\u{201D} was edited, so it stays.")
+                }
+            }
+            self.render()
+        }
+    }
+
+    /// The same check on a pending follow-up: marked done, which takes it off
+    /// the calendar, with an Undo that marks it pending again.
+    func completeFollowUp(id: String, now: Date = Date()) {
+        guard let item = store.followUps.first(where: { $0.id == id }), item.status == .pending else {
+            render()
+            return
+        }
+        store.setFollowUpStatus(id: id, done: true, now: now)
+        render()
+        Toast.showUndo(in: view, message: "\u{201C}\(item.title)\u{201D} completed") { [weak self] in
+            guard let self else { return }
+            self.store.setFollowUpStatus(id: id, done: false)
+            self.render()
         }
     }
 

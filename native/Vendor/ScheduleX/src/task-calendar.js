@@ -17,7 +17,8 @@
 //     (`setEvents`), and a drop only *asks* the native side to move the task
 //     (`move`). The store decides; the native side then pushes the new events
 //     back. A drop the store refuses is undone by that same push, so this page
-//     never shows a position the store does not hold.
+//     never shows a position the store does not hold. The check on a chip is
+//     the same: it asks (`complete`), and the push draws the result.
 //
 // The palette is the app theme's, never Schedule-X's own Material purple:
 // `setTheme` writes the native side's resolved colours over the theme's CSS
@@ -90,12 +91,25 @@ function describe(value) {
 // is "task" or "followUp"; the native side routes on it.
 const movable = new Map()
 
+// A `gl-ref-N` class -> the record a chip's check completes, for the events
+// the native side marks `completable` (a real, open record; never a
+// projection). A class rather than the event id because Schedule-X's agenda
+// rows carry no `data-event-id`, only the event's additional classes, and a
+// class built from a counter is safe whatever characters a hand-edited id
+// holds.
+const completable = new Map()
+
 function toCalendarEvent(item) {
   const classes = []
   if (item.projected) classes.push('gl-projected')
   if (item.completed) classes.push('gl-completed')
   if (item.allDay) classes.push('gl-all-day')
   if (item.movable) movable.set(item.id, { id: item.taskID, kind: item.kind || 'task' })
+  if (item.completable) {
+    const ref = 'gl-ref-' + completable.size
+    completable.set(ref, { id: item.taskID, kind: item.kind || 'task', title: item.title })
+    classes.push('gl-completable', ref)
+  }
   return {
     id: item.id,
     taskID: item.taskID,
@@ -110,6 +124,84 @@ function toCalendarEvent(item) {
       additionalClasses: classes,
     },
   }
+}
+
+// MARK: The check
+//
+// Schedule-X draws every chip and agenda row itself, and re-renders them as
+// it likes, so the check is added after it draws rather than inside its
+// templates: one observer gives every `gl-completable` event a check, and
+// takes it off an element Schedule-X has reused for anything else. Which
+// record a check finishes is read from its chip's class at click time, never
+// remembered on the button, for the same reason.
+//
+// The check sits inside the chip, so it stops every event the chip listens
+// for: a click would otherwise also open the task, a press would start the
+// drag timer, and a double-click would reach the day's "new task".
+
+function refOf(chip) {
+  for (const name of chip.classList) if (name.startsWith('gl-ref-')) return name
+  return null
+}
+
+function completeFrom(button) {
+  const chip = button.closest('.sx__event')
+  const record = chip && completable.get(refOf(chip))
+  if (!record) return
+  chip.classList.add('is-completing')
+  post({ type: 'complete', taskID: record.id, kind: record.kind })
+}
+
+function makeCheck() {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'gl-check'
+  button.draggable = false
+  for (const type of ['mousedown', 'mouseup', 'touchstart', 'touchend', 'dblclick', 'keydown']) {
+    button.addEventListener(type, (event) => event.stopPropagation())
+  }
+  button.addEventListener('dragstart', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  })
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    completeFrom(button)
+  })
+  return button
+}
+
+function decorateChecks() {
+  for (const stale of document.querySelectorAll('.sx__event:not(.gl-completable) > .gl-check')) stale.remove()
+  for (const chip of document.querySelectorAll('.sx__event.gl-completable')) {
+    const record = completable.get(refOf(chip))
+    if (!record) continue
+    let button = chip.querySelector(':scope > .gl-check')
+    if (!button) {
+      button = makeCheck()
+      chip.appendChild(button)
+    }
+    const label = 'Complete \u201C' + record.title + '\u201D'
+    if (button.getAttribute('aria-label') !== label) {
+      button.setAttribute('aria-label', label)
+      button.title = record.kind === 'followUp' ? 'Mark done' : 'Complete'
+    }
+  }
+}
+
+// A microtask rather than an animation frame: WebKit stops animation frames
+// for a page nobody can see, and a chip finished from the Agenda must not
+// wait for the window to come forward before its neighbours get their checks.
+let decorateQueued = false
+
+function queueDecorate() {
+  if (decorateQueued) return
+  decorateQueued = true
+  queueMicrotask(() => {
+    decorateQueued = false
+    decorateChecks()
+  })
 }
 
 // MARK: The calendar
@@ -202,7 +294,17 @@ function mount(config) {
     },
     [controls, currentTime, scrollController, dragAndDrop],
   )
-  calendar.render(document.getElementById('calendar'))
+  const root = document.getElementById('calendar')
+  calendar.render(root)
+  // Only the calendar's own subtree, and only structure and classes: the
+  // check's own insertions settle in one more pass, because a decorated chip
+  // is skipped.
+  new MutationObserver(queueDecorate).observe(root, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['class'],
+  })
   wireHeader()
   renderWeekdays()
   refreshHeader()
@@ -536,9 +638,13 @@ window.GrandLineTaskCalendar = {
 
   setEvents: guarded((payload) => {
     movable.clear()
+    completable.clear()
     const events = (payload.events || []).map(toCalendarEvent)
     if (payload.calendars) controls.setCalendars(payload.calendars)
     calendar.events.set(events)
+    // A chip Schedule-X keeps across the set keeps its element, so the
+    // observer may see nothing change; the new refs still need checking.
+    queueDecorate()
     return { count: events.length }
   }),
 
@@ -599,6 +705,13 @@ window.GrandLineTaskCalendar = {
         (el) => el.dataset.taskId,
       ),
       trayGroups: Array.from(document.querySelectorAll('#gl-tray-list .gl-tray-group')).map((el) => el.textContent),
+      // The checks, as drawn: the record each one would complete, and how
+      // many sit on a projection (which must be none).
+      checks: Array.from(document.querySelectorAll('.sx__event > .gl-check')).map((button) => {
+        const record = completable.get(refOf(button.parentElement))
+        return record ? record.id : null
+      }),
+      projectedChecks: document.querySelectorAll('.sx__event.gl-projected .gl-check').length,
       emptyVisible: visible('gl-empty'),
       emptyTitle: document.getElementById('gl-empty-title').textContent,
     }
