@@ -91,7 +91,15 @@ final class ShiftCalendarWebView: WKWebView {
     /// The check on a pending follow-up's chip or row was clicked.
     var onCompleteFollowUp: ((String) -> Void)?
     /// A tray row's Today, Tomorrow or Pick…: "today", "tomorrow" or "pick".
+    /// A task's Pick… goes to `onEditSchedule` instead whenever the page
+    /// said where its row is.
     var onScheduleFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ when: String) -> Void)?
+    /// The When panel for a task: a click on its own chip (never a
+    /// projection's) or its tray row's Pick…. `anchor` is where the chip or
+    /// the row is, in this view's coordinates, and `edge` the side the panel
+    /// should open on - beside a chip, and to the left of the tray, which is
+    /// the card's right edge.
+    var onEditSchedule: ((_ taskID: String, _ anchor: NSRect, _ edge: NSRectEdge) -> Void)?
     /// The tray's fold button asked for this state.
     var onTrayCollapse: ((Bool) -> Void)?
     /// The empty state's New task.
@@ -246,6 +254,9 @@ final class ShiftCalendarWebView: WKWebView {
             guard let id = body["taskID"] as? String else { return }
             if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
                 onOpenFollowUp?(id)
+            } else if (body["projected"] as? Bool) != true, let anchor = anchorRect(body["rect"]),
+                      let onEditSchedule {
+                onEditSchedule(id, anchor, .maxX)
             } else {
                 onOpenTask?(id)
             }
@@ -270,7 +281,11 @@ final class ShiftCalendarWebView: WKWebView {
             guard let id = body["taskID"] as? String, let when = body["when"] as? String,
                   ["today", "tomorrow", "pick"].contains(when) else { return }
             let kind = ShiftCalendarEntry.Kind(rawValue: (body["kind"] as? String) ?? "") ?? .task
-            onScheduleFromTray?(id, kind, when)
+            if when == "pick", kind == .task, let anchor = anchorRect(body["rect"]), let onEditSchedule {
+                onEditSchedule(id, anchor, .minX)
+            } else {
+                onScheduleFromTray?(id, kind, when)
+            }
         case "tray":
             guard let collapsed = body["collapsed"] as? Bool else { return }
             onTrayCollapse?(collapsed)
@@ -290,6 +305,25 @@ final class ShiftCalendarWebView: WKWebView {
         default:
             break
         }
+    }
+
+    /// The page's rectangle for an element (CSS pixels from the page's top
+    /// left, which are this view's points at its 1x zoom) as a rect in this
+    /// view, or `nil` for anything that is not one. Converted by hand rather
+    /// than trusting that `WKWebView` is flipped, so the anchor is right
+    /// either way.
+    func anchorRect(_ value: Any?) -> NSRect? {
+        guard let rect = value as? [String: Any],
+              let x = (rect["x"] as? NSNumber)?.doubleValue, let y = (rect["y"] as? NSNumber)?.doubleValue,
+              let width = (rect["width"] as? NSNumber)?.doubleValue,
+              let height = (rect["height"] as? NSNumber)?.doubleValue,
+              [x, y, width, height].allSatisfy(\.isFinite), width >= 0, height >= 0 else { return nil }
+        let top = isFlipped ? y : Double(bounds.height) - y - height
+        let anchor = NSRect(x: x, y: top, width: max(1, width), height: max(1, height))
+        // A chip scrolled out of the page's own viewport has nowhere to
+        // anchor; the panel opens on the part that still shows.
+        let visible = anchor.intersection(bounds)
+        return visible.isNull || visible.isEmpty ? nil : visible
     }
 
     // MARK: Display gating

@@ -1036,6 +1036,16 @@ final class ShiftCalendarView: NSView {
     var onCompleteTask: ((String) -> Void)?
     /// The check on a follow-up's chip or row.
     var onCompleteFollowUp: ((String) -> Void)?
+    /// The When panel for a task, anchored at its chip or tray row, in this
+    /// view's coordinates. Unset, a click opens the task as before.
+    var onEditSchedule: ((_ taskID: String, _ anchor: NSRect, _ edge: NSRectEdge) -> Void)? {
+        didSet {
+            webView.onEditSchedule = onEditSchedule == nil ? nil : { [weak self] id, rect, edge in
+                guard let self else { return }
+                self.onEditSchedule?(id, self.convert(rect, from: self.webView), edge)
+            }
+        }
+    }
     /// The empty state's New task.
     var onNewTask: (() -> Void)?
     /// The empty state's Open List.

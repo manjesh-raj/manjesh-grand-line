@@ -33,7 +33,8 @@
 //    verbatim, so a hardcoded height leaves slack that `.gravityAreas` injects
 //    into an arbitrary row (fm/grandline-task-editor-layout-fix). That is
 //    `HelmFormSheet.sizeToFitContent()` now, and all four non-scrolling sheets
-//    get it rather than just this one.
+//    get it rather than just this one. This sheet has scrolled since the When
+//    panel (tasks-calendar plan PR 5), so it no longer takes it.
 //
 // The mockup's Attachments drag-and-drop section is deliberately NOT part of
 // this - that is a different (already-shipped) attachment mechanism in this
@@ -115,15 +116,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     private let projectIconTile = IconTileView(size: 22, cornerRadius: HelmMetrics.rChip)
     private lazy var projectCard = HelmFieldCard(label: "Project", accessory: projectIconTile)
 
-    /// E6: the field-card idiom with a themed calendar popover, replacing
-    /// the `.textFieldAndStepper` picker the audit calls "the single most
-    /// dated AppKit control still visible in the app". `target`/`action`,
-    /// `dateValue`, `isEnabled` and `isHidden` all read the same, which is
-    /// what makes this a type change rather than a rework of this sheet.
-    private let dueDatePicker = HelmDateField()
-    private lazy var dueRow = HelmToggleRow(title: "Set due date",
-                                            subtitle: "Add a date and optional time",
-                                            trailing: dueDatePicker)
+    /// The When panel (tasks-calendar plan PR 5): the date, the time (All
+    /// day or At a time), the repeat rule and the reminder, in the one
+    /// component the calendar's popover also uses. It replaced the "Set due
+    /// date" switch and the Repeat and Remind cards, which is also what
+    /// stopped a date-only task being saved with a time of day it never had.
+    private let scheduleEditor: ShiftScheduleEditor
 
     /// Daylight §6.9's chips-in-well, replacing the field-plus-separate-flow
     /// pattern this row used to be. The interaction is unchanged (Return or a
@@ -135,36 +133,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
     private let descriptionView = HelmTextView(height: 110)
 
-    // MARK: Repeat and reminder (F5)
-
-    /// The Repeat card, its weekday chips and the Remind me card.
-    ///
-    /// All three live under the due-date row and **disable together when the
-    /// task has no due date**, because a rule with no anchor recurs zero
-    /// times and a reminder with no due time has nothing to be early for
-    /// (`ShiftTask.recurrence`'s own doc comment). Disabling states that
-    /// where a silently-ignored setting would not.
-    private let repeatCard = HelmFieldCard(label: "Repeat")
-    private let reminderCard = HelmFieldCard(label: "Remind me")
-    private let weekdayRow = NSStackView()
-    private var weekdayChips: [HelmButton] = []
-    private let recurrencePreview = NSTextField(labelWithString: "")
-
-    /// The rule being edited, `nil` for a task that happens once. Held rather
-    /// than read back off the cards so the weekday chips and the preview line
-    /// have one source of truth between them.
-    private var recurrence: ShiftRecurrence?
-    private var reminderMinutes: Int?
-
-    /// Once the person edits the due-date controls directly (switch or
-    /// picker), further title edits stop overwriting their choice - only a
-    /// brand-new detected phrase should ever clobber a still-untouched Due
-    /// field, never a deliberate manual edit.
+    /// Once the person edits the When panel directly, further title edits
+    /// stop overwriting their choice - only a brand-new detected phrase
+    /// should ever clobber a still-untouched date, never a deliberate manual
+    /// edit.
     private var dueManuallyEdited = false
 
     init(task: ShiftTask?, projects: [ShiftProject], defaultProjectID: String? = nil, existingAttachmentData: Data? = nil,
          prefillTitle: String? = nil, prefillDescription: String? = nil,
-         prefillDueDate: String? = nil, prefillDueTime: String? = nil) {
+         prefillDueDate: String? = nil, prefillDueTime: String? = nil,
+         allDayReminderAt: String = ShiftDue.defaultAllDayReminderAt) {
         self.editing = task
         self.projects = projects
         self.defaultProjectID = defaultProjectID
@@ -173,8 +151,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         self.prefillDescription = prefillDescription
         self.prefillDueDate = prefillDueDate
         self.prefillDueTime = prefillDueTime
-        self.recurrence = task?.recurrence
-        self.reminderMinutes = task?.reminderMinutesBefore
+        // `task?.dueDate` is `String??` collapsed by optional chaining -
+        // genuinely `nil` when editing an existing task that has no due date,
+        // not merely "editing is nil". The prefill must never fill that in,
+        // so it only applies for a brand-new task.
+        self.scheduleEditor = ShiftScheduleEditor(
+            draft: ShiftScheduleDraft(day: task != nil ? task?.dueDate : prefillDueDate,
+                                      time: task != nil ? task?.dueTime : prefillDueTime,
+                                      recurrence: task?.recurrence,
+                                      reminderMinutes: task?.reminderMinutesBefore),
+            allDayReminderAt: allDayReminderAt)
         self.selectedPriority = task?.priority ?? .normal
         let candidateProjectID = task?.projectID ?? defaultProjectID
         self.selectedProjectID = projects.contains { $0.id == candidateProjectID } ? candidateProjectID : nil
@@ -184,7 +170,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        let form = HelmFormSheet(title: editing == nil ? "New Task" : "Edit Task")
+        // Scrolling since the When panel: with a repeat rule's rows and its
+        // preview the form measured 1,218pt, taller than a laptop's screen, so
+        // a fixed sheet would put Save below the bottom edge.
+        // The content cap is the column a 520pt sheet actually has. Left at
+        // the default 520, the scrolling layout's preferred column width (at
+        // 750, over the window's 500 hold - AGENTS.md gotcha (13)) widened the
+        // sheet to 564pt, measured.
+        let form = HelmFormSheet(title: editing == nil ? "New Task" : "Edit Task", scrolls: true,
+                                 maxContentWidth: HelmFormSheet.width - 2 * HelmFormSheet.gutter)
+        form.setFrameSize(NSSize(width: HelmFormSheet.width, height: Self.sheetHeight))
         self.form = form
         view = form
         form.onApplyTheme = { [weak self] theme in self?.applyExtraTheme(theme) }
@@ -218,38 +213,11 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         updateProjectCard()
         form.addColumns([priorityCard, projectCard])
 
-        // MARK: Due date
+        // MARK: When
 
-        dueDatePicker.target = self
-        dueDatePicker.action = #selector(dueDatePickerChanged)
-        // `editing?.dueDate` and `editing?.dueTime` are `String??` collapsed
-        // by optional chaining - genuinely `nil` when editing an existing
-        // task that has no due date, not merely "editing is nil". The prefill
-        // must never fill that in, so it only applies for a brand-new task.
-        let initialDueDate = editing != nil ? editing?.dueDate : prefillDueDate
-        let initialDueTime = editing != nil ? editing?.dueTime : prefillDueTime
-        let existingDue = ShiftDateFormatting.dateTime(from: initialDueDate, time: initialDueTime)
-        if let existingDue {
-            dueRow.isOn = true
-            dueDatePicker.dateValue = existingDue
-            dueDatePicker.isEnabled = true
-        } else {
-            dueRow.isOn = false
-            dueDatePicker.dateValue = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
-            dueDatePicker.isEnabled = false
-        }
-        dueDatePicker.isHidden = !dueRow.isOn
-        dueRow.onToggle = { [weak self] in self?.hasDueToggled() }
-        form.addRow(dueRow)
-
-        // MARK: Repeat and reminder (F5)
-
-        form.addSection("Repeat")
-        buildRepeatControls()
-        form.addColumns([repeatCard, reminderCard])
-        form.addRow(weekdayRow)
-        form.addRow(recurrencePreview)
-        syncRepeatControls()
+        form.addSection("When")
+        scheduleEditor.onChange = { [weak self] _ in self?.scheduleEdited() }
+        form.addRow(scheduleEditor)
 
         // MARK: Tags
 
@@ -259,9 +227,6 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         tagsInput.onTokensChanged = { [weak self] tokens in
             guard let self else { return }
             self.tagChips = tokens
-            // The well grows and shrinks with its chip count, so the sheet
-            // re-measures - the same reason `renderTagChips` did.
-            self.form?.sizeToFitContent()
         }
         form.addRow(tagsInput)
 
@@ -306,8 +271,11 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
         form.setSubtitle("Something to do.")
         form.refreshTheme()
-        form.sizeToFitContent()
     }
+
+    /// The sheet's height. It scrolls inside that, so it fits a 13-inch
+    /// screen under the window's title bar with room to spare.
+    static let sheetHeight: CGFloat = 760
 
     override func viewDidAppear() {
         super.viewDidAppear()
@@ -325,10 +293,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         detectedIcon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
         detectedLabel.textColor = muted
         updatePriorityDotColor(theme: theme)
-        // The weekday chips theme themselves (`HelmButton` observes
-        // `ThemeManager` directly); only their *selected* variant is this
-        // sheet's to decide, and `syncRepeatControls` owns that.
-        recurrencePreview.textColor = muted
+        // The When panel themes itself, so the calendar's popover and this
+        // sheet paint it the same way.
         tagsInput.applyTheme(theme)
         attachmentWell.applyTheme(theme)
     }
@@ -416,226 +382,42 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         guard field === titleField else { return }
         guard !dueManuallyEdited else { return }
         guard let parsed = ShiftDateParser.parse(titleField.stringValue) else {
-            let wasHidden = detectedRow.isHidden
             detectedRow.isHidden = true
-            if !wasHidden { form.sizeToFitContent() }
             return
         }
-        dueRow.isOn = true
-        dueDatePicker.isEnabled = true
-        dueDatePicker.isHidden = false
-        if parsed.hasTime {
-            dueDatePicker.dateValue = parsed.date
-        } else {
-            // Keep whatever time-of-day is already in the picker (default
-            // 9:00 AM) - a date-only phrase like "next mon" shouldn't
-            // silently zero out the time to midnight.
-            let existingTime = Calendar.current.dateComponents([.hour, .minute], from: dueDatePicker.dateValue)
-            var comps = Calendar.current.dateComponents([.year, .month, .day], from: parsed.date)
-            comps.hour = existingTime.hour
-            comps.minute = existingTime.minute
-            dueDatePicker.dateValue = Calendar.current.date(from: comps) ?? parsed.date
-        }
-        // **Review defect U16's second half.** Turning the due switch on
-        // above is exactly the state `syncRepeatControls` gates Repeat and
-        // Remind on, but only `hasDueToggled()` ever called it - so a due
-        // date that arrived by detection left both pickers dimmed over a
-        // task that now had the anchor they need. The switch and the
-        // detection are two ways into one state, and both re-sync it.
-        syncRepeatControls()
-        let (dateStr, timeStr) = ShiftDateFormatting.components(from: dueDatePicker.dateValue)
+        let (dateStr, timeStr) = ShiftDateFormatting.components(from: parsed.date)
+        var draft = scheduleEditor.draft
+        draft.setDay(dateStr)
+        // A date-only phrase like "next mon" keeps whatever the panel's Time
+        // row already says, rather than silently making it all day or
+        // inventing a time.
+        if parsed.hasTime { draft.time = timeStr }
+        // `setDraft`, not an edit: the panel's own `onChange` is how this
+        // sheet knows the captain took the date over, and detection is not
+        // the captain. Review defect U16's second half lives on here too: a
+        // date that arrived by detection leaves Remind live, because the
+        // panel re-derives every row from the draft.
+        scheduleEditor.setDraft(draft)
         detectedLabel.stringValue = "Detected: \(ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil))"
-        let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = false
-        if wasHidden { form.sizeToFitContent() }
         detectedPhrase = parsed
     }
 
     @objc private func dismissDetected() {
-        let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = true
         dueManuallyEdited = true
         // U16: the captain has said "that is not a date" - so the title
         // keeps the words, and Save must not lift them out of it.
         detectedPhrase = nil
-        if !wasHidden { form.sizeToFitContent() }
     }
 
-    private func hasDueToggled() {
+    /// The captain changed the When panel by hand. That supersedes the
+    /// detection, including keeping the phrase in the title (U16), and
+    /// stops later title edits from moving the date.
+    private func scheduleEdited() {
         dueManuallyEdited = true
-        let on = dueRow.isOn
-        dueDatePicker.isEnabled = on
-        dueDatePicker.isHidden = !on
-        detectedRow.isHidden = true
-        // U16: whatever the captain does to the switch by hand supersedes
-        // the detection, including keeping the phrase in the title.
         detectedPhrase = nil
-        // F5: the repeat and reminder controls have no meaning without an
-        // anchor, so they follow this switch rather than sitting enabled
-        // over a task that can never recur.
-        syncRepeatControls()
-        form.sizeToFitContent()
-    }
-
-    // MARK: Repeat and reminder (F5)
-
-    private func buildRepeatControls() {
-        repeatCard.configureChoices(ShiftRecurrence.presets.map(\.title),
-                                    selectedIndex: Self.presetIndex(for: recurrence)) { [weak self] index in
-            guard let self else { return }
-            var picked = ShiftRecurrence.presets[index].rule
-            // A preset switch keeps the weekday selection the captain has
-            // already made, as long as the new rule is still weekly - which
-            // is what makes "Every week" plus three chips reachable without
-            // re-picking the days after every preset change.
-            if picked?.frequency == .weekly, let existing = self.recurrence, existing.frequency == .weekly,
-               ShiftRecurrence.presets[index].title != "Every weekday" {
-                picked?.weekdays = existing.weekdays
-            }
-            self.recurrence = picked
-            self.syncRepeatControls()
-            self.form?.sizeToFitContent()
-        }
-
-        let reminderTitles = ["No reminder"] + ShiftReminderOffset.choices.map(ShiftReminderOffset.label(for:))
-        reminderCard.configureChoices(reminderTitles,
-                                      selectedIndex: Self.reminderIndex(for: reminderMinutes)) { [weak self] index in
-            guard let self else { return }
-            self.reminderMinutes = index == 0 ? nil : ShiftReminderOffset.choices[index - 1]
-            self.syncRepeatControls()
-        }
-
-        weekdayRow.orientation = .horizontal
-        weekdayRow.alignment = .centerY
-        weekdayRow.spacing = HelmMetrics.s2 - 2
-        // AGENTS.md gotcha (10): a horizontal stack left at `.gravityAreas`
-        // honours no hugging priority, so the seven chips would be spread by
-        // Auto Layout's own tie-breaking rather than sitting together.
-        weekdayRow.distribution = .fill
-        weekdayRow.translatesAutoresizingMaskIntoConstraints = false
-        for weekday in Self.weekdayOrder() {
-            // The chip's own letter, not an abbreviation - "M T W T F S S" is
-            // the row the captain reviewed in the mockup. The full weekday
-            // name is the accessibility label, because two of the seven
-            // letters are ambiguous on their own.
-            let name = ShiftRecurrence.shortWeekdayName(weekday)
-            let chip = HelmButton(title: String(name.prefix(1)), variant: .secondary, size: .small,
-                                  target: self, action: #selector(weekdayChipClicked(_:)))
-            chip.tag = weekday
-            chip.setAccessibilityLabel(name)
-            chip.widthAnchor.constraint(equalToConstant: 30).isActive = true
-            weekdayChips.append(chip)
-            weekdayRow.addArrangedSubview(chip)
-        }
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        weekdayRow.addArrangedSubview(spacer)
-
-        recurrencePreview.font = HelmType.caption()
-        recurrencePreview.lineBreakMode = .byTruncatingTail
-    }
-
-    @objc private func weekdayChipClicked(_ sender: HelmButton) {
-        guard var rule = recurrence, rule.frequency == .weekly else { return }
-        if rule.weekdays.contains(sender.tag) {
-            rule.weekdays.remove(sender.tag)
-        } else {
-            rule.weekdays.insert(sender.tag)
-        }
-        recurrence = rule
-        syncRepeatControls()
-    }
-
-    /// Re-derives every repeat control from `recurrence`/`reminderMinutes`.
-    ///
-    /// One function rather than per-control updates, because the three
-    /// controls constrain each other: the chips only apply to a weekly rule,
-    /// the preview names whatever the chips now say, and all of it is dead
-    /// without a due date.
-    private func syncRepeatControls() {
-        let hasDue = dueRow.isOn
-        repeatCard.isEnabled = hasDue
-        reminderCard.isEnabled = hasDue
-        repeatCard.select(Self.presetIndex(for: recurrence))
-        reminderCard.select(Self.reminderIndex(for: reminderMinutes))
-
-        let weekly = hasDue && recurrence?.frequency == .weekly
-        weekdayRow.isHidden = !weekly
-        let selected = recurrence?.weekdays ?? []
-        for chip in weekdayChips {
-            // `.primary` for a selected day is the same on/off pair the
-            // app's other multi-select chip rows use, and it carries the
-            // accent fill the mockup shows.
-            chip.variant = selected.contains(chip.tag) ? .primary : .secondary
-        }
-
-        recurrencePreview.isHidden = !hasDue
-        recurrencePreview.stringValue = previewText()
-    }
-
-    /// The line under the controls: what this rule means, and when the next
-    /// few occurrences actually land.
-    ///
-    /// Real dates rather than a restatement of the rule - the mockup's
-    /// "next 9 occurrences shown" exists so a captain can verify by eye that
-    /// "every weekday" is the pattern they meant, which a second English
-    /// sentence cannot do.
-    private func previewText() -> String {
-        guard dueRow.isOn else { return "" }
-        guard let rule = recurrence else {
-            guard let minutes = reminderMinutes else { return "Happens once." }
-            return "Happens once. Reminder \(ShiftReminderOffset.label(for: minutes).lowercased())."
-        }
-        let anchor = dueDatePicker.dateValue
-        let upcoming = rule.occurrences(anchor: anchor, from: anchor, through: nil, limit: 4)
-            .dropFirst()
-            .map { ShiftDateFormatting.friendly(ShiftDateFormatting.components(from: $0).0) }
-        var text = rule.displayName + "."
-        if upcoming.isEmpty {
-            text += " No further occurrences."
-        } else {
-            text += " Next: " + upcoming.joined(separator: ", ") + "."
-        }
-        if let minutes = reminderMinutes {
-            text += " Reminder \(ShiftReminderOffset.label(for: minutes).lowercased())."
-        }
-        return text
-    }
-
-    /// Which preset a rule is, or the "Does not repeat" row for a rule this
-    /// sheet's own list cannot name (a hand-edited `INTERVAL=3`, say). The
-    /// rule itself is *not* discarded by this - only Save writes, and Save
-    /// writes `recurrence`, which an unrecognised rule still occupies.
-    private static func presetIndex(for rule: ShiftRecurrence?) -> Int {
-        guard let rule else { return 0 }
-        let normalized = rule.normalized
-        for (index, preset) in ShiftRecurrence.presets.enumerated() {
-            guard let candidate = preset.rule?.normalized else { continue }
-            if candidate.frequency == normalized.frequency && candidate.interval == normalized.interval
-                && (candidate.weekdays == normalized.weekdays || candidate.weekdays.isEmpty) {
-                return index
-            }
-        }
-        return 0
-    }
-
-    private static func reminderIndex(for minutes: Int?) -> Int {
-        guard let minutes, let index = ShiftReminderOffset.choices.firstIndex(of: minutes) else { return 0 }
-        return index + 1
-    }
-
-    /// The seven weekdays starting at the captain's own locale's first day,
-    /// so the chip row reads in the same order as the calendar view's columns.
-    private static func weekdayOrder() -> [Int] {
-        let first = Calendar.current.firstWeekday
-        return (0..<7).map { ((first - 1 + $0) % 7) + 1 }
-    }
-
-    @objc private func dueDatePickerChanged() {
-        dueManuallyEdited = true
-        let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = true
-        if !wasHidden { form.sizeToFitContent() }
     }
 
     // MARK: Attachment
@@ -660,7 +442,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // U16: the detected phrase has become structured data in the due
         // field, so it comes out of the prose. `titleWithoutDatePhrase`
         // returns the title unchanged when the phrase *was* the whole title.
-        if dueRow.isOn, let detectedPhrase {
+        if scheduleEditor.draft.day != nil, let detectedPhrase {
             titleText = ShiftDateParser.titleWithoutDatePhrase(titleText, parsed: detectedPhrase)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -677,22 +459,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         task.title = titleText
         task.description = descriptionView.string
         task.priority = selectedPriority
-        if dueRow.isOn {
-            let (dateStr, timeStr) = ShiftDateFormatting.components(from: dueDatePicker.dateValue)
-            task.dueDate = dateStr
-            task.dueTime = timeStr
-        } else {
-            task.dueDate = nil
-            task.dueTime = nil
-        }
+        // The date, the time, the rule and the reminder, through the one
+        // mapping the calendar's popover also writes with. A rule or a
+        // reminder with no date to anchor on is dropped there.
+        task = scheduleEditor.draft.applied(to: task)
         task.projectID = selectedProjectID
         task.tags = tagChips
-        // A rule or a reminder with no due date to anchor on is dropped
-        // rather than saved: the controls are already disabled in that
-        // state, so this only catches a task whose due date was switched
-        // off *after* a rule was picked.
-        task.recurrence = dueRow.isOn ? recurrence : nil
-        task.reminderMinutesBefore = dueRow.isOn ? reminderMinutes : nil
         onSave?(task, attachmentChange ?? .unchanged)
         dismissIfPresented()
     }
@@ -733,17 +505,18 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// `DaylightChromeSelfTest`'s own convention of mounting a sheet directly).
     var debugTitleText: String { titleField.stringValue }
     var debugDescriptionText: String { descriptionView.string }
-    var debugDueRowIsOn: Bool { dueRow.isOn }
-    var debugDueDateValue: Date { dueDatePicker.dateValue }
+    /// The When panel itself, for a suite that clicks its real controls.
+    var debugScheduleEditor: ShiftScheduleEditor { scheduleEditor }
+    var debugHasDueDate: Bool { scheduleEditor.draft.day != nil }
     /// Triggers the real `save()` - the same method the footer's own Save
     /// button target/action calls.
     func debugTriggerSave() { save() }
 
     /// Review defect U16: whether the Repeat and Remind pickers are live.
-    /// Read off the controls, not re-derived from `dueRow.isOn` - the whole
+    /// Read off the controls, not re-derived from the draft - the whole
     /// defect was that the two had drifted apart.
-    var debugRepeatEnabled: Bool { repeatCard.isEnabled }
-    var debugReminderEnabled: Bool { reminderCard.isEnabled }
+    var debugRepeatEnabled: Bool { scheduleEditor.debugRepeatPopup.isEnabled }
+    var debugReminderEnabled: Bool { scheduleEditor.debugReminderPopup.isEnabled }
 
     /// Drives the real `controlTextDidChange` path a keystroke in the title
     /// field takes - never the private helper behind it, which would leave

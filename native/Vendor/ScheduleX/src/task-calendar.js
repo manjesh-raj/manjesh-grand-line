@@ -114,6 +114,7 @@ function toCalendarEvent(item) {
     id: item.id,
     taskID: item.taskID,
     kind: item.kind || 'task',
+    projected: !!item.projected,
     title: item.title,
     start: toTemporal(item.start),
     end: toTemporal(item.end),
@@ -258,8 +259,19 @@ function mount(config) {
           controls.setDate(date)
           selectView('day')
         },
-        onEventClick(event) {
-          post({ type: 'open', taskID: event.taskID, kind: event.kind || 'task' })
+        // The chip's own rectangle rides along, so the native side can open
+        // the When panel beside it. Which record gets the panel and which
+        // gets its editor is the native side's call.
+        onEventClick(event, uiEvent) {
+          const target = uiEvent && uiEvent.target && uiEvent.target.closest
+            ? uiEvent.target.closest('[data-event-id]') : null
+          post({
+            type: 'open',
+            taskID: event.taskID,
+            kind: event.kind || 'task',
+            projected: !!event.projected,
+            rect: rectOf(target),
+          })
         },
         onDoubleClickDate(date) {
           post({ type: 'add', day: toDateString(date), time: null })
@@ -308,6 +320,15 @@ function mount(config) {
   wireHeader()
   renderWeekdays()
   refreshHeader()
+}
+
+// An element's place in the page, in CSS pixels from the top left, which is
+// the web view's own points at the page's 1x zoom. `null` when there is no
+// element to measure.
+function rectOf(element) {
+  if (!element || !element.getBoundingClientRect) return null
+  const r = element.getBoundingClientRect()
+  return { x: r.left, y: r.top, width: r.width, height: r.height }
 }
 
 function postRange(range) {
@@ -485,7 +506,7 @@ function trayRow(item) {
   quick.className = 'gl-tray-quick'
   quick.appendChild(trayButton('Today', 'today'))
   quick.appendChild(trayButton('Tomorrow', 'tomorrow'))
-  quick.appendChild(trayButton('Pick\u2026', 'pick', 'Open it to choose a date'))
+  quick.appendChild(trayButton('Pick\u2026', 'pick', 'Choose a date, a time and a repeat'))
   body.appendChild(title)
   body.appendChild(meta)
   body.appendChild(quick)
@@ -555,7 +576,13 @@ function wireTray() {
     if (!row) return
     const button = event.target.closest('.gl-quick')
     if (button) {
-      post({ type: 'schedule', taskID: row.dataset.taskId, kind: row.dataset.kind, when: button.dataset.when })
+      post({
+        type: 'schedule',
+        taskID: row.dataset.taskId,
+        kind: row.dataset.kind,
+        when: button.dataset.when,
+        rect: rectOf(row),
+      })
     } else {
       post({ type: 'open', taskID: row.dataset.taskId, kind: row.dataset.kind })
     }
