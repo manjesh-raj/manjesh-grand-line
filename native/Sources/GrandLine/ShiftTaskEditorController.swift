@@ -138,6 +138,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// should ever clobber a still-untouched date, never a deliberate manual
     /// edit.
     private var dueManuallyEdited = false
+    /// The rule the When panel held before a repeat phrase in the title
+    /// replaced it. `nil` while no detected rule is in place.
+    private var ruleBeforeDetection: ShiftRecurrence??
 
     init(task: ShiftTask?, projects: [ShiftProject], defaultProjectID: String? = nil, existingAttachmentData: Data? = nil,
          prefillTitle: String? = nil, prefillDescription: String? = nil,
@@ -382,9 +385,11 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         guard field === titleField else { return }
         guard !dueManuallyEdited else { return }
         guard let parsed = ShiftDateParser.parse(titleField.stringValue) else {
+            restoreRuleBeforeDetection()
             detectedRow.isHidden = true
             return
         }
+        if parsed.recurrence == nil { restoreRuleBeforeDetection() }
         let (dateStr, timeStr) = ShiftDateFormatting.components(from: parsed.date)
         var draft = scheduleEditor.draft
         draft.setDay(dateStr)
@@ -392,13 +397,23 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // row already says, rather than silently making it all day or
         // inventing a time.
         if parsed.hasTime { draft.time = timeStr }
+        // A repeat phrase ("every tue") is lifted out of the title on save
+        // just as the date is, so its rule must land in the panel here, or the
+        // phrase would be cut from the title with nothing saved in its place
+        // (tasks-calendar plan PR 7).
+        if let rule = parsed.recurrence {
+            if ruleBeforeDetection == nil { ruleBeforeDetection = .some(draft.recurrence) }
+            draft = Self.draft(draft, with: rule)
+        }
         // `setDraft`, not an edit: the panel's own `onChange` is how this
         // sheet knows the captain took the date over, and detection is not
         // the captain. Review defect U16's second half lives on here too: a
         // date that arrived by detection leaves Remind live, because the
         // panel re-derives every row from the draft.
         scheduleEditor.setDraft(draft)
-        detectedLabel.stringValue = "Detected: \(ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil))"
+        var detected = ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil)
+        if let rule = parsed.recurrence { detected += " \u{00B7} \(rule.displayName)" }
+        detectedLabel.stringValue = "Detected: \(detected)"
         detectedRow.isHidden = false
         detectedPhrase = parsed
     }
@@ -409,6 +424,21 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // U16: the captain has said "that is not a date" - so the title
         // keeps the words, and Save must not lift them out of it.
         detectedPhrase = nil
+        restoreRuleBeforeDetection()
+    }
+
+    /// Puts back the rule the When panel held before a repeat phrase in the
+    /// title replaced it: the phrase is gone, or the detection was dismissed.
+    private func restoreRuleBeforeDetection() {
+        guard let before = ruleBeforeDetection else { return }
+        ruleBeforeDetection = nil
+        scheduleEditor.setDraft(Self.draft(scheduleEditor.draft, with: before))
+    }
+
+    /// The panel's draft with its repeat rule replaced, keeping the day, the
+    /// time and the reminder.
+    private static func draft(_ draft: ShiftScheduleDraft, with rule: ShiftRecurrence?) -> ShiftScheduleDraft {
+        ShiftScheduleDraft(day: draft.day, time: draft.time, recurrence: rule, reminderMinutes: draft.reminderMinutes)
     }
 
     /// The captain changed the When panel by hand. That supersedes the
@@ -417,6 +447,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     private func scheduleEdited() {
         dueManuallyEdited = true
         detectedPhrase = nil
+        // Whatever the panel holds now is the captain's, so a dismissed or
+        // retyped phrase has nothing of its own to put back.
+        ruleBeforeDetection = nil
         detectedRow.isHidden = true
     }
 
