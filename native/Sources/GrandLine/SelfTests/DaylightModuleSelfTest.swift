@@ -1711,9 +1711,12 @@ enum DaylightModuleSelfTest {
                 // destination's drill header names the page the captain
                 // actually opened - there is nowhere left for a lumped title
                 // to hide.
-                if shell.drillHeaderForTests.titleForTests != dest.title {
+                // A door's route opens its host page's view, so the header
+                // names that page: the Calendar is Tasks' Calendar view.
+                let page = ModuleTable.landing(for: dest).route
+                if shell.drillHeaderForTests.titleForTests != page.title {
                     fail("\(dest)'s drill header says '\(shell.drillHeaderForTests.titleForTests)', "
-                         + "expected '\(dest.title)'", &ok)
+                         + "expected '\(page.title)'", &ok)
                 }
                 // The real back path a click or a VoiceOver press takes.
                 if !shell.drillHeaderForTests.debugActivateBack() {

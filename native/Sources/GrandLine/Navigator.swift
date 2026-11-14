@@ -128,11 +128,16 @@ final class Navigator: NSObject {
     /// after connecting the Firstmate console, so the new tab is visible
     /// immediately instead of landing silently in the background.
     func show(_ dest: RailDestination) {
+        // A door's route is another page's tab (`ModuleDescriptor.door`): the
+        // Calendar is Tasks' Calendar view, so ⌘K, Recents, a notification or
+        // a saved session that names it lands on Tasks with that view showing.
+        let landing = ModuleTable.landing(for: dest)
+        let page = landing.route
         // B4 (UI modernization audit §3B): the report asks for the transition
         // to be "skipped when the destination is already visible", and this is
         // the only point where that is still knowable - `hideAllDestinations()`
         // one line down erases it.
-        let wasAlreadyShowing = currentDestinationKind == .rail(dest)
+        let wasAlreadyShowing = currentDestinationKind == .rail(page)
         content.crossfadeOutgoingPage(unless: wasAlreadyShowing)
         hideAllDestinations()
 
@@ -140,19 +145,37 @@ final class Navigator: NSObject {
         // to be (and the matching line-per-destination in
         // `hideAllDestinations`). The slot is mounted here if this is its
         // first visit - see `DestinationRegistry.swift`.
-        guard let slot = content.mounter.show(dest.slot) else { return }
+        guard let slot = content.mounter.show(page.slot) else { return }
+
+        // The tab the route stands for, before the chrome reads it. A door's
+        // tab for a door's route. The page's own route means the page, not
+        // the view a door row opens on it: "Tasks" from ⌘K, Home or a
+        // notification while Tasks was last on its Calendar view lands on
+        // Tasks' first view with the Tasks row lit, rather than on the
+        // Calendar with the Calendar row lit.
+        if let host = slot.controller as? ModuleTabHosting {
+            let module = ModuleTable.module(for: page)
+            if let pageTab = landing.pageTab {
+                host.selectModuleTab(named: pageTab)
+            } else if ModuleTable.sidebarModule(for: page, pageTab: host.selectedModuleTabName) != module,
+                      let own = module.tabs.first(where: {
+                          $0.route == page && ModuleTable.sidebarModule(for: page, pageTab: $0.name) == module
+                      }) {
+                host.selectModuleTab(named: own.name)
+            }
+        }
 
         // `fm/grandline-recents-navigation`: records whatever was showing a
-        // moment ago and removes `dest` itself from the list - see
+        // moment ago and removes `page` itself from the list - see
         // `RecentDestinations`'s own recording method's doc comment for why a
         // captain never sees "where I already am" in the dropdown.
-        updateRecentDestinations(arriving: .rail(dest))
+        updateRecentDestinations(arriving: .rail(page))
 
         // The chrome half of a navigation - the drill header, the scroll
         // edge's re-target and the space pill - belongs to whichever shell is
         // showing. The classic shell's `workspaceDidShow` is exactly what
         // stood here, in the same order.
-        workspace.chrome?.workspaceDidShow(dest, slot: slot)
+        workspace.chrome?.workspaceDidShow(page, slot: slot)
 
         // B2: the bar's lit shortcut is pushed from `updateRecentDestinations`
         // a few lines up, the one call every navigation route makes - not
@@ -161,7 +184,7 @@ final class Navigator: NSObject {
         // B4: the page arrives rather than teleporting. Nothing above this
         // line knows or cares that it animates; see `animateDestinationEntrance`.
         content.animateDestinationEntrance(slot.controller.view,
-                                           direction: dest == .homeCanvas ? .back : .drillIn,
+                                           direction: page == .homeCanvas ? .back : .drillIn,
                                            skip: wasAlreadyShowing)
 
         // §8 Phase 6: which destination is showing decides where the bar's
@@ -188,6 +211,12 @@ final class Navigator: NSObject {
             hostsTab: destination == .hosts ? workspace.hostsPanel.currentTab : nil)
     }
 
+    /// Whether Tasks is showing, on its Calendar view. Asked without building
+    /// the page.
+    private var isShowingTaskCalendar: Bool {
+        currentDestinationKind == .rail(.shift) && workspace.isBuilt(.shift) && workspace.shift.isShowingCalendar
+    }
+
     /// Perform whatever ⌘N means on the page that is showing.
     ///
     /// Every branch dispatches the *existing* menu action rather than
@@ -196,9 +225,9 @@ final class Navigator: NSObject {
     /// a fix to the sheet cannot miss an entry point.
     @objc func newContextualItem() {
         switch contextualNewAction {
-        // On the Calendar, ⌘N is its own New Task, dated to the day on
-        // screen, rather than a trip to Tasks with an undated one.
-        case .task where currentDestinationKind == .rail(.calendar): workspace.calendar.newTaskFromMenu()
+        // On Tasks' Calendar view, ⌘N is the calendar's own New Task, dated to
+        // the day on screen, rather than an undated one.
+        case .task where isShowingTaskCalendar: workspace.shift.newTaskOnCalendar()
         case .task: newShiftTaskFromMenu()
         case .host: newHostFromMenu()
         case .sshKey: newKeyFromMenu()

@@ -338,14 +338,18 @@ enum MainSplitShellSelfTest {
             shell.workspace.navigator.show(destination)
             settle(shell)
             let module = ModuleTable.module(for: destination)
-            check(shell.debugCurrentDestination == destination, "\(destination.rawValue) did not show", &ok)
+            // A door's route lands on its host page's tab: the Calendar on
+            // Tasks' Calendar view (`ModuleTable.landing(for:)`).
+            let landing = ModuleTable.landing(for: destination)
+            check(shell.debugCurrentDestination == landing.route, "\(destination.rawValue) did not show", &ok)
             let slotView = shell.destinationViewIfMountedForTests(destination.slot)
             check(slotView != nil && slotView === shell.workspace.content.visibleDestinationView(),
                   "\(destination.rawValue) is not showing its own mounter slot", &ok)
             check(slotView?.isDescendant(of: shell.debugContentPane) == true,
                   "\(destination.rawValue)'s page is not in the content column", &ok)
-            check(shell.sidebar.debugSelectedEntry == .module(module),
-                  "\(destination.rawValue) did not light \(module.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
+            let row = ModuleTable.sidebarModule(for: destination, pageTab: shell.debugCurrentTab?.name)
+            check(shell.sidebar.debugSelectedEntry == .module(row),
+                  "\(destination.rawValue) did not light \(row.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
             check(shell.currentModule == module && window.title == module.title,
                   "the window is titled \"\(window.title)\" on \(destination.rawValue), want \"\(module.title)\"", &ok)
             check(shell.toolbar.debugCrumb.hasSuffix(module.title) && window.titleVisibility == .hidden,
@@ -371,7 +375,7 @@ enum MainSplitShellSelfTest {
             } else if module.drawsToolbarTabs {
                 check(names == module.tabs.map(\.name), "\(module.title)'s toolbar shows \(names)", &ok)
                 let lit = selectedTabName(shell).flatMap { name in module.tabs.first { $0.name == name } }
-                check(lit?.route == destination,
+                check(lit?.route == landing.route && (landing.pageTab == nil || lit?.name == landing.pageTab),
                       "\(destination.rawValue) lit the \(String(describing: selectedTabName(shell))) tab", &ok)
             } else {
                 check(names.isEmpty, "\(module.title), one page, shows tabs \(names)", &ok)
@@ -1290,12 +1294,15 @@ enum MainSplitShellSelfTest {
         check(shell.debugCurrentDestination == .shift, "the Back segment went to \(String(describing: shell.debugCurrentDestination))", &ok)
     }
 
-    /// The toolbar's calendar button, after the bell on every page: from a
-    /// page far from it, its own target and action land on the Calendar page
-    /// with its Calendar sidebar row lit and its own view tab selected - and
-    /// not on Tasks, which no longer has a Calendar tab to land on.
+    /// Tasks and the calendar are one surface (tasks-calendar plan PR 4):
+    /// the toolbar's calendar button and the Calendar sidebar row are doors
+    /// to Tasks' Calendar view, the Calendar row is lit while that view shows
+    /// and the Tasks row on its other views, and a filter set on Board is
+    /// still the filter on the calendar.
     private static func checkTheCalendarButton(_ shell: MainSplitShellController, _ window: NSWindow,
                                                _ ok: inout Bool) {
+        let tasks = shell.workspace.shift
+        let store = shell.workspace.shiftStore
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         guard let item = shell.toolbar.toolbar.items.first(where: { $0.itemIdentifier == WorkspaceToolbar.ItemID.calendar }),
@@ -1304,19 +1311,90 @@ enum MainSplitShellSelfTest {
             return
         }
         check(item.visibilityPriority != .low, "the calendar button is among the first to overflow", &ok)
+
+        // The button: the button's own target and action, from a page far
+        // from Tasks.
         _ = NSApplication.shared.sendAction(action, to: item.target, from: item)
         settle(shell)
-        check(shell.debugCurrentDestination == .calendar,
-              "the calendar button went to \(String(describing: shell.debugCurrentDestination))", &ok)
-        check(shell.currentModule == .calendar,
-              "the calendar button lit the \(shell.currentModule.title) row instead of Calendar", &ok)
-        // It reopens the view the calendar last showed, as the row does, so
-        // the lit tab is whichever view the page is on.
-        let view = shell.workspace.calendar.selectedModuleTabName
-        check(selectedTabName(shell) == view,
-              "the calendar button lit \(selectedTabName(shell) ?? "no tab") with the Calendar on \(view)", &ok)
-        check(shell.workspace.calendar.drawsSidebarLayout && shell.workspace.calendar.debugCalendarView.showsHeading,
-              "the Calendar page did not take the sidebar layout's heading", &ok)
+        check(shell.debugCurrentDestination == .shift && tasks.isShowingCalendar,
+              "the calendar button went to \(String(describing: shell.debugCurrentDestination)), "
+              + "Tasks on \(tasks.selectedModuleTabName)", &ok)
+        check(shell.currentModule == .tasks && shell.toolbar.debugCrumb.hasSuffix("Tasks"),
+              "the calendar button drew \(shell.currentModule.title)'s chrome (\(shell.toolbar.debugCrumb)), want Tasks'", &ok)
+        check(shell.toolbar.debugTabNames == ["Board", "List", "Calendar", "Weekly review"]
+                && selectedTabName(shell) == "Calendar",
+              "the calendar button lit \(selectedTabName(shell) ?? "no tab") of \(shell.toolbar.debugTabNames)", &ok)
+        check(shell.sidebar.debugSelectedEntry == .module(.calendar),
+              "Tasks' Calendar view lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Calendar row", &ok)
+        check(shell.debugHeader?.title == "Tasks" && shell.debugHeader?.subtitle == tasks.calendar.caption,
+              "the Calendar view's header is \(String(describing: shell.debugHeader)), want Tasks / the calendar's caption", &ok)
+        check(!tasks.debugCalendarSection.isHidden && !tasks.debugWorkspaceFilterRow.isHidden,
+              "the Calendar view should show the calendar under the filter row", &ok)
+
+        // The calendar fills the column under the filter row, and gives the
+        // window back its size.
+        let section = tasks.debugCalendarSection
+        let clip = section.enclosingScrollView?.contentView
+        let below = section.convert(section.bounds, to: clip)
+        check(clip.map { below.maxY <= $0.bounds.maxY + 1 && below.height > ShiftCalendarView.minimumHeight - 30 } ?? false,
+              "the calendar should fill the column under the filter row, it sits at \(below) in \(clip?.bounds ?? .zero)", &ok)
+
+        // Board lights the Tasks row; the Calendar row brings the view back;
+        // the Tasks row returns to Board rather than to the Calendar.
+        clickTab("Board", shell)
+        check(shell.sidebar.debugSelectedEntry == .module(.tasks) && tasks.debugCalendarSection.isHidden,
+              "Board lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Tasks row", &ok)
+        check(shell.sidebar.debugClick(.module(.calendar)), "the sidebar has no Calendar row", &ok)
+        settle(shell)
+        check(tasks.isShowingCalendar && selectedTabName(shell) == "Calendar"
+                && shell.sidebar.debugSelectedEntry == .module(.calendar),
+              "the Calendar row opened Tasks on \(tasks.selectedModuleTabName)", &ok)
+        check(shell.sidebar.debugClick(.module(.tasks)), "the sidebar has no Tasks row", &ok)
+        settle(shell)
+        check(selectedTabName(shell) == "Board" && shell.sidebar.debugSelectedEntry == .module(.tasks),
+              "the Tasks row after the Calendar opened \(selectedTabName(shell) ?? "nothing")", &ok)
+
+        // A filter set on Board is the filter on the calendar: Overdue keeps
+        // the late task on the calendar and in the tray's pinned rows, and
+        // takes today's task off it.
+        let today = Calendar.current.startOfDay(for: Date())
+        func day(_ offset: Int) -> String {
+            ShiftDateFormatting.components(from: Calendar.current.date(byAdding: .day, value: offset, to: today) ?? today).dateStr
+        }
+        var late = ShiftTask.fresh()
+        late.title = "Renew the staging certificate"
+        late.dueDate = day(-2)
+        store.addTask(late)
+        var current = ShiftTask.fresh()
+        current.title = "Rotate the deploy key"
+        current.dueDate = day(0)
+        store.addTask(current)
+        settle(shell)
+        tasks.debugScopeFilter.debugClickTab(id: ShiftController.ShiftTaskScope.overdue.rawValue)
+        settle(shell)
+        check(tasks.taskScope == .overdue, "the Overdue filter did not take on Board", &ok)
+        clickTab("Calendar", shell)
+        let calendarView = tasks.calendar.debugCalendarView
+        let events = Set(calendarView.debugEventIDs)
+        let overdue = (calendarView.debugTrayPayload["overdue"] as? [[String: Any]] ?? []).compactMap { $0["taskID"] as? String }
+        check(tasks.taskScope == .overdue, "switching to the Calendar dropped the Board's filter", &ok)
+        // The fixture's own discriminating power: both tasks fall in the
+        // month the calendar opens on, so only the filter can tell them apart.
+        let unfiltered = ShiftCalendarModel.entries(tasks: [late, current],
+                                                    from: Calendar.current.date(byAdding: .day, value: -7, to: today) ?? today,
+                                                    through: Calendar.current.date(byAdding: .day, value: 7, to: today) ?? today)
+        check(unfiltered.count == 2, "the fixture's two tasks did not both land on the calendar unfiltered", &ok)
+        check(!events.contains(current.id) && overdue.contains(late.id),
+              "with Overdue set on Board the calendar draws \(events.sorted()) and pins \(overdue)", &ok)
+        check(!tasks.calendar.caption.isEmpty && shell.debugHeader?.subtitle == tasks.calendar.caption,
+              "the filtered calendar's header reads \(String(describing: shell.debugHeader))", &ok)
+        tasks.debugScopeFilter.debugClickTab(id: ShiftController.ShiftTaskScope.all.rawValue)
+        settle(shell)
+        check(Set(calendarView.debugEventIDs).contains(current.id),
+              "All tasks on the calendar should draw today's task again, got \(calendarView.debugEventIDs)", &ok)
+        store.deleteTask(id: late.id)
+        store.deleteTask(id: current.id)
+        clickTab("Board", shell)
     }
 
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

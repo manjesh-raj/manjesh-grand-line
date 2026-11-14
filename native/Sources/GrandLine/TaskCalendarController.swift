@@ -1,30 +1,31 @@
 // Grand Line - native macOS app.
 //
-// The Calendar destination: its own sidebar row in Work, between Tasks and
-// Crew, where the captain's mockup puts it.
+// The calendar half of Tasks: Tasks' Calendar view, a child of the Tasks page
+// (`ShiftController`), beside Board, List and Weekly review (tasks-calendar
+// plan PR 4, the captain's decision 1A).
 //
-// It was Tasks' third tab (F5, then PR 542's Schedule-X page). The captain
-// asked for it in the sidebar, and a calendar reachable both as a Tasks tab
-// and as a page of its own would be two answers to "where is the calendar",
-// so the tab went and this is the one route. The toolbar's calendar button,
-// the Go menu, ⌘K and the floating bar's All Destinations all land here.
+// It was Tasks' third tab (F5), then a page of its own behind the Calendar
+// sidebar row (PR 542's Schedule-X page). A calendar that is a page of its
+// own has none of the Tasks page's filters, its project picker or its New
+// task, so it is a view of Tasks again and the sidebar row is a door to it:
+// the row, the toolbar's calendar button, the Go menu's ⌘0, ⌘K and Recents
+// all land on this view, and the row is lit while it shows
+// (`ModuleTable.sidebarModule(for:pageTab:)`). It stays its own controller
+// rather than more of the Tasks page (GL-36).
 //
-// What it shows is Shift's own records by their date: every active task, the
+// What it shows is Shift's own records by their date, through the Tasks
+// page's filters (`taskFilter`, `followUpFilter`): every active task, the
 // finished tasks filed in the months the visible period touches (so a past
 // month shows what got done in it), and every pending follow-up. Beside the
 // card, the Unscheduled tray lists the open tasks with no date and pins the
-// overdue ones, so no open task is invisible here (GL-14). It owns none of
-// them. A click opens the same editor the Tasks
-// page opens (`ShiftRecordSheets`), a double-click or New Task opens New Task
-// dated to that day, and a drop writes the new date through the store with
-// an Undo that restores the date this controller already held (GL-33).
+// overdue ones, so no open task the filters keep is invisible here (GL-14).
+// It owns none of them. A click opens the same editor the Tasks page opens
+// (`ShiftRecordSheets`), a double-click or New task opens New Task dated to
+// that day, and a drop writes the new date through the store with an Undo
+// that restores the date this controller already held (GL-33).
 //
-// In the sidebar layout the toolbar draws Month, Week, Day and Agenda as the
-// module's tabs (`ModuleTabHosting`), and the page draws the mockup's
-// "Calendar" heading with the period's count beside it (GL-14). The card's own Day, Week, Month and Agenda pills
-// stay visible there too, because the captain's mockup draws both, and they
-// are one path: either reaches `ShiftCalendarView.show(scale:)` or the page's
-// own pill handler, and the other follows.
+// Day, Week, Month and Agenda are the card's own pills, the one switcher for
+// the calendar's period: the window toolbar draws Tasks' views, not these.
 
 import AppKit
 
@@ -33,17 +34,19 @@ final class TaskCalendarController: NSViewController {
     let store: ShiftStore
     private let calendarView = ShiftCalendarView()
     private var themeToken: ThemeObservation?
-    private var renderPendingForStoreChange = false
-    /// Set once the sidebar shell shows this page (`SidebarLayoutAdopting`).
-    private(set) var drawsSidebarLayout = false
 
-    /// The shell's header line follows the visible period's count.
+    /// The Tasks page's filters: the scope (All tasks, Due today, Overdue,
+    /// My priorities, Recently updated) and the project, so a filter set on
+    /// Board is the filter on the calendar too. Every task this view draws
+    /// or lists, finished ones included, runs through `taskFilter`.
+    var taskFilter: (ShiftTask) -> Bool = { _ in true }
+    /// The project filter for follow-ups, as the board's Follow-ups lane
+    /// applies it.
+    var followUpFilter: (ShiftFollowUp) -> Bool = { _ in true }
+
+    /// The Tasks page's header line follows the visible period's count.
     var onDrillSubtitleChanged: (() -> Void)?
-    /// The toolbar follows a view the captain switched in the page (a pill,
-    /// "+N more" on a crowded day).
-    var onModuleTabChanged: (() -> Void)?
-    /// The empty state's Open List: Tasks, on its List view. The shell owns
-    /// navigation, so this page only asks.
+    /// The empty state's Open List: the Tasks page's own List view.
     var onOpenTaskList: (() -> Void)?
 
     init(store: ShiftStore) {
@@ -57,12 +60,11 @@ final class TaskCalendarController: NSViewController {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
-    private lazy var newTaskButton: HelmButton = {
-        let button = HelmButton(title: "New task", variant: .primary, size: .small,
-                                symbol: "plus", target: self, action: #selector(newTaskClicked))
-        button.toolTip = "New task on the day the calendar is showing (\u{2318}N)"
-        return button
-    }()
+    /// The page's own margins around the card: room for its shadow
+    /// (`task-calendar.css`'s body padding). The Tasks page lets the view
+    /// overhang its column by these, so the card's edges line up with the
+    /// filter row above it.
+    static let cardInsets = NSEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 984, height: 720))
@@ -70,10 +72,10 @@ final class TaskCalendarController: NSViewController {
         view = root
         root.addSubview(calendarView)
         NSLayoutConstraint.activate([
-            calendarView.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
-            calendarView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter - 6),
-            calendarView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -(HelmMetrics.pageGutter - 6)),
-            calendarView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s3),
+            calendarView.topAnchor.constraint(equalTo: root.topAnchor),
+            calendarView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            calendarView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            calendarView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
 
         calendarView.onOpenTask = { [weak self] id in self?.openTask(id: id) }
@@ -89,19 +91,11 @@ final class TaskCalendarController: NSViewController {
         calendarView.onNewTask = { [weak self] in self?.newTaskFromMenu() }
         calendarView.onOpenList = { [weak self] in self?.onOpenTaskList?() }
         calendarView.completedTasks = { [weak self] months in
-            self?.store.completedTasks(inMonths: months) ?? []
+            guard let self else { return [] }
+            return self.store.completedTasks(inMonths: months).filter(self.taskFilter)
         }
-        var lastScale = calendarView.scale
-        calendarView.onPeriodChanged = { [weak self] in
-            guard let self else { return }
-            self.onDrillSubtitleChanged?()
-            if self.calendarView.scale != lastScale {
-                lastScale = self.calendarView.scale
-                self.onModuleTabChanged?()
-            }
-        }
+        calendarView.onPeriodChanged = { [weak self] in self?.onDrillSubtitleChanged?() }
 
-        store.observe { [weak self] in self?.scheduleRenderForStoreChange() }
         themeToken = ThemeManager.shared.observe { [weak self, weak root] theme in
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
@@ -110,36 +104,36 @@ final class TaskCalendarController: NSViewController {
         render()
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        render()
-    }
-
     // MARK: Data
 
-    /// Every active task and every follow-up. Finished tasks are not handed
-    /// over here: the view asks for the `completed/` months its visible period
-    /// needs (`ShiftCalendarView.completedTasks`), so October shows what got
-    /// done in October rather than only what the board's 7-day Done column
-    /// still holds. The calendar has no filters of its own: it is the whole
-    /// schedule.
+    /// Every active task and every follow-up the Tasks page's filters keep.
+    /// Finished tasks are not handed over here: the view asks for the
+    /// `completed/` months its visible period needs
+    /// (`ShiftCalendarView.completedTasks`), so October shows what got done
+    /// in October rather than only what the board's 7-day Done column still
+    /// holds.
+    ///
+    /// The Tasks page calls this from its own render, which is where a store
+    /// change arrives (REL-02), so this view does not observe the store
+    /// twice.
     func render() {
-        renderPendingForStoreChange = false
         guard isViewLoaded else { return }
-        calendarView.configure(tasks: store.activeTasks, followUps: store.followUps, projects: store.projects)
+        calendarView.configure(tasks: store.activeTasks.filter(taskFilter),
+                               followUps: store.followUps.filter(followUpFilter),
+                               projects: store.projects)
         onDrillSubtitleChanged?()
     }
 
-    private func scheduleRenderForStoreChange() {
-        guard !renderPendingForStoreChange else { return }
-        renderPendingForStoreChange = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.renderPendingForStoreChange else { return }
-            self.renderPendingForStoreChange = false
-            // A page nobody can see does not rebuild; `viewWillAppear` does.
-            guard self.isViewLoaded, self.view.window != nil, !self.view.isHiddenOrHasHiddenAncestor else { return }
-            self.render()
-        }
+    /// The visible period's own count, or its stated absence (GL-14). The
+    /// Tasks page's header carries it while this view shows.
+    var caption: String { calendarView.caption }
+
+    /// What a task chip's colour says: priority or project.
+    var colouring: ShiftCalendarColouring { calendarView.colouring }
+
+    func setColouring(_ colouring: ShiftCalendarColouring) {
+        _ = view
+        calendarView.setColouring(colouring)
     }
 
     // MARK: Opening and adding
@@ -195,10 +189,8 @@ final class TaskCalendarController: NSViewController {
         return calendarView.focusedDay ?? range.start
     }
 
-    /// ⌘N and the toolbar's New task.
+    /// ⌘N and the Tasks page's New task, while this view shows.
     func newTaskFromMenu() { addTask(on: newTaskDay) }
-
-    @objc private func newTaskClicked() { newTaskFromMenu() }
 
     // MARK: The tray
 
@@ -298,49 +290,5 @@ final class TaskCalendarController: NSViewController {
 
     #if FM_SELFTESTS
     var debugCalendarView: ShiftCalendarView { calendarView }
-    var debugNewTaskButton: HelmButton { newTaskButton }
     #endif
-}
-
-// MARK: - The shell's header and actions
-
-extension TaskCalendarController: DaylightDrillActions, WorkspacePrimaryActionProviding, SidebarLayoutAdopting {
-
-    var drillHeaderActions: [NSView] { [newTaskButton] }
-
-    /// GL-14: the visible period's own count, or its stated absence - the
-    /// floating bar's drill header line. The sidebar layout draws no module
-    /// header for the Calendar (`showsHeader: false`); the page's own
-    /// heading row states the count there instead.
-    var drillHeaderSubtitle: String? { calendarView.caption }
-
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }
-
-    /// The captain's mockup: a "Calendar" heading over the card, with the
-    /// period's count on its row.
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
-        calendarView.showHeading(RailDestination.calendar.title)
-        onDrillSubtitleChanged?()
-    }
-}
-
-// MARK: - Month, Week, Day and Agenda as the module's tabs
-
-extension TaskCalendarController: ModuleTabHosting {
-    var moduleTabNames: [String] { ShiftCalendarScale.allCases.map(\.title) }
-
-    var selectedModuleTabName: String { calendarView.scale.title }
-
-    func selectModuleTab(named name: String) {
-        _ = view
-        guard let scale = ShiftCalendarScale(title: name) else { return }
-        calendarView.show(scale: scale)
-    }
-
-    /// Nothing to hide: the card's pills are the captain's design in this
-    /// layout too, and they are the same path as the toolbar's tabs.
-    func setModuleTabControlHidden(_ hidden: Bool) {}
 }

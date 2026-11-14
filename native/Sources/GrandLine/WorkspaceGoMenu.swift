@@ -34,15 +34,22 @@ enum WorkspaceGoMenu {
 
     /// The sidebar's map, top to bottom: Home, then each group with its
     /// modules, and a module's tabs under it where the toolbar draws them.
+    /// A tab a listed door row opens is left to that row, so Tasks' Calendar
+    /// view is the one Calendar item (⌘0) rather than two.
     static func entries(hidden: Set<WorkspaceModule> = []) -> [Entry] {
         var entries: [Entry] = [.module(.home)]
+        let listed = Set(WorkspaceSidebarModel.listedModules(hidden: hidden))
         for group in WorkspaceGroup.allCases {
             let modules = WorkspaceSidebarModel.modules(in: group, hidden: hidden)
             guard !modules.isEmpty else { continue }
             entries.append(.group(group.title))
             for module in modules {
                 entries.append(.module(module))
-                entries.append(contentsOf: module.tabs.map(Entry.tab))
+                let tabs = module.tabs.filter { tab in
+                    let row = ModuleTable.sidebarModule(for: tab.route, pageTab: tab.name)
+                    return row == module || !listed.contains(row)
+                }
+                entries.append(contentsOf: tabs.map(Entry.tab))
             }
         }
         return entries

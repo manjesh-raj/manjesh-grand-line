@@ -154,9 +154,14 @@ enum ModuleTableSelfTest {
             check(actual == modules, "group \(group?.title ?? "none") holds \(actual) but the plan is \(modules)", &ok)
         }
         check(WorkspaceModule.allCases.count == 19, "the sidebar has \(WorkspaceModule.allCases.count) items, not 19", &ok)
+        // A door row has no page of its own: it is reached by the route it
+        // is a door to (the Calendar row, Tasks › Calendar).
         for module in WorkspaceModule.allCases {
-            check(!ModuleTable.routes(in: module).isEmpty, "\(module.title) has no destination moving into it", &ok)
+            check(!ModuleTable.routes(in: module).isEmpty || module.doorRoute != nil,
+                  "\(module.title) has no destination moving into it", &ok)
         }
+        check(WorkspaceModule.allCases.filter { $0.doorRoute != nil } == [.calendar],
+              "the door rows are \(WorkspaceModule.allCases.filter { $0.doorRoute != nil }), want the Calendar alone", &ok)
         let titles = WorkspaceModule.allCases.map(\.title)
         check(Set(titles).count == titles.count, "two modules share a title", &ok)
     }
@@ -179,7 +184,7 @@ enum ModuleTableSelfTest {
         (.console, "Console", "terminal", .teal, "Terminals, hosts and the shared Firstmate session", .command, .console, nil),
         (.hosts, "Hosts", "server.rack", .teal, "Saved hosts, SSH keys and snippets", .operations, .connections, "Hosts"),
         (.shift, "Tasks", "checkmark.circle", .rose, "A task board, follow-ups and projects", .command, .tasks, nil),
-        (.calendar, "Calendar", "calendar.badge.checkmark", .rose, "Tasks and follow-ups by the day they are due", .command, .calendar, nil),
+        (.calendar, "Calendar", "calendar.badge.checkmark", .rose, "Tasks and follow-ups by the day they are due", .command, .tasks, "Calendar"),
         (.review, "Review", "arrow.triangle.branch", .green, "Open pull requests, ready to merge", .command, .crew, "Review"),
         (.logAnalyzer, "Log Analyzer", "text.magnifyingglass", .teal, "Collect, analyse and explain captured output", .operations, .logs, nil),
         (.kubernetes, "Kubernetes", "cube.transparent", .teal, "Read-only cluster browsing and multi-pod log tailing", .operations, .kubernetes, nil),
@@ -228,8 +233,8 @@ enum ModuleTableSelfTest {
     /// content column opens with its header.
     static let pinnedModules: [(WorkspaceModule, String, WorkspaceGroup?, [String], String, RailDestination?, Bool)] = [
         (.home, "Home", nil, [], "sailboat.fill", nil, true),
-        (.tasks, "Tasks", .work, ["Board", "List", "Weekly review"], "checkmark.circle", .shift, true),
-        (.calendar, "Calendar", .work, ["Month", "Week", "Day", "Agenda"], "calendar.badge.checkmark", .calendar, false),
+        (.tasks, "Tasks", .work, ["Board", "List", "Calendar", "Weekly review"], "checkmark.circle", .shift, true),
+        (.calendar, "Calendar", .work, [], "calendar.badge.checkmark", nil, true),
         (.crew, "Crew", .work, ["Needs you", "In flight", "Review", "Ask the crew", "Log"], "person.3.fill", .overview, true),
         (.connections, "Connections", .work, ["Hosts", "Keys", "Snippets", "Commands"], "server.rack", .hosts, false),
         (.console, "Console", .work, [], "terminal", nil, false),

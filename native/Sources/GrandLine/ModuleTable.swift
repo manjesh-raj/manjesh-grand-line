@@ -34,7 +34,8 @@
 // They follow the captain's modular workspace prototype (Version 2): eighteen
 // sidebar items, which are Home plus seventeen modules in four groups, with
 // Console as its own module - and a nineteenth since, the Calendar row the
-// captain's later mockup puts in Work after Tasks.
+// captain's later mockup puts in Work after Tasks. That row is a door rather
+// than a page: it opens Tasks on its Calendar view (`ModuleDescriptor.door`).
 // `docs/modular-shell/feature-inventory.md` is the feature-level half of the
 // same plan, and its suite checks that every destination row there names the
 // module this table does.
@@ -122,7 +123,7 @@ extension WorkspaceModule {
     /// own, so nothing a captain recognises changes; a module of several pages
     /// has one of its own.
     var symbol: String {
-        row.symbol ?? ModuleTable.routes(in: self).first.map(\.symbol) ?? "square.grid.2x2"
+        row.symbol ?? (ModuleTable.routes(in: self).first ?? doorRoute).map(\.symbol) ?? "square.grid.2x2"
     }
 
     /// The page that draws those of this module's children that are its own
@@ -141,11 +142,13 @@ extension WorkspaceModule {
     /// The tabs the window toolbar draws for this module, in `children` order.
     /// A tab is a destination of its own when a row claims it, and otherwise
     /// one of `pageTabHost`'s own tabs. Its `route` is the page either way, so
-    /// every one of the 29 routes still lands on its page.
+    /// every one of the 29 routes still lands on its page. A door's row
+    /// (`ModuleDescriptor.door`) names a tab without being its page, so it is
+    /// passed over here and the tab stays the host page's own.
     var tabs: [ModuleTab] {
         guard drawsToolbarTabs else { return [] }
         return children.compactMap { name in
-            if let row = ModuleTable.rows.first(where: { $0.module == self && $0.child == name }) {
+            if let row = ModuleTable.rows.first(where: { $0.module == self && $0.child == name && $0.door == nil }) {
                 return ModuleTab(module: self, name: name, route: row.route, isPageTab: row.route == pageTabHost)
             }
             guard let host = pageTabHost else { return nil }
@@ -157,6 +160,18 @@ extension WorkspaceModule {
     /// page's live subtitle. The captain dropped it on Connections and Console;
     /// every other module keeps it.
     var showsHeader: Bool { row.showsHeader }
+
+    /// The route this sidebar row is a door to, when it is one: the
+    /// Calendar row opens Tasks on its Calendar view rather than a page of
+    /// its own (tasks-calendar plan PR 4). `nil` for every other row.
+    var doorRoute: RailDestination? { ModuleTable.rows.first { $0.door == self }?.route }
+
+    /// The tab a door row opens: one of its host module's page tabs.
+    var doorTab: ModuleTab? {
+        guard let route = doorRoute, let descriptor = ModuleTable.descriptor(for: route),
+              let name = descriptor.child else { return nil }
+        return descriptor.module.tabs.first { $0.name == name }
+    }
 }
 
 /// One sidebar item, as `ModuleTable.modules` writes it down (R2-ARCH-03).
@@ -221,6 +236,11 @@ struct ModuleDescriptor {
     /// The tab inside `module`, or `nil` when the destination is the module's
     /// whole page.
     let child: String?
+    /// The sidebar row that is a door to this destination, which is then not
+    /// a page of its own but `module`'s tab named `child`: navigating here
+    /// shows that tab, and the row is lit while the tab shows
+    /// (`ModuleTable.landing(for:)`, `ModuleTable.sidebarModule(for:pageTab:)`).
+    var door: WorkspaceModule? = nil
     /// R2-UX-10: the narrowest the sidebar layout's content column may be
     /// while this page shows, with overlay scrollers (the shell adds a legacy
     /// scroller's track itself). A page wider than its column grows the
@@ -321,13 +341,18 @@ enum ModuleTable {
         //   A fallback only - `TaskCalendarController` supplies the visible
         //   period's own count (GL-14).
         // Its module:
-        //   Its own sidebar row in Work, after Tasks, where the captain's
-        //   mockup puts it. It was Tasks' third tab until then
-        //   (`docs/history/34-recurrence-and-calendar.md`).
+        //   Tasks' Calendar view, with the Calendar sidebar row in Work as
+        //   its door (tasks-calendar plan PR 4, the captain's decision 1A).
+        //   It was Tasks' third tab (F5), then a page of its own behind that
+        //   row, and now it is one Tasks surface with two ways in: the row
+        //   and the toolbar's calendar button both land on the tab, and the
+        //   row is lit while the tab shows. The route stays, so ⌘K, Recents,
+        //   a notification and a saved session still address it, and its
+        //   slot is the Tasks page's (`docs/history/34-recurrence-and-calendar.md`).
         ModuleDescriptor(route: .calendar, title: "Calendar", symbol: "calendar.badge.checkmark", hue: .rose,
-                         slot: .calendar, subtitle: "Tasks and follow-ups by the day they are due",
+                         slot: .shift, subtitle: "Tasks and follow-ups by the day they are due",
                          mountsEagerly: false, space: .command, homeCards: [],
-                         newAction: .task, module: .calendar, child: nil),
+                         newAction: .task, module: .tasks, child: "Calendar", door: .calendar),
         // Its hue:
         //   Merge queue
         ModuleDescriptor(route: .review, title: "Review", symbol: "arrow.triangle.branch", hue: .green,
@@ -652,21 +677,21 @@ enum ModuleTable {
     /// nothing a captain recognises changes; a module of several pages has
     /// one of its own. `pageTabHost` is the page that draws those of the
     /// module's children that are its own tabs rather than destinations:
-    /// Shift's views are Tasks' tabs, the Fleet page's Needs you, Dashboard
+    /// Shift's views (Board, List, Calendar and Weekly review) are Tasks'
+    /// tabs, the Fleet page's Needs you, Dashboard
     /// and Log are Crew's Needs you, In flight and Log, the Hosts page's
-    /// Hosts, SSH Keys and Snippets are Connections' first three, the
-    /// Calendar's Month, Week, Day and Agenda are its own, and Kubernetes'
-    /// Cluster and Log Tail are its own. The captain dropped the content
-    /// column's header on Connections and Console; the Calendar draws the
-    /// mockup's heading itself, with its count beside it, so the column's
-    /// header would only repeat it. Every other module keeps it.
+    /// Hosts, SSH Keys and Snippets are Connections' first three, and
+    /// Kubernetes' Cluster and Log Tail are its own. The Calendar row is a
+    /// door to Tasks' Calendar view and has no tabs of its own. The captain
+    /// dropped the content column's header on Connections and Console;
+    /// every other module keeps it.
     static let modules: [WorkspaceModuleDescriptor] = [
         WorkspaceModuleDescriptor(module: .home, title: "Home", group: nil, children: []),
         WorkspaceModuleDescriptor(module: .tasks, title: "Tasks", group: .work,
-                                  children: ["Board", "List", "Weekly review"], pageTabHost: .shift),
-        WorkspaceModuleDescriptor(module: .calendar, title: "Calendar", group: .work,
-                                  children: ["Month", "Week", "Day", "Agenda"], pageTabHost: .calendar,
-                                  showsHeader: false),
+                                  children: ["Board", "List", "Calendar", "Weekly review"], pageTabHost: .shift),
+        // A door, not a page: Tasks' Calendar view (`ModuleDescriptor.door`).
+        // Month, Week, Day and Agenda are the calendar card's own pills.
+        WorkspaceModuleDescriptor(module: .calendar, title: "Calendar", group: .work, children: []),
         WorkspaceModuleDescriptor(module: .crew, title: "Crew", group: .work,
                                   children: ["Needs you", "In flight", "Review", "Ask the crew", "Log"],
                                   symbol: "person.3.fill", pageTabHost: .overview),
@@ -716,9 +741,34 @@ enum ModuleTable {
 
     /// The tab `route` stands for. On a page that draws several of its
     /// module's tabs, `pageTab` is which of its own tabs is showing; a page
-    /// that has not said yet stands for the first of them.
+    /// that has not said yet stands for the first of them. A door's route
+    /// stands for the tab it opens.
     static func tab(for route: RailDestination, pageTab: String?) -> ModuleTab? {
-        let tabs = module(for: route).tabs.filter { $0.route == route }
-        return tabs.first { $0.name == pageTab } ?? tabs.first
+        let landing = landing(for: route)
+        let tabs = module(for: landing.route).tabs.filter { $0.route == landing.route }
+        return tabs.first { $0.name == (landing.pageTab ?? pageTab) } ?? tabs.first
+    }
+
+    /// Where navigating to `route` lands: the page itself, or for a door's
+    /// route (`ModuleDescriptor.door`) its host page and the tab to show
+    /// there. `.calendar` lands on Tasks' Calendar view.
+    static func landing(for route: RailDestination) -> (route: RailDestination, pageTab: String?) {
+        guard let row = descriptor(for: route), row.door != nil, let host = row.module.pageTabHost,
+              let tab = row.child else { return (route, nil) }
+        return (host, tab)
+    }
+
+    /// The sidebar row that stands for `route` while `pageTab` shows on it:
+    /// the door row for the tab a door opens, so the Calendar row is lit on
+    /// Tasks' Calendar view and the Tasks row on its other views, and
+    /// otherwise the module the page lives in. The one place a row is lit
+    /// for a view rather than for a page (the plan's risk table).
+    static func sidebarModule(for route: RailDestination, pageTab: String? = nil) -> WorkspaceModule {
+        if let door = descriptor(for: route)?.door { return door }
+        let module = module(for: route)
+        guard route == module.pageTabHost, let pageTab,
+              let door = rows.first(where: { $0.door != nil && $0.module == module && $0.child == pageTab })?.door
+        else { return module }
+        return door
     }
 }
