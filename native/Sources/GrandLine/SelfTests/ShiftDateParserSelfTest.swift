@@ -166,12 +166,154 @@ enum ShiftDateParserSelfTest {
             failures.append("B21: 'Followed up on wed' must still find the real 'wed'")
         }
 
+        checkRepeatPhrases(now: now, calendar: cal, failures: &failures)
+        checkAddedOnADay(now: now, calendar: cal, failures: &failures)
+
         if failures.isEmpty {
-            print("PASS: ShiftDateParserSelfTest (9 checks)")
+            print("PASS: ShiftDateParserSelfTest (11 checks)")
             return true
         } else {
             for f in failures { print("FAIL: \(f)") }
             return false
+        }
+    }
+
+    // MARK: 10. Repeat phrases (tasks-calendar plan PR 7)
+
+    /// "every weekday", "every mon, wed", "every 2 weeks" and "monthly on the
+    /// last day" become rules, the date is the rule's first date, and the
+    /// phrase comes out of the title along with the date.
+    private static func checkRepeatPhrases(now: Date, calendar cal: Calendar, failures: inout [String]) {
+        func day(_ date: Date) -> String { ShiftDateFormatting.components(from: date).dateStr }
+        func expect(_ text: String, rule: ShiftRecurrence, due: String, time: String? = nil, title: String,
+                    line: Int = #line) {
+            guard let parsed = ShiftDateParser.parse(text, now: now) else {
+                failures.append("repeat: \(text.debugDescription) parsed nothing (line \(line))")
+                return
+            }
+            if parsed.recurrence?.ruleText != rule.ruleText {
+                failures.append("repeat: \(text.debugDescription) gave rule \(parsed.recurrence?.ruleText ?? "none"), "
+                                + "expected \(rule.ruleText)")
+            }
+            let (gotDay, gotTime) = ShiftDateFormatting.components(from: parsed.date)
+            if gotDay != due || parsed.hasTime != (time != nil) || (time != nil && gotTime != time) {
+                failures.append("repeat: \(text.debugDescription) is due \(gotDay) \(parsed.hasTime ? gotTime : "all day"), "
+                                + "expected \(due) \(time ?? "all day")")
+            }
+            let stripped = ShiftDateParser.titleWithoutDatePhrase(text, parsed: parsed)
+            if stripped != title {
+                failures.append("repeat: \(text.debugDescription) left the title \(stripped.debugDescription), "
+                                + "expected \(title.debugDescription)")
+            }
+        }
+
+        // The reference day is Wednesday 2026-08-12, 10:00.
+        expect("Standup every weekday", rule: ShiftRecurrence(frequency: .weekly, weekdays: ShiftRecurrence.weekdaySet),
+               due: "2026-08-12", title: "Standup")
+        expect("Gym every mon, wed", rule: ShiftRecurrence(frequency: .weekly, weekdays: [2, 4]),
+               due: "2026-08-12", title: "Gym")
+        expect("Gym every tue and thu 7am", rule: ShiftRecurrence(frequency: .weekly, weekdays: [3, 5]),
+               due: "2026-08-13", time: "07:00", title: "Gym")
+        expect("Review dashboards every 2 weeks", rule: ShiftRecurrence(frequency: .weekly, interval: 2),
+               due: "2026-08-12", title: "Review dashboards")
+        expect("Pay rent monthly on the last day", rule: ShiftRecurrence(frequency: .monthly, monthDays: [-1]),
+               due: "2026-08-31", title: "Pay rent")
+        // August 2026 opens on a Saturday, so its Fridays are 7 and 14.
+        expect("Board deck every month on the 2nd friday",
+               rule: ShiftRecurrence(frequency: .monthly,
+                                     monthWeekdays: [ShiftRecurrenceMonthWeekday(ordinal: 2, weekday: 6)]),
+               due: "2026-08-14", title: "Board deck")
+        expect("Invoice every month on the 1st", rule: ShiftRecurrence(frequency: .monthly, monthDays: [1]),
+               due: "2026-09-01", title: "Invoice")
+        expect("Patch notes every tue 10am", rule: ShiftRecurrence(frequency: .weekly, weekdays: [3]),
+               due: "2026-08-18", time: "10:00", title: "Patch notes")
+        expect("Water the plants every other day", rule: ShiftRecurrence(frequency: .daily, interval: 2),
+               due: "2026-08-12", title: "Water the plants")
+        expect("Rotate keys every 3 months", rule: ShiftRecurrence(frequency: .monthly, interval: 3),
+               due: "2026-08-12", title: "Rotate keys")
+        expect("Renew the domain yearly", rule: ShiftRecurrence(frequency: .yearly),
+               due: "2026-08-12", title: "Renew the domain")
+        expect("Water plants daily at 9am", rule: ShiftRecurrence(frequency: .daily),
+               due: "2026-08-13", time: "09:00", title: "Water plants")
+        expect("Sync with Ana weekly on fri", rule: ShiftRecurrence(frequency: .weekly, weekdays: [6]),
+               due: "2026-08-14", title: "Sync with Ana")
+        expect("Clean the desk every weekend", rule: ShiftRecurrence(frequency: .weekly, weekdays: [1, 7]),
+               due: "2026-08-15", title: "Clean the desk")
+
+        // The repeat phrase is taken out of what the day scan reads. Read as a
+        // day phrase, "wed" is *next* Wednesday (the 19th); as a rule it is
+        // today, the 12th.
+        if let parsed = ShiftDateParser.parse("Retro every wed", now: now) {
+            if day(parsed.date) != "2026-08-12" {
+                failures.append("repeat: \"every wed\" on a Wednesday should start today, got \(day(parsed.date)) "
+                                + "(the weekday was read as a day phrase as well)")
+            }
+        } else {
+            failures.append("repeat: \"Retro every wed\" parsed nothing")
+        }
+
+        // A day phrase beside the rule moves where it starts.
+        if let parsed = ShiftDateParser.parse("Standup every weekday starting next week", now: now) {
+            if day(parsed.date) != "2026-08-19" || parsed.recurrence?.weekdays != ShiftRecurrence.weekdaySet {
+                failures.append("repeat: \"every weekday starting next week\" should start 2026-08-19, got "
+                                + "\(day(parsed.date)) \(parsed.recurrence?.ruleText ?? "no rule")")
+            }
+        } else {
+            failures.append("repeat: \"every weekday starting next week\" parsed nothing")
+        }
+
+        // The bare adverbs are also ordinary words in a title. These must not
+        // become rules, or the task is dated and loses the word.
+        let ordinary = ["Weekly review", "Send the monthly report", "Daily standup notes",
+                        "Check every log file", "Yearly budget planning", "Everyday carry list"]
+        for title in ordinary {
+            if let parsed = ShiftDateParser.parse(title, now: now) {
+                failures.append("repeat: \(title.debugDescription) must not parse, matched "
+                                + "\(parsed.matchedText.debugDescription) as \(parsed.recurrence?.ruleText ?? "a date")")
+            }
+        }
+        // No repeat phrase, no rule: the old phrases are unchanged.
+        if ShiftDateParser.parse("Ship the release tomorrow 3pm", now: now)?.recurrence != nil {
+            failures.append("repeat: a plain day phrase must not produce a rule")
+        }
+    }
+
+    // MARK: 11. Added on a day (the calendar's quick add)
+
+    /// The day a quick add was typed into stands in for a missing day phrase,
+    /// and a day phrase in the text still wins.
+    private static func checkAddedOnADay(now: Date, calendar cal: Calendar, failures: inout [String]) {
+        func day(_ date: Date) -> String { ShiftDateFormatting.components(from: date).dateStr }
+        guard let thursday = cal.date(byAdding: .day, value: 8, to: cal.startOfDay(for: now)),
+              let saturday = cal.date(byAdding: .day, value: 3, to: cal.startOfDay(for: now)) else {
+            failures.append("on a day: could not build the fixture days")
+            return
+        }
+        if ShiftDateParser.parse("Write the patch notes", now: now, on: thursday) != nil {
+            failures.append("on a day: a title with no phrase must still parse nothing, so the caller keeps its day")
+        }
+        // 9am has passed on the reference day, but not on the 20th: no roll
+        // over to the next day when the day was given.
+        if let parsed = ShiftDateParser.parse("Ship it 9am", now: now, on: thursday) {
+            let (d, t) = ShiftDateFormatting.components(from: parsed.date)
+            if d != "2026-08-20" || t != "09:00" || !parsed.hasTime {
+                failures.append("on a day: \"9am\" on 2026-08-20 resolved to \(d) \(t)")
+            }
+        } else {
+            failures.append("on a day: \"Ship it 9am\" parsed nothing")
+        }
+        if let parsed = ShiftDateParser.parse("Call the bank tomorrow", now: now, on: thursday),
+           day(parsed.date) != "2026-08-13" {
+            failures.append("on a day: a typed \"tomorrow\" should win over the cell, got \(day(parsed.date))")
+        }
+        // A rule from a Saturday's cell starts on its first date after it.
+        if let parsed = ShiftDateParser.parse("Standup every weekday", now: now, on: saturday) {
+            if day(parsed.date) != "2026-08-17" {
+                failures.append("on a day: \"every weekday\" added on Saturday should start Monday 2026-08-17, "
+                                + "got \(day(parsed.date))")
+            }
+        } else {
+            failures.append("on a day: \"Standup every weekday\" parsed nothing")
         }
     }
 }

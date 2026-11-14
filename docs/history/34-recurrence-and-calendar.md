@@ -689,3 +689,66 @@ Confirmed to catch a regression:
 - PRs 5 to 8 of the plan: the When panel, exceptions, the tray drag and quick add, and completing from the calendar.
 - Weekly review's next-week list as a link into Calendar › Week.
 - A saved session restores Tasks, not its Calendar view, because the Tasks page does not persist its view.
+
+## Tray drag and quick add (tasks-calendar plan PR 7, `fm/grand-line-calendar-pr7-tray-drag-quickadd`)
+
+PR 2 put the Unscheduled tray in the calendar's web page rather than in AppKit so that a row could be dragged onto the grid through one DOM.
+This PR is that drag, the reverse drag (a chip back onto the tray), the quick add in a day, and repeat phrases in the title parser.
+It leaves out the rest of the plan's interaction list: dragging a projection and the "Only this / This and following" dialog are PR 6, and the When panel is PR 5.
+
+### What shipped
+
+- **A tray row drags onto the grid.** Rows are HTML5 drag sources.
+  The page finds the target under the pointer with the same DOM lookups the drag plugin and Schedule-X use: a month cell (`.sx__month-grid-day`), a time in Week and Day (`.sx__time-grid-day`, a column 24 hours tall, snapped to 15 minutes like the plugin) or the all-day row (`.sx__date-grid-day`).
+  A dashed box over the target names the day ("Drop to schedule Mon, 16 Nov") or the slot ("10:00 · Sat, 14 Nov").
+  The box is drawn over the grid, never inside a day, so a Schedule-X re-render cannot take it with it.
+  A drop posts `place`, and `TaskCalendarController.placeFromTray` writes it through the same path, toast and Undo a chip drop takes.
+- **A time slot gives an all-day task its time.** `ShiftCalendarReschedule.apply` keeps an all-day task all-day for a chip drag, which is still right.
+  A tray row dropped on a slot is the captain answering "when", so `adoptsTime` lets the slot's time stand.
+  A row dropped on a day still keeps whatever time it had.
+- **A chip drags onto the tray** and loses its date, its time and its reminder, with Undo.
+  The chip's drag belongs to the plugin (HTML5 in the month grid, mouse events in the time grid), so the page only records which movable chip was pressed and where the drag ended.
+  `onBeforeEventUpdate` then refuses the plugin's own move of that chip, which the plugin would otherwise also make to the last day the pointer crossed on its way to the tray.
+  A repeating task is refused with a toast: its rule is anchored on the due date, and deleting the rule to honour a drop would lose more than the drop asked for.
+  A follow-up is refused too, because the tray does not list undated follow-ups, so it would vanish from the calendar.
+- **Quick add in a day.** Hovering a month cell shows a + beside its date.
+  It opens a title field over the cell, and every keystroke posts `quickAddParse`.
+  The native side reads the text with `ShiftDateParser` and answers with pills for the day, the time and the rule (`setQuickAddHint`, matched by a sequence number so an answer to an older keystroke is dropped).
+  Return posts `quickAdd`, which adds the task with an Undo that deletes it again.
+  Command-Return opens New Task with everything filled in, and Escape closes the field.
+  `ShiftCalendarQuickAdd` is the pure half: the cell's day stands in for a missing day phrase, a typed day phrase wins, and a repeat phrase moves the date to the rule's first date on or after the cell.
+- **Repeat phrases in the parser.** "every day", "every weekday", "every weekend", "every mon, wed", "every other week", "every 2 weeks on mon", "every month on the 2nd friday", "monthly on the last day", "every 3 months", "yearly" and similar become a `ShiftRecurrence`.
+  The returned date is the rule's first occurrence, so "every tue" typed on a Wednesday is due next Tuesday.
+  The phrase is blanked out of the text before the day scan runs, or "every wed" would also be read as the day phrase "wed" and land a week late.
+  `parse` gained `on day:`, the day the text is being added on, for the quick add.
+- **The parser's other callers.** The New Task sheet's title detection now sets Repeat from a repeat phrase, because Save lifts the phrase out of the title and the rule would otherwise be lost.
+  Dismissing the detection, or typing the phrase away, puts back the rule Repeat held before, and a rule picked by hand is never overridden.
+  The menu-bar quick add saves the rule as well.
+  ⌥Space capture, App Intents and the crew's due text still take only the date, as before.
+
+### Decisions
+
+- **The bare adverbs only count at the end of their phrase.** "Weekly review", "Send the monthly report" and "Daily standup notes" are ordinary titles.
+  "daily", "weekly", "monthly", "yearly" and "annually" become a rule only when followed by "on …", by nothing, by "at", "@", "from" or "starting", or by a time.
+  "every" is explicit and needs no such guard.
+- **The tray drop words are back.** PR 2's `checkTrayPayload` asserted the empty state did *not* mention a drag, because the drag was not built yet.
+  That check is inverted here, and the tray gains the board's footer, "Drop a chip here to clear its date."
+- **No `color-mix` in the stylesheet.** The bundle targets Safari 16, and `color-mix` arrived in 16.2.
+  The drop box's wash is a pseudo-element in `--sx-color-primary-container` at reduced opacity.
+- **Quick add is in the month grid only.** Week and Day keep the double-click on a slot, which already opens New Task at that time.
+
+### Verification
+
+- `FM_RUN_SHIFT_DATE_PARSER_TESTS` (blocking lane): fourteen repeat phrases with their rule, due date, time and stripped title; "every wed" on a Wednesday starting today; a day phrase beside a rule; six ordinary titles that must not parse; and the `on day:` cases.
+  Confirmed to fail with the masking removed (the "every wed" case and seven stripped titles) and with the bare-adverb guard removed (four ordinary titles).
+- `FM_RUN_SHIFT_CALENDAR_TESTS` (blocking lane): `checkTrayDropRules` (slot time adopted from the tray but not from a chip, unschedule clearing exactly date, time and reminder, the repeating and finished refusals) and `checkQuickAdd` (the draft, the task and the pills), plus the new bridge entries, messages and page ids.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (windowed lane), each read back from the store: a tray row dragged onto a month day, and onto 15:00 in the week view; a month chip and a week-view timed chip dragged onto the tray; a repeating chip refused; and a real + click, typed text, the native pills, and Return adding "Patch notes" on the first Tuesday at 10:00, weekly.
+  Confirmed to fail with the `onBeforeEventUpdate` gate removed (five checks: the chip was moved to the day it crossed) and with `adoptsTime` off in `placeFromTray` (the 15:00 case).
+  Passed three runs in a row.
+- Rendered with `WKWebView.takeSnapshot` in Daylight and Dusk: the month drop box, the tray lit as a target, the + on a hovered day, the quick-add field with its pills, and the week slot box.
+  The first render found the month label cut off at "Drop to schedule M…" in a cell narrowed by the tray, so it now wraps to two lines.
+  A render taken before Schedule-X's view and theme transitions finish shows a faded, offset grid, so wait a beat before snapping.
+- `build-schedule-x-web.sh` regenerated `web/` (and `BUILD-INFO.txt`) from `src/`.
+  On this machine its `npm ci` runs through Automic Vault's `av inject`, and the rebuild waits on that approval prompt.
+- The local build used `swift build --build-system native`: Swift 6.4's default build system compiles the vendored Metal shaders, and this machine has no Metal toolchain installed.
+

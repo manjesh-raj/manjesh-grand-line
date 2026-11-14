@@ -154,6 +154,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// than read back off the cards so the weekday chips and the preview line
     /// have one source of truth between them.
     private var recurrence: ShiftRecurrence?
+    /// The rule Repeat held before a repeat phrase in the title replaced it
+    /// (`adoptDetectedRule`). `nil` while no detected rule is in place.
+    private var recurrenceBeforeDetection: ShiftRecurrence??
+    /// Repeat was set by hand, so title detection leaves it alone - the
+    /// same rule `dueManuallyEdited` applies to the date.
+    private var repeatManuallyEdited = false
     private var reminderMinutes: Int?
 
     /// Once the person edits the due-date controls directly (switch or
@@ -416,6 +422,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         guard field === titleField else { return }
         guard !dueManuallyEdited else { return }
         guard let parsed = ShiftDateParser.parse(titleField.stringValue) else {
+            adoptDetectedRule(nil)
+            syncRepeatControls()
             let wasHidden = detectedRow.isHidden
             detectedRow.isHidden = true
             if !wasHidden { form.sizeToFitContent() }
@@ -442,9 +450,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // date that arrived by detection left both pickers dimmed over a
         // task that now had the anchor they need. The switch and the
         // detection are two ways into one state, and both re-sync it.
+        //
+        // A repeat phrase ("every tue") is lifted out of the title on save
+        // just as the date is, so its rule must land in Repeat here, or the
+        // phrase would be cut from the title with nothing saved in its place.
+        adoptDetectedRule(parsed.recurrence)
         syncRepeatControls()
         let (dateStr, timeStr) = ShiftDateFormatting.components(from: dueDatePicker.dateValue)
-        detectedLabel.stringValue = "Detected: \(ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil))"
+        var detected = ShiftDateFormatting.friendly(dateStr, time: parsed.hasTime ? timeStr : nil)
+        if let rule = parsed.recurrence { detected += " · \(rule.displayName)" }
+        detectedLabel.stringValue = "Detected: \(detected)"
         let wasHidden = detectedRow.isHidden
         detectedRow.isHidden = false
         if wasHidden { form.sizeToFitContent() }
@@ -458,7 +473,23 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // U16: the captain has said "that is not a date" - so the title
         // keeps the words, and Save must not lift them out of it.
         detectedPhrase = nil
+        adoptDetectedRule(nil)
+        syncRepeatControls()
         if !wasHidden { form.sizeToFitContent() }
+    }
+
+    /// Puts a detected repeat phrase's rule in Repeat, or - when the phrase
+    /// is gone or the detection was dismissed - puts back the rule Repeat
+    /// held before it.
+    private func adoptDetectedRule(_ rule: ShiftRecurrence?) {
+        guard !repeatManuallyEdited else { return }
+        if let rule {
+            if recurrenceBeforeDetection == nil { recurrenceBeforeDetection = .some(recurrence) }
+            recurrence = rule
+        } else if let before = recurrenceBeforeDetection {
+            recurrence = before
+            recurrenceBeforeDetection = nil
+        }
     }
 
     private func hasDueToggled() {
@@ -493,6 +524,10 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                 picked?.weekdays = existing.weekdays
             }
             self.recurrence = picked
+            // Picked by hand: a repeat phrase in the title no longer
+            // overrides Repeat, and there is nothing for it to put back.
+            self.repeatManuallyEdited = true
+            self.recurrenceBeforeDetection = nil
             self.syncRepeatControls()
             self.form?.sizeToFitContent()
         }
@@ -543,6 +578,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
             rule.weekdays.insert(sender.tag)
         }
         recurrence = rule
+        repeatManuallyEdited = true
+        recurrenceBeforeDetection = nil
         syncRepeatControls()
     }
 

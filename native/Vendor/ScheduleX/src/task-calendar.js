@@ -18,7 +18,11 @@
 //     (`move`). The store decides; the native side then pushes the new events
 //     back. A drop the store refuses is undone by that same push, so this page
 //     never shows a position the store does not hold. The check on a chip is
-//     the same: it asks (`complete`), and the push draws the result.
+//     the same: it asks (`complete`), and the push draws the result. So are a
+//     tray row dropped on a day (`place`), a chip dropped on the tray
+//     (`unschedule`) and a task typed into a day's quick add (`quickAdd`):
+//     each is a request, and the next `setEvents` and `setTray` are the
+//     answer.
 //
 // The palette is the app theme's, never Schedule-X's own Material purple:
 // `setTheme` writes the native side's resolved colours over the theme's CSS
@@ -280,8 +284,11 @@ function mount(config) {
         },
         // The plugin already refuses to start a drag on `disableDND`; this is
         // the second gate, so a projection or a completed task can never
-        // reach `move` whatever the DOM was persuaded to do.
+        // reach `move` whatever the DOM was persuaded to do. A chip the tray
+        // just took is refused too: the plugin would otherwise also move it
+        // to the last day the pointer crossed on its way there.
         onBeforeEventUpdate(oldEvent) {
+          if (unscheduledChip !== null && String(oldEvent.id) === unscheduledChip) return false
           return movable.has(oldEvent.id)
         },
         onEventUpdate(event) {
@@ -312,6 +319,8 @@ function mount(config) {
 
 function postRange(range) {
   refreshHeader()
+  // A quick add belongs to a day on screen; a new period has other days.
+  closeQuickAdd()
   if (!range) return
   post({
     type: 'range',
@@ -470,6 +479,8 @@ function trayRow(item) {
   row.dataset.kind = item.kind
   row.tabIndex = 0
   row.setAttribute('role', 'button')
+  // A row drags onto a day or a time (see "Dragging from the tray").
+  row.draggable = true
   const edge = document.createElement('span')
   edge.className = 'gl-tray-edge'
   edge.style.background = item.edge
@@ -517,6 +528,7 @@ function renderTray(tray) {
   toggle.setAttribute('aria-label', trayCollapsed ? 'Expand Unscheduled' : 'Collapse Unscheduled')
   document.getElementById('gl-tray-count').textContent = String(tray.count || 0)
   document.getElementById('gl-tray-hint').textContent = tray.hint || ''
+  document.getElementById('gl-tray-drop').textContent = tray.dropHint || ''
   list.textContent = ''
   const overdue = tray.overdue || []
   if (overdue.length) {
@@ -575,6 +587,351 @@ function wireTray() {
 }
 
 wireTray()
+
+// MARK: Dragging from the tray, and back to it
+//
+// A tray row is an HTML5 drag source of this page's own, so the grid Schedule-X
+// draws is the drop target: a month cell (`.sx__month-grid-day`, the drag
+// plugin's own day lookup), a time in Week and Day (`.sx__time-grid-day`, a
+// column 24 hours tall) or the all-day row (`.sx__date-grid-day`). A drop
+// posts `place` with the day and, for a time slot, the time. Which task may
+// land where is the native side's rule (`ShiftCalendarReschedule`).
+//
+// The other way, a real chip dropped on the tray posts `unschedule`. The
+// chip's own drag belongs to the drag plugin - HTML5 in the month grid, mouse
+// events in the time grid - so this only notes which chip was pressed, sees
+// where the drag ended, and has `onBeforeEventUpdate` refuse the plugin's own
+// move of it. A projection or a finished task is never pressed here, because
+// only `movable` events count.
+
+const SLOT_MINUTES = 15
+const DAY_MINUTES = 24 * 60
+// The row being dragged: { taskID, kind }.
+let trayDrag = null
+// The movable chip under a mouse-down, until that drag ends: { eventID,
+// taskID, kind, x, y, moved }.
+let pressedChip = null
+// The chip the tray just took, so the plugin's own update of it is refused.
+let unscheduledChip = null
+
+function shortDay(day) {
+  return jsDate(Temporal.PlainDate.from(day)).toLocaleDateString(locale, {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  })
+}
+
+// The day, and for a time slot the time, under the pointer: `null` when it
+// is over nothing a task can be dated to.
+function dropTargetAt(element, clientY) {
+  if (!element || !element.closest) return null
+  const cell = element.closest('.sx__month-grid-day[data-date]')
+  if (cell) return { element: cell, day: cell.dataset.date, time: null }
+  const column = element.closest('.sx__time-grid-day[data-time-grid-date]')
+  if (column) {
+    const rect = column.getBoundingClientRect()
+    const fraction = Math.min(Math.max((clientY - rect.top) / rect.height, 0), 1)
+    const minutes = Math.min(Math.floor((fraction * DAY_MINUTES) / SLOT_MINUTES) * SLOT_MINUTES, DAY_MINUTES - SLOT_MINUTES)
+    return {
+      element: column,
+      day: column.dataset.timeGridDate,
+      time: pad(Math.floor(minutes / 60)) + ':' + pad(minutes % 60),
+      top: rect.top + (minutes / DAY_MINUTES) * rect.height,
+      height: (30 / DAY_MINUTES) * rect.height,
+    }
+  }
+  const allDay = element.closest('.sx__date-grid-day[data-date-grid-date]')
+  if (allDay) return { element: allDay, day: allDay.dataset.dateGridDate, time: null }
+  return null
+}
+
+// The dashed target over the cell or the slot a row would land on, with the
+// day (and time) it means. Drawn over the grid, never inside it.
+function showDrop(target) {
+  const drop = document.getElementById('gl-drop')
+  const body = document.querySelector('.gl-body').getBoundingClientRect()
+  const rect = target.element.getBoundingClientRect()
+  const top = target.time ? target.top : rect.top
+  const height = target.time ? Math.max(target.height, 26) : rect.height
+  drop.style.left = rect.left - body.left + 'px'
+  drop.style.top = top - body.top + 'px'
+  drop.style.width = rect.width + 'px'
+  drop.style.height = height + 'px'
+  drop.classList.toggle('is-slot', !!target.time)
+  document.getElementById('gl-drop-label').textContent = target.time
+    ? target.time + ' \u00B7 ' + shortDay(target.day)
+    : 'Drop to schedule ' + shortDay(target.day)
+  drop.dataset.day = target.day
+  drop.dataset.time = target.time || ''
+  drop.hidden = false
+}
+
+function hideDrop() {
+  const drop = document.getElementById('gl-drop')
+  drop.hidden = true
+  drop.dataset.day = ''
+  drop.dataset.time = ''
+}
+
+function setTrayDropTarget(on) {
+  document.getElementById('gl-tray').classList.toggle('is-drop-target', on)
+}
+
+function insideTray(x, y) {
+  const tray = document.getElementById('gl-tray')
+  if (tray.hidden) return false
+  const r = tray.getBoundingClientRect()
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+}
+
+function endTrayDrag() {
+  if (!trayDrag) return
+  for (const row of document.querySelectorAll('.gl-tray-item.is-dragging')) row.classList.remove('is-dragging')
+  trayDrag = null
+  hideDrop()
+}
+
+function unscheduleChip(chip) {
+  unscheduledChip = chip.eventID
+  post({ type: 'unschedule', taskID: chip.taskID, kind: chip.kind })
+  // Long enough for the plugin's own drop to ask and be refused, and no
+  // longer: the store's answer redraws the chip or takes it away.
+  setTimeout(() => {
+    if (unscheduledChip === chip.eventID) unscheduledChip = null
+  }, 1000)
+}
+
+function wireDragging() {
+  const list = document.getElementById('gl-tray-list')
+  const tray = document.getElementById('gl-tray')
+
+  list.addEventListener('dragstart', (event) => {
+    const row = event.target.closest && event.target.closest('.gl-tray-item')
+    if (!row) return
+    closeQuickAdd()
+    trayDrag = { taskID: row.dataset.taskId, kind: row.dataset.kind }
+    row.classList.add('is-dragging')
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', row.querySelector('.gl-tray-title').textContent)
+    }
+  })
+  list.addEventListener('dragend', endTrayDrag)
+
+  document.addEventListener('dragover', (event) => {
+    if (!trayDrag) return
+    const target = dropTargetAt(event.target, event.clientY)
+    if (!target) {
+      hideDrop()
+      return
+    }
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    showDrop(target)
+  })
+  document.addEventListener('drop', (event) => {
+    if (!trayDrag) return
+    event.preventDefault()
+    const target = dropTargetAt(event.target, event.clientY)
+    if (target) post({ type: 'place', taskID: trayDrag.taskID, kind: trayDrag.kind, day: target.day, time: target.time })
+    endTrayDrag()
+  })
+
+  // A chip dragged in the month grid: HTML5, so the tray is a real drop
+  // target. `drop` fires before the plugin's own `dragend`.
+  tray.addEventListener('dragover', (event) => {
+    if (trayDrag || !pressedChip) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    setTrayDropTarget(true)
+  })
+  tray.addEventListener('dragleave', (event) => {
+    if (!event.relatedTarget || !tray.contains(event.relatedTarget)) setTrayDropTarget(false)
+  })
+  tray.addEventListener('drop', (event) => {
+    if (trayDrag || !pressedChip) return
+    event.preventDefault()
+    event.stopPropagation()
+    setTrayDropTarget(false)
+    unscheduleChip(pressedChip)
+  })
+
+  // Which chip a drag started on, read before the plugin sees the press.
+  document.addEventListener(
+    'mousedown',
+    (event) => {
+      const el = event.target.closest && event.target.closest('.sx__event[data-event-id]')
+      const record = el && movable.get(el.dataset.eventId)
+      pressedChip = record
+        ? { eventID: el.dataset.eventId, taskID: record.id, kind: record.kind, x: event.clientX, y: event.clientY, moved: false }
+        : null
+    },
+    true,
+  )
+  // A chip dragged in the time grid: mouse events, so the tray is found by
+  // where the pointer is when the button comes up.
+  document.addEventListener('mousemove', (event) => {
+    if (!pressedChip || !(event.buttons & 1)) return
+    if (Math.abs(event.clientX - pressedChip.x) + Math.abs(event.clientY - pressedChip.y) > 4) pressedChip.moved = true
+    if (pressedChip.moved) setTrayDropTarget(insideTray(event.clientX, event.clientY))
+  })
+  document.addEventListener(
+    'mouseup',
+    (event) => {
+      const chip = pressedChip
+      if (!chip) return
+      setTrayDropTarget(false)
+      if (chip.moved && insideTray(event.clientX, event.clientY)) unscheduleChip(chip)
+      // After the plugin's own handlers, which run on this same event.
+      setTimeout(() => {
+        if (pressedChip === chip) pressedChip = null
+      }, 0)
+    },
+    true,
+  )
+  document.addEventListener('dragend', () => {
+    setTrayDropTarget(false)
+    const chip = pressedChip
+    setTimeout(() => {
+      if (pressedChip === chip) pressedChip = null
+    }, 0)
+  })
+}
+
+wireDragging()
+
+// MARK: Quick add in a day
+//
+// Hovering a day in the month grid shows a small + beside its date. It opens
+// a title field over that day. The native side reads what is typed with the
+// app's own title parser and answers with what it understood - the day, a
+// time, a repeat rule - as pills under the field (`setQuickAddHint`). Return
+// adds the task, Command-Return opens the full sheet with everything filled
+// in, and Escape closes the field. The day belongs to the cell; which day
+// "tomorrow" or "every tue" means belongs to the native clock and parser.
+
+let quickAdd = null // { day, seq }
+let hoverDay = null
+
+function placeCellAdd(cell) {
+  const button = document.getElementById('gl-cell-add')
+  const body = document.querySelector('.gl-body').getBoundingClientRect()
+  const rect = cell.getBoundingClientRect()
+  button.style.left = rect.right - body.left - 30 + 'px'
+  button.style.top = rect.top - body.top + 9 + 'px'
+  button.dataset.day = cell.dataset.date
+  button.setAttribute('aria-label', 'Add a task on ' + shortDay(cell.dataset.date))
+  button.hidden = false
+}
+
+function hideCellAdd() {
+  const button = document.getElementById('gl-cell-add')
+  button.hidden = true
+  hoverDay = null
+}
+
+function openQuickAdd(day) {
+  const cell = document.querySelector(`.sx__month-grid-day[data-date="${day}"]`)
+  if (!cell) return
+  hideCellAdd()
+  const panel = document.getElementById('gl-quick-add')
+  const input = document.getElementById('gl-quick-add-input')
+  const bodyEl = document.querySelector('.gl-body')
+  const body = bodyEl.getBoundingClientRect()
+  const rect = cell.getBoundingClientRect()
+  const width = Math.max(rect.width - 8, 220)
+  const left = Math.min(rect.left - body.left + 4, body.width - width - 4)
+  panel.style.left = Math.max(left, 4) + 'px'
+  panel.style.top = rect.top - body.top + 32 + 'px'
+  panel.style.width = width + 'px'
+  panel.dataset.day = day
+  input.value = ''
+  input.placeholder = 'New task on ' + shortDay(day)
+  document.getElementById('gl-quick-add-keys').textContent = '\u21A9 add \u00B7 \u2318\u21A9 details'
+  quickAdd = { day, seq: 0 }
+  renderQuickAddPills([])
+  panel.hidden = false
+  input.focus()
+}
+
+function closeQuickAdd() {
+  if (!quickAdd) return
+  quickAdd = null
+  const panel = document.getElementById('gl-quick-add')
+  panel.hidden = true
+  panel.dataset.day = ''
+  document.getElementById('gl-quick-add-input').value = ''
+  renderQuickAddPills([])
+}
+
+function renderQuickAddPills(pills) {
+  const row = document.getElementById('gl-quick-add-pills')
+  row.textContent = ''
+  for (const pill of pills) {
+    const chip = document.createElement('b')
+    chip.className = 'gl-quick-add-pill'
+    if (pill.kind) chip.dataset.kind = pill.kind
+    chip.textContent = pill.label
+    row.appendChild(chip)
+  }
+}
+
+function wireQuickAdd() {
+  document.addEventListener('mouseover', (event) => {
+    if (quickAdd || trayDrag || pressedChip || controls.getView() !== 'month-grid') return
+    if (event.target.closest && event.target.closest('#gl-cell-add')) return
+    const cell = event.target.closest && event.target.closest('.sx__month-grid-day[data-date]')
+    if (!cell) {
+      if (hoverDay) hideCellAdd()
+      return
+    }
+    if (hoverDay === cell.dataset.date) return
+    hoverDay = cell.dataset.date
+    placeCellAdd(cell)
+  })
+  document.querySelector('.gl-body').addEventListener('mouseleave', hideCellAdd)
+  document.getElementById('gl-cell-add').addEventListener('click', (event) => {
+    event.stopPropagation()
+    openQuickAdd(event.currentTarget.dataset.day)
+  })
+
+  const input = document.getElementById('gl-quick-add-input')
+  input.addEventListener('input', () => {
+    if (!quickAdd) return
+    quickAdd.seq += 1
+    const text = input.value
+    if (!text.trim()) {
+      renderQuickAddPills([])
+      return
+    }
+    post({ type: 'quickAddParse', day: quickAdd.day, text, seq: quickAdd.seq })
+  })
+  input.addEventListener('keydown', (event) => {
+    if (!quickAdd) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeQuickAdd()
+      return
+    }
+    if (event.key !== 'Enter' || event.isComposing) return
+    event.preventDefault()
+    const text = input.value.trim()
+    if (!text) return
+    post({ type: 'quickAdd', day: quickAdd.day, text, details: !!event.metaKey })
+    closeQuickAdd()
+  })
+  // Clicking away from an empty field puts it away. A field with words in
+  // it stays until Return or Escape, so a stray click loses nothing.
+  input.addEventListener('blur', () => {
+    if (quickAdd && !input.value.trim()) setTimeout(() => {
+      if (document.activeElement !== input && !input.value.trim()) closeQuickAdd()
+    }, 0)
+  })
+}
+
+wireQuickAdd()
 
 function visible(id) {
   const el = document.getElementById(id)
@@ -657,6 +1014,14 @@ window.GrandLineTaskCalendar = {
     selectView(payload.view)
   }),
 
+  // The native parser's reading of the quick-add field, for the text whose
+  // `seq` it names. An answer to an older keystroke is dropped.
+  setQuickAddHint: guarded((payload) => {
+    if (!quickAdd || payload.seq !== quickAdd.seq) return { applied: false }
+    renderQuickAddPills(payload.pills || [])
+    return { applied: true }
+  }),
+
   showDate: guarded((payload) => {
     controls.setDate(Temporal.PlainDate.from(payload.date))
   }),
@@ -714,6 +1079,18 @@ window.GrandLineTaskCalendar = {
       projectedChecks: document.querySelectorAll('.sx__event.gl-projected .gl-check').length,
       emptyVisible: visible('gl-empty'),
       emptyTitle: document.getElementById('gl-empty-title').textContent,
+      // Dragging and quick add, as drawn.
+      trayDraggableRows: document.querySelectorAll('#gl-tray-list .gl-tray-item[draggable="true"]').length,
+      trayDropHint: document.getElementById('gl-tray-drop').textContent,
+      trayDropTarget: document.getElementById('gl-tray').classList.contains('is-drop-target'),
+      dropVisible: visible('gl-drop'),
+      dropLabel: document.getElementById('gl-drop-label').textContent,
+      cellAddVisible: visible('gl-cell-add'),
+      cellAddDay: document.getElementById('gl-cell-add').dataset.day || null,
+      quickAddOpen: visible('gl-quick-add'),
+      quickAddDay: document.getElementById('gl-quick-add').dataset.day || null,
+      quickAddFocused: document.activeElement === document.getElementById('gl-quick-add-input'),
+      quickAddPills: Array.from(document.querySelectorAll('#gl-quick-add-pills .gl-quick-add-pill')).map((el) => el.textContent),
     }
   }),
 }
