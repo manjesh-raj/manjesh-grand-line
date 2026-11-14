@@ -481,6 +481,7 @@ enum ShiftStoreSelfTest {
               "deleting an already-deleted follow-up should report that nothing was removed")
 
         checkUnknownKeyPassthrough(check)
+        checkRuleComponentPassthrough(check)
         checkRefusedCompletionKeepsTheTask(check)
 
         return report(failures)
@@ -573,6 +574,87 @@ enum ShiftStoreSelfTest {
         check(reloaded.debugTaskRecordsWithUnknownKeys == 1,
               "the same two keys are still unknown after a reload, got "
               + "\(reloaded.debugTaskRecordsWithUnknownKeys)")
+    }
+
+    // MARK: Calendar PR 1 - the rule line and the series keys round-trip
+
+    /// The record-level passthrough above keeps unknown *keys*. The repeat
+    /// rule is one value under a known key, so a component a newer build
+    /// adds to that line (and the two series keys it adds to the record)
+    /// needs this build's own handling - driven here through a real store
+    /// rewrite, a completion and a spawn, from a hand-written file.
+    private static func checkRuleComponentPassthrough(_ check: (Bool, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-rule-passthrough-\(UUID().uuidString)", isDirectory: true)
+        let tasks = root.appendingPathComponent("tasks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tasks, withIntermediateDirectories: true)
+        let file = tasks.appendingPathComponent("active.yaml")
+        try? """
+        tasks:
+          - id: "r1"
+            title: "Pay the rent"
+            description: ""
+            status: "todo"
+            priority: "normal"
+            due_date: "2026-09-28"
+            created_at: "2026-09-01T09:00:00Z"
+            updated_at: "2026-09-01T09:00:00Z"
+            recurrence: "FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=-1;EXDATE=2026-10-31;X-NUDGE=2D"
+            series_id: "series-rent"
+            occurrence: "2026-09-30"
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let savedShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            if let savedShiftDir { setenv("FM_SHIFT_DIR", savedShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let store = ShiftStore()
+        guard var task = store.activeTasks.first else {
+            check(false, "fixture: the recurring record must decode")
+            return
+        }
+        // The fixture's own discriminating power: the foreign component is
+        // really foreign, and the series keys are really this build's own.
+        check(task.recurrence?.carried == ["X-NUDGE=2D"],
+              "fixture: X-NUDGE must be a component this build carries, got \(task.recurrence?.carried ?? [])")
+        check(task.seriesID == "series-rent" && task.occurrence == "2026-09-30",
+              "series_id and occurrence are read into the task")
+        check(store.debugTaskRecordsWithUnknownKeys == 0,
+              "series_id and occurrence are known keys now, so nothing is foreign, got "
+              + "\(store.debugTaskRecordsWithUnknownKeys)")
+
+        task.title = "Pay the rent (edited on this build)"
+        store.updateTask(task)
+        let rewritten = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+        check(rewritten.contains("Pay the rent (edited on this build)"),
+              "fixture: the file really was rewritten from the decoded struct")
+        check(rewritten.contains("FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=-1;EXDATE=2026-10-31;X-NUDGE=2D"),
+              "a rule component this build does not model must survive the rewrite, got:\n\(rewritten)")
+        check(rewritten.components(separatedBy: "series_id").count == 2
+                && rewritten.components(separatedBy: "\"occurrence\"").count == 2,
+              "series_id and occurrence are written once each, got:\n\(rewritten)")
+
+        // Completing spawns the next instance under a new id, which the
+        // record-level passthrough cannot follow: the rule and the series id
+        // travel because they are the struct's own.
+        store.setTaskCompleted(id: task.id, completed: true, now: dateTime(year: 2026, month: 9, day: 30, hour: 9, minute: 0))
+        let completedFile = tasks.appendingPathComponent("completed/2026-09.yaml")
+        let completed = (try? String(contentsOf: completedFile, encoding: .utf8)) ?? ""
+        check(completed.contains("series-rent") && completed.contains("X-NUDGE=2D"),
+              "the completed record keeps the series id and the whole rule line, got:\n\(completed)")
+        let reloaded = ShiftStore()
+        let next = reloaded.activeTasks.first
+        check(next?.dueDate == "2026-11-30",
+              "the next instance walks from its slot and skips the excluded 31 October, got \(next?.dueDate ?? "nil")")
+        check(next?.seriesID == "series-rent", "the spawned instance keeps the series id")
+        check(next?.occurrence == nil, "and carries no occurrence of its own")
+        check(next?.recurrence?.carried == ["X-NUDGE=2D"],
+              "the foreign component reaches the spawned instance too, got \(next?.recurrence?.ruleText ?? "nil")")
+        check(next?.recurrence?.exceptionDates.isEmpty == true,
+              "and the skipped date it walked past is pruned, got \(next?.recurrence?.ruleText ?? "nil")")
     }
 
     // MARK: R2-BUG-01 - a refused or failed month write keeps the task

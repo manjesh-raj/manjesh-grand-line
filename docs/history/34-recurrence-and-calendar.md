@@ -441,3 +441,51 @@ The toolbar check landed in that moment.
 `show(scale:)` now remembers the scale it asked for until the page confirms it or the call completes, and a `view` report naming anything else in that window is logged and dropped as stale.
 `ShiftCalendarViewSelfTest` requests Week then Agenda, delivers a stale `view: week` through the page's message entry before the page answers, and reads the scale at once.
 Confirmed to fail with the guard disabled ("a stale view report pulled the scale back to week").
+
+## The rule line round-trips (calendar plan PR 1, `fm/grand-line-calendar-pr1-rule-roundtrip`)
+
+The tasks-and-calendar plan (2026-11-13) adds skipped dates, "2nd Friday" rules and series identity in later PRs.
+Its first PR makes the data model safe for them before anything writes them, and changes no UI.
+
+### What shipped
+
+- `ShiftRecurrence` carries every component it does not model in `carried`, verbatim and in file order, and `ruleText` writes them back after its own.
+  Before this, `parse` ignored an unknown component and the next save dropped it.
+  The task-level `ShiftYamlPassthrough` could not help, because the whole rule is one value under the known `recurrence` key.
+- A known key whose value this build cannot read for the rule's frequency is carried whole rather than half-applied.
+  Examples are a plain `BYDAY=MO` on a monthly rule, an ordinal `BYDAY` on a weekly rule, and `BYMONTHDAY` on a daily one.
+- New modelled components:
+  - `EXDATE=YYYY-MM-DD,...` skips dates.
+    A skipped date still counts toward `COUNT`, as RFC 5545 has it.
+  - `BYMONTHDAY` (`13`, or `-1` for the last day) on monthly rules.
+    A day the month lacks is skipped, unlike the plain monthly rule's clamping.
+  - Ordinal `BYDAY` (`2FR`, `-1MO`) on monthly rules.
+    With `BYMONTHDAY` as well, the two intersect ("Friday the 13th").
+  - `FREQ=YEARLY`, which clamps a 29 February anchor to the 28th in common years.
+- `series_id` and `occurrence` are task fields and known keys.
+  `ShiftStore.nextOccurrence` walks the rule from `occurrence` when it is set, so an instance moved "only this" does not shift the series.
+  The spawned instance keeps `series_id`, carries no `occurrence`, and drops skipped dates before its own due date (GL-35).
+- `ShiftThreeWayMerge` asks the record type for a safe merge when both sides edited a record.
+  For a task, skipped dates merge as a three-way set when at least one side changed them, with `updatedAt` set aside.
+  A three-way set rather than a plain union, so an un-skip on one side survives.
+  Any other edit on both sides is still a conflict, and the conflict's field list now includes the rule line as "Repeat".
+
+### Decisions
+
+- Nothing mints `series_id` yet, and nothing writes `occurrence` or a new rule component.
+  Those belong to the PRs that add the editor and the exceptions, and this one has to reach the captain's build first.
+- An unknown `FREQ` value (anything other than the four above) still makes `parse` return `nil`, and the next save drops the line.
+  Nothing in the plan writes one, and keeping it would need editor semantics for a rule the sheet cannot show.
+- The calendar still projects from the due date rather than from `occurrence`.
+  It only differs once something writes `occurrence`, which is the exceptions PR's job.
+
+### Verification
+
+`FM_RUN_SHIFT_RECURRENCE_TESTS`, `FM_RUN_SHIFT_STORE_TESTS` and `FM_RUN_SHIFT_CONFLICT_TESTS` gained the new cases, all in CI's blocking lane.
+`FM_RUN_SHIFT_CALENDAR_TESTS`, `FM_RUN_WIDGET_SNAPSHOT_TESTS` and `FM_RUN_SHIFT_DUE_TESTS` were also run, because they read the rule.
+Confirmed to catch a regression:
+
+- Dropping the carried-component append failed seven recurrence cases and four store cases, including the store's "a rule component this build does not model must survive the rewrite".
+- Disabling the merge hook failed the conflict suite's "skipping different dates on two machines must not conflict".
+- A plain union instead of the three-way set failed "the date GitHub un-skipped stays un-skipped".
+- Not applying `EXDATE` in the walk failed five recurrence cases, including "skipped dates must not be produced".

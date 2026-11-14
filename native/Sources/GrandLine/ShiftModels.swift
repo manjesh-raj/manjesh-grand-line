@@ -83,6 +83,18 @@ struct ShiftTask: Equatable {
     /// the same as `nil`.
     var reminderMinutesBefore: Int? = nil
 
+    /// The repeating series this record belongs to, shared by every instance
+    /// `ShiftStore.nextOccurrence` spawns from it and kept on the completed
+    /// records, so finished occurrences can be read back as one series. `nil`
+    /// for a one-off task and for a series nothing has minted an id for yet.
+    var seriesID: String? = nil
+
+    /// The rule slot ("YYYY-MM-DD") this instance fills, when it was moved off
+    /// that slot for this occurrence only. `nil` means the slot is the due
+    /// date. `ShiftStore.nextOccurrence` walks the rule from here, so moving
+    /// one occurrence does not shift the rest of the series.
+    var occurrence: String? = nil
+
     /// A blank task ready for `ShiftStore.addTask` - the New Task editor
     /// (phase 2) fills fields into this rather than hand-assembling every
     /// property inline.

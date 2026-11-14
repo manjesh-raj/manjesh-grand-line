@@ -49,6 +49,14 @@ protocol ShiftConflictRecordType: Equatable {
     var id: String { get }
     var conflictTitle: String { get }
     func fieldSnapshot() -> [(label: String, value: String)]
+    /// A record both sides edited that this type can still merge safely, or
+    /// `nil` to leave it a conflict. Called only after the plain comparisons
+    /// found real edits on both sides.
+    static func autoMerged(base: Self, local: Self, remote: Self) -> Self?
+}
+
+extension ShiftConflictRecordType {
+    static func autoMerged(base: Self, local: Self, remote: Self) -> Self? { nil }
 }
 
 enum ShiftConflictFormat {
@@ -70,7 +78,46 @@ extension ShiftTask: ShiftConflictRecordType {
             ("Tags", tags.joined(separator: ", ")),
             ("Notes", notes ?? "\u{2014}"),
             ("Subtasks", subtasks.map { "\($0.done ? "[x]" : "[ ]") \($0.title)" }.joined(separator: "; ")),
+            // The rule line itself, so a conflict that is only about the
+            // repeat does not show the captain an empty list of differences.
+            ("Repeat", recurrence?.ruleText ?? "\u{2014}"),
         ]
+    }
+
+    /// Skipped dates (`EXDATE`) merge as a set, so two machines skipping
+    /// different occurrences of one series do not conflict.
+    ///
+    /// Engaged only when at least one side changed the skipped dates. With
+    /// those and `updatedAt` set aside (skipping a date bumps it on each
+    /// side), the record must be unchanged on one side or identical on both;
+    /// anything else is still a real conflict. The set merge is three-way
+    /// rather than a plain union, so an un-skip on one side survives: a date
+    /// is kept when both sides have it, or when the side that has it added it.
+    static func autoMerged(base: ShiftTask, local: ShiftTask, remote: ShiftTask) -> ShiftTask? {
+        let (b, l, r) = (base.skippedDates, local.skippedDates, remote.skippedDates)
+        guard l != b || r != b else { return nil }
+        let (kb, kl, kr) = (base.withoutSkipsOrStamp, local.withoutSkipsOrStamp, remote.withoutSkipsOrStamp)
+        var merged: ShiftTask
+        if kl == kr || kr == kb {
+            merged = local
+        } else if kl == kb {
+            merged = remote
+        } else {
+            return nil
+        }
+        guard merged.recurrence != nil else { return merged }
+        merged.recurrence?.exceptionDates = l.intersection(r).union(l.subtracting(b)).union(r.subtracting(b))
+        merged.updatedAt = max(local.updatedAt, remote.updatedAt)
+        return merged
+    }
+
+    private var skippedDates: Set<String> { recurrence?.exceptionDates ?? [] }
+
+    private var withoutSkipsOrStamp: ShiftTask {
+        var copy = self
+        copy.recurrence?.exceptionDates = []
+        copy.updatedAt = ""
+        return copy
     }
 }
 
@@ -251,6 +298,9 @@ enum ShiftThreeWayMerge {
                 } else if rv == bv {
                     resolved.append(lv)
                     notes.append(ShiftAutoMergeNote(kind: kind, title: lv.conflictTitle, action: "Kept your update (unchanged on GitHub)"))
+                } else if let merged = T.autoMerged(base: bv, local: lv, remote: rv) {
+                    resolved.append(merged)
+                    notes.append(ShiftAutoMergeNote(kind: kind, title: merged.conflictTitle, action: "Merged both sides' skipped dates"))
                 } else {
                     conflicts.append(ShiftRecordConflict(kind: kind, id: id, local: lv, remote: rv))
                 }

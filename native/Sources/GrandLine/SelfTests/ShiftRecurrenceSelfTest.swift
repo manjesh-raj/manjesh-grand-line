@@ -47,6 +47,11 @@ enum ShiftRecurrenceSelfTest {
         checkCompletionAdvances(&ok)
         checkReminderHorizon(&ok)
         checkDisplayNames(&ok)
+        checkCarriedComponents(&ok)
+        checkExceptionDates(&ok)
+        checkMonthDaysAndOrdinals(&ok)
+        checkYearly(&ok)
+        checkSeriesAndOccurrence(&ok)
 
         if ok { print("[ShiftRecurrenceSelfTest] all checks passed") }
         return ok
@@ -73,10 +78,10 @@ enum ShiftRecurrenceSelfTest {
         check(ShiftRecurrence.parse("INTERVAL=2") == nil, "a rule with no FREQ is not a rule", &ok)
         // The one that matters: a frequency this app does not implement must
         // not silently become a daily task.
-        check(ShiftRecurrence.parse("FREQ=YEARLY;INTERVAL=1") == nil,
+        check(ShiftRecurrence.parse("FREQ=HOURLY;INTERVAL=1") == nil,
               "an unsupported FREQ must be rejected, not downgraded", &ok)
         check(ShiftRecurrence.parse("FREQ=DAILY;WKST=SU;BYSETPOS=2")?.frequency == .daily,
-              "unknown components should be ignored rather than failing the parse", &ok)
+              "unknown components should not fail the parse", &ok)
         // A hand-edited file is a real input: `INTERVAL=0` would make the
         // generator produce the anchor forever.
         check(ShiftRecurrence.parse("FREQ=DAILY;INTERVAL=0")?.interval == 1,
@@ -393,7 +398,206 @@ enum ShiftRecurrenceSelfTest {
               "a bounded rule says how many times", &ok)
     }
 
+    // MARK: PR 1 - the rule line round-trips
+
+    /// A component this build does not model must survive this build
+    /// rewriting the line. The whole rule is one YAML value, so the task-level
+    /// passthrough cannot carry it - this is the only thing that does.
+    private static func checkCarriedComponents(_ ok: inout Bool) {
+        let foreign = "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO;X-SNOOZE=PT1H;BYSETPOS=2"
+        guard var rule = ShiftRecurrence.parse(foreign) else {
+            fail("a rule with foreign components should still parse", &ok)
+            return
+        }
+        // The fixture's discriminating power: the components really are ones
+        // this build does not model, so they are carried rather than applied.
+        check(rule.carried == ["X-SNOOZE=PT1H", "BYSETPOS=2"],
+              "fixture: both foreign components should be carried in file order, got \(rule.carried)", &ok)
+        check(rule.ruleText == foreign,
+              "a rule this build did not write should come back byte-identical, got \(rule.ruleText)", &ok)
+
+        // An edit to a part this build owns keeps what it does not own.
+        rule.weekdays.insert(4)
+        check(rule.ruleText == "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE;X-SNOOZE=PT1H;BYSETPOS=2",
+              "editing the days must keep the foreign components, got \(rule.ruleText)", &ok)
+
+        // A known key whose value does not apply to the frequency is carried
+        // whole, not half-applied and not dropped.
+        let monthlyPlain = ShiftRecurrence.parse("FREQ=MONTHLY;INTERVAL=1;BYDAY=MO")
+        check(monthlyPlain?.carried == ["BYDAY=MO"] && monthlyPlain?.monthWeekdays.isEmpty == true,
+              "a plain BYDAY on a monthly rule is carried, got \(monthlyPlain?.ruleText ?? "nil")", &ok)
+        let weeklyOrdinal = ShiftRecurrence.parse("FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,2FR")
+        check(weeklyOrdinal?.carried == ["BYDAY=MO,2FR"] && weeklyOrdinal?.weekdays.isEmpty == true,
+              "a BYDAY this build cannot read whole is carried whole, got \(weeklyOrdinal?.ruleText ?? "nil")",
+              &ok)
+        let dailyMonthDay = ShiftRecurrence.parse("FREQ=DAILY;BYMONTHDAY=1")
+        check(dailyMonthDay?.ruleText == "FREQ=DAILY;INTERVAL=1;BYMONTHDAY=1",
+              "BYMONTHDAY on a daily rule is carried, got \(dailyMonthDay?.ruleText ?? "nil")", &ok)
+
+        // And a line this build wrote itself carries nothing, so its own
+        // output is never mistaken for foreign.
+        let own = ShiftRecurrence(frequency: .monthly, monthDays: [-1], exceptionDates: ["2026-10-31"])
+        check(ShiftRecurrence.parse(own.ruleText)?.carried == [],
+              "this build's own line should carry nothing, got \(ShiftRecurrence.parse(own.ruleText)?.carried ?? [])",
+              &ok)
+        check(ShiftRecurrence.parse(own.ruleText) == own.normalized,
+              "this build's own line should round-trip to an equal rule", &ok)
+    }
+
+    private static func checkExceptionDates(_ ok: inout Bool) {
+        let anchor = date("2026-09-14 09:00")   // Monday
+        let text = "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE,FR;EXDATE=2026-09-18,2026-09-16"
+        guard let rule = ShiftRecurrence.parse(text) else {
+            fail("a rule with EXDATE should parse", &ok)
+            return
+        }
+        check(rule.exceptionDates == ["2026-09-16", "2026-09-18"],
+              "EXDATE should parse into its dates, got \(rule.exceptionDates)", &ok)
+        check(rule.carried.isEmpty, "EXDATE is modelled, not carried", &ok)
+        check(rule.ruleText == "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,WE,FR;EXDATE=2026-09-16,2026-09-18",
+              "EXDATE is written sorted, last of this build's own, got \(rule.ruleText)", &ok)
+
+        let produced = days(rule.occurrences(anchor: anchor, from: anchor, through: date("2026-09-25 23:59"),
+                                             calendar: calendar, limit: 20))
+        check(produced == ["2026-09-14", "2026-09-21", "2026-09-23", "2026-09-25"],
+              "skipped dates must not be produced, got \(produced)", &ok)
+
+        // RFC 5545: COUNT is spent before EXDATE removes, so a skipped date
+        // still uses up its slot.
+        var counted = rule
+        counted.count = 4
+        let countedDays = days(counted.occurrences(anchor: anchor, from: anchor, through: nil,
+                                                   calendar: calendar, limit: 20))
+        check(countedDays == ["2026-09-14", "2026-09-21"],
+              "a skipped date still counts toward COUNT, got \(countedDays)", &ok)
+
+        check(days([rule.next(after: anchor, anchor: anchor, calendar: calendar)].compactMap { $0 })
+                == ["2026-09-21"],
+              "next(after:) steps over skipped dates", &ok)
+
+        // GL-35: the spawned instance drops the skipped dates its walk passed,
+        // and keeps the ones still ahead of it. Local calendar here, because
+        // `nextOccurrence` resolves due dates the way the store does.
+        var task = ShiftTask.fresh()
+        task.title = "Gym"
+        task.dueDate = "2026-09-14"
+        task.recurrence = ShiftRecurrence(frequency: .daily,
+                                          exceptionDates: ["2026-09-01", "2026-09-15", "2026-09-20", "garbage"])
+        let spawned = ShiftStore.nextOccurrence(after: task, now: localNoon("2026-09-14"))
+        check(spawned?.dueDate == "2026-09-16",
+              "the spawned instance skips an excluded next day, got \(spawned?.dueDate ?? "nil")", &ok)
+        check(spawned?.recurrence?.exceptionDates == ["2026-09-20", "garbage"],
+              "and drops only the skipped dates before it, got \(spawned?.recurrence?.exceptionDates ?? [])", &ok)
+    }
+
+    private static func checkMonthDaysAndOrdinals(_ ok: inout Bool) {
+        let anchor = date("2026-01-13 09:00")
+
+        let thirteenth = ShiftRecurrence.parse("FREQ=MONTHLY;BYMONTHDAY=13")
+        check(thirteenth?.monthDays == [13], "BYMONTHDAY should parse", &ok)
+        let thirteenths = days(thirteenth?.occurrences(anchor: anchor, from: anchor, through: date("2026-04-30 00:00"),
+                                                       calendar: calendar, limit: 10) ?? [])
+        check(thirteenths == ["2026-01-13", "2026-02-13", "2026-03-13", "2026-04-13"],
+              "BYMONTHDAY=13 lands on the 13th, got \(thirteenths)", &ok)
+
+        let last = ShiftRecurrence(frequency: .monthly, monthDays: [-1])
+        let lastDays = days(last.occurrences(anchor: anchor, from: anchor, through: date("2026-04-30 23:59"),
+                                             calendar: calendar, limit: 10))
+        check(lastDays == ["2026-01-31", "2026-02-28", "2026-03-31", "2026-04-30"],
+              "BYMONTHDAY=-1 is every month's last day, got \(lastDays)", &ok)
+        check(calendar.component(.hour, from: last.next(after: anchor, anchor: anchor, calendar: calendar)
+                                    ?? .distantPast) == 9,
+              "a by-day monthly rule keeps the anchor's time of day", &ok)
+
+        // A day the month does not have is skipped, as RFC 5545 has it - the
+        // contrast with the plain monthly rule's clamping is deliberate.
+        let thirtyFirst = ShiftRecurrence(frequency: .monthly, monthDays: [31])
+        let skipped = days(thirtyFirst.occurrences(anchor: anchor, from: anchor, through: date("2026-05-31 23:59"),
+                                                   calendar: calendar, limit: 10))
+        check(skipped == ["2026-01-31", "2026-03-31", "2026-05-31"],
+              "BYMONTHDAY=31 skips the short months, got \(skipped)", &ok)
+
+        let secondFriday = ShiftRecurrence.parse("FREQ=MONTHLY;BYDAY=2FR")
+        check(secondFriday?.monthWeekdays == [ShiftRecurrenceMonthWeekday(ordinal: 2, weekday: 6)],
+              "an ordinal BYDAY should parse, got \(secondFriday?.ruleText ?? "nil")", &ok)
+        let fridays = days(secondFriday?.occurrences(anchor: anchor, from: anchor, through: date("2026-04-30 00:00"),
+                                                     calendar: calendar, limit: 10) ?? [])
+        check(fridays == ["2026-02-13", "2026-03-13", "2026-04-10"],
+              "2FR is each month's second Friday (January's fell before the anchor), got \(fridays)", &ok)
+
+        let lastMonday = ShiftRecurrence.parse("FREQ=MONTHLY;BYDAY=-1MO")
+        let mondays = days(lastMonday?.occurrences(anchor: anchor, from: anchor, through: date("2026-03-31 00:00"),
+                                                   calendar: calendar, limit: 10) ?? [])
+        check(mondays == ["2026-01-26", "2026-02-23", "2026-03-30"],
+              "-1MO is each month's last Monday, got \(mondays)", &ok)
+
+        // Both together intersect: Friday the 13th.
+        let unlucky = ShiftRecurrence.parse("FREQ=MONTHLY;BYDAY=1FR,2FR;BYMONTHDAY=13")
+        let unluckyDays = days(unlucky?.occurrences(anchor: anchor, from: anchor, through: date("2026-12-31 00:00"),
+                                                    calendar: calendar, limit: 10) ?? [])
+        check(unluckyDays == ["2026-02-13", "2026-03-13", "2026-11-13"],
+              "BYMONTHDAY with BYDAY is their intersection, got \(unluckyDays)", &ok)
+
+        check(ShiftRecurrence(frequency: .monthly, monthWeekdays: [ShiftRecurrenceMonthWeekday(ordinal: -1, weekday: 6),
+                                                                   ShiftRecurrenceMonthWeekday(ordinal: 2, weekday: 2)])
+                .ruleText == "FREQ=MONTHLY;INTERVAL=1;BYDAY=2MO,-1FR",
+              "ordinal entries are written in rule order, 'last' after the counted ones", &ok)
+        check(ShiftRecurrence.parse("FREQ=MONTHLY;BYDAY=6FR")?.carried == ["BYDAY=6FR"],
+              "an ordinal no month can have is carried rather than applied", &ok)
+
+        check(last.displayName == "Every month on the last day", "got \(last.displayName)", &ok)
+        check(thirteenth?.displayName == "Every month on day 13", "got \(thirteenth?.displayName ?? "nil")", &ok)
+        let english = ShiftRecurrence.longWeekdayName(6)
+        check(secondFriday?.displayName == "Every month on the 2nd \(english)",
+              "got \(secondFriday?.displayName ?? "nil")", &ok)
+    }
+
+    private static func checkYearly(_ ok: inout Bool) {
+        let leap = date("2028-02-29 09:00")
+        guard let yearly = ShiftRecurrence.parse("FREQ=YEARLY;INTERVAL=1") else {
+            fail("FREQ=YEARLY should parse now", &ok)
+            return
+        }
+        let produced = days(yearly.occurrences(anchor: leap, from: leap, through: date("2032-03-01 00:00"),
+                                               calendar: calendar, limit: 10))
+        check(produced == ["2028-02-29", "2029-02-28", "2030-02-28", "2031-02-28", "2032-02-29"],
+              "a 29 February anchor clamps in common years, got \(produced)", &ok)
+        let everyOther = ShiftRecurrence(frequency: .yearly, interval: 2)
+        check(everyOther.ruleText == "FREQ=YEARLY;INTERVAL=2", "got \(everyOther.ruleText)", &ok)
+        check(everyOther.displayName == "Every 2 years", "got \(everyOther.displayName)", &ok)
+        check(yearly.displayName == "Every year", "got \(yearly.displayName)", &ok)
+    }
+
+    private static func checkSeriesAndOccurrence(_ ok: inout Bool) {
+        var task = ShiftTask.fresh()
+        task.title = "Review the budget"
+        task.recurrence = ShiftRecurrence(frequency: .weekly)
+        task.seriesID = "series-1"
+        // Monday's slot, moved to Wednesday for this occurrence only.
+        task.occurrence = "2026-09-14"
+        task.dueDate = "2026-09-16"
+
+        let spawned = ShiftStore.nextOccurrence(after: task, now: localNoon("2026-09-16"))
+        check(spawned?.dueDate == "2026-09-21",
+              "the series walks from its slot, not the moved date, got \(spawned?.dueDate ?? "nil")", &ok)
+        check(spawned?.seriesID == "series-1", "the spawned instance keeps the series id", &ok)
+        check(spawned?.occurrence == nil, "and fills its own slot, so it carries no occurrence", &ok)
+
+        // The discriminating half: without a slot the same task walks from
+        // its due date, so the check above is really about `occurrence`.
+        var plain = task
+        plain.occurrence = nil
+        check(ShiftStore.nextOccurrence(after: plain, now: localNoon("2026-09-16"))?.dueDate == "2026-09-23",
+              "with no occurrence the walk starts from the due date", &ok)
+    }
+
     // MARK: Helpers
+
+    /// Noon on `day` in the machine's own zone, where `ShiftStore` resolves
+    /// due dates (AGENTS.md: a day-string fixture needs `Calendar.current`).
+    private static func localNoon(_ day: String) -> Date {
+        ShiftDateFormatting.dateTime(from: day, time: "12:00") ?? Date()
+    }
 
     private static func date(_ text: String) -> Date {
         let f = DateFormatter()

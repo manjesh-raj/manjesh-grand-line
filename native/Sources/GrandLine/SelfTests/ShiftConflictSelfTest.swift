@@ -575,6 +575,52 @@ enum ShiftConflictSelfTest {
                   "REL-22: a record this build cannot decode survives the resolved merge")
         }
 
+        // MARK: 7. Calendar PR 1 - skipped dates merge as a set
+        //
+        // Pure: the record-level merge itself, no repositories. Two machines
+        // skipping different occurrences of one series must not conflict, an
+        // un-skip on one side must survive, and an edit to anything else on
+        // both sides must still be a real conflict.
+        do {
+            func task(exdates: Set<String>, title: String = "Standup", stamp: String) -> ShiftTask {
+                ShiftTask(id: "series", title: title, description: "", status: .todo, priority: .normal,
+                          dueDate: "2026-09-14", dueTime: nil, projectID: nil, tags: [], createdAt: "2026-09-01T00:00:00Z",
+                          updatedAt: stamp, completedAt: nil, notes: nil, subtasks: [], hasAttachment: false,
+                          recurrence: ShiftRecurrence(frequency: .daily, exceptionDates: exdates))
+            }
+            let base = task(exdates: ["2026-09-20"], stamp: "2026-09-01T00:00:00Z")
+            let mine = task(exdates: ["2026-09-20", "2026-09-16"], stamp: "2026-09-02T00:00:00Z")
+            let theirs = task(exdates: ["2026-09-18"], stamp: "2026-09-03T00:00:00Z")
+
+            // The fixture's own discriminating power: both sides really did
+            // edit the record, so without the set merge this is a conflict.
+            check(mine != base && theirs != base && mine != theirs,
+                  "PR1 merge: fixture - both sides must have changed the record")
+            let skips = ShiftThreeWayMerge.run(kind: .task, base: [base], local: [mine], remote: [theirs])
+            check(skips.conflicts.isEmpty, "PR1 merge: skipping different dates on two machines must not conflict")
+            check(skips.resolved.first?.recurrence?.exceptionDates == ["2026-09-16", "2026-09-18"],
+                  "PR1 merge: both additions kept, and the date GitHub un-skipped stays un-skipped, got "
+                  + "\(skips.resolved.first?.recurrence?.ruleText ?? "nil")")
+            check(skips.resolved.first?.updatedAt == "2026-09-03T00:00:00Z",
+                  "PR1 merge: the merged record carries the later of the two stamps")
+
+            // One side skips, the other renames: still safe, and both land.
+            let renamed = task(exdates: ["2026-09-20"], title: "Daily standup", stamp: "2026-09-03T00:00:00Z")
+            let mixed = ShiftThreeWayMerge.run(kind: .task, base: [base], local: [mine], remote: [renamed])
+            check(mixed.conflicts.isEmpty && mixed.resolved.first?.title == "Daily standup"
+                    && mixed.resolved.first?.recurrence?.exceptionDates == ["2026-09-16", "2026-09-20"],
+                  "PR1 merge: a skip on one side and a rename on the other both survive, got "
+                  + "\(mixed.resolved.first.map { "\($0.title) \($0.recurrence?.ruleText ?? "")" } ?? "nil")")
+
+            // Both sides renamed differently: the set merge must not hide a
+            // real conflict, and the conflict now names the rule line too.
+            let mineRenamed = task(exdates: ["2026-09-20", "2026-09-16"], title: "Mine", stamp: "2026-09-02T00:00:00Z")
+            let both = ShiftThreeWayMerge.run(kind: .task, base: [base], local: [mineRenamed], remote: [renamed])
+            check(both.conflicts.count == 1, "PR1 merge: two different titles are still a conflict")
+            check(both.conflicts.first?.fieldDiffs.contains { $0.field == "Repeat" } == true,
+                  "PR1 merge: the conflict lists the repeat rule among its differences")
+        }
+
         return finish()
     }
 
