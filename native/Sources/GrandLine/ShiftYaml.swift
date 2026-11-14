@@ -68,7 +68,7 @@ enum ShiftYaml {
         "id", "title", "description", "status", "priority", "due_date", "due_time",
         "project_id", "tags", "created_at", "updated_at", "completed_at", "notes",
         "subtasks", "has_attachment", "recurrence", "reminder_minutes_before",
-        "series_id", "occurrence",
+        "series_id", "occurrence", "occurrence_time",
     ]
 
     static let followUpKnownKeys: Set<String> = [
@@ -111,6 +111,7 @@ enum ShiftYaml {
         // copy back beside the struct's own value.
         m[str("series_id")] = strOpt(t.seriesID)
         m[str("occurrence")] = strOpt(t.occurrence)
+        m[str("occurrence_time")] = strOpt(t.occurrenceTime)
         return .dictionary(m)
     }
 
@@ -144,7 +145,8 @@ enum ShiftYaml {
             recurrence: optString(dict[str("recurrence")] ?? .null).flatMap(ShiftRecurrence.parse),
             reminderMinutesBefore: dict[str("reminder_minutes_before")]?.int,
             seriesID: optString(dict[str("series_id")] ?? .null),
-            occurrence: optString(dict[str("occurrence")] ?? .null)
+            occurrence: optString(dict[str("occurrence")] ?? .null),
+            occurrenceTime: optString(dict[str("occurrence_time")] ?? .null)
         )
     }
 

@@ -279,14 +279,14 @@ final class ShiftNotificationScheduler {
                                           live: inout Set<String>) {
         guard let date = Self.nextDateToRemind(for: task, now: now),
               let fire = ShiftDue.reminderFireInstant(
-                date: date, time: task.dueTime, minutesBefore: task.reminderMinutesBefore,
+                date: date, time: task.slotTime, minutesBefore: task.reminderMinutesBefore,
                 allDayAt: allDayAt, defaultLookahead: lookahead),
               fire <= now else { return }
         let identifier = Self.occurrenceIdentifier(taskID: task.id, date: date)
         live.insert(identifier)
         guard notifiedOccurrenceIDs.insert(identifier).inserted else { return }
         notify(
-            title: ShiftDue.taskTitle(date: date, time: task.dueTime, now: now),
+            title: ShiftDue.taskTitle(date: date, time: task.slotTime, now: now),
             body: task.title,
             identifier: identifier,
             // "Open task" opens the live record - the missed occurrence the
@@ -314,7 +314,7 @@ final class ShiftNotificationScheduler {
     /// missed.
     ///
     /// The walk mirrors `ShiftStore.nextOccurrence`: it is anchored at the
-    /// live record's rule slot (`occurrence`) when it was moved "only this",
+    /// live record's rule slot (`ShiftTask.ruleAnchor`) when it was moved "only this",
     /// `COUNT` is the budget left *including* the live occurrence, so a last
     /// occurrence has no next date, and the slots that went by unnoticed do
     /// not spend the rest. `UNTIL` still ends it, and a skipped date
@@ -325,8 +325,7 @@ final class ShiftNotificationScheduler {
                                  calendar: Calendar = .current) -> String? {
         guard let rule = task.recurrence, rule.afterOneOccurrence != nil,
               ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: now, calendar: calendar),
-              let anchor = ShiftDateFormatting.dateTime(from: task.occurrence ?? task.dueDate,
-                                                        time: task.dueTime)
+              let anchor = task.ruleAnchor
         else { return nil }
         let from = max(anchor.addingTimeInterval(1), calendar.startOfDay(for: now))
         // Two is enough: a rule lands at most once on a day, so if today's
@@ -335,7 +334,7 @@ final class ShiftNotificationScheduler {
         for occurrence in rule.withoutCount.occurrences(anchor: anchor, from: from, through: nil,
                                                         calendar: calendar, limit: 2) {
             let day = ShiftDateFormatting.components(from: occurrence).dateStr
-            if !ShiftDue.isOverdue(date: day, time: task.dueTime, now: now, calendar: calendar) {
+            if !ShiftDue.isOverdue(date: day, time: task.slotTime, now: now, calendar: calendar) {
                 return day
             }
         }

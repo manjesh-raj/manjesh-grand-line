@@ -95,6 +95,22 @@ struct ShiftTask: Equatable {
     /// one occurrence does not shift the rest of the series.
     var occurrence: String? = nil
 
+    /// The rule slot's time ("HH:MM"), when the instance was moved off its
+    /// slot to another time for this occurrence only. `nil` means the slot's
+    /// time is `dueTime`. Without it a timed occurrence moved "only this" from
+    /// 09:00 to 14:00 would anchor every later instance at 14:00, because
+    /// `occurrence` holds a day.
+    var occurrenceTime: String? = nil
+
+    /// The rule slot this instance fills: its day and its time. The rule is
+    /// anchored here, never on the due date when the two differ, so moving one
+    /// occurrence leaves the series where it was. Every walk of a task's rule
+    /// (`ShiftStore.nextOccurrence`, the calendar's projections, the missed
+    /// repeat's reminder) starts from this one derivation.
+    var slotDay: String? { occurrence ?? dueDate }
+    var slotTime: String? { occurrence == nil ? dueTime : (occurrenceTime ?? dueTime) }
+    var ruleAnchor: Date? { ShiftDateFormatting.dateTime(from: slotDay, time: slotTime) }
+
     /// A blank task ready for `ShiftStore.addTask` - the New Task editor
     /// (phase 2) fills fields into this rather than hand-assembling every
     /// property inline.

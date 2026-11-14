@@ -20,7 +20,9 @@
 //     `onEventUpdate`, the bridge, `ShiftController.rescheduleTask`, the
 //     reschedule rule and `ShiftStore` - and then the task is read back from
 //     the store. Done in the month grid and in the week view's time grid;
-//   - a projection cannot be dragged, whatever the DOM is persuaded to do;
+//   - a projection's drop asks which occurrences it moves, and Cancel writes
+//     nothing; a repeating chip's drop asks too, and "Only this occurrence"
+//     pins its slot;
 //   - a click on an event reaches `onOpenTask` with the task's id, and a
 //     follow-up's reaches `onOpenFollowUp`, and a drag moves its own date;
 //   - a pill in the card and `show(scale:)` are one path: either moves the
@@ -53,6 +55,13 @@
 //     it crossed on the way; a repeating chip is refused; and a day's + opens
 //     its quick add, the native parser's pills appear under it, and Return
 //     adds the task with its time and repeat rule.
+//   - **exceptions** (tasks-calendar plan PR 6), each read back from the
+//     store: a projection dragged to another day through the dialog's "Only
+//     this occurrence" skips its date and adds a one-off there, and Undo puts
+//     both back; a right-click on a projection offers "Skip this occurrence",
+//     which skips it and leaves a "Skipped" marker; a click on the marker
+//     offers it back; and a projection dragged through "This and following"
+//     ends the live rule and starts a new series on the drop.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -84,6 +93,14 @@ enum ShiftCalendarViewSelfTest {
         // captures and restores it.
         defer { ThemeManager.shared.setTheme(themeBefore) }
         ThemeManager.shared.setTheme(HelmTheme.daylight)
+
+        // A real modal session would hang a headless run. A dialog no case
+        // expected is cancelled and named, so it fails rather than blocks.
+        HelmConfirm.responderForTests = { request in
+            failures.append("an unexpected dialog asked \"\(request.title)\"")
+            return .cancel
+        }
+        defer { HelmConfirm.responderForTests = nil }
 
         withScratchStore { store in
             let calendar = Calendar.current
@@ -242,15 +259,29 @@ enum ShiftCalendarViewSelfTest {
             check(store.followUps.first { $0.id == followUp.id }?.followUpAt == targetDay,
                   "dragging a follow-up should move its date in the store")
 
-            // MARK: A projection cannot be dragged
+            // MARK: A projection's drop asks, and Cancel writes nothing
 
             if view.debugEventIDs.contains(projectionID) {
                 let before = store.activeTasks.first { $0.id == repeating }
+                let countBefore = store.activeTasks.count
+                var asked: HelmConfirm.Request?
+                let fallback = HelmConfirm.responderForTests
+                HelmConfirm.responderForTests = { request in
+                    asked = request
+                    return .cancel
+                }
                 monthDrag(web, eventID: projectionID, toDay: targetDay)
+                _ = waitFor(timeout: 5) { asked != nil }
                 drain(turns: 30)
+                HelmConfirm.responderForTests = fallback
+                check(asked?.title == "Move a repeating task?",
+                      "dragging a projection should ask which occurrences move, asked \(asked?.title ?? "nothing")")
                 let after = store.activeTasks.first { $0.id == repeating }
-                check(after?.dueDate == before?.dueDate && after?.dueTime == before?.dueTime,
-                      "dragging a projection must not move the real task")
+                check(after == before && store.activeTasks.count == countBefore,
+                      "a cancelled drop of a projection must write nothing")
+                _ = waitFor(timeout: 3) { eventIn(web, id: projectionID, day: tomorrowDay) }
+                check(eventIn(web, id: projectionID, day: tomorrowDay) && !eventIn(web, id: projectionID, day: targetDay),
+                      "a cancelled drop puts the projection back on its own day")
             }
 
             // MARK: A real week-view drag moves the time
@@ -263,12 +294,20 @@ enum ShiftCalendarViewSelfTest {
             _ = waitFor(timeout: 3) {
                 (js(web, "!!document.querySelector('.sx__time-grid-event[data-event-id=\"\(repeating)\"]')") as? Bool) == true
             }
+            // A repeating task: the drop asks, and "Only this occurrence"
+            // moves it while its slot stays on the rule.
+            let fallback = HelmConfirm.responderForTests
+            HelmConfirm.responderForTests = { _ in .confirm }
             timeGridDrag(web, eventID: repeating, minutesLater: 60)
             _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == repeating }?.dueTime == "10:30" }
+            HelmConfirm.responderForTests = fallback
             let retimed = store.activeTasks.first { $0.id == repeating }
             check(retimed?.dueTime == "10:30" && retimed?.dueDate == todayDay,
                   "dragging a timed task an hour down should make it 10:30 on the same day, got "
                   + "\(retimed?.dueDate ?? "nil") \(retimed?.dueTime ?? "nil")")
+            check(retimed?.occurrence == todayDay && retimed?.occurrenceTime == "09:30",
+                  "moved only this time, the instance keeps its 09:30 slot, got "
+                  + "\(retimed?.occurrence ?? "nil") \(retimed?.occurrenceTime ?? "nil")")
 
             // MARK: Paging re-reads the store
 
@@ -434,6 +473,7 @@ enum ShiftCalendarViewSelfTest {
         withScratchStore { store in checkComplete(store: store, check: check) }
         withScratchStore { store in checkWhenPanel(store: store, check: check) }
         withScratchStore { store in checkDragAndQuickAdd(store: store, check: check) }
+        withScratchStore { store in checkExceptions(store: store, check: check) }
 
         return report(failures)
     }
@@ -1134,6 +1174,165 @@ enum ShiftCalendarViewSelfTest {
 
     /// A pointer's press on one element: down, held past the core's 150ms
     /// drag timer, up, then the click the browser would send.
+    // MARK: Exceptions
+
+    /// Plan PR 6: the drop dialog, the chip's menu and a skipped date, each
+    /// through the real page and read back from the store.
+    ///
+    /// The fixture is a daily task in the middle of next month, so every date
+    /// it touches is a day of the month on screen whatever today is.
+    private static func checkExceptions(store: ShiftStore, check: (Bool, String) -> Void) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let nextMonth = calendar.date(byAdding: .month, value: 1,
+                                      to: calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today)
+            ?? today
+        let start = ShiftDateFormatting.components(from: calendar.date(byAdding: .day, value: 7, to: nextMonth) ?? nextMonth).0
+        func day(_ offset: Int) -> String { ShiftScheduleDraft.adding(days: offset, to: start) ?? start }
+        let ferns = seed(store, title: "Water the ferns", due: start, time: "09:00", rule: ShiftRecurrence(frequency: .daily))
+        let live = { store.activeTasks.first { $0.id == ferns } }
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "the exceptions case's page never reported ready and configured")
+            return
+        }
+        _ = call(web, "showDate", ["date": start])
+        _ = waitFor(timeout: 5) { eventIn(web, id: "\(ferns)@\(day(1))", day: day(1)) }
+        check(eventIn(web, id: ferns, day: start) && eventIn(web, id: "\(ferns)@\(day(1))", day: day(1)),
+              "the fixture's live chip and its first projection should be on the page")
+        check((state(web)["menuChips"] as? [String] ?? []).contains("\(ferns)@\(day(2))"),
+              "a repeating task's projection should offer the occurrence menu")
+
+        let fallback = HelmConfirm.responderForTests
+        defer { HelmConfirm.responderForTests = fallback }
+
+        // MARK: A projection, "Only this occurrence"
+
+        var asked: HelmConfirm.Request?
+        HelmConfirm.responderForTests = { request in
+            asked = request
+            return .confirm
+        }
+        monthDrag(web, eventID: "\(ferns)@\(day(1))", toDay: day(4))
+        _ = waitFor(timeout: 5) { store.activeTasks.count == 2 }
+        if let asked {
+            check(asked.confirmTitle == TaskCalendarController.scopeOnlyThisTitle
+                    && asked.extra?.title == TaskCalendarController.scopeFollowingTitle && asked.confirmIsDefault,
+                  "the dialog offers Only this occurrence (the default) and This and following, got "
+                  + "\(asked.confirmTitle) / \(asked.extra?.title ?? "no third button")")
+            check(asked.body.contains(ShiftSeriesEdit.phrase(day(1), time: "09:00"))
+                    && asked.body.contains(ShiftSeriesEdit.phrase(day(4), time: "09:00")),
+                  "the dialog names the occurrence and where it goes, got \"\(asked.body)\"")
+            let titles = HelmConfirm.makeContent(asked).debugButtonTitles
+            check(titles.contains(TaskCalendarController.scopeOnlyThisTitle)
+                    && titles.contains(TaskCalendarController.scopeFollowingTitle) && titles.contains("Cancel"),
+                  "the drawn dialog carries all three buttons, got \(titles)")
+        } else {
+            check(false, "dragging a projection should ask which occurrences move")
+        }
+        let disk = ShiftStore()
+        let diskLive = disk.activeTasks.first { $0.id == ferns }
+        let oneOff = disk.activeTasks.first { $0.id != ferns }
+        check(diskLive?.recurrence?.exceptionDates == [day(1)] && diskLive?.dueDate == start,
+              "only this: the projection's date is skipped and the live instance stays, got "
+              + "\(diskLive?.recurrence?.ruleText ?? "nil")")
+        check(oneOff?.dueDate == day(4) && oneOff?.dueTime == "09:00" && oneOff?.recurrence == nil
+                && oneOff?.seriesID == diskLive?.seriesID && oneOff?.seriesID != nil && oneOff?.occurrence == day(1),
+              "only this: a one-off of the same series takes the new day, got "
+              + "\(oneOff?.dueDate ?? "nil") \(oneOff?.dueTime ?? "nil") \(oneOff?.recurrence?.ruleText ?? "no rule")")
+        _ = waitFor(timeout: 5) { (state(web)["skipped"] as? [String] ?? []).contains("\(ferns)@\(day(1)):skipped") }
+        check((state(web)["skipped"] as? [String] ?? []).contains("\(ferns)@\(day(1)):skipped"),
+              "the skipped date stays on the grid as a marker, got \(state(web)["skipped"] ?? "nothing")")
+        if let oneOff {
+            _ = waitFor(timeout: 3) { eventIn(web, id: oneOff.id, day: day(4)) }
+            check(eventIn(web, id: oneOff.id, day: day(4)), "the one-off is a real chip on its new day")
+        }
+        let skippedTitle = js(web, "(() => { const el = document.querySelector('[data-event-id=\"\(ferns)@\(day(1)):skipped\"]');"
+                              + " return el ? el.textContent : null })()") as? String ?? ""
+        check(skippedTitle.contains("Skipped: Water the ferns"), "the marker says it is skipped, got \"\(skippedTitle)\"")
+
+        // Undo puts both back: the date and the one-off.
+        let undo = undoButton(in: controller.view)
+        check(undo != nil, "a moved occurrence should offer Undo")
+        undo?.performClick(nil)
+        drain(turns: 10)
+        let undone = ShiftStore()
+        check(undone.activeTasks.map(\.id) == [ferns] && undone.activeTasks.first?.recurrence?.exceptionDates.isEmpty == true,
+              "Undo should withdraw the one-off and un-skip the date, got \(undone.activeTasks.map(\.title)) "
+              + "\(undone.activeTasks.first?.recurrence?.ruleText ?? "nil")")
+
+        // MARK: The menu: Skip, and Restore from the marker
+
+        var shown: NSMenu?
+        controller.debugMenuPresenter = { shown = $0 }
+        let rightClick = """
+        const el = document.querySelector(`.sx__month-grid-event[data-event-id="${id}"]`);
+        if (!el) return 'missing';
+        const r = el.getBoundingClientRect();
+        const event = new MouseEvent('contextmenu', {bubbles: true, cancelable: true, button: 2,
+                                                     clientX: r.x + 6, clientY: r.y + 6});
+        return el.dispatchEvent(event) ? 'not prevented' : 'prevented';
+        """
+        _ = waitFor(timeout: 5) { eventIn(web, id: "\(ferns)@\(day(2))", day: day(2)) }
+        let prevented = asyncJS(web, rightClick, ["id": "\(ferns)@\(day(2))"]) as? String
+        _ = waitFor(timeout: 3) { shown != nil }
+        check(prevented == "prevented", "the page should take the right-click from WebKit's own menu, got \(prevented ?? "nil")")
+        check(shown?.items.map(\.title) == ["Skip This Occurrence", "", "Open Task\u{2026}"],
+              "a projection's menu offers Skip and Open, got \(shown?.items.map(\.title) ?? [])")
+        shown?.performActionForItem(at: 0)
+        _ = waitFor(timeout: 5) { live()?.recurrence?.exceptionDates.contains(day(2)) == true }
+        check(ShiftStore().activeTasks.first { $0.id == ferns }?.recurrence?.exceptionDates == [day(2)],
+              "Skip this occurrence writes the date to EXDATE")
+        let marker = "\(ferns)@\(day(2)):skipped"
+        _ = waitFor(timeout: 5) { (state(web)["skipped"] as? [String] ?? []).contains(marker) }
+        check((state(web)["skipped"] as? [String] ?? []).contains(marker) && !eventIn(web, id: "\(ferns)@\(day(2))", day: day(2)),
+              "the skipped projection becomes a marker")
+
+        shown = nil
+        _ = js(web, "document.querySelector('[data-event-id=\"\(marker)\"]').click()")
+        _ = waitFor(timeout: 3) { shown != nil }
+        check(shown?.items.first?.title == "Restore This Occurrence",
+              "a click on a skipped date offers it back, got \(shown?.items.map(\.title) ?? [])")
+        shown?.performActionForItem(at: 0)
+        _ = waitFor(timeout: 5) { live()?.recurrence?.exceptionDates.isEmpty == true }
+        check(ShiftStore().activeTasks.first { $0.id == ferns }?.recurrence?.exceptionDates.isEmpty == true,
+              "Restore takes the date back out of EXDATE")
+        _ = waitFor(timeout: 5) { eventIn(web, id: "\(ferns)@\(day(2))", day: day(2)) }
+        check(eventIn(web, id: "\(ferns)@\(day(2))", day: day(2)), "the restored date is a projection again")
+        controller.debugMenuPresenter = nil
+
+        // MARK: A projection, "This and following"
+
+        HelmConfirm.responderForTests = { _ in .extra }
+        _ = waitFor(timeout: 5) { eventIn(web, id: "\(ferns)@\(day(5))", day: day(5)) }
+        monthDrag(web, eventID: "\(ferns)@\(day(5))", toDay: day(6))
+        _ = waitFor(timeout: 5) { store.activeTasks.count == 2 }
+        let split = ShiftStore()
+        let ended = split.activeTasks.first { $0.id == ferns }
+        let series = split.activeTasks.first { $0.id != ferns }
+        check(ended?.recurrence?.until == day(4) && ended?.dueDate == start,
+              "this and following: the live rule ends the day before, got \(ended?.recurrence?.ruleText ?? "nil")")
+        check(series?.dueDate == day(6) && series?.dueTime == "09:00" && series?.recurrence?.frequency == .daily
+                && series?.recurrence?.until == nil && series?.seriesID != ended?.seriesID,
+              "this and following: a new daily series starts on the drop, got "
+              + "\(series?.dueDate ?? "nil") \(series?.recurrence?.ruleText ?? "no rule")")
+        if let series {
+            _ = waitFor(timeout: 5) { eventIn(web, id: "\(series.id)@\(day(7))", day: day(7)) }
+            check(eventIn(web, id: series.id, day: day(6)) && eventIn(web, id: "\(series.id)@\(day(7))", day: day(7)),
+                  "the new series draws its own chip and projections")
+        }
+        check(!eventIn(web, id: "\(ferns)@\(day(5))", day: day(5)), "the old series draws nothing on the 5th any more")
+
+        _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
+        check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) exception bridge call(s) never got a reply")
+    }
+
     private static func press(_ web: WKWebView, _ selector: String) {
         let script = """
         const el = document.querySelector(selector);

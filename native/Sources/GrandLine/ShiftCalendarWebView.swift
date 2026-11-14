@@ -91,6 +91,13 @@ final class ShiftCalendarWebView: WKWebView {
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
     /// A follow-up's event was dropped on a new day or time.
     var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// A repeating task's projection, the date its rule puts on `slot`, was
+    /// dropped on a new day or time.
+    var onMoveOccurrence: ((_ taskID: String, _ slot: String, _ day: String, _ time: String?) -> Void)?
+    /// A repeating task's chip asked for its occurrence's menu: a right-click
+    /// on its live chip (`slot` is `nil`) or a projection, or a click on a
+    /// skipped date (`skipped`). `anchor` is the chip, in this view.
+    var onOccurrenceMenu: ((_ taskID: String, _ slot: String?, _ skipped: Bool, _ anchor: NSRect?) -> Void)?
     /// The check on a real, open task's chip or Agenda row was clicked.
     var onCompleteTask: ((String) -> Void)?
     /// The check on a pending follow-up's chip or row was clicked.
@@ -282,9 +289,15 @@ final class ShiftCalendarWebView: WKWebView {
             guard let id = body["taskID"] as? String, let day = body["day"] as? String else { return }
             if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
                 onMoveFollowUp?(id, day, body["time"] as? String)
+            } else if let slot = body["slot"] as? String {
+                onMoveOccurrence?(id, slot, day, body["time"] as? String)
             } else {
                 onMoveTask?(id, day, body["time"] as? String)
             }
+        case "menu":
+            guard let id = body["taskID"] as? String,
+                  (body["kind"] as? String) != ShiftCalendarEntry.Kind.followUp.rawValue else { return }
+            onOccurrenceMenu?(id, body["slot"] as? String, (body["skipped"] as? Bool) == true, anchorRect(body["rect"]))
         case "complete":
             guard let id = body["taskID"] as? String else { return }
             if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {

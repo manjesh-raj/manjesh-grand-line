@@ -472,6 +472,14 @@ html:not([data-view='month-grid']) .gl-weekdays {
   content: ' \21BB';
 }
 
+/* A date the repeat rule skips (`EXDATE`): fainter than a projection, with
+ * no repeat mark, so it reads as a date the rule passes over. Its title says
+ * "Skipped", and a click offers it back. */
+.sx__event.gl-skipped {
+  opacity: 0.4;
+  border-style: dashed;
+}
+
 .sx__event.gl-completed .sx__month-grid-event-title,
 .sx__event.gl-completed .sx__date-grid-event-text,
 .sx__event.gl-completed .sx__time-grid-event-title,
@@ -592,9 +600,10 @@ html:not([data-view='month-grid']) .gl-weekdays {
 /* Nothing that cannot move should look like it can. The core marks every
  * month-grid event `draggable` once a drag plugin is installed, whatever its
  * own `disableDND` says, so the browser would still lift a ghost of a
- * projection; this stops the lift itself. */
-.sx__event.gl-projected,
-.sx__event.gl-completed {
+ * finished task; this stops the lift itself. The page marks every event the
+ * native side did not call movable `gl-fixed`. A projection is movable: its
+ * drop asks which occurrences it moves. */
+.sx__event.gl-fixed {
   cursor: pointer;
   -webkit-user-drag: none;
 }

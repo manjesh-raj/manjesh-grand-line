@@ -19,10 +19,12 @@
 //   - **A projected occurrence is not a task.** Only one instance of a
 //     recurring task exists in `active.yaml` at a time
 //     (`ShiftStore.nextOccurrence`'s header says why); later dates are a
-//     projection of the rule. The page draws them faint and marked, and they
-//     cannot be dragged - `ShiftCalendarPayload` marks them immovable, and the
-//     page refuses a drop on anything not marked movable a second time. They
-//     carry no check either: only a real, open record is `completable`.
+//     projection of the rule. The page draws them faint and marked. They
+//     carry no check: only a real, open record is `completable`. A drop of
+//     one names its slot, and like a drop of the live instance it asks
+//     whether it moves only this occurrence or the series from here on
+//     (`ShiftSeriesEdit`, tasks-calendar plan PR 6). A date the rule skips
+//     is drawn too, faint and marked "Skipped", and its menu offers it back.
 //   - **A completed task is shown and cannot be moved.** `updateTask` only
 //     touches `active.yaml`, so a dropped completed task would save nothing.
 //   - **What is on screen is stated** (GL-14). The caption above the calendar
@@ -96,9 +98,19 @@ struct ShiftCalendarEntry: Equatable {
     /// completed one, it is not something a drag should reschedule.
     var isCancelled: Bool = false
     var kind: Kind = .task
+    /// A date the rule skips (`EXDATE`), drawn so it can be offered back.
+    var isSkipped: Bool = false
+    /// The record repeats. Its open chips, its projections and its skipped
+    /// dates carry a menu (Skip, or Restore).
+    var repeats: Bool = false
 
-    /// Whether a drag may move this entry. Only a real, open record.
-    var isMovable: Bool { !isProjected && !isCompleted && !isCancelled }
+    /// Whether a drag may move this entry: an open record, or a projection
+    /// of one. A projection's drop is a request about one occurrence of the
+    /// live record, which `TaskCalendarController.moveOccurrence` asks about.
+    var isMovable: Bool { !isCompleted && !isCancelled && !isSkipped }
+
+    /// Whether the chip offers a menu for its occurrence.
+    var offersMenu: Bool { kind == .task && repeats && !isCompleted && !isCancelled }
 
     /// Whether the page draws a check on this entry (the captain's decision
     /// 4A). Only a real, open record: a projection has no record to finish
@@ -106,7 +118,7 @@ struct ShiftCalendarEntry: Equatable {
     /// one has nothing left to finish. The same rule as `isMovable`, kept
     /// separate because it answers a different question and the two are free
     /// to diverge.
-    var isCompletable: Bool { !isProjected && !isCompleted && !isCancelled }
+    var isCompletable: Bool { !isProjected && !isCompleted && !isCancelled && !isSkipped }
 }
 
 /// What lands on which day. Pure; no AppKit.
@@ -117,8 +129,10 @@ enum ShiftCalendarModel {
     ///
     /// A task contributes its own due date when that date is in range, and -
     /// if it carries a rule - every occurrence the rule produces in range
-    /// after it. The real record is always the earliest of the two, because
-    /// `next(after:)` never returns the anchor itself.
+    /// after its slot, and every date the rule skips there. The rule walks
+    /// from the instance's slot (`ShiftTask.ruleAnchor`), not its due date,
+    /// so an occurrence moved "only this" leaves the projections where they
+    /// were.
     ///
     /// `perTaskLimit` bounds a daily rule across a long window (GL-35).
     static func entries(tasks: [ShiftTask], from: Date, through: Date,
@@ -132,18 +146,37 @@ enum ShiftCalendarModel {
             if anchor >= calendar.startOfDay(for: from) && anchor <= through {
                 out.append(entry(for: task, day: dueDate, time: task.dueTime, projected: false))
             }
-            guard let rule = task.recurrence else { continue }
+            guard let rule = task.recurrence, let slot = task.ruleAnchor else { continue }
             // A completed task's rule has already been advanced by
             // `ShiftStore.nextOccurrence` into a real successor record, so
             // projecting it again would double every repeated task on the
             // calendar for as long as the completed one stays in the Done
             // window.
             guard task.status != .completed, task.status != .cancelled else { continue }
-            let projected = rule.occurrences(anchor: anchor, from: max(from, anchor.addingTimeInterval(1)),
-                                             through: through, calendar: calendar, limit: perTaskLimit)
+            let start = max(from, slot.addingTimeInterval(1))
+            let projected = rule.occurrences(anchor: slot, from: start, through: through, calendar: calendar,
+                                             limit: perTaskLimit)
             for date in projected {
                 let (day, time) = ShiftDateFormatting.components(from: date)
                 out.append(entry(for: task, day: day, time: task.dueTime == nil ? nil : time, projected: true))
+            }
+            // The skipped dates: the same walk without `EXDATE`, kept where
+            // it lands on one. A hand-written date the rule never produces
+            // draws nothing.
+            guard !rule.exceptionDates.isEmpty else { continue }
+            var unskipped = rule
+            unskipped.exceptionDates = []
+            for date in unskipped.occurrences(anchor: slot, from: start, through: through, calendar: calendar,
+                                              limit: perTaskLimit) {
+                let day = ShiftDateFormatting.components(from: date).dateStr
+                guard rule.exceptionDates.contains(day) else { continue }
+                // All day, whatever the rule's time: a skipped date holds no
+                // time, and in a narrow month cell a time would leave no room
+                // for the word "Skipped".
+                var skipped = entry(for: task, day: day, time: nil, projected: false)
+                skipped.isSkipped = true
+                skipped.title = "Skipped: \(task.title)"
+                out.append(skipped)
             }
         }
         return out.sorted(by: inDayOrder)
@@ -191,7 +224,8 @@ enum ShiftCalendarModel {
                            projectID: task.projectID, priority: task.priority,
                            isProjected: projected,
                            isCompleted: task.status == .completed,
-                           isCancelled: task.status == .cancelled)
+                           isCancelled: task.status == .cancelled,
+                           repeats: task.recurrence != nil)
     }
 
     /// The month grid's own date range around `anchor`: whole weeks covering
@@ -375,8 +409,13 @@ enum ShiftCalendarPayload {
     /// The id is the task's own for a real record, and the task id plus the
     /// day for a projection, so the many projections of one rule stay distinct
     /// while every one of them still opens the same task (`taskID`). A
-    /// follow-up's carries a prefix, because a follow-up and a task are two
-    /// stores whose ids nothing keeps apart.
+    /// skipped date's id says so, so it never collides with the projection
+    /// it replaced. A follow-up's carries a prefix, because a follow-up and a
+    /// task are two stores whose ids nothing keeps apart.
+    ///
+    /// `slot` is the day of a projection or a skipped date: the occurrence a
+    /// drop or a menu acts on. The live instance has none, because the native
+    /// side knows which slot it fills.
     ///
     /// A task has a due time but no duration, so a timed task is drawn as a
     /// half-hour block. It ends at 23:59 at the latest: a block that crossed
@@ -393,10 +432,11 @@ enum ShiftCalendarPayload {
         }
         let id: String
         switch entry.kind {
+        case .task where entry.isSkipped: id = "\(entry.taskID)@\(entry.day):skipped"
         case .task: id = entry.isProjected ? "\(entry.taskID)@\(entry.day)" : entry.taskID
         case .followUp: id = "followup:\(entry.taskID)"
         }
-        return [
+        var event: [String: Any] = [
             "id": id,
             "taskID": entry.taskID,
             "kind": entry.kind.rawValue,
@@ -407,9 +447,13 @@ enum ShiftCalendarPayload {
             "calendarId": ShiftCalendarPalette.calendarID(for: entry, colouring: colouring),
             "projected": entry.isProjected,
             "completed": entry.isCompleted,
+            "skipped": entry.isSkipped,
             "movable": entry.isMovable,
             "completable": entry.isCompletable,
+            "menu": entry.offersMenu,
         ]
+        if entry.isProjected || entry.isSkipped { event["slot"] = entry.day }
+        return event
     }
 
     static let timedBlockMinutes = 30
@@ -1118,6 +1162,11 @@ final class ShiftCalendarView: NSView {
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
     /// A dropped follow-up.
     var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// A dropped projection: the occurrence on `slot` of the task `taskID`.
+    var onMoveOccurrence: ((_ taskID: String, _ slot: String, _ day: String, _ time: String?) -> Void)?
+    /// A repeating task's occurrence menu, anchored at its chip in this
+    /// view's coordinates (`nil` when the page could not measure it).
+    var onOccurrenceMenu: ((_ taskID: String, _ slot: String?, _ skipped: Bool, _ anchor: NSRect?) -> Void)?
     /// The visible period or the view changed: the caption and the scale
     /// may both be new.
     var onPeriodChanged: (() -> Void)?
@@ -1244,6 +1293,11 @@ final class ShiftCalendarView: NSView {
         webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
         webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
         webView.onMoveFollowUp = { [weak self] id, day, time in self?.onMoveFollowUp?(id, day, time) }
+        webView.onMoveOccurrence = { [weak self] id, slot, day, time in self?.onMoveOccurrence?(id, slot, day, time) }
+        webView.onOccurrenceMenu = { [weak self] id, slot, skipped, rect in
+            guard let self else { return }
+            self.onOccurrenceMenu?(id, slot, skipped, rect.map { self.convert($0, from: self.webView) })
+        }
         webView.onScheduleFromTray = { [weak self] id, kind, when in self?.onScheduleFromTray?(id, kind, when) }
         webView.onCompleteTask = { [weak self] id in self?.onCompleteTask?(id) }
         webView.onCompleteFollowUp = { [weak self] id in self?.onCompleteFollowUp?(id) }
@@ -1494,11 +1548,12 @@ final class ShiftCalendarView: NSView {
 
     private func refreshCaption(entries: [ShiftCalendarEntry]? = nil) {
         let list = entries ?? visibleEntries()
-        let tasksOnly = list.filter { $0.kind == .task }
+        // A skipped date is drawn so it can be offered back, and is not work.
+        let tasksOnly = list.filter { $0.kind == .task && !$0.isSkipped }
         let today = ShiftDateFormatting.components(from: Date()).dateStr
         let period = ShiftCalendarModel.periodPhrase(scale: scale, visibleStart: visibleRange?.start, today: today)
         caption = Self.subtitle(total: tasksOnly.count, projected: tasksOnly.filter(\.isProjected).count,
-                                followUps: list.count - tasksOnly.count, tray: tray, period: period)
+                                followUps: list.filter { $0.kind == .followUp }.count, tray: tray, period: period)
     }
 
     /// GL-14: what is on screen and what is not, in one line.

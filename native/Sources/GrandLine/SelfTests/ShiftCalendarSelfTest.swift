@@ -209,7 +209,7 @@ enum ShiftCalendarSelfTest {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
         for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "place", "unschedule",
-                        "quickAddParse", "quickAdd", "tray", "newTask", "openList"] {
+                        "quickAddParse", "quickAdd", "tray", "newTask", "openList", "menu"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
         // The captain's card: its header, weekday row and legend are this
@@ -232,12 +232,24 @@ enum ShiftCalendarSelfTest {
         // task or start a drag.
         check(js.contains("gl-completable") && js.contains("gl-check"),
               "the committed bundle draws no check on a completable event - rebuild it")
+        // Plan PR 6: a projection's drop names its slot, a repeating chip's
+        // menu is asked for on a right-click, and a skipped date is marked.
+        check(js.contains("slot:") && js.contains("contextmenu") && js.contains("gl-skipped")
+                && js.contains("gl-menu-") && js.contains("gl-fixed"),
+              "the committed bundle has no projection drop, chip menu or skipped date - rebuild it")
         if let css = try? String(contentsOf: dir.appendingPathComponent("task-calendar.css"), encoding: .utf8) {
             // The raised cells are drawn inside each day, never as a margin
             // between days: the drag plugin finds the drop day with
             // `closest('.sx__month-grid-day')`, and a gap would be nowhere.
             check(css.contains(".sx__month-grid-day:before"), "the month grid's raised cell is not drawn inside the day")
             check(css.contains(".sx__calendar-header{display:none}"), "Schedule-X's own header still shows")
+            // Only an event the native side did not call movable is held in
+            // place: a projection moves now (plan PR 6), and a stylesheet that
+            // still stopped its lift would leave the month grid's drag dead.
+            check(css.contains(".sx__event.gl-fixed{cursor:pointer;-webkit-user-drag:none}")
+                    && !css.contains(".sx__event.gl-projected{cursor:pointer"),
+                  "the stylesheet should hold only fixed events in place")
+            check(css.contains(".sx__event.gl-skipped{"), "the stylesheet draws no skipped date")
             for variable in ShiftCalendarPalette.requiredVariables where variable.hasPrefix("--gl-") {
                 guard variable != "--gl-accent-ink", variable != "--gl-now-line" else { continue }
                 check(css.contains("var(\(variable))"), "the stylesheet never reads \(variable)")
@@ -283,7 +295,30 @@ enum ShiftCalendarSelfTest {
         check(projection["id"] as? String == "t1@2026-10-28",
               "a projection's id carries its day, so many projections of one rule stay distinct")
         check(projection["taskID"] as? String == "t1", "a projection still opens its real task")
-        check(projection["movable"] as? Bool == false, "a projection must never be movable")
+        // Plan PR 6: a projection moves, and its drop names its slot so the
+        // native side moves that occurrence rather than the live instance.
+        check(projection["movable"] as? Bool == true && projection["slot"] as? String == "2026-10-28",
+              "a projection is movable and names its slot, got \(projection["movable"] ?? "-") / \(projection["slot"] ?? "-")")
+        check(allDay["slot"] == nil, "the live instance names no slot: the native side knows which it fills")
+        var skippedEntry = entry(day: "2026-10-29")
+        skippedEntry.isSkipped = true
+        skippedEntry.repeats = true
+        let skipped = ShiftCalendarPayload.event(for: skippedEntry)
+        check(skipped["id"] as? String == "t1@2026-10-29:skipped" && skipped["skipped"] as? Bool == true
+                && skipped["slot"] as? String == "2026-10-29",
+              "a skipped date has an id of its own, says so and names its slot, got \(skipped)")
+        check(skipped["movable"] as? Bool == false && skipped["completable"] as? Bool == false
+                && skipped["menu"] as? Bool == true,
+              "a skipped date neither moves nor completes, and offers its menu")
+        var repeating = entry()
+        repeating.repeats = true
+        check(ShiftCalendarPayload.event(for: repeating)["menu"] as? Bool == true
+                && allDay["menu"] as? Bool == false,
+              "a repeating task's chip offers the occurrence menu, a one-off's does not")
+        var repeatingDone = entry(completed: true)
+        repeatingDone.repeats = true
+        check(ShiftCalendarPayload.event(for: repeatingDone)["menu"] as? Bool == false,
+              "a finished occurrence offers no menu")
         check(ShiftCalendarPayload.event(for: entry(completed: true))["movable"] as? Bool == false,
               "a completed task must never be movable")
         check(ShiftCalendarPayload.event(for: entry(cancelled: true))["movable"] as? Bool == false,
@@ -346,8 +381,8 @@ enum ShiftCalendarSelfTest {
         let entries = ShiftCalendarModel.entries(tasks: [task], from: start, through: end)
         check(entries.filter { !$0.isProjected }.count == 1 && entries.filter(\.isProjected).count >= 2,
               "a daily rule should give one real entry and its projections, got \(entries.map(\.day))")
-        check(entries.filter(\.isMovable).map(\.day) == ["2026-10-27"],
-              "only the real instance of a repeating task is movable")
+        check(entries.filter(\.isMovable).count == entries.count,
+              "the real instance and every projection of a repeating task are movable (plan PR 6)")
         check(entries.filter(\.isCompletable).map(\.day) == ["2026-10-27"],
               "only the real instance of a repeating task carries a check, got \(entries.filter(\.isCompletable).map(\.day))")
     }
