@@ -1011,9 +1011,10 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: Modules and their tabs
 
-    /// A module's sidebar row: the tab it showed last, or its first.
+    /// A module's sidebar row: the tab it showed last, or its first. A door
+    /// row (the Calendar) opens the tab it is a door to.
     override func openModule(_ module: WorkspaceModule) {
-        if let tab = lastTab[module] ?? module.tabs.first {
+        if let tab = module.doorTab ?? lastTab[module] ?? module.tabs.first {
             open(tab)
         } else {
             workspace.navigator.show(module.primaryRoute)
@@ -1043,8 +1044,10 @@ final class MainSplitShellController: WorkspaceShellController {
         }
     }
 
+    /// A door's route follows its own row: hiding the Calendar row takes
+    /// the Calendar out of ⌘K, and hiding Tasks does not.
     override func hidesPage(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))
+        AppSettings.shared.hiddenModules.contains(ModuleTable.sidebarModule(for: destination))
     }
 
     /// Show a tab: its page through the navigator, like every other route,
@@ -1155,7 +1158,11 @@ final class MainSplitShellController: WorkspaceShellController {
         } else {
             let tabs = module.tabs
             let current = currentTab
-            if let current { lastTab[module] = current }
+            // A door's tab is its row's to reopen, not the module's: the Tasks
+            // row after a visit to the Calendar goes back to Board or List.
+            if let current, ModuleTable.sidebarModule(for: current.route, pageTab: current.name) == module {
+                lastTab[module] = current
+            }
             // The page that draws the module's tabs may count what each
             // holds (Connections' hosts, keys and snippets), even while one
             // of the module's other pages is showing.
@@ -1184,6 +1191,9 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
         contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
+        // The lit row follows the showing tab too: Tasks' Calendar view is
+        // the Calendar row's (`ModuleTable.sidebarModule(for:pageTab:)`).
+        sidebar.select(workspace.navigator.currentDestinationKind, pageTab: currentTab?.name)
         applyTitleBar()
     }
 

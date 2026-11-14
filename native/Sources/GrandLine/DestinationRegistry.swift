@@ -106,8 +106,10 @@ extension DaylightDrillActions {
 
 /// One mountable body view.
 ///
-/// **One-to-one with `RailDestination` today, and deliberately still its own
-/// type.** It was not always one-to-one: `.updates`/`.bootstrap`/
+/// **One-to-one with `RailDestination` but for one door, and deliberately
+/// still its own type.** `.calendar` shows on `.shift`'s slot, because the
+/// Calendar is Tasks' view behind a sidebar row of its own (tasks-calendar
+/// plan PR 4). It was not always one-to-one before that either: `.updates`/`.bootstrap`/
 /// `.automation`/`.githubSync` shared a single `SetupContainerController`
 /// slot until `fm/grandline-separate-setup-destinations` un-merged them (see
 /// `RailDestination.slot` below for the captain's own reasoning), and
@@ -120,7 +122,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
-    case overview, strawHat, console, hosts, shift, calendar, review, logAnalyzer, kubernetes
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
     case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, poneglyph, settings
     /// The four Engineering setup pages. One slot each since
     /// `fm/grandline-separate-setup-destinations`; they shared a single
@@ -138,7 +140,11 @@ extension RailDestination {
         case .console: return .console
         case .hosts: return .hosts
         case .shift: return .shift
-        case .calendar: return .calendar
+        // Tasks' Calendar view, behind the Calendar sidebar row (tasks-calendar
+        // plan PR 4). `Navigator.show` lands the route on the Tasks page's
+        // tab (`ModuleTable.landing(for:)`), so this slot is the page it
+        // shows on rather than a body of its own.
+        case .calendar: return .shift
         case .review: return .review
         case .logAnalyzer: return .logAnalyzer
         case .kubernetes: return .kubernetes

@@ -85,6 +85,17 @@ enum SplitShellModelSelfTest {
             let module = ModuleTable.module(for: route)
             check(ModuleTable.descriptor(for: route) != nil && listed.contains(module),
                   "\(route.rawValue) has no module the sidebar lists", &ok)
+            // A door's route is its host page's tab, and lights its own row.
+            let landing = ModuleTable.landing(for: route)
+            if let pageTab = landing.pageTab {
+                check(module.tabs.contains { $0.route == landing.route && $0.name == pageTab && $0.isPageTab },
+                      "\(route.rawValue) is a door to \(module.title) › \(pageTab), which is not one of its page tabs", &ok)
+                check(ModuleTable.tab(for: route, pageTab: nil)?.name == pageTab,
+                      "a deep link to \(route.rawValue) does not light \(module.title) › \(pageTab)", &ok)
+                check(listed.contains(ModuleTable.sidebarModule(for: route)),
+                      "\(route.rawValue)'s door row is not one the sidebar lists", &ok)
+                continue
+            }
             if module.drawsToolbarTabs {
                 check(module.tabs.contains { $0.route == route },
                       "\(route.rawValue) lives in \(module.title) but none of its tabs shows it", &ok)
@@ -95,9 +106,10 @@ enum SplitShellModelSelfTest {
                       "\(route.rawValue) is not one of \(module.title)'s pages", &ok)
             }
         }
-        // Every module opens on one of its own pages.
+        // Every module opens on one of its own pages, and a door row on the
+        // route it is a door to.
         for module in WorkspaceModule.allCases {
-            check(ModuleTable.module(for: module.primaryRoute) == module,
+            check(ModuleTable.sidebarModule(for: module.primaryRoute) == module,
                   "\(module.title) opens on \(module.primaryRoute.rawValue), which is not its own", &ok)
         }
     }
@@ -129,10 +141,10 @@ enum SplitShellModelSelfTest {
     private static func checkTheTabsAreTheRealViews(_ ok: inout Bool) {
         typealias Tab = (name: String, route: RailDestination, pageTab: Bool)
         let expected: [WorkspaceModule: [Tab]] = [
-            .tasks: [("Board", .shift, true), ("List", .shift, true), ("Weekly review", .shift, true)],
-            // The Calendar's own page draws its four views (`TaskCalendarController`).
-            .calendar: [("Month", .calendar, true), ("Week", .calendar, true), ("Day", .calendar, true),
-                        ("Agenda", .calendar, true)],
+            // The Calendar is Tasks' view (tasks-calendar plan PR 4); its
+            // sidebar row is a door to this tab and has no tabs of its own.
+            .tasks: [("Board", .shift, true), ("List", .shift, true), ("Calendar", .shift, true),
+                     ("Weekly review", .shift, true)],
             // Needs you is the Fleet page's, in the sidebar layout only: the
             // parked tasks and their open decisions (the later page work).
             .crew: [("Needs you", .overview, true), ("In flight", .overview, true), ("Review", .review, false),
@@ -158,19 +170,20 @@ enum SplitShellModelSelfTest {
         }
         check(!WorkspaceModule.settings.drawsToolbarTabs && !WorkspaceModule.settings.children.isEmpty,
               "Settings' categories moved into the toolbar; its page keeps its own column", &ok)
-        // The captain's call: no big title on Connections and Console, and
-        // the Calendar draws its mockup's heading itself; every other module
-        // keeps its title and subtitle.
+        // The captain's call: no big title on Connections and Console; every
+        // other module keeps its title and subtitle. Tasks' Calendar view
+        // draws Tasks' title with the calendar's caption under it.
         let headless = WorkspaceModule.allCases.filter { !$0.showsHeader }
-        check(headless == [.calendar, .connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
+        check(headless == [.connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
     /// Stage 6, the captain's call: the sidebar lists no pins. A Pinned
     /// section repeated pages that already had a module row and a tab. The
     /// pins themselves are the floating bar's, untouched.
     /// The captain's mockup: Calendar is its own row in Work, right after
-    /// Tasks and before Crew, and it is the one route to the calendar - Tasks
-    /// has no Calendar tab left to be a second one.
+    /// Tasks and before Crew. Since the tasks-calendar plan's PR 4 the row is
+    /// a door to Tasks' Calendar view (decision 1A): it opens that tab, it is
+    /// lit while the tab shows, and there is one calendar behind both.
     private static func checkTheCalendarRow(_ ok: inout Bool) {
         let work = WorkspaceSidebarModel.modules(in: .work)
         if let tasks = work.firstIndex(of: .tasks), let calendar = work.firstIndex(of: .calendar),
@@ -185,23 +198,61 @@ enum SplitShellModelSelfTest {
         check(workNode?.children.prefix(3).map(\.entry) == [.module(.tasks), .module(.calendar), .module(.crew)],
               "the sidebar's Work rows start \(workNode?.children.prefix(3).map(\.entry) ?? [])", &ok)
 
-        // Routing: the row opens the Calendar page, on its Month view, and
-        // that page belongs to the row.
-        check(WorkspaceModule.calendar.primaryRoute == .calendar,
+        // Routing: the row is a door to Tasks › Calendar, and the route lands
+        // there too, on the Tasks page's slot.
+        check(WorkspaceModule.calendar.primaryRoute == .calendar && WorkspaceModule.calendar.doorRoute == .calendar,
               "the Calendar row opens \(WorkspaceModule.calendar.primaryRoute.rawValue)", &ok)
-        check(ModuleTable.module(for: .calendar) == .calendar, "the Calendar page lights the \(ModuleTable.module(for: .calendar)) row", &ok)
-        check(ModuleTable.tab(for: .calendar, pageTab: nil)?.name == "Month",
-              "the Calendar page stands for \(ModuleTable.tab(for: .calendar, pageTab: nil)?.name ?? "no tab")", &ok)
-        check(RailDestination.calendar.slot == .calendar, "the Calendar has no slot of its own", &ok)
+        check(WorkspaceModule.calendar.doorTab == WorkspaceModule.tasks.tabs.first { $0.name == "Calendar" },
+              "the Calendar row's door is \(String(describing: WorkspaceModule.calendar.doorTab)), want Tasks › Calendar", &ok)
+        let landing = ModuleTable.landing(for: .calendar)
+        check(landing.route == .shift && landing.pageTab == "Calendar",
+              "the Calendar route lands on \(landing.route.rawValue) › \(landing.pageTab ?? "nothing")", &ok)
+        check(ModuleTable.module(for: .calendar) == .tasks, "the Calendar lives in \(ModuleTable.module(for: .calendar))", &ok)
+        check(RailDestination.calendar.slot == .shift, "the Calendar has a body of its own beside Tasks'", &ok)
+        check(WorkspaceModule.calendar.tabs.isEmpty && !WorkspaceModule.calendar.drawsToolbarTabs,
+              "the Calendar row draws tabs \(WorkspaceModule.calendar.tabs.map(\.name)) - Month, Week, Day and Agenda "
+              + "are the card's pills", &ok)
+
+        // The lit row follows the view, by name: the plan's one new mapping.
+        check(ModuleTable.sidebarModule(for: .shift, pageTab: "Calendar") == .calendar,
+              "Tasks' Calendar view lights \(ModuleTable.sidebarModule(for: .shift, pageTab: "Calendar"))", &ok)
+        for view in ["Board", "List", "Weekly review"] {
+            check(ModuleTable.sidebarModule(for: .shift, pageTab: view) == .tasks,
+                  "Tasks' \(view) lights \(ModuleTable.sidebarModule(for: .shift, pageTab: view))", &ok)
+        }
+        check(ModuleTable.sidebarModule(for: .calendar) == .calendar && ModuleTable.sidebarModule(for: .shift) == .tasks,
+              "a deep link lights the wrong row", &ok)
+        check(ModuleTable.sidebarModule(for: .overview, pageTab: "Calendar") == .crew,
+              "a tab called Calendar on another page would light the Calendar row", &ok)
+
         check(ContextualNewAction.forDestination(.calendar) == .task, "⌘N on the Calendar should make a task", &ok)
-        check(WorkspaceToolbar.calendarSymbol == RailDestination.calendar.symbol,
+        check(WorkspaceToolbar.calendarSymbol == RailDestination.calendar.symbol
+                && WorkspaceModule.calendar.symbol == RailDestination.calendar.symbol,
               "the toolbar's calendar button and the Calendar row draw different glyphs", &ok)
         check(RailDestination.calendar.symbol != RailDestination.schedules.symbol,
               "Calendar and Schedules share a sidebar glyph", &ok)
 
-        // One route: no tab anywhere else is called Calendar.
-        let stray = WorkspaceModule.allCases.filter { $0 != .calendar }.flatMap(\.tabs).filter { $0.name == "Calendar" }
-        check(stray.isEmpty, "\(stray.map { "\($0.module.title) › \($0.name)" }) is a second route to the calendar", &ok)
+        // One calendar: no module but Tasks has a tab called Calendar.
+        let stray = WorkspaceModule.allCases.filter { $0 != .tasks }.flatMap(\.tabs).filter { $0.name == "Calendar" }
+        check(stray.isEmpty, "\(stray.map { "\($0.module.title) › \($0.name)" }) is a second calendar", &ok)
+
+        // The Go menu has one Calendar item: the row, with ⌘0. Tasks' tab of
+        // the same name is left to it, and comes back when the row is hidden.
+        func calendarItems(_ hidden: Set<WorkspaceModule>) -> Int {
+            WorkspaceGoMenu.entries(hidden: hidden).filter { entry in
+                switch entry {
+                case .module(let module): return module.title == "Calendar"
+                case .tab(let tab): return tab.name == "Calendar"
+                case .group: return false
+                }
+            }.count
+        }
+        check(calendarItems([]) == 1, "the Go menu has \(calendarItems([])) Calendar items", &ok)
+        check(calendarItems([.calendar]) == 1 && WorkspaceGoMenu.entries(hidden: [.calendar]).contains { entry in
+                  if case .tab(let tab) = entry { return tab.module == .tasks && tab.name == "Calendar" }
+                  return false
+              },
+              "with the Calendar row hidden the Go menu should keep Tasks › Calendar", &ok)
 
         // The Go menu is the sidebar's map, and the chords follow the rows.
         let entries = WorkspaceGoMenu.entries()

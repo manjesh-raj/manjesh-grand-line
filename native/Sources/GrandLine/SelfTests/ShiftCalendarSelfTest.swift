@@ -54,6 +54,7 @@ enum ShiftCalendarSelfTest {
         checkFollowUps(check)
         checkCaption(check)
         checkScales(check)
+        checkProjectColouring(check)
         checkTrayModel(check)
         checkTrayPayload(check)
         checkCompletedMonths(check)
@@ -418,7 +419,10 @@ enum ShiftCalendarSelfTest {
             check((ShiftCalendarPalette.themePayload(for: theme)["dark"] as? Bool) == (theme.mode == .dark),
                   "\(theme.id): the page's register must follow the theme's mode")
 
-            for (id, value) in ShiftCalendarPalette.calendars(for: theme) {
+            // Coloured by project too, so every project hue and the No
+            // project chip are swept on every theme as well.
+            let sweep = ShiftCalendarPalette.calendars(for: theme, colouring: .project, projects: Self.colouringProjects)
+            for (id, value) in sweep {
                 guard let calendar = value as? [String: Any],
                       let colours = calendar["lightColors"] as? [String: String],
                       let fill = colours["container"], let ink = colours["onContainer"] else {
@@ -785,8 +789,12 @@ enum ShiftCalendarSelfTest {
 
     private static func checkScales(_ check: (Bool, String) -> Void) {
         check(ShiftCalendarScale.agenda.rawValue == "list", "Agenda is Schedule-X's open-source list view")
-        check(WorkspaceModule.calendar.children == ShiftCalendarScale.allCases.map(\.title),
-              "the Calendar module's tabs are its four views, got \(WorkspaceModule.calendar.children)")
+        // The four views are the card's own pills (tasks-calendar plan PR 4):
+        // the toolbar draws Tasks' views, the Calendar among them, and the
+        // Calendar row draws no tabs of its own.
+        check(WorkspaceModule.calendar.children.isEmpty && WorkspaceModule.tasks.children.contains("Calendar"),
+              "the calendar's views should be the card's, got Calendar \(WorkspaceModule.calendar.children) "
+              + "and Tasks \(WorkspaceModule.tasks.children)")
         for scale in ShiftCalendarScale.allCases {
             check(ShiftCalendarScale(title: scale.title) == scale, "\(scale.title) does not round-trip")
         }
@@ -794,6 +802,111 @@ enum ShiftCalendarSelfTest {
         let month = ShiftCalendarModel.range(for: ShiftDateFormatting.date(from: "2026-10-15") ?? Date(), scale: .month)
         check(agenda.start == month.start && agenda.days == month.days,
               "the agenda covers the month the month grid does")
+    }
+
+    // MARK: 9. Colour by project
+
+    static let colouringProjects: [ShiftProject] = {
+        var infra = ShiftProject.fresh()
+        infra.id = "Infra_Hardening/2026"
+        infra.name = "Infra hardening"
+        var release = ShiftProject.fresh()
+        release.id = "release-4-20"
+        release.name = ""
+        return [infra, release]
+    }()
+
+    private static func checkProjectColouring(_ check: (Bool, String) -> Void) {
+        let theme = HelmTheme.daylight
+        let projects = colouringProjects
+        let infra = projects[0]
+        func entry(project: String?, kind: ShiftCalendarEntry.Kind = .task) -> ShiftCalendarEntry {
+            ShiftCalendarEntry(taskID: "t", title: "Task", day: "2026-11-13", time: nil, projectID: project,
+                               priority: .high, isProjected: false, isCompleted: false, kind: kind)
+        }
+
+        // A safe id: Schedule-X builds CSS custom properties from it.
+        check(ShiftCalendarPalette.projectCalendarID(infra.id) == "project-infra-hardening-2026",
+              "a project's calendar id is \(ShiftCalendarPalette.projectCalendarID(infra.id))")
+        check(ShiftCalendarPalette.projectCalendarID(nil) == "project-none"
+                && ShiftCalendarPalette.projectCalendarID("") == "project-none",
+              "no project has its own calendar id")
+
+        // Which calendar a chip is drawn in.
+        check(ShiftCalendarPalette.calendarID(for: entry(project: infra.id), colouring: .priority)
+                == ShiftCalendarCategory.high.rawValue,
+              "by priority, a high task is drawn in the high category")
+        check(ShiftCalendarPalette.calendarID(for: entry(project: infra.id), colouring: .project)
+                == ShiftCalendarPalette.projectCalendarID(infra.id),
+              "by project, a task is drawn in its project's calendar")
+        check(ShiftCalendarPalette.calendarID(for: entry(project: nil), colouring: .project) == "project-none",
+              "by project, a task with no project is drawn in the No project calendar")
+        check(ShiftCalendarPalette.calendarID(for: entry(project: infra.id, kind: .followUp), colouring: .project)
+                == ShiftCalendarCategory.followUp.rawValue,
+              "a follow-up stays amber when chips are coloured by project")
+        check(ShiftCalendarPayload.event(for: entry(project: infra.id), colouring: .project)["calendarId"] as? String
+                == ShiftCalendarPalette.projectCalendarID(infra.id),
+              "the event payload names the project's calendar")
+
+        // The calendars and the legend the page gets.
+        let byPriority = ShiftCalendarPalette.calendars(for: theme, colouring: .priority, projects: projects)
+        let byProject = ShiftCalendarPalette.calendars(for: theme, colouring: .project, projects: projects)
+        check(Set(byPriority.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue)),
+              "by priority the page gets the four categories, got \(byPriority.keys.sorted())")
+        let projectIDs = projects.map { ShiftCalendarPalette.projectCalendarID($0.id) } + ["project-none"]
+        check(Set(byProject.keys) == Set(ShiftCalendarCategory.allCases.map(\.rawValue) + projectIDs),
+              "by project the page gets every project, No project and the categories, got \(byProject.keys.sorted())")
+        let legend = ShiftCalendarPalette.legend(for: theme, colouring: .project, projects: projects)
+        check(legend.map { $0["id"] ?? "" } == projectIDs + [ShiftCalendarCategory.followUp.rawValue],
+              "by project the legend is the projects, No project and Follow-up, got \(legend.map { $0["id"] ?? "" })")
+        check(legend.map { $0["label"] ?? "" } == ["Infra hardening", "Untitled project", "No project", "Follow-up"],
+              "the legend's words are \(legend.map { $0["label"] ?? "" })")
+        check(ShiftCalendarPalette.themePayload(for: theme, colouring: .project, projects: projects)["legend"]
+                as? [[String: String]] == legend,
+              "the theme payload carries the project legend")
+
+        // A project's chip is its board hue; no project is the neutral well,
+        // never a wash of page ink (AGENTS.md's `.neutral` rule).
+        let infraColours = ShiftCalendarPalette.projectColours(infra.id, theme: theme)
+        check(infraColours["main"]?.uppercased()
+                == "#" + ShiftProjectPalette.tint(forProjectID: infra.id).hex(in: theme).uppercased(),
+              "a project's chip edge is its board hue, got \(infraColours["main"] ?? "nil")")
+        for palette in HelmTheme.appThemes {
+            let none = ShiftCalendarPalette.projectColours(nil, theme: palette)
+            let inkWash = ShiftCalendarPalette.colours(tintHex: palette.chromeInkHex, theme: palette)
+            check(none["container"] != inkWash["container"],
+                  "\(palette.id): a task with no project is drawn as a wash of page ink")
+            if let fill = none["container"] {
+                let card = HelmTheme.nsColor(palette.chromeBackgroundHex)
+                let ratio = HelmContrast.ratio(HelmTheme.nsColor(String(fill.dropFirst())), card)
+                check(ratio < 1.6, "\(palette.id): the No project chip measures \(String(format: "%.2f", ratio)):1 "
+                      + "on its card - heavier than the neutral well")
+            }
+        }
+
+        // The tray's row edges follow the colouring too.
+        var tray = ShiftCalendarTray()
+        tray.groups = [.init(projectID: infra.id, title: infra.name,
+                             items: [ShiftCalendarTrayItem(id: "u", kind: .task, title: "Undated", priority: .high,
+                                                           projectID: infra.id)])]
+        let payload = ShiftCalendarPayload.tray(tray, projectNames: [infra.id: infra.name], theme: theme,
+                                                collapsed: false, colouring: .project)
+        let edge = ((payload["groups"] as? [[String: Any]])?.first?["items"] as? [[String: Any]])?.first?["edge"] as? String
+        check(edge == infraColours["main"], "by project a tray row's edge is its project's hue, got \(edge ?? "nil")")
+
+        // The choice is remembered, and priority is the default.
+        let defaults = AppDefaults.store
+        let saved = defaults.object(forKey: ShiftCalendarColouring.defaultsKey)
+        defer {
+            if let saved { defaults.set(saved, forKey: ShiftCalendarColouring.defaultsKey) }
+            else { defaults.removeObject(forKey: ShiftCalendarColouring.defaultsKey) }
+        }
+        defaults.removeObject(forKey: ShiftCalendarColouring.defaultsKey)
+        check(ShiftCalendarColouring.saved == .priority, "an unset colouring reads as priority")
+        defaults.set("project", forKey: ShiftCalendarColouring.defaultsKey)
+        check(ShiftCalendarColouring.saved == .project, "a saved project colouring reads back")
+        defaults.set("rainbow", forKey: ShiftCalendarColouring.defaultsKey)
+        check(ShiftCalendarColouring.saved == .priority, "an unknown colouring falls back to priority")
     }
 
     // MARK: Helpers

@@ -113,11 +113,11 @@ enum ReviewTourLab {
         /// Render Home's whole scroll document, not just the window - what a
         /// page that overflows really holds below the fold.
         case renderDoc(String)
-        /// Switch the Tasks page to `board`, `list` or `review` through its
-        /// own segmented control.
+        /// Switch the Tasks page to `board`, `list`, `calendar` or `review`
+        /// through its own segmented control.
         case tasksView(String)
-        /// Put the Calendar page in `month`, `week`, `day` or `agenda`,
-        /// through the same path its toolbar tab takes. Give it a `wait`
+        /// Show Tasks' Calendar view in `month`, `week`, `day` or `agenda`,
+        /// through the same path its card's pills take. Give it a `wait`
         /// before the next `render`: the page is async.
         case calendarView(ShiftCalendarScale)
         /// Put one top-bar square into a state a click or a pointer would:
@@ -630,7 +630,8 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("tasks \(id)")
             case .calendarView(let scale):
-                shell.workspace.calendar.selectModuleTab(named: scale.title)
+                shell.workspace.shift.selectModuleTab(named: "Calendar")
+                shell.workspace.shift.calendar.debugCalendarView.show(scale: scale)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("calendar \(scale.title.lowercased())")
             case .barState(let state, let target):

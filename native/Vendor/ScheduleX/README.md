@@ -8,7 +8,7 @@ Their licence texts ship inside the bundle as `web/THIRD-PARTY-LICENSES.txt`, wh
 ## Why Schedule-X, and why vendored
 
 **Schedule-X, specifically.** This was the captain's choice, after the open-source calendar options review proposed it as the most modern option for what was then Tasks › Calendar.
-The calendar is its own sidebar page now (`TaskCalendarController`).
+It is Tasks' Calendar view (`TaskCalendarController`), which the Calendar sidebar row opens.
 It gives month, week, day and list (Agenda) views, today's highlight, a now-line and drag and drop, and it themes itself through CSS variables, which is what lets it follow the app theme.
 
 **Embedded, not reimplemented.** The previous calendar was a hand-drawn AppKit month and week grid.

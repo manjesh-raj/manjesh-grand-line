@@ -1,8 +1,8 @@
 // Grand Line - native macOS app.
 //
-// The Calendar's page half: a real `TaskCalendarController` over a scratch
-// store, in a real window, with the real vendored Schedule-X page loaded in a
-// real `WKWebView`.
+// The Calendar's page half: a real `TaskCalendarController` (Tasks' Calendar
+// view, mounted on its own here) over a scratch store, in a real window, with
+// the real vendored Schedule-X page loaded in a real `WKWebView`.
 //
 // Everything here is read back from the page's own DOM, never from what the
 // native side believes it sent:
@@ -23,8 +23,10 @@
 //   - a projection cannot be dragged, whatever the DOM is persuaded to do;
 //   - a click on an event reaches `onOpenTask` with the task's id, and a
 //     follow-up's reaches `onOpenFollowUp`, and a drag moves its own date;
-//   - a pill in the card and the toolbar's tab are one path: either moves
-//     the other, and Agenda is the open-source list view;
+//   - a pill in the card and `show(scale:)` are one path: either moves the
+//     other, and Agenda is the open-source list view;
+//   - the Tasks page's filters reach the calendar (`taskFilter`), and
+//     colouring by project paints each chip in its project's calendar;
 //   - the card's own Next button pages, and paging re-reads the store;
 //   - the page's CSS variables follow a live theme change, light and dark;
 //   - hiding the page suspends it, and hiding it at zero width then showing
@@ -85,8 +87,6 @@ enum ShiftCalendarViewSelfTest {
             defer { window.orderOut(nil) }
             let view = controller.debugCalendarView
             let web = view.debugWebView
-            var tabChanges = 0
-            controller.onModuleTabChanged = { tabChanges += 1 }
 
             // MARK: Lazy until shown
 
@@ -224,14 +224,10 @@ enum ShiftCalendarViewSelfTest {
 
             // MARK: A real week-view drag moves the time
 
-            // The card's own Week pill: the native side, and so the toolbar,
-            // follow it.
-            let changesBefore = tabChanges
+            // The card's own Week pill: the native side follows it.
             _ = js(web, "document.querySelector('#gl-views [data-view=\"week\"]').click()")
             _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "week" && view.scale == .week }
-            check(view.scale == .week && controller.selectedModuleTabName == "Week",
-                  "the native side should follow the Week pill, got \(view.scale)")
-            check(tabChanges > changesBefore, "the toolbar should hear the page switched view")
+            check(view.scale == .week, "the native side should follow the Week pill, got \(view.scale)")
             check(state(web)["activePill"] as? String == "week", "the Week pill should be the filled one")
             _ = waitFor(timeout: 3) {
                 (js(web, "!!document.querySelector('.sx__time-grid-event[data-event-id=\"\(repeating)\"]')") as? Bool) == true
@@ -257,19 +253,19 @@ enum ShiftCalendarViewSelfTest {
                   "next week should carry the daily rule's projections")
             check(state(web)["title"] as? String != weekTitle, "the card's title should follow the new week")
 
-            // MARK: The toolbar's Agenda tab
+            // MARK: Agenda from the native side
 
-            controller.selectModuleTab(named: "Agenda")
+            view.show(scale: .agenda)
             _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "list" }
             check(state(web)["view"] as? String == "list" && state(web)["activePill"] as? String == "list",
-                  "the Agenda tab should show Schedule-X's list view with its pill filled")
+                  "Agenda should show Schedule-X's list view with its pill filled")
             _ = js(web, "document.getElementById('gl-today').click()")
             _ = waitFor(timeout: 3) {
                 (js(web, "document.querySelectorAll('.sx__list-event').length") as? Int ?? 0) > 0
             }
             check((js(web, "document.querySelectorAll('.sx__list-event').length") as? Int ?? 0) > 0,
                   "the agenda should list this month's records")
-            controller.selectModuleTab(named: "Month")
+            view.show(scale: .month)
             _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "month-grid" }
             _ = call(web, "showDate", ["date": todayDay])
 
@@ -338,7 +334,7 @@ enum ShiftCalendarViewSelfTest {
             let back = state(web)
             check(back["view"] as? String == "month-grid",
                   "hiding and showing the calendar should keep the month, the page shows \(back["view"] ?? "nil")")
-            check(view.scale == .month && controller.selectedModuleTabName == "Month",
+            check(view.scale == .month,
                   "hiding and showing the calendar should keep the native scale on the month, got \(view.scale)")
 
             // The page reports, the native side decides: a range report naming
@@ -372,7 +368,7 @@ enum ShiftCalendarViewSelfTest {
             // Read before the page's own confirmation arrives: that is the
             // window the toolbar check fell into, and the confirmation would
             // otherwise put the scale right again and hide the defect.
-            check(view.scale == .agenda && controller.selectedModuleTabName == "Agenda",
+            check(view.scale == .agenda,
                   "a stale view report pulled the scale back to \(view.scale)")
             _ = waitFor(timeout: 5) { state(web)["view"] as? String == "list" }
             check(view.scale == .agenda, "after the page confirmed, the scale is \(view.scale)")
@@ -396,8 +392,7 @@ enum ShiftCalendarViewSelfTest {
             check((js(web, "!!\(moreButton)") as? Bool) == true, "five tasks on one day should draw a \"+N more\" button")
             _ = js(web, "\(moreButton).click()")
             _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "day" && view.scale == .day }
-            check(state(web)["view"] as? String == "day" && view.scale == .day
-                    && controller.selectedModuleTabName == "Day",
+            check(state(web)["view"] as? String == "day" && view.scale == .day,
                   "\"+N more\" should open the day on both sides, got \(state(web)["view"] ?? "nil") / \(view.scale)")
 
             _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
@@ -460,7 +455,7 @@ enum ShiftCalendarViewSelfTest {
               "an undated-only store should show the first-run state over the grid, got \(first)")
         check(!view.debugCaption.contains("Nothing scheduled") && view.debugCaption.contains("2 open tasks"),
               "the caption should count the open tasks, not say nothing is scheduled, got \"\(view.debugCaption)\"")
-        check(controller.drillHeaderSubtitle == view.debugCaption, "the drill header states the same caption")
+        check(controller.caption == view.debugCaption, "the controller states the same caption the Tasks header carries")
         // The tray takes room from the card rather than covering it.
         let geometry = js(web, "(() => { const c = document.getElementById('gl-card').getBoundingClientRect();"
                           + " const t = document.getElementById('gl-tray').getBoundingClientRect();"
@@ -534,6 +529,50 @@ enum ShiftCalendarViewSelfTest {
                         + " return el ? el.classList.contains('gl-completed') : null })()") as? Bool
         check(struck == true, "a finished task is drawn as finished")
         _ = call(web, "showDate", ["date": todayDay])
+
+        // MARK: Colour by project
+
+        // The Tasks page's Colour by: the legend becomes the store's
+        // projects, No project and Follow-up, and a chip with no project is
+        // drawn in the neutral calendar rather than its priority's.
+        let colouringBefore = defaults.object(forKey: ShiftCalendarColouring.defaultsKey)
+        defer {
+            if let colouringBefore { defaults.set(colouringBefore, forKey: ShiftCalendarColouring.defaultsKey) }
+            else { defaults.removeObject(forKey: ShiftCalendarColouring.defaultsKey) }
+        }
+        let byProject = [ShiftCalendarPalette.projectCalendarID(infra.id), ShiftCalendarPalette.projectCalendarID(nil),
+                         ShiftCalendarCategory.followUp.rawValue]
+        controller.setColouring(.project)
+        _ = waitFor(timeout: 5) { state(web)["legend"] as? [String] == byProject }
+        check(state(web)["legend"] as? [String] == byProject,
+              "coloured by project, the legend should name the projects, got \(state(web)["legend"] ?? "nothing")")
+        _ = waitFor(timeout: 5) {
+            (state(web)["chipEdges"] as? [String] ?? []).contains { $0.contains(ShiftCalendarPalette.projectCalendarID(nil)) }
+        }
+        let projectEdges = state(web)["chipEdges"] as? [String] ?? []
+        check(projectEdges.contains { $0.contains(ShiftCalendarPalette.projectCalendarID(nil)) }
+                && !projectEdges.contains { $0.contains(ShiftCalendarCategory.normal.rawValue) },
+              "a task with no project should be drawn in the No project colour, got \(projectEdges)")
+        check(ShiftCalendarColouring.saved == .project, "the colouring should be remembered across launches")
+        controller.setColouring(.priority)
+        _ = waitFor(timeout: 5) { state(web)["legend"] as? [String] == ShiftCalendarCategory.allCases.map(\.rawValue) }
+        check(state(web)["legend"] as? [String] == ShiftCalendarCategory.allCases.map(\.rawValue),
+              "back to priority, the legend names the categories again, got \(state(web)["legend"] ?? "nothing")")
+
+        // MARK: The Tasks page's filters
+
+        // `taskFilter` is how the page's scope and project reach the
+        // calendar: a filter that keeps only Infra's tasks takes the dated
+        // runbook off today and leaves Infra's undated task in the tray.
+        controller.taskFilter = { $0.projectID == infra.id }
+        controller.render()
+        _ = waitFor(timeout: 5) { !eventIn(web, id: runbook, day: todayDay) }
+        check(!eventIn(web, id: runbook, day: todayDay), "a task the filter drops should leave the grid")
+        check(state(web)["trayRows"] as? [String] == [audit],
+              "the tray should keep only what the filter keeps, got \(state(web)["trayRows"] ?? "nothing")")
+        controller.taskFilter = { _ in true }
+        controller.render()
+        _ = waitFor(timeout: 5) { eventIn(web, id: runbook, day: todayDay) }
 
         _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
         check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) tray bridge call(s) never got a reply")

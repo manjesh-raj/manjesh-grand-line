@@ -23,8 +23,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     let store: ShiftStore
 
-    private let scroll = NSScrollView()
-    private let contentStack = NSStackView()
+    /// Internal rather than private for `ShiftController+Calendar.swift`,
+    /// the same family (GL-36).
+    let scroll = NSScrollView()
+    let contentStack = NSStackView()
 
     /// GL-16: see `UpdatesController.checkAllPill` - a clear-coloured
     /// `HoverHighlightView` renders identically to the plain `NSView` this
@@ -104,7 +106,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// page keeps its own enum.
     enum ShiftTopLevelView: String { case dashboard, weeklyReview }
     var topLevelView: ShiftTopLevelView = .dashboard
-    private let dashboardContainer = NSStackView()
+    let dashboardContainer = NSStackView()
     private let weeklyReviewContainer = NSStackView()
 
     // MARK: The board (fm/grandline-tasks-kanban-devops-split)
@@ -121,17 +123,21 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// `String`-backed for the same reason `ShiftTopLevelView` is:
     /// `HelmSegmentedTabs` deals in caller-owned ids.
     ///
-    /// F5 added a third, a calendar, and the captain later moved it out to a
-    /// sidebar row of its own (`TaskCalendarController`), so it answers "when
-    /// does this land" from one place rather than from a tab here and a page
-    /// there.
-    private enum ShiftTasksView: String { case board, list }
-    private var tasksView: ShiftTasksView = .board
-    /// UI-15: the page's **one** view switcher - Board, List and Review. There used to be two on one row (My Tasks / Weekly Review on
+    /// The third is the calendar (`TaskCalendarController`, embedded by
+    /// `ShiftController+Calendar.swift`). F5 put it here, the captain moved
+    /// it to a sidebar row of its own, and the tasks-calendar plan's PR 4
+    /// brought it back as this view with that row as its door, so it shares
+    /// the page's filters, project picker and New task rather than having
+    /// none (`docs/history/34-recurrence-and-calendar.md`).
+    enum ShiftTasksView: String { case board, list, calendar }
+    private(set) var tasksView: ShiftTasksView = .board
+    /// UI-15: the page's **one** view switcher - Board, List, Calendar and
+    /// Review. There used to be two on one row (My Tasks / Weekly Review on
     /// the left, Board / List / Calendar on the right), which is two answers
     /// to "what am I looking at". Weekly Review is the fourth view now; it
     /// keeps its Shift-menu item and its ⌘K entry, both of which call
-    /// `showWeeklyReview()`.
+    /// `showWeeklyReview()`. The calendar's Day, Week, Month and Agenda are
+    /// its card's own pills, not a second switcher here.
     private static let reviewViewID = "review"
     /// The sidebar layout's toolbar draws these four views as Tasks' tabs
     /// (`ModuleTabHosting`, at the end of this file).
@@ -139,13 +145,28 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let viewTabs = HelmSegmentedTabs(items: [
         .init(id: ShiftTasksView.board.rawValue, title: "Board"),
         .init(id: ShiftTasksView.list.rawValue, title: "List"),
+        .init(id: ShiftTasksView.calendar.rawValue, title: "Calendar"),
         .init(id: ShiftController.reviewViewID, title: "Review"),
     ], selected: ShiftTasksView.board.rawValue)
 
+    // MARK: The Calendar view (tasks-calendar plan PR 4)
+
+    /// Tasks' Calendar view, built the first time it shows
+    /// (`ShiftController+Calendar.swift`).
+    lazy var calendar: TaskCalendarController = makeCalendar()
+    /// The calendar's place in the page, under the filter row. Arranged in
+    /// the dashboard the first time the view shows.
+    let calendarSection = NSView()
+    /// The section's height: the visible height under the filter row
+    /// (`applyCalendarHeight`).
+    var calendarHeightTie: NSLayoutConstraint?
+    /// The Colour by control, beside the filters while the calendar shows.
+    lazy var colourControl: NSStackView = makeColourControl()
+
     /// The toolbar's quiet right-hand pair: how lanes and the list are
     /// sorted, and the Done lane's window stated once (UI-29).
-    private let sortPopup = HelmPopUpButton()
-    private let doneWindowNote = NSTextField(labelWithString: "Done \u{00B7} last 7 days")
+    let sortPopup = HelmPopUpButton()
+    let doneWindowNote = NSTextField(labelWithString: "Done \u{00B7} last 7 days")
 
     /// Which slice of the captain's tasks the page is showing - the sidebar's
     /// Workspace and Smart views rows.
@@ -275,7 +296,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// carries its constraints (AGENTS.md gotcha (11)), so the gap it leaves
     /// would stay behind it.
 
-    private let boardSection = NSStackView()
+    let boardSection = NSStackView()
 
     /// UI-31 / GL-14: a task file that failed to parse is a stated failure
     /// naming the file and the line, never "0 open tasks" over empty lanes.
@@ -469,7 +490,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// (`adoptSidebarLayout`). The floating bar never sets it.
     private(set) var drawsSidebarLayout = false
     /// The page column's filters, as one row under the header.
-    private let workspaceFilterRow = NSStackView()
+    let workspaceFilterRow = NSStackView()
     private lazy var scopeFilter: HelmSegmentedTabs = {
         let tabs = HelmSegmentedTabs(items: ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                      selected: ShiftTaskScope.all.rawValue, size: .compact)
@@ -682,7 +703,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         NSLayoutConstraint.activate([
             contentLeading,
             contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: Self.contentTopInset),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s5),
             dashboardContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             tasksRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -873,7 +894,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         store.reloadAllAsync { [weak self] in self?.render() }
     }
 
-    private func scrollToTop() {
+    func scrollToTop() {
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }
@@ -986,7 +1007,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         if store.isInFailedLoadState { return "Task list could not be read" }
         // R2-UX-07: four zeros said nothing a "start here" state does not say
         // better.
-        if showsStartHere { return "No tasks yet" }
+        if showsStartHere, !isShowingCalendar { return "No tasks yet" }
+        // On the Calendar view the header states what the calendar shows: the
+        // visible period's count, its repeats, and the unscheduled and
+        // overdue work beside it (GL-14).
+        if isShowingCalendar { return calendarSubtitle }
         let c = counts()
         let parts = [
             "\(c.open) open",
@@ -1275,8 +1300,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     private func switchTasksView(_ view: ShiftTasksView) {
+        let wasCalendar = tasksView == .calendar
         tasksView = view
         viewTabs.select(view.rawValue)
+        if view == .calendar {
+            embedCalendarIfNeeded()
+            // The calendar fills the page under the filter row, so a board
+            // scrolled down would otherwise open it part-way off screen.
+            if !wasCalendar { scrollToTop() }
+        }
+        applyTabRowAccessories()
         render()
         onModuleTabChanged?()
     }
@@ -1363,7 +1396,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// Both filters at once - every surface that shows tasks runs through this
     /// one predicate rather than remembering to apply two.
-    private func matchesFilters(_ task: ShiftTask) -> Bool {
+    func matchesFilters(_ task: ShiftTask) -> Bool {
         matchesProjectFilter(task) && matchesScope(task)
     }
 
@@ -1600,7 +1633,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [viewTabs, spacer, sortPopup, doneWindowNote])
+        colourControl.isHidden = true
+        let row = NSStackView(views: [viewTabs, spacer, sortPopup, doneWindowNote, colourControl])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = HelmMetrics.s4
@@ -1613,7 +1647,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     /// Held so `switchTopLevelView` can size it.
-    private var topToolbar: NSStackView?
+    var topToolbar: NSStackView?
     /// The review's width tie to the page, active only while it shows.
     private var weeklyReviewWidthTie: NSLayoutConstraint?
 
@@ -1631,8 +1665,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         dashboardContainer.isHidden = view != .dashboard
         weeklyReviewContainer.isHidden = view != .weeklyReview
         if view != .weeklyReview { weeklyReviewWidthTie?.isActive = false }
-        sortPopup.isHidden = view != .dashboard
-        doneWindowNote.isHidden = view != .dashboard
+        applyTabRowAccessories()
         // The column's rows are all about the task board, so it goes with it.
         // Both halves are needed: hiding the view alone would leave its gap
         // behind, since an ordinary hidden `NSView` keeps its constraints.
@@ -1642,6 +1675,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         applyContentLeadingInset()
         if drawsSidebarLayout { workspaceFilterRow.isHidden = view != .dashboard || isProjectDetailFullPage }
         if view == .weeklyReview { renderWeeklyReview() }
+        applyCalendarVisibility()
         applyTheme()
         onModuleTabChanged?()
     }
@@ -1912,6 +1946,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         renderProjectsSection()
         if topLevelView == .weeklyReview { renderWeeklyReview() }
         if drawsSidebarLayout { renderWorkspaceChrome() }
+        // The calendar redraws only while it shows; switching to it renders it.
+        if isShowingCalendar { calendar.render() }
 
         applyTheme()
     }
@@ -1937,7 +1973,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Whether the project detail currently owns the whole page - the board
     /// and the task panel both have to stay hidden while it does, whichever
     /// way the Board/List toggle happens to be set.
-    private var isProjectDetailFullPage = false
+    private(set) var isProjectDetailFullPage = false
 
     /// Board mode hides the flat task panel and shows the board; list mode is
     /// this page's original layout exactly. `taskPanel` is a *hidden arranged
@@ -1950,8 +1986,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         applyFailedReadState()
         let failed = store.isInFailedLoadState && !isProjectDetailFullPage
         let boardShowing = !isProjectDetailFullPage && !failed && tasksView == .board
+        let calendarShowing = !isProjectDetailFullPage && !failed && tasksView == .calendar
         boardSection.isHidden = !boardShowing
-        let hideTasks = isProjectDetailFullPage || failed || boardShowing
+        applyCalendarVisibility()
+        let hideTasks = isProjectDetailFullPage || failed || boardShowing || calendarShowing
         taskPanel.isHidden = hideTasks
         // The *column wrapper*, not just the panel inside it. `tasksRow` is
         // `.fillEqually`, and a visible-but-empty column still claims its
@@ -1959,6 +1997,14 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // against a blank left half in board mode (caught in a real render,
         // not by reading the constraints).
         tasksLeftColumn?.isHidden = hideTasks
+        if !drawsSidebarLayout {
+            // The calendar fills the page under the tab row; Follow-ups and
+            // Projects are the board's and the list's company.
+            // The Projects section is also what a project's detail hides
+            // (`applyProjectDetailFullPage`), so it stays hidden for that too.
+            followUpsRow?.isHidden = calendarShowing
+            projectsSectionView?.isHidden = calendarShowing || isProjectDetailFullPage
+        }
         if drawsSidebarLayout {
             // The table is the List tab; the floating bar's My Tasks card
             // and its column are not drawn, so Follow-ups spans the row.
@@ -1968,8 +2014,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             workspaceFilterRow.isHidden = isProjectDetailFullPage || topLevelView != .dashboard
             // R2-UX-07: an empty Tasks page was three empty states (the
             // board's lanes, Follow-ups and Projects) under a filter row of
-            // zeros. With nothing at all it is one invitation instead.
-            let startHere = showsStartHere && !failed && !isProjectDetailFullPage
+            // zeros. With nothing at all it is one invitation instead. The
+            // calendar is the exception: an empty month is still the
+            // calendar the captain opened, and a double-click on a day there
+            // adds the first task.
+            let startHere = showsStartHere && !failed && !isProjectDetailFullPage && !calendarShowing
             startHereState.isHidden = !startHere
             if startHere {
                 for view in [boardSection, tasksTable.card, workspaceFilterRow] + startHereReplaces {
@@ -1983,9 +2032,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
                 let board = tasksView == .board && !isProjectDetailFullPage && !failed
                 let laneOnBoard = board && boardFitsFollowUpLane
                 boardView.trailingLaneShown = laneOnBoard
-                followUpsRow?.isHidden = laneOnBoard
-                projectsSectionView?.isHidden = board
-                followUpsJumpWanted = !laneOnBoard
+                // The calendar draws follow-ups on their day and fills the
+                // page, so neither card sits under it.
+                followUpsRow?.isHidden = laneOnBoard || calendarShowing
+                projectsSectionView?.isHidden = board || calendarShowing
+                followUpsJumpWanted = !laneOnBoard && !calendarShowing
                 fitFilterRow()
             }
         }
@@ -2445,7 +2496,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// header's "+" button (cockpit-fix-shift-new-project).
     func presentNewProjectEditor() { presentProjectEditor() }
 
-    @objc private func newTaskClicked() { presentTaskEditor(for: nil) }
+    /// On the Calendar view, New task is dated to the day the calendar shows.
+    @objc private func newTaskClicked() {
+        if isShowingCalendar { newTaskOnCalendar() } else { presentTaskEditor(for: nil) }
+    }
     @objc private func newFollowUpClicked() { presentFollowUpEditor(for: nil) }
     @objc private func newProjectClicked() { presentProjectEditor() }
 
@@ -2746,6 +2800,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
         viewTabs.applyTheme(theme)
         doneWindowNote.textColor = muted
+        paintColourControl(theme)
         sidebar.applyTheme(theme)
         boardView.applyTheme(theme)
         followUpLane.applyTheme(theme)
@@ -2861,22 +2916,25 @@ enum ShiftSyncPresentation {
 // MARK: - Tasks' tabs in the sidebar layout
 
 extension ShiftController: ModuleTabHosting {
-    var moduleTabNames: [String] { ["Board", "List", "Weekly review"] }
+    var moduleTabNames: [String] { ["Board", "List", "Calendar", "Weekly review"] }
 
     var selectedModuleTabName: String {
         guard topLevelView == .dashboard else { return "Weekly review" }
         switch tasksView {
         case .board: return "Board"
         case .list: return "List"
+        case .calendar: return "Calendar"
         }
     }
 
     /// Through the view switcher's own handler, so a toolbar click and a click
-    /// on the page's pill are one path.
+    /// on the page's pill are one path. "Calendar" is also where the Calendar
+    /// sidebar row and the toolbar's calendar button land (`ModuleTable.landing(for:)`).
     func selectModuleTab(named name: String) {
         switch name {
         case "Weekly review": viewTabs.onSelect?(Self.reviewViewID)
         case "List": viewTabs.onSelect?(ShiftTasksView.list.rawValue)
+        case "Calendar": viewTabs.onSelect?(ShiftTasksView.calendar.rawValue)
         default: viewTabs.onSelect?(ShiftTasksView.board.rawValue)
         }
     }
@@ -2977,9 +3035,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         projectPopup.setAccessibilityLabel("Project")
         projectPopup.setContentHuggingPriority(.required, for: .horizontal)
         followUpsJump.setContentHuggingPriority(.required, for: .horizontal)
-        // The sort and the Done window move here from the tab row the
-        // toolbar's tabs replaced.
-        for view in [sortPopup, doneWindowNote] as [NSView] {
+        // The sort, the Done window and the calendar's Colour by move here
+        // from the tab row the toolbar's tabs replaced.
+        for view in [sortPopup, doneWindowNote, colourControl] as [NSView] {
             view.removeFromSuperview()
         }
         let spacer = NSView()
@@ -3004,6 +3062,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup, doneWindowNote] as [NSView] {
             workspaceFilterRow.addArrangedSubview(view)
         }
+        // The calendar's Colour by, at the trailing end where the sort sits
+        // on Board and List (`fitFilterRow` shows one or the other).
+        workspaceFilterRow.addArrangedSubview(colourControl)
         workspaceFilterRow.orientation = .horizontal
         workspaceFilterRow.alignment = .centerY
         workspaceFilterRow.spacing = HelmMetrics.s3
@@ -3055,11 +3116,21 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// the Done window's note move into its menu. Measured from the expanded controls' fitting
     /// widths whichever form shows, so it cannot flip back and forth.
     fileprivate func fitFilterRow() {
-        let available = workspaceFilterRow.bounds.width
+        // The row is tied to the content column's width, and the column
+        // takes a new width before the row is laid out to it - the column's
+        // own frame change is what runs this. Reading the row measured the
+        // width it had a moment ago: on a first visit zero, which left the
+        // previous view's controls up, and after a narrowing the old width,
+        // so a row that no longer fitted did not collapse (both caught in
+        // tour-lab renders of the Calendar view).
+        let available = contentStack.bounds.width
         guard drawsSidebarLayout, available > 0 else { return }
-        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, doneWindowNote]
+        let calendarShowing = tasksView == .calendar
+        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, doneWindowNote, colourControl]
             .filter { view in
-                view === projectPopup || view === sortPopup || view === scopeFilter
+                view === projectPopup || view === scopeFilter
+                    || (view === sortPopup && !calendarShowing)
+                    || (view === colourControl && calendarShowing)
                     || (view === followUpsJump && followUpsJumpWanted)
                     || (view === doneWindowNote && tasksView == .board)
             }
@@ -3071,10 +3142,11 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         // another layout pass, and this runs from `viewDidLayout`.
         let wanted: [(NSView, Bool)] = [
             (projectPopup, collapse),
-            (sortPopup, collapse || topLevelView != .dashboard),
+            (sortPopup, collapse || topLevelView != .dashboard || calendarShowing),
             (filterMenuButton, !collapse),
             (followUpsJump, collapse || !followUpsJumpWanted),
             (doneWindowNote, collapse || tasksView != .board || topLevelView != .dashboard),
+            (colourControl, collapse || !calendarShowing || topLevelView != .dashboard),
         ]
         for (view, hidden) in wanted where view.isHidden != hidden { view.isHidden = hidden }
     }
@@ -3111,6 +3183,17 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        // The calendar is drawn by date, so its menu offers what its chips
+        // are coloured by instead of a sort.
+        if tasksView == .calendar {
+            header("Colour by")
+            for colouring in ShiftCalendarColouring.allCases {
+                let item = ShiftLaneMenuItem(title: colouring.title) { [weak self] in self?.setCalendarColouring(colouring) }
+                item.state = colouring == calendarColouring ? .on : .off
+                menu.addItem(item)
+            }
+            return menu
+        }
         header("Sort by")
         for index in 0..<sortPopup.numberOfItems {
             guard let source = sortPopup.item(at: index) else { continue }

@@ -555,16 +555,10 @@ enum DestinationMountingSelfTest {
     /// this case exists to catch. Adding body chrome purely to clear a floor
     /// would be worse than a documented exception.
     ///
-    /// `.calendar` is a fourth, for `.whiteboard`'s reason: its body is one
-    /// `WKWebView` holding the Schedule-X card, whose title, view pills,
-    /// weekday row, day numbers and legend are all page text. Its one native
-    /// label is the period's caption ("Nothing scheduled this month." on an
-    /// empty store), which the floating bar's drill header shows and the
-    /// sidebar layout's heading row draws. `ShiftCalendarViewSelfTest` reads
-    /// the page's own text back from its DOM, which is where that check
-    /// belongs.
+    /// (`.calendar` was a fourth while it was a page of its own. It is Tasks'
+    /// Calendar view now, so it shows the Tasks page and clears the general
+    /// floor.)
     private static let minNonEmptyLabelsOverride: [RailDestination: Int] = [
-        .calendar: 1,
         .docs: 3,
         .postmortems: 1,
         .whiteboard: 2,

@@ -596,3 +596,96 @@ Confirmed to fail by injection:
 - The task editor still writes a time for every due date, so a date-only task saved through the sheet becomes `00:00`.
   PR 5's "All day or At a time" row is the fix for that.
 - The conflict UI's field list shows neither a task's nor a follow-up's reminder offset, as before.
+
+## One Tasks surface: the Calendar is Tasks' view again, and its row is a door (tasks-calendar plan PR 4, `fm/grand-line-calendar-pr4-one-tasks-surface`)
+
+The captain chose decision 1A of the tasks-calendar plan: one Tasks surface with two doors.
+The Calendar page had none of the Tasks page's filters, its project picker or its New task, so a filter set on Board was lost on the way to the calendar.
+This PR makes the calendar Tasks' third view again and keeps the sidebar row the captain asked for, as a way in rather than a second page.
+
+### What shipped
+
+- **Tasks' views are Board, List, Calendar and Weekly review**, in the toolbar and in the floating bar's switcher.
+  `TaskCalendarController` is a child controller the Tasks page embeds under its filter row (`ShiftController+Calendar.swift`), not more of the 3,500-line page (GL-36).
+  It lost its own header, its New task button and its toolbar tabs.
+- **Two doors.** The Calendar sidebar row, the toolbar's calendar button, the Go menu's ⌘0, ⌘K, Recents, a notification and a saved session all land on Tasks' Calendar view.
+  The crumb, the tabs and the header are Tasks'.
+  The Calendar row is lit while that view shows, and the Tasks row on the other views.
+- **Shared filters and tray.** The scope (All tasks, Due today, Overdue, My priorities, Recently updated) and the project picker run through the same `matchesFilters` the board uses, so they apply to the grid, the finished tasks of past months, the Unscheduled tray and the caption.
+  Follow-ups take the project filter, as the board's Follow-ups lane does.
+- **The header's line on the Calendar view is the calendar's caption**, after the project when one is picked.
+- **New task and ⌘N on the Calendar view** date the task to the day on screen, as the old page's New task did.
+- **Day, Week, Month and Agenda are the card's own pills**, the one switcher for the period.
+- **Colour by Priority or Project**, beside the filters while the calendar shows and in the Filter menu when the row collapses.
+  Remembered in `fm.calendar.colourBy`.
+  By project, each project is its own Schedule-X calendar in the board's project hue, and a task with no project is the neutral field fill with ink text, never a wash of page ink.
+  The legend becomes the projects, No project and Follow-up, and a follow-up stays amber.
+
+### Decisions
+
+- **`RailDestination.calendar` stays as a route.** ⌘K, Recents, notifications and saved sessions address it, so removing it would have turned every saved "calendar" into Home.
+  Its `ModuleTable` row now says it lives in Tasks › Calendar and names the Calendar row as its `door`.
+  `ModuleTable.landing(for:)` turns the route into the Tasks page plus its Calendar tab, and `Navigator.show` lands it there.
+  Its slot is the Tasks page's, so `DestinationSlotID.calendar` is gone.
+- **The lit row is one mapping**, `ModuleTable.sidebarModule(for:pageTab:)`, as the plan's risk table asked.
+  The sidebar asks it with the page's current tab, and a hidden Calendar row falls back to lighting Tasks.
+- **The Tasks row reopens Board or List after a Calendar visit**, not the Calendar.
+  The shell does not record a door's tab as the module's last tab, because clicking Tasks and seeing the Calendar row light up reads as the wrong click.
+- **The Tasks route means Tasks, not its Calendar view.** ⌘K's "Switch to Tasks", Home's Tasks card or a notification arriving while the page was last on the Calendar lands on Tasks' first view with the Tasks row lit.
+  `Navigator.show` decides it, so a route lights the row it names whichever entry point used it.
+  The full local run found this: `ReviewTwoUXSelfTest` opened `.shift` on an empty store after the route sweep had left Tasks on its Calendar view, and got the calendar instead of the start-here state.
+- **One Go menu item.** Tasks' Calendar tab is left to the Calendar row (⌘0), and comes back under Tasks when the row is hidden.
+  ⌘1 to ⌘9 and ⌘3 for Crew are unchanged.
+- **Hiding the Calendar row hides the route in ⌘K**, and hiding Tasks does not (`hidesPage` asks the door).
+- **The calendar fills the column under the filter row.**
+  Its section's height is tied to the clip view's at priority 490, under the window's hold on its size (gotcha (13)), so a short window scrolls the page instead of squeezing the month below `ShiftCalendarView.minimumHeight`.
+  The tie is released while another view shows, because a hidden view keeps its constraints (gotcha (15)).
+- **An empty store shows the calendar, not the start-here state**, on the Calendar view only.
+  An empty month is still what the captain opened, and a double-click on a day adds the first task.
+- **The calendar no longer observes the store itself.** The Tasks page already re-renders on a store change (REL-02) and renders the calendar while it shows.
+
+### What the renders found
+
+Tour-lab renders of Tasks › Calendar at 1512 × 920 in Daylight and Dusk, of Board, and of the Calendar at 1100 × 820.
+Two defects were found that way and fixed before the PR, both in `fitFilterRow`:
+
+- On the first visit the filter row showed the Board's sort instead of Colour by.
+- After narrowing the window to 1100 the row ran past the page's edge instead of collapsing into Filter.
+
+Both came from reading the row's own width, which lags the content column's by one layout pass.
+`fitFilterRow` runs from the column's frame change, so it now measures the column, which the row is tied to.
+
+The full local run then found one more: in the floating bar, a project's detail showed the Projects grid behind it, because the Calendar view's hiding of that section also un-hid it.
+`DaylightDrillPageSelfTest` caught it, and the section now stays hidden for a project's detail.
+
+One pre-existing defect is left for a follow-up: at 1100pt the card's header has no room for the period's title, and the Agenda pill is clipped.
+The card and its CSS are unchanged by this PR, and the old Calendar page had the same width there.
+
+### Verification
+
+- `FM_RUN_SPLIT_SHELL_MODEL_TESTS`: the Calendar row's place, the door's route, tab and landing, the lit row by view name (Board, List and Weekly review light Tasks, Calendar lights Calendar, a tab of that name elsewhere does not), one Go menu item with ⌘0 and the tab back when the row is hidden, and every route landing on its module's tab.
+- `FM_RUN_MAIN_SPLIT_SHELL_TESTS`: the calendar button from Hosts lands on Tasks' Calendar view with Tasks' crumb, tabs and header and the Calendar row lit.
+  The calendar fills the column under the filter row.
+  Board lights Tasks, the Calendar row brings the view back, and the Tasks row returns to Board.
+  Overdue set on Board is still the filter on the Calendar: today's task leaves the grid and the late one stays pinned in the tray, and All tasks brings it back.
+- `FM_RUN_SHIFT_CALENDAR_TESTS`: the colouring's calendar ids, calendars, legend, tray edges and saved key, and the project and No project chips' contrast on every app theme.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS`: by project the page's legend and chip edges change, and back again, and `taskFilter` takes a task off the grid and out of the tray.
+- `FM_RUN_MODULE_TABLE_TESTS`, `FM_RUN_FEATURE_INVENTORY_TESTS`, `FM_RUN_REVIEW2_UX_MODEL_TESTS` and `FM_RUN_NAVIGATION_COHERENCE_TESTS` follow the new table, the inventory rows and the toolbar tooltip, which now names the place through `PlaceName`.
+- Two full local runs, because this changes shell structure.
+  The first failed three suites, all from this change, and each is fixed above or follows the new routing (`DaylightModuleSelfTest`'s drill header names the page a door lands on).
+  The second failed one source guard in `ShellSplitSelfTest` on `Navigator.show`'s parameter name, which is restored, and every suite that reads `Navigator.swift` was re-run after it.
+  `swift build -c release` is clean.
+
+Confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| `sidebarModule(for:pageTab:)` never returns the door | "Tasks' Calendar view lights tasks", "the Go menu has 2 Calendar items", and four `MainSplitShellSelfTest` checks including the lit row and the Tasks row reopening the Calendar |
+| `render()` hands the calendar every task, unfiltered | "with Overdue set on Board the calendar draws ..." and the view suite's filter check |
+| `calendarID` ignores the colouring | three colouring checks in `ShiftCalendarSelfTest` and "a task with no project should be drawn in the No project colour" |
+
+### Left out
+
+- PRs 5 to 8 of the plan: the When panel, exceptions, the tray drag and quick add, and completing from the calendar.
+- Weekly review's next-week list as a link into Calendar › Week.
+- A saved session restores Tasks, not its Calendar view, because the Tasks page does not persist its view.

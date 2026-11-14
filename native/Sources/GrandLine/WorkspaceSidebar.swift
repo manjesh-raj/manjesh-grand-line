@@ -78,10 +78,10 @@ enum WorkspaceSidebarModel {
 }
 
 extension WorkspaceModule {
-    /// The page a module opens on the first time: its first tab, or its one
-    /// page.
+    /// The page a module opens on the first time: its first tab, its one
+    /// page, or for a door row the route it is a door to.
     var primaryRoute: RailDestination {
-        tabs.first?.route ?? ModuleTable.routes(in: self).first ?? .homeCanvas
+        tabs.first?.route ?? ModuleTable.routes(in: self).first ?? doorRoute ?? .homeCanvas
     }
 
     /// The module's pages, each once, in tab order.
@@ -172,6 +172,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What the workspace last said is showing, so a rebuild can light the
     /// same row again.
     private var current: RecentDestinationKind?
+    /// The showing page's own tab, which decides the lit row on a page that
+    /// a door row opens a view of (`ModuleTable.sidebarModule(for:pageTab:)`).
+    private var currentPageTab: String?
     /// Guards the programmatic selection that lights a row, so it is never
     /// mistaken for the captain picking one.
     private var isApplyingSelection = false
@@ -281,9 +284,11 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     /// What is showing changed. Lights its row, opening the section (and, for
-    /// a session, Console) it sits in.
-    func select(_ kind: RecentDestinationKind?) {
+    /// a session, Console) it sits in. `pageTab` is the page's own tab, which
+    /// lights the Calendar row on Tasks' Calendar view.
+    func select(_ kind: RecentDestinationKind?, pageTab: String? = nil) {
         current = kind
+        currentPageTab = pageTab
         guard isViewLoaded else { return }
         applySelection()
     }
@@ -385,7 +390,11 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         case .host(let id, _):
             return all.first { $0.entry == .session(hostID: id) } ?? all.first { $0.entry == .module(.console) }
         case .rail(let destination):
-            return all.first { $0.entry == .module(ModuleTable.module(for: destination)) }
+            // A door row the captain hid leaves its view to the module the
+            // page lives in, so a row is still lit.
+            let module = ModuleTable.sidebarModule(for: destination, pageTab: currentPageTab)
+            return all.first { $0.entry == .module(module) }
+                ?? all.first { $0.entry == .module(ModuleTable.module(for: destination)) }
         }
     }
 

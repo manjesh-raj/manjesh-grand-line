@@ -92,9 +92,12 @@ enum ReviewTwoUXModelSelfTest {
                 tabs[tab.module, default: []].append(tab.name)
             }
         }
+        // A tab a door row opens is that row's item, not a second one under
+        // its module: Tasks' Calendar view is the Calendar row (⌘0).
         for module in WorkspaceModule.allCases {
-            check((tabs[module] ?? []) == module.tabs.map(\.name),
-                  "\(module.title)'s Go menu tabs are \(tabs[module] ?? []), want \(module.tabs.map(\.name))", &ok)
+            let want = module.tabs.filter { ModuleTable.sidebarModule(for: $0.route, pageTab: $0.name) == module }.map(\.name)
+            check((tabs[module] ?? []) == want,
+                  "\(module.title)'s Go menu tabs are \(tabs[module] ?? []), want \(want)", &ok)
         }
         // A tab survives the round trip through its menu item.
         for module in WorkspaceModule.allCases {
@@ -273,7 +276,7 @@ enum ReviewTwoUXModelSelfTest {
                   "the launch landing no longer skips a hidden Setup (GL-31 would open a Personal install on Setup)", &ok)
         }
         if let shell = source("MainSplitShellController.swift") {
-            check(shell.contains("AppSettings.shared.hiddenModules.contains(ModuleTable.module(for: destination))"),
+            check(shell.contains("AppSettings.shared.hiddenModules.contains(ModuleTable.sidebarModule(for: destination))"),
                   "the sidebar shell no longer tells the palette which pages are hidden", &ok)
         }
         if let palette = source("UnifiedSearchProviders.swift") {

@@ -572,12 +572,12 @@ enum SidebarRedesignsSelfTest {
         view.subviews.flatMap { ($0 as? T).map { [$0] } ?? [] } + view.subviews.flatMap { descendants(type, in: $0) }
     }
 
-    /// The Calendar is its own sidebar row now (`TaskCalendarSelfTest`), so
-    /// Tasks' tabs are three.
+    /// The Calendar is Tasks' third view again, behind its own sidebar row
+    /// (tasks-calendar plan PR 4), so Tasks' tabs are four.
     private static func checkTasksReview(_ shell: MainSplitShellController, _ window: NSWindow,
                                          _ ok: inout Bool) {
         let tasks = shell.workspace.shift
-        check(tasks.moduleTabNames == ["Board", "List", "Weekly review"],
+        check(tasks.moduleTabNames == ["Board", "List", "Calendar", "Weekly review"],
               "Tasks' tabs are \(tasks.moduleTabNames)", &ok)
         clickTab("Weekly review", shell)
         check(tasks.debugWorkspaceFilterRow.isHidden, "the filter row shows over Weekly review", &ok)
