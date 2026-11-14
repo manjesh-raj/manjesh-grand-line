@@ -138,6 +138,14 @@ struct ShiftFollowUp: Equatable {
     var projectID: String?
     var notes: String?
 
+    /// Minutes before the follow-up's time to fire its reminder, or `nil`
+    /// for the scheduler's own default lookahead - the same field, the same
+    /// choices and the same `0`-is-not-`nil` rule as
+    /// `ShiftTask.reminderMinutesBefore`. Defaulted so the synthesised
+    /// memberwise initialiser stays source-compatible with every existing
+    /// call site.
+    var reminderMinutesBefore: Int? = nil
+
     /// A blank follow-up ready for `ShiftStore.addFollowUp`.
     static func fresh() -> ShiftFollowUp {
         ShiftFollowUp(
@@ -271,4 +279,14 @@ struct ShiftPushedBackItem {
 /// rather than inventing new state.
 struct ShiftSettings {
     var syncStatus: String = "Synced"
+
+    /// The time of day (`"HH:MM"`) a task or follow-up with a date and no
+    /// time is reminded about, on its own day. "1 day before" means this
+    /// time on the day before.
+    ///
+    /// Read through `ShiftDue.reminderInstant(date:time:allDayAt:)`, which
+    /// falls back to `ShiftDue.defaultAllDayReminderAt` for a value it cannot
+    /// read - a hand-edited `"9am"` costs the captain their custom time, not
+    /// the reminder.
+    var allDayReminderAt: String = ShiftDue.defaultAllDayReminderAt
 }

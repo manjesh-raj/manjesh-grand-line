@@ -826,6 +826,12 @@ final class ShiftStore {
         followUps[idx].followUpAt = dateStr
         followUps[idx].followUpTime = timeStr
         followUps[idx].status = .pending
+        // A snooze names the moment to be reminded, so an offset chosen for
+        // the original time no longer applies. Left as it was, "1 day
+        // before" put a follow-up snoozed by an hour a day in the past, and
+        // the very next poll reminded again. `nil` (the default lookahead)
+        // is left alone - that is the behaviour snooze has always had.
+        if followUps[idx].reminderMinutesBefore != nil { followUps[idx].reminderMinutesBefore = 0 }
         persistFollowUps()
         logActivity(
             kind: "follow_up_snoozed", summary: "Snoozed follow-up \"\(followUps[idx].title)\"",

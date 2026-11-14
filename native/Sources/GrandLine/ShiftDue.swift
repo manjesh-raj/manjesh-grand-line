@@ -48,16 +48,70 @@ enum ShiftDue {
         return instant <= now
     }
 
-    /// When a reminder for this item should be considered "reached".
+    /// The time of day a date-only item is reminded about when
+    /// `settings.yaml` does not say (`ShiftSettings.allDayReminderAt`).
+    static let defaultAllDayReminderAt = "09:00"
+
+    /// The moment a reminder is *about*: the item's own time, or for a
+    /// date-only item `allDayAt` on its day.
     ///
     /// Deliberately **not** `overdueInstant`: a task due today should be
-    /// reminded about in the morning, not at 23:59. So a date-only item's
-    /// reminder moment is the start of its day and its *overdue* moment is the
-    /// end of it - which is exactly the gap the banner's wording has to
-    /// respect rather than collapse (B22).
+    /// reminded about in the morning, not at 23:59. It used to be the start
+    /// of the day, which with the poll's 30-minute lookahead posted "Task
+    /// due today" at 23:30 on the evening *before* - so a task due Friday
+    /// reminded on Thursday night. `allDayAt` is what fixes that, and it
+    /// falls back to `defaultAllDayReminderAt` for a value that is not a
+    /// real `HH:MM` rather than to midnight.
     static func reminderInstant(date yyyyMMdd: String?,
-                                time hhmm: String?) -> Date? {
-        ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm)
+                                time hhmm: String?,
+                                allDayAt: String = defaultAllDayReminderAt) -> Date? {
+        if hhmm != nil { return ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm) }
+        return ShiftDateFormatting.dateTime(from: yyyyMMdd,
+                                            time: clockTime(allDayAt) ?? defaultAllDayReminderAt)
+    }
+
+    /// When the reminder for an item **fires**: `reminderInstant` less the
+    /// item's own "remind me N minutes before", or less `defaultLookahead`
+    /// when it has none.
+    ///
+    /// The one rule for tasks, follow-ups and the next date of a missed
+    /// repeat, so the three cannot drift apart. Two details:
+    ///
+    ///   - `0` is a real offset ("at the due time") and is not the same as
+    ///     `nil`, which is why the optional is unwrapped rather than
+    ///     defaulted.
+    ///   - A **date-only** item with no offset takes no lookahead. Its
+    ///     reminder moment is already a time the captain chose for "the
+    ///     day"; firing half an hour before it would just make 09:00 read
+    ///     as 08:30. An explicit offset still applies, so "1 day before" is
+    ///     that time on the day before.
+    static func reminderFireInstant(date yyyyMMdd: String?,
+                                    time hhmm: String?,
+                                    minutesBefore: Int?,
+                                    allDayAt: String = defaultAllDayReminderAt,
+                                    defaultLookahead: TimeInterval) -> Date? {
+        guard let anchor = reminderInstant(date: yyyyMMdd, time: hhmm, allDayAt: allDayAt) else {
+            return nil
+        }
+        let lead: TimeInterval
+        if let minutesBefore {
+            lead = TimeInterval(max(0, minutesBefore) * 60)
+        } else {
+            lead = hhmm == nil ? 0 : defaultLookahead
+        }
+        return anchor.addingTimeInterval(-lead)
+    }
+
+    /// `text` as a 24-hour `"HH:MM"`, or `nil` when it is not one. A
+    /// one-digit hour is accepted and padded, because `9:00` is what a person
+    /// types into `settings.yaml` by hand.
+    static func clockTime(_ text: String) -> String? {
+        let parts = text.trimmingCharacters(in: .whitespaces)
+            .split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, (1...2).contains(parts[0].count), parts[1].count == 2,
+              let hour = Int(parts[0]), let minute = Int(parts[1]),
+              (0...23).contains(hour), (0...59).contains(minute) else { return nil }
+        return String(format: "%02d:%02d", hour, minute)
     }
 
     /// The banner's own title for a task, given both instants above.

@@ -540,3 +540,59 @@ It is independent of the plan's other PRs: the tray belongs to the calendar card
   The first render found the quick buttons spilling out of a hovered row, because `.gl-tray button { font: inherit }` out-ranked `.gl-quick`'s own size.
   The reset now inherits only the font family.
 - `build-schedule-x-web.sh` regenerated `web/` (and `BUILD-INFO.txt`) from `src/`.
+
+## Reminders: the all-day time, a missed repeat, and follow-ups (tasks-calendar plan PR 3, `fm/grand-line-calendar-pr3-reminders`)
+
+PR 3 of the tasks-calendar plan (`data/grand-line-tasks-calendar-plan/report.md`).
+It changes when a Tasks reminder fires and nothing about how one is delivered.
+
+### What shipped
+
+- **A date-only item reminds at `all_day_reminder_at` on its own day.**
+  `settings.yaml` gained `all_day_reminder_at`, `"09:00"` by default.
+  `ShiftDue.reminderInstant` used to be local midnight for a date with no time, and the poll's 30-minute lookahead then posted "Task due today" at 23:30 the evening before.
+  A date-only item with no offset takes no lookahead now, because its reminder moment is already a chosen time.
+  "1 day before" means that time on the day before.
+  An unreadable value falls back to 09:00, never to midnight.
+- **One fire rule.** `ShiftDue.reminderFireInstant` answers "when does this fire" for a task, a follow-up and the next date of a missed repeat.
+  It replaced `ShiftNotificationScheduler.horizon(for:now:default:)`.
+- **A missed repeat reminds for its next date.**
+  When a repeating task's live occurrence is overdue, the poll also reminds for the series' next date, once, as `shift.task.<id>@<YYYY-MM-DD>`.
+  The live record is not rolled forward, so the missed one stays overdue (the captain's decision 5A).
+  `nextDateToRemind` walks the rule the way `ShiftStore.nextOccurrence` does: from the rule slot (`occurrence`, PR 1) when the live record was moved "only this", a last `COUNT` occurrence has no next date, `UNTIL` ends it, and missed slots do not spend the budget.
+  A skipped date (`EXDATE`) is never reminded for, because the walk already leaves it out.
+  It starts at today, so a series left for months reminds once for today rather than once per missed date.
+  A next-date banner is withdrawn when its date has passed and when the task is completed or deleted.
+- **Follow-ups have "Remind me".** `ShiftFollowUp.reminderMinutesBefore` (`reminder_minutes_before` in `follow-ups.yaml`, added to the known keys), the same choices as a task, and a card on the follow-up sheet.
+- **A snooze resets an explicit offset to "at the time".**
+  The banner's "Snooze 1h" writes a new time and used to keep the offset, so "1 day before" put the snoozed follow-up a day in the past and the next poll reminded again.
+  A follow-up with no offset keeps the default lookahead it always had.
+- `poll(now:)` takes an injectable instant, so a suite can ask about 23:30 and 09:00 directly.
+
+### One trap
+
+`YamlSwift` follows YAML 1.1, which reads an unquoted `07:30` as a **base-60 integer** (450).
+A captain who types `all_day_reminder_at: 07:30` would otherwise silently get 09:00.
+`ShiftYaml.settings(from:)` turns such an integer back into `HH:MM`.
+The same parser treats an unquoted `due_time` the same way, which this PR did not change.
+
+### Verification
+
+`ShiftDueSelfTest` (blocking lane) gained five cases: the date-only fire rule through the helper and through `poll(now:)`, the setting (including the unquoted form and five unreadable values), the next-date walk, the next-date banners through the poll, and follow-up offsets through the poll, the YAML, a snooze and the sheet's own Save.
+`ShiftRecurrenceSelfTest`'s offset cases moved to `reminderFireInstant` unchanged in meaning.
+Confirmed to fail by injection:
+
+- The old rule put back (midnight anchor plus the lookahead) failed 14 checks, including "a task due Friday with no time must not remind at 23:30 on Thursday" and the same through the poll.
+- Removing the next-date call from `poll` failed five, starting with "with Monday missed, the poll reminds for Wednesday".
+- Passing `nil` for a follow-up's offset failed "a follow-up's own "2 hours before" fires at 13:00".
+- Dropping the follow-up's YAML write failed "the offset round-trips through follow-ups.yaml".
+- Removing the snooze reset failed "a follow-up snoozed by an hour must not remind again a minute later".
+- Walking from the due date instead of `occurrence` failed "a moved occurrence's next date follows the rule slot".
+
+### Left out
+
+- No UI for `all_day_reminder_at`.
+  It is a `settings.yaml` key, and the When panel (PR 5) is where the time controls are being reworked.
+- The task editor still writes a time for every due date, so a date-only task saved through the sheet becomes `00:00`.
+  PR 5's "All day or At a time" row is the fix for that.
+- The conflict UI's field list shows neither a task's nor a follow-up's reminder offset, as before.
