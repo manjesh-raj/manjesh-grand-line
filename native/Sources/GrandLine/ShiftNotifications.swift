@@ -46,11 +46,19 @@ final class ShiftNotificationScheduler {
     /// twice does not double-notify.
     private var notifiedTaskDueAt: [String: Date] = [:]
     private var notifiedFollowUpDueAt: [String: Date] = [:]
+    /// The per-date banners for the next date of a missed repeat, by their
+    /// full identifier (`occurrenceIdentifier(taskID:date:)`). A date is its
+    /// own key, so each date of a series notifies once.
+    private var notifiedOccurrenceIDs: Set<String> = []
 
     private let pollInterval: TimeInterval = 60
     /// How far ahead of a due date/time to fire the reminder - matches the
     /// brief's "due tasks and follow-ups coming up" (not just exactly-on-time
     /// alerts, which a 60s poll could easily miss by a few seconds).
+    ///
+    /// Only for an item with a time and no offset of its own. A date-only
+    /// item is reminded at `settings.yaml`'s `all_day_reminder_at` instead
+    /// (`ShiftDue.reminderFireInstant`).
     private let lookahead: TimeInterval = 30 * 60
 
     init(store: ShiftStore) {
@@ -108,10 +116,13 @@ final class ShiftNotificationScheduler {
     /// check without waiting for the timer - mirrors how `FleetNotifier`'s
     /// own poll cycle is exercised in this codebase (a temporary env-gated
     /// probe, per AGENTS.md's "Verifying native UI bugs" convention).
-    func poll() {
+    ///
+    /// `now` is injectable for the same reason: whether a reminder fires is
+    /// a question about a particular instant, and a suite has to be able to
+    /// ask it at 23:30 and at 09:00 rather than whenever it happens to run.
+    func poll(now: Date = Date()) {
         ServiceHealthRegistry.shared.recordSuccess(.shiftDueItems)
-        let now = Date()
-        let horizon = now.addingTimeInterval(lookahead)
+        let allDayAt = store.settings.allDayReminderAt
 
         var dueTaskCount = 0
         var overdueCount = 0
@@ -121,14 +132,18 @@ final class ShiftNotificationScheduler {
         // reconciled against what this poller believes it has posted.
         var liveTaskIDs: Set<String> = []
         var liveFollowUpIDs: Set<String> = []
+        var liveOccurrenceIDs: Set<String> = []
         for task in store.activeTasks {
-            guard let due = ShiftDue.reminderInstant(date: task.dueDate, time: task.dueTime) else { continue }
+            guard let due = ShiftDue.reminderInstant(date: task.dueDate, time: task.dueTime,
+                                                     allDayAt: allDayAt) else { continue }
             liveTaskIDs.insert(task.id)
+            remindOfNextDateIfMissed(task, now: now, allDayAt: allDayAt, live: &liveOccurrenceIDs)
             // F5's "remind me N minutes before": the per-task offset replaces
             // this scheduler's own `lookahead` for the task that carries one,
-            // rather than adding a second mechanism beside it. A task with no
-            // offset keeps the exact behaviour it had.
-            guard due <= Self.horizon(for: task, now: now, default: horizon) else { continue }
+            // rather than adding a second mechanism beside it.
+            guard let fire = ShiftDue.reminderFireInstant(
+                date: task.dueDate, time: task.dueTime, minutesBefore: task.reminderMinutesBefore,
+                allDayAt: allDayAt, defaultLookahead: lookahead), fire <= now else { continue }
             dueTaskCount += 1
             // B22: `due <= now` called a date-only task overdue at local
             // midnight, while the task list beside it did not until the next
@@ -151,9 +166,15 @@ final class ShiftNotificationScheduler {
         var dueFollowUpCount = 0
         for followUp in store.followUps where followUp.status == .pending {
             guard let due = ShiftDue.reminderInstant(date: followUp.followUpAt,
-                                                     time: followUp.followUpTime) else { continue }
+                                                     time: followUp.followUpTime,
+                                                     allDayAt: allDayAt) else { continue }
             liveFollowUpIDs.insert(followUp.id)
-            guard due <= horizon else { continue }
+            // A follow-up's own "Remind me", through the same rule a task's
+            // takes.
+            guard let fire = ShiftDue.reminderFireInstant(
+                date: followUp.followUpAt, time: followUp.followUpTime,
+                minutesBefore: followUp.reminderMinutesBefore,
+                allDayAt: allDayAt, defaultLookahead: lookahead), fire <= now else { continue }
             dueFollowUpCount += 1
             if ShiftDue.isOverdue(date: followUp.followUpAt, time: followUp.followUpTime,
                                   now: now) { overdueCount += 1 }
@@ -174,7 +195,8 @@ final class ShiftNotificationScheduler {
             )
         }
 
-        withdrawStaleNotifications(liveTaskIDs: liveTaskIDs, liveFollowUpIDs: liveFollowUpIDs)
+        withdrawStaleNotifications(liveTaskIDs: liveTaskIDs, liveFollowUpIDs: liveFollowUpIDs,
+                                   liveOccurrenceIDs: liveOccurrenceIDs)
 
         onDueCountsChanged?(dueTaskCount, dueFollowUpCount, overdueCount)
     }
@@ -187,8 +209,13 @@ final class ShiftNotificationScheduler {
     /// lie the captain has to dismiss by hand. The memo is dropped with it, so
     /// re-adding the same due date later notifies again rather than being
     /// silently deduped against a banner that no longer exists.
+    ///
+    /// A next-date banner is stale once its date is no longer the series'
+    /// next date as well: when Wednesday's has been and Friday's is still
+    /// ahead, "Task due today" for Wednesday is the same lie.
     private func withdrawStaleNotifications(liveTaskIDs: Set<String>,
-                                            liveFollowUpIDs: Set<String>) {
+                                            liveFollowUpIDs: Set<String>,
+                                            liveOccurrenceIDs: Set<String>) {
         var stale: [String] = []
         for id in notifiedTaskDueAt.keys where !liveTaskIDs.contains(id) {
             stale.append("shift.task.\(id)")
@@ -197,6 +224,10 @@ final class ShiftNotificationScheduler {
         for id in notifiedFollowUpDueAt.keys where !liveFollowUpIDs.contains(id) {
             stale.append("shift.followup.\(id)")
             notifiedFollowUpDueAt[id] = nil
+        }
+        for identifier in notifiedOccurrenceIDs.sorted() where !liveOccurrenceIDs.contains(identifier) {
+            stale.append(identifier)
+            notifiedOccurrenceIDs.remove(identifier)
         }
         guard !stale.isEmpty else { return }
         withdraw(stale)
@@ -228,20 +259,87 @@ final class ShiftNotificationScheduler {
     /// Which items this poller currently believes it has a live banner for.
     var debugNotifiedTaskIDs: [String] { Array(notifiedTaskDueAt.keys) }
     var debugNotifiedFollowUpIDs: [String] { Array(notifiedFollowUpDueAt.keys) }
+    /// The due moment each follow-up was last posted for - a re-post moves it.
+    var debugNotifiedFollowUpDueAt: [String: Date] { notifiedFollowUpDueAt }
+    var debugNotifiedOccurrenceIDs: [String] { notifiedOccurrenceIDs.sorted() }
     #endif
 
-    /// How far ahead of `task`'s due time this poll is willing to fire.
+    // MARK: The next date of a missed repeat
+
+    /// Posts "Task due today" for the next date of a repeating task whose
+    /// live occurrence was missed, once per date.
     ///
-    /// `static` and parameterised so the pure-logic suite can assert the rule
-    /// without a timer, a store or a notification centre - the whole of what
-    /// "remind me N minutes before" means is this one comparison.
+    /// The live record is left exactly where it is - still overdue, still on
+    /// its own date - because rolling it forward would hide the missed one
+    /// (the captain's call on the tasks-calendar plan: a missed repeat stays
+    /// overdue and still reminds for the next date). Without this, the
+    /// scheduler only ever looked at the live record, so leaving Monday's
+    /// instance of a Mon/Wed/Fri task undone silenced Wednesday and Friday.
+    private func remindOfNextDateIfMissed(_ task: ShiftTask, now: Date, allDayAt: String,
+                                          live: inout Set<String>) {
+        guard let date = Self.nextDateToRemind(for: task, now: now),
+              let fire = ShiftDue.reminderFireInstant(
+                date: date, time: task.dueTime, minutesBefore: task.reminderMinutesBefore,
+                allDayAt: allDayAt, defaultLookahead: lookahead),
+              fire <= now else { return }
+        let identifier = Self.occurrenceIdentifier(taskID: task.id, date: date)
+        live.insert(identifier)
+        guard notifiedOccurrenceIDs.insert(identifier).inserted else { return }
+        notify(
+            title: ShiftDue.taskTitle(date: date, time: task.dueTime, now: now),
+            body: task.title,
+            identifier: identifier,
+            // "Open task" opens the live record - the missed occurrence the
+            // captain still has to deal with.
+            category: NotificationCategory.shiftTask,
+            payload: NotificationPayload(subject: .shiftTask, shiftTaskID: task.id)
+        )
+    }
+
+    /// The banner identifier for one date of a series:
+    /// `shift.task.<id>@<YYYY-MM-DD>`. Distinct from the live record's own
+    /// `shift.task.<id>`, so neither can replace or withdraw the other.
+    static func occurrenceIdentifier(taskID: String, date yyyyMMdd: String) -> String {
+        "shift.task.\(taskID)@\(yyyyMMdd)"
+    }
+
+    /// The date a missed repeating task should next remind for, or `nil`
+    /// when there is none.
     ///
-    /// `0` is a real offset ("at the due time") and is deliberately not the
-    /// same as `nil` ("this app's default lookahead"), which is why the
-    /// optional is unwrapped rather than defaulted.
-    static func horizon(for task: ShiftTask, now: Date, default fallback: Date) -> Date {
-        guard let minutes = task.reminderMinutesBefore else { return fallback }
-        return now.addingTimeInterval(TimeInterval(max(0, minutes) * 60))
+    /// `nil` unless the live occurrence is overdue (otherwise its own
+    /// reminder is the reminder) and the rule has a further occurrence. The
+    /// answer is the first date after the live one that is not itself
+    /// overdue yet - today's, for most rules - so a series missed for weeks
+    /// reminds once for the date that matters rather than once per date it
+    /// missed.
+    ///
+    /// The walk mirrors `ShiftStore.nextOccurrence`: it is anchored at the
+    /// live record's rule slot (`occurrence`) when it was moved "only this",
+    /// `COUNT` is the budget left *including* the live occurrence, so a last
+    /// occurrence has no next date, and the slots that went by unnoticed do
+    /// not spend the rest. `UNTIL` still ends it, and a skipped date
+    /// (`EXDATE`) is never reminded for. It starts at today rather than at the anchor,
+    /// so a series left for months costs a few steps rather than one per
+    /// missed day, and the generator's own step ceiling bounds it (GL-35).
+    static func nextDateToRemind(for task: ShiftTask, now: Date,
+                                 calendar: Calendar = .current) -> String? {
+        guard let rule = task.recurrence, rule.afterOneOccurrence != nil,
+              ShiftDue.isOverdue(date: task.dueDate, time: task.dueTime, now: now, calendar: calendar),
+              let anchor = ShiftDateFormatting.dateTime(from: task.occurrence ?? task.dueDate,
+                                                        time: task.dueTime)
+        else { return nil }
+        let from = max(anchor.addingTimeInterval(1), calendar.startOfDay(for: now))
+        // Two is enough: a rule lands at most once on a day, so if today's
+        // has already gone by the next one is on a later day and cannot be
+        // overdue.
+        for occurrence in rule.withoutCount.occurrences(anchor: anchor, from: from, through: nil,
+                                                        calendar: calendar, limit: 2) {
+            let day = ShiftDateFormatting.components(from: occurrence).dateStr
+            if !ShiftDue.isOverdue(date: day, time: task.dueTime, now: now, calendar: calendar) {
+                return day
+            }
+        }
+        return nil
     }
 
     private func notify(title: String, body: String, identifier: String,

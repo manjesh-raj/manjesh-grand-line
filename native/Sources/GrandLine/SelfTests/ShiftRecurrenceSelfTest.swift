@@ -349,33 +349,33 @@ enum ShiftRecurrenceSelfTest {
     // MARK: The reminder offset
 
     private static func checkReminderHorizon(_ ok: inout Bool) {
-        let now = date("2026-09-16 09:00")
-        let fallback = now.addingTimeInterval(30 * 60)
+        // A timed task: the reminder fires `minutesBefore` ahead of its due
+        // moment, or the scheduler's own lookahead ahead when it has none.
+        // The date-only half of this rule is `ShiftDueSelfTest`'s, because
+        // its fixture has to be in the local calendar.
+        let lookahead: TimeInterval = 30 * 60
+        let day = "2026-09-16"
+        guard let due = ShiftDateFormatting.dateTime(from: day, time: "09:00") else {
+            fail("fixture: a due date and time should resolve", &ok)
+            return
+        }
+        func fire(_ minutes: Int?) -> Date? {
+            ShiftDue.reminderFireInstant(date: day, time: "09:00", minutesBefore: minutes,
+                                         defaultLookahead: lookahead)
+        }
 
-        var plain = ShiftTask.fresh()
-        plain.reminderMinutesBefore = nil
-        check(ShiftNotificationScheduler.horizon(for: plain, now: now, default: fallback) == fallback,
+        check(fire(nil) == due.addingTimeInterval(-lookahead),
               "a task with no offset keeps the scheduler's own lookahead", &ok)
-
-        var early = ShiftTask.fresh()
-        early.reminderMinutesBefore = 15
-        let horizon = ShiftNotificationScheduler.horizon(for: early, now: now, default: fallback)
-        check(horizon == now.addingTimeInterval(15 * 60),
+        check(fire(15) == due.addingTimeInterval(-15 * 60),
               "a 15-minute offset should fire 15 minutes ahead, not 30", &ok)
         // The discriminating half: the offset genuinely *narrows* the default
         // window rather than being ignored, which an equality against the
         // fallback alone would not catch.
-        check(horizon < fallback, "a 15-minute offset must be tighter than the 30-minute default", &ok)
-
-        var atDue = ShiftTask.fresh()
-        atDue.reminderMinutesBefore = 0
-        check(ShiftNotificationScheduler.horizon(for: atDue, now: now, default: fallback) == now,
-              "0 means \"at the due time\" and is not the same as no offset", &ok)
-
-        var late = ShiftTask.fresh()
-        late.reminderMinutesBefore = 1440
-        check(ShiftNotificationScheduler.horizon(for: late, now: now, default: fallback)
-              == now.addingTimeInterval(24 * 60 * 60),
+        if let narrow = fire(15), let wide = fire(nil) {
+            check(narrow > wide, "a 15-minute offset must be later than the 30-minute default", &ok)
+        }
+        check(fire(0) == due, "0 means \"at the due time\" and is not the same as no offset", &ok)
+        check(fire(1440) == due.addingTimeInterval(-24 * 60 * 60),
               "a day-ahead offset should widen the window past the default", &ok)
 
         check(ShiftReminderOffset.label(for: 15) == "15 minutes before",

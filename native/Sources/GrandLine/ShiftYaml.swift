@@ -73,7 +73,7 @@ enum ShiftYaml {
 
     static let followUpKnownKeys: Set<String> = [
         "id", "title", "status", "priority", "follow_up_at", "follow_up_time",
-        "related_task_id", "project_id", "notes",
+        "related_task_id", "project_id", "notes", "reminder_minutes_before",
     ]
 
     static let projectKnownKeys: Set<String> = [
@@ -161,6 +161,8 @@ enum ShiftYaml {
         m[str("related_task_id")] = strOpt(f.relatedTaskID)
         m[str("project_id")] = strOpt(f.projectID)
         m[str("notes")] = strOpt(f.notes)
+        // Written unconditionally, as on a task (see `toYaml(_: ShiftTask)`).
+        m[str("reminder_minutes_before")] = f.reminderMinutesBefore.map { Yaml.int($0) } ?? .null
         return .dictionary(m)
     }
 
@@ -177,7 +179,11 @@ enum ShiftYaml {
             followUpTime: optString(dict[str("follow_up_time")] ?? .null),
             relatedTaskID: optString(dict[str("related_task_id")] ?? .null),
             projectID: optString(dict[str("project_id")] ?? .null),
-            notes: optString(dict[str("notes")] ?? .null)
+            notes: optString(dict[str("notes")] ?? .null),
+            // Absent on every follow-up written before this field existed,
+            // which reads as "the default lookahead" - exactly what those
+            // follow-ups had.
+            reminderMinutesBefore: dict[str("reminder_minutes_before")]?.int
         )
     }
 
@@ -270,12 +276,33 @@ enum ShiftYaml {
     static func toYaml(_ s: ShiftSettings) -> Yaml {
         var m = YamlOrderedMap()
         m[str("sync_status")] = str(s.syncStatus)
+        m[str("all_day_reminder_at")] = str(s.allDayReminderAt)
         return .dictionary(m)
     }
 
     static func settings(from y: Yaml) -> ShiftSettings {
         guard let dict = y.dictionary else { return ShiftSettings() }
-        return ShiftSettings(syncStatus: optString(dict[str("sync_status")] ?? .null) ?? "Synced")
+        return ShiftSettings(
+            syncStatus: optString(dict[str("sync_status")] ?? .null) ?? "Synced",
+            // Kept as written, even when it is not a time this build can
+            // read: the fallback happens where the value is used, so a
+            // hand-edited typo is still in the file for the captain to fix.
+            allDayReminderAt: clockText(dict[str("all_day_reminder_at")] ?? .null)
+                ?? ShiftDue.defaultAllDayReminderAt
+        )
+    }
+
+    /// A time-of-day scalar as `"HH:MM"`, however the YAML parser typed it.
+    ///
+    /// A person writes `all_day_reminder_at: 07:30` without quotes, and YAML
+    /// 1.1 (which `YamlSwift` follows) reads an unquoted `07:30` as a
+    /// **base-60 integer**, 450. Without this the captain's own edit would
+    /// read as "not set" and quietly fall back to 09:00.
+    private static func clockText(_ y: Yaml) -> String? {
+        if case .int(let minutes) = y, (0..<(24 * 60)).contains(minutes) {
+            return String(format: "%02d:%02d", minutes / 60, minutes % 60)
+        }
+        return optString(y)
     }
 
     // MARK: Whole-document (top-level `<key>: [ ... ]` mapping)

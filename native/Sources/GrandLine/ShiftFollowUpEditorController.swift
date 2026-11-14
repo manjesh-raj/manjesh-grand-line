@@ -42,6 +42,11 @@ final class ShiftFollowUpEditorController: NSViewController {
     private let followUpDatePicker = HelmDateField()
     private let priorityDot = HelmDotAccessory()
     private lazy var priorityCard = HelmFieldCard(label: "Priority", accessory: priorityDot)
+    /// The task editor's "Remind me" card, with the same choices
+    /// (`ShiftReminderOffset`). A follow-up always has a date, so unlike the
+    /// task editor's this one is never disabled.
+    private let reminderCard = HelmFieldCard(label: "Remind me")
+    private var reminderMinutes: Int?
     private let taskCard = HelmFieldCard(label: "Related task")
     private let projectCard = HelmFieldCard(label: "Related project")
     private let notesView = HelmTextView(height: 90)
@@ -64,6 +69,7 @@ final class ShiftFollowUpEditorController: NSViewController {
         self.prefillFollowUpAt = prefillFollowUpAt
         self.prefillFollowUpTime = prefillFollowUpTime
         self.selectedPriority = followUp?.priority ?? .normal
+        self.reminderMinutes = followUp?.reminderMinutesBefore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -97,6 +103,13 @@ final class ShiftFollowUpEditorController: NSViewController {
             self.updatePriorityDot(ThemeManager.shared.theme)
         }
         form.addColumns([labelledDatePicker(form), priorityCard])
+
+        let reminderTitles = ["No reminder"] + ShiftReminderOffset.choices.map(ShiftReminderOffset.label(for:))
+        reminderCard.configureChoices(reminderTitles,
+                                      selectedIndex: Self.reminderIndex(for: reminderMinutes)) { [weak self] index in
+            self?.reminderMinutes = index == 0 ? nil : ShiftReminderOffset.choices[index - 1]
+        }
+        form.addRow(reminderCard)
 
         form.addSection("Related")
         taskIDs = [nil] + tasks.map { $0.id }
@@ -135,6 +148,14 @@ final class ShiftFollowUpEditorController: NSViewController {
         return form.labelledField("Follow up", followUpDatePicker)
     }
 
+    /// The menu row for a stored offset. A hand-edited value the menu does
+    /// not list shows as "No reminder" but is not discarded: Save writes
+    /// `reminderMinutes`, which still holds it until the captain picks a row.
+    private static func reminderIndex(for minutes: Int?) -> Int {
+        guard let minutes, let index = ShiftReminderOffset.choices.firstIndex(of: minutes) else { return 0 }
+        return index + 1
+    }
+
     private func applyExtraTheme(_ theme: HelmTheme) {
         updatePriorityDot(theme)
     }
@@ -171,6 +192,7 @@ final class ShiftFollowUpEditorController: NSViewController {
         followUp.projectID = projectIDs.indices.contains(selectedProjectIndex) ? projectIDs[selectedProjectIndex] : nil
         let notes = notesView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         followUp.notes = notes.isEmpty ? nil : notes
+        followUp.reminderMinutesBefore = reminderMinutes
         onSave?(followUp)
         dismissIfPresented()
     }
@@ -201,6 +223,7 @@ final class ShiftFollowUpEditorController: NSViewController {
     var debugTitleText: String { titleField.stringValue }
     var debugNotesText: String { notesView.string }
     var debugFollowUpDateValue: Date { followUpDatePicker.dateValue }
+    var debugReminderTitle: String { reminderCard.value }
     /// Triggers the real `save()` - the same method the footer's own Save
     /// button target/action calls.
     func debugTriggerSave() { save() }
