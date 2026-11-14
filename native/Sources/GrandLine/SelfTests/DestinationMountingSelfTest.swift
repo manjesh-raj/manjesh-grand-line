@@ -558,8 +558,8 @@ enum DestinationMountingSelfTest {
     /// `.calendar` is a fourth, for `.whiteboard`'s reason: its body is one
     /// `WKWebView` holding the Schedule-X card, whose title, view pills,
     /// weekday row, day numbers and legend are all page text. Its one native
-    /// label is the period's caption ("Nothing scheduled in this period." on
-    /// an empty store), which the floating bar's drill header shows and the
+    /// label is the period's caption ("Nothing scheduled this month." on an
+    /// empty store), which the floating bar's drill header shows and the
     /// sidebar layout's heading row draws. `ShiftCalendarViewSelfTest` reads
     /// the page's own text back from its DOM, which is where that check
     /// belongs.

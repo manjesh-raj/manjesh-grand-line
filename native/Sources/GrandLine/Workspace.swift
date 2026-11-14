@@ -241,6 +241,10 @@ final class Workspace {
     private(set) lazy var calendar: TaskCalendarController = {
         let calendar = TaskCalendarController(store: shiftStore)
         calendar.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        calendar.onOpenTaskList = { [weak self] in
+            self?.navigator.show(.shift)
+            self?.shift.selectModuleTab(named: "List")
+        }
         return built(.calendar, calendar)
     }()
 

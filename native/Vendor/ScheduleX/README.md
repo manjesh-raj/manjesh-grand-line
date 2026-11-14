@@ -40,9 +40,9 @@ Resize is not used at all: a task has a due time but no duration.
 | Path | What it is |
 | --- | --- |
 | `src/package.json`, `src/package-lock.json` | The pinned dependency set. Installed only by the build script, with `npm ci`. |
-| `src/task-calendar.js` | Hand-written entry point: mounts the calendar, adapts the drag plugin, drives the card's own header (previous and next, the period's title, Today, the view pills), the weekday row and the legend, and exposes `window.GrandLineTaskCalendar`, the bridge `ShiftCalendarWebView` calls. |
+| `src/task-calendar.js` | Hand-written entry point: mounts the calendar, adapts the drag plugin, drives the card's own header (previous and next, the period's title, Today, the view pills), the weekday row, the legend, the Unscheduled tray's rows and the empty state, and exposes `window.GrandLineTaskCalendar`, the bridge `ShiftCalendarWebView` calls. |
 | `src/task-calendar.css` | Hand-written layer over the default theme: the captain's raised card, a raised cell per day drawn inside the day (never as a gap, which the drag plugin would see as nowhere), dimmed days outside the month, today as a pill, chips with an accent edge, the agenda's rows, projections drawn faint, finished tasks struck through, and the now-line and today's weekday in theme colours. Schedule-X's own header is hidden. |
-| `src/index.html` | Hand-written page shell: the CSP, the card's header, weekday row and legend, and the one classic `<script>` tag. |
+| `src/index.html` | Hand-written page shell: the CSP, the card's header, weekday row and legend, the first-run empty state over the grid, the Unscheduled tray beside the card, and the one classic `<script>` tag. |
 | `web/` | **Generated and committed.** The script, the stylesheet, the page, `THIRD-PARTY-LICENSES.txt` and `BUILD-INFO.txt`. |
 
 ## Rebuilding

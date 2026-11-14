@@ -527,7 +527,44 @@ final class ShiftStore {
     /// write it performed itself.
     private var completedTasksCache: [ShiftTask]?
 
-    private func invalidateCompletedTasksCache() { completedTasksCache = nil }
+    /// The tasks finished in each of `months` (`YYYY-MM`), read from those
+    /// month files only.
+    ///
+    /// The Calendar asks for the months its visible period touches, so
+    /// paging back a year parses one or two files rather than every month the
+    /// captain has ever kept (GL-35). A file that is missing or cannot be read
+    /// contributes nothing, the same as in `allCompletedTasks()`. Each month
+    /// is memoised alongside that cache and invalidated with it.
+    func completedTasks(inMonths months: [String]) -> [ShiftTask] {
+        var out: [ShiftTask] = []
+        for month in Set(months).sorted() where Self.isMonthKey(month) {
+            if let cached = completedMonthCache[month] {
+                out += cached
+                continue
+            }
+            let tasks = ShiftYaml.readList(path: completedPath(forMonth: month), key: "tasks")
+                .compactMap(ShiftYaml.task(from:))
+            completedMonthCache[month] = tasks
+            out += tasks
+        }
+        return out
+    }
+
+    private var completedMonthCache: [String: [ShiftTask]] = [:]
+
+    /// `YYYY-MM` and nothing else, because the key becomes a file name.
+    static func isMonthKey(_ text: String) -> Bool {
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[0].count == 4, parts[1].count == 2,
+              parts.allSatisfy({ $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }),
+              let month = Int(parts[1]) else { return false }
+        return (1...12).contains(month)
+    }
+
+    private func invalidateCompletedTasksCache() {
+        completedTasksCache = nil
+        completedMonthCache = [:]
+    }
 
     // MARK: Mutations
 

@@ -14,11 +14,17 @@
 //
 // ## What crosses the bridge
 //
-// Native to page: `configure` once, then `setEvents`, `setTheme`, `setView`,
-// `showDate`, `suspend`/`resume`, and `state` (read back from the page's DOM,
-// for a self-test). Page to native: `ready`, `error`, `range` (the visible
-// period changed), `open` (an event was clicked), `add` (a day or a time slot
-// was double-clicked) and `move` (an event was dropped somewhere new).
+// Native to page: `configure` once, then `setEvents`, `setTray`, `setTheme`,
+// `setView`, `showDate`, `suspend`/`resume`, and `state` (read back from the
+// page's DOM, for a self-test). Page to native: `ready`, `error`, `range` (the
+// visible period changed), `open` (an event or a tray row was clicked), `add`
+// (a day or a time slot was double-clicked), `move` (an event was dropped
+// somewhere new), `schedule` (a tray row's Today, Tomorrow or Pick…), `tray`
+// (the tray's fold button), `newTask` and `openList` (the empty state's two
+// buttons).
+//
+// `schedule` names the button, never a date: which day "Today" is belongs to
+// the native side's clock, not the page's.
 //
 // ## Who owns the view state (R4-ARCH-01)
 //
@@ -79,6 +85,14 @@ final class ShiftCalendarWebView: WKWebView {
     var onMoveTask: ((_ taskID: String, _ day: String, _ time: String?) -> Void)?
     /// A follow-up's event was dropped on a new day or time.
     var onMoveFollowUp: ((_ id: String, _ day: String, _ time: String?) -> Void)?
+    /// A tray row's Today, Tomorrow or Pick…: "today", "tomorrow" or "pick".
+    var onScheduleFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ when: String) -> Void)?
+    /// The tray's fold button asked for this state.
+    var onTrayCollapse: ((Bool) -> Void)?
+    /// The empty state's New task.
+    var onNewTask: (() -> Void)?
+    /// The empty state's Open List.
+    var onOpenList: (() -> Void)?
     /// The day the page is focused on (`YYYY-MM-DD`), as its last range
     /// report said: what a New Task from the toolbar is dated to.
     private(set) var focusedDay: String?
@@ -240,6 +254,18 @@ final class ShiftCalendarWebView: WKWebView {
             } else {
                 onMoveTask?(id, day, body["time"] as? String)
             }
+        case "schedule":
+            guard let id = body["taskID"] as? String, let when = body["when"] as? String,
+                  ["today", "tomorrow", "pick"].contains(when) else { return }
+            let kind = ShiftCalendarEntry.Kind(rawValue: (body["kind"] as? String) ?? "") ?? .task
+            onScheduleFromTray?(id, kind, when)
+        case "tray":
+            guard let collapsed = body["collapsed"] as? Bool else { return }
+            onTrayCollapse?(collapsed)
+        case "newTask":
+            onNewTask?()
+        case "openList":
+            onOpenList?()
         case "reply":
             guard let callID = body["callID"] as? Int,
                   let completion = pendingCalls.removeValue(forKey: callID) else { return }

@@ -24,8 +24,10 @@
 //   - **A completed task is shown and cannot be moved.** `updateTask` only
 //     touches `active.yaml`, so a dropped completed task would save nothing.
 //   - **What is on screen is stated** (GL-14). The caption above the calendar
-//     counts the tasks in the visible period, and says so when there are none
-//     rather than leaving an empty grid to be interpreted.
+//     counts the tasks in the visible period, and the open work the grid
+//     cannot show: undated tasks, which the Unscheduled tray beside the card
+//     lists, and overdue ones, which it pins. An empty grid with open tasks
+//     behind it never reads as "nothing scheduled".
 //
 // A drop is a request. The page posts `move`, `ShiftController.rescheduleTask`
 // applies `ShiftCalendarReschedule` and writes through the store, and the
@@ -206,6 +208,149 @@ enum ShiftCalendarModel {
     }
 }
 
+// MARK: - The Unscheduled tray
+
+/// One row of the Unscheduled tray: an open task with no date, or an
+/// overdue task or follow-up pinned above them.
+struct ShiftCalendarTrayItem: Equatable {
+    var id: String
+    var kind: ShiftCalendarEntry.Kind
+    var title: String
+    var priority: ShiftPriority
+    var projectID: String?
+    /// The day an overdue record was due, and how many days ago that was.
+    /// `nil` and 0 for an undated task.
+    var dueDay: String?
+    var daysOverdue: Int = 0
+}
+
+/// Everything the calendar's grid cannot show by itself (GL-14): the open
+/// tasks that have no date, and the overdue work whose own day is usually off
+/// screen. Overdue records are also drawn on their own day; the tray pins
+/// them so they are never only in a month nobody is looking at.
+struct ShiftCalendarTray: Equatable {
+    /// The undated tasks of one project, or of none.
+    struct Group: Equatable {
+        /// `nil` for the "No project" group.
+        var projectID: String?
+        var title: String
+        var items: [ShiftCalendarTrayItem]
+    }
+
+    var overdue: [ShiftCalendarTrayItem] = []
+    var groups: [Group] = []
+    /// Every open task, dated or not.
+    var openTasks = 0
+    /// Open tasks and pending follow-ups that carry a date.
+    var datedRecords = 0
+
+    var unscheduledCount: Int { groups.reduce(0) { $0 + $1.items.count } }
+
+    /// Open work exists and none of it has a date: the first-run state the
+    /// captain reported, where the calendar used to read as if there was no
+    /// work at all.
+    var isUndatedOnly: Bool { datedRecords == 0 && unscheduledCount > 0 }
+
+    static let noProjectTitle = "No project"
+}
+
+extension ShiftCalendarModel {
+
+    /// The tray for `tasks` and `followUps` on `today` (`YYYY-MM-DD`).
+    ///
+    /// Undated open tasks are grouped by project in the store's own project
+    /// order, with "No project" last, and sorted by priority then title
+    /// inside a group. Overdue records come first, oldest first. A follow-up
+    /// with no date is not a task and is not listed; one that is overdue is.
+    static func tray(tasks: [ShiftTask], followUps: [ShiftFollowUp], projects: [ShiftProject],
+                     today: String, calendar: Calendar = .current) -> ShiftCalendarTray {
+        var tray = ShiftCalendarTray()
+        var undated: [String?: [ShiftCalendarTrayItem]] = [:]
+        let todayDate = ShiftDateFormatting.date(from: today)
+        func daysBefore(_ day: String) -> Int {
+            guard let todayDate, let due = ShiftDateFormatting.date(from: day) else { return 0 }
+            return max(calendar.dateComponents([.day], from: calendar.startOfDay(for: due),
+                                               to: calendar.startOfDay(for: todayDate)).day ?? 0, 0)
+        }
+
+        for task in tasks where task.status != .completed && task.status != .cancelled {
+            tray.openTasks += 1
+            let item = ShiftCalendarTrayItem(id: task.id, kind: .task, title: task.title,
+                                             priority: task.priority, projectID: task.projectID)
+            guard let due = task.dueDate, !due.isEmpty else {
+                let key = (task.projectID?.isEmpty ?? true) ? nil : task.projectID
+                undated[key, default: []].append(item)
+                continue
+            }
+            tray.datedRecords += 1
+            if due < today {
+                var overdue = item
+                overdue.dueDay = due
+                overdue.daysOverdue = daysBefore(due)
+                tray.overdue.append(overdue)
+            }
+        }
+        for item in followUps where item.status == .pending {
+            guard let due = item.followUpAt, !due.isEmpty else { continue }
+            tray.datedRecords += 1
+            guard due < today else { continue }
+            tray.overdue.append(ShiftCalendarTrayItem(id: item.id, kind: .followUp, title: item.title,
+                                                      priority: item.priority, projectID: item.projectID,
+                                                      dueDay: due, daysOverdue: daysBefore(due)))
+        }
+
+        tray.overdue.sort { ($0.dueDay ?? "", $0.title) < ($1.dueDay ?? "", $1.title) }
+        let rank: [ShiftPriority: Int] = [.high: 0, .normal: 1, .low: 2]
+        func ordered(_ items: [ShiftCalendarTrayItem]) -> [ShiftCalendarTrayItem] {
+            items.sorted { (rank[$0.priority] ?? 1, $0.title) < (rank[$1.priority] ?? 1, $1.title) }
+        }
+        for project in projects {
+            guard let items = undated.removeValue(forKey: project.id) else { continue }
+            tray.groups.append(.init(projectID: project.id, title: project.name, items: ordered(items)))
+        }
+        let noProject = undated.removeValue(forKey: nil)
+        // A project id with no project record (deleted, or not yet synced):
+        // still grouped, under its id rather than a name nobody chose.
+        for key in undated.keys.compactMap({ $0 }).sorted() {
+            tray.groups.append(.init(projectID: key, title: key, items: ordered(undated[key] ?? [])))
+        }
+        if let noProject {
+            tray.groups.append(.init(projectID: nil, title: ShiftCalendarTray.noProjectTitle,
+                                     items: ordered(noProject)))
+        }
+        return tray
+    }
+
+    /// The `completed/<YYYY-MM>.yaml` files the period `[from, through]`
+    /// needs: every month it touches, and one either side. A task is filed by
+    /// the month it was finished in, not the month it was due, so a task due
+    /// on the 30th and finished on the 2nd lives in the next month's file.
+    static func completedMonths(from: Date, through: Date, calendar: Calendar = .current) -> [String] {
+        guard let first = calendar.date(byAdding: .month, value: -1, to: from),
+              let last = calendar.date(byAdding: .month, value: 1, to: through) else { return [] }
+        var months: [String] = []
+        var cursor = calendar.date(from: calendar.dateComponents([.year, .month], from: first)) ?? first
+        while cursor <= last, months.count < 24 {
+            let parts = calendar.dateComponents([.year, .month], from: cursor)
+            months.append(String(format: "%04d-%02d", parts.year ?? 0, parts.month ?? 0))
+            guard let next = calendar.date(byAdding: .month, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return months
+    }
+
+    /// How the caption names the visible period: "this month" for the month
+    /// grid and the agenda (which covers the same month), "this week", and
+    /// "today" or "on this day" for the day view.
+    static func periodPhrase(scale: ShiftCalendarScale, visibleStart: String?, today: String) -> String {
+        switch scale {
+        case .month, .agenda: return "this month"
+        case .week: return "this week"
+        case .day: return visibleStart == nil || visibleStart == today ? "today" : "on this day"
+        }
+    }
+}
+
 // MARK: - What crosses the bridge
 
 /// The page's wire shapes. Pure functions from the store's values to JSON-ready
@@ -255,6 +400,78 @@ enum ShiftCalendarPayload {
     }
 
     static let timedBlockMinutes = 30
+
+    /// The Unscheduled tray and the first-run empty state, for `setTray`.
+    ///
+    /// Every word the page shows is decided here, where a self-test can read
+    /// it without a page. Colours are resolved per theme (the row's edge is
+    /// its category's, the group's dot its project's), so the page is sent a
+    /// fresh tray on a theme change, which is a repaint of the tray it already
+    /// holds (GL-24).
+    static func tray(_ tray: ShiftCalendarTray, projectNames: [String: String],
+                     theme: HelmTheme, collapsed: Bool) -> [String: Any] {
+        func edge(_ item: ShiftCalendarTrayItem) -> String {
+            let entry = ShiftCalendarEntry(taskID: item.id, title: item.title, day: "", time: nil,
+                                           projectID: item.projectID, priority: item.priority,
+                                           isProjected: false, isCompleted: false, kind: item.kind)
+            return ShiftCalendarPalette.colours(for: ShiftCalendarCategory(entry: entry), theme: theme)["main"] ?? ""
+        }
+        func row(_ item: ShiftCalendarTrayItem) -> [String: Any] {
+            let meta: String
+            if item.dueDay != nil {
+                let late = item.daysOverdue == 1 ? "Overdue 1 day" : "Overdue \(item.daysOverdue) days"
+                let what = item.kind == .followUp ? "Follow-up"
+                    : item.projectID.flatMap { projectNames[$0] ?? $0 } ?? ShiftCalendarTray.noProjectTitle
+                meta = "\(late) · \(what)"
+            } else {
+                meta = ShiftCalendarCategory(priority: item.priority).title
+            }
+            return ["taskID": item.id, "kind": item.kind.rawValue, "title": item.title,
+                    "edge": edge(item), "meta": meta, "overdue": item.dueDay != nil]
+        }
+        let groups: [[String: Any]] = tray.groups.map { group in
+            [
+                "title": group.title,
+                "count": group.items.count,
+                // No project is the neutral field's dot, not page ink
+                // (AGENTS.md's `.neutral` rule); the page draws it faint.
+                "dot": group.projectID.map { "#" + ShiftProjectPalette.tint(forProjectID: $0).hex(in: theme) } ?? "",
+                "items": group.items.map(row),
+            ]
+        }
+        var payload: [String: Any] = [
+            "count": tray.unscheduledCount,
+            "overdue": tray.overdue.map(row),
+            "overdueTitle": "Overdue · \(tray.overdue.count)",
+            "groups": groups,
+            "collapsed": collapsed,
+            "hint": trayHint,
+            "nothing": tray.unscheduledCount + tray.overdue.count == 0 ? trayAllDated : "",
+        ]
+        if tray.isUndatedOnly {
+            payload["empty"] = emptyState(openTasks: tray.openTasks)
+        }
+        return payload
+    }
+
+    static let trayHint = "No date yet. Press Today or Tomorrow on a row to put it on the calendar."
+    static let trayAllDated = "Every open task has a date."
+
+    /// The first-run state: open tasks exist and none of them has a date, so
+    /// the grid is empty for a reason the page states, and points at the tray
+    /// beside it rather than at nothing.
+    static func emptyState(openTasks: Int) -> [String: String] {
+        let have = openTasks == 1
+            ? "You have 1 open task, and it is not on a day yet."
+            : "You have \(openTasks) open tasks, and none of them is on a day."
+        return [
+            "title": "Nothing has a date yet",
+            "body": have + " Press Today or Tomorrow on a row in Unscheduled to put it on the calendar, "
+                + "or double-click a day to add a task there.",
+            "newTask": "New task",
+            "openList": "Open List",
+        ]
+    }
 
     /// Schedule-X accepts a locale only in `ll-RR` form and throws on
     /// anything else ("en", "zh-Hans-CN"), so the captain's locale is reduced
@@ -318,7 +535,11 @@ enum ShiftCalendarCategory: String, CaseIterable {
 
     init(entry: ShiftCalendarEntry) {
         guard entry.kind == .task else { self = .followUp; return }
-        switch entry.priority {
+        self.init(priority: entry.priority)
+    }
+
+    init(priority: ShiftPriority) {
+        switch priority {
         case .high: self = .high
         case .normal: self = .normal
         case .low: self = .low
@@ -387,6 +608,8 @@ enum ShiftCalendarPalette {
         // The card and its cells (task-calendar.css).
         "--gl-ground", "--gl-card", "--gl-card-edge", "--gl-cell", "--gl-cell-dim",
         "--gl-ink", "--gl-muted", "--gl-faint", "--gl-control-edge", "--gl-control-hover",
+        // The Unscheduled tray's Overdue heading and rows.
+        "--gl-overdue-ink",
     ]
 
     /// Every CSS variable, resolved from `theme`.
@@ -474,6 +697,9 @@ enum ShiftCalendarPalette {
             "--gl-faint": faint,
             "--gl-control-edge": line,
             "--gl-control-hover": toward(0.06),
+            // The theme's red as text, so corrected for legibility on the
+            // card the tray is drawn on (the now-line uses it raw, as a line).
+            "--gl-overdue-ink": CodePreviewTheme.legibleHex(HelmTheme.nsColor(theme.ansiHex[1]), on: surface),
         ]
     }
 
@@ -684,6 +910,16 @@ final class ShiftCalendarView: NSView {
     /// The visible period or the view changed: the caption and the scale
     /// may both be new.
     var onPeriodChanged: (() -> Void)?
+    /// A tray row's Today, Tomorrow or Pick… (`when` is the button's word).
+    var onScheduleFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ when: String) -> Void)?
+    /// The empty state's New task.
+    var onNewTask: (() -> Void)?
+    /// The empty state's Open List.
+    var onOpenList: (() -> Void)?
+    /// The finished tasks filed in these `completed/` months. The calendar
+    /// asks for the months its visible period needs, so a past month shows
+    /// what got done in it.
+    var completedTasks: ((_ months: [String]) -> [ShiftTask])?
 
     private(set) var scale: ShiftCalendarScale = .month
     /// The scale `show(scale:)` asked the page for, until the page confirms
@@ -709,6 +945,13 @@ final class ShiftCalendarView: NSView {
 
     private var tasks: [ShiftTask] = []
     private var followUps: [ShiftFollowUp] = []
+    private var projects: [ShiftProject] = []
+    private(set) var tray = ShiftCalendarTray()
+    private(set) var lastTrayPayload: [String: Any] = [:]
+    /// The tray folded to a strip. The page asks, this side decides and
+    /// remembers it across launches.
+    private(set) var trayCollapsed = AppDefaults.store.bool(forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+    static let trayCollapsedDefaultsKey = "fm.calendar.trayCollapsed"
     /// The period the page last reported, as `YYYY-MM-DD` strings. Until the
     /// first report it is the month grid around today, which is what the page
     /// opens on.
@@ -800,6 +1043,10 @@ final class ShiftCalendarView: NSView {
         webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
         webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
         webView.onMoveFollowUp = { [weak self] id, day, time in self?.onMoveFollowUp?(id, day, time) }
+        webView.onScheduleFromTray = { [weak self] id, kind, when in self?.onScheduleFromTray?(id, kind, when) }
+        webView.onTrayCollapse = { [weak self] collapsed in self?.setTrayCollapsed(collapsed) }
+        webView.onNewTask = { [weak self] in self?.onNewTask?() }
+        webView.onOpenList = { [weak self] in self?.onOpenList?() }
 
         applyTheme(ThemeManager.shared.theme)
         refreshCaption()
@@ -866,6 +1113,7 @@ final class ShiftCalendarView: NSView {
             }
             self.isConfigured = true
             self.pushEvents()
+            self.pushTray()
         }
     }
 
@@ -894,6 +1142,8 @@ final class ShiftCalendarView: NSView {
         }
         guard selected != scale else { return }
         scale = selected
+        // The caption names the period ("this week"), so it follows the view.
+        refreshCaption()
         onPeriodChanged?()
     }
 
@@ -917,6 +1167,7 @@ final class ShiftCalendarView: NSView {
     func show(scale: ShiftCalendarScale) {
         guard scale != self.scale else { return }
         self.scale = scale
+        refreshCaption()
         onPeriodChanged?()
         guard isConfigured else { return }
         requestedScale = scale
@@ -933,10 +1184,35 @@ final class ShiftCalendarView: NSView {
 
     // MARK: Data
 
-    func configure(tasks: [ShiftTask], followUps: [ShiftFollowUp] = []) {
+    func configure(tasks: [ShiftTask], followUps: [ShiftFollowUp] = [], projects: [ShiftProject] = [],
+                   today: Date = Date()) {
         self.tasks = tasks
         self.followUps = followUps
+        self.projects = projects
+        tray = ShiftCalendarModel.tray(tasks: tasks, followUps: followUps, projects: projects,
+                                       today: ShiftDateFormatting.components(from: today).dateStr)
         pushEvents()
+        pushTray()
+    }
+
+    /// Hands the tray (and the empty state, when there is one) to the page.
+    private func pushTray() {
+        let names = Dictionary(projects.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        lastTrayPayload = ShiftCalendarPayload.tray(tray, projectNames: names, theme: ThemeManager.shared.theme,
+                                                    collapsed: trayCollapsed)
+        guard isConfigured else { return }
+        webView.call("setTray", payload: lastTrayPayload) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setTray failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
+    func setTrayCollapsed(_ collapsed: Bool) {
+        guard collapsed != trayCollapsed else { return }
+        trayCollapsed = collapsed
+        AppDefaults.store.set(collapsed, forKey: Self.trayCollapsedDefaultsKey)
+        pushTray()
     }
 
     /// Recomputes the visible period's entries, states them in the caption,
@@ -967,31 +1243,62 @@ final class ShiftCalendarView: NSView {
             start = s
             end = calendar.date(byAdding: .day, value: days, to: s) ?? s
         }
-        return ShiftCalendarModel.entries(tasks: tasks, followUps: followUps,
-                                          from: start, through: end.addingTimeInterval(-1), calendar: calendar)
+        let through = end.addingTimeInterval(-1)
+        let finished = completedTasks?(ShiftCalendarModel.completedMonths(from: start, through: through,
+                                                                          calendar: calendar)) ?? []
+        // A record in both files (R2-BUG-01's worst case) is drawn once, as
+        // the open task it still is.
+        let open = Set(tasks.map(\.id))
+        return ShiftCalendarModel.entries(tasks: tasks + finished.filter { !open.contains($0.id) },
+                                          followUps: followUps,
+                                          from: start, through: through, calendar: calendar)
     }
 
     private func refreshCaption(entries: [ShiftCalendarEntry]? = nil) {
         let list = entries ?? visibleEntries()
         let tasksOnly = list.filter { $0.kind == .task }
+        let today = ShiftDateFormatting.components(from: Date()).dateStr
+        let period = ShiftCalendarModel.periodPhrase(scale: scale, visibleStart: visibleRange?.start, today: today)
         caption = Self.subtitle(total: tasksOnly.count, projected: tasksOnly.filter(\.isProjected).count,
-                                followUps: list.count - tasksOnly.count)
+                                followUps: list.count - tasksOnly.count, tray: tray, period: period)
         captionLabel.stringValue = caption
     }
 
-    /// GL-14: "nothing in this period" is a real, stated answer, never a
-    /// blank grid the reader has to interpret. The projected count is stated
-    /// separately because a month showing 40 events of which 35 are
-    /// projections is a different fact from a month with 40 real tasks.
-    static func subtitle(total: Int, projected: Int, followUps: Int = 0) -> String {
-        guard total + followUps > 0 else { return "Nothing scheduled in this period." }
-        let real = total - projected
+    /// GL-14: what is on screen and what is not, in one line.
+    ///
+    /// It counts the visible period's records, says how many of them are a
+    /// repeat rule's dates rather than records (a month showing 40 events of
+    /// which 35 are projections is a different fact from 40 real tasks), and
+    /// then the work the grid cannot show: tasks with no date, and overdue
+    /// ones. An empty grid with open tasks behind it never reads as "nothing
+    /// scheduled", which is what the captain saw with 13 undated tasks.
+    static func subtitle(total: Int, projected: Int, followUps: Int = 0,
+                         tray: ShiftCalendarTray = ShiftCalendarTray(), period: String = "this month") -> String {
+        let unscheduled = tray.unscheduledCount
+        if tray.isUndatedOnly, total + followUps == 0 {
+            let open = tray.openTasks == 1 ? "1 open task" : "\(tray.openTasks) open tasks"
+            return "\(open) · none on the calendar yet · \(unscheduled) unscheduled"
+        }
         var parts: [String] = []
-        if real > 0 || total > 0 { parts.append(real == 1 ? "1 task" : "\(real) tasks") }
-        if followUps > 0 { parts.append(followUps == 1 ? "1 follow-up" : "\(followUps) follow-ups") }
-        var text = parts.joined(separator: " and ")
-        if projected > 0 { text += ", \(projected) projected from a repeat rule" }
-        return text + " in this period. Drag one to move its date."
+        if total + followUps > 0 {
+            var nouns: [String] = []
+            if total > 0 { nouns.append(total == 1 ? "1 task" : "\(total) tasks") }
+            if followUps > 0 { nouns.append(followUps == 1 ? "1 follow-up" : "\(followUps) follow-ups") }
+            var text = nouns.joined(separator: " and ") + " " + period
+            if projected == 1 {
+                text += ", 1 of them a repeat date not yet created"
+            } else if projected > 1 {
+                text += ", \(projected) of them repeat dates not yet created"
+            }
+            parts.append(text)
+        } else if unscheduled + tray.overdue.count > 0 {
+            parts.append("Nothing dated \(period)")
+        } else {
+            return "Nothing scheduled \(period)."
+        }
+        if unscheduled > 0 { parts.append("\(unscheduled) unscheduled") }
+        if !tray.overdue.isEmpty { parts.append("\(tray.overdue.count) overdue") }
+        return parts.joined(separator: " · ")
     }
 
     // MARK: Theme
@@ -1011,6 +1318,8 @@ final class ShiftCalendarView: NSView {
                 AppLog.lifecycle.error("task calendar: setTheme failed: \(error.message, privacy: .public)")
             }
         }
+        // The tray's edges and dots are resolved colours too.
+        pushTray()
     }
 
     // MARK: Debug hooks (GL-27)
@@ -1026,5 +1335,6 @@ final class ShiftCalendarView: NSView {
     var debugIsConfigured: Bool { isConfigured }
     var debugShowsMissingBundle: Bool { missingBundleState != nil }
     var debugEventIDs: [String] { lastEventsPayload.compactMap { $0["id"] as? String } }
+    var debugTrayPayload: [String: Any] { lastTrayPayload }
     #endif
 }

@@ -48,10 +48,21 @@ body {
   padding: 4px 6px 14px;
 }
 
+/* The card, and the Unscheduled tray beside it. */
+.gl-layout {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+}
+
 /* MARK: The card */
 
 .gl-card {
   box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -139,13 +150,26 @@ body {
 }
 
 .gl-round:hover,
-.gl-pill:not(.is-active):hover {
+.gl-pill:not(.is-active):not(.gl-primary):hover {
   background: var(--gl-control-hover);
 }
 
-.gl-head button:focus-visible {
+.gl-head button:focus-visible,
+.gl-empty button:focus-visible,
+.gl-tray button:focus-visible,
+.gl-tray-item:focus-visible {
   outline: 2px solid var(--sx-color-primary);
   outline-offset: 2px;
+}
+
+/* The family only: a `font` shorthand here would out-rank each button's own
+ * size, which is one class deep. */
+.gl-empty button,
+.gl-tray button {
+  font-family: inherit;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 /* The weekday row belongs to the month grid only: the week and day views
@@ -196,6 +220,15 @@ html:not([data-view='month-grid']) .gl-weekdays {
 }
 
 /* MARK: Schedule-X inside the card */
+
+/* The grid's own area, which the first-run state sits over. */
+.gl-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 #calendar {
   flex: 1;
@@ -479,4 +512,323 @@ html.gl-suspended *::after {
 
 .sx__week-grid__date--is-today .sx__week-grid__day-name {
   color: var(--gl-accent-ink);
+}
+
+/* MARK: The first-run state
+ *
+ * Open tasks exist and none has a date. The grid stays, quieter, so the
+ * month is still there to aim at, and the card over it says why it is empty
+ * and points at the tray. The agenda says so in its own words instead. */
+
+.gl-card.is-empty #calendar {
+  opacity: 0.45;
+}
+
+html[data-view='list'] .gl-card.is-empty #calendar {
+  opacity: 1;
+}
+
+.gl-empty {
+  position: absolute;
+  z-index: 5;
+  top: 26%;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: calc(100% - 48px);
+  max-width: 440px;
+  padding: 22px 24px 20px;
+  text-align: center;
+  background: var(--gl-card);
+  border: 1px solid var(--gl-card-edge);
+  border-radius: var(--gl-radius-card);
+  box-shadow: var(--gl-shadow-card);
+}
+
+.gl-empty[hidden],
+html[data-view='list'] .gl-empty {
+  display: none;
+}
+
+.gl-empty-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 12px;
+  border-radius: 12px;
+  background: var(--sx-color-primary-container);
+  color: var(--sx-color-on-primary-container);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+}
+
+.gl-empty-icon::before {
+  content: '\25EB';
+}
+
+.gl-empty h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--gl-ink);
+}
+
+.gl-empty p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gl-muted);
+}
+
+.gl-empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.gl-empty .gl-pill {
+  height: 30px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.gl-pill.gl-primary {
+  background: var(--sx-color-primary);
+  border-color: var(--sx-color-primary);
+  color: var(--sx-color-on-primary);
+  font-weight: 600;
+}
+
+.gl-pill.gl-primary::before {
+  content: '+';
+  margin-inline-end: 6px;
+  font-weight: 700;
+}
+
+/* MARK: The Unscheduled tray
+ *
+ * Its own card beside the calendar's, in the same surface, edge and shadow,
+ * with each row's colour edge taken from the same categories as the chips. */
+
+.gl-tray {
+  flex: none;
+  box-sizing: border-box;
+  width: 264px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--gl-card);
+  border: 1px solid var(--gl-card-edge);
+  border-radius: var(--gl-radius-card);
+  box-shadow: var(--gl-shadow-card);
+  overflow: hidden;
+}
+
+.gl-tray[hidden] {
+  display: none;
+}
+
+.gl-tray-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px 6px 16px;
+}
+
+.gl-tray-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gl-ink);
+  white-space: nowrap;
+}
+
+.gl-tray-count {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  min-width: 10px;
+  padding: 0 7px;
+  border-radius: 9px;
+  text-align: center;
+  background: var(--gl-cell);
+  color: var(--gl-muted);
+}
+
+.gl-tray-toggle {
+  margin-inline-start: auto;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gl-muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gl-tray-toggle::before {
+  content: '\21E5';
+}
+
+.gl-tray-toggle:hover {
+  background: var(--gl-control-hover);
+  border-color: var(--gl-control-edge);
+}
+
+.gl-tray-hint {
+  margin: 0;
+  padding: 0 16px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--gl-muted);
+}
+
+.gl-tray-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+}
+
+.gl-tray-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 8px 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gl-muted);
+}
+
+.gl-tray-group i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gl-faint);
+}
+
+.gl-tray-group.is-overdue {
+  color: var(--gl-overdue-ink);
+}
+
+.gl-tray-item {
+  display: flex;
+  gap: 9px;
+  align-items: stretch;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.gl-tray-item:hover,
+.gl-tray-item:focus-within {
+  background: var(--gl-control-hover);
+  border-color: var(--gl-control-edge);
+}
+
+.gl-tray-edge {
+  flex: none;
+  width: 3px;
+  border-radius: 2px;
+}
+
+.gl-tray-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.gl-tray-title {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--gl-ink);
+  overflow-wrap: anywhere;
+}
+
+.gl-tray-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--gl-muted);
+}
+
+.gl-tray-item.is-overdue .gl-tray-meta {
+  color: var(--gl-overdue-ink);
+  font-weight: 600;
+}
+
+.gl-tray-quick {
+  display: none;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.gl-tray-item:hover .gl-tray-quick,
+.gl-tray-item:focus-within .gl-tray-quick {
+  display: flex;
+}
+
+.gl-quick {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  border: 1px solid var(--gl-control-edge);
+  background: var(--gl-card);
+  color: var(--gl-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.gl-quick:hover {
+  background: var(--sx-color-primary-container);
+  border-color: var(--sx-color-primary);
+  color: var(--sx-color-on-primary-container);
+}
+
+.gl-tray-nothing {
+  margin: 12px 8px;
+  font-size: 12.5px;
+  color: var(--gl-muted);
+}
+
+/* Folded to a strip: the name and the count, read top to bottom, and the
+ * button that opens it again. */
+.gl-tray.is-collapsed {
+  width: 44px;
+}
+
+.gl-tray.is-collapsed .gl-tray-head {
+  flex-direction: column;
+  padding: 10px 0;
+  gap: 10px;
+}
+
+.gl-tray.is-collapsed .gl-tray-toggle {
+  order: -1;
+  margin: 0;
+}
+
+.gl-tray.is-collapsed .gl-tray-toggle::before {
+  content: '\21E4';
+}
+
+.gl-tray.is-collapsed .gl-tray-head h2 {
+  writing-mode: vertical-rl;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gl-muted);
+}
+
+.gl-tray.is-collapsed .gl-tray-hint,
+.gl-tray.is-collapsed .gl-tray-list {
+  display: none;
 }

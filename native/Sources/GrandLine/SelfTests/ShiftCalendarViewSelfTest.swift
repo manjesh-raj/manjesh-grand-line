@@ -30,7 +30,12 @@
 //   - hiding the page suspends it, and hiding it at zero width then showing
 //     it again keeps the month on both sides (R4-BUG-01): a range report
 //     moves the period and never the scale, and "+N more" opens its day
-//     through the page's own view handler.
+//     through the page's own view handler;
+//   - **every open task has a place**: an undated-only store draws its tasks
+//     in the Unscheduled tray and the first-run state over the grid rather
+//     than "Nothing scheduled", a row's real Today button writes the date to
+//     the store (read back from the store), the fold is remembered, and a
+//     past month shows the task finished in it, read from `completed/`.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -163,7 +168,7 @@ enum ShiftCalendarViewSelfTest {
                 check(Double(projected ?? "") ?? 1 < 1, "a projection should be drawn faint, got \(projected ?? "nil")")
                 check(real == "1", "a real task is fully opaque, got \(real ?? "nil")")
             }
-            check(view.debugCaption.contains("projected"),
+            check(view.debugCaption.contains("repeat dates not yet created"),
                   "a period carrying projections should say so, got \"\(view.debugCaption)\"")
 
             // MARK: A click opens the task
@@ -399,7 +404,139 @@ enum ShiftCalendarViewSelfTest {
             check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) bridge call(s) never got a reply")
         }
 
+        withScratchStore { store in checkTray(store: store, check: check) }
+
         return report(failures)
+    }
+
+    // MARK: The Unscheduled tray
+
+    /// The captain's report, reproduced: open tasks, none dated. Before the
+    /// tray the grid was empty and the caption said "Nothing scheduled".
+    private static func checkTray(store: ShiftStore, check: (Bool, String) -> Void) {
+        let defaults = AppDefaults.store
+        let foldBefore = defaults.object(forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+        defer {
+            if let foldBefore { defaults.set(foldBefore, forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+            else { defaults.removeObject(forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+        }
+        defaults.set(false, forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+
+        var infra = ShiftProject.fresh()
+        infra.name = "Infra"
+        store.addProject(infra)
+        let audit = seed(store, title: "Audit IAM keys", due: nil, time: nil, rule: nil, priority: .high)
+        if var task = store.activeTasks.first(where: { $0.id == audit }) {
+            task.projectID = infra.id
+            store.updateTask(task)
+        }
+        let runbook = seed(store, title: "Review the on-call runbook", due: nil, time: nil, rule: nil)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let todayDay = ShiftDateFormatting.components(from: today).0
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "the tray case's page never reported ready and configured")
+            return
+        }
+        _ = waitFor(timeout: 5) { (state(web)["trayRows"] as? [String] ?? []).count == 2 }
+
+        // MARK: Undated only: the tray and the first-run state
+
+        let first = state(web)
+        check(first["trayVisible"] as? Bool == true, "the Unscheduled tray should be drawn beside the card, got \(first)")
+        check(first["trayRows"] as? [String] == [audit, runbook],
+              "the tray should list the store's undated tasks, grouped (Infra first), got \(first["trayRows"] ?? "nothing")")
+        check(first["trayGroups"] as? [String] == ["Infra · 1", "No project · 1"],
+              "the tray's groups should be read from the store's projects, got \(first["trayGroups"] ?? "nothing")")
+        check(first["trayCount"] as? String == "2", "the tray's count should be 2, got \(first["trayCount"] ?? "nil")")
+        check(first["emptyVisible"] as? Bool == true && first["emptyTitle"] as? String == "Nothing has a date yet",
+              "an undated-only store should show the first-run state over the grid, got \(first)")
+        check(!view.debugCaption.contains("Nothing scheduled") && view.debugCaption.contains("2 open tasks"),
+              "the caption should count the open tasks, not say nothing is scheduled, got \"\(view.debugCaption)\"")
+        check(controller.drillHeaderSubtitle == view.debugCaption, "the drill header states the same caption")
+        // The tray takes room from the card rather than covering it.
+        let geometry = js(web, "(() => { const c = document.getElementById('gl-card').getBoundingClientRect();"
+                          + " const t = document.getElementById('gl-tray').getBoundingClientRect();"
+                          + " return [c.right, t.left, t.width, t.right, window.innerWidth] })()") as? [Double] ?? []
+        check(geometry.count == 5 && geometry[0] <= geometry[1] && geometry[2] > 200 && geometry[3] <= geometry[4],
+              "the tray should sit beside the card, inside the page, got \(geometry)")
+
+        // MARK: Today writes the date
+
+        // The real button, through the page's real listener and the bridge.
+        _ = js(web, "document.querySelector('.gl-tray-item[data-task-id=\"\(runbook)\"] .gl-quick[data-when=\"today\"]').click()")
+        _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == runbook }?.dueDate == todayDay }
+        let scheduled = store.activeTasks.first { $0.id == runbook }
+        check(scheduled?.dueDate == todayDay && scheduled?.dueTime == nil,
+              "Today on a tray row should date the task today in the store, got \(scheduled?.dueDate ?? "nil")")
+        _ = waitFor(timeout: 5) { (state(web)["trayRows"] as? [String] ?? []) == [audit] }
+        let after = state(web)
+        check(after["trayRows"] as? [String] == [audit], "a dated task should leave the tray, got \(after["trayRows"] ?? "nil")")
+        check(after["emptyVisible"] as? Bool == false, "with a dated task the first-run state should give way to the grid")
+        _ = waitFor(timeout: 3) { eventIn(web, id: runbook, day: todayDay) }
+        check(eventIn(web, id: runbook, day: todayDay), "the scheduled task should be drawn on today")
+        check(view.debugCaption.hasPrefix("1 task this month") && view.debugCaption.contains("1 unscheduled"),
+              "the caption should count the dated task and the one still unscheduled, got \"\(view.debugCaption)\"")
+
+        // Tomorrow on a follow-up row that is overdue writes the follow-up.
+        var lateFollowUp = ShiftFollowUp.fresh()
+        lateFollowUp.title = "Ping the registrar"
+        lateFollowUp.followUpAt = ShiftDateFormatting.components(
+            from: calendar.date(byAdding: .day, value: -3, to: today) ?? today).0
+        store.addFollowUp(lateFollowUp)
+        controller.render()
+        _ = waitFor(timeout: 5) { (state(web)["trayOverdueRows"] as? [String] ?? []) == [lateFollowUp.id] }
+        check(state(web)["trayOverdueRows"] as? [String] == [lateFollowUp.id],
+              "an overdue follow-up should be pinned in the tray, got \(state(web)["trayOverdueRows"] ?? "nil")")
+        let tomorrowDay = ShiftDateFormatting.components(
+            from: calendar.date(byAdding: .day, value: 1, to: today) ?? today).0
+        _ = js(web, "document.querySelector('.gl-tray-item[data-task-id=\"\(lateFollowUp.id)\"] .gl-quick[data-when=\"tomorrow\"]').click()")
+        _ = waitFor(timeout: 5) { store.followUps.first { $0.id == lateFollowUp.id }?.followUpAt == tomorrowDay }
+        check(store.followUps.first { $0.id == lateFollowUp.id }?.followUpAt == tomorrowDay,
+              "Tomorrow on an overdue follow-up should move its date to tomorrow in the store")
+
+        // MARK: The fold is remembered
+
+        _ = js(web, "document.getElementById('gl-tray-toggle').click()")
+        _ = waitFor(timeout: 5) { state(web)["trayCollapsed"] as? Bool == true }
+        check(state(web)["trayCollapsed"] as? Bool == true && view.trayCollapsed,
+              "the fold button should fold the tray on both sides")
+        check(AppDefaults.store.bool(forKey: ShiftCalendarView.trayCollapsedDefaultsKey),
+              "the fold should be remembered across launches")
+        let folded = js(web, "document.getElementById('gl-tray').getBoundingClientRect().width") as? Double ?? 0
+        check(folded > 0 && folded < 60, "a folded tray is a strip, got \(folded)pt wide")
+        _ = js(web, "document.getElementById('gl-tray-toggle').click()")
+        _ = waitFor(timeout: 5) { state(web)["trayCollapsed"] as? Bool == false }
+        check(state(web)["trayCollapsed"] as? Bool == false, "the fold button should open the tray again")
+
+        // MARK: A past month shows what got done in it
+
+        // Due and finished two months ago: outside the board's 7-day Done
+        // window, so only the month's own `completed/` file can draw it.
+        let pastDue = calendar.date(byAdding: .month, value: -2, to: today) ?? today
+        let pastDay = ShiftDateFormatting.components(from: pastDue).0
+        let done = seed(store, title: "Patch Tuesday review", due: pastDay, time: nil, rule: nil)
+        store.setTaskCompleted(id: done, completed: true,
+                               now: calendar.date(bySettingHour: 12, minute: 0, second: 0, of: pastDue) ?? pastDue)
+        controller.render()
+        _ = call(web, "showDate", ["date": pastDay])
+        _ = waitFor(timeout: 5) { eventIn(web, id: done, day: pastDay) }
+        check(eventIn(web, id: done, day: pastDay),
+              "a task finished two months ago should be drawn on its day when that month is shown")
+        let struck = js(web, "(() => { const el = document.querySelector('[data-event-id=\"\(done)\"]');"
+                        + " return el ? el.classList.contains('gl-completed') : null })()") as? Bool
+        check(struck == true, "a finished task is drawn as finished")
+        _ = call(web, "showDate", ["date": todayDay])
+
+        _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
+        check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) tray bridge call(s) never got a reply")
     }
 
     // MARK: Driving the page

@@ -32,6 +32,10 @@
          date field) is hidden; this one is the captain's design: round
          previous and next buttons, the period's title, and the views as
          pills. task-calendar.js drives every control here. -->
+    <!-- The card and, beside it, the Unscheduled tray. Both live in this one
+         page so a later drag from the tray onto a day uses the same DOM the
+         grid's own drag already does. -->
+    <div class="gl-layout" id="gl-layout">
     <main class="gl-card" id="gl-card">
       <header class="gl-head">
         <button type="button" class="gl-round" id="gl-prev" aria-label="Previous period">&#x2039;</button>
@@ -47,9 +51,33 @@
         </nav>
       </header>
       <div class="gl-weekdays" id="gl-weekdays" aria-hidden="true"></div>
-      <div id="calendar"></div>
+      <div class="gl-body">
+        <div id="calendar"></div>
+        <!-- The first-run state: open tasks exist and none has a date. The
+             words arrive from the native side with the tray. -->
+        <section class="gl-empty" id="gl-empty" hidden aria-live="polite">
+          <div class="gl-empty-icon" aria-hidden="true"></div>
+          <h2 id="gl-empty-title"></h2>
+          <p id="gl-empty-body"></p>
+          <div class="gl-empty-actions">
+            <button type="button" class="gl-pill gl-primary" id="gl-empty-new"></button>
+            <button type="button" class="gl-pill" id="gl-empty-list"></button>
+          </div>
+        </section>
+      </div>
       <footer class="gl-legend" id="gl-legend"></footer>
     </main>
+    <aside class="gl-tray" id="gl-tray" hidden aria-labelledby="gl-tray-title">
+      <header class="gl-tray-head">
+        <h2 id="gl-tray-title">Unscheduled</h2>
+        <span class="gl-tray-count" id="gl-tray-count"></span>
+        <button type="button" class="gl-tray-toggle" id="gl-tray-toggle" aria-expanded="true"
+                aria-controls="gl-tray-list" aria-label="Collapse Unscheduled"></button>
+      </header>
+      <p class="gl-tray-hint" id="gl-tray-hint"></p>
+      <div class="gl-tray-list" id="gl-tray-list"></div>
+    </aside>
+    </div>
     <!-- A classic script, not `type="module"`, for the reason the other two
          page shells give: a module graph on a file:// origin is a needless
          portability question, and the bundle is one self-contained IIFE. -->
