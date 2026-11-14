@@ -68,6 +68,7 @@ enum ShiftYaml {
         "id", "title", "description", "status", "priority", "due_date", "due_time",
         "project_id", "tags", "created_at", "updated_at", "completed_at", "notes",
         "subtasks", "has_attachment", "recurrence", "reminder_minutes_before",
+        "series_id", "occurrence",
     ]
 
     static let followUpKnownKeys: Set<String> = [
@@ -104,6 +105,12 @@ enum ShiftYaml {
         // a key the format does not have.
         m[str("recurrence")] = strOpt(t.recurrence?.ruleText)
         m[str("reminder_minutes_before")] = t.reminderMinutesBefore.map { Yaml.int($0) } ?? .null
+        // The repeating-series identity. Written the same unconditional way,
+        // and listed in `taskKnownKeys`, because a key this build reads must
+        // also be one it writes - otherwise the passthrough would put a stale
+        // copy back beside the struct's own value.
+        m[str("series_id")] = strOpt(t.seriesID)
+        m[str("occurrence")] = strOpt(t.occurrence)
         return .dictionary(m)
     }
 
@@ -135,7 +142,9 @@ enum ShiftYaml {
             // "a new field needs a default on read" lesson, which this type
             // takes by hand because it is not `Codable`).
             recurrence: optString(dict[str("recurrence")] ?? .null).flatMap(ShiftRecurrence.parse),
-            reminderMinutesBefore: dict[str("reminder_minutes_before")]?.int
+            reminderMinutesBefore: dict[str("reminder_minutes_before")]?.int,
+            seriesID: optString(dict[str("series_id")] ?? .null),
+            occurrence: optString(dict[str("occurrence")] ?? .null)
         )
     }
 

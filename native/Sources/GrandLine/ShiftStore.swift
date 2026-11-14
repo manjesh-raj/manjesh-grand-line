@@ -608,9 +608,17 @@ final class ShiftStore {
     /// instance this spawned. Un-completing is a correction to one
     /// occurrence, and silently deleting a future task the captain may
     /// already have edited is the worse of the two surprises.
+    ///
+    /// The walk starts from the instance's rule slot (`occurrence`) when it
+    /// has one, not its due date: an occurrence moved "only this" to another
+    /// day must not drag the rest of the series along with it. The spawned
+    /// instance fills its own slot, so it carries no `occurrence`, and it
+    /// keeps the task's `seriesID` - which, like every other known key, is
+    /// written from the struct, so the record-level passthrough (keyed by the
+    /// old id) could never have carried it to the new one.
     static func nextOccurrence(after task: ShiftTask, now: Date = Date()) -> ShiftTask? {
         guard let rule = task.recurrence,
-              let anchor = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime)
+              let anchor = ShiftDateFormatting.dateTime(from: task.occurrence ?? task.dueDate, time: task.dueTime)
         else { return nil }
         // B24, first half: `COUNT` never ran out. Each spawned instance has
         // its own due date, and that date was handed to the rule as the
@@ -646,10 +654,13 @@ final class ShiftStore {
         spawned.dueTime = task.dueTime == nil ? nil : timeStr
         spawned.subtasks = task.subtasks.map { ShiftSubtask(id: UUID().uuidString, title: $0.title, done: false) }
         spawned.hasAttachment = false
+        spawned.occurrence = nil
         // The remaining budget, so the series really does run out (B24). An
         // unbounded rule is unchanged, so an ordinary repeating task's YAML
-        // line is byte-identical to what it always was.
-        spawned.recurrence = remaining
+        // line is byte-identical to what it always was. Skipped dates the
+        // walk has passed are dropped, so `EXDATE` cannot grow without bound
+        // (GL-35).
+        spawned.recurrence = remaining.prunedExceptionDates(before: dateStr)
         return spawned
     }
 
