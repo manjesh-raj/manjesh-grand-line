@@ -489,3 +489,54 @@ Confirmed to catch a regression:
 - Disabling the merge hook failed the conflict suite's "skipping different dates on two machines must not conflict".
 - A plain union instead of the three-way set failed "the date GitHub un-skipped stays un-skipped".
 - Not applying `EXDATE` in the walk failed five recurrence cases, including "skipped dates must not be produced".
+
+## Every open task has a place: the Unscheduled tray (PR 2 of the tasks-and-calendar plan, `fm/grand-line-calendar-pr2-unscheduled-tray`)
+
+The captain opened the Calendar with 13 open tasks, none of them dated, and saw an empty month captioned "Nothing scheduled in this period."
+`ShiftCalendarModel.entries` skips every task with no due date, and nothing else on the page showed one, so the caption read as if there was no work.
+The plan (`grand-line-tasks-calendar-plan`, captain decision 2A) puts an Unscheduled tray beside the calendar card.
+This PR is that tray, the new caption, the first-run empty state, and past months read from `completed/`.
+It is independent of the plan's other PRs: the tray belongs to the calendar card wherever the card ends up living (PR 4).
+
+### What shipped
+
+- **The tray**, a second card beside the calendar's, inside the same Schedule-X page.
+  It lists open tasks with no date, grouped by project in the store's own order with "No project" last, sorted by priority then title.
+  Overdue tasks and overdue follow-ups are pinned above them, oldest first, and still drawn on their own day too.
+  A row's edge is its category colour (the same one its chip would have), and a group's dot is its project's colour, with "No project" drawn faint rather than in page ink.
+  Hovering a row shows Today, Tomorrow and Pick….
+  Today and Tomorrow go through `ShiftCalendarReschedule` and the store, with the same Undo a drop has.
+  Pick… opens the task's editor until the When panel (PR 5) exists.
+  The fold button folds the tray to a 44pt strip, and the choice is kept in `fm.calendar.trayCollapsed`.
+- **The caption** counts the period's records, how many of them are repeat dates not yet created, then the unscheduled and overdue counts, in the period's own words ("this month", "this week", "today").
+  For example: "24 tasks this month, 9 of them repeat dates not yet created · 8 unscheduled · 2 overdue".
+  A period with nothing dated but open work elsewhere says "Nothing dated this week · …", and "Nothing scheduled this month." is left for a store with no open work at all.
+- **The first-run state.** When open tasks exist and none of them (and no pending follow-up) has a date, a card over the dimmed grid says "Nothing has a date yet", counts the open tasks, points at the tray, and offers New task and Open List (Tasks › List, through the shell's navigator).
+  Agenda shows its own empty text instead.
+- **Past months.** The Calendar used to load finished tasks only inside the board's 7-day Done window, so any earlier month looked like nothing had happened.
+  The view now asks `ShiftStore.completedTasks(inMonths:)` for the `completed/` files its visible period touches, plus one month either side, because a task is filed by the month it was finished in rather than the month it was due.
+  Each month file is memoised and invalidated with the existing completed-tasks cache, and the month key is validated before it becomes a file name.
+
+### Decisions
+
+- **The tray lives in the web page, not in AppKit.** The plan's risk table chose this so that PR 7's drag from the tray onto a day can use the same DOM the grid's drag already uses.
+  Every word and colour still comes from `ShiftCalendarPayload.tray`, so the wording is asserted in the blocking lane without a page.
+- **`schedule` names the button, never a date.** The page posts `when: "today"`, and `TaskCalendarController.scheduleFromTray` resolves the day on the native clock.
+- **The fold is a request.** The page posts `tray`, the native side stores the choice and sends the tray back folded, which is R4-ARCH-01's rule for web islands.
+- **No drag wording.** The board's tray copy says "Drag onto a day" and "Drop a chip here to clear its date", which are PR 7.
+  The hint and the empty state offer Today and Tomorrow instead, and `checkTrayPayload` fails if the empty state mentions a drag.
+- **The Agenda's "No date" group** is part of the Agenda rework in the plan and is not in this PR.
+- **A new palette variable, `--gl-overdue-ink`**, is the theme's red corrected for legibility on the card, because the Overdue heading and rows are text and `--gl-now-line` is the raw red used as a line.
+
+### Verification
+
+- `FM_RUN_SHIFT_CALENDAR_TESTS` (blocking lane): `checkTrayModel` (grouping, order, overdue, in-progress included, finished and cancelled excluded, undated follow-ups excluded, the first-run predicate and its discriminating fixtures), `checkTrayPayload` (meta strings, edges, dots, the empty state's words), `checkCompletedMonths` (the month window, the month-key guard, and a real scratch store whose memo is invalidated by un-completing a task), the new caption cases, and the bridge entries and page ids.
+  Confirmed to fail with the old "Nothing scheduled" caption put back for an empty grid (three cases).
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` (windowed lane): an undated-only store draws its two tasks in the tray, grouped, with the first-run state over the grid and a caption that counts open tasks.
+  The real Today button on a row writes today's date, read back from the store, after which the row leaves the tray, the empty state gives way and the chip is on today.
+  Tomorrow on an overdue follow-up writes the follow-up's date, the fold button folds and is remembered, and a task finished two months ago is drawn struck through when that month is shown.
+  Confirmed to fail with the bridge's `schedule` handler disconnected and with the controller's `completedTasks` hookup returning nothing (eight checks between them).
+- Rendered with `WKWebView.takeSnapshot` in Daylight and Dusk, for the empty state, the tray with a hovered row, and the folded strip.
+  The first render found the quick buttons spilling out of a hovered row, because `.gl-tray button { font: inherit }` out-ranked `.gl-quick`'s own size.
+  The reset now inherits only the font family.
+- `build-schedule-x-web.sh` regenerated `web/` (and `BUILD-INFO.txt`) from `src/`.

@@ -340,6 +340,145 @@ function renderLegend(items) {
   }
 }
 
+// MARK: The Unscheduled tray
+//
+// Beside the card: the open tasks with no date, grouped by project, and the
+// overdue ones pinned above them. The native side sends every word and every
+// colour (`ShiftCalendarPayload.tray`), so this only builds rows. A row's
+// Today and Tomorrow post `schedule` with the button's word, never a date:
+// which day "today" is belongs to the native clock. The fold button asks the
+// native side, which remembers the choice and sends the tray back folded.
+
+let trayCollapsed = false
+
+function trayButton(label, when, title) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'gl-quick'
+  button.dataset.when = when
+  button.textContent = label
+  if (title) button.title = title
+  return button
+}
+
+function trayRow(item) {
+  const row = document.createElement('div')
+  row.className = 'gl-tray-item' + (item.overdue ? ' is-overdue' : '')
+  row.dataset.taskId = item.taskID
+  row.dataset.kind = item.kind
+  row.tabIndex = 0
+  row.setAttribute('role', 'button')
+  const edge = document.createElement('span')
+  edge.className = 'gl-tray-edge'
+  edge.style.background = item.edge
+  const body = document.createElement('div')
+  body.className = 'gl-tray-body'
+  const title = document.createElement('div')
+  title.className = 'gl-tray-title'
+  title.textContent = item.title
+  const meta = document.createElement('div')
+  meta.className = 'gl-tray-meta'
+  meta.textContent = item.meta
+  const quick = document.createElement('div')
+  quick.className = 'gl-tray-quick'
+  quick.appendChild(trayButton('Today', 'today'))
+  quick.appendChild(trayButton('Tomorrow', 'tomorrow'))
+  quick.appendChild(trayButton('Pick\u2026', 'pick', 'Open it to choose a date'))
+  body.appendChild(title)
+  body.appendChild(meta)
+  body.appendChild(quick)
+  row.appendChild(edge)
+  row.appendChild(body)
+  return row
+}
+
+function trayGroup(title, dot, extraClass) {
+  const heading = document.createElement('div')
+  heading.className = 'gl-tray-group' + (extraClass ? ' ' + extraClass : '')
+  if (dot !== undefined) {
+    const swatch = document.createElement('i')
+    if (dot) swatch.style.background = dot
+    heading.appendChild(swatch)
+  }
+  heading.appendChild(document.createTextNode(title))
+  return heading
+}
+
+function renderTray(tray) {
+  const aside = document.getElementById('gl-tray')
+  const list = document.getElementById('gl-tray-list')
+  trayCollapsed = !!tray.collapsed
+  aside.hidden = false
+  aside.classList.toggle('is-collapsed', trayCollapsed)
+  const toggle = document.getElementById('gl-tray-toggle')
+  toggle.setAttribute('aria-expanded', trayCollapsed ? 'false' : 'true')
+  toggle.setAttribute('aria-label', trayCollapsed ? 'Expand Unscheduled' : 'Collapse Unscheduled')
+  document.getElementById('gl-tray-count').textContent = String(tray.count || 0)
+  document.getElementById('gl-tray-hint').textContent = tray.hint || ''
+  list.textContent = ''
+  const overdue = tray.overdue || []
+  if (overdue.length) {
+    list.appendChild(trayGroup(tray.overdueTitle || 'Overdue', undefined, 'is-overdue'))
+    for (const item of overdue) list.appendChild(trayRow(item))
+  }
+  for (const group of tray.groups || []) {
+    list.appendChild(trayGroup(group.title + ' \u00B7 ' + group.count, group.dot || ''))
+    for (const item of group.items || []) list.appendChild(trayRow(item))
+  }
+  if (tray.nothing) {
+    const none = document.createElement('p')
+    none.className = 'gl-tray-nothing'
+    none.textContent = tray.nothing
+    list.appendChild(none)
+  }
+  renderEmpty(tray.empty || null)
+}
+
+// The first-run state over the grid: open tasks exist and none has a date.
+function renderEmpty(empty) {
+  const section = document.getElementById('gl-empty')
+  document.getElementById('gl-card').classList.toggle('is-empty', !!empty)
+  section.hidden = !empty
+  if (!empty) return
+  document.getElementById('gl-empty-title').textContent = empty.title
+  document.getElementById('gl-empty-body').textContent = empty.body
+  document.getElementById('gl-empty-new').textContent = empty.newTask
+  document.getElementById('gl-empty-list').textContent = empty.openList
+}
+
+function wireTray() {
+  const list = document.getElementById('gl-tray-list')
+  list.addEventListener('click', (event) => {
+    const row = event.target.closest('.gl-tray-item')
+    if (!row) return
+    const button = event.target.closest('.gl-quick')
+    if (button) {
+      post({ type: 'schedule', taskID: row.dataset.taskId, kind: row.dataset.kind, when: button.dataset.when })
+    } else {
+      post({ type: 'open', taskID: row.dataset.taskId, kind: row.dataset.kind })
+    }
+  })
+  list.addEventListener('keydown', (event) => {
+    const row = event.target
+    if (!row.classList || !row.classList.contains('gl-tray-item')) return
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    post({ type: 'open', taskID: row.dataset.taskId, kind: row.dataset.kind })
+  })
+  document.getElementById('gl-tray-toggle').addEventListener('click', () => {
+    post({ type: 'tray', collapsed: !trayCollapsed })
+  })
+  document.getElementById('gl-empty-new').addEventListener('click', () => post({ type: 'newTask' }))
+  document.getElementById('gl-empty-list').addEventListener('click', () => post({ type: 'openList' }))
+}
+
+wireTray()
+
+function visible(id) {
+  const el = document.getElementById(id)
+  return !!el && !el.hidden && getComputedStyle(el).display !== 'none'
+}
+
 // MARK: Theme
 //
 // Schedule-X themes itself through CSS variables declared on `:root` and
@@ -403,6 +542,11 @@ window.GrandLineTaskCalendar = {
     return { count: events.length }
   }),
 
+  setTray: guarded((payload) => {
+    renderTray(payload)
+    return { rows: document.querySelectorAll('#gl-tray-list .gl-tray-item').length }
+  }),
+
   setView: guarded((payload) => {
     selectView(payload.view)
   }),
@@ -446,6 +590,17 @@ window.GrandLineTaskCalendar = {
       // Each month-grid chip's accent edge names its category's colour
       // variable, so a caller can see which category a chip was drawn as.
       chipEdges: Array.from(document.querySelectorAll('.sx__month-grid-event')).map((el) => el.style.borderInlineStart),
+      // The tray and the empty state, as drawn.
+      trayVisible: visible('gl-tray'),
+      trayCollapsed: document.getElementById('gl-tray').classList.contains('is-collapsed'),
+      trayCount: document.getElementById('gl-tray-count').textContent,
+      trayRows: Array.from(document.querySelectorAll('#gl-tray-list .gl-tray-item')).map((el) => el.dataset.taskId),
+      trayOverdueRows: Array.from(document.querySelectorAll('#gl-tray-list .gl-tray-item.is-overdue')).map(
+        (el) => el.dataset.taskId,
+      ),
+      trayGroups: Array.from(document.querySelectorAll('#gl-tray-list .gl-tray-group')).map((el) => el.textContent),
+      emptyVisible: visible('gl-empty'),
+      emptyTitle: document.getElementById('gl-empty-title').textContent,
     }
   }),
 }

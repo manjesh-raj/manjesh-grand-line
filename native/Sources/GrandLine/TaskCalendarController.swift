@@ -10,8 +10,11 @@
 // the Go menu, ⌘K and the floating bar's All Destinations all land here.
 //
 // What it shows is Shift's own records by their date: every active task, the
-// tasks finished inside the Done column's window, and every pending
-// follow-up. It owns none of them. A click opens the same editor the Tasks
+// finished tasks filed in the months the visible period touches (so a past
+// month shows what got done in it), and every pending follow-up. Beside the
+// card, the Unscheduled tray lists the open tasks with no date and pins the
+// overdue ones, so no open task is invisible here (GL-14). It owns none of
+// them. A click opens the same editor the Tasks
 // page opens (`ShiftRecordSheets`), a double-click or New Task opens New Task
 // dated to that day, and a drop writes the new date through the store with
 // an Undo that restores the date this controller already held (GL-33).
@@ -39,6 +42,9 @@ final class TaskCalendarController: NSViewController {
     /// The toolbar follows a view the captain switched in the page (a pill,
     /// "+N more" on a crowded day).
     var onModuleTabChanged: (() -> Void)?
+    /// The empty state's Open List: Tasks, on its List view. The shell owns
+    /// navigation, so this page only asks.
+    var onOpenTaskList: (() -> Void)?
 
     init(store: ShiftStore) {
         self.store = store
@@ -77,6 +83,14 @@ final class TaskCalendarController: NSViewController {
         calendarView.onMoveFollowUp = { [weak self] id, day, time in
             self?.rescheduleFollowUp(id: id, to: day, time: time)
         }
+        calendarView.onScheduleFromTray = { [weak self] id, kind, when in
+            self?.scheduleFromTray(id: id, kind: kind, when: when)
+        }
+        calendarView.onNewTask = { [weak self] in self?.newTaskFromMenu() }
+        calendarView.onOpenList = { [weak self] in self?.onOpenTaskList?() }
+        calendarView.completedTasks = { [weak self] months in
+            self?.store.completedTasks(inMonths: months) ?? []
+        }
         var lastScale = calendarView.scale
         calendarView.onPeriodChanged = { [weak self] in
             guard let self else { return }
@@ -103,23 +117,16 @@ final class TaskCalendarController: NSViewController {
 
     // MARK: Data
 
-    /// Every active task, the tasks the board's Done column still shows (a
-    /// month that silently drops everything finished would read as a month
-    /// where nothing happened), and every follow-up. The calendar has no
-    /// filters of its own: it is the whole schedule.
-    private func calendarTasks() -> [ShiftTask] {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -ShiftController.doneColumnLookbackDays, to: Date())
-        return store.activeTasks + store.allCompletedTasks().filter { task in
-            guard let cutoff,
-                  let completed = task.completedAt.flatMap(ShiftStore.date(fromISO8601:)) else { return false }
-            return completed >= cutoff
-        }
-    }
-
+    /// Every active task and every follow-up. Finished tasks are not handed
+    /// over here: the view asks for the `completed/` months its visible period
+    /// needs (`ShiftCalendarView.completedTasks`), so October shows what got
+    /// done in October rather than only what the board's 7-day Done column
+    /// still holds. The calendar has no filters of its own: it is the whole
+    /// schedule.
     func render() {
         renderPendingForStoreChange = false
         guard isViewLoaded else { return }
-        calendarView.configure(tasks: calendarTasks(), followUps: store.followUps)
+        calendarView.configure(tasks: store.activeTasks, followUps: store.followUps, projects: store.projects)
         onDrillSubtitleChanged?()
     }
 
@@ -193,6 +200,31 @@ final class TaskCalendarController: NSViewController {
 
     @objc private func newTaskClicked() { newTaskFromMenu() }
 
+    // MARK: The tray
+
+    /// A tray row's Today or Tomorrow dates the record through the same path
+    /// a drop takes (the reschedule rule, the store, Undo). Pick… opens the
+    /// record's editor, which is where a date is chosen until the When panel
+    /// lands.
+    func scheduleFromTray(id: String, kind: ShiftCalendarEntry.Kind, when: String, now: Date = Date()) {
+        let calendar = Calendar.current
+        let offset: Int
+        switch when {
+        case "today": offset = 0
+        case "tomorrow": offset = 1
+        default:
+            if kind == .followUp { openFollowUp(id: id) } else { openTask(id: id) }
+            return
+        }
+        guard let date = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: now)) else { return }
+        let day = ShiftDateFormatting.components(from: date).dateStr
+        if kind == .followUp {
+            rescheduleFollowUp(id: id, to: day, time: nil)
+        } else {
+            rescheduleTask(id: id, to: day, time: nil)
+        }
+    }
+
     // MARK: Dropping
 
     /// A task dropped on a new day (or a new time).
@@ -218,7 +250,9 @@ final class TaskCalendarController: NSViewController {
             store.updateTask(moved)
             render()
             let phrase = ShiftDateFormatting.friendly(day, time: moved.dueTime)
-            Toast.showUndo(in: view, message: "\u{201C}\(task.title)\u{201D} moved to \(phrase)") { [weak self] in
+            // A task with no date is not "moved" anywhere: it is scheduled.
+            let verb = previousDue == nil ? "scheduled for" : "moved to"
+            Toast.showUndo(in: view, message: "\u{201C}\(task.title)\u{201D} \(verb) \(phrase)") { [weak self] in
                 // Re-read first, so an edit made while the toast was up is
                 // not reverted along with the date.
                 guard let self,

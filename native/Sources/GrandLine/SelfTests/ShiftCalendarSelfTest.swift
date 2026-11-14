@@ -18,6 +18,10 @@
 //      role clearing the contrast floor as the hex the page actually receives,
 //      on every app theme.
 //   6. **What a drop does to a task**, including the refusals.
+//   7. **Every open task has a place** (the Unscheduled tray): undated tasks
+//      grouped by project, overdue work pinned, the first-run empty state,
+//      the caption that counts all three, and a past month's finished tasks
+//      read from that month's `completed/` file only.
 //
 // The page itself - rendering, a real drag, the theme reaching the DOM - is
 // `ShiftCalendarViewSelfTest`, which needs a window and so runs in the other
@@ -50,6 +54,9 @@ enum ShiftCalendarSelfTest {
         checkFollowUps(check)
         checkCaption(check)
         checkScales(check)
+        checkTrayModel(check)
+        checkTrayPayload(check)
+        checkCompletedMonths(check)
 
         print(ok ? "ShiftCalendarSelfTest: OK" : "ShiftCalendarSelfTest: FAILURES")
         return ok
@@ -189,16 +196,18 @@ enum ShiftCalendarSelfTest {
         check(js.contains("GrandLineTaskCalendar"), "the bundle does not define window.GrandLineTaskCalendar")
         check(js.contains(ShiftCalendarWebView.messageHandlerName),
               "the bundle never posts to \(ShiftCalendarWebView.messageHandlerName)")
-        for entry in ["configure", "setEvents", "setTheme", "setView", "showDate", "suspend", "resume", "state"] {
+        for entry in ["configure", "setEvents", "setTray", "setTheme", "setView", "showDate", "suspend", "resume",
+                      "state"] {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
-        for message in ["ready", "error", "range", "open", "add", "move"] {
+        for message in ["ready", "error", "range", "open", "add", "move", "schedule", "tray", "newTask", "openList"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
         // The captain's card: its header, weekday row and legend are this
         // bundle's, not Schedule-X's, and Agenda is the open-source list view.
         if let html = try? String(contentsOf: dir.appendingPathComponent("index.html"), encoding: .utf8) {
-            for id in ["gl-prev", "gl-next", "gl-title", "gl-today", "gl-views", "gl-weekdays", "gl-legend"] {
+            for id in ["gl-prev", "gl-next", "gl-title", "gl-today", "gl-views", "gl-weekdays", "gl-legend",
+                       "gl-tray", "gl-tray-list", "gl-tray-toggle", "gl-empty", "gl-empty-new", "gl-empty-list"] {
                 check(html.contains("id=\"\(id)\""), "the page shell has no #\(id)")
             }
             for scale in ShiftCalendarScale.allCases {
@@ -513,16 +522,263 @@ enum ShiftCalendarSelfTest {
     }
 
     private static func checkCaption(_ check: (Bool, String) -> Void) {
-        check(ShiftCalendarView.subtitle(total: 0, projected: 0) == "Nothing scheduled in this period.",
-              "an empty period is stated, never left blank (GL-14)")
+        check(ShiftCalendarView.subtitle(total: 0, projected: 0) == "Nothing scheduled this month.",
+              "an empty period with no open work is stated, never left blank (GL-14)")
         let mixed = ShiftCalendarView.subtitle(total: 5, projected: 3)
-        check(mixed.hasPrefix("2 tasks, 3 projected from a repeat rule"),
+        check(mixed == "5 tasks this month, 3 of them repeat dates not yet created",
               "projections are counted apart from real tasks, got \"\(mixed)\"")
-        let withFollowUps = ShiftCalendarView.subtitle(total: 2, projected: 0, followUps: 1)
-        check(withFollowUps.hasPrefix("2 tasks and 1 follow-up in this period"),
-              "follow-ups are counted beside tasks, got \"\(withFollowUps)\"")
-        check(ShiftCalendarView.subtitle(total: 0, projected: 0, followUps: 2).hasPrefix("2 follow-ups in this period"),
+        let withFollowUps = ShiftCalendarView.subtitle(total: 2, projected: 0, followUps: 1, period: "this week")
+        check(withFollowUps == "2 tasks and 1 follow-up this week",
+              "follow-ups are counted beside tasks, in the period's own words, got \"\(withFollowUps)\"")
+        check(ShiftCalendarView.subtitle(total: 0, projected: 0, followUps: 2) == "2 follow-ups this month",
               "a period with only follow-ups is not stated as empty")
+
+        // The work the grid cannot show is counted too.
+        var tray = ShiftCalendarTray()
+        tray.groups = [.init(projectID: nil, title: ShiftCalendarTray.noProjectTitle, items: [
+            ShiftCalendarTrayItem(id: "u1", kind: .task, title: "A", priority: .normal, projectID: nil),
+            ShiftCalendarTrayItem(id: "u2", kind: .task, title: "B", priority: .normal, projectID: nil),
+        ])]
+        tray.overdue = [ShiftCalendarTrayItem(id: "o1", kind: .task, title: "C", priority: .high, projectID: nil,
+                                              dueDay: "2026-11-10", daysOverdue: 3)]
+        tray.openTasks = 3
+        tray.datedRecords = 1
+        let full = ShiftCalendarView.subtitle(total: 24, projected: 9, tray: tray)
+        check(full == "24 tasks this month, 9 of them repeat dates not yet created · 2 unscheduled · 1 overdue",
+              "the caption counts dated, unscheduled and overdue work, got \"\(full)\"")
+        let quietWeek = ShiftCalendarView.subtitle(total: 0, projected: 0, tray: tray, period: "this week")
+        check(quietWeek == "Nothing dated this week · 2 unscheduled · 1 overdue",
+              "a period with nothing dated but open work elsewhere must not read as empty, got \"\(quietWeek)\"")
+
+        // The captain's report: 13 open tasks, none dated.
+        var undated = ShiftCalendarTray()
+        undated.groups = [.init(projectID: nil, title: ShiftCalendarTray.noProjectTitle, items: (0..<13).map {
+            ShiftCalendarTrayItem(id: "t\($0)", kind: .task, title: "T\($0)", priority: .normal, projectID: nil)
+        })]
+        undated.openTasks = 13
+        let first = ShiftCalendarView.subtitle(total: 0, projected: 0, tray: undated)
+        check(first == "13 open tasks · none on the calendar yet · 13 unscheduled",
+              "an undated-only store states its open tasks, not \"Nothing scheduled\", got \"\(first)\"")
+        check(!first.contains("Nothing scheduled"), "13 open tasks must never read as nothing scheduled")
+
+        let today = "2026-11-13"
+        check(ShiftCalendarModel.periodPhrase(scale: .month, visibleStart: "2026-10-26", today: today) == "this month"
+              && ShiftCalendarModel.periodPhrase(scale: .agenda, visibleStart: nil, today: today) == "this month"
+              && ShiftCalendarModel.periodPhrase(scale: .week, visibleStart: "2026-11-09", today: today) == "this week"
+              && ShiftCalendarModel.periodPhrase(scale: .day, visibleStart: today, today: today) == "today"
+              && ShiftCalendarModel.periodPhrase(scale: .day, visibleStart: "2026-11-20", today: today) == "on this day",
+              "each view names its period in its own words")
+    }
+
+    // MARK: 9. The Unscheduled tray
+
+    private static func checkTrayModel(_ check: (Bool, String) -> Void) {
+        func task(_ id: String, _ title: String, due: String? = nil, project: String? = nil,
+                  priority: ShiftPriority = .normal, status: ShiftTaskStatus = .todo) -> ShiftTask {
+            var t = ShiftTask.fresh()
+            t.id = id
+            t.title = title
+            t.dueDate = due
+            t.projectID = project
+            t.priority = priority
+            t.status = status
+            return t
+        }
+        var infra = ShiftProject.fresh()
+        infra.id = "p-infra"
+        infra.name = "Infra"
+        var release = ShiftProject.fresh()
+        release.id = "p-release"
+        release.name = "Release"
+        let tasks = [
+            task("a", "Shortlist candidates", project: "p-gone"),
+            task("b", "Try Renovate", priority: .low),
+            task("c", "Audit IAM keys", project: "p-infra", priority: .high),
+            task("d", "Clean up Terraform", project: "p-infra"),
+            task("e", "Grafana dashboards", project: "p-release"),
+            task("f", "Postmortem template"),
+            task("g", "Renew TLS", due: "2026-11-11", project: "p-infra", priority: .high),
+            task("h", "Due later", due: "2026-11-20"),
+            task("i", "Due today", due: "2026-11-13"),
+            task("j", "Finished undated", status: .completed),
+            task("k", "Cancelled overdue", due: "2026-11-01", status: .cancelled),
+            task("l", "Started, undated", status: .inProgress),
+        ]
+        var overdueFollowUp = ShiftFollowUp.fresh()
+        overdueFollowUp.id = "fu-late"
+        overdueFollowUp.title = "Ping Nithin"
+        overdueFollowUp.followUpAt = "2026-11-10"
+        var undatedFollowUp = overdueFollowUp
+        undatedFollowUp.id = "fu-undated"
+        undatedFollowUp.followUpAt = nil
+        var doneFollowUp = overdueFollowUp
+        doneFollowUp.id = "fu-done"
+        doneFollowUp.status = .done
+
+        let tray = ShiftCalendarModel.tray(tasks: tasks, followUps: [overdueFollowUp, undatedFollowUp, doneFollowUp],
+                                           projects: [release, infra], today: "2026-11-13")
+        // Project order is the store's, an unknown project id is still a
+        // group (under its id), and No project is last.
+        check(tray.groups.map(\.title) == ["Release", "Infra", "p-gone", ShiftCalendarTray.noProjectTitle],
+              "groups follow the store's project order with No project last, got \(tray.groups.map(\.title))")
+        check(tray.groups.first { $0.projectID == "p-infra" }?.items.map(\.id) == ["c", "d"],
+              "a group is sorted by priority, then title")
+        check(tray.groups.last?.items.map(\.id) == ["f", "l", "b"],
+              "No project holds every undated open task without one, in-progress included, finished excluded, got "
+              + "\(tray.groups.last?.items.map(\.id) ?? [])")
+        check(tray.groups.last?.projectID == nil, "the No project group carries no project id")
+        check(tray.unscheduledCount == 7, "seven open tasks have no date, counted \(tray.unscheduledCount)")
+        // Overdue: oldest first, follow-ups too, nothing finished, today is
+        // not overdue.
+        check(tray.overdue.map(\.id) == ["fu-late", "g"],
+              "overdue work is pinned oldest first, follow-ups included, got \(tray.overdue.map(\.id))")
+        check(tray.overdue.first?.kind == .followUp && tray.overdue.first?.daysOverdue == 3
+              && tray.overdue.last?.daysOverdue == 2 && tray.overdue.last?.dueDay == "2026-11-11",
+              "an overdue row knows its day and how late it is, got \(tray.overdue)")
+        check(tray.openTasks == 10 && tray.datedRecords == 4,
+              "10 open tasks and 4 dated records, got \(tray.openTasks) and \(tray.datedRecords)")
+        check(!tray.isUndatedOnly, "a store with dated work is not the first-run state")
+
+        // The captain's situation: open tasks, none dated.
+        let undatedOnly = ShiftCalendarModel.tray(tasks: [task("x", "One"), task("y", "Two")], followUps: [undatedFollowUp],
+                                                  projects: [], today: "2026-11-13")
+        check(undatedOnly.isUndatedOnly && undatedOnly.unscheduledCount == 2,
+              "two undated tasks and no dated work is the first-run state")
+        // The fixture's own discriminating power: one dated follow-up is
+        // dated work, so the empty state must give way to the grid.
+        var datedSoon = overdueFollowUp
+        datedSoon.followUpAt = "2026-11-20"
+        check(!ShiftCalendarModel.tray(tasks: [task("x", "One")], followUps: [datedSoon], projects: [],
+                                       today: "2026-11-13").isUndatedOnly,
+              "a dated follow-up is dated work, so the first-run state does not apply")
+        check(!ShiftCalendarModel.tray(tasks: [], followUps: [], projects: [], today: "2026-11-13").isUndatedOnly,
+              "an empty store is not \"open tasks with no date\"")
+    }
+
+    private static func checkTrayPayload(_ check: (Bool, String) -> Void) {
+        var infra = ShiftProject.fresh()
+        infra.id = "p-infra"
+        infra.name = "Infra"
+        var tray = ShiftCalendarTray()
+        tray.groups = [
+            .init(projectID: "p-infra", title: "Infra", items: [
+                ShiftCalendarTrayItem(id: "c", kind: .task, title: "Audit \"IAM\" keys", priority: .high,
+                                      projectID: "p-infra"),
+            ]),
+            .init(projectID: nil, title: ShiftCalendarTray.noProjectTitle, items: [
+                ShiftCalendarTrayItem(id: "b", kind: .task, title: "Try Renovate", priority: .low, projectID: nil),
+            ]),
+        ]
+        tray.overdue = [
+            ShiftCalendarTrayItem(id: "fu", kind: .followUp, title: "Ping", priority: .normal, projectID: nil,
+                                  dueDay: "2026-11-10", daysOverdue: 3),
+            ShiftCalendarTrayItem(id: "g", kind: .task, title: "Renew TLS", priority: .high, projectID: "p-infra",
+                                  dueDay: "2026-11-12", daysOverdue: 1),
+        ]
+        tray.openTasks = 3
+        tray.datedRecords = 2
+        let theme = HelmTheme.dusk
+        let payload = ShiftCalendarPayload.tray(tray, projectNames: ["p-infra": "Infra"], theme: theme, collapsed: true)
+        check(payload["count"] as? Int == 2, "the tray's count is its undated tasks, got \(payload["count"] ?? "nil")")
+        check(payload["collapsed"] as? Bool == true, "the remembered fold crosses the bridge")
+        check(payload["empty"] == nil, "a store with dated work sends no empty state")
+        check(payload["overdueTitle"] as? String == "Overdue · 2", "the Overdue heading counts its rows")
+        let overdue = payload["overdue"] as? [[String: Any]] ?? []
+        check(overdue.map { $0["meta"] as? String ?? "" } == ["Overdue 3 days · Follow-up", "Overdue 1 day · Infra"],
+              "an overdue row says how late it is and what it is, got \(overdue.map { $0["meta"] ?? "" })")
+        check(overdue.first?["kind"] as? String == "followUp" && overdue.first?["overdue"] as? Bool == true,
+              "a follow-up row says it is one, so Today writes the follow-up's own date")
+        let groups = payload["groups"] as? [[String: Any]] ?? []
+        check(groups.map { $0["title"] as? String ?? "" } == ["Infra", "No project"] && groups.first?["count"] as? Int == 1,
+              "groups cross in order with their counts")
+        check(groups.first?["dot"] as? String == "#" + ShiftProjectPalette.tint(forProjectID: "p-infra").hex(in: theme),
+              "a project group's dot is its project's colour")
+        check(groups.last?["dot"] as? String == "",
+              "No project's dot is left to the page's faint ink, never page ink (the .neutral rule)")
+        let firstRow = (groups.first?["items"] as? [[String: Any]])?.first ?? [:]
+        check(firstRow["title"] as? String == "Audit \"IAM\" keys" && firstRow["taskID"] as? String == "c",
+              "a row's title and id cross unaltered")
+        check(firstRow["meta"] as? String == "High priority", "an undated row names its priority")
+        check(firstRow["edge"] as? String == ShiftCalendarPalette.colours(for: .high, theme: theme)["main"],
+              "a row's edge is its category's colour, the same one its chip would have")
+        // The discriminating half: two categories really are two edges.
+        let lowRow = (groups.last?["items"] as? [[String: Any]])?.first ?? [:]
+        check(lowRow["edge"] as? String != firstRow["edge"] as? String, "a low-priority row's edge differs from a high one's")
+        check(payload["nothing"] as? String == "", "a tray with rows says nothing about being empty")
+
+        var undated = tray
+        undated.overdue = []
+        undated.datedRecords = 0
+        undated.openTasks = 13
+        let empty = ShiftCalendarPayload.tray(undated, projectNames: [:], theme: theme, collapsed: false)["empty"]
+            as? [String: String]
+        check(empty?["title"] == "Nothing has a date yet", "the first-run state has its title, got \(empty ?? [:])")
+        check(empty?["body"]?.hasPrefix("You have 13 open tasks, and none of them is on a day.") == true,
+              "the first-run state counts the open tasks, got \(empty?["body"] ?? "nil")")
+        check(empty?["body"]?.contains("Unscheduled") == true, "the first-run state points at the tray")
+        check(empty?["body"]?.lowercased().contains("drag") == false,
+              "the first-run state must not offer a drag from the tray, which is not built yet")
+        check(empty?["newTask"] == "New task" && empty?["openList"] == "Open List", "the two buttons are named")
+        check(ShiftCalendarPayload.emptyState(openTasks: 1)["body"]?.hasPrefix("You have 1 open task, and it is") == true,
+              "one open task is not pluralised")
+        let nothing = ShiftCalendarPayload.tray(ShiftCalendarTray(), projectNames: [:], theme: theme, collapsed: false)
+        check(nothing["nothing"] as? String == ShiftCalendarPayload.trayAllDated,
+              "a tray with no rows says every open task has a date, rather than drawing a blank card")
+    }
+
+    private static func checkCompletedMonths(_ check: (Bool, String) -> Void) {
+        let start = ShiftDateFormatting.date(from: "2026-09-28") ?? Date()
+        let end = ShiftDateFormatting.date(from: "2026-11-08") ?? Date()
+        check(ShiftCalendarModel.completedMonths(from: start, through: end)
+              == ["2026-08", "2026-09", "2026-10", "2026-11", "2026-12"],
+              "the October grid reads the months it touches and one either side, got "
+              + "\(ShiftCalendarModel.completedMonths(from: start, through: end))")
+        let jan = ShiftDateFormatting.date(from: "2027-01-05") ?? Date()
+        check(ShiftCalendarModel.completedMonths(from: jan, through: jan) == ["2026-12", "2027-01", "2027-02"],
+              "a range crosses a year boundary cleanly")
+        for bad in ["2026-13", "2026-1", "../x", "2026-10.yaml", "２０２６-10"] {
+            check(!ShiftStore.isMonthKey(bad), "\(bad) must not be accepted as a month file name")
+        }
+        check(ShiftStore.isMonthKey("2026-10"), "2026-10 is a month")
+
+        // A real store, real month files: a past month reads only its own.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-calendar-months-\(UUID().uuidString)", isDirectory: true)
+        let prior = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            if let prior { setenv("FM_SHIFT_DIR", prior, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = ShiftStore()
+        var october = ShiftTask.fresh()
+        october.title = "Finished in October"
+        october.dueDate = "2026-10-14"
+        store.addTask(october)
+        var november = ShiftTask.fresh()
+        november.title = "Finished in November"
+        november.dueDate = "2026-11-03"
+        store.addTask(november)
+        let calendar = Calendar.current
+        let octNoon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                    of: ShiftDateFormatting.date(from: "2026-10-15") ?? Date()) ?? Date()
+        let novNoon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                    of: ShiftDateFormatting.date(from: "2026-11-04") ?? Date()) ?? Date()
+        store.setTaskCompleted(id: october.id, completed: true, now: octNoon)
+        store.setTaskCompleted(id: november.id, completed: true, now: novNoon)
+        check(store.completedTasks(inMonths: ["2026-10"]).map(\.id) == [october.id],
+              "October's file holds October's finished task only")
+        check(Set(store.completedTasks(inMonths: ["2026-10", "2026-11", "2026-10"]).map(\.id)) == [october.id, november.id]
+              && store.completedTasks(inMonths: ["2026-10", "2026-11", "2026-10"]).count == 2,
+              "two months read both files once each")
+        check(store.completedTasks(inMonths: ["2025-01", "../tasks"]).isEmpty,
+              "a month with no file, or a key that is not a month, reads nothing")
+        // The memo is invalidated by a write: un-completing October's task
+        // takes it out of the month the calendar reads.
+        _ = store.completedTasks(inMonths: ["2026-10"])
+        store.setTaskCompleted(id: october.id, completed: false)
+        check(store.completedTasks(inMonths: ["2026-10"]).isEmpty,
+              "a task put back to active must leave its month's memo, not linger on the calendar")
     }
 
     // MARK: 8. The four views

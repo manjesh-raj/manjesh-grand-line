@@ -967,6 +967,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.morningBriefingEnabled` | Saved preference `fm.morningBriefingEnabled` | declared in AppSettings | Settings › Briefings |  |
 | `state.fm.clipboardHistoryEnabled` | Saved preference `fm.clipboardHistoryEnabled` | declared in AppSettings | Settings › Capture |  |
 | `state.fm.morningBriefingRecord` | Saved preference `fm.morningBriefingRecord` | declared in AppSettings | Home (Morning briefing card's cache) |  |
+| `state.fm.calendar.trayCollapsed` | Saved preference `fm.calendar.trayCollapsed` | new (calendar plan PR 2) | Calendar (the Unscheduled tray folded to a strip; unset is open) |  |
 | `state.fm.notebook.inspectorVisible` | Saved preference `fm.notebook.inspectorVisible` | declared in NotebookController | Knowledge › Notebook |  |
 | `state.fm.notifications.mutedSources` | Saved preference `fm.notifications.mutedSources` | new (Bridge extras) - before it a mute lasted for the session only | Toolbar (the notifications panel's row menu, Mute <source>; kept across relaunch) |  |
 | `state.fm.notifications.quietWhileFocusing` | Saved preference `fm.notifications.quietWhileFocusing` | new (Bridge extras) | Toolbar (the notifications panel holds informational entries while a focus session runs; unset is on) |  |
