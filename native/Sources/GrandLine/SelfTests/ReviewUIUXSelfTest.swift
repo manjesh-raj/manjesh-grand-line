@@ -995,14 +995,16 @@ enum ReviewUIUXSelfTest {
             _ = editor.view
 
             // The review's own second half: the pickers stay dimmed after a
-            // detected due date.
-            guard !editor.debugRepeatEnabled, !editor.debugReminderEnabled else {
-                return "Repeat/Remind are live before any due date exists, so this case cannot tell "
-                     + "the fix from the defect"
+            // detected due date. Since the When panel (tasks-calendar plan
+            // PR 5) Repeat is never dimmed - a rule picked with no date starts
+            // today - so Remind, which still needs a date, carries the check.
+            guard editor.debugRepeatEnabled, !editor.debugReminderEnabled else {
+                return "Remind is live before any due date exists (or Repeat is dimmed), so this "
+                     + "case cannot tell the fix from the defect"
             }
             editor.debugTypeTitle("Buy milk tomorrow at 5pm")
-            guard editor.debugDueRowIsOn else {
-                return "typing a date phrase no longer turns the due switch on"
+            guard editor.debugHasDueDate else {
+                return "typing a date phrase no longer gives the task a due date"
             }
             guard editor.debugRepeatEnabled, editor.debugReminderEnabled else {
                 return "a due date arrived by detection and the Repeat/Remind pickers are still "

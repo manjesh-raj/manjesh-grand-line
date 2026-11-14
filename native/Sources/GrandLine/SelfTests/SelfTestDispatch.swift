@@ -638,6 +638,14 @@ enum SelfTestDispatch {
             exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
         }
 
+        // The When panel's model (tasks-calendar plan PR 5): every Repeat preset
+        // and Custom state to its rule and back, and an untouched rule written
+        // back byte-identical. Pure logic; the panel's real controls are
+        // `ShiftCalendarViewSelfTest`'s.
+        if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_SCHEDULE_TESTS"] == "1" {
+            exit(ShiftScheduleSelfTest.run() ? 0 : 1)
+        }
+
         // The Calendar, the Schedule-X page. Split the way Code Preview's suites
         // are: `ShiftCalendarSelfTest` is pure logic (the vendored bundle's digests,
         // its offline CSP and licences, the event payload, the palette's contrast on

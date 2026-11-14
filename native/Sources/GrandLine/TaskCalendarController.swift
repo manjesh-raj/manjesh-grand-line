@@ -19,12 +19,15 @@
 // month shows what got done in it), and every pending follow-up. Beside the
 // card, the Unscheduled tray lists the open tasks with no date and pins the
 // overdue ones, so no open task the filters keep is invisible here (GL-14).
-// It owns none of them. A click opens the same editor the Tasks page opens
-// (`ShiftRecordSheets`), a double-click or New task opens New Task dated to
-// that day, a drop writes the new date through the store with an Undo that
-// restores the date this controller already held (GL-33), and the check on a
-// real chip or an Agenda row completes the record (the captain's decision
-// 4A) with an Undo that puts it back.
+// It owns none of them. A click on a task's chip, or its tray row's Pick…,
+// opens the When panel beside it (`ShiftSchedulePopover`, tasks-calendar plan
+// PR 5), and the panel's "Open task…" opens the same editor the Tasks page
+// opens (`ShiftRecordSheets`). A projection, a finished task and a follow-up
+// open their editor or notice as before. A double-click or New task opens
+// New Task dated to that day, a drop or the panel writes the new date through
+// the store with an Undo that restores what this controller already held
+// (GL-33), and the check on a real chip or an Agenda row completes the record
+// (the captain's decision 4A) with an Undo that puts it back.
 //
 // Day, Week, Month and Agenda are the card's own pills, the one switcher for
 // the calendar's period: the window toolbar draws Tasks' views, not these.
@@ -50,6 +53,10 @@ final class TaskCalendarController: NSViewController {
     var onDrillSubtitleChanged: (() -> Void)?
     /// The empty state's Open List: the Tasks page's own List view.
     var onOpenTaskList: (() -> Void)?
+
+    /// The When panel while it shows. One at a time: a second chip's click
+    /// closes the first, which commits it.
+    private var schedulePopover: ShiftSchedulePopover?
 
     init(store: ShiftStore) {
         self.store = store
@@ -91,6 +98,9 @@ final class TaskCalendarController: NSViewController {
         calendarView.onCompleteFollowUp = { [weak self] id in self?.completeFollowUp(id: id) }
         calendarView.onScheduleFromTray = { [weak self] id, kind, when in
             self?.scheduleFromTray(id: id, kind: kind, when: when)
+        }
+        calendarView.onEditSchedule = { [weak self] id, anchor, edge in
+            self?.editSchedule(id: id, anchor: anchor, edge: edge)
         }
         calendarView.onNewTask = { [weak self] in self?.newTaskFromMenu() }
         calendarView.onOpenList = { [weak self] in self?.onOpenTaskList?() }
@@ -199,9 +209,10 @@ final class TaskCalendarController: NSViewController {
     // MARK: The tray
 
     /// A tray row's Today or Tomorrow dates the record through the same path
-    /// a drop takes (the reschedule rule, the store, Undo). Pick… opens the
-    /// record's editor, which is where a date is chosen until the When panel
-    /// lands.
+    /// a drop takes (the reschedule rule, the store, Undo). A task's Pick…
+    /// arrives at `editSchedule` instead, with its row's place; a follow-up's
+    /// (and a task's whose row the page could not measure) opens the
+    /// record's editor.
     func scheduleFromTray(id: String, kind: ShiftCalendarEntry.Kind, when: String, now: Date = Date()) {
         let calendar = Calendar.current
         let offset: Int
@@ -276,6 +287,48 @@ final class TaskCalendarController: NSViewController {
         }
     }
 
+    // MARK: The When panel
+
+    /// The When panel for a live task, beside its chip or tray row. Anything
+    /// else the page names (a finished task) opens the way a click always
+    /// did.
+    func editSchedule(id: String, anchor: NSRect, edge: NSRectEdge) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }) else {
+            openTask(id: id)
+            return
+        }
+        schedulePopover?.close()
+        let projectName = task.projectID.flatMap { pid in store.projects.first { $0.id == pid }?.name }
+        let popover = ShiftSchedulePopover(task: task, projectName: projectName,
+                                           allDayReminderAt: store.settings.allDayReminderAt)
+        popover.onCommit = { [weak self] draft in self?.commitSchedule(draft, taskID: id) }
+        popover.onOpenTask = { [weak self] in self?.openTask(id: id) }
+        popover.onClose = { [weak self, weak popover] in
+            if let self, self.schedulePopover === popover { self.schedulePopover = nil }
+        }
+        schedulePopover = popover
+        popover.show(relativeTo: anchor, of: calendarView, preferredEdge: edge)
+    }
+
+    /// The panel's draft, written into the task as the store has it now, so
+    /// an edit that arrived while the panel was open (a sync, the sheet) is
+    /// kept. Undo restores the four fields this method read (GL-33).
+    func commitSchedule(_ draft: ShiftScheduleDraft, taskID id: String) {
+        guard let task = store.activeTasks.first(where: { $0.id == id }), draft.changes(task) else { return }
+        let updated = draft.applied(to: task)
+        store.updateTask(updated)
+        render()
+        let previous = (task.dueDate, task.dueTime, task.recurrence, task.reminderMinutesBefore, task.occurrence)
+        Toast.showUndo(in: view, message: Self.scheduleToast(from: task, to: updated)) { [weak self] in
+            guard let self,
+                  var current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            (current.dueDate, current.dueTime, current.recurrence, current.reminderMinutesBefore,
+             current.occurrence) = previous
+            self.store.updateTask(current)
+            self.render()
+        }
+    }
+
     /// The same check on a pending follow-up: marked done, which takes it off
     /// the calendar, with an Undo that marks it pending again.
     func completeFollowUp(id: String, now: Date = Date()) {
@@ -290,6 +343,21 @@ final class TaskCalendarController: NSViewController {
             self.store.setFollowUpStatus(id: id, done: false)
             self.render()
         }
+    }
+
+    /// What the panel's change did, in one line.
+    static func scheduleToast(from old: ShiftTask, to new: ShiftTask) -> String {
+        let name = "\u{201C}\(new.title)\u{201D}"
+        guard let day = new.dueDate else { return "\(name) has no date now" }
+        let when = ShiftDateFormatting.friendly(day, time: new.dueTime)
+        if old.dueDate == nil { return "\(name) scheduled for \(when)" }
+        if old.dueDate != new.dueDate || old.dueTime != new.dueTime { return "\(name) moved to \(when)" }
+        if old.recurrence != new.recurrence {
+            guard let rule = new.recurrence else { return "\(name) no longer repeats" }
+            let pattern = rule.patternName
+            return "\(name) repeats \(pattern.prefix(1).lowercased() + pattern.dropFirst())"
+        }
+        return new.reminderMinutesBefore == nil ? "\(name) has no reminder now" : "\(name)\u{2019}s reminder changed"
     }
 
     // MARK: Dropping
@@ -365,5 +433,6 @@ final class TaskCalendarController: NSViewController {
 
     #if FM_SELFTESTS
     var debugCalendarView: ShiftCalendarView { calendarView }
+    var debugSchedulePopover: ShiftSchedulePopover? { schedulePopover }
     #endif
 }

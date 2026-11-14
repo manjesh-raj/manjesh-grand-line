@@ -47,7 +47,18 @@ final class HelmDateField: NSControl {
     /// reads the same.
     let elements: NSDatePicker.ElementFlags
 
+    /// Words shown in place of the value while there is none ("No date"),
+    /// for a caller whose value is optional. `nil`, the default, always
+    /// shows the date. Picking a date in the popover does not clear it: the
+    /// caller does, from `onChange`, because only it knows the value is set.
+    var emptyText: String? {
+        didSet { if emptyText != oldValue { render() } }
+    }
+
     private var date = Date()
+    /// The theme `applyTheme` was last handed, so `render` can colour the
+    /// empty text without a second observation.
+    private var appliedTheme = ThemeManager.shared.theme
     private let card = HoverHighlightView()
     private let valueLabel = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
@@ -80,12 +91,19 @@ final class HelmDateField: NSControl {
         valueLabel.lineBreakMode = .byTruncatingTail
         valueLabel.translatesAutoresizingMaskIntoConstraints = false
         valueLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // AGENTS.md gotcha (5): the words are the one thing that flexes.
+        // Left at the default, a field wider than its value stretched the
+        // chevron's image view instead, and the glyph sat in the middle of
+        // the field (measured 221pt wide in the When panel's Date row).
+        valueLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         card.addSubview(valueLabel)
 
         chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.setAccessibilityElement(false)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         card.addSubview(chevron)
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(cardClicked))
@@ -172,7 +190,8 @@ final class HelmDateField: NSControl {
     }
 
     private func render() {
-        valueLabel.stringValue = Self.describe(date, elements: elements)
+        valueLabel.stringValue = emptyText ?? Self.describe(date, elements: elements)
+        valueLabel.textColor = emptyText == nil ? HelmField.ink(appliedTheme) : HelmField.mutedInk(appliedTheme)
         card.accessibilityLabelOverride = valueLabel.stringValue
         toolTip = valueLabel.stringValue
     }
@@ -197,12 +216,13 @@ final class HelmDateField: NSControl {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        appliedTheme = theme
         card.normalColor = HelmField.fill(theme)
         card.hoverColor = HelmField.fill(theme).hoverShifted(by: 0.10, forMode: theme.mode)
         card.layer?.borderWidth = HelmField.hairlineBorderWidth
         card.layer?.borderColor = HelmField.border(theme).cgColor
         card.cornerRadius = HelmField.cornerRadius(for: theme)
-        valueLabel.textColor = HelmField.ink(theme)
+        valueLabel.textColor = emptyText == nil ? HelmField.ink(theme) : HelmField.mutedInk(theme)
         chevron.contentTintColor = HelmField.mutedInk(theme)
         if let content = popover.contentViewController?.view {
             content.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor

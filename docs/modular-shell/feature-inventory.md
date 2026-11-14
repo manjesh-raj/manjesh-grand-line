@@ -849,8 +849,9 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftProjectDetailView` | ShiftProjectDetailView controls | `checkboxClicked`, `chevronClicked` | Tasks (the project page, unchanged) |  |
 | `action.ShiftProjectViews` | ShiftProjectViews controls | `openClicked`, `statusButtonClicked`, `statusItemSelected` | Tasks (the projects panel under the view, unchanged) |  |
 | `action.ShiftQuickCapture` | ShiftQuickCapture controls | `askTheCrew`, `clicked` | System (⌥Space quick capture panel, unchanged) |  |
+| `action.ShiftScheduleEditor` | ShiftScheduleEditor controls | `countDownClicked`, `countUpClicked`, `doneClicked`, `endChosen`, `intervalDownClicked`, `intervalUpClicked`, `monthlyChosen`, `openClicked`, `quickClicked`, `reminderChosen`, `repeatChosen`, `unitChosen`, `weekdayClicked` | Tasks (the When panel: in the task editor sheet, and as the Calendar's popover from a chip or a tray row's Pick…) |  |
 | `action.ShiftSnoozeCustomController` | ShiftSnoozeCustomController controls | `cancel`, `confirm` | Tasks (snooze sheet) |  |
-| `action.ShiftTaskEditorController` | ShiftTaskEditorController controls | `chooseImageClicked`, `deleteTask`, `dismissDetected`, `dueDatePickerChanged`, `priorityItemSelected`, `projectItemSelected`, `weekdayChipClicked` | Tasks (task editor; also the inspector's fields) |  |
+| `action.ShiftTaskEditorController` | ShiftTaskEditorController controls | `chooseImageClicked`, `deleteTask`, `dismissDetected`, `priorityItemSelected`, `projectItemSelected` | Tasks (task editor; also the inspector's fields) |  |
 | `action.SnippetEditorController` | SnippetEditorController controls | `deleteSnippet` | Connections › Snippets (snippet editor) |  |
 | `action.SnippetExpansionPanel` | SnippetExpansionPanel controls | `requestPermission` | Connections › Snippets (the expansion switch: a card in the floating bar's column, a plain row over the table in the sidebar layout) |  |
 | `action.SRELeadChatView` | SRELeadChatView controls | `submit` | Console (SRE Lead pane) |  |

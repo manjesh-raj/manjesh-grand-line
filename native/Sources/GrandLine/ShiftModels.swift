@@ -73,8 +73,8 @@ struct ShiftTask: Equatable {
     /// A rule is a **pattern, not a series**: the anchor it expands from is
     /// this task's own `dueDate`/`dueTime`, so pushing a due date moves the
     /// whole future series without rewriting the rule. A task with a rule
-    /// and no due date never recurs, which is why the editor's Repeat card
-    /// disables itself until a due date is set.
+    /// and no due date never recurs, which is why the When panel starts a
+    /// rule picked with no date on today, and "No date" drops the rule.
     var recurrence: ShiftRecurrence? = nil
 
     /// Minutes before the due time to fire the reminder, or `nil` for this

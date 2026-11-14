@@ -36,7 +36,8 @@ enum ShiftRecordSheets {
         let existingAttachmentData = (task?.hasAttachment ?? false) ? store.attachmentData(forTaskID: task!.id) : nil
         let editor = ShiftTaskEditorController(
             task: task ?? prefill, projects: store.projects, defaultProjectID: defaultProjectID,
-            existingAttachmentData: existingAttachmentData
+            existingAttachmentData: existingAttachmentData,
+            allDayReminderAt: store.settings.allDayReminderAt
         )
         editor.onSave = { saved, attachmentChange in
             if task != nil {
