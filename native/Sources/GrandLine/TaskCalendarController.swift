@@ -24,7 +24,11 @@
 // that day, a drop writes the new date through the store with an Undo that
 // restores the date this controller already held (GL-33), and the check on a
 // real chip or an Agenda row completes the record (the captain's decision
-// 4A) with an Undo that puts it back.
+// 4A) with an Undo that puts it back. A tray row dragged onto a day or a time
+// slot is scheduled the same way a drop is, a chip dragged onto the tray
+// loses its date the same way, and a day's quick add (its +) adds a task
+// there, read by the same title parser the New Task sheet uses, with an Undo
+// that removes it again (tasks-calendar plan PR 7).
 //
 // Day, Week, Month and Agenda are the card's own pills, the one switcher for
 // the calendar's period: the window toolbar draws Tasks' views, not these.
@@ -91,6 +95,13 @@ final class TaskCalendarController: NSViewController {
         calendarView.onCompleteFollowUp = { [weak self] id in self?.completeFollowUp(id: id) }
         calendarView.onScheduleFromTray = { [weak self] id, kind, when in
             self?.scheduleFromTray(id: id, kind: kind, when: when)
+        }
+        calendarView.onPlaceFromTray = { [weak self] id, kind, day, time in
+            self?.placeFromTray(id: id, kind: kind, day: day, time: time)
+        }
+        calendarView.onUnschedule = { [weak self] id, kind in self?.unschedule(id: id, kind: kind) }
+        calendarView.onQuickAdd = { [weak self] day, text, details in
+            self?.quickAdd(on: day, text: text, details: details)
         }
         calendarView.onNewTask = { [weak self] in self?.newTaskFromMenu() }
         calendarView.onOpenList = { [weak self] in self?.onOpenTaskList?() }
@@ -292,6 +303,83 @@ final class TaskCalendarController: NSViewController {
         }
     }
 
+    /// A tray row dragged onto a day, or onto a time slot in Week and Day.
+    /// The slot's time is the captain's answer to "when", so an all-day task
+    /// takes it (`ShiftCalendarReschedule.apply`'s `adoptsTime`).
+    func placeFromTray(id: String, kind: ShiftCalendarEntry.Kind, day: String, time: String?) {
+        if kind == .followUp {
+            rescheduleFollowUp(id: id, to: day, time: time, adoptsTime: true)
+        } else {
+            rescheduleTask(id: id, to: day, time: time, adoptsTime: true)
+        }
+    }
+
+    /// A chip dragged onto the tray: the task loses its date and lands in
+    /// the tray, with an Undo that puts back the date, the time and the
+    /// reminder this method already held (GL-33).
+    func unschedule(id: String, kind: ShiftCalendarEntry.Kind) {
+        guard kind == .task else {
+            render()
+            Toast.show(in: view, message: ShiftCalendarReschedule.followUpKeepsItsDate)
+            return
+        }
+        guard let task = store.activeTasks.first(where: { $0.id == id }) else {
+            render()
+            return
+        }
+        switch ShiftCalendarReschedule.unschedule(task: task) {
+        case .unchanged:
+            render()
+        case .refused(let reason):
+            render()
+            Toast.show(in: view, message: reason)
+        case .moved(let cleared):
+            let previousDue = task.dueDate
+            let previousTime = task.dueTime
+            let previousReminder = task.reminderMinutesBefore
+            store.updateTask(cleared)
+            render()
+            Toast.showUndo(in: view, message: "\u{201C}\(task.title)\u{201D} has no date now") { [weak self] in
+                guard let self,
+                      var current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+                current.dueDate = previousDue
+                current.dueTime = previousTime
+                current.reminderMinutesBefore = previousReminder
+                self.store.updateTask(current)
+                self.render()
+            }
+        }
+    }
+
+    // MARK: Quick add
+
+    /// A day's quick add, submitted. Return adds the task straight away;
+    /// Command-Return (`details`) opens the New Task sheet with everything
+    /// the text said already filled in, for whatever the field cannot set.
+    ///
+    /// The Undo removes the task this method just added, which is a real
+    /// restore of the store as it was (GL-33).
+    func quickAdd(on day: String, text: String, details: Bool, now: Date = Date()) {
+        guard let draft = ShiftCalendarQuickAdd.draft(text: text, day: day, now: now) else { return }
+        let task = ShiftCalendarQuickAdd.task(from: draft)
+        if details {
+            ShiftRecordSheets.presentTaskEditor(
+                from: self, store: store, task: nil, prefill: task,
+                onSaved: { [weak self] in self?.render() },
+                onDelete: { [weak self] id in self?.confirmDeleteTask(id: id) })
+            return
+        }
+        store.addTask(task)
+        render()
+        var message = "Added \u{201C}\(task.title)\u{201D} on \(ShiftDateFormatting.friendly(draft.day, time: draft.time))"
+        if let rule = draft.recurrence { message += ", \(rule.displayName.lowercased())" }
+        Toast.showUndo(in: view, message: message) { [weak self] in
+            guard let self, self.store.activeTasks.contains(where: { $0.id == task.id }) else { return }
+            self.store.deleteTask(id: task.id)
+            self.render()
+        }
+    }
+
     // MARK: Dropping
 
     /// A task dropped on a new day (or a new time).
@@ -300,12 +388,12 @@ final class TaskCalendarController: NSViewController {
     /// restores the date and time this method already held (GL-33). A refused
     /// or no-op drop writes nothing, and `render()` pushes the store's events
     /// back so the page drops the position it drew optimistically.
-    func rescheduleTask(id: String, to day: String, time: String?) {
+    func rescheduleTask(id: String, to day: String, time: String?, adoptsTime: Bool = false) {
         guard let task = store.activeTasks.first(where: { $0.id == id }) else {
             render()
             return
         }
-        switch ShiftCalendarReschedule.apply(task: task, day: day, time: time) {
+        switch ShiftCalendarReschedule.apply(task: task, day: day, time: time, adoptsTime: adoptsTime) {
         case .unchanged:
             render()
         case .refused(let reason):
@@ -333,12 +421,12 @@ final class TaskCalendarController: NSViewController {
     }
 
     /// The same, for a follow-up's own date.
-    func rescheduleFollowUp(id: String, to day: String, time: String?) {
+    func rescheduleFollowUp(id: String, to day: String, time: String?, adoptsTime: Bool = false) {
         guard let item = store.followUps.first(where: { $0.id == id }) else {
             render()
             return
         }
-        switch ShiftCalendarReschedule.apply(followUp: item, day: day, time: time) {
+        switch ShiftCalendarReschedule.apply(followUp: item, day: day, time: time, adoptsTime: adoptsTime) {
         case .unchanged:
             render()
         case .refused(let reason):

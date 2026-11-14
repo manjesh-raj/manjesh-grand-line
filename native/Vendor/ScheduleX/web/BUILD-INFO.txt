@@ -9,13 +9,13 @@ web/ fetches nothing: the script, the stylesheet (with the default theme's
 icons inlined as data: URIs) and the page are the whole bundle.
 SHA-256 of every shipped file, asserted by ShiftCalendarSelfTest:
 sha256 4a110dc9f081c65a922366285cfe7518ba34dc0bb61160dbb53b1a0176fd7732  THIRD-PARTY-LICENSES.txt
-sha256 d5d78620d8384180eeb3c9d74ff7b86ab5995acd61bcf4eb8be0840b171a28a7  index.html
-sha256 5becc5ded527510a68abf8b346d6d574bcd8bd1d3c85462cae2a7639bfa54ef7  task-calendar.css
-sha256 28eac26f67a289c7a6b8ac1690d8e7467a0e90958a414bdf966b49d4d49fe688  task-calendar.js
+sha256 59db3a67f3e3f30157144f7798b953709c00d179abcb846de82b38c0ce9cc3a8  index.html
+sha256 1619dc20b021c3311d6e7a6a3d6333bbddcc5b33eb26a26527cfb4299cd6403a  task-calendar.css
+sha256 f268a0f7b1a36c2b3ebde2866b0bbe65e7d1d65caa642442be90b97cb58d479d  task-calendar.js
 SHA-256 of every input, asserted by Scripts/check-web-bundles.sh:
 input sha256 c5fbdf708dd304f60ad61b78f6fee2b3992cbb78a92dd58f56c2b075db4e77c2  Scripts/build-schedule-x-web.sh
-input sha256 d5d78620d8384180eeb3c9d74ff7b86ab5995acd61bcf4eb8be0840b171a28a7  Vendor/ScheduleX/src/index.html
+input sha256 59db3a67f3e3f30157144f7798b953709c00d179abcb846de82b38c0ce9cc3a8  Vendor/ScheduleX/src/index.html
 input sha256 c1619bc51892a1e7b357437afb7b799914d94cc99ba5af7e22ddf0273be3a6c8  Vendor/ScheduleX/src/package-lock.json
 input sha256 aa65b44fd3a441858bcfb79f17496357835bd03be023b867c9ea3a6d44712d0e  Vendor/ScheduleX/src/package.json
-input sha256 6e164cb09380be2e67a2decd89745def4d5f2f6721203d9bc33daad93c799357  Vendor/ScheduleX/src/task-calendar.css
-input sha256 42400b165dd44356b76471caf8db2a6c5865406c2db242bd349e41bde2acbe10  Vendor/ScheduleX/src/task-calendar.js
+input sha256 fcde18032652613e5826f4aed8e4e38cce7bec2ecd2ce7d77fb61c18c2cfb739  Vendor/ScheduleX/src/task-calendar.css
+input sha256 40576bf8a44fcd400fb364b237766af6ff515c66925f1508ea914a54761511c2  Vendor/ScheduleX/src/task-calendar.js

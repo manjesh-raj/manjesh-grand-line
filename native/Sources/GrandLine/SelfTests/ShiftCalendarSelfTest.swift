@@ -23,6 +23,10 @@
 //      grouped by project, overdue work pinned, the first-run empty state,
 //      the caption that counts all three, and a past month's finished tasks
 //      read from that month's `completed/` file only.
+//   8. **Drag and quick add** (tasks-calendar plan PR 7): a tray row dropped
+//      on a time slot takes the slot's time, a chip dropped on the tray loses
+//      its date (and a repeating one is refused), and a day's quick add reads
+//      its text into a title, a day, a time and a rule.
 //
 // The page itself - rendering, a real drag, the theme reaching the DOM - is
 // `ShiftCalendarViewSelfTest`, which needs a window and so runs in the other
@@ -59,6 +63,8 @@ enum ShiftCalendarSelfTest {
         checkTrayModel(check)
         checkTrayPayload(check)
         checkCompletedMonths(check)
+        checkTrayDropRules(check)
+        checkQuickAdd(check)
 
         print(ok ? "ShiftCalendarSelfTest: OK" : "ShiftCalendarSelfTest: FAILURES")
         return ok
@@ -198,19 +204,20 @@ enum ShiftCalendarSelfTest {
         check(js.contains("GrandLineTaskCalendar"), "the bundle does not define window.GrandLineTaskCalendar")
         check(js.contains(ShiftCalendarWebView.messageHandlerName),
               "the bundle never posts to \(ShiftCalendarWebView.messageHandlerName)")
-        for entry in ["configure", "setEvents", "setTray", "setTheme", "setView", "showDate", "suspend", "resume",
-                      "state"] {
+        for entry in ["configure", "setEvents", "setTray", "setTheme", "setView", "showDate", "setQuickAddHint",
+                      "suspend", "resume", "state"] {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
-        for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "tray", "newTask",
-                        "openList"] {
+        for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "place", "unschedule",
+                        "quickAddParse", "quickAdd", "tray", "newTask", "openList"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
         // The captain's card: its header, weekday row and legend are this
         // bundle's, not Schedule-X's, and Agenda is the open-source list view.
         if let html = try? String(contentsOf: dir.appendingPathComponent("index.html"), encoding: .utf8) {
             for id in ["gl-prev", "gl-next", "gl-title", "gl-today", "gl-views", "gl-weekdays", "gl-legend",
-                       "gl-tray", "gl-tray-list", "gl-tray-toggle", "gl-empty", "gl-empty-new", "gl-empty-list"] {
+                       "gl-tray", "gl-tray-list", "gl-tray-toggle", "gl-tray-drop", "gl-empty", "gl-empty-new",
+                       "gl-empty-list", "gl-drop", "gl-cell-add", "gl-quick-add", "gl-quick-add-input"] {
                 check(html.contains("id=\"\(id)\""), "the page shell has no #\(id)")
             }
             for scale in ShiftCalendarScale.allCases {
@@ -739,8 +746,11 @@ enum ShiftCalendarSelfTest {
         check(empty?["body"]?.hasPrefix("You have 13 open tasks, and none of them is on a day.") == true,
               "the first-run state counts the open tasks, got \(empty?["body"] ?? "nil")")
         check(empty?["body"]?.contains("Unscheduled") == true, "the first-run state points at the tray")
-        check(empty?["body"]?.lowercased().contains("drag") == false,
-              "the first-run state must not offer a drag from the tray, which is not built yet")
+        check(empty?["body"]?.lowercased().contains("drag one from unscheduled") == true,
+              "the first-run state should offer the drag from the tray, got \(empty?["body"] ?? "nil")")
+        check(ShiftCalendarPayload.tray(tray, projectNames: [:], theme: theme, collapsed: false)["dropHint"] as? String
+              == ShiftCalendarPayload.trayDropHint && !ShiftCalendarPayload.trayDropHint.isEmpty,
+              "the tray says a chip can be dropped on it")
         check(empty?["newTask"] == "New task" && empty?["openList"] == "Open List", "the two buttons are named")
         check(ShiftCalendarPayload.emptyState(openTasks: 1)["body"]?.hasPrefix("You have 1 open task, and it is") == true,
               "one open task is not pluralised")
@@ -934,6 +944,94 @@ enum ShiftCalendarSelfTest {
     private static func sourceFile(_ relative: String) -> String? {
         guard let root = SelfTestSources.appSourceDirectory() else { return nil }
         return try? String(contentsOf: root.appendingPathComponent(relative).standardizedFileURL, encoding: .utf8)
+    }
+    // MARK: 8. Drag and quick add
+
+    private static func checkTrayDropRules(_ check: (Bool, String) -> Void) {
+        var undated = ShiftTask.fresh()
+        undated.title = "Undated"
+        // A tray row dropped on a time slot takes the time; on a day, it
+        // stays all-day. The same task through the chip rule never gains one,
+        // which is what makes the first assertion discriminating.
+        if case .moved(let t) = ShiftCalendarReschedule.apply(task: undated, day: "2026-11-18", time: "15:00",
+                                                             adoptsTime: true) {
+            check(t.dueDate == "2026-11-18" && t.dueTime == "15:00",
+                  "a tray row dropped on 15:00 should be due at 15:00, got \(t.dueDate ?? "nil") \(t.dueTime ?? "nil")")
+        } else { check(false, "a tray row dropped on a time slot should be scheduled") }
+        if case .moved(let t) = ShiftCalendarReschedule.apply(task: undated, day: "2026-11-18", time: "15:00") {
+            check(t.dueTime == nil, "a chip drag still never gives an all-day task a time")
+        } else { check(false, "an undated task dropped on a day should be scheduled") }
+        if case .moved(let t) = ShiftCalendarReschedule.apply(task: undated, day: "2026-11-18", time: nil,
+                                                             adoptsTime: true) {
+            check(t.dueDate == "2026-11-18" && t.dueTime == nil, "a tray row dropped on a day stays all-day")
+        } else { check(false, "a tray row dropped on a day should be scheduled") }
+        var lateFollowUp = ShiftFollowUp.fresh()
+        lateFollowUp.followUpAt = "2026-11-02"
+        if case .moved(let f) = ShiftCalendarReschedule.apply(followUp: lateFollowUp, day: "2026-11-18", time: "09:00",
+                                                             adoptsTime: true) {
+            check(f.followUpAt == "2026-11-18" && f.followUpTime == "09:00", "an overdue follow-up takes the slot's time too")
+        } else { check(false, "an overdue follow-up dropped from the tray should move") }
+
+        // A chip dropped on the tray.
+        var dated = ShiftTask.fresh()
+        dated.title = "Dated"
+        dated.dueDate = "2026-11-18"
+        dated.dueTime = "15:00"
+        dated.reminderMinutesBefore = 30
+        if case .moved(let t) = ShiftCalendarReschedule.unschedule(task: dated) {
+            check(t.dueDate == nil && t.dueTime == nil && t.reminderMinutesBefore == nil && t.title == "Dated",
+                  "a chip dropped on the tray loses its date, its time and its reminder, and nothing else")
+        } else { check(false, "a dated task dropped on the tray should lose its date") }
+        check(ShiftCalendarReschedule.unschedule(task: undated) == .unchanged, "an undated task has nothing to clear")
+        var repeating = dated
+        repeating.recurrence = ShiftRecurrence(frequency: .weekly)
+        if case .refused(let reason) = ShiftCalendarReschedule.unschedule(task: repeating) {
+            check(reason.contains("repeats"), "the refusal says why: \(reason)")
+        } else { check(false, "a repeating task must keep its date - its rule is anchored on it") }
+        var done = dated
+        done.status = .completed
+        if case .refused = ShiftCalendarReschedule.unschedule(task: done) {} else {
+            check(false, "a finished task dropped on the tray must be refused")
+        }
+    }
+
+    private static func checkQuickAdd(_ check: (Bool, String) -> Void) {
+        // Wednesday 2026-08-12, 10:00 local: the date parser suite's own
+        // reference instant, at local noon for the day strings.
+        var parts = DateComponents()
+        parts.year = 2026; parts.month = 8; parts.day = 12; parts.hour = 10
+        let now = Calendar.current.date(from: parts) ?? Date()
+
+        let plain = ShiftCalendarQuickAdd.draft(text: "  Write the patch notes ", day: "2026-08-20", now: now)
+        check(plain == ShiftCalendarQuickAdd.Draft(title: "Write the patch notes", day: "2026-08-20", time: nil,
+                                                    recurrence: nil),
+              "plain text lands on the cell's day, all day, got \(String(describing: plain))")
+        let timed = ShiftCalendarQuickAdd.draft(text: "Ship it 9am", day: "2026-08-20", now: now)
+        check(timed?.day == "2026-08-20" && timed?.time == "09:00" && timed?.title == "Ship it",
+              "a time phrase sets the time on the cell's day, got \(String(describing: timed))")
+        let repeating = ShiftCalendarQuickAdd.draft(text: "Patch notes every tue 10am", day: "2026-08-15", now: now)
+        check(repeating?.title == "Patch notes" && repeating?.day == "2026-08-18" && repeating?.time == "10:00"
+              && repeating?.recurrence == ShiftRecurrence(frequency: .weekly, weekdays: [3]),
+              "\"every tue 10am\" typed into Saturday's cell is due Tuesday at 10:00 every week, got "
+              + "\(String(describing: repeating))")
+        check(ShiftCalendarQuickAdd.draft(text: "   ", day: "2026-08-20", now: now) == nil, "empty text adds nothing")
+        check(ShiftCalendarQuickAdd.draft(text: "Task", day: "20/08/2026", now: now) == nil,
+              "a cell day the calendar cannot save adds nothing")
+
+        if let repeating {
+            let task = ShiftCalendarQuickAdd.task(from: repeating)
+            check(task.title == "Patch notes" && task.dueDate == "2026-08-18" && task.dueTime == "10:00"
+                  && task.recurrence == repeating.recurrence && task.status == .todo,
+                  "the draft becomes an open task with its day, time and rule")
+            let pills = ShiftCalendarQuickAdd.pills(for: repeating)
+            check(pills.map { $0["kind"] ?? "" } == ["day", "time", "repeat"],
+                  "the field shows the day, the time and the rule, got \(pills)")
+            check(pills.last?["label"] == "\u{21BB} Every Tue", "the rule pill uses the rule's own name, got \(pills)")
+        }
+        if let plain {
+            check(ShiftCalendarQuickAdd.pills(for: plain).map { $0["kind"] ?? "" } == ["day"],
+                  "plain text shows only the day it lands on")
+        }
     }
 }
 

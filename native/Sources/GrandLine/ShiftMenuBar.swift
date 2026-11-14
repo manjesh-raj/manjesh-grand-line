@@ -257,6 +257,7 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
             let (dateStr, timeStr) = ShiftDateFormatting.components(from: parsed.date)
             task.dueDate = dateStr
             task.dueTime = parsed.hasTime ? timeStr : nil
+            task.recurrence = parsed.recurrence
         }
         task.title = trimmed
         store.addTask(task)

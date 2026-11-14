@@ -45,6 +45,14 @@
 //     fresh store - without opening it or starting a drag, the toast's real
 //     Undo puts the series back as it was, and a follow-up's check marks it
 //     done.
+//   - **drag and quick add** (tasks-calendar plan PR 7), each read back from
+//     the store: a tray row dragged onto a month day is dated to it, and onto
+//     a week view time slot is dated and timed to it; a chip dragged onto the
+//     tray loses its date, in the month grid (HTML5, through the drag plugin)
+//     and in the week view (mouse events), and is not also moved to the day
+//     it crossed on the way; a repeating chip is refused; and a day's + opens
+//     its quick add, the native parser's pills appear under it, and Return
+//     adds the task with its time and repeat rule.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -408,6 +416,7 @@ enum ShiftCalendarViewSelfTest {
 
         withScratchStore { store in checkTray(store: store, check: check) }
         withScratchStore { store in checkComplete(store: store, check: check) }
+        withScratchStore { store in checkDragAndQuickAdd(store: store, check: check) }
 
         return report(failures)
     }
@@ -748,6 +757,196 @@ enum ShiftCalendarViewSelfTest {
         return nil
     }
 
+    // MARK: Drag and quick add
+
+    private static func checkDragAndQuickAdd(store: ShiftStore, check: (Bool, String) -> Void) {
+        let defaults = AppDefaults.store
+        let foldBefore = defaults.object(forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+        defer {
+            if let foldBefore { defaults.set(foldBefore, forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+            else { defaults.removeObject(forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+        }
+        defaults.set(false, forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let todayDay = ShiftDateFormatting.components(from: today).0
+        // A day in the month on screen other than today: two days on, or two
+        // back when that would leave the month.
+        func dayInMonth(_ offset: Int) -> String {
+            let forward = calendar.date(byAdding: .day, value: offset, to: today) ?? today
+            if calendar.component(.month, from: forward) == calendar.component(.month, from: today) {
+                return ShiftDateFormatting.components(from: forward).0
+            }
+            return ShiftDateFormatting.components(from: calendar.date(byAdding: .day, value: -offset, to: today) ?? today).0
+        }
+        let targetDay = dayInMonth(2)
+        let crossedDay = dayInMonth(3)
+
+        let rfc = seed(store, title: "Draft the RFC", due: nil, time: nil, rule: nil)
+        let venue = seed(store, title: "Book the venue", due: nil, time: nil, rule: nil)
+        let cert = seed(store, title: "Renew the cert", due: todayDay, time: nil, rule: nil)
+        let standup = seed(store, title: "Standup", due: todayDay, time: nil, rule: ShiftRecurrence(frequency: .weekly))
+        let deploy = seed(store, title: "Deploy window", due: todayDay, time: "14:00", rule: nil)
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "the drag case's page never reported ready and configured")
+            return
+        }
+        _ = waitFor(timeout: 5) { (state(web)["trayRows"] as? [String] ?? []).count == 2 }
+        let first = state(web)
+        check(first["trayDraggableRows"] as? Int == 2, "every tray row should be draggable, got \(first["trayDraggableRows"] ?? "nil")")
+        check(first["trayDropHint"] as? String == ShiftCalendarPayload.trayDropHint,
+              "the tray should say a chip can be dropped on it, got \(first["trayDropHint"] ?? "nil")")
+
+        // MARK: A tray row onto a month day
+
+        _ = waitFor(timeout: 5) {
+            (js(web, "!!document.querySelector('.sx__month-grid-day[data-date=\"\(targetDay)\"]')") as? Bool) == true
+                && eventIn(web, id: cert, day: todayDay)
+        }
+        let monthDrop = trayRowDrag(web, taskID: rfc, toDay: targetDay, minutes: nil)
+        check(monthDrop["shown"] as? Bool == true && (monthDrop["label"] as? String ?? "").hasPrefix("Drop to schedule"),
+              "dragging a tray row over a day should draw the drop target with its day, got \(monthDrop)")
+        _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == rfc }?.dueDate == targetDay }
+        let placed = store.activeTasks.first { $0.id == rfc }
+        check(placed?.dueDate == targetDay && placed?.dueTime == nil,
+              "a tray row dropped on \(targetDay) should be due that day, all day, got "
+              + "\(placed?.dueDate ?? "nil") \(placed?.dueTime ?? "nil")")
+        _ = waitFor(timeout: 5) { !((state(web)["trayRows"] as? [String] ?? []).contains(rfc)) }
+        let afterPlace = state(web)
+        check(!(afterPlace["trayRows"] as? [String] ?? []).contains(rfc), "the dated row should leave the tray")
+        check(afterPlace["dropVisible"] as? Bool == false, "the drop target should go away with the drag")
+        _ = waitFor(timeout: 3) { eventIn(web, id: rfc, day: targetDay) }
+        check(eventIn(web, id: rfc, day: targetDay), "the placed task should be drawn on its day")
+
+        // MARK: A chip onto the tray, in the month grid
+
+        // Over a day first, so the drag plugin has somewhere it would move
+        // the chip to: the tray must win, and the day must not.
+        let monthBack = monthChipToTray(web, eventID: cert, overDay: crossedDay)
+        check(monthBack["highlighted"] as? Bool == true,
+              "a chip held over the tray should light the tray as the target, got \(monthBack)")
+        _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == cert }?.dueDate == nil }
+        drain(turns: 30)
+        let cleared = store.activeTasks.first { $0.id == cert }
+        check(cleared != nil && cleared?.dueDate == nil && cleared?.dueTime == nil,
+              "a chip dropped on the tray should lose its date in the store, got \(cleared?.dueDate ?? "nil")")
+        _ = waitFor(timeout: 5) { (state(web)["trayRows"] as? [String] ?? []).contains(cert) }
+        check((state(web)["trayRows"] as? [String] ?? []).contains(cert), "the chip should come back as a tray row")
+        check(!eventIn(web, id: cert, day: crossedDay) && !eventIn(web, id: cert, day: todayDay),
+              "the chip must not also be moved to the day it crossed")
+
+        // A repeating chip keeps its date: its rule is anchored on it.
+        _ = monthChipToTray(web, eventID: standup, overDay: crossedDay)
+        drain(turns: 40)
+        let kept = store.activeTasks.first { $0.id == standup }
+        check(kept?.dueDate == todayDay && kept?.recurrence != nil,
+              "a repeating chip dropped on the tray must keep its date and rule, got \(kept?.dueDate ?? "nil")")
+
+        // MARK: The week view: a tray row onto a time, and a timed chip back
+
+        _ = js(web, "document.querySelector('#gl-views [data-view=\"week\"]').click()")
+        _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == "week" && view.scale == .week }
+        let weekStart = state(web)["start"] as? String ?? todayDay
+        let slotDay = todayDay >= weekStart ? todayDay : weekStart
+        // The view's pill answers before Schedule-X has drawn the new grid.
+        _ = waitFor(timeout: 5) {
+            (js(web, "!!document.querySelector('.sx__time-grid-day[data-time-grid-date=\"\(slotDay)\"]')") as? Bool) == true
+        }
+        let slot = trayRowDrag(web, taskID: venue, toDay: slotDay, minutes: 15 * 60)
+        check(slot["shown"] as? Bool == true && (slot["label"] as? String ?? "").hasPrefix("15:00"),
+              "dragging a tray row over 15:00 should draw the slot it lands on, got \(slot)")
+        _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == venue }?.dueTime == "15:00" }
+        let timed = store.activeTasks.first { $0.id == venue }
+        check(timed?.dueDate == slotDay && timed?.dueTime == "15:00",
+              "a tray row dropped on \(slotDay) at 15:00 should be due then, got "
+              + "\(timed?.dueDate ?? "nil") \(timed?.dueTime ?? "nil")")
+
+        _ = waitFor(timeout: 3) {
+            (js(web, "!!document.querySelector('.sx__time-grid-event[data-event-id=\"\(deploy)\"]')") as? Bool) == true
+        }
+        let weekBack = timeGridChipToTray(web, eventID: deploy)
+        check(weekBack["highlighted"] as? Bool == true,
+              "a time grid chip held over the tray should light the tray, got \(weekBack)")
+        _ = waitFor(timeout: 5) { store.activeTasks.first { $0.id == deploy }?.dueDate == nil }
+        let unscheduled = store.activeTasks.first { $0.id == deploy }
+        check(unscheduled?.dueDate == nil && unscheduled?.dueTime == nil,
+              "a timed chip dragged onto the tray should lose its date and time, got "
+              + "\(unscheduled?.dueDate ?? "nil") \(unscheduled?.dueTime ?? "nil")")
+
+        // MARK: Quick add in a day
+
+        view.show(scale: .month)
+        _ = waitFor(timeout: 5) { state(web)["view"] as? String == "month-grid" }
+        _ = waitFor(timeout: 5) {
+            (js(web, "!!document.querySelector('.sx__month-grid-day[data-date=\"\(todayDay)\"]')") as? Bool) == true
+        }
+        let hover = """
+        const cell = document.querySelector(`.sx__month-grid-day[data-date="${day}"]`);
+        if (!cell) return 'missing';
+        const r = cell.getBoundingClientRect();
+        cell.dispatchEvent(new MouseEvent('mouseover', {bubbles: true, clientX: r.x + 20, clientY: r.y + 40}));
+        return 'ok';
+        """
+        _ = asyncJS(web, hover, ["day": todayDay])
+        let hovered = state(web)
+        check(hovered["cellAddVisible"] as? Bool == true && hovered["cellAddDay"] as? String == todayDay,
+              "hovering a day should show its + button, got \(hovered["cellAddVisible"] ?? "nil") / \(hovered["cellAddDay"] ?? "nil")")
+        _ = js(web, "document.getElementById('gl-cell-add').click()")
+        let opened = state(web)
+        check(opened["quickAddOpen"] as? Bool == true && opened["quickAddDay"] as? String == todayDay
+              && opened["quickAddFocused"] as? Bool == true,
+              "the + should open a focused title field on its day, got \(opened)")
+
+        let type = """
+        const input = document.getElementById('gl-quick-add-input');
+        input.value = text;
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        return 'ok';
+        """
+        _ = asyncJS(web, type, ["text": "Patch notes every tue 10am"])
+        _ = waitFor(timeout: 5) { (state(web)["quickAddPills"] as? [String] ?? []).count == 3 }
+        let pills = state(web)["quickAddPills"] as? [String] ?? []
+        check(pills.count == 3 && pills.last?.contains("Every Tue") == true
+              && pills.contains(ShiftDateFormatting.clock("10:00")),
+              "the field should show the parsed day, time and rule as pills, got \(pills)")
+
+        _ = js(web, "document.getElementById('gl-quick-add-input').dispatchEvent("
+               + "new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}))")
+        _ = waitFor(timeout: 5) { store.activeTasks.contains { $0.title == "Patch notes" } }
+        let added = store.activeTasks.first { $0.title == "Patch notes" }
+        var firstTuesday = today
+        while calendar.component(.weekday, from: firstTuesday) != 3 {
+            firstTuesday = calendar.date(byAdding: .day, value: 1, to: firstTuesday) ?? firstTuesday
+        }
+        check(added?.dueDate == ShiftDateFormatting.components(from: firstTuesday).0 && added?.dueTime == "10:00"
+              && added?.recurrence == ShiftRecurrence(frequency: .weekly, weekdays: [3]),
+              "Return should add \"Patch notes\" on the first Tuesday from today at 10:00, every Tuesday, got "
+              + "\(added?.dueDate ?? "nil") \(added?.dueTime ?? "nil") \(added?.recurrence?.ruleText ?? "no rule")")
+        check(state(web)["quickAddOpen"] as? Bool == false, "Return should put the field away")
+
+        // Escape puts it away and adds nothing.
+        let countBefore = store.activeTasks.count
+        _ = asyncJS(web, hover, ["day": targetDay])
+        _ = js(web, "document.getElementById('gl-cell-add').click()")
+        _ = asyncJS(web, type, ["text": "Never mind"])
+        _ = js(web, "document.getElementById('gl-quick-add-input').dispatchEvent("
+               + "new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))")
+        drain(turns: 20)
+        check(state(web)["quickAddOpen"] as? Bool == false && store.activeTasks.count == countBefore,
+              "Escape should close the field and add nothing")
+
+        _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
+        check(web.debugPendingCallCount == 0, "\(web.debugPendingCallCount) drag bridge call(s) never got a reply")
+    }
+
     // MARK: Driving the page
 
     /// A pointer's press on one element: down, held past the core's 150ms
@@ -806,6 +1005,83 @@ enum ShiftCalendarViewSelfTest {
         return 'ok';
         """
         _ = asyncJS(web, script, ["eventID": eventID, "minutes": minutesLater])
+    }
+
+    /// A tray row dragged onto a month day, or onto a time slot in the week
+    /// or day view (`minutes` after midnight). HTML5, as a pointer drives it:
+    /// `dragstart` on the row, `dragover` and `drop` on the target, `dragend`
+    /// on the row. Returns whether the drop target was drawn, and its label.
+    private static func trayRowDrag(_ web: WKWebView, taskID: String, toDay day: String,
+                                    minutes: Int?) -> [String: Any] {
+        let script = """
+        const row = document.querySelector(`.gl-tray-item[data-task-id="${taskID}"]`);
+        const target = minutes === null
+          ? document.querySelector(`.sx__month-grid-day[data-date="${day}"]`)
+          : document.querySelector(`.sx__time-grid-day[data-time-grid-date="${day}"]`);
+        if (!row || !target) return {missing: !row ? 'row' : 'target'};
+        const t = target.getBoundingClientRect();
+        const x = t.x + 10;
+        const y = minutes === null ? t.y + 30 : t.y + (minutes + 5) / (24 * 60) * t.height;
+        row.dispatchEvent(new DragEvent('dragstart', {bubbles: true}));
+        target.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+        const shown = !document.getElementById('gl-drop').hidden;
+        const label = document.getElementById('gl-drop-label').textContent;
+        target.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+        row.dispatchEvent(new DragEvent('dragend', {bubbles: true}));
+        return {shown, label};
+        """
+        // `null` is how "a month day, no time" reaches the script.
+        let minutesArgument: Any = minutes.map { $0 as Any } ?? NSNull()
+        return asyncJS(web, script, ["taskID": taskID, "day": day, "minutes": minutesArgument]) as? [String: Any] ?? [:]
+    }
+
+    /// A month-grid chip dragged over `overDay` and then onto the tray: the
+    /// plugin's own HTML5 drag, so the tray gets `dragover` and `drop` and the
+    /// plugin its `dragend` after them, in the order WebKit sends them.
+    private static func monthChipToTray(_ web: WKWebView, eventID: String, overDay: String) -> [String: Any] {
+        let script = """
+        const el = document.querySelector(`.sx__month-grid-event[data-event-id="${eventID}"]`);
+        const day = document.querySelector(`.sx__month-grid-day[data-date="${overDay}"]`);
+        const tray = document.getElementById('gl-tray');
+        if (!el || !day) return {missing: !el ? 'chip' : 'day'};
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: r.x + 4, clientY: r.y + 4}));
+        await new Promise(resolve => setTimeout(resolve, 220));
+        const d = day.getBoundingClientRect();
+        day.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, clientX: d.x + 10, clientY: d.y + 30}));
+        const t = tray.getBoundingClientRect();
+        const at = {bubbles: true, cancelable: true, clientX: t.x + t.width / 2, clientY: t.y + t.height / 2};
+        tray.dispatchEvent(new DragEvent('dragover', at));
+        const highlighted = tray.classList.contains('is-drop-target');
+        tray.dispatchEvent(new DragEvent('drop', at));
+        document.dispatchEvent(new DragEvent('dragend', {bubbles: true}));
+        document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+        return {highlighted};
+        """
+        return asyncJS(web, script, ["eventID": eventID, "overDay": overDay]) as? [String: Any] ?? [:]
+    }
+
+    /// A time grid chip dragged onto the tray: the plugin's mouse-driven
+    /// drag, down on the chip and move and up on the document, with the
+    /// button held through the move.
+    private static func timeGridChipToTray(_ web: WKWebView, eventID: String) -> [String: Any] {
+        let script = """
+        const el = document.querySelector(`.sx__time-grid-event[data-event-id="${eventID}"]`);
+        const tray = document.getElementById('gl-tray');
+        if (!el) return {missing: 'chip'};
+        el.scrollIntoView();
+        const r = el.getBoundingClientRect();
+        const t = tray.getBoundingClientRect();
+        const x = t.x + t.width / 2, y = t.y + t.height / 2;
+        el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, buttons: 1, clientX: r.x + 4, clientY: r.y + 4}));
+        await new Promise(resolve => setTimeout(resolve, 220));
+        document.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, buttons: 1, clientX: x, clientY: y}));
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const highlighted = tray.classList.contains('is-drop-target');
+        document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
+        return {highlighted};
+        """
+        return asyncJS(web, script, ["eventID": eventID]) as? [String: Any] ?? [:]
     }
 
     private static func eventIn(_ web: WKWebView, id: String, day: String) -> Bool {

@@ -460,6 +460,7 @@ enum ShiftCalendarPayload {
             "groups": groups,
             "collapsed": collapsed,
             "hint": trayHint,
+            "dropHint": trayDropHint,
             "nothing": tray.unscheduledCount + tray.overdue.count == 0 ? trayAllDated : "",
         ]
         if tray.isUndatedOnly {
@@ -468,7 +469,9 @@ enum ShiftCalendarPayload {
         return payload
     }
 
-    static let trayHint = "No date yet. Press Today or Tomorrow on a row to put it on the calendar."
+    static let trayHint = "No date yet. Drag a row onto a day, or onto a time in Week and Day."
+    /// The tray's footer: the other direction of the same drag.
+    static let trayDropHint = "Drop a chip here to clear its date."
     static let trayAllDated = "Every open task has a date."
 
     /// The first-run state: open tasks exist and none of them has a date, so
@@ -480,8 +483,8 @@ enum ShiftCalendarPayload {
             : "You have \(openTasks) open tasks, and none of them is on a day."
         return [
             "title": "Nothing has a date yet",
-            "body": have + " Press Today or Tomorrow on a row in Unscheduled to put it on the calendar, "
-                + "or double-click a day to add a task there.",
+            "body": have + " Drag one from Unscheduled onto a day, or press Today on a row. "
+                + "New tasks you add from a day land on that day.",
             "newTask": "New task",
             "openList": "Open List",
         ]
@@ -954,14 +957,19 @@ enum ShiftCalendarReschedule {
     /// adopted by a task that already had one. That keeps a drop in the month
     /// grid (which carries no time of its own) from inventing one, and keeps
     /// "due on this day" from silently becoming "due at 9:00".
-    static func apply(task: ShiftTask, day: String, time: String?) -> Outcome {
+    ///
+    /// `adoptsTime` is the one exception, for a row dragged out of the
+    /// Unscheduled tray onto a time slot: there the slot *is* the captain's
+    /// answer to "when", so an all-day task takes it. A tray row dropped on a
+    /// day (no time) still keeps whatever time it had.
+    static func apply(task: ShiftTask, day: String, time: String?, adoptsTime: Bool = false) -> Outcome {
         guard task.status != .completed, task.status != .cancelled else {
             return .refused("A finished task can't be moved.")
         }
         guard ShiftDateFormatting.date(from: day) != nil, day.count == 10 else {
             return .refused("That isn't a day the calendar can save.")
         }
-        let newTime: String? = task.dueTime == nil ? nil : (time ?? task.dueTime)
+        let newTime: String? = task.dueTime == nil && !adoptsTime ? nil : (time ?? task.dueTime)
         if let newTime, !isClock(newTime) {
             return .refused("That isn't a time the calendar can save.")
         }
@@ -980,12 +988,14 @@ enum ShiftCalendarReschedule {
         case refused(String)
     }
 
-    static func apply(followUp: ShiftFollowUp, day: String, time: String?) -> FollowUpOutcome {
+    static func apply(followUp: ShiftFollowUp, day: String, time: String?,
+                      adoptsTime: Bool = false) -> FollowUpOutcome {
         guard followUp.status == .pending else { return .refused("A finished follow-up can't be moved.") }
         guard ShiftDateFormatting.date(from: day) != nil, day.count == 10 else {
             return .refused("That isn't a day the calendar can save.")
         }
-        let newTime: String? = followUp.followUpTime == nil ? nil : (time ?? followUp.followUpTime)
+        let newTime: String? = followUp.followUpTime == nil && !adoptsTime
+            ? nil : (time ?? followUp.followUpTime)
         if let newTime, !isClock(newTime) {
             return .refused("That isn't a time the calendar can save.")
         }
@@ -996,11 +1006,92 @@ enum ShiftCalendarReschedule {
         return .moved(moved)
     }
 
+    /// A chip dropped on the Unscheduled tray: the task loses its date, its
+    /// time and the reminder that hung off them, and lands in the tray.
+    ///
+    /// A repeating task is refused rather than stripped of its rule. A rule
+    /// is anchored on the due date (`ShiftRecurrence`'s header), so a rule
+    /// with no date is not a thing the store can hold, and quietly deleting
+    /// the captain's repeat to make room for a drop would lose more than the
+    /// drop asked for.
+    static func unschedule(task: ShiftTask) -> Outcome {
+        guard task.status != .completed, task.status != .cancelled else {
+            return .refused("A finished task can't be moved.")
+        }
+        guard task.recurrence == nil else {
+            return .refused("\u{201C}\(task.title)\u{201D} repeats, so it keeps a date. Open it to stop the repeat first.")
+        }
+        guard task.dueDate != nil || task.dueTime != nil else { return .unchanged }
+        var cleared = task
+        cleared.dueDate = nil
+        cleared.dueTime = nil
+        cleared.reminderMinutesBefore = nil
+        return .moved(cleared)
+    }
+
+    /// A follow-up's date is the reason it exists - the day to come back to
+    /// it - and the tray does not list undated follow-ups, so taking the date
+    /// away would take it off the calendar altogether.
+    static let followUpKeepsItsDate = "A follow-up keeps its date. Open it to change when it comes back."
+
     private static func isClock(_ text: String) -> Bool {
         let parts = text.split(separator: ":")
         guard parts.count == 2, parts.allSatisfy({ $0.count == 2 }),
               let h = Int(parts[0]), let m = Int(parts[1]) else { return false }
         return (0..<24).contains(h) && (0..<60).contains(m)
+    }
+}
+
+// MARK: - Quick add in a day
+
+/// What a day's quick add makes of the text typed into it. Pure, so the
+/// reading is tested without a page.
+///
+/// The day is the cell's, unless the text names one of its own ("tomorrow",
+/// "next mon"); a time phrase sets the time; a repeat phrase ("every tue",
+/// "monthly on the last day") sets the rule and moves the date to the rule's
+/// first date on or after the cell. Every phrase that became data comes out
+/// of the title, through the same `ShiftDateParser` the New Task sheet uses,
+/// so a quick add and the sheet read the same words the same way.
+enum ShiftCalendarQuickAdd {
+
+    struct Draft: Equatable {
+        var title: String
+        var day: String
+        var time: String?
+        var recurrence: ShiftRecurrence?
+    }
+
+    /// `nil` for empty text, or a cell day the calendar cannot save.
+    static func draft(text: String, day: String, now: Date = Date()) -> Draft? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, day.count == 10, let cellDay = ShiftDateFormatting.date(from: day) else { return nil }
+        guard let parsed = ShiftDateParser.parse(trimmed, now: now, on: cellDay) else {
+            return Draft(title: trimmed, day: day, time: nil, recurrence: nil)
+        }
+        let (dateStr, timeStr) = ShiftDateFormatting.components(from: parsed.date)
+        return Draft(title: ShiftDateParser.titleWithoutDatePhrase(trimmed, parsed: parsed),
+                     day: dateStr, time: parsed.hasTime ? timeStr : nil, recurrence: parsed.recurrence)
+    }
+
+    /// The new task the draft describes.
+    static func task(from draft: Draft) -> ShiftTask {
+        var task = ShiftTask.fresh()
+        task.title = draft.title
+        task.dueDate = draft.day
+        task.dueTime = draft.time
+        task.recurrence = draft.recurrence
+        return task
+    }
+
+    /// What the field shows under itself as the captain types: the day the
+    /// task will land on, its time and its rule, each as a pill. `kind` lets
+    /// a self-test tell them apart; the page only draws `label`.
+    static func pills(for draft: Draft) -> [[String: String]] {
+        var pills = [["kind": "day", "label": ShiftDateFormatting.friendly(draft.day)]]
+        if let time = draft.time { pills.append(["kind": "time", "label": ShiftDateFormatting.clock(time)]) }
+        if let rule = draft.recurrence { pills.append(["kind": "repeat", "label": "\u{21BB} \(rule.displayName)"]) }
+        return pills
     }
 }
 
@@ -1036,6 +1127,13 @@ final class ShiftCalendarView: NSView {
     var onCompleteTask: ((String) -> Void)?
     /// The check on a follow-up's chip or row.
     var onCompleteFollowUp: ((String) -> Void)?
+    /// A tray row dropped on a day, or on a time slot.
+    var onPlaceFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ day: String, _ time: String?) -> Void)?
+    /// A chip dropped on the tray.
+    var onUnschedule: ((_ id: String, _ kind: ShiftCalendarEntry.Kind) -> Void)?
+    /// A day's quick add was submitted: Return, or Command-Return for the
+    /// full sheet (`details`).
+    var onQuickAdd: ((_ day: String, _ text: String, _ details: Bool) -> Void)?
     /// The empty state's New task.
     var onNewTask: (() -> Void)?
     /// The empty state's Open List.
@@ -1139,6 +1237,12 @@ final class ShiftCalendarView: NSView {
         webView.onScheduleFromTray = { [weak self] id, kind, when in self?.onScheduleFromTray?(id, kind, when) }
         webView.onCompleteTask = { [weak self] id in self?.onCompleteTask?(id) }
         webView.onCompleteFollowUp = { [weak self] id in self?.onCompleteFollowUp?(id) }
+        webView.onPlaceFromTray = { [weak self] id, kind, day, time in self?.onPlaceFromTray?(id, kind, day, time) }
+        webView.onUnschedule = { [weak self] id, kind in self?.onUnschedule?(id, kind) }
+        webView.onQuickAdd = { [weak self] day, text, details in self?.onQuickAdd?(day, text, details) }
+        // The field's pills are a reading of the text, with nothing to
+        // decide, so this view answers it itself.
+        webView.onQuickAddParse = { [weak self] day, text, seq in self?.answerQuickAddParse(day: day, text: text, seq: seq) }
         webView.onTrayCollapse = { [weak self] collapsed in self?.setTrayCollapsed(collapsed) }
         webView.onNewTask = { [weak self] in self?.onNewTask?() }
         webView.onOpenList = { [weak self] in self?.onOpenList?() }
@@ -1316,6 +1420,18 @@ final class ShiftCalendarView: NSView {
         webView.call("setTray", payload: lastTrayPayload) { result in
             if case .failure(let error) = result {
                 AppLog.lifecycle.error("task calendar: setTray failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
+    /// Answers the quick-add field with what its text means, for the
+    /// keystroke `seq` names. The page drops an answer to an older one.
+    func answerQuickAddParse(day: String, text: String, seq: Int, now: Date = Date()) {
+        let pills = ShiftCalendarQuickAdd.draft(text: text, day: day, now: now).map(ShiftCalendarQuickAdd.pills(for:)) ?? []
+        guard isConfigured else { return }
+        webView.call("setQuickAddHint", payload: ["seq": seq, "pills": pills]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setQuickAddHint failed: \(error.message, privacy: .public)")
             }
         }
     }

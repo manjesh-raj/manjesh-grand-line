@@ -33,8 +33,8 @@
          previous and next buttons, the period's title, and the views as
          pills. task-calendar.js drives every control here. -->
     <!-- The card and, beside it, the Unscheduled tray. Both live in this one
-         page so a later drag from the tray onto a day uses the same DOM the
-         grid's own drag already does. -->
+         page so a drag from the tray onto a day uses the same DOM the grid's
+         own drag already does. -->
     <div class="gl-layout" id="gl-layout">
     <main class="gl-card" id="gl-card">
       <header class="gl-head">
@@ -55,6 +55,19 @@
         <div id="calendar"></div>
         <!-- The first-run state: open tasks exist and none has a date. The
              words arrive from the native side with the tray. -->
+        <!-- Drag from the tray and quick add. These sit over Schedule-X's
+             own DOM rather than inside it, so a re-render of a day never
+             takes them with it. task-calendar.js positions each one. -->
+        <div class="gl-drop" id="gl-drop" hidden aria-hidden="true"><span id="gl-drop-label"></span></div>
+        <button type="button" class="gl-cell-add" id="gl-cell-add" hidden aria-label="Add a task on this day">+</button>
+        <div class="gl-quick-add" id="gl-quick-add" hidden>
+          <input type="text" id="gl-quick-add-input" autocomplete="off" spellcheck="false"
+                 aria-describedby="gl-quick-add-hint" />
+          <div class="gl-quick-add-hint" id="gl-quick-add-hint" aria-live="polite">
+            <span class="gl-quick-add-pills" id="gl-quick-add-pills"></span>
+            <span class="gl-quick-add-keys" id="gl-quick-add-keys"></span>
+          </div>
+        </div>
         <section class="gl-empty" id="gl-empty" hidden aria-live="polite">
           <div class="gl-empty-icon" aria-hidden="true"></div>
           <h2 id="gl-empty-title"></h2>
@@ -76,6 +89,7 @@
       </header>
       <p class="gl-tray-hint" id="gl-tray-hint"></p>
       <div class="gl-tray-list" id="gl-tray-list"></div>
+      <p class="gl-tray-drop" id="gl-tray-drop"></p>
     </aside>
     </div>
     <!-- A classic script, not `type="module"`, for the reason the other two
