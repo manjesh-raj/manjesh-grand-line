@@ -15,13 +15,17 @@
 // ## What crosses the bridge
 //
 // Native to page: `configure` once, then `setEvents`, `setTray`, `setTheme`,
-// `setView`, `showDate`, `suspend`/`resume`, and `state` (read back from the
-// page's DOM, for a self-test). Page to native: `ready`, `error`, `range` (the
-// visible period changed), `open` (an event or a tray row was clicked), `add`
-// (a day or a time slot was double-clicked), `move` (an event was dropped
-// somewhere new), `complete` (the check on a real chip or an Agenda row),
-// `schedule` (a tray row's Today, Tomorrow or Pick…), `tray` (the tray's fold
-// button), `newTask` and `openList` (the empty state's two buttons).
+// `setView`, `showDate`, `setQuickAddHint`, `suspend`/`resume`, and `state`
+// (read back from the page's DOM, for a self-test). Page to native: `ready`,
+// `error`, `range` (the visible period changed), `open` (an event or a tray
+// row was clicked), `add` (a day or a time slot was double-clicked), `move`
+// (an event was dropped somewhere new), `complete` (the check on a real chip
+// or an Agenda row), `schedule` (a tray row's Today, Tomorrow or Pick…),
+// `place` (a tray row was dropped on a day or a time slot), `unschedule` (a
+// chip was dropped on the tray), `quickAddParse` (the day's quick-add field
+// changed, and wants its pills), `quickAdd` (that field was submitted),
+// `tray` (the tray's fold button), `newTask` and `openList` (the empty
+// state's two buttons).
 //
 // `schedule` names the button, never a date: which day "Today" is belongs to
 // the native side's clock, not the page's.
@@ -45,7 +49,8 @@
 // catching up on an earlier request, and it is dropped too. `WebIslandOwnershipSelfTest`
 // fails the run on an `on*` callback that assigns `scale` itself.
 //
-// `move` is a request, never a fact. The page has already drawn the event in
+// `move` is a request, never a fact, and so are `place`, `unschedule` and
+// `quickAdd`. The page has already drawn the event in
 // its new place, but nothing is written until `ShiftController` asks the
 // store, and the store's answer comes back as the next `setEvents` - so a drop
 // the store refuses snaps back, and the page never shows a date the store does
@@ -100,6 +105,16 @@ final class ShiftCalendarWebView: WKWebView {
     /// should open on - beside a chip, and to the left of the tray, which is
     /// the card's right edge.
     var onEditSchedule: ((_ taskID: String, _ anchor: NSRect, _ edge: NSRectEdge) -> Void)?
+    /// A tray row was dropped on a day, or on a time slot (`time`).
+    var onPlaceFromTray: ((_ id: String, _ kind: ShiftCalendarEntry.Kind, _ day: String, _ time: String?) -> Void)?
+    /// A chip was dropped on the tray.
+    var onUnschedule: ((_ id: String, _ kind: ShiftCalendarEntry.Kind) -> Void)?
+    /// The quick-add field on `day` now reads `text`; `seq` names the
+    /// keystroke, so the answer can be matched to it.
+    var onQuickAddParse: ((_ day: String, _ text: String, _ seq: Int) -> Void)?
+    /// The quick-add field on `day` was submitted, with Command held for
+    /// `details`.
+    var onQuickAdd: ((_ day: String, _ text: String, _ details: Bool) -> Void)?
     /// The tray's fold button asked for this state.
     var onTrayCollapse: ((Bool) -> Void)?
     /// The empty state's New task.
@@ -286,6 +301,21 @@ final class ShiftCalendarWebView: WKWebView {
             } else {
                 onScheduleFromTray?(id, kind, when)
             }
+        case "place":
+            guard let id = body["taskID"] as? String, let day = body["day"] as? String else { return }
+            let kind = ShiftCalendarEntry.Kind(rawValue: (body["kind"] as? String) ?? "") ?? .task
+            onPlaceFromTray?(id, kind, day, body["time"] as? String)
+        case "unschedule":
+            guard let id = body["taskID"] as? String else { return }
+            let kind = ShiftCalendarEntry.Kind(rawValue: (body["kind"] as? String) ?? "") ?? .task
+            onUnschedule?(id, kind)
+        case "quickAddParse":
+            guard let day = body["day"] as? String, let text = body["text"] as? String,
+                  let seq = body["seq"] as? Int else { return }
+            onQuickAddParse?(day, text, seq)
+        case "quickAdd":
+            guard let day = body["day"] as? String, let text = body["text"] as? String else { return }
+            onQuickAdd?(day, text, (body["details"] as? Bool) == true)
         case "tray":
             guard let collapsed = body["collapsed"] as? Bool else { return }
             onTrayCollapse?(collapsed)

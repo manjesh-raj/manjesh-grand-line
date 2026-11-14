@@ -40,7 +40,7 @@ Resize is not used at all: a task has a due time but no duration.
 | Path | What it is |
 | --- | --- |
 | `src/package.json`, `src/package-lock.json` | The pinned dependency set. Installed only by the build script, with `npm ci`. |
-| `src/task-calendar.js` | Hand-written entry point: mounts the calendar, adapts the drag plugin, drives the card's own header (previous and next, the period's title, Today, the view pills), the weekday row, the legend, the Unscheduled tray's rows, the empty state and the check on each real, open chip and Agenda row, and exposes `window.GrandLineTaskCalendar`, the bridge `ShiftCalendarWebView` calls. |
+| `src/task-calendar.js` | Hand-written entry point: mounts the calendar, adapts the drag plugin, drives the card's own header (previous and next, the period's title, Today, the view pills), the weekday row, the legend, the Unscheduled tray's rows, the empty state and the check on each real, open chip and Agenda row, dragging a tray row onto a day or a time and a chip back onto the tray, a day's quick-add field, and exposes `window.GrandLineTaskCalendar`, the bridge `ShiftCalendarWebView` calls. |
 | `src/task-calendar.css` | Hand-written layer over the default theme: the captain's raised card, a raised cell per day drawn inside the day (never as a gap, which the drag plugin would see as nowhere), dimmed days outside the month, today as a pill, chips with an accent edge, the agenda's rows, projections drawn faint, finished tasks struck through, and the now-line and today's weekday in theme colours. Schedule-X's own header is hidden. |
 | `src/index.html` | Hand-written page shell: the CSP, the card's header, weekday row and legend, the first-run empty state over the grid, the Unscheduled tray beside the card, and the one classic `<script>` tag. |
 | `web/` | **Generated and committed.** The script, the stylesheet, the page, `THIRD-PARTY-LICENSES.txt` and `BUILD-INFO.txt`. |
@@ -60,6 +60,7 @@ Run it after editing anything in `src/`, or after bumping a version in `src/pack
 Bump the version in `src/package.json`, rebuild, and check six things, because each one fails silently:
 
 1. **The drag plugin still works.** Run `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS=1 .build/debug/GrandLine`. It drags in the month grid and the week view and reads the task store.
+   The tray's drag reads three more of the plugin's and the core's details, and they fail the same suite: the drop targets `.sx__month-grid-day[data-date]`, `.sx__time-grid-day[data-time-grid-date]` (a column 24 hours tall) and `.sx__date-grid-day[data-date-grid-date]`, the order `drop` then `dragend` for a chip dropped on the tray, and `onBeforeEventUpdate` returning `false` to cancel the plugin's own move.
 2. **The CSS variable names still exist.** `ShiftCalendarPalette.requiredVariables` names every `--sx-color-*` role the palette sets. A renamed role leaves Schedule-X's default purple behind.
 3. **The callbacks still exist.** `task-calendar.js` uses `onEventClick`, `onDoubleClickDate`, `onDoubleClickDateTime`, `onClickPlusEvents`, `onRangeUpdate`, `onRender`, `onSelectedDateUpdate`, `onBeforeEventUpdate` and `onEventUpdate`, and the scroll controller's `scrollTo`.
 4. **The locale rule still holds.** Schedule-X throws on a locale that is not `ll-RR`, which is why `ShiftCalendarPayload.scheduleXLocale` normalises it.

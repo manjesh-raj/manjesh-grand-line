@@ -837,7 +837,12 @@ html[data-view='list'] .gl-empty {
   padding: 7px 8px;
   border-radius: 10px;
   border: 1px solid transparent;
-  cursor: pointer;
+  cursor: grab;
+}
+
+/* The row on its way to a day: left faint where it was. */
+.gl-tray-item.is-dragging {
+  opacity: 0.4;
 }
 
 .gl-tray-item:hover,
@@ -939,6 +944,186 @@ html[data-view='list'] .gl-empty {
 }
 
 .gl-tray.is-collapsed .gl-tray-hint,
+.gl-tray.is-collapsed .gl-tray-drop,
 .gl-tray.is-collapsed .gl-tray-list {
   display: none;
+}
+
+/* The footer that says a chip can come back here. */
+.gl-tray-drop {
+  margin: 0;
+  padding: 9px 16px 11px;
+  border-top: 1px solid var(--gl-control-edge);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--gl-muted);
+}
+
+.gl-tray-drop:empty {
+  display: none;
+}
+
+/* A chip held over the tray: the whole tray is the target. */
+.gl-tray.is-drop-target {
+  outline: 2px dashed var(--sx-color-primary);
+  outline-offset: -2px;
+}
+
+.gl-tray.is-drop-target .gl-tray-drop {
+  color: var(--gl-accent-ink);
+  font-weight: 600;
+}
+
+/* MARK: Drag from the tray, and quick add
+ *
+ * Each of these sits over the grid rather than inside a day, so a re-render
+ * of the month never takes it with it; task-calendar.js places it. */
+
+.gl-drop {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  border: 2px dashed var(--sx-color-primary);
+  border-radius: var(--gl-radius-cell);
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 6px 7px;
+}
+
+.gl-drop[hidden] {
+  display: none;
+}
+
+/* The wash under the dashed edge, faint enough that the day's own chips
+ * still read through it. (No `color-mix`: the bundle targets Safari 16.) */
+.gl-drop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--sx-color-primary-container);
+  opacity: 0.45;
+}
+
+.gl-drop span {
+  position: relative;
+}
+
+/* A month cell is narrow beside the tray, so its label wraps rather than
+ * losing the day; a time slot is one line. */
+.gl-drop span {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--gl-accent-ink);
+}
+
+.gl-drop.is-slot span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A time slot: a half-hour block at the time it would land on. */
+.gl-drop.is-slot {
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+.gl-drop.is-slot::before {
+  opacity: 0.8;
+}
+
+.gl-cell-add {
+  position: absolute;
+  z-index: 4;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--sx-color-primary-container);
+  color: var(--sx-color-on-primary-container);
+  font: 600 15px/20px -apple-system, BlinkMacSystemFont, sans-serif;
+  text-align: center;
+  cursor: pointer;
+}
+
+.gl-cell-add[hidden] {
+  display: none;
+}
+
+.gl-cell-add:hover {
+  background: var(--sx-color-primary);
+  color: var(--sx-color-on-primary);
+}
+
+.gl-cell-add:focus-visible {
+  outline: 2px solid var(--sx-color-primary);
+  outline-offset: 2px;
+}
+
+.gl-quick-add {
+  position: absolute;
+  z-index: 6;
+  box-sizing: border-box;
+}
+
+.gl-quick-add[hidden] {
+  display: none;
+}
+
+.gl-quick-add input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1.5px solid var(--sx-color-primary);
+  border-radius: 7px;
+  background: var(--gl-card);
+  color: var(--gl-ink);
+  font: 12.5px -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  box-shadow: 0 0 0 3px var(--sx-color-primary-container), var(--gl-shadow-card);
+  outline: none;
+}
+
+.gl-quick-add input::placeholder {
+  color: var(--gl-faint);
+}
+
+.gl-quick-add-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  padding: 4px 6px;
+  border-radius: 7px;
+  background: var(--gl-card);
+  box-shadow: var(--gl-shadow-chip);
+  font-size: 11px;
+  color: var(--gl-muted);
+}
+
+.gl-quick-add-pills {
+  display: contents;
+}
+
+.gl-quick-add-pill {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--sx-color-primary-container);
+  color: var(--sx-color-on-primary-container);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gl-quick-add-keys {
+  margin-inline-start: auto;
+  white-space: nowrap;
 }
