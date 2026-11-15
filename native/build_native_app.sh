@@ -259,7 +259,14 @@ CANON
 # than failing the package, since everything else about the app is fine
 # without it.
 if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
-  CONST_VALUES="$(find .build -path "*release/GrandLine.build/GrandLine.swiftconstvalues" -print -quit)"
+  # The two SwiftPM build systems put this file in different places: the
+  # legacy native one under `.build/<triple>/release/`, and the Swift Build
+  # engine (the default from Swift 6.4 / Xcode 27) under `.build/out/`. A
+  # `.build` that has seen both holds a stale copy of the other one's file,
+  # so take the newest rather than the first match.
+  CONST_VALUES="$(ls -t .build/*/release/GrandLine.build/GrandLine.swiftconstvalues \
+    .build/out/Intermediates.noindex/GrandLine.build/Release/GrandLine-p.build/Objects-normal/*/GrandLine-primary.swiftconstvalues \
+    2>/dev/null | head -n 1 || true)"
   if [ -n "$CONST_VALUES" ]; then
     find "$PWD/Sources/GrandLine" -name '*.swift' > "$APPINTENTS_WORK/sources.txt"
     printf '%s\n' "$PWD/$CONST_VALUES" > "$APPINTENTS_WORK/constvals.txt"
