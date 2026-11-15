@@ -1300,3 +1300,50 @@ The last one was found in an off-screen render, not from the code: "Waiting for 
 Not verified: a real toggle with an approved administrator prompt, because an agent shell cannot answer that dialog.
 Both AppleScripts were compiled with `osacompile` to confirm they parse.
 Whether the setting survives a restart is disputed in public reports and was not tested here, which is the reason the switch re-reads rather than remembers.
+
+## Security > Xcode: the Metal Toolchain switch (`fm/grand-line-metal-toolchain-settings-toggle`)
+
+### What it does
+
+The Security page gained an Xcode card under Power, with one switch, "Metal Toolchain".
+Since Xcode 26 the Metal shader compiler is a separate component, and the release build (`swift build -c release`, run by `build_native_app.sh`) fails without it.
+The captain's Mac was missing it, and nothing said so until a build broke.
+Turning the switch on runs `xcodebuild -downloadComponent MetalToolchain`, the command Apple's "Downloading and installing additional Xcode components" page gives.
+Turning it off runs `xcodebuild -deleteComponent metalToolchain`, which `xcodebuild -help` lists beside it and which is the command-line half of the Delete button in Xcode > Settings > Components.
+All three argument lists are fixed literals in `MetalToolchain.swift`.
+Neither direction runs as root or asks for a password.
+
+### Decisions
+
+It copies the lid switch's shape on purpose (`LidClosedKeepAwake.swift`): no preference key, the switch shows what `xcodebuild -showComponent metalToolchain -json` reports, re-read every time the page comes on screen and after every change, and the switch never runs ahead of the re-read.
+
+A Mac that cannot have the component reads as unavailable ("Needs Xcode"), not as off.
+That covers only the Command Line Tools selected (the `xcode-select` shim's "requires Xcode" error) and an Xcode before 26 (`invalid option`).
+Anything else unreadable is unknown (GL-14).
+The missing state is accepted as both `uninstalled` and `notInstalled`, because the second is how Xcode's own component enum spells it in `DVTFoundation` and it was not observable on a Mac that has the toolchain.
+
+Removal asks first through `HelmConfirm`.
+The lid switch has no confirm because macOS's administrator prompt is one, and nothing from macOS asks before `-deleteComponent`.
+Turning it on never asks, since a download can be repeated.
+
+Progress needed a streaming read, so `Subprocess.run`/`runAsync` gained an optional `onOutput` chunk observer rather than a second runner.
+`xcodebuild` prints an `NSLog` line about its result bundle before every real error, so `SubprocessResult.failureSummary`'s "first stderr line" would always have been that line.
+`failureReason` reads the `xcodebuild: error:` line instead, and turns the catalog-fetch failure into a plain "could not reach Apple's download server".
+
+`ExternalToolGuard` now refuses every `xcodebuild` in a test process except `-showComponent` and `-version`, so no suite or tour can download or delete the real toolchain, while a suite can still check that this Mac's real output parses.
+
+### Verified
+
+`FM_RUN_METAL_TOOLCHAIN_TESTS` (headless) covers the fixed arguments, the parser against this Mac's real `-showComponent -json` output, the plain failure reasons, progress text across chunk boundaries and carriage returns, the state machine against a scripted system, and the guard.
+It also reads this Mac's real status once, read-only.
+Case 8 of `FM_RUN_SETTINGS_REDESIGN_TESTS` presses the real switch on a mounted page.
+`FM_RUN_SUBPROCESS_TESTS` gained a case proving `onOutput` sees the first line while the child is still running.
+
+Injections that each failed by name: setting the state optimistically before the re-read, dropping the removal confirm, and removing the guard's `xcodebuild` rule.
+
+The card was rendered in the tour lab in Daylight and Dusk, reading the real "Installed now (build 27A266a)".
+
+Not verified live: a real download from a missing state, and a real `-deleteComponent`.
+Removing the captain's toolchain would break every Metal build on the Mac while it re-downloaded, including a parallel task's.
+So the live "Downloading... (" line format is known only from the string in Xcode's own `Xcode3Core` binary, and the parser shows whatever is inside the parentheses, preferring a percentage.
+Whether `-deleteComponent` needs privileges was not measured either, and a failure there surfaces as "Not removed - <xcodebuild's error>".

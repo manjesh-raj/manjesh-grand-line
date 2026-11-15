@@ -83,8 +83,9 @@ enum SettingsSidebarNavigationSelfTest {
     /// gained its Clipboard history card (the switch that turns the history
     /// on, off by default).
     /// Thirty-five since the Security page gained its Power card (the
-    /// lid-closed switch).
-    private static let expectedCardCount = 35
+    /// lid-closed switch). Thirty-six since it gained its Xcode card (the
+    /// Metal Toolchain switch).
+    private static let expectedCardCount = 36
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

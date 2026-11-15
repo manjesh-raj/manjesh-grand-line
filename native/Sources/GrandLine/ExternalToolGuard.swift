@@ -24,7 +24,8 @@
 //   secret, a shared service, or changes the machine;
 // - a script or program inside the real firstmate home (`fm-*.sh`, the PR
 //   scan), whether it is the executable or the script an interpreter was
-//   handed.
+//   handed;
+// - `xcodebuild` doing anything but a read (`xcodebuildReads`).
 //
 // A copy under a temporary directory is always allowed, because that is what
 // a suite's own stub is: about twenty suites write a fake `claude`, `herdr` or
@@ -93,6 +94,14 @@ enum ExternalToolGuard {
         "osascript",
     ]
 
+    /// The only `xcodebuild` runs a test process may start. Every other one
+    /// can change the machine for every project on it: Settings' Metal
+    /// Toolchain switch runs `-downloadComponent` (a download from Apple that
+    /// installs a toolchain) and `-deleteComponent` (which removes it). Reads
+    /// stay allowed, so a suite can still check that this Mac's real
+    /// `-showComponent` output parses.
+    static let xcodebuildReads: Set<String> = ["-showComponent", "-version"]
+
     /// Interpreters whose first path argument is the program actually run.
     private static let interpreters: Set<String> = ["bash", "sh", "zsh", "python3", "python", "node", "ruby", "perl"]
 
@@ -108,6 +117,11 @@ enum ExternalToolGuard {
         }
         for program in programs {
             if let reason = refusal(forProgram: program) { return reason }
+        }
+        let standardized = (executable as NSString).standardizingPath
+        if (standardized as NSString).lastPathComponent == "xcodebuild", !isTemporary(standardized),
+           !(arguments.first.map(xcodebuildReads.contains) ?? false) {
+            return "'xcodebuild \(arguments.first ?? "")' can download or delete Xcode components"
         }
         if (executable as NSString).lastPathComponent == "git", let subcommand = gitSubcommand(arguments) {
             if subcommand == "credential" {

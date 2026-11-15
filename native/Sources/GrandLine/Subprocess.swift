@@ -305,6 +305,11 @@ enum Subprocess {
     ///     on a terminal fails fast instead of hanging.
     ///   - label: what the log line calls this run. Defaults to the
     ///     executable's last path component.
+    ///   - onOutput: sees each chunk of captured stdout as it arrives, for a
+    ///     caller that shows a long run's progress (Settings' Metal Toolchain
+    ///     download). Called on a background queue, in order, and only for a
+    ///     `.capture`d stdout - with stderr merged into it when that policy
+    ///     says so. The result still carries every byte.
     @discardableResult
     static func run(
         executable: String,
@@ -318,7 +323,8 @@ enum Subprocess {
         stderr stderrPolicy: StreamPolicy = .capture,
         log: os.Logger = AppLog.subprocess,
         label: String? = nil,
-        cancellation: SubprocessCancellation? = nil
+        cancellation: SubprocessCancellation? = nil,
+        onOutput: ((Data) -> Void)? = nil
     ) -> SubprocessResult {
         _ = ignoreSIGPIPE
         // REL-05: a run inside `SubprocessCancellation.withScope` is
@@ -383,6 +389,7 @@ enum Subprocess {
         let outCollector = StreamCollector()
         let errCollector = StreamCollector()
 
+        outCollector.onChunk = onOutput
         if let outPipe { outCollector.attach(to: outPipe.fileHandleForReading, group: group) }
         if let errPipe { errCollector.attach(to: errPipe.fileHandleForReading, group: group) }
 
@@ -508,12 +515,13 @@ enum Subprocess {
         log: os.Logger = AppLog.subprocess,
         qos: DispatchQoS.QoSClass = .userInitiated,
         completeOn completionQueue: DispatchQueue = .main,
+        onOutput: ((Data) -> Void)? = nil,
         completion: @escaping (SubprocessResult) -> Void
     ) {
         DispatchQueue.global(qos: qos).async {
             let result = run(executable: executable, arguments: arguments, cwd: cwd, env: env,
                              extraEnv: extraEnv, timeout: timeout,
-                             stdout: stdoutPolicy, stderr: stderrPolicy, log: log)
+                             stdout: stdoutPolicy, stderr: stderrPolicy, log: log, onOutput: onOutput)
             completionQueue.async { completion(result) }
         }
     }
@@ -724,6 +732,9 @@ private final class StreamCollector {
 
     private let lock = NSLock()
     private var buffer = Data()
+    /// `Subprocess.run`'s `onOutput`, set before `attach`. A handle's
+    /// `readabilityHandler` calls are serial, so chunks arrive in order.
+    var onChunk: ((Data) -> Void)?
     private var handle: FileHandle?
     private var group: DispatchGroup?
     private var finished = false
@@ -746,6 +757,7 @@ private final class StreamCollector {
                 self.lock.lock()
                 self.buffer.append(chunk)
                 self.lock.unlock()
+                self.onChunk?(chunk)
             }
         }
     }
