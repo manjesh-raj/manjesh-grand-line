@@ -44,7 +44,6 @@ extension ShiftController {
             guard let self, self.isShowingCalendar else { return }
             self.onDrillSubtitleChanged?()
         }
-        calendar.onOpenTaskList = { [weak self] in self?.selectModuleTab(named: "List") }
         return calendar
     }
 

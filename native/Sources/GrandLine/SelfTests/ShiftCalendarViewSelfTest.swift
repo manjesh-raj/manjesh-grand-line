@@ -36,8 +36,8 @@
 //     moves the period and never the scale, and "+N more" opens its day
 //     through the page's own view handler;
 //   - **every open task has a place**: an undated-only store draws its tasks
-//     in the Unscheduled tray and the first-run state over the grid rather
-//     than "Nothing scheduled", a row's real Today button writes the date to
+//     in the Unscheduled tray, leaves every view's grid uncovered (no card
+//     over it) and its caption never says "Nothing scheduled", a row's real Today button writes the date to
 //     the store (read back from the store), the fold is remembered, and a
 //     past month shows the task finished in it, read from `completed/`;
 //   - **a check completes from the calendar** (the captain's decision 4A):
@@ -525,8 +525,21 @@ enum ShiftCalendarViewSelfTest {
         check(first["trayGroups"] as? [String] == ["Infra · 1", "No project · 1"],
               "the tray's groups should be read from the store's projects, got \(first["trayGroups"] ?? "nothing")")
         check(first["trayCount"] as? String == "2", "the tray's count should be 2, got \(first["trayCount"] ?? "nil")")
-        check(first["emptyVisible"] as? Bool == true && first["emptyTitle"] as? String == "Nothing has a date yet",
-              "an undated-only store should show the first-run state over the grid, got \(first)")
+        // The captain's report: an undated-only store drew a centred "Nothing
+        // has a date yet" card over a dimmed grid, with no close. The header
+        // line and the tray already say it, so nothing covers the grid, in
+        // any view.
+        for scale in [ShiftCalendarScale.month, .week, .day, .agenda] {
+            view.show(scale: scale)
+            _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == scale.rawValue }
+            let shown = state(web)
+            let dimmed = js(web, "document.getElementById('gl-card').classList.contains('is-empty')") as? Bool
+            check(shown["view"] as? String == scale.rawValue && shown["emptyVisible"] as? Bool == false && dimmed == false,
+                  "an undated-only store should leave the \(scale.title) grid uncovered and undimmed, got "
+                  + "view \(shown["view"] ?? "nil"), card \(shown["emptyVisible"] ?? "nil"), dimmed \(dimmed.map(String.init) ?? "nil")")
+        }
+        view.show(scale: .month)
+        _ = waitFor(timeout: 5) { (state(web)["view"] as? String) == ShiftCalendarScale.month.rawValue }
         check(!view.debugCaption.contains("Nothing scheduled") && view.debugCaption.contains("2 open tasks"),
               "the caption should count the open tasks, not say nothing is scheduled, got \"\(view.debugCaption)\"")
         check(controller.caption == view.debugCaption, "the controller states the same caption the Tasks header carries")
@@ -548,7 +561,7 @@ enum ShiftCalendarViewSelfTest {
         _ = waitFor(timeout: 5) { (state(web)["trayRows"] as? [String] ?? []) == [audit] }
         let after = state(web)
         check(after["trayRows"] as? [String] == [audit], "a dated task should leave the tray, got \(after["trayRows"] ?? "nil")")
-        check(after["emptyVisible"] as? Bool == false, "with a dated task the first-run state should give way to the grid")
+        check(after["emptyVisible"] as? Bool == false, "with a dated task nothing should cover the grid either")
         _ = waitFor(timeout: 3) { eventIn(web, id: runbook, day: todayDay) }
         check(eventIn(web, id: runbook, day: todayDay), "the scheduled task should be drawn on today")
         check(view.debugCaption.hasPrefix("1 task this month") && view.debugCaption.contains("1 unscheduled"),

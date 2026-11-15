@@ -458,7 +458,7 @@ enum ShiftCalendarPayload {
 
     static let timedBlockMinutes = 30
 
-    /// The Unscheduled tray and the first-run empty state, for `setTray`.
+    /// The Unscheduled tray, for `setTray`.
     ///
     /// Every word the page shows is decided here, where a self-test can read
     /// it without a page. Colours are resolved per theme (the row's edge is
@@ -497,7 +497,12 @@ enum ShiftCalendarPayload {
                 "items": group.items.map(row),
             ]
         }
-        var payload: [String: Any] = [
+        // No `empty` key, ever. The page still draws a centred "Nothing has a
+        // date yet" card over a dimmed grid when one arrives, and the captain
+        // asked for it gone: it covered the grid and repeated the header
+        // line, the toolbar's New task and the tray's own hint, with no way
+        // to close it. The tray's hint is the first-run guidance now.
+        return [
             "count": tray.unscheduledCount,
             "overdue": tray.overdue.map(row),
             "overdueTitle": "Overdue · \(tray.overdue.count)",
@@ -507,32 +512,12 @@ enum ShiftCalendarPayload {
             "dropHint": trayDropHint,
             "nothing": tray.unscheduledCount + tray.overdue.count == 0 ? trayAllDated : "",
         ]
-        if tray.isUndatedOnly {
-            payload["empty"] = emptyState(openTasks: tray.openTasks)
-        }
-        return payload
     }
 
     static let trayHint = "No date yet. Drag a row onto a day, or onto a time in Week and Day."
     /// The tray's footer: the other direction of the same drag.
     static let trayDropHint = "Drop a chip here to clear its date."
     static let trayAllDated = "Every open task has a date."
-
-    /// The first-run state: open tasks exist and none of them has a date, so
-    /// the grid is empty for a reason the page states, and points at the tray
-    /// beside it rather than at nothing.
-    static func emptyState(openTasks: Int) -> [String: String] {
-        let have = openTasks == 1
-            ? "You have 1 open task, and it is not on a day yet."
-            : "You have \(openTasks) open tasks, and none of them is on a day."
-        return [
-            "title": "Nothing has a date yet",
-            "body": have + " Drag one from Unscheduled onto a day, or press Today on a row. "
-                + "New tasks you add from a day land on that day.",
-            "newTask": "New task",
-            "openList": "Open List",
-        ]
-    }
 
     /// Schedule-X accepts a locale only in `ll-RR` form and throws on
     /// anything else ("en", "zh-Hans-CN"), so the captain's locale is reduced
@@ -1193,10 +1178,6 @@ final class ShiftCalendarView: NSView {
     /// A day's quick add was submitted: Return, or Command-Return for the
     /// full sheet (`details`).
     var onQuickAdd: ((_ day: String, _ text: String, _ details: Bool) -> Void)?
-    /// The empty state's New task.
-    var onNewTask: (() -> Void)?
-    /// The empty state's Open List.
-    var onOpenList: (() -> Void)?
     /// The finished tasks filed in these `completed/` months. The calendar
     /// asks for the months its visible period needs, so a past month shows
     /// what got done in it.
@@ -1308,8 +1289,6 @@ final class ShiftCalendarView: NSView {
         // decide, so this view answers it itself.
         webView.onQuickAddParse = { [weak self] day, text, seq in self?.answerQuickAddParse(day: day, text: text, seq: seq) }
         webView.onTrayCollapse = { [weak self] collapsed in self?.setTrayCollapsed(collapsed) }
-        webView.onNewTask = { [weak self] in self?.onNewTask?() }
-        webView.onOpenList = { [weak self] in self?.onOpenList?() }
 
         applyTheme(ThemeManager.shared.theme)
         refreshCaption()
