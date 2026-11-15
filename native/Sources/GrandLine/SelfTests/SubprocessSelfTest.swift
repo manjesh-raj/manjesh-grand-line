@@ -68,6 +68,7 @@ enum SubprocessSelfTest {
         discardedStderrFloodDoesNotDeadlock()
         timeoutKillsAHangingChild()
         exitStatusAndStreamsAreReported()
+        outputIsObservedAsItArrives()
         stdinIsDelivered()
         launchFailureIsDistinctFromExitFailure()
         environmentInjection()
@@ -225,6 +226,44 @@ enum SubprocessSelfTest {
     }
 
     // MARK: - Basic contract
+
+    /// `onOutput` is what Settings' Metal Toolchain download reads its
+    /// progress from. The child pauses between its two lines, so the first
+    /// chunk is seen while it is still running - not handed over at exit -
+    /// and the merged stderr comes through the same observer.
+    private static func outputIsObservedAsItArrives() {
+        print("- onOutput sees stdout (and merged stderr) while the child runs, and the result keeps every byte")
+        let lock = NSLock()
+        var seen = Data()
+        var firstSeenAt: Date?
+        let started = Date()
+        let result = Subprocess.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "echo first; sleep 1; echo second >&2"],
+            env: [:],
+            timeout: 10,
+            stderr: .mergeIntoStdout,
+            onOutput: { chunk in
+                lock.lock()
+                if firstSeenAt == nil { firstSeenAt = Date() }
+                seen.append(chunk)
+                lock.unlock()
+            }
+        )
+        let finished = Date()
+        lock.lock()
+        let observed = String(decoding: seen, as: UTF8.self)
+        let first = firstSeenAt
+        lock.unlock()
+        check(result.ok, "the child exited cleanly (\(result.outcome), status \(result.status))")
+        check(observed == "first\nsecond\n", "the observer saw both lines in order: \(observed.debugDescription)")
+        check(result.stdout == "first\nsecond", "the result still carries the whole output: \(result.stdout.debugDescription)")
+        // The fixture's own discriminating power: the run really took the
+        // pause, or "seen before exit" below proves nothing.
+        check(finished.timeIntervalSince(started) >= 0.9, "the child paused between its lines")
+        check(first.map { finished.timeIntervalSince($0) >= 0.5 } ?? false,
+              "the first line was seen while the child was still running, not at exit")
+    }
 
     private static func exitStatusAndStreamsAreReported() {
         print("- exit status, stdout and stderr are each reported separately")

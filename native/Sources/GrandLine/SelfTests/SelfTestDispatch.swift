@@ -1207,6 +1207,15 @@ enum SelfTestDispatch {
             exit(LidClosedKeepAwakeSelfTest.run() ? 0 : 1)
         }
 
+        // Security > Xcode's Metal Toolchain switch: the fixed xcodebuild
+        // calls, the -showComponent parser, plain failure reasons, download
+        // progress, and the state machine that never shows installed before a
+        // re-read says so - against a scripted system, nothing downloaded.
+        // The painted half is case 8 of FM_RUN_SETTINGS_REDESIGN_TESTS.
+        if ProcessInfo.processInfo.environment["FM_RUN_METAL_TOOLCHAIN_TESTS"] == "1" {
+            exit(MetalToolchainSelfTest.run() ? 0 : 1)
+        }
+
         // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
         // Motion audit. Dusk's own colour derivation is measured by
         // FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See

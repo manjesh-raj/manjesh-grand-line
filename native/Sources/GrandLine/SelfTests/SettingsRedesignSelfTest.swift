@@ -42,6 +42,11 @@
 //      re-read says on every visit, stays put and inert while the
 //      administrator prompt is up, snaps back after a cancel, and shows on in
 //      the switch, a pill and the description - never while it is off.
+//   8. **Security's Metal Toolchain switch never runs ahead of Xcode.** Real
+//      presses with a scripted `xcodebuild` behind it: the switch shows what
+//      a re-read says on every visit (including "Needs Xcode" on a Mac that
+//      cannot have it), shows the download's progress beside itself while it
+//      stays inert, says why a download failed, and asks before removing.
 //
 // Window-backed on purpose (and so listed in `NEEDS_SESSION`): the search and
 // history cases drive real `HoverHighlightView` presses and read painted
@@ -71,7 +76,8 @@ enum SettingsRedesignSelfTest {
                       checkADependentRowIsDimmedAndInert,
                       checkTheWidePageCollapsesAndComesBack,
                       checkTheClipboardHistorySwitchDrivesCapture,
-                      checkTheLidClosedSwitchFollowsTheSystem] {
+                      checkTheLidClosedSwitchFollowsTheSystem,
+                      checkTheMetalToolchainSwitchFollowsXcode] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -739,6 +745,198 @@ enum SettingsRedesignSelfTest {
         let toggleFrame = toggle.convert(toggle.bounds, to: content)
         // The fixture's own discriminating power: a row that never laid out
         // contains nothing, and every frame check would be vacuous.
+        check(rowFrame.width > 300 && toggleFrame.width > 0,
+              "the row never laid out (\(rowFrame)) - the frame check would be vacuous", &ok)
+        check(rowFrame.insetBy(dx: -0.5, dy: -0.5).contains(toggleFrame),
+              "the switch \(toggleFrame) spills out of its row \(rowFrame)", &ok)
+        check(toggleFrame.maxX <= rowFrame.maxX - SettingsRow.Metrics.insetH + 0.5,
+              "the switch ignores the row's trailing inset", &ok)
+    }
+
+    // MARK: 8. Security's Metal Toolchain switch
+
+    /// A real press on the real switch, with `ScriptedMetalToolchainSystem`
+    /// behind it so nothing is downloaded or deleted. The state machine is
+    /// `MetalToolchainSelfTest`'s, headless; this is what the captain sees.
+    private static func checkTheMetalToolchainSwitchFollowsXcode(_ ok: inout Bool) {
+        print("\n-- Security's Metal Toolchain switch shows Xcode's state, never ahead of it --")
+        let system = ScriptedMetalToolchainSystem(reading: .notInstalled)
+        let settings = SettingsController(hostStore: HostStore(), keyStore: SSHKeyStore(),
+                                          snippetStore: SnippetStore(), dictationStore: DictationStore(),
+                                          keepAwakeSystem: ScriptedKeepAwakeSystem(reading: .off),
+                                          metalToolchainSystem: system)
+        let window = mount(settings)
+        defer { _ = window }
+        settings.select(.security)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        checkTheMetalRowIsOnTheSecurityPage(settings, &ok)
+        checkTheMetalRowShowsXcodeOnEveryVisit(settings, system, &ok)
+        checkAnInstallShowsProgressAndWaits(settings, system, window, &ok)
+        checkARemovalAsksFirst(settings, system, &ok)
+        checkTheMetalControlsSitInsideTheCard(settings, window, &ok)
+    }
+
+    private static func metalDescription(_ settings: SettingsController) -> String {
+        settings.debugMetalToolchainRow?.descriptionLabel?.stringValue ?? ""
+    }
+
+    private static func checkTheMetalRowIsOnTheSecurityPage(_ settings: SettingsController, _ ok: inout Bool) {
+        print("\n-- the row lives on Security, under Xcode, with its footnote --")
+        let sections = settings.debugSections(in: .security)
+        guard let row = settings.debugMetalToolchainRow else {
+            fail("the Metal Toolchain row was never built", &ok)
+            return
+        }
+        guard let section = sections.first(where: { $0.headingLabel?.stringValue == "Xcode" }) else {
+            fail("the Security page has no Xcode section", &ok)
+            return
+        }
+        check(section.group.rows.contains { $0 === row }, "the Metal Toolchain row is not in the Xcode section", &ok)
+        check(row.titleLabel.stringValue == "Metal Toolchain", "the row is titled \(row.titleLabel.stringValue)", &ok)
+        check(sections.firstIndex(where: { $0.headingLabel?.stringValue == "Power" }).map {
+                  $0 < sections.firstIndex { $0 === section }! } ?? false,
+              "the Xcode section is not below Power", &ok)
+        let foot = section.footLabel?.stringValue ?? ""
+        check(foot.contains("not a Grand Line setting") && foot.contains("-downloadComponent"),
+              "the footnote does not say this is Xcode's, run by Xcode's own command: \(foot)", &ok)
+        check(metalDescription(settings).contains("build_native_app.sh"),
+              "the help text does not say what needs it: \(metalDescription(settings))", &ok)
+    }
+
+    private static func checkTheMetalRowShowsXcodeOnEveryVisit(_ settings: SettingsController,
+                                                              _ system: ScriptedMetalToolchainSystem,
+                                                              _ ok: inout Bool) {
+        print("\n-- the switch shows Xcode's state on every visit --")
+        let toggle = settings.debugMetalToolchainSwitch
+        check(!toggle.isOn && toggle.isEnabled, "a missing toolchain did not paint an enabled, off switch", &ok)
+        check(metalDescription(settings).contains("Not installed now"), "off, but the description does not say so", &ok)
+
+        // Installed from a terminal while Settings was elsewhere.
+        system.reading = .installed(build: "27A266a")
+        revisitSecurity(settings)
+        check(toggle.isOn, "a visit after a terminal install still shows off", &ok)
+        check(metalDescription(settings).contains("Installed now (build 27A266a)"),
+              "installed, but the description does not say so: \(metalDescription(settings))", &ok)
+
+        system.reading = .unavailable("Xcode is not installed, only the Command Line Tools")
+        revisitSecurity(settings)
+        check(!toggle.isOn && !toggle.isEnabled, "a Mac with no Xcode painted a usable or on switch", &ok)
+        check(settings.debugMetalToolchainStatusText == "Needs Xcode",
+              "no Xcode says \(settings.debugMetalToolchainStatusText ?? "nothing")", &ok)
+        check(metalDescription(settings).contains("only the Command Line Tools"),
+              "no Xcode, but the description does not say why", &ok)
+
+        system.reading = .unknown("xcodebuild hung")
+        revisitSecurity(settings)
+        check(!toggle.isOn && !toggle.isEnabled, "an unreadable state painted a usable or on switch", &ok)
+        check(settings.debugMetalToolchainStatusText == "Unknown",
+              "an unreadable state says \(settings.debugMetalToolchainStatusText ?? "nothing")", &ok)
+
+        system.reading = .notInstalled
+        revisitSecurity(settings)
+        check(!toggle.isOn && settings.debugMetalToolchainStatusText == nil, "back to not installed did not repaint", &ok)
+    }
+
+    private static func checkAnInstallShowsProgressAndWaits(_ settings: SettingsController,
+                                                            _ system: ScriptedMetalToolchainSystem,
+                                                            _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- a press downloads with progress beside the switch, and waits for Xcode --")
+        let toggle = settings.debugMetalToolchainSwitch
+        system.outcome = .applied
+        system.holdsChanges = true
+        _ = toggle.accessibilityPerformPress()
+        check(system.changeRequests.last == true, "the press asked for no download", &ok)
+        check(!toggle.isOn, "the switch painted on while the download was still running", &ok)
+        check(!toggle.isEnabled, "the switch stayed pressable while the download ran", &ok)
+        check(settings.debugMetalToolchainStatusText == "Starting download\u{2026}",
+              "the row says \(settings.debugMetalToolchainStatusText ?? "nothing") as the download starts", &ok)
+        system.reportProgress("Downloading 42%")
+        check(settings.debugMetalToolchainStatusText == "Downloading 42%",
+              "the row says \(settings.debugMetalToolchainStatusText ?? "nothing") mid-download", &ok)
+        check(metalDescription(settings).contains("Downloading from Apple now"),
+              "the description does not say a download is running", &ok)
+        window.contentView?.layoutSubtreeIfNeeded()
+        checkTheMetalDescriptionIsNotClipped(settings, "mid-download", &ok)
+        let requests = system.changeRequests.count
+        _ = toggle.accessibilityPerformPress()
+        check(system.changeRequests.count == requests, "a press on the inert switch started a second change", &ok)
+
+        system.releasePendingChange()
+        window.contentView?.layoutSubtreeIfNeeded()
+        check(toggle.isOn && toggle.isEnabled, "a finished download did not paint on", &ok)
+        check(settings.debugMetalToolchainStatusText == nil, "the progress text stayed after the download landed", &ok)
+        system.holdsChanges = false
+
+        // A failed download leaves it off and says why.
+        system.reading = .notInstalled
+        revisitSecurity(settings)
+        system.outcome = .failed("Apple's download server could not be reached. Check the network and try again")
+        _ = toggle.accessibilityPerformPress()
+        check(!toggle.isOn && toggle.isEnabled, "a failed download did not leave a usable, off switch", &ok)
+        check(metalDescription(settings).contains("Not installed - Apple's download server could not be reached"),
+              "a failed download left no reason: \(metalDescription(settings))", &ok)
+        system.outcome = .applied
+        _ = toggle.accessibilityPerformPress()
+        check(toggle.isOn, "a retried download did not paint on", &ok)
+    }
+
+    /// Same measurement as the lid row's: the status text beside the switch
+    /// changes the control column's width while the download runs.
+    private static func checkTheMetalDescriptionIsNotClipped(_ settings: SettingsController, _ when: String,
+                                                             _ ok: inout Bool) {
+        guard let label = settings.debugMetalToolchainRow?.descriptionLabel, let cell = label.cell else {
+            fail("no description to measure \(when)", &ok)
+            return
+        }
+        let needed = cell.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width,
+                                                     height: .greatestFiniteMagnitude)).height
+        check(label.frame.width > 100, "the description never laid out \(when) - the clip check would be vacuous", &ok)
+        check(label.frame.height + 0.5 >= needed,
+              "the description is clipped \(when): \(label.frame.height)pt tall, its text needs \(needed)pt", &ok)
+    }
+
+    private static func checkARemovalAsksFirst(_ settings: SettingsController,
+                                               _ system: ScriptedMetalToolchainSystem, _ ok: inout Bool) {
+        print("\n-- turning it off asks first, and a cancel snaps the switch back --")
+        let toggle = settings.debugMetalToolchainSwitch
+        check(toggle.isOn, "the case needs the switch on to start with", &ok)
+        var asked: [HelmConfirm.Request] = []
+        defer { HelmConfirm.responderForTests = nil }
+
+        HelmConfirm.responderForTests = { asked.append($0); return .cancel }
+        let requests = system.changeRequests.count
+        _ = toggle.accessibilityPerformPress()
+        check(asked.count == 1, "turning it off asked \(asked.count) times", &ok)
+        check(asked.first.map { $0.destructive && $0.body.contains("release build") } ?? false,
+              "the confirm is not destructive or does not say what breaks", &ok)
+        check(system.changeRequests.count == requests, "a cancelled confirm still ran -deleteComponent", &ok)
+        check(toggle.isOn, "a cancelled confirm left the switch painted off", &ok)
+
+        HelmConfirm.responderForTests = { asked.append($0); return .confirm }
+        _ = toggle.accessibilityPerformPress()
+        check(system.changeRequests.last == false, "a confirmed removal did not run -deleteComponent", &ok)
+        check(!toggle.isOn && toggle.isEnabled, "a confirmed removal did not paint off", &ok)
+        check(metalDescription(settings).contains("Not installed now"), "removed, but the description disagrees", &ok)
+
+        // Turning it on never asks - it is a download.
+        let askedBefore = asked.count
+        _ = toggle.accessibilityPerformPress()
+        check(asked.count == askedBefore, "turning it on asked for confirmation", &ok)
+        check(toggle.isOn, "turning it back on did not paint on", &ok)
+    }
+
+    private static func checkTheMetalControlsSitInsideTheCard(_ settings: SettingsController,
+                                                              _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- the Metal row's controls sit inside its card --")
+        guard let row = settings.debugMetalToolchainRow, let content = window.contentView else {
+            fail("no row to measure", &ok)
+            return
+        }
+        content.layoutSubtreeIfNeeded()
+        let rowFrame = row.convert(row.bounds, to: content)
+        let toggle = settings.debugMetalToolchainSwitch
+        let toggleFrame = toggle.convert(toggle.bounds, to: content)
         check(rowFrame.width > 300 && toggleFrame.width > 0,
               "the row never laid out (\(rowFrame)) - the frame check would be vacuous", &ok)
         check(rowFrame.insetBy(dx: -0.5, dy: -0.5).contains(toggleFrame),

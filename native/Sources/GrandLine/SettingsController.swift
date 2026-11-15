@@ -220,7 +220,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing claude summary"
             case .intents: return "siri spotlight raycast shortcuts automation app intents"
-            case .security: return "touch id sudo pam lock vault poneglyph password credential lid closed sleep awake power battery pmset"
+            case .security: return "touch id sudo pam lock vault poneglyph password credential lid closed sleep awake power battery pmset xcode metal toolchain shader compiler build"
             case .backup: return "export import restore glbackup archive move machine"
             }
         }
@@ -293,14 +293,19 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// system side is injectable so a suite can drive the row with no
     /// administrator prompt (`LidClosedKeepAwake.swift`).
     private let lidKeepAwake: LidClosedKeepAwakeModel
+    /// Security > Xcode's "Metal Toolchain" switch, injectable the same way so
+    /// a suite never downloads or deletes anything (`MetalToolchain.swift`).
+    private let metalToolchain: MetalToolchainModel
 
     init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore,
-         keepAwakeSystem: KeepAwakeSystem = PmsetKeepAwakeSystem()) {
+         keepAwakeSystem: KeepAwakeSystem = PmsetKeepAwakeSystem(),
+         metalToolchainSystem: MetalToolchainSystem = XcodebuildMetalToolchainSystem()) {
         self.hostStore = hostStore
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         self.dictationStore = dictationStore
         self.lidKeepAwake = LidClosedKeepAwakeModel(system: keepAwakeSystem)
+        self.metalToolchain = MetalToolchainModel(system: metalToolchainSystem)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -562,6 +567,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let lidClosedPill = HelmStatusPill(style: .pill)
     private let lidClosedStatusLabel = NSTextField(labelWithString: "")
     private var lidClosedRow: SettingsRow?
+
+    /// Security > Xcode. Built once and re-rendered in place for the same
+    /// reason: the row must not jump while a download reports progress.
+    private let metalToolchainSwitch = HelmToggle()
+    private let metalToolchainStatusLabel = NSTextField(labelWithString: "")
+    private var metalToolchainRow: SettingsRow?
 
     // MARK: - Dependent rows (the reference's `data-dep`)
 
@@ -1069,7 +1080,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         selectedCategory = category
         sidebar.select(category.rawValue)
         mountPage(category)
-        refreshLidClosedIfShown()
+        refreshSystemStateIfShown()
         refreshToolbar()
         // The shell owns the drill header; this page only says "re-read me".
         onDrillSubtitleChanged?()
@@ -1183,7 +1194,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             hasCheckedSudoTouchIDOnce = true
             checkSudoTouchID()
         }
-        refreshLidClosedIfShown()
+        refreshSystemStateIfShown()
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scrollView) { scrollToTop() }
     }
@@ -2118,6 +2129,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                                                                     insets: NSEdgeInsets())),
             SettingsSection(heading: "Power", group: SettingsGroup(rows: [buildLidClosedRow()]),
                             foot: "This is a macOS setting (pmset disablesleep), not a Grand Line one. Changing it asks for an administrator through macOS's own prompt - Grand Line never sees your password."),
+            SettingsSection(heading: "Xcode", group: SettingsGroup(rows: [buildMetalToolchainRow()]),
+                            foot: Self.metalToolchainFoot),
         ]
     }
 
@@ -2125,12 +2138,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     static let lidClosedHelp = "Stops this Mac from sleeping, even with the lid closed, so agents keep running. A closed Mac in a bag gets hot and drains its battery quickly, so turn this off when you no longer need it."
 
-    /// Every time the Security page comes on screen, not once: the setting is
-    /// the system's, it outlives this app, and it can change from a terminal
-    /// behind the page's back.
-    private func refreshLidClosedIfShown() {
+    /// Every time the Security page comes on screen, not once: both the lid
+    /// setting and the Metal Toolchain are the system's, they outlive this
+    /// app, and they can change from a terminal behind the page's back.
+    private func refreshSystemStateIfShown() {
         guard selectedCategory == .security else { return }
         lidKeepAwake.refresh()
+        metalToolchain.refresh()
     }
 
     private func buildLidClosedRow() -> SettingsRow {
@@ -2195,6 +2209,89 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // to the line count it had before (gotcha (22)). Security is never
         // the wide page, so the section width is the page width.
         if lastPageWidth > 0 { lidClosedRow?.relayoutDescription(cardWidth: lastPageWidth) }
+    }
+
+    // MARK: - Xcode (Metal Toolchain)
+
+    static let metalToolchainHelp = "Xcode's compiler for Metal shaders. Since Xcode 26 it is a separate download rather than part of Xcode, and Grand Line's release build (build_native_app.sh) fails without it."
+
+    static let metalToolchainFoot = "This is an Xcode component, not a Grand Line setting, and every project on this Mac shares it. The switch runs Xcode's own xcodebuild -downloadComponent and -deleteComponent, the same as Xcode > Settings > Components. Neither asks for a password."
+
+    private func buildMetalToolchainRow() -> SettingsRow {
+        metalToolchainSwitch.setAccessibilityLabel("Metal Toolchain")
+        metalToolchainSwitch.onToggle = { [weak self] in self?.metalToolchainToggled() }
+        metalToolchainStatusLabel.font = HelmType.caption()
+        metalToolchainStatusLabel.textColor = HelmTheme.mutedInk(theme)
+        let trailing = NSStackView(views: [metalToolchainStatusLabel, metalToolchainSwitch])
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = HelmMetrics.s2
+        let row = SettingsRow(title: "Metal Toolchain", description: Self.metalToolchainHelp, control: trailing)
+        metalToolchainRow = row
+        metalToolchain.onChange = { [weak self] in self?.renderMetalToolchainRow() }
+        renderMetalToolchainRow()
+        return row
+    }
+
+    /// Turning it on is a download the captain can repeat at no cost. Turning
+    /// it off deletes it and breaks the next release build, and nothing from
+    /// macOS asks first - unlike the lid switch, whose administrator prompt
+    /// is its own confirmation - so this page asks.
+    private func metalToolchainToggled() {
+        let wantOn = metalToolchainSwitch.isOn
+        if !wantOn, metalToolchain.state.isOn, !metalToolchain.isChanging {
+            let confirmed = HelmConfirm.confirm(
+                title: "Remove the Metal Toolchain?",
+                body: "Xcode deletes its copy of the Metal shader compiler. Grand Line's release build, and any other project with Metal shaders, fails until you turn this back on and it downloads again.",
+                confirmTitle: "Remove", destructive: true, symbol: "hammer", hue: .amber)
+            guard confirmed else {
+                renderMetalToolchainRow()
+                return
+            }
+        }
+        metalToolchain.requestChange(to: wantOn)
+    }
+
+    /// Paints the row from the model and only from the model, so the switch
+    /// snaps back to the real state after every click until a re-read moves it.
+    private func renderMetalToolchainRow() {
+        let state = metalToolchain.state
+        metalToolchainSwitch.isOn = state.isOn
+        metalToolchainSwitch.isEnabled = state.isKnown && !metalToolchain.isChanging
+
+        let status: String?
+        switch (metalToolchain.change, state) {
+        case (.installing?, _): status = metalToolchain.progress ?? "Starting download\u{2026}"
+        case (.removing?, _): status = "Removing\u{2026}"
+        case (nil, .checking): status = "Checking\u{2026}"
+        case (nil, .unavailable): status = "Needs Xcode"
+        case (nil, .unknown): status = "Unknown"
+        case (nil, .known): status = nil
+        }
+        metalToolchainStatusLabel.stringValue = status ?? ""
+        metalToolchainStatusLabel.isHidden = status == nil
+
+        var description = Self.metalToolchainHelp
+        switch state {
+        case _ where metalToolchain.change == .installing:
+            description += " Downloading from Apple now. It can take several minutes, and it carries on if you leave this page."
+        case .known(true, let build):
+            description += build.map { " Installed now (build \($0))." } ?? " Installed now."
+        case .known(false, _):
+            description += " Not installed now. Turn it on to download it."
+        case .unavailable(let reason):
+            description += " Unavailable on this Mac - \(reason)."
+        case .unknown(let reason):
+            description += " Could not read the current state - \(reason)."
+        case .checking:
+            break
+        }
+        if let message = metalToolchain.message { description += " " + message }
+        metalToolchainRow?.descriptionLabel?.stringValue = description
+        // The status text beside the switch comes, goes and changes width as
+        // the download reports progress, which moves the control column - and
+        // the page only re-wraps on a page width change (gotcha (22)).
+        if lastPageWidth > 0 { metalToolchainRow?.relayoutDescription(cardWidth: lastPageWidth) }
     }
 
     /// Rebuilt (not only re-themed) on every status change, since the
@@ -2864,6 +2961,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // Not in `mutedLabels`: the stack detaches it while hidden, and that
         // list drops a label whose superview is gone.
         lidClosedStatusLabel.textColor = muted
+        metalToolchainStatusLabel.textColor = muted
         shortcutsPage.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
         appearanceModeTabs?.select(currentAppearanceMode.rawValue)
@@ -2877,7 +2975,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         captureShortcutRecorder?.applyTheme(theme)
         for toggle in [autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch, morningBriefingSwitch,
                        compactModeSwitch, compactDockSwitch, compactBadgeSwitch, separateMenuBarItemsSwitch,
-                       clipboardHistorySwitch, lidClosedSwitch] + moduleSwitches.map(\.toggle) {
+                       clipboardHistorySwitch, lidClosedSwitch, metalToolchainSwitch] + moduleSwitches.map(\.toggle) {
             toggle.applyTheme(theme)
         }
         profileTabs?.applyTheme(theme)
@@ -3043,12 +3141,17 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var debugToggles: [HelmToggle] {
         [terminalColors.changeSwitch, autoReconnectSwitch, trimBackgroundSwitch, appLockSwitch, notifySwitch,
          morningBriefingSwitch, compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
-         separateMenuBarItemsSwitch, clipboardHistorySwitch, lidClosedSwitch]
+         separateMenuBarItemsSwitch, clipboardHistorySwitch, lidClosedSwitch, metalToolchainSwitch]
     }
     var debugLidClosedSwitch: HelmToggle { lidClosedSwitch }
     var debugLidClosedRow: SettingsRow? { lidClosedRow }
     var debugLidClosedPillShown: Bool { !lidClosedPill.isHidden }
     var debugLidClosedStatusText: String? { lidClosedStatusLabel.isHidden ? nil : lidClosedStatusLabel.stringValue }
+    var debugMetalToolchainSwitch: HelmToggle { metalToolchainSwitch }
+    var debugMetalToolchainRow: SettingsRow? { metalToolchainRow }
+    var debugMetalToolchainStatusText: String? {
+        metalToolchainStatusLabel.isHidden ? nil : metalToolchainStatusLabel.stringValue
+    }
     /// T4's two controls. The suite types into the real field and sends its
     /// real action, so these hand out the controls rather than a commit.
     var debugScrollbackField: HelmTextField { scrollbackField }
