@@ -1347,3 +1347,44 @@ Not verified live: a real download from a missing state, and a real `-deleteComp
 Removing the captain's toolchain would break every Metal build on the Mac while it re-downloaded, including a parallel task's.
 So the live "Downloading... (" line format is known only from the string in Xcode's own `Xcode3Core` binary, and the parser shows whatever is inside the parentheses, preferring a percentage.
 Whether `-deleteComponent` needs privileges was not measured either, and a failure there surfaces as "Not removed - <xcodebuild's error>".
+
+## Packaging: stamp the real SDK so the app keeps Liquid Glass (`fm/grand-line-sidebar-theme-regression`)
+
+### What happened
+
+After the captain moved to Xcode 27 and rebuilt the app, the sidebar turned warm brown in Dusk and beige in Daylight, and the toolbar lost its glass capsules.
+No theme or sidebar code had changed.
+The cause was the binary's `LC_BUILD_VERSION` load command.
+The build installed on Nov 12 (`0.2.0-32-g57f53c8e`) said `minos 13.0, sdk 26.5`.
+The build installed on Nov 15 (`0.2.0-42-g00d02cb3`) said `minos 13.0, sdk 13.0`.
+
+AppKit decides between the macOS 26 look and the compatibility look from that `sdk` field.
+With `sdk 13.0` the system sidebar is the old `NSVisualEffectView` sidebar material (material 7), which is tinted by the desktop picture.
+With `sdk 26.0` or later it is an `NSContainerConcentricGlassEffectView`.
+
+Swift 6.4 made the Swift Build engine SwiftPM's default, and that engine stamps the deployment target as the SDK version.
+The legacy native engine stamped the real SDK.
+A three-line package with `.macOS(.v13)` reproduces it: `swift build --build-system native` gives `sdk 27.0` and `--build-system swiftbuild` gives `sdk 13.0`.
+#572 made the release build work under the new engine, which is why this only appeared after it.
+
+### Decisions
+
+`build_native_app.sh` passes `-Xlinker -platform_version -Xlinker macos -Xlinker <floor> -Xlinker <sdk>`, with the floor read from `Package.swift` and the SDK from `xcrun --show-sdk-version`.
+Both engines honour it, and under the legacy engine the binary still has exactly one `LC_BUILD_VERSION`.
+`--build-system native` was not used, because SwiftPM 6.4 already warns that it is deprecated.
+After the build, the script fails if the binary's `sdk` is not the SDK the build used, so a future engine change cannot ship the old look silently.
+`Scripts/build-probe-app.sh` passes the same flags, so a probe looks like the app it stands in for.
+
+A plain `swift build` (the debug binary the suites and the tour lab run) is not changed.
+Under Swift Build it still says `sdk 13.0` and mounts the compatibility sidebar.
+The tour lab paints the sidebar on `HelmTheme.sidePanelFill` either way, so its renders are not affected by the material.
+
+### Verified
+
+A release build with the flags says `sdk 27.0` and `minos 13.0`, `Scripts/check-deployment-target.sh` passes, and the link prints no warnings.
+The new check fails on the Nov 15 installed binary and on an unstamped debug binary, and passes on the stamped one.
+Temporary, reverted instrumentation in the tour lab printed the real shell's sidebar ancestry in Dusk and Daylight.
+The unstamped debug binary had `NSVisualEffectView(material 7)`, and the stamped one had `NSContainerConcentricGlassEffectView`.
+The renders show the same split: the inset, rounded sidebar and capsule toolbar groups with the stamp, and the edge-to-edge sidebar and flat toolbar without it.
+
+Not verified: the composited window on the captain's display, because an off-screen render cannot draw the desktop-tinted material.

@@ -110,11 +110,36 @@ else
   echo "    will not be registered with the system. Settings → Shortcuts & Siri says so."
 fi
 
+# The SDK the binary says it was linked against, which AppKit keys its whole
+# look on. A binary stamped with the macOS 26 SDK or later gets Liquid Glass:
+# the glass sidebar and the toolbar's capsules. One stamped with anything older
+# runs in the compatibility look, where the sidebar is the pre-26 sidebar
+# material tinted by the desktop picture.
+#
+# The legacy SwiftPM build system stamped the real SDK. The Swift Build engine
+# (the default from Swift 6.4 / Xcode 27) stamps the deployment target instead.
+# The first app built with it, once #572 made the release build work there,
+# said `sdk 13.0` where the build before said `sdk 26.5`, and its sidebar
+# turned warm brown in a dark theme and beige in a light one. Pass the real SDK to the linker ourselves, which both engines
+# honour, and check the result after the build so neither can ship the old
+# look again.
+DEPLOYMENT_TARGET="$(sed -n 's/.*\.macOS(\.v\([0-9][0-9]*\)).*/\1/p' Package.swift | head -1).0"
+SDK_VERSION="$(xcrun --show-sdk-version)"
+SWIFT_BUILD_EXTRA+=(-Xlinker -platform_version -Xlinker macos
+                    -Xlinker "$DEPLOYMENT_TARGET" -Xlinker "$SDK_VERSION")
+
 echo "Building $EXECUTABLE_NAME (release) - version $VERSION (build $BUILD_VERSION)…"
 swift build -c release "${SWIFT_BUILD_EXTRA[@]}"
 
 BIN="./.build/release/$EXECUTABLE_NAME"
 [ -x "$BIN" ] || { echo "build did not produce $BIN"; exit 1; }
+
+STAMPED_SDK="$(otool -l "$BIN" | awk '/LC_BUILD_VERSION/ { found = 1 } found && $1 == "sdk" { print $2; exit }')"
+if [ "$STAMPED_SDK" != "$SDK_VERSION" ]; then
+  echo "error: $BIN says it was linked against the macOS ${STAMPED_SDK:-<unknown>} SDK, but the build used $SDK_VERSION." >&2
+  echo "       macOS would run it in the pre-Liquid Glass look. See the SDK_VERSION comment above." >&2
+  exit 1
+fi
 
 # R2: keep the previous bundle's App Intents metadata before the bundle is
 # thrown away, so the step after the processor runs can compare against it.

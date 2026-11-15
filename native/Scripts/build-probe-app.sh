@@ -104,7 +104,13 @@ if [ "$PROBE_BUNDLE_ID" = "com.manjesh.grandline.native" ]; then
 fi
 
 echo "==> swift build (debug - the probe wants the FM_RUN_* suites and debug* hooks)"
-swift build
+# Stamp the real SDK, as build_native_app.sh does and for the same reason: the
+# Swift Build engine stamps the deployment target instead, and macOS then draws
+# the pre-Liquid Glass sidebar and toolbar, so the probe would not look like
+# the app it stands in for.
+DEPLOYMENT_TARGET="$(sed -n 's/.*\.macOS(\.v\([0-9][0-9]*\)).*/\1/p' Package.swift | head -1).0"
+swift build -Xlinker -platform_version -Xlinker macos \
+  -Xlinker "$DEPLOYMENT_TARGET" -Xlinker "$(xcrun --show-sdk-version)"
 BIN=".build/debug/$EXECUTABLE_NAME"
 [ -x "$BIN" ] || { echo "error: $BIN not found after build" >&2; exit 1; }
 
