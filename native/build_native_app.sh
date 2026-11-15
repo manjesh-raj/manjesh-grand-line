@@ -369,7 +369,8 @@ else
   echo "    Saved Keychain items (SSH keys/passphrases) may stop being readable"
   echo "    after a future rebuild, since an unsigned/ad-hoc binary gets a new"
   echo "    code identity on every rebuild. See native/README.md's"
-  echo "    \"Local signing setup\" section to create this identity once per machine."
+  echo "    \"Local signing setup\" section to create this identity once per machine,"
+  echo "    or its troubleshooting note if the certificate exists but is invalid."
 fi
 
 # Install/update the copy in /Applications so the app behaves like a normal
