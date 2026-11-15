@@ -433,9 +433,10 @@ enum SettingsThemeLayoutParitySelfTest {
         // Thirty-four since the Capture page gained its Clipboard history
         // card (the switch that turns the history on, off by default).
         // Thirty-five since the Security page gained its Power card (the
-        // lid-closed switch).
-        guard daylightFP.cardCount == 35 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 35")
+        // lid-closed switch). Thirty-six since it gained its Xcode card (the
+        // Metal Toolchain switch).
+        guard daylightFP.cardCount == 36 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 36")
             ok = false
             return
         }
