@@ -23,9 +23,10 @@
 // or an Agenda row), `schedule` (a tray row's Today, Tomorrow or Pick…),
 // `place` (a tray row was dropped on a day or a time slot), `unschedule` (a
 // chip was dropped on the tray), `quickAddParse` (the day's quick-add field
-// changed, and wants its pills), `quickAdd` (that field was submitted),
-// `tray` (the tray's fold button), `newTask` and `openList` (the empty
-// state's two buttons).
+// changed, and wants its pills), `quickAdd` (that field was submitted) and
+// `tray` (the tray's fold button). The page's first-run card still posts
+// `newTask` and `openList`, but nothing sends it the state that shows that
+// card any more (`ShiftCalendarPayload.tray`), so neither is handled.
 //
 // `schedule` names the button, never a date: which day "Today" is belongs to
 // the native side's clock, not the page's.
@@ -124,10 +125,6 @@ final class ShiftCalendarWebView: WKWebView {
     var onQuickAdd: ((_ day: String, _ text: String, _ details: Bool) -> Void)?
     /// The tray's fold button asked for this state.
     var onTrayCollapse: ((Bool) -> Void)?
-    /// The empty state's New task.
-    var onNewTask: (() -> Void)?
-    /// The empty state's Open List.
-    var onOpenList: (() -> Void)?
     /// The day the page is focused on (`YYYY-MM-DD`), as its last range
     /// report said: what a New Task from the toolbar is dated to.
     private(set) var focusedDay: String?
@@ -332,10 +329,6 @@ final class ShiftCalendarWebView: WKWebView {
         case "tray":
             guard let collapsed = body["collapsed"] as? Bool else { return }
             onTrayCollapse?(collapsed)
-        case "newTask":
-            onNewTask?()
-        case "openList":
-            onOpenList?()
         case "reply":
             guard let callID = body["callID"] as? Int,
                   let completion = pendingCalls.removeValue(forKey: callID) else { return }

@@ -61,8 +61,6 @@ final class TaskCalendarController: NSViewController {
 
     /// The Tasks page's header line follows the visible period's count.
     var onDrillSubtitleChanged: (() -> Void)?
-    /// The empty state's Open List: the Tasks page's own List view.
-    var onOpenTaskList: (() -> Void)?
 
     /// The When panel while it shows. One at a time: a second chip's click
     /// closes the first, which commits it.
@@ -125,8 +123,6 @@ final class TaskCalendarController: NSViewController {
         calendarView.onQuickAdd = { [weak self] day, text, details in
             self?.quickAdd(on: day, text: text, details: details)
         }
-        calendarView.onNewTask = { [weak self] in self?.newTaskFromMenu() }
-        calendarView.onOpenList = { [weak self] in self?.onOpenTaskList?() }
         calendarView.completedTasks = { [weak self] months in
             guard let self else { return [] }
             return self.store.completedTasks(inMonths: months).filter(self.taskFilter)

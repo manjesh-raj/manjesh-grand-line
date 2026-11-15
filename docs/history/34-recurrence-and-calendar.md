@@ -513,6 +513,7 @@ It is independent of the plan's other PRs: the tray belongs to the calendar card
   A period with nothing dated but open work elsewhere says "Nothing dated this week · …", and "Nothing scheduled this month." is left for a store with no open work at all.
 - **The first-run state.** When open tasks exist and none of them (and no pending follow-up) has a date, a card over the dimmed grid says "Nothing has a date yet", counts the open tasks, points at the tray, and offers New task and Open List (Tasks › List, through the shell's navigator).
   Agenda shows its own empty text instead.
+  Removed by `fm/grand-line-calendar-empty-card-dismiss` (see the end of this file).
 - **Past months.** The Calendar used to load finished tasks only inside the board's 7-day Done window, so any earlier month looked like nothing had happened.
   The view now asks `ShiftStore.completedTasks(inMonths:)` for the `completed/` files its visible period touches, plus one month either side, because a task is filed by the month it was finished in rather than the month it was due.
   Each month file is memoised and invalidated with the existing completed-tasks cache, and the month key is validated before it becomes a file name.
@@ -920,3 +921,38 @@ Confirmed to catch a regression:
 
 - The When panel asking "only this" for a date or time change. Its edits stay "this and following".
 - A context menu on one-off chips. Only a repeating task's chips get one.
+
+## The first-run card removed (`fm/grand-line-calendar-empty-card-dismiss`)
+
+The captain opened Calendar on a store with 13 open tasks and none dated, and got a centred "Nothing has a date yet" card over a dimmed month grid, with New task and Open List and no close icon.
+Their call: the card is not needed by default, and if it stays it must close.
+
+### What shipped
+
+- `ShiftCalendarPayload.tray` never sends an `empty` key, so the page never shows the card and never dims the grid, in any view.
+- The native half of the card's two buttons is gone: `onNewTask` and `onOpenList` on the web view and the view, `TaskCalendarController.onOpenTaskList`, and the bridge's `newTask` and `openList` cases.
+
+### Decisions
+
+- **No replacement hint.** Everything the card said is already on screen without covering anything.
+  The page header says "13 open tasks · none on the calendar yet · 13 unscheduled", the toolbar has New task, and the tray's own hint says "No date yet. Drag a row onto a day, or onto a time in Week and Day."
+  A dismissable hint would have been a fourth copy of the same sentence.
+- **Native only, no bundle rebuild.** The page draws the card only when the tray payload carries `empty`, so withholding it is the whole fix.
+  The page's `#gl-empty` section, its stylesheet rules and its two `post` calls are still in the committed bundle, dormant.
+  Delete them at the next `build-schedule-x-web.sh` run, which is why `checkBundleCarriesTheBridge` no longer requires `newTask`, `openList` or the `gl-empty*` ids.
+- `ShiftCalendarTray.isUndatedOnly` and `openTasks` stay, because the caption's "none on the calendar yet" line reads them.
+
+### Verification
+
+- `FM_RUN_SHIFT_CALENDAR_TESTS`: an undated-only tray sends no `empty`, with a fixture check that the tray really is undated-only, and the tray hint still carries the guidance.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS`: on an undated-only store, Month, Week, Day and Agenda each read back with the card hidden and `#gl-card` not `.is-empty`.
+- Also run: `FM_RUN_FEATURE_INVENTORY_TESTS` and `FM_RUN_WEB_ISLAND_OWNERSHIP_TESTS`. `swift build -c release` is clean for these files.
+  No full local run, per the captain's standing preference. CI is the gate.
+- Tour lab before and after, all four views in Daylight and Dusk, on a scratch store with seven undated tasks.
+  Before, the card covered Month, Week and Day. After, every view shows its plain grid.
+
+Confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| `tray` sends the old `empty` payload again | The payload check, and all four views in the view suite (Month, Week and Day drew the card, and all four dimmed the grid) |

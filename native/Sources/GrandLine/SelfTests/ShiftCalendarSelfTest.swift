@@ -20,7 +20,7 @@
 //      on every app theme.
 //   6. **What a drop does to a task**, including the refusals.
 //   7. **Every open task has a place** (the Unscheduled tray): undated tasks
-//      grouped by project, overdue work pinned, the first-run empty state,
+//      grouped by project, overdue work pinned, no card over the grid,
 //      the caption that counts all three, and a past month's finished tasks
 //      read from that month's `completed/` file only.
 //   8. **Drag and quick add** (tasks-calendar plan PR 7): a tray row dropped
@@ -209,15 +209,14 @@ enum ShiftCalendarSelfTest {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
         for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "place", "unschedule",
-                        "quickAddParse", "quickAdd", "tray", "newTask", "openList", "menu"] {
+                        "quickAddParse", "quickAdd", "tray", "menu"] {
             check(js.contains("type:\"\(message)\""), "the committed bundle never posts `\(message)`")
         }
         // The captain's card: its header, weekday row and legend are this
         // bundle's, not Schedule-X's, and Agenda is the open-source list view.
         if let html = try? String(contentsOf: dir.appendingPathComponent("index.html"), encoding: .utf8) {
             for id in ["gl-prev", "gl-next", "gl-title", "gl-today", "gl-views", "gl-weekdays", "gl-legend",
-                       "gl-tray", "gl-tray-list", "gl-tray-toggle", "gl-tray-drop", "gl-empty", "gl-empty-new",
-                       "gl-empty-list", "gl-drop", "gl-cell-add", "gl-quick-add", "gl-quick-add-input"] {
+                       "gl-tray", "gl-tray-list", "gl-tray-toggle", "gl-tray-drop", "gl-drop", "gl-cell-add", "gl-quick-add", "gl-quick-add-input"] {
                 check(html.contains("id=\"\(id)\""), "the page shell has no #\(id)")
             }
             for scale in ShiftCalendarScale.allCases {
@@ -710,7 +709,7 @@ enum ShiftCalendarSelfTest {
         check(undatedOnly.isUndatedOnly && undatedOnly.unscheduledCount == 2,
               "two undated tasks and no dated work is the first-run state")
         // The fixture's own discriminating power: one dated follow-up is
-        // dated work, so the empty state must give way to the grid.
+        // dated work, so the caption counts it rather than the open tasks.
         var datedSoon = overdueFollowUp
         datedSoon.followUpAt = "2026-11-20"
         check(!ShiftCalendarModel.tray(tasks: [task("x", "One")], followUps: [datedSoon], projects: [],
@@ -775,20 +774,18 @@ enum ShiftCalendarSelfTest {
         undated.overdue = []
         undated.datedRecords = 0
         undated.openTasks = 13
-        let empty = ShiftCalendarPayload.tray(undated, projectNames: [:], theme: theme, collapsed: false)["empty"]
-            as? [String: String]
-        check(empty?["title"] == "Nothing has a date yet", "the first-run state has its title, got \(empty ?? [:])")
-        check(empty?["body"]?.hasPrefix("You have 13 open tasks, and none of them is on a day.") == true,
-              "the first-run state counts the open tasks, got \(empty?["body"] ?? "nil")")
-        check(empty?["body"]?.contains("Unscheduled") == true, "the first-run state points at the tray")
-        check(empty?["body"]?.lowercased().contains("drag one from unscheduled") == true,
-              "the first-run state should offer the drag from the tray, got \(empty?["body"] ?? "nil")")
+        // The captain's report: this exact store drew a centred card over the
+        // grid with no close, repeating the header line and the toolbar's New
+        // task. The tray's hint is the guidance; no empty state crosses.
+        check(undated.isUndatedOnly, "the fixture is the undated-only store the card used to cover")
+        let undatedPayload = ShiftCalendarPayload.tray(undated, projectNames: [:], theme: theme, collapsed: false)
+        check(undatedPayload["empty"] == nil,
+              "an undated-only store must send no empty state to cover the grid, got \(undatedPayload["empty"] ?? "nil")")
+        check((undatedPayload["hint"] as? String)?.contains("Drag a row onto a day") == true,
+              "the tray's hint still says how to date a task, got \(undatedPayload["hint"] ?? "nil")")
         check(ShiftCalendarPayload.tray(tray, projectNames: [:], theme: theme, collapsed: false)["dropHint"] as? String
               == ShiftCalendarPayload.trayDropHint && !ShiftCalendarPayload.trayDropHint.isEmpty,
               "the tray says a chip can be dropped on it")
-        check(empty?["newTask"] == "New task" && empty?["openList"] == "Open List", "the two buttons are named")
-        check(ShiftCalendarPayload.emptyState(openTasks: 1)["body"]?.hasPrefix("You have 1 open task, and it is") == true,
-              "one open task is not pluralised")
         let nothing = ShiftCalendarPayload.tray(ShiftCalendarTray(), projectNames: [:], theme: theme, collapsed: false)
         check(nothing["nothing"] as? String == ShiftCalendarPayload.trayAllDated,
               "a tray with no rows says every open task has a date, rather than drawing a blank card")
