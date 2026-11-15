@@ -348,7 +348,7 @@ final class ShiftStore {
         // per list element and a GCD worker's 512 KB stack overflows on a long
         // task history (P11 of the polish report measured the same parser
         // crashing there at 400 records).
-        HelmParseThread.run(label: "tasks") {
+        HelmParseThread.run(label: "tasks") { [weak self] in
             let parsed = Self.parseAll(root: root)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion(); return }

@@ -276,7 +276,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         reloadGeneration &+= 1
         let generation = reloadGeneration
         let store = runbookStore
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let postmortems = store.listPostmortems()
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.reloadGeneration == generation else { return }

@@ -364,7 +364,7 @@ final class LockPresenter {
     /// screen, nothing but a beep. This is that escape hatch, reachable from
     /// the menu bar alone with no other window ever appearing.
     func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let ok = VaultSource.verifyAppPassword(password)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion(false); return }

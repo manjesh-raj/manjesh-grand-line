@@ -115,6 +115,15 @@ let package = Package(
                 // lanes" / GL-07 (build fails on any warning in this app's
                 // own sources).
                 .unsafeFlags(["-Wno-ambiguous-macro"]),
+                // The default Swift Build engine (Xcode 27 / Swift 6.4)
+                // reports -Wshorten-64-to-32 for this target, and the
+                // packaging log filled up with it once the release build
+                // moved to that engine. Upstream ggml and
+                // whisper.cpp narrow int64_t tensor sizes to int throughout
+                // (~1,370 diagnostics in one release build), and fixing them
+                // here would mean carrying hundreds of patches against a
+                // vendored tree. Same scoping as above: this target only.
+                .unsafeFlags(["-Wno-shorten-64-to-32"]),
             ],
             cxxSettings: [
                 .define("GGML_USE_CPU"),
@@ -126,6 +135,9 @@ let package = Package(
                 .headerSearchPath("ggml-src/ggml-cpu"),
                 .headerSearchPath("ggml-src/ggml-metal"),
                 .headerSearchPath("whisper-src"),
+                // Repeated from cSettings so the .cpp sources get it under
+                // either build engine (see the cSettings comment).
+                .unsafeFlags(["-Wno-shorten-64-to-32"]),
             ],
             linkerSettings: [
                 .linkedFramework("Foundation"),
