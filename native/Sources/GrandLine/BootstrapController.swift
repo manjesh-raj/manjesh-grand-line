@@ -2284,7 +2284,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         isLoadingSoftware = true
         rebuildSoftwareSection()
         let items = softwareRows.map { $0.item }
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcomes = items.map { ($0.id, DependencyCheckCache.shared.check($0, forceRefresh: forceRefresh)) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion?(); return }

@@ -635,7 +635,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         isLoadingSoftware = true
         rebuildStepper()
         let items = toolRows.map { $0.item }
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcomes = items.map { ($0.id, DependencyCheckCache.shared.check($0, forceRefresh: forceRefresh)) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion?(); return }

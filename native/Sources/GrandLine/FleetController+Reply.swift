@@ -271,7 +271,7 @@ extension FleetController {
         guard let composer = openReplyComposer else { return }
         composer.setBusy(true)
         composer.setStatus("Sending\u{2026}", tint: nil)
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = FleetActions.reply(taskID: taskID, text: text)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }

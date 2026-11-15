@@ -286,7 +286,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
         syncButton.isEnabled = false
         syncSpinner.isHidden = false
         syncSpinner.startAnimation()
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = DocsSyncSource.update()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
