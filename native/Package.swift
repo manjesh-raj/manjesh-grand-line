@@ -63,6 +63,15 @@ let package = Package(
         .target(
             name: "CWhisper",
             path: "Vendor/whisper.cpp/Sources/CWhisper",
+            // The unmerged shader is vendored for provenance and as the input
+            // to Scripts/build-whisper-metal-shader.py, never compiled here:
+            // the app compiles the pre-merged copy embedded in
+            // WhisperMetalShaderSource.swift at runtime. The legacy native
+            // build system silently ignored this file, but the default
+            // Swift Build engine (Xcode 27 / Swift 6.4) compiles any `.metal`
+            // it finds, without this target's header search paths, and fails
+            // on `#include "ggml-common.h"`.
+            exclude: ["ggml-src/ggml-metal/ggml-metal.metal"],
             publicHeadersPath: "include",
             cSettings: [
                 .define("GGML_USE_CPU"),
