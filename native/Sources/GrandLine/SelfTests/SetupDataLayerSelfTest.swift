@@ -65,6 +65,9 @@ enum SetupDataLayerSelfTest {
             ("anAppBundleAloneCountsAsInstalled", test_caskAppBundleOnly),
             ("aCaskAbsentEverywhereIsNotInstalled", test_caskAbsent),
             ("aFailedCaskUpgradeNamesBrewsOwnError", test_caskUpgradeFailureNamesTheError),
+            ("homebrewItemsShareOneListAndOneInfo", test_brewItemsShareOneRead),
+            ("brewListAndInfoRepliesParse", test_brewParse),
+            ("aFailedSharedBrewInfoFallsBackToEachItem", test_brewBatchFailureFallsBack),
             ("npmVersionsMapOntoTheRightStatus", test_npmStatusMapping),
             ("anNpmCheckRunsNpmLsOnceAndLogsFromItsJSON", test_npmLogComesFromTheJSONRead),
             ("everyNpmPackageSharesOneLsAndOneOutdated", test_npmPackagesShareOneRead),
@@ -197,7 +200,10 @@ enum SetupDataLayerSelfTest {
             return "a cask installed under Caskroom/automic-vault was not found for the fully-qualified "
                  + "token automic-vault/isotopes/automic-vault - got \(outcome.installedLabel) (\(outcome.status))"
         }
-        guard args(matching: "list") == nil else {
+        // The shared Homebrew read runs one `brew list --versions` for the
+        // catalog's formulae (R5 energy fix 3). It must never name a cask.
+        let listCalls = UpdatesDataTestSeam.invocations.filter { $0.args.first == "list" }
+        guard !listCalls.contains(where: { $0.args.contains { $0.contains("automic-vault") } }) else {
             return "a cask's installed state must not be asked of `brew list` - it has to load the cask's "
                  + "definition and fails when a tap ships one this Homebrew cannot parse"
         }
@@ -310,6 +316,94 @@ enum SetupDataLayerSelfTest {
         guard !outcome.ok else { return "a failed brew upgrade reported success" }
         guard outcome.detail == "brew upgrade automic-vault/isotopes/automic-vault failed: Error: Cask 'automic-vault' definition is invalid: undefined method 'run' for an instance of Homebrew::InstallSteps::DSL" else {
             return "the failure must name brew's first error line, got: \(outcome.detail)"
+        }
+        return nil
+    }
+
+    private static let brewCatalogItems = DependencyCatalog.items.filter {
+        switch $0.kind {
+        case .brewFormula, .brewCask: return true
+        default: return false
+        }
+    }
+
+    /// `brew info --json=v2` for the whole catalog, cut down to the fields the
+    /// checks read: two formulae and two casks, one of them fully qualified.
+    private static let catalogBrewInfo = #"""
+        {"formulae":[{"name":"gh","full_name":"gh","versions":{"stable":"2.104.0"}},
+                     {"name":"tmux","full_name":"tmux","versions":{"stable":"3.9"}}],
+         "casks":[{"token":"claude-code","full_token":"claude-code","version":"2.1.311"},
+                  {"token":"automic-vault","full_token":"automic-vault/isotopes/automic-vault","version":"4.23.0"}]}
+        """#
+
+    /// R5 energy fix 3: the Homebrew rows used to cost a `brew list` and a
+    /// `brew info` per formula and a `brew info --cask` per cask. A sweep of
+    /// all of them is now one of each read, plus the tap check a
+    /// fully-qualified cask always needed.
+    private static func test_brewItemsShareOneRead() -> String? {
+        guard brewCatalogItems.count > 1 else { return "the catalog has \(brewCatalogItems.count) Homebrew items - the case is vacuous" }
+        fakeUpdates(["list": result("gh 2.104.0\ntmux 3.7 3.8"), "info": result(catalogBrewInfo)])
+        installCaskFixture(token: "automic-vault", versions: ["4.23.0"])
+        installCaskFixture(token: "claude-code", versions: ["2.1.300"])
+        let outcomes = brewCatalogItems.map { UpdatesSource.check($0) }
+        let calls = UpdatesDataTestSeam.invocations.map { $0.args.first ?? "" }
+        let list = calls.filter { $0 == "list" }.count, info = calls.filter { $0 == "info" }.count
+        guard list == 1, info == 1 else {
+            return "\(brewCatalogItems.count) Homebrew checks ran list x\(list), info x\(info) - want 1 and 1 (\(UpdatesDataTestSeam.invocations.map { $0.args }))"
+        }
+        let want: [String: (DependencyStatus, String)] = [
+            "gh": (.upToDate, "2.104.0 - up to date"), "tmux": (.updateAvailable, "3.8 \u{2192} 3.9"),
+            "claude-code": (.updateAvailable, "2.1.300 \u{2192} 2.1.311"), "automic-vault": (.upToDate, "4.23.0 - up to date"),
+        ]
+        for (item, outcome) in zip(brewCatalogItems, outcomes) {
+            guard let expected = want[item.id] else { return "no expectation for catalog item \(item.id)" }
+            guard outcome.status == expected.0, outcome.detail == expected.1 else {
+                return "\(item.id) read \(outcome.status) (\(outcome.detail)), want \(expected.0) (\(expected.1))"
+            }
+        }
+        return nil
+    }
+
+    private static func test_brewParse() -> String? {
+        let installed = BrewBatchReading.installedVersions(fromList: "gh 2.104.0\ntmux 3.7 3.8\n")
+        guard installed == ["gh": "2.104.0", "tmux": "3.8"] else {
+            return "`brew list --versions` should read the newest of each line, got \(installed)"
+        }
+        let reading = BrewBatchReading(formulae: ["gh"], casks: ["automic-vault/isotopes/automic-vault"],
+                                       listResult: result(""), infoResult: result(catalogBrewInfo))
+        guard reading.cask("automic-vault/isotopes/automic-vault")?["version"] as? String == "4.23.0",
+              reading.cask("claude-code")?["version"] as? String == "2.1.311",
+              reading.formula("gh") != nil else {
+            return "a cask must be found by its full token or its short one, and a formula by name"
+        }
+        let failed = BrewBatchReading(formulae: ["gh"], casks: [], listResult: result(""),
+                                      infoResult: result(catalogBrewInfo, status: 1))
+        guard failed.formula("gh") == nil else { return "a failed `brew info` must never be read as an answer" }
+        return nil
+    }
+
+    /// One cask brew cannot load fails the whole shared `brew info`. Each
+    /// item must then ask on its own, so the formulae still get an answer and
+    /// the cask still names brew's error, exactly as before the batch.
+    private static func test_brewBatchFailureFallsBack() -> String? {
+        fakeUpdates([:])
+        UpdatesDataTestSeam.run = { _, args, _ in
+            switch args.first {
+            case "list": return result("gh 2.100.0")
+            case "info" where args.contains("--cask"): return brewCannotLoadCask
+            case "info" where args.count > 3: return brewCannotLoadCask
+            case "info": return result(#"{"formulae":[{"name":"gh","versions":{"stable":"2.104.0"}}]}"#)
+            default: return result("")
+            }
+        }
+        installCaskFixture(token: "automic-vault", versions: ["4.18.0"])
+        let gh = UpdatesSource.check(DependencyItem(id: "gh", name: "gh", category: "Homebrew", kind: .brewFormula(formula: "gh")))
+        guard gh.status == .updateAvailable, gh.detail == "2.100.0 \u{2192} 2.104.0" else {
+            return "a formula should still be answered when the shared info failed, got \(gh.status) (\(gh.detail))"
+        }
+        let vault = UpdatesSource.check(automicVault)
+        guard vault.status == .checkFailed, vault.log.contains("Homebrew error: Error: Cask 'automic-vault' definition is invalid") else {
+            return "the cask brew cannot load must still be .checkFailed and name brew's error, got \(vault.status): \(vault.log)"
         }
         return nil
     }

@@ -70,6 +70,16 @@ enum DependencyCatalog {
         items.compactMap { if case .npmGlobal(let package) = $0.kind { return package } else { return nil } }
     }
 
+    /// Every Homebrew formula and cask in the catalog, which is what one
+    /// shared `brew list`/`brew info` read asks about.
+    static var brewFormulae: [String] {
+        items.compactMap { if case .brewFormula(let formula) = $0.kind { return formula } else { return nil } }
+    }
+
+    static var brewCasks: [String] {
+        items.compactMap { if case .brewCask(let cask, _) = $0.kind { return cask } else { return nil } }
+    }
+
     /// Category display order - `Dictionary`-grouping in `UpdatesController`
     /// would otherwise be unordered.
     static let categoryOrder = ["npm packages", "Homebrew", "Other tools", "Firstmate", "Security", "Documentation"]
@@ -555,6 +565,7 @@ enum UpdatesSource {
     /// re-check after an install never reads what was there before it.
     static func invalidateBatchReads() {
         npmRead.invalidate()
+        brewRead.invalidate()
     }
 
     private static func installedNpmVersion(npm: String, package: String) -> String? {
@@ -602,10 +613,21 @@ enum UpdatesSource {
 
     private static func checkBrewFormula(_ formula: String) -> CheckOutcome {
         guard let brew = resolveExecutable("brew") else { return missingToolOutcome("brew") }
-        let installed = installedBrewVersion(brew: brew, formula: formula)
-        let infoResult = run(brew, ["info", "--json=v2", formula])
-        let latest = latestBrewFormulaVersion(from: infoResult.stdout)
-        let log = infoResult.combinedLog
+        let reading = brewReading(brew: brew, including: .formula(formula))
+        let installed = reading.installedFormulae[formula]
+        let latest: String?
+        let log: String
+        if let entry = reading.formula(formula) {
+            latest = latestBrewFormulaVersion(fromEntry: entry)
+            log = [BrewBatchReading.listLog(formula: formula, installed: installed), BrewBatchReading.describe(entry)]
+                .joined(separator: "\n")
+        } else {
+            // The shared `brew info` failed or did not name this formula:
+            // ask about this one alone, exactly as every check used to.
+            let infoResult = run(brew, ["info", "--json=v2", formula])
+            latest = latestBrewFormulaVersion(from: infoResult.stdout)
+            log = infoResult.combinedLog
+        }
 
         guard let installed else {
             return CheckOutcome(installedLabel: "not installed", latestLabel: latest, status: .notInstalled, detail: latest != nil ? "Not installed - \(latest!) available" : "Not installed", log: log)
@@ -625,21 +647,53 @@ enum UpdatesSource {
     /// Homebrew cannot parse.
     private static func installedBrewVersion(brew: String, formula: String) -> String? {
         let result = run(brew, ["list", "--versions", formula])
-        guard result.status == 0, !result.stdout.isEmpty else { return nil }
-        // "<name> <version>[ <version>...]" - the installed formula/cask name
-        // followed by one version per installed copy; the last is the newest.
-        return result.stdout.split(separator: " ").last.map(String.init)
+        guard result.status == 0 else { return nil }
+        return BrewBatchReading.installedVersions(fromList: result.stdout)[formula]
     }
+
+    /// R5 energy fix 3: one `brew list --versions` for every formula and one
+    /// `brew info --json=v2` for every formula and cask in the catalog,
+    /// shared by every Homebrew check that asks within `brewRead.window`.
+    ///
+    /// This replaced a `brew list` plus a `brew info` per formula and a
+    /// `brew info --cask` per cask, each one a Ruby start-up. The report
+    /// suggested `brew outdated --json=v2` for the second half; `brew info`
+    /// is used instead because it is what each check already read, so every
+    /// status stays what it was. `brew outdated` leaves out a cask that
+    /// updates itself unless asked with `--greedy`, compares against brew's
+    /// own install record rather than the version on disk that
+    /// `BrewCaskInstallation` reads, and auto-updates Homebrew first, which
+    /// is a network fetch the old check never made.
+    ///
+    /// One unparseable cask fails a whole `brew info` (the Automic Vault tap
+    /// did exactly that), so a failed batch is never read as an answer: each
+    /// check then asks about its own item, which is the old path and the old
+    /// cost, and only on a machine where brew is already failing.
+    private static func brewReading(brew: String, including item: BrewBatchReading.Name) -> BrewBatchReading {
+        let formulae = Array(Set(DependencyCatalog.brewFormulae + (item.formula.map { [$0] } ?? []))).sorted()
+        let casks = Array(Set(DependencyCatalog.brewCasks + (item.cask.map { [$0] } ?? []))).sorted()
+        return brewRead.value(accepts: { $0.formulae.contains(item.formula ?? "") || $0.casks.contains(item.cask ?? "") }) {
+            for cask in casks { ensureTapped(brew: brew, cask: cask) }
+            let list = run(brew, ["list", "--versions"] + formulae)
+            let info = run(brew, ["info", "--json=v2"] + formulae + casks)
+            return BrewBatchReading(formulae: Set(formulae), casks: Set(casks), listResult: list, infoResult: info)
+        }
+    }
+
+    private static let brewRead = CoalescedRead<BrewBatchReading>(
+        window: 30, waitBound: 2 * UpdatesRunLimits.timeout + 30)
 
     private static func latestBrewFormulaVersion(from json: String) -> String? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let formulae = obj["formulae"] as? [[String: Any]],
-              let first = formulae.first,
-              let versions = first["versions"] as? [String: Any],
-              let stable = versions["stable"] as? String
+              let first = formulae.first
         else { return nil }
-        return stable
+        return latestBrewFormulaVersion(fromEntry: first)
+    }
+
+    private static func latestBrewFormulaVersion(fromEntry entry: [String: Any]) -> String? {
+        (entry["versions"] as? [String: Any])?["stable"] as? String
     }
 
     private static func updateBrewFormula(_ formula: String) -> UpdateOutcome {
@@ -647,6 +701,7 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'brew' not found on PATH", log: "")
         }
         let result = run(brew, ["upgrade", formula])
+        invalidateBatchReads()
         guard result.status == 0 else { return failedUpdate("brew upgrade \(formula)", result) }
         let version = installedBrewVersion(brew: brew, formula: formula)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Upgraded to \(version ?? "latest")", log: result.combinedLog)
@@ -673,12 +728,21 @@ enum UpdatesSource {
                                 detail: "Installed \(found.version) - Homebrew not found, cannot determine latest",
                                 log: found.evidence)
         }
-        ensureTapped(brew: brew, cask: cask)
-        let infoResult = run(brew, ["info", "--cask", "--json=v2", cask])
-        let latest = infoResult.status == 0 ? latestBrewCaskVersion(from: infoResult.stdout) : nil
-        let brewError = infoResult.status != 0 ? BrewCaskInstallation.firstErrorLine(of: infoResult) : nil
-        let log = [found?.evidence ?? "", brewError.map { "Homebrew error: \($0)" } ?? "", infoResult.combinedLog]
-            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let latest: String?
+        let log: String
+        if let entry = brewReading(brew: brew, including: .cask(cask)).cask(cask) {
+            latest = entry["version"] as? String
+            log = [found?.evidence ?? "", BrewBatchReading.describe(entry)].filter { !$0.isEmpty }.joined(separator: "\n")
+        } else {
+            // The shared read failed or left this cask out: ask about it
+            // alone, which is also what names brew's own error for it.
+            ensureTapped(brew: brew, cask: cask)
+            let infoResult = run(brew, ["info", "--cask", "--json=v2", cask])
+            latest = infoResult.status == 0 ? latestBrewCaskVersion(from: infoResult.stdout) : nil
+            let brewError = infoResult.status != 0 ? BrewCaskInstallation.firstErrorLine(of: infoResult) : nil
+            log = [found?.evidence ?? "", brewError.map { "Homebrew error: \($0)" } ?? "", infoResult.combinedLog]
+                .filter { !$0.isEmpty }.joined(separator: "\n")
+        }
 
         guard let installed = found?.version else {
             return CheckOutcome(installedLabel: "not installed", latestLabel: latest, status: .notInstalled, detail: latest != nil ? "Not installed - \(latest!) available" : "Not installed", log: log)
@@ -741,6 +805,7 @@ enum UpdatesSource {
         // explicit `--cask` form - brew resolves it unambiguously on this
         // machine since no formula shares the name.
         let result = run(brew, ["upgrade", cask])
+        invalidateBatchReads()
         guard result.status == 0 else {
             // Name brew's own reason. A cask brew cannot load fails here
             // too, and "brew upgrade failed" alone reads like a network blip
@@ -1008,6 +1073,92 @@ struct NpmGlobalReading {
             result[name] = Outdated(current: entry["current"] as? String, latest: entry["latest"] as? String)
         }
         return result
+    }
+}
+
+// MARK: - Shared Homebrew read
+
+/// One `brew list --versions` and one `brew info --json=v2`, parsed once for
+/// every formula and cask they named. See `UpdatesSource.brewReading`.
+struct BrewBatchReading {
+    enum Name {
+        case formula(String)
+        case cask(String)
+
+        var formula: String? { if case .formula(let name) = self { return name } else { return nil } }
+        var cask: String? { if case .cask(let name) = self { return name } else { return nil } }
+    }
+
+    let formulae: Set<String>
+    let casks: Set<String>
+    let listResult: SubprocessResult
+    let infoResult: SubprocessResult
+    let installedFormulae: [String: String]
+    /// `nil` when `brew info` failed, which is never read as an answer.
+    private let formulaEntries: [String: [String: Any]]?
+    private let caskEntries: [String: [String: Any]]?
+
+    init(formulae: Set<String>, casks: Set<String>, listResult: SubprocessResult, infoResult: SubprocessResult) {
+        self.formulae = formulae
+        self.casks = casks
+        self.listResult = listResult
+        self.infoResult = infoResult
+        // `brew list --versions a b` exits 1 when any one of them is not
+        // installed and still lists the ones that are, so the lines are read
+        // whatever the status.
+        installedFormulae = Self.installedVersions(fromList: listResult.stdout)
+        let parsed = infoResult.status == 0 ? Self.parseInfo(infoResult.stdout) : nil
+        formulaEntries = parsed?.formulae
+        caskEntries = parsed?.casks
+    }
+
+    /// This formula's `brew info` entry, matched by `name` or `full_name`.
+    func formula(_ name: String) -> [String: Any]? { formulaEntries?[name] }
+
+    /// This cask's entry, matched by `full_token` (`owner/tap/name`) or by
+    /// `token`, so a fully-qualified catalog name finds it either way.
+    func cask(_ name: String) -> [String: Any]? {
+        guard let caskEntries else { return nil }
+        return caskEntries[name] ?? caskEntries[BrewCaskInstallation.shortToken(name)]
+    }
+
+    /// `"<name> <version>[ <version>...]"` per line. A formula with several
+    /// installed copies lists each, and the last is the newest.
+    static func installedVersions(fromList text: String) -> [String: String] {
+        var versions: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: " ")
+            guard fields.count >= 2, let newest = fields.last else { continue }
+            versions[String(fields[0])] = String(newest)
+        }
+        return versions
+    }
+
+    static func parseInfo(_ json: String) -> (formulae: [String: [String: Any]], casks: [String: [String: Any]])? {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        var formulae: [String: [String: Any]] = [:]
+        for entry in obj["formulae"] as? [[String: Any]] ?? [] {
+            for key in ["name", "full_name"] { if let name = entry[key] as? String { formulae[name] = entry } }
+        }
+        var casks: [String: [String: Any]] = [:]
+        for entry in obj["casks"] as? [[String: Any]] ?? [] {
+            for key in ["token", "full_token"] { if let token = entry[key] as? String { casks[token] = entry } }
+        }
+        return (formulae, casks)
+    }
+
+    static func listLog(formula: String, installed: String?) -> String {
+        installed.map { "brew list --versions: \(formula) \($0)" } ?? "brew list --versions: \(formula) is not installed"
+    }
+
+    /// One item's own `brew info` entry, as the row's log. It is the same
+    /// JSON a per-item `brew info` printed, cut down to this item.
+    static func describe(_ entry: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: entry, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return "" }
+        return "brew info --json=v2:\n\(text)"
     }
 }
 
