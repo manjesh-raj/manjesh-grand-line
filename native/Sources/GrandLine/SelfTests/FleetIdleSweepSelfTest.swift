@@ -55,6 +55,7 @@ enum FleetIdleSweepSelfTest {
         checkTheSettledClassification(&ok)
         checkTheWatcherFilter(&ok)
         checkARealStreamReportsAnAppend(home: home, &ok)
+        checkTheTransitionKey(&ok)
         checkABurstCostsOneSweep(&ok)
         checkTheTickSlowsDownWithNoWindowOnScreen(&ok)
 
@@ -167,10 +168,22 @@ enum FleetIdleSweepSelfTest {
         print("\n-- a state-change sweep re-reads only the task whose files changed --")
         _ = FleetDataSource.parseTasksAfterStateChange()
         check(spawns() == [], "with no file changed a state-change sweep should run nothing", &ok)
+        // R5 energy fix 8: a busy record or inbox move is not a transition.
+        // A live crew rewrites both on every turn, and each one used to re-run
+        // the script; the notifier's own tick still re-reads every live crew.
         letTheClockMove()
         write(home, "state/live.busy-state", "idle claude-hook\n")
         _ = FleetDataSource.parseTasksAfterStateChange()
-        check(spawns() == ["live"], "a changed .busy-state should re-read that task alone", &ok)
+        check(spawns() == [], "a changed .busy-state alone should not re-run the script for a young live reading", &ok)
+        append(home, "state/live.status", "working [at=1793251400]: next step\n")
+        _ = FleetDataSource.parseTasksAfterStateChange()
+        check(spawns() == ["live"], "an append to a live task's .status should re-read that task alone", &ok)
+        // A settled task keeps the full key: a finished crew comes back by
+        // taking a turn, which replaces its busy record.
+        letTheClockMove()
+        write(home, "state/done.busy-state", "busy claude-hook\n")
+        _ = FleetDataSource.parseTasksAfterStateChange()
+        check(spawns() == ["done"], "a settled task whose busy record changed must be re-read", &ok)
 
         print("\n-- the captain's Refresh and an expired reading re-read everything --")
         _ = FleetDataSource.parseTasks(forceRefresh: true)
@@ -263,6 +276,28 @@ enum FleetIdleSweepSelfTest {
         let deadline = Date().addingTimeInterval(10)
         while fired == 0, Date() < deadline { spin(0.1) }
         check(fired > 0, "an append to a known task's .status should wake the notifier within 10s", &ok)
+    }
+
+    /// R5 energy fix 8: the key a live reading is re-read on, from an event.
+    private static func checkTheTransitionKey(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 8: only .status and .meta announce a live transition --")
+        let t0 = Date(timeIntervalSince1970: 1_793_251_216)
+        func entry(_ name: String, _ seconds: TimeInterval, _ size: Int = 10) -> FleetTaskFingerprint.Entry {
+            .init(name: name, modified: t0.addingTimeInterval(seconds), size: size)
+        }
+        let base = FleetTaskFingerprint(entries: [entry("t.busy-state", 0), entry("t.meta", 0), entry("t.status", 0)])
+        let busyMoved = FleetTaskFingerprint(entries: [entry("t.busy-state", 5), entry("t.inbox", 5), entry("t.meta", 0), entry("t.status", 0)])
+        let statusMoved = FleetTaskFingerprint(entries: [entry("t.busy-state", 0), entry("t.meta", 0), entry("t.status", 5, 40)])
+        let metaMoved = FleetTaskFingerprint(entries: [entry("t.busy-state", 0), entry("t.meta", 5), entry("t.status", 0)])
+        let noStatus = FleetTaskFingerprint(entries: [entry("t.busy-state", 0), entry("t.meta", 0)])
+        check(base != busyMoved && base.sameTransitionFiles(as: busyMoved),
+              "a busy record or inbox change should leave the transition files equal", &ok)
+        check(!base.sameTransitionFiles(as: statusMoved), "a .status append is a transition", &ok)
+        check(!base.sameTransitionFiles(as: metaMoved), "a rewritten .meta (a re-dispatch) is a transition", &ok)
+        check(!noStatus.sameTransitionFiles(as: noStatus),
+              "a task with no .status yet must never be skipped - nothing would announce its first transition", &ok)
+        check(FleetNotifier.stateChangeSettle == 3,
+              "a state-file burst should settle for 3 s before its sweep, is \(FleetNotifier.stateChangeSettle)", &ok)
     }
 
     private static func checkABurstCostsOneSweep(_ ok: inout Bool) {
