@@ -265,12 +265,12 @@ final class TaskCalendarController: NSViewController {
     /// longer open is left alone.
     ///
     /// Undo is a real restore (GL-33). The task is reopened with the status
-    /// it had, and the instance this completion spawned is withdrawn - but
-    /// only while it is exactly as it was spawned. Reopening alone would
-    /// leave two live instances of one series, which is why the store's own
-    /// reopen does not withdraw anything (`ShiftStore.nextOccurrence`'s
-    /// header). An instance edited since the check keeps its edits, and the
-    /// toast says so rather than pretending the series is back as it was.
+    /// it had, and the store's reopen withdraws the instance this completion
+    /// spawned - but only while it is untouched since
+    /// (`ShiftStore.keepOneLiveInstance`, R5-BUG-10), the one rule every
+    /// surface's un-tick shares. An instance edited since the check keeps its
+    /// edits and the series, and the toast says so rather than pretending the
+    /// series is back as it was.
     func completeTask(id: String, now: Date = Date()) {
         guard let task = store.activeTasks.first(where: { $0.id == id }),
               task.status != .completed, task.status != .cancelled else {
@@ -294,13 +294,9 @@ final class TaskCalendarController: NSViewController {
                 reopened.status = task.status
                 self.store.updateTask(reopened)
             }
-            if let spawned, let current = self.store.activeTasks.first(where: { $0.id == spawned.id }) {
-                if current == spawned {
-                    self.store.deleteTask(id: spawned.id)
-                } else {
-                    Toast.show(in: self.view,
-                               message: "Reopened. The next \u{201C}\(spawned.title)\u{201D} was edited, so it stays.")
-                }
+            if let spawned, self.store.activeTasks.contains(where: { $0.id == spawned.id }) {
+                Toast.show(in: self.view,
+                           message: "Reopened. The next \u{201C}\(spawned.title)\u{201D} was edited, so it stays.")
             }
             self.render()
         }

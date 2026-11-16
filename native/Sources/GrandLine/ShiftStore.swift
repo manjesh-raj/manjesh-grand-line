@@ -584,6 +584,13 @@ final class ShiftStore {
             task.status = .completed
             task.completedAt = iso
             task.updatedAt = iso
+            // R5-BUG-10: a series quick-added with a rule has no id yet, and
+            // a reopen can only find the series' live record by one. Minted
+            // here, before the completed record is written, so that record
+            // and the instance it spawns share it.
+            if task.recurrence != nil, task.seriesID == nil {
+                task.seriesID = UUID().uuidString
+            }
             // R2-BUG-01: the month record is written first, and the task
             // leaves `active.yaml` only once that write landed. The other
             // order rewrote the active file without the task and then lost
@@ -616,11 +623,61 @@ final class ShiftStore {
             removeFromCompletedMonth(id: id, month: month)
             // REL-22: the record's unknown keys move with it.
             taskPassthrough.absorb(raw, knownKeys: ShiftYaml.taskKnownKeys)
+            let withdrawn = keepOneLiveInstance(reopening: &restored, completedAt: task.completedAt)
             activeTasks.append(restored)
             persistActiveTasks()
             logActivity(kind: "task_reopened", summary: "Reopened \"\(restored.title)\"", targetID: restored.id, now: now)
+            if let withdrawn {
+                clearRelatedTaskPointers(to: withdrawn.id)
+                logActivity(kind: "task_recurrence_withdrawn",
+                            summary: "Withdrew the next \"\(withdrawn.title)\"",
+                            targetID: withdrawn.id, now: now)
+            }
         }
         notify()
+    }
+
+    /// R5-BUG-10: one series, one live record. A reopened repeating task
+    /// meets the series' live record whenever its completion spawned one, and
+    /// left as it was the two would each spawn a chain, spending the `COUNT`
+    /// twice and writing the same next slot twice.
+    ///
+    /// So when a live record of the same series exists, one of the two stops
+    /// repeating:
+    ///
+    ///   - **The instance this completion spawned, untouched since**, is
+    ///     withdrawn and returned, and the reopened record carries the series
+    ///     on. That is an un-tick read as the correction it is, the same
+    ///     outcome the Calendar's Undo always had.
+    ///   - **Anything else** (a spawn the captain has edited, or a series
+    ///     already completed past the reopened instance) stays, and the
+    ///     reopened record loses its rule and comes back as a one-off for its
+    ///     own date. Deleting a future task the captain may have edited is the
+    ///     worse of the two surprises.
+    ///
+    /// The spawn is recognised by what `setTaskCompleted` wrote into it: the
+    /// series id, and a `createdAt` equal to the completion's `completedAt`.
+    /// Any edit moves its `updatedAt` off that instant. A completed record
+    /// with no series id predates the id being minted at completion, so the
+    /// instant alone has to find its spawn.
+    private func keepOneLiveInstance(reopening restored: inout ShiftTask, completedAt: String?) -> ShiftTask? {
+        guard restored.recurrence != nil else { return nil }
+        let id = restored.id
+        let series = restored.seriesID
+        let isSpawn: (ShiftTask) -> Bool = { $0.createdAt == completedAt && $0.seriesID == series }
+        let sameSeries: (ShiftTask) -> Bool = { other in
+            guard other.id != id, other.recurrence != nil else { return false }
+            if let series, other.seriesID == series { return true }
+            return completedAt != nil && isSpawn(other)
+        }
+        guard let idx = activeTasks.firstIndex(where: sameSeries) else { return nil }
+        let live = activeTasks[idx]
+        if completedAt != nil, isSpawn(live), live.updatedAt == live.createdAt {
+            activeTasks.remove(at: idx)
+            return live
+        }
+        restored.recurrence = nil
+        return nil
     }
 
     /// The next instance of a recurring task, or `nil` when the task does
@@ -641,10 +698,10 @@ final class ShiftStore {
     /// copying the bytes for every occurrence of a daily task is how a
     /// git-synced tree grows without bound, GL-35).
     ///
-    /// Reopening a completed recurring task does **not** withdraw the
-    /// instance this spawned. Un-completing is a correction to one
-    /// occurrence, and silently deleting a future task the captain may
-    /// already have edited is the worse of the two surprises.
+    /// Reopening a completed recurring task withdraws the instance this
+    /// spawned only while it is untouched, and otherwise turns the reopened
+    /// record into a one-off (`keepOneLiveInstance`), so a series never has
+    /// two live records.
     ///
     /// The walk starts from the instance's rule slot (`ShiftTask.ruleAnchor`)
     /// when it has one, not its due date: an occurrence moved "only this" to

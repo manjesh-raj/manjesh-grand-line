@@ -483,6 +483,7 @@ enum ShiftStoreSelfTest {
         checkUnknownKeyPassthrough(check)
         checkRuleComponentPassthrough(check)
         checkRefusedCompletionKeepsTheTask(check)
+        checkReopenKeepsOneLiveInstance(check)
 
         return report(failures)
     }
@@ -655,6 +656,102 @@ enum ShiftStoreSelfTest {
               "the foreign component reaches the spawned instance too, got \(next?.recurrence?.ruleText ?? "nil")")
         check(next?.recurrence?.exceptionDates.isEmpty == true,
               "and the skipped date it walked past is pruned, got \(next?.recurrence?.ruleText ?? "nil")")
+    }
+
+    // MARK: R5-BUG-10 - a reopened repeating task leaves one live instance
+
+    /// Completing a repeating task spawns the next instance, and reopening
+    /// the completed one used to restore it with its rule and withdraw
+    /// nothing - so the series had two live records, and completing the
+    /// reopened one spawned a second instance for the same next slot. Only
+    /// the Calendar's own Undo compensated. Driven here through the store's
+    /// bare path (the board, the list and the task editor take it), for the
+    /// three shapes a reopen meets: the untouched spawn, an edited spawn, and
+    /// a series already advanced past the reopened instance.
+    private static func checkReopenKeepsOneLiveInstance(_ check: (Bool, String) -> Void) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shift-r5bug10-\(UUID().uuidString)", isDirectory: true)
+        let savedShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            if let savedShiftDir { setenv("FM_SHIFT_DIR", savedShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let daily = ShiftRecurrence.parse("FREQ=DAILY;INTERVAL=1")
+        check(daily != nil, "fixture: the daily rule must parse")
+        let morning = dateTime(year: 2026, month: 11, day: 16, hour: 9, minute: 0)
+        let evening = dateTime(year: 2026, month: 11, day: 16, hour: 19, minute: 0)
+        let night = dateTime(year: 2026, month: 11, day: 16, hour: 22, minute: 0)
+
+        // A quick-added series carries no series id, which is the shape the
+        // report's scenario starts from.
+        func seed(_ store: ShiftStore, _ title: String) -> String {
+            var task = ShiftTask.fresh(now: morning)
+            task.title = title
+            task.dueDate = "2026-11-16"
+            task.recurrence = daily
+            store.addTask(task)
+            return task.id
+        }
+        func live(_ store: ShiftStore, _ title: String) -> [ShiftTask] {
+            store.activeTasks.filter { $0.title == title && $0.recurrence != nil }
+        }
+
+        // 1. Complete, reopen, complete: the untouched spawn is withdrawn on
+        //    reopen, so the second completion fills tomorrow's slot once.
+        let store = ShiftStore()
+        let water = seed(store, "Water the plants")
+        store.setTaskCompleted(id: water, completed: true, now: morning)
+        check(live(store, "Water the plants").count == 1 && !store.activeTasks.contains { $0.id == water },
+              "fixture: completing spawned one next instance")
+        store.setTaskCompleted(id: water, completed: false, now: evening)
+        check(live(ShiftStore(), "Water the plants").map(\.id) == [water],
+              "reopening must leave the series one live record, the reopened one, got "
+              + "\(live(ShiftStore(), "Water the plants").map { "\($0.id == water ? "reopened" : "spawn") \($0.dueDate ?? "")" })")
+        store.setTaskCompleted(id: water, completed: true, now: night)
+        let afterAgain = live(ShiftStore(), "Water the plants")
+        check(afterAgain.count == 1 && afterAgain.first?.dueDate == "2026-11-17",
+              "complete, reopen, complete must leave one instance for 2026-11-17, got "
+              + "\(afterAgain.map { $0.dueDate ?? "nil" })")
+
+        // 2. An edited spawn keeps its edits and the series; the reopened
+        //    record becomes a one-off, so completing it spawns nothing.
+        let laundry = seed(store, "Do the laundry")
+        store.setTaskCompleted(id: laundry, completed: true, now: morning)
+        guard var spawn = live(store, "Do the laundry").first else {
+            check(false, "fixture: completing the laundry spawned no next instance")
+            return
+        }
+        spawn.notes = "Use the delicate cycle"
+        store.updateTask(spawn, now: evening)
+        store.setTaskCompleted(id: laundry, completed: false, now: evening)
+        let reopened = ShiftStore().activeTasks.first { $0.id == laundry }
+        check(reopened != nil && reopened?.recurrence == nil,
+              "a reopen beside an edited spawn must strip the rule from the reopened record, got "
+              + "\(reopened?.recurrence?.ruleText ?? "no rule")")
+        check(ShiftStore().activeTasks.first { $0.id == spawn.id }?.notes == "Use the delicate cycle",
+              "the edited spawn must stay, edits and all")
+        store.setTaskCompleted(id: laundry, completed: true, now: night)
+        let laundrySlots = ShiftStore().activeTasks.filter { $0.title == "Do the laundry" }.map { $0.dueDate ?? "nil" }
+        check(laundrySlots == ["2026-11-17"],
+              "complete, reopen, complete beside an edited spawn must leave one 2026-11-17 instance, got \(laundrySlots)")
+
+        // 3. A series already advanced past the reopened instance: the live
+        //    record is two completions on, so nothing ties it to this one but
+        //    the series id the first completion minted.
+        let bins = seed(store, "Take the bins out")
+        store.setTaskCompleted(id: bins, completed: true, now: morning)
+        guard let second = live(store, "Take the bins out").first else {
+            check(false, "fixture: completing the bins spawned no next instance")
+            return
+        }
+        store.setTaskCompleted(id: second.id, completed: true,
+                               now: dateTime(year: 2026, month: 11, day: 17, hour: 9, minute: 0))
+        store.setTaskCompleted(id: bins, completed: false, now: night)
+        let binsLive = live(ShiftStore(), "Take the bins out")
+        check(binsLive.count == 1 && binsLive.first?.id != bins,
+              "reopening an instance the series has moved past must leave the series one live record, got "
+              + "\(binsLive.map { "\($0.id == bins ? "reopened" : "live") \($0.dueDate ?? "")" })")
     }
 
     // MARK: R2-BUG-01 - a refused or failed month write keeps the task
