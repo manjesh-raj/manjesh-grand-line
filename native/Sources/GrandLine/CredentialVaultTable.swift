@@ -3,7 +3,7 @@
 // The two cells Poneglyph's credential table needs beyond `HelmDataTable`'s
 // own: the live 2FA code, and a row's Reveal and Copy.
 //
-// The sidebar layout draws Secrets › Poneglyph as the prototype's table
+// The sidebar layout draws Secrets › Secrets as the prototype's table
 // (`CredentialVaultController`'s "The sidebar layout" extension). Both cells
 // keep the list row's rules exactly, because they are the captain's own:
 //

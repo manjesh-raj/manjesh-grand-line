@@ -206,7 +206,7 @@ enum ModuleTableSelfTest {
         (.bootstrap, "Bootstrap", "hammer", .amber, "Set this machine up, and see what has drifted", .engineering, .setup, "Setup steps"),
         (.automation, "Automation", "bolt.fill", .amber, "Run every setup step in order, unattended", .engineering, .setup, "Automation"),
         (.githubSync, "GitHub Sync", "arrow.2.squarepath", .amber, "Pull upstream into each of your personal forks", .engineering, .setup, "GitHub sync"),
-        (.poneglyph, "Poneglyph", "doc.text.image", .amber, "Your credentials, encrypted and one click from the clipboard", .stores, .secrets, "Poneglyph"),
+        (.poneglyph, "Poneglyph", "doc.text.image", .amber, "Your credentials, encrypted and one click from the clipboard", .stores, .secrets, "Secrets"),
         (.settings, "Settings", "gearshape", .slate, "Connection, appearance, terminal, security and backup", .engineering, .settings, nil),
     ]
 
@@ -239,7 +239,7 @@ enum ModuleTableSelfTest {
         (.connections, "Connections", .work, ["Hosts", "Keys", "Snippets", "Commands"], "server.rack", .hosts, false),
         (.console, "Console", .work, [], "terminal", nil, false),
         (.knowledge, "Knowledge", .work, ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"], "books.vertical", nil, true),
-        (.secrets, "Secrets", .work, ["Poneglyph", "Automic Vault"], "key.fill", nil, true),
+        (.secrets, "Secrets", .work, ["Secrets", "Automic Vault"], "key.fill", nil, true),
         (.kubernetes, "Kubernetes", .observe, ["Cluster", "Log Tail"], "cube.transparent", .kubernetes, true),
         (.logs, "Logs", .observe, [], "text.magnifyingglass", nil, true),
         (.health, "Health", .observe, [], "waveform.path.ecg", nil, true),
