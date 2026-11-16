@@ -107,6 +107,14 @@ final class ShiftGitSync {
     private let pendingWork = GitSyncPendingWork()
     private var pullTimer: Timer?
 
+    /// R5 energy fix 5: on battery or in Low Power Mode the periodic pull
+    /// stretches from every `periodicPullInterval` to every 30 minutes. It is
+    /// a prefetch of another machine's edits, and a local edit still pushes
+    /// at once through `markDirty()`. Main thread only, like `pullTimer`.
+    static let reducedPowerPullInterval: TimeInterval = 30 * 60
+    private lazy var pullCadence = PowerAwareCadence(interval: periodicPullInterval,
+                                                     reducedInterval: Self.reducedPowerPullInterval)
+
     /// Set by `detectAndResolveConflicts()` whenever it finds real per-record
     /// conflicts (status flips to `.conflict`) - cleared once
     /// `resolveConflicts(choices:)` successfully applies a resolution. The UI
@@ -324,6 +332,9 @@ final class ShiftGitSync {
                 // own note on that failure mode) - the next tick after the
                 // captain comes back pulls as usual.
                 guard !AppActivityState.shared.isBackgrounded else { return }
+                let now = Date()
+                guard self.pullCadence.isDue(now: now, reduced: PowerSource.prefersReducedBackgroundWork()) else { return }
+                self.pullCadence.noteRun(at: now)
                 self.queue.async {
                     if self.pullNow() == .diverged { _ = self.detectAndResolveConflicts() }
                 }

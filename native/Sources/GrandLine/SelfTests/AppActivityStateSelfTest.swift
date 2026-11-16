@@ -165,8 +165,12 @@ enum AppActivityStateSelfTest {
         // slows a poller the captain is watching. The fleet's tick folds the
         // reading into `shouldSlowDown` with the on-screen one (R4-PERF-01);
         // `FleetIdleSweepSelfTest` asserts that result reaches the gate.
+        // The signals poller's tick goes through `timerTickShouldRun` since R5
+        // energy fix 5 (battery cadence), so both halves are pinned: the tick
+        // passes the real reading, and the helper hands it to the gate.
         for (file, needle) in [("FleetNotifier.swift", "Self.shouldSlowDown(backgrounded: AppActivityState.shared.isBackgrounded,"),
-                               ("BackgroundSignalsPoller.swift", "backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded)"),
+                               ("BackgroundSignalsPoller.swift", "backgrounded: AppActivityState.shared.isBackgrounded)"),
+                               ("BackgroundSignalsPoller.swift", "return backgroundedGate.shouldRun(backgrounded: backgrounded)"),
                                ("ShiftGitSync.swift", "!AppActivityState.shared.isBackgrounded")] {
             guard let text = source(file) else {
                 print("  SKIP: app sources not reachable from here")

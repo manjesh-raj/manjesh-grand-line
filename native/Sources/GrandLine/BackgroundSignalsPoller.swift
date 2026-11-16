@@ -55,6 +55,16 @@ final class BackgroundSignalsPoller {
     /// than repeating the literal.
     static let pollInterval: TimeInterval = 15 * 60
 
+    /// R5 energy fix 5: the cadence on battery or in Low Power Mode. Each
+    /// pass is the app's biggest burst of child processes and network calls,
+    /// and what it refreshes is FYI counts, so on battery an hour-old count is
+    /// the better trade. `checkNow()` (the manual "Check now") is not gated.
+    static let reducedPowerPollInterval: TimeInterval = 60 * 60
+
+    /// When the timer's tick may do a pass on reduced power. Every pass that
+    /// starts, timer or manual, is noted here.
+    private var powerCadence = PowerAwareCadence(interval: pollInterval, reducedInterval: reducedPowerPollInterval)
+
     /// How old a shared `DependencyCheckCache` entry may be and still satisfy
     /// **this poller's** sweep. Deliberately not `DependencyCheckCache.
     /// defaultTTL`, which is what the three Setup pages use.
@@ -388,7 +398,8 @@ final class BackgroundSignalsPoller {
             // `checkNow()`: that method is also the manual/deep-link entry
             // point ("Check now"), and a captain asking for a check must
             // always get one.
-            guard self.backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded) else { return }
+            guard self.timerTickShouldRun(now: Date(), reducedPower: PowerSource.prefersReducedBackgroundWork(),
+                                          backgrounded: AppActivityState.shared.isBackgrounded) else { return }
             self.checkNow()
         }
         t.tolerance = 30
@@ -398,6 +409,17 @@ final class BackgroundSignalsPoller {
     func stop() {
         timer?.invalidate()
         timer = nil
+    }
+
+    /// R5 energy fix 5: whether a timer tick does a pass.
+    ///
+    /// On reduced power the hourly cadence decides alone. It is already
+    /// slower than the backgrounded gate's every-other-tick, and consulting
+    /// both would stack them into two hours. On normal power the backgrounded
+    /// gate decides, exactly as before.
+    func timerTickShouldRun(now: Date, reducedPower: Bool, backgrounded: Bool) -> Bool {
+        if reducedPower { return powerCadence.isDue(now: now, reduced: true) }
+        return backgroundedGate.shouldRun(backgrounded: backgrounded)
     }
 
     /// Whether a new pass may start (GL-03), extracted so it can be tested
@@ -460,6 +482,7 @@ final class BackgroundSignalsPoller {
         }
         isChecking = true
         passStartedAt = Date()
+        powerCadence.noteRun(at: passStartedAt ?? Date())
         ServiceHealthRegistry.shared.markRunning(.backgroundSignals)
         currentPassID += 1
         let passID = currentPassID

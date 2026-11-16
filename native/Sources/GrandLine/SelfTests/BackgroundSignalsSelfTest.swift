@@ -49,6 +49,8 @@ enum BackgroundSignalsSelfTest {
         checkNoUnattendedAvList(&ok)
         checkVaultToolsPublish(&ok)
         checkAppPasswordRetryBackoff(&ok)
+        checkPowerAwareCadence(&ok)
+        checkPowerCadenceIsWired(&ok)
         print(ok ? "BackgroundSignalsSelfTest: all checks passed" : "BackgroundSignalsSelfTest: FAILED")
         return ok
     }
@@ -252,6 +254,94 @@ enum BackgroundSignalsSelfTest {
         check(code.contains("VaultSource.loadToolStatus"),
               "the poller no longer calls VaultSource.loadToolStatus - if the vault check was removed outright, remove this guard too and say so",
               &ok)
+    }
+
+    // MARK: R5 energy fix 5 - power-aware cadence
+
+    /// Ticks of `period` for `hours`, each up to 30 s late (the timers'
+    /// tolerance), counting the ones a cadence lets run.
+    private static func runs(of cadence: PowerAwareCadence, period: TimeInterval,
+                             hours: Double, reduced: Bool) -> Int {
+        var cadence = cadence
+        let start = Date()
+        var count = 0
+        var tick = 1
+        while Double(tick) * period <= hours * 3600 {
+            let now = start.addingTimeInterval(Double(tick) * period + Double(tick % 3) * 15)
+            if cadence.isDue(now: now, reduced: reduced) {
+                cadence.noteRun(at: now)
+                count += 1
+            }
+            tick += 1
+        }
+        return count
+    }
+
+    private static func checkPowerAwareCadence(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 5: the sweep and the Tasks pull slow down on battery --")
+        let sweep = PowerAwareCadence(interval: BackgroundSignalsPoller.pollInterval,
+                                      reducedInterval: BackgroundSignalsPoller.reducedPowerPollInterval)
+        check(BackgroundSignalsPoller.reducedPowerPollInterval == 60 * 60,
+              "the battery sweep cadence should be 60 minutes, is \(BackgroundSignalsPoller.reducedPowerPollInterval)s", &ok)
+        let sweepAC = runs(of: sweep, period: BackgroundSignalsPoller.pollInterval, hours: 4, reduced: false)
+        let sweepBattery = runs(of: sweep, period: BackgroundSignalsPoller.pollInterval, hours: 4, reduced: true)
+        check(sweepAC == 16, "on AC the sweep should run every 15-minute tick: 16 in 4 hours, got \(sweepAC)", &ok)
+        check(sweepBattery == 4, "on battery the sweep should run hourly: 4 in 4 hours, got \(sweepBattery)", &ok)
+
+        let pull = PowerAwareCadence(interval: 300, reducedInterval: ShiftGitSync.reducedPowerPullInterval)
+        check(ShiftGitSync.reducedPowerPullInterval == 30 * 60,
+              "the battery pull cadence should be 30 minutes, is \(ShiftGitSync.reducedPowerPullInterval)s", &ok)
+        let pullAC = runs(of: pull, period: 300, hours: 2, reduced: false)
+        let pullBattery = runs(of: pull, period: 300, hours: 2, reduced: true)
+        check(pullAC == 24, "on AC the Tasks pull should run every 5-minute tick: 24 in 2 hours, got \(pullAC)", &ok)
+        check(pullBattery == 4, "on battery the Tasks pull should run every 30 minutes: 4 in 2 hours, got \(pullBattery)", &ok)
+
+        // A manual "Check now" counts as a run, so the next battery tick waits
+        // a full hour after it rather than repeating it.
+        var manual = sweep
+        let start = Date()
+        manual.noteRun(at: start)
+        check(!manual.isDue(now: start.addingTimeInterval(45 * 60), reduced: true),
+              "a battery tick 45 minutes after a manual check should wait", &ok)
+        check(manual.isDue(now: start.addingTimeInterval(45 * 60), reduced: false),
+              "plugged in, the same tick should run - the stretch is battery-only", &ok)
+        check(manual.isDue(now: start.addingTimeInterval(60 * 60), reduced: true),
+              "a battery tick an hour after the last run should run", &ok)
+
+        // The poller's own tick decision, on the shared instance: on reduced
+        // power the hourly cadence alone decides, whatever the backgrounded
+        // gate would have said.
+        let poller = BackgroundSignalsPoller.shared
+        check(poller.timerTickShouldRun(now: Date(), reducedPower: true, backgrounded: true),
+              "the first battery tick of a session (no pass yet) should run", &ok)
+
+        PowerSource.reducedOverrideForTests = true
+        check(PowerSource.prefersReducedBackgroundWork(), "the test override should read as reduced power", &ok)
+        PowerSource.reducedOverrideForTests = false
+        check(!PowerSource.prefersReducedBackgroundWork(), "the test override should read as normal power", &ok)
+        PowerSource.reducedOverrideForTests = nil
+    }
+
+    /// Both timers have to ask. A cadence nobody consults is the failure this
+    /// guards against, and no headless suite can fire a 15-minute timer.
+    private static func checkPowerCadenceIsWired(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 5: both timers consult the power cadence --")
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            fail("source root not found - this check cannot run", &ok)
+            return
+        }
+        let poller = (try? String(contentsOf: root.appendingPathComponent("BackgroundSignalsPoller.swift"), encoding: .utf8))
+            .map(strippingComments) ?? ""
+        let shift = (try? String(contentsOf: root.appendingPathComponent("ShiftGitSync.swift"), encoding: .utf8))
+            .map(strippingComments) ?? ""
+        check(poller.contains("Timer.scheduledTimer") && shift.contains("Timer.scheduledTimer"),
+              "the poller or the Tasks sync no longer has its timer here - this guard is pointing at the wrong place", &ok)
+        check(poller.contains("timerTickShouldRun(now: Date(), reducedPower: PowerSource.prefersReducedBackgroundWork()"),
+              "the poller's timer tick no longer asks the power cadence", &ok)
+        check(poller.contains("powerCadence.noteRun("),
+              "the poller no longer notes its passes, so a manual check would not reset the battery cadence", &ok)
+        check(shift.contains("pullCadence.isDue(now: now, reduced: PowerSource.prefersReducedBackgroundWork())"),
+              "the Tasks pull timer no longer asks the power cadence", &ok)
     }
 
     /// Drops `//` line comments and `/* */` blocks so a source guard matches
