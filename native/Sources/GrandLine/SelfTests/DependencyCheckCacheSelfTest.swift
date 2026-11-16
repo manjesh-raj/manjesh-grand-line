@@ -48,6 +48,8 @@ enum DependencyCheckCacheSelfTest {
         checkPollerWindowCannotBeSatisfiedByThePreviousPollerSweep(&ok)
         checkPollerSweepDoesNotBypassTheSharedCache(&ok)
         checkAWaiterChecksForItselfAfterOneTimeout(&ok)
+        checkATimedOutWaiterReturnsTheStaleAnswer(&ok)
+        checkACancelledCheckIsNeverKept(&ok)
         print(ok ? "DependencyCheckCacheSelfTest: all checks passed" : "DependencyCheckCacheSelfTest: FAILED")
         DependencyCheckCache.checkOverrideForTests = nil
         return ok
@@ -96,6 +98,73 @@ enum DependencyCheckCacheSelfTest {
             fail("REL-28: a waiter on a hung check never returned - it keeps waiting instead of checking itself", &ok)
         } else if !waiterDetail.contains("call-2") {
             fail("REL-28: the waiter should have run its own check, got \"\(waiterDetail)\"", &ok)
+        }
+    }
+
+    /// R5 energy fix 6: a waiter that gives up on a hung check returns the
+    /// last answer it can find rather than running a duplicate beside it.
+    /// Only a cache with no answer at all runs its own (REL-28, above).
+    private static func checkATimedOutWaiterReturnsTheStaleAnswer(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 6: a waiter that times out returns the stale answer, no duplicate --")
+        let previous = DependencyCheckCache.inFlightWaitTimeout
+        DependencyCheckCache.debugSetInFlightWaitTimeout(0.3)
+        defer { DependencyCheckCache.debugSetInFlightWaitTimeout(previous) }
+        let cache = DependencyCheckCache()
+        let item = fakeItem("r5-stale-tool")
+        let hungStarted = DispatchSemaphore(value: 0)
+        let releaseHung = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var calls = 0
+        DependencyCheckCache.checkOverrideForTests = { item in
+            lock.lock(); calls += 1; let call = calls; lock.unlock()
+            if call == 2 {
+                hungStarted.signal()
+                releaseHung.wait()
+            }
+            return fakeOutcome(for: "\(item.id)-call-\(call)")
+        }
+        _ = cache.check(item)
+        let hungDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            _ = cache.check(item, forceRefresh: true)
+            hungDone.signal()
+        }
+        hungStarted.wait()
+        let waiterDone = DispatchSemaphore(value: 0)
+        var waiter: (outcome: CheckOutcome, gatheredAt: Date)?
+        DispatchQueue.global(qos: .utility).async {
+            waiter = cache.checkDated(item, maxAge: 0)
+            waiterDone.signal()
+        }
+        let returned = waiterDone.wait(timeout: .now() + 3) == .success
+        lock.lock(); let callsWhileHung = calls; lock.unlock()
+        releaseHung.signal()
+        _ = hungDone.wait(timeout: .now() + 10)
+        if !returned {
+            fail("R5: a waiter on a hung check never returned", &ok)
+        } else if callsWhileHung != 2 {
+            fail("R5: the waiter ran a duplicate check beside the hung one (\(callsWhileHung) checks, want 2)", &ok)
+        } else if waiter?.outcome.detail.contains("call-1") != true {
+            fail("R5: the waiter should return the earlier answer, got \"\(waiter?.outcome.detail ?? "nil")\"", &ok)
+        }
+    }
+
+    /// A check whose children were killed by its own caller's cancellation
+    /// (the sweep's watchdog) is not an answer, and must not be served to the
+    /// next page that asks.
+    private static func checkACancelledCheckIsNeverKept(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 6: a check cancelled mid-run is never cached --")
+        let cache = DependencyCheckCache()
+        let item = fakeItem("r5-cancelled-tool")
+        let token = SubprocessCancellation()
+        DependencyCheckCache.checkOverrideForTests = { item in
+            token.cancel()
+            return CheckOutcome(installedLabel: "1.0.0", latestLabel: nil, status: .checkFailed,
+                                detail: "\(item.id) killed", log: "")
+        }
+        _ = SubprocessCancellation.withScope(token) { cache.check(item) }
+        if cache.cachedOutcome(for: item) != nil {
+            fail("R5: a check cancelled mid-run was cached - the next page would read the poller's own kill as a failure", &ok)
         }
     }
 

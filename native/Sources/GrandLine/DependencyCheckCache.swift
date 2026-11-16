@@ -156,9 +156,9 @@ final class DependencyCheckCache {
     /// for the truth never gets served a stale answer, and the refreshed
     /// truth is what every other page sees next.
     /// How long a coalesced waiter blocks on the in-flight runner before
-    /// giving up and checking for itself. Comfortably longer than a real
-    /// check; short enough that a wedged one cannot park a pool thread
-    /// indefinitely.
+    /// giving up. Comfortably longer than a real check; short enough that a
+    /// wedged one cannot park a pool thread indefinitely. What it does then is
+    /// `checkDated`'s R5 energy fix 6 note.
     private(set) static var inFlightWaitTimeout: TimeInterval = 120
 
     func check(_ item: DependencyItem, forceRefresh: Bool = false, maxAge: TimeInterval = defaultTTL) -> CheckOutcome {
@@ -205,7 +205,19 @@ final class DependencyCheckCache {
                 // registration still in `inFlight`, and wait again - forever,
                 // while the comment above promised it would check for itself.
                 if group.wait(timeout: .now() + Self.inFlightWaitTimeout) == .timedOut {
-                    AppLog.poller.error("dependency check: \(item.id, privacy: .public) waited \(Self.inFlightWaitTimeout, privacy: .public)s on another check - running its own")
+                    // R5 energy fix 6: a waiter that gives up returns the last
+                    // answer it can find, of any age, with its real gather
+                    // time, rather than starting a second check beside the
+                    // first. Under load that duplicate was what the review saw
+                    // (`gh-axi` checked three times in 90 seconds), and it ran
+                    // exactly when the first was about to finish. Only with no
+                    // answer at all does it run its own, since GL-14 forbids
+                    // making one up.
+                    if let stale = staleOutcome(for: item) {
+                        AppLog.poller.error("dependency check: \(item.id, privacy: .public) waited \(Self.inFlightWaitTimeout, privacy: .public)s on another check - returning the answer from \(stale.gatheredAt, privacy: .public)")
+                        return stale
+                    }
+                    AppLog.poller.error("dependency check: \(item.id, privacy: .public) waited \(Self.inFlightWaitTimeout, privacy: .public)s on another check and has no earlier answer - running its own")
                     gaveUpWaiting = true
                 }
                 continue
@@ -222,15 +234,26 @@ final class DependencyCheckCache {
             let outcome = runner(item)
 
             let gatheredAt = Date()
-            records?.record(outcome, for: item.id, at: gatheredAt)
+            // A check whose children a cancelled caller killed (the sweep's
+            // watchdog, R5 energy fix 6) reads as a failure of our own
+            // making. It goes back to that caller, which publishes nothing,
+            // and is never kept for anyone else.
+            let cancelled = SubprocessCancellation.scoped?.isCancelled ?? false
+            if !cancelled { records?.record(outcome, for: item.id, at: gatheredAt) }
             lock.lock()
-            entries[item.id] = Entry(outcome: outcome, checkedAt: gatheredAt)
+            if !cancelled { entries[item.id] = Entry(outcome: outcome, checkedAt: gatheredAt) }
             // Identity-checked: only the runner that registered clears it.
             if inFlight[item.id] === group { inFlight.removeValue(forKey: item.id) }
             lock.unlock()
             group.leave()
             return (outcome, gatheredAt)
         }
+    }
+
+    /// The newest answer for `item` of any age: this session's entry or the
+    /// record an earlier launch kept.
+    private func staleOutcome(for item: DependencyItem) -> (outcome: CheckOutcome, gatheredAt: Date)? {
+        recentOutcome(for: item, maxAge: .infinity)
     }
 
     /// Drops a single item's cached entry, if any - not called by any

@@ -126,17 +126,19 @@ final class BackgroundSignalsPoller {
     // previous one has clearly wedged, plus a "last completed" timestamp so
     // the failure is at least observable instead of invisible.
     //
-    // Note what this deliberately does NOT do: it does not kill the wedged
-    // pass (there is no handle to its children yet - that is the phase-2
-    // runner's job). A superseded pass may still be running and may still
-    // publish its own results later; every one of those publishes is an
-    // idempotent `NotificationSources.set*` call with a freshly-computed
-    // count, so a late writer is stale-but-valid, never corrupting.
+    // R5 energy fix 6 replaced "start a second pass beside it" with
+    // cancellation. The review's child log caught the old supersede running
+    // two sweeps at once (`npm ls -g gh-axi` from two passes 148 s apart), and
+    // on a loaded machine a pass genuinely ran past the watchdog. Every pass
+    // now runs inside `SubprocessCancellation.withScope` with its own token.
+    // A hung pass is cancelled, which terminates its running child and stops
+    // it at its next step, it publishes nothing, and the pass that was asked
+    // for starts once it has returned. Two passes never run at once.
 
-    /// How long a single pass may run before a new tick is allowed to start
-    /// anyway. Generous on purpose: a genuinely slow (not hung) pass on a
-    /// cold `brew`/`gh` cache can legitimately take minutes, and starting a
-    /// second pass alongside it costs real process spawns.
+    /// How long a single pass may run before the next request cancels it.
+    /// Generous on purpose: a genuinely slow (not hung) pass on a cold
+    /// `brew`/`gh` cache can legitimately take minutes, and a cancelled pass
+    /// throws that work away.
     ///
     /// `static` for the same reason as `pollInterval`: `sharedCheckMaxAge`'s
     /// own bound is expressed against it.
@@ -145,11 +147,17 @@ final class BackgroundSignalsPoller {
     /// When the currently-running pass started, `nil` if none is running.
     private var passStartedAt: Date?
 
-    /// Identifies the pass that currently "owns" the latch. A pass the
-    /// watchdog superseded still finishes eventually and still reaches the
-    /// completion block - without this it would clear the latch out from under
-    /// the newer pass that replaced it, letting a third pass start alongside
-    /// the second. Only the pass whose id still matches may clear it.
+    /// The running pass's cancellation, `nil` if none is running.
+    private var passToken: SubprocessCancellation?
+
+    /// A pass was asked for while a hung one was being cancelled, so one
+    /// starts as soon as the cancelled pass returns.
+    private var passRequestedAfterCancel = false
+
+    /// Identifies the pass that currently "owns" the latch. Only the pass
+    /// whose id still matches may clear it. Since passes no longer overlap
+    /// this is always the finishing pass, and it stays as the guard that keeps
+    /// it so.
     private var currentPassID = 0
 
     /// When a pass last ran all four checks to completion. `nil` means no
@@ -157,9 +165,9 @@ final class BackgroundSignalsPoller {
     /// this a real home; for now it is readable and logged).
     private(set) var lastCompletedPassAt: Date?
 
-    /// How many passes were force-superseded by the watchdog. Non-zero means
-    /// something in the check path is hanging and deserves attention.
-    private(set) var supersededPassCount = 0
+    /// How many passes the watchdog cancelled. Non-zero means something in
+    /// the check path is hanging and deserves attention.
+    private(set) var cancelledPassCount = 0
 
     // MARK: F12 - the counts this poller already computed
     //
@@ -432,9 +440,10 @@ final class BackgroundSignalsPoller {
         /// Something is running and has not exceeded the watchdog. This is the
         /// normal skip, and the one that used to be permanent.
         case refused
-        /// Something has been running longer than the watchdog: start anyway,
-        /// and say so. `ageSeconds` is what the log/health message reports.
-        case supersede(ageSeconds: Int)
+        /// Something has been running longer than the watchdog: cancel it, and
+        /// start the requested pass once it has returned. Never alongside it.
+        /// `ageSeconds` is what the log/health message reports.
+        case cancelHung(ageSeconds: Int)
     }
 
     static func admit(isChecking: Bool, passStartedAt: Date?,
@@ -446,13 +455,35 @@ final class BackgroundSignalsPoller {
         guard let passStartedAt else { return .refused }
         let age = now.timeIntervalSince(passStartedAt)
         guard age > watchdog else { return .refused }
-        return .supersede(ageSeconds: Int(age))
+        return .cancelHung(ageSeconds: Int(age))
     }
 
-    /// Only the pass that still owns the latch may release it. A superseded
-    /// pass finishes eventually and reaches the same completion block; if it
-    /// cleared the latch there, it would clear it out from under its own
-    /// replacement and a third pass would start alongside the second.
+    #if FM_SELFTESTS
+    /// Puts the poller in the state a pass running since `startedAt` leaves
+    /// it in, without running one, and hands back that pass's token.
+    func debugSimulateRunningPass(startedAt: Date) -> SubprocessCancellation {
+        let token = SubprocessCancellation()
+        isChecking = true
+        passStartedAt = startedAt
+        passToken = token
+        currentPassID += 1
+        return token
+    }
+
+    var debugCurrentPassID: Int { currentPassID }
+    var debugPassRequestedAfterCancel: Bool { passRequestedAfterCancel }
+
+    /// Clears what `debugSimulateRunningPass` set, without the follow-up pass
+    /// a real finish would start.
+    func debugEndSimulatedPass() {
+        isChecking = false
+        passStartedAt = nil
+        passToken = nil
+        passRequestedAfterCancel = false
+    }
+    #endif
+
+    /// Only the pass that still owns the latch may release it.
     static func mayReleaseLatch(finishingPassID: Int, currentPassID: Int) -> Bool {
         finishingPassID == currentPassID
     }
@@ -467,18 +498,27 @@ final class BackgroundSignalsPoller {
             return
         case .start:
             break
-        case .supersede(let age):
-            supersededPassCount += 1
+        case .cancelHung(let age):
+            // Once per hung pass: a second request while it winds down only
+            // asks for the same follow-up pass.
+            guard passToken?.isCancelled == false else {
+                passRequestedAfterCancel = true
+                return
+            }
+            cancelledPassCount += 1
             AppLog.poller.error("""
-                background signals: pass started \(age)s ago has not finished - starting a new one \
-                anyway (GL-03 watchdog, \(self.supersededPassCount) so far this session).
+                background signals: pass started \(age)s ago has not finished - cancelling it and \
+                starting a new one when it returns (GL-03 watchdog, \(self.cancelledPassCount) so far this session).
                 """)
-            // A superseded pass is exactly the invisible failure F1 exists to
+            // A hung pass is exactly the invisible failure F1 exists to
             // surface: something in the check path is hanging, and until now
             // nothing anywhere said so.
             ServiceHealthRegistry.shared.recordFailure(
                 .backgroundSignals,
-                "A check pass has been running for \(age)s without finishing (watchdog fired \(supersededPassCount)x).")
+                "A check pass has been running for \(age)s without finishing (watchdog fired \(cancelledPassCount)x).")
+            passRequestedAfterCancel = true
+            passToken?.cancel()
+            return
         }
         isChecking = true
         passStartedAt = Date()
@@ -486,32 +526,50 @@ final class BackgroundSignalsPoller {
         ServiceHealthRegistry.shared.markRunning(.backgroundSignals)
         currentPassID += 1
         let passID = currentPassID
+        let token = SubprocessCancellation()
+        passToken = token
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            // Computed once and shared with `checkSetupDrift` below (the
-            // Software checklist step reads the exact same per-item outcomes)
-            // rather than shelling out to `brew`/`npm` twice for the same
-            // catalog in one poll pass. See `sweepSoftware`.
-            let (softwareSamples, softwareGatheredAt) = Self.sweepSoftware()
-            let softwareStatuses = softwareSamples.map { $0.outcome.status }
-            self.checkToolUpdates(samples: softwareSamples, gatheredAt: softwareGatheredAt)
-            self.checkGitHubSync()
-            self.checkVault()
-            // The software half of setup drift is the sweep above, so this
-            // reading is only as new as that sweep was.
-            self.checkSetupDrift(softwareStatuses: softwareStatuses, gatheredAt: softwareGatheredAt)
+            SubprocessCancellation.withScope(token) { self.runPass(token: token) }
             DispatchQueue.main.async {
-                // Every completed pass counts as a real completion for
-                // diagnostics, even a superseded one - it did finish.
-                self.lastCompletedPassAt = Date()
-                ServiceHealthRegistry.shared.recordSuccess(.backgroundSignals)
-                // ...but only the pass that still owns the latch may release
-                // it. See `currentPassID`.
+                // A cancelled pass published nothing and did not complete.
+                if !token.isCancelled {
+                    self.lastCompletedPassAt = Date()
+                    ServiceHealthRegistry.shared.recordSuccess(.backgroundSignals)
+                }
                 guard Self.mayReleaseLatch(finishingPassID: passID, currentPassID: self.currentPassID) else { return }
                 self.isChecking = false
                 self.passStartedAt = nil
+                self.passToken = nil
+                if self.passRequestedAfterCancel {
+                    self.passRequestedAfterCancel = false
+                    self.checkNow()
+                }
             }
         }
+    }
+
+    /// One pass's four checks, in order, inside the pass's cancellation
+    /// scope. A cancelled pass stops at its next step and publishes nothing:
+    /// what it gathered after its child was killed is a failure of our own
+    /// making, not a reading.
+    private func runPass(token: SubprocessCancellation) {
+        // Computed once and shared with `checkSetupDrift` below (the
+        // Software checklist step reads the exact same per-item outcomes)
+        // rather than shelling out to `brew`/`npm` twice for the same
+        // catalog in one poll pass. See `sweepSoftware`.
+        let (softwareSamples, softwareGatheredAt) = Self.sweepSoftware()
+        guard !token.isCancelled else { return }
+        let softwareStatuses = softwareSamples.map { $0.outcome.status }
+        checkToolUpdates(samples: softwareSamples, gatheredAt: softwareGatheredAt)
+        guard !token.isCancelled else { return }
+        checkGitHubSync(token: token)
+        guard !token.isCancelled else { return }
+        checkVault(token: token)
+        guard !token.isCancelled else { return }
+        // The software half of setup drift is the sweep above, so this
+        // reading is only as new as that sweep was.
+        checkSetupDrift(softwareStatuses: softwareStatuses, gatheredAt: softwareGatheredAt, token: token)
     }
 
     /// The 13-item `DependencyCatalog` sweep, and the one piece of this
@@ -548,8 +606,12 @@ final class BackgroundSignalsPoller {
     static func sweepSoftware(cache: DependencyCheckCache = .shared,
                               items: [DependencyItem] = DependencyCatalog.items)
         -> (samples: [SoftwareSample], gatheredAt: Date) {
-        let sampled = items.map {
-            ($0, cache.checkDated($0, forceRefresh: false, maxAge: sharedCheckMaxAge))
+        // R5 energy fix 6: a cancelled pass stops asking. The rest of the
+        // catalog would only be killed at launch, one child at a time.
+        var sampled: [(DependencyItem, (outcome: CheckOutcome, gatheredAt: Date))] = []
+        for item in items {
+            if SubprocessCancellation.scoped?.isCancelled == true { break }
+            sampled.append((item, cache.checkDated(item, forceRefresh: false, maxAge: sharedCheckMaxAge)))
         }
         // `min()` is nil only for an empty catalog, which never happens;
         // `Date()` is the honest answer for "nothing contributed" anyway.
@@ -593,7 +655,7 @@ final class BackgroundSignalsPoller {
 
     // MARK: #4 - GitHub Sync
 
-    private func checkGitHubSync() {
+    private func checkGitHubSync(token: SubprocessCancellation) {
         let repos = GitHubSyncCatalog.repos
         // The whole outcome, not just `.status` - same reason as the software
         // sweep above: `.detail` is the "12 commits behind kunchenguid/gh-axi"
@@ -601,10 +663,13 @@ final class BackgroundSignalsPoller {
         // check before the GitHub Sync page has ever been opened. Each fork is
         // stamped when its own check started, since the sweep is sequential
         // and takes tens of seconds end to end.
-        let readings = repos.map { repo -> ForkReading in
+        var readings: [ForkReading] = []
+        for repo in repos {
+            guard !token.isCancelled else { return }
             let gatheredAt = Date()
-            return Self.reading(repo, GitHubSyncSource.check(repo), gatheredAt: gatheredAt)
+            readings.append(Self.reading(repo, GitHubSyncSource.check(repo), gatheredAt: gatheredAt))
         }
+        guard !token.isCancelled else { return }
         DispatchQueue.main.async { [weak self] in
             self?.publishForkReadings(readings)
         }
@@ -655,7 +720,7 @@ final class BackgroundSignalsPoller {
     /// "hasn't been checked yet this session" rather than as a zero (GL-14).
     /// The **attention** count - the actual Notification Center signal - is
     /// unaffected and still refreshes on this poller's full cadence.
-    private func checkVault() {
+    private func checkVault(token: SubprocessCancellation) {
         let gatheredAt = Date()
         let tools = VaultSource.loadToolStatus()
         // B1: an `av` read that failed is not "nothing needs attention".
@@ -664,6 +729,7 @@ final class BackgroundSignalsPoller {
         // which is what the Vault canvas card renders honestly. Logged here
         // rather than there because only this caller knows the read was a
         // scheduled pass rather than a page's own load.
+        guard !token.isCancelled else { return }
         if tools == nil {
             AppLog.poller.info("vault check skipped: av doctor read failed, leaving the count unchanged")
         }
@@ -693,7 +759,8 @@ final class BackgroundSignalsPoller {
          StoreLoadFailure.peekArrayCount(at: SnippetStore.storeURL()) ?? 0)
     }
 
-    private func checkSetupDrift(softwareStatuses: [DependencyStatus], gatheredAt: Date) {
+    private func checkSetupDrift(softwareStatuses: [DependencyStatus], gatheredAt: Date,
+                                 token: SubprocessCancellation) {
         let firstmateHome = SetupStepChecks.firstmateHomeDone()
 
         var dotfilesState: DotfilesRepoState?
@@ -729,6 +796,7 @@ final class BackgroundSignalsPoller {
             .restoreConfig: restoreConfigDone,
         ]
 
+        guard !token.isCancelled else { return }
         DispatchQueue.main.async { [weak self] in
             self?.publishSetupStepResults(results, gatheredAt: gatheredAt)
         }

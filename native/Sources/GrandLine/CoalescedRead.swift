@@ -96,9 +96,13 @@ final class CoalescedRead<Value> {
         lock.unlock()
 
         let value = fetch()
+        // A read whose children were killed by a cancelled caller (the
+        // background sweep's watchdog, R5 energy fix 6) is a failure of our own
+        // making, never an answer to share.
+        let cancelled = SubprocessCancellation.scoped?.isCancelled ?? false
 
         lock.lock()
-        if generation == mine { stored = (value, Date(), mine) }
+        if generation == mine, !cancelled { stored = (value, Date(), mine) }
         if inFlight?.group === group { inFlight = nil }
         lock.unlock()
         group.leave()

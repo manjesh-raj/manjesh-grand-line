@@ -43,6 +43,7 @@ enum BackgroundSignalsSelfTest {
     static func run() -> Bool {
         var ok = true
         checkPassAdmission(&ok)
+        checkAHungPassIsCancelledNotOverlapped(&ok)
         checkSetupCountsNeverLoadAStore(&ok)
         checkLatchRelease(&ok)
         checkHealthVerdicts(&ok)
@@ -118,7 +119,7 @@ enum BackgroundSignalsSelfTest {
         // Busy and young: the ordinary skip.
         if BackgroundSignalsPoller.admit(isChecking: true, passStartedAt: now.addingTimeInterval(-30),
                                          now: now, watchdog: watchdog) != .refused {
-            fail("a pass 30s into a 300s watchdog was superseded - that is just piling on", &ok)
+            fail("a pass 30s into a 300s watchdog was cancelled - it is just slow", &ok)
         }
         // Exactly at the watchdog is still young: strictly greater, so the
         // boundary can never flap between two ticks landing on the same second.
@@ -126,19 +127,43 @@ enum BackgroundSignalsSelfTest {
                                          now: now, watchdog: watchdog) != .refused {
             fail("the watchdog boundary is inclusive - it should need to be genuinely exceeded", &ok)
         }
-        // Busy and hung: supersede, and report how long it has been.
+        // Busy and hung: cancel it, and report how long it has been.
         switch BackgroundSignalsPoller.admit(isChecking: true, passStartedAt: now.addingTimeInterval(-601),
                                              now: now, watchdog: watchdog) {
-        case .supersede(let age):
-            if age < 600 { fail("superseded pass reported an age of \(age)s, want ~601", &ok) }
+        case .cancelHung(let age):
+            if age < 600 { fail("the hung pass reported an age of \(age)s, want ~601", &ok) }
         default:
-            fail("a pass hung for 601s past a 300s watchdog was not superseded - this is the GL-03 bug", &ok)
+            fail("a pass hung for 601s past a 300s watchdog was not cancelled - this is the GL-03 bug", &ok)
         }
         // Busy with no start time at all is a broken state, not a licence.
         if BackgroundSignalsPoller.admit(isChecking: true, passStartedAt: nil, now: now, watchdog: watchdog) != .refused {
             fail("a held latch with no start time started another pass anyway", &ok)
         }
-        print("  OK - idle starts, young refuses, hung supersedes with a real age")
+        print("  OK - idle starts, young refuses, hung is cancelled with a real age")
+    }
+
+    /// R5 energy fix 6: a hung pass is cancelled, and nothing starts beside
+    /// it. The old supersede started a second pass at once, and the review's
+    /// child log caught two sweeps checking the same npm package 148 s apart.
+    /// Driven on the shared poller with a simulated running pass, so no real
+    /// pass (and no subprocess) ever starts here.
+    private static func checkAHungPassIsCancelledNotOverlapped(_ ok: inout Bool) {
+        print("\n-- R5 energy fix 6: a hung pass is cancelled, never run beside --")
+        let poller = BackgroundSignalsPoller.shared
+        let token = poller.debugSimulateRunningPass(
+            startedAt: Date().addingTimeInterval(-(BackgroundSignalsPoller.passWatchdog + 60)))
+        defer { poller.debugEndSimulatedPass() }
+        let passID = poller.debugCurrentPassID
+        let cancelledBefore = poller.cancelledPassCount
+        poller.checkNow()
+        check(token.isCancelled, "the hung pass's token should be cancelled, so its running child is terminated", &ok)
+        check(poller.debugCurrentPassID == passID,
+              "a new pass started beside the hung one (pass id \(passID) -> \(poller.debugCurrentPassID)) - passes overlap", &ok)
+        check(poller.debugPassRequestedAfterCancel,
+              "the requested pass should be queued to start when the cancelled one returns", &ok)
+        poller.checkNow()
+        check(poller.cancelledPassCount == cancelledBefore + 1 && poller.debugCurrentPassID == passID,
+              "a second request while the hung pass winds down should neither cancel again nor start a pass", &ok)
     }
 
     private static func checkLatchRelease(_ ok: inout Bool) {
@@ -239,7 +264,7 @@ enum BackgroundSignalsSelfTest {
         }
         // Discriminating power first: if the fixture ever stops being the file
         // this check thinks it is, every assertion below passes vacuously.
-        check(source.contains("private func checkVault()"),
+        check(source.contains("private func checkVault("),
               "the poller's vault check is not in this file any more - this guard is pointing at the wrong place",
               &ok)
 
