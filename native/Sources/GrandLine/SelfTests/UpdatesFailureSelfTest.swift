@@ -183,7 +183,10 @@ enum UpdatesFailureSelfTest {
     /// must be recorded exactly once.
     private static func test_seamIsThreadSafe() -> String? {
         fakeUpdates([:])
-        let item = DependencyItem(id: "seam-race", name: "seam-race", category: "Test", kind: .npmGlobal(package: "seam-race"))
+        // Not an npm or Homebrew item: those share one batch read between
+        // concurrent checks (R5 energy fixes 2 and 3), so their per-check call
+        // count is not fixed. no-mistakes makes the same calls every time.
+        let item = DependencyItem(id: "seam-race", name: "seam-race", category: "Test", kind: .noMistakes)
         let threads = 8, perThread = 200
         DispatchQueue.concurrentPerform(iterations: threads) { _ in
             for _ in 0..<perThread { _ = UpdatesSource.check(item) }

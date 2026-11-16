@@ -67,6 +67,11 @@ enum SetupDataLayerSelfTest {
             ("aFailedCaskUpgradeNamesBrewsOwnError", test_caskUpgradeFailureNamesTheError),
             ("npmVersionsMapOntoTheRightStatus", test_npmStatusMapping),
             ("anNpmCheckRunsNpmLsOnceAndLogsFromItsJSON", test_npmLogComesFromTheJSONRead),
+            ("everyNpmPackageSharesOneLsAndOneOutdated", test_npmPackagesShareOneRead),
+            ("npmOutdatedRepliesParseIncludingTheErrorShape", test_npmOutdatedParse),
+            ("anUnreachableRegistryIsCheckFailedNotUpToDate", test_npmRegistryFailure),
+            ("anUninstalledNpmPackageStillNamesTheLatest", test_npmUninstalledNamesLatest),
+            ("anNpmUpdateDropsTheSharedRead", test_npmUpdateInvalidates),
             ("aMissingToolIsAReportedFailureNotACrash", test_missingToolIsReported),
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
             ("dotfilesReadsBranchRemoteAndDirtyFilesFromGit", test_dotfilesParsesGit),
@@ -349,7 +354,7 @@ enum SetupDataLayerSelfTest {
 
         // Same version installed and latest -> up to date.
         fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
-                     "view": result("1.2.3")])
+                     "outdated": result("{}")])
         let same = UpdatesSource.check(item)
         guard same.status == .upToDate else {
             return "equal versions should be .upToDate, got \(same.status) (\(same.detail))"
@@ -358,7 +363,7 @@ enum SetupDataLayerSelfTest {
         // Newer available -> update available.
         UpdatesDataTestSeam.reset()
         fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
-                     "view": result("1.3.0")])
+                     "outdated": result(#"{"gh-axi":{"current":"1.2.3","wanted":"1.3.0","latest":"1.3.0"}}"#, status: 1)])
         let newer = UpdatesSource.check(item)
         guard newer.status == .updateAvailable else {
             return "a newer latest should be .updateAvailable, got \(newer.status) (\(newer.detail))"
@@ -375,7 +380,7 @@ enum SetupDataLayerSelfTest {
     private static func test_npmLogComesFromTheJSONRead() -> String? {
         let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
         fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
-                     "view": result("1.3.0")])
+                     "outdated": result("{}")])
         let outcome = UpdatesSource.check(item)
         let lsCalls = UpdatesDataTestSeam.invocations.filter { $0.args.first == "ls" }
         guard lsCalls.count == 1 else {
@@ -386,6 +391,114 @@ enum SetupDataLayerSelfTest {
         }
         guard outcome.log.contains("gh-axi@1.2.3") else {
             return "the log should still say what is installed, got: \(outcome.log)"
+        }
+        return nil
+    }
+
+    private static let npmCatalogItems = DependencyCatalog.items.filter {
+        if case .npmGlobal = $0.kind { return true } else { return false }
+    }
+
+    /// R5 energy fix 2: the five npm rows used to cost five `npm ls` plus five
+    /// `npm view` per sweep. A sweep of all of them is now one of each read,
+    /// and no per-package registry call at all while they are installed.
+    private static func test_npmPackagesShareOneRead() -> String? {
+        guard npmCatalogItems.count > 1 else { return "the catalog has \(npmCatalogItems.count) npm items - the case is vacuous" }
+        let installed = npmCatalogItems.map { "\"\($0.id)\":{\"version\":\"1.0.0\"}" }.joined(separator: ",")
+        fakeUpdates(["ls": result("{\"dependencies\":{\(installed)}}"),
+                     "outdated": result(#"{"gh-axi":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}"#, status: 1)])
+        let outcomes = npmCatalogItems.map { UpdatesSource.check($0) }
+        let calls = UpdatesDataTestSeam.invocations.map { $0.args.first ?? "" }
+        let ls = calls.filter { $0 == "ls" }.count, outdated = calls.filter { $0 == "outdated" }.count
+        let view = calls.filter { $0 == "view" }.count
+        guard ls == 1, outdated == 1, view == 0 else {
+            return "\(npmCatalogItems.count) npm checks ran ls x\(ls), outdated x\(outdated), view x\(view) - want 1, 1 and 0"
+        }
+        guard let outdatedArgs = UpdatesDataTestSeam.invocations.first(where: { $0.args.first == "outdated" })?.args,
+              outdatedArgs.contains("-g"), outdatedArgs.contains("--json"),
+              npmCatalogItems.allSatisfy({ outdatedArgs.contains($0.id) }) else {
+            return "the one `npm outdated` must be global, JSON, and name every catalog package"
+        }
+        for (item, outcome) in zip(npmCatalogItems, outcomes) {
+            let want: DependencyStatus = item.id == "gh-axi" ? .updateAvailable : .upToDate
+            guard outcome.status == want else {
+                return "\(item.id) read \(outcome.status) (\(outcome.detail)) from the shared read, want \(want)"
+            }
+        }
+        return nil
+    }
+
+    /// The three reply shapes measured from npm 11 on this machine: `{}` for
+    /// all current, one entry per outdated package (with exit 1), and an
+    /// `error` object when the registry was unreachable (also exit 1).
+    private static func test_npmOutdatedParse() -> String? {
+        guard NpmGlobalReading.parseOutdated("{}") == [:] else { return "`{}` must parse to nothing outdated" }
+        let behind = NpmGlobalReading.parseOutdated(
+            #"{"gh-axi":{"current":"0.1.40","wanted":"0.1.51","latest":"0.1.51","dependent":"lib","location":"/x/lib/node_modules/gh-axi"}}"#)
+        guard behind?["gh-axi"] == .init(current: "0.1.40", latest: "0.1.51") else {
+            return "an outdated entry should read current 0.1.40 latest 0.1.51, got \(String(describing: behind))"
+        }
+        let error = #"{"error":{"code":"ECONNREFUSED","summary":"FetchError: request to http://127.0.0.1:9/gh-axi failed"}}"#
+        guard NpmGlobalReading.parseOutdated(error) == nil else {
+            return "an `error` reply must read as a failure, never as an empty (all current) list"
+        }
+        guard NpmGlobalReading.parseOutdated("") == nil, NpmGlobalReading.parseOutdated("npm ERR! boom") == nil else {
+            return "a reply that is not JSON must read as a failure"
+        }
+        return nil
+    }
+
+    /// GL-14: a registry that did not answer is not "everything is current",
+    /// even though `npm outdated` then lists nothing.
+    private static func test_npmRegistryFailure() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
+                     "outdated": result(#"{"error":{"code":"ENOTFOUND","summary":"getaddrinfo ENOTFOUND registry.npmjs.org"}}"#,
+                                        stderr: "npm error code ENOTFOUND", status: 1)])
+        let outcome = UpdatesSource.check(item)
+        guard outcome.status == .checkFailed,
+              outcome.detail == "Installed 1.2.3 - could not reach npm registry for the latest version" else {
+            return "an unreachable registry must be .checkFailed with the old detail, got \(outcome.status) (\(outcome.detail))"
+        }
+        guard outcome.log.contains("ENOTFOUND") else { return "the log dropped npm's own error: \(outcome.log)" }
+        return nil
+    }
+
+    /// `npm outdated` says nothing about a package that is not installed, so
+    /// that one row still asks the registry, and still names the version.
+    private static func test_npmUninstalledNamesLatest() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"name":"lib"}"#, status: 1), "outdated": result("{}"), "view": result("2.0.0")])
+        let outcome = UpdatesSource.check(item)
+        guard outcome.status == .notInstalled, outcome.detail == "Not installed - 2.0.0 available" else {
+            return "a missing package should read \"Not installed - 2.0.0 available\", got \(outcome.status) (\(outcome.detail))"
+        }
+        return nil
+    }
+
+    /// The re-check after an install must not read the shared answer from
+    /// before it. `ScheduleRunner` and every page re-check this way.
+    private static func test_npmUpdateInvalidates() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        let installedLock = NSLock()
+        var installedVersion = "1.2.3"
+        fakeUpdates([:])
+        UpdatesDataTestSeam.run = { _, args, _ in
+            installedLock.lock(); defer { installedLock.unlock() }
+            switch args.first {
+            case "ls": return result("{\"dependencies\":{\"gh-axi\":{\"version\":\"\(installedVersion)\"}}}")
+            case "outdated":
+                return installedVersion == "1.3.0" ? result("{}")
+                    : result(#"{"gh-axi":{"current":"1.2.3","latest":"1.3.0"}}"#, status: 1)
+            case "install": installedVersion = "1.3.0"; return result("added 1 package")
+            default: return result("")
+            }
+        }
+        guard UpdatesSource.check(item).status == .updateAvailable else { return "the fixture should start behind" }
+        guard UpdatesSource.update(item).ok else { return "the fake install failed" }
+        let after = UpdatesSource.check(item)
+        guard after.status == .upToDate, after.installedLabel == "1.3.0" else {
+            return "the re-check after an install read \(after.status) \(after.installedLabel) - the shared read from before the install was reused"
         }
         return nil
     }

@@ -64,6 +64,12 @@ enum DependencyCatalog {
         .init(id: "devops-playbook", name: "DevOps Playbook", category: "Documentation", kind: .docs),
     ]
 
+    /// Every npm-global package in the catalog, which is what one shared
+    /// `npm ls`/`npm outdated` read asks about.
+    static var npmPackages: [String] {
+        items.compactMap { if case .npmGlobal(let package) = $0.kind { return package } else { return nil } }
+    }
+
     /// Category display order - `Dictionary`-grouping in `UpdatesController`
     /// would otherwise be unordered.
     static let categoryOrder = ["npm packages", "Homebrew", "Other tools", "Firstmate", "Security", "Documentation"]
@@ -357,9 +363,15 @@ enum UpdatesDataTestSeam {
     private static var _invocations: [(executable: String, args: [String])] = []
 
     /// `(executable, args, cwd) -> result`. `nil` means "really run it".
+    ///
+    /// A new transport also drops the shared npm and Homebrew reads, so a case
+    /// never reads a reply an earlier case's fake produced.
     static var run: ((String, [String], URL?) -> SubprocessResult)? {
         get { locked { _run } }
-        set { locked { _run = newValue } }
+        set {
+            locked { _run = newValue }
+            UpdatesSource.invalidateBatchReads()
+        }
     }
     /// `name -> absolute path`, or `nil` to report the tool as missing.
     static var resolveExecutable: ((String) -> String?)? {
@@ -403,6 +415,7 @@ enum UpdatesDataTestSeam {
             _applicationsDirectory = nil
             _invocations = []
         }
+        UpdatesSource.invalidateBatchReads()
     }
 }
 #endif
@@ -474,11 +487,29 @@ enum UpdatesSource {
 
     private static func checkNpm(_ package: String) -> CheckOutcome {
         guard let npm = resolveExecutable("npm") else { return missingToolOutcome("npm") }
-        let lsResult = run(npm, ["ls", "-g", package, "--depth=0", "--json"])
-        let installed = npmInstalledVersions(fromLsJSON: lsResult.stdout)[package]
-        let latestResult = run(npm, ["view", package, "version"])
-        let latest = latestResult.status == 0 && !latestResult.stdout.isEmpty ? latestResult.stdout : nil
-        let log = [npmLsLog(package: package, installed: installed, result: lsResult), latestResult.combinedLog]
+        let reading = npmReading(npm: npm, including: package)
+        let installed = reading.installed[package]
+        var latest: String?
+        var registryLog = ""
+        if reading.registryFailed {
+            registryLog = reading.outdatedResult.combinedLog
+        } else if let entry = reading.outdated[package] {
+            latest = entry.latest
+            registryLog = "npm outdated -g: \(package) \(entry.current ?? "not installed") \u{2192} \(entry.latest ?? "unknown")"
+        } else if let installed {
+            // `npm outdated` lists only what is behind, so a package it does
+            // not name is at the registry's latest version.
+            latest = installed
+            registryLog = "npm outdated -g: \(package) is current"
+        } else {
+            // Not installed, so `npm outdated` has nothing to say about it.
+            // The row still names the version an install would bring, which
+            // is the one case that still asks the registry per package.
+            let latestResult = run(npm, ["view", package, "version"])
+            latest = latestResult.status == 0 && !latestResult.stdout.isEmpty ? latestResult.stdout : nil
+            registryLog = latestResult.combinedLog
+        }
+        let log = [npmLsLog(package: package, installed: installed, result: reading.lsResult), registryLog]
             .filter { !$0.isEmpty }.joined(separator: "\n")
 
         guard let installed else {
@@ -494,6 +525,36 @@ enum UpdatesSource {
             return CheckOutcome(installedLabel: installed, latestLabel: latest, status: .upToDate, detail: "\(installed) - up to date", log: log)
         }
         return CheckOutcome(installedLabel: installed, latestLabel: latest, status: .updateAvailable, detail: "\(installed) \u{2192} \(latest)", log: log)
+    }
+
+    /// R5 energy fix 2: one `npm ls -g --json` and one `npm outdated -g
+    /// --json` for every npm package in the catalog, shared by every npm
+    /// check that asks within `npmRead.window`.
+    ///
+    /// This replaced five `npm ls` plus five `npm view` per sweep, which was
+    /// ten `node` start-ups at about a CPU-second each and five registry round
+    /// trips every fifteen minutes. `npm outdated` is the one registry call
+    /// now: it asks the registry about the named packages only, and npm itself
+    /// fails the whole command (an `{"error": ...}` reply) when the registry
+    /// cannot be reached, which is what turns into "could not reach npm
+    /// registry" on each row exactly as a failed `npm view` did.
+    private static func npmReading(npm: String, including package: String) -> NpmGlobalReading {
+        let packages = Array(Set(DependencyCatalog.npmPackages + [package])).sorted()
+        return npmRead.value(accepts: { $0.packages.contains(package) }) {
+            let ls = run(npm, ["ls", "-g", "--depth=0", "--json"] + packages)
+            let outdated = run(npm, ["outdated", "-g", "--json"] + packages)
+            return NpmGlobalReading(packages: Set(packages), lsResult: ls, outdatedResult: outdated)
+        }
+    }
+
+    /// See `CoalescedRead`'s header for why the window is seconds.
+    private static let npmRead = CoalescedRead<NpmGlobalReading>(
+        window: 30, waitBound: 2 * UpdatesRunLimits.timeout + 30)
+
+    /// Forget the shared npm and Homebrew reads. Every update calls it, so the
+    /// re-check after an install never reads what was there before it.
+    static func invalidateBatchReads() {
+        npmRead.invalidate()
     }
 
     private static func installedNpmVersion(npm: String, package: String) -> String? {
@@ -531,6 +592,7 @@ enum UpdatesSource {
             return UpdateOutcome(ok: false, newVersionLabel: nil, detail: "'npm' not found on PATH", log: "")
         }
         let result = run(npm, ["install", "-g", package])
+        invalidateBatchReads()
         guard result.status == 0 else { return failedUpdate("npm install -g \(package)", result) }
         let version = installedNpmVersion(npm: npm, package: package)
         return UpdateOutcome(ok: true, newVersionLabel: version, detail: "Installed \(version ?? "latest")", log: result.combinedLog)
@@ -896,6 +958,56 @@ enum UpdatesSource {
         }
         guard !status.isEmpty else { return nil }
         return (status, ahead, behind, detailParts.joined(separator: " \u{00B7} "))
+    }
+}
+
+// MARK: - Shared npm read
+
+/// One `npm ls -g --json` and one `npm outdated -g --json`, parsed once for
+/// every package they named. See `UpdatesSource.npmReading`.
+struct NpmGlobalReading {
+    struct Outdated: Equatable {
+        let current: String?
+        let latest: String?
+    }
+
+    let packages: Set<String>
+    let lsResult: SubprocessResult
+    let outdatedResult: SubprocessResult
+    /// `name -> version` of what is installed.
+    let installed: [String: String]
+    /// The packages `npm outdated` named, which are the ones behind.
+    let outdated: [String: Outdated]
+    /// `npm outdated` did not answer: the registry was unreachable or npm
+    /// failed outright. Every package's latest version is then unknown.
+    let registryFailed: Bool
+
+    init(packages: Set<String>, lsResult: SubprocessResult, outdatedResult: SubprocessResult) {
+        self.packages = packages
+        self.lsResult = lsResult
+        self.outdatedResult = outdatedResult
+        installed = UpdatesSource.npmInstalledVersions(fromLsJSON: lsResult.stdout)
+        let parsed = Self.parseOutdated(outdatedResult.stdout)
+        outdated = parsed ?? [:]
+        registryFailed = parsed == nil
+    }
+
+    /// `npm outdated --json`: `{}` when everything is current, one entry per
+    /// package that is behind, and `{"error": {...}}` when npm could not ask
+    /// the registry. It exits 1 whenever anything is outdated, so the exit
+    /// status says nothing and the reply is the only signal. `nil` means
+    /// failed, including a reply that is not JSON at all.
+    static func parseOutdated(_ json: String) -> [String: Outdated]? {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["error"] == nil
+        else { return nil }
+        var result: [String: Outdated] = [:]
+        for (name, value) in obj {
+            guard let entry = value as? [String: Any] else { continue }
+            result[name] = Outdated(current: entry["current"] as? String, latest: entry["latest"] as? String)
+        }
+        return result
     }
 }
 
