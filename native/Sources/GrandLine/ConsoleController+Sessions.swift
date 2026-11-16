@@ -189,6 +189,15 @@ extension ConsoleController {
             tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m Still waiting for the key unlock you started.\r\n")
             return
         }
+        // The fallback line below promises "Press ⌘R to retry", and the ssh
+        // it started is usually still sitting at its password prompt when the
+        // captain does. `startProcess` ignores a start while a child is
+        // running, so without this the retry unlocked the key and then
+        // started nothing - ⌘R looked dead.
+        if tab.sshStartedWithoutSavedKey {
+            stopRunningProcess(of: tab)
+            tab.sshStartedWithoutSavedKey = false
+        }
         tab.awaitingKeyUnlock = true
         tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m Unlocking \"\(key.label)\"...\r\n")
         DispatchQueue.global(qos: .userInitiated).async { [weak self, weak tab] in
@@ -219,9 +228,11 @@ extension ConsoleController {
                     tab.terminal.feed(text: "  \u{1b}[2mPress ⌘R to try again.\u{1b}[0m\r\n")
                     return
                 case .failure(let error):
-                    tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m \(error.localizedDescription)\r\n")
-                    tab.terminal.feed(text: "  \u{1b}[2mConnecting without the saved key, so ssh may ask for a password. "
-                                      + "Press ⌘R to retry.\u{1b}[0m\r\n")
+                    AppLog.keychain.error("saved key not used for this connect: \(error.localizedDescription, privacy: .public)")
+                    for line in Self.savedKeyFallbackLines(keyLabel: key.label, error: error) {
+                        tab.terminal.feed(text: line)
+                    }
+                    tab.sshStartedWithoutSavedKey = true
                     // R4-UX-04 (WF-12): said where the captain is looking as
                     // well, the session strip, rather than only in the
                     // scrollback above whatever ssh prints next.
@@ -235,6 +246,41 @@ extension ConsoleController {
     /// R4-UX-04: the session strip's line for a saved key that could not be
     /// used, so ssh was started without it.
     static let savedKeyFallbackNotice = "Key refused, asking for a password"
+
+    /// What the tab prints when a saved key could not be unlocked and ssh is
+    /// started without it: the real reason, what to do about it, and ⌘R only
+    /// when a retry from this process can actually work. It used to print
+    /// the bare error, which for the captain's case was the Keychain's own
+    /// "The user name or passphrase you entered is not correct." - a
+    /// password nobody had typed - followed by a ⌘R that could never help.
+    static func savedKeyFallbackLines(keyLabel: String, error: Error) -> [String] {
+        let keychainError = error as? KeychainError
+        var advice = keychainError?.recoverySuggestion ?? ""
+        if keychainError?.retryCanHelp ?? true {
+            advice += advice.isEmpty ? "Press ⌘R to retry." : " Then press ⌘R to retry."
+        }
+        return [
+            "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m Could not unlock \"\(keyLabel)\": \(error.localizedDescription)\r\n",
+            "  \u{1b}[2mConnecting without the saved key, so ssh may ask for a password.\u{1b}[0m\r\n",
+            "  \u{1b}[2m\(advice)\u{1b}[0m\r\n",
+        ]
+    }
+
+    /// Stop a tab's still-running child without the exit being reported as a
+    /// dropped session. `terminate()` cancels SwiftTerm's exit monitor, so
+    /// `processTerminated` never fires (no "[process ended]" line, no
+    /// auto-reconnect racing the restart, no clean-up of the *new* start's key
+    /// file) - which also means nothing reaps the child, so that is done here.
+    func stopRunningProcess(of tab: TabModel) {
+        guard let process = tab.terminal.process, process.running else { return }
+        let pid = process.shellPid
+        tab.terminal.terminate()
+        guard pid > 0 else { return }
+        DispatchQueue.global(qos: .utility).async {
+            var status: Int32 = 0
+            _ = waitpid(pid, &status, 0)
+        }
+    }
 
     /// The half of `connectSSH` that has to run on the main thread: forking
     /// the PTY and (optionally) firing the host's startup snippet.

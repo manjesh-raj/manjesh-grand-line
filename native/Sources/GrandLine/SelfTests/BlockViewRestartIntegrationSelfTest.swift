@@ -74,6 +74,7 @@ enum BlockViewRestartIntegrationSelfTest {
             ("autoReconnectShapedRestartClearsStuckBlock", test_autoReconnectShapedRestart),
             ("manualReconnectShapedRestartClearsStuckBlock", test_manualReconnectShapedRestart),
             ("bothRestartShapesEndInIdenticalCleanState", test_bothShapesAgree),
+            ("manualReconnectRestartsAKeyFallbackSession", test_manualReconnectRestartsAKeyFallbackSession),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -177,6 +178,73 @@ enum BlockViewRestartIntegrationSelfTest {
         }
         _ = (autoWindow, manualWindow)
         return nil
+    }
+
+    // MARK: - ⌘R after a saved key fell back to a password
+
+    /// `fm/grand-line-ssh-key-unlock-fallback`: when a saved key cannot be
+    /// unlocked, `connectSSH` starts ssh without it and prints "Press ⌘R to
+    /// retry". That ssh is still running at its password prompt when the
+    /// captain presses ⌘R, and SwiftTerm's `startProcess` ignores a start
+    /// while a child runs - so the retry unlocked again and then started
+    /// nothing. The fallback session has to be stopped and a new one started.
+    private static func test_manualReconnectRestartsAKeyFallbackSession() -> String? {
+        let keyStore = SSHKeyStore()
+        let key = SSHKey(label: "Fallback Test Key", type: .ed25519, publicKey: "", fingerprint: "")
+        keyStore.add(key)
+        SSHKeyMaterializer.debugMaterializeOverride = { _ in throw KeychainError.accessDenied }
+        defer { SSHKeyMaterializer.debugMaterializeOverride = nil }
+        // The gate starts locked, and a locked console defers every tab's
+        // start - which would leave nothing running for ⌘R to restart.
+        let gate = AppLockGate.shared
+        let wasLocked = gate.isLocked
+        gate.setLocked(false)
+        defer { gate.setLocked(wasLocked) }
+
+        let controller = ConsoleController(keyStore: keyStore, snippetStore: SnippetStore(), isFirstmateConsole: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
+        window.contentViewController = controller
+        controller.view.layoutSubtreeIfNeeded()
+        controller.debugOpenKeyedTestTab(label: "Key Fallback Host", keyID: key.id)
+        controller.viewDidAppear()
+        controller.view.layoutSubtreeIfNeeded()
+        defer {
+            if let id = controller.debugAllTabIDs().first { controller.debugCloseTab(id: id) }
+            _ = window
+        }
+
+        // The unlock runs off the main thread and starts the fallback on main.
+        guard waitUntil(timeout: 5, { controller.debugCurrentChild()?.running == true }),
+              let first = controller.debugCurrentChild() else {
+            return "the fallback session never started"
+        }
+        guard controller.debugCurrentTerminalOutput()?.contains("Could not unlock") == true else {
+            return "the fallback did not say the key could not be unlocked - the fixture is not the fallback path"
+        }
+
+        controller.debugSimulateManualReconnectRestart()
+
+        guard waitUntil(timeout: 5, {
+            guard let now = controller.debugCurrentChild() else { return false }
+            return now.running && now.pid != first.pid
+        }) else {
+            return "⌘R left the fallback session \(first.pid) running and started nothing new"
+        }
+        // The old child is gone, not left behind as a second ssh or a zombie.
+        guard waitUntil(timeout: 5, { kill(first.pid, 0) != 0 && errno == ESRCH }) else {
+            return "the fallback session \(first.pid) was not stopped and reaped"
+        }
+        return nil
+    }
+
+    @discardableResult
+    private static func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        return condition()
     }
 }
 

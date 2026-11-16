@@ -92,6 +92,23 @@ extension ConsoleController {
         reconnectActive()
     }
 
+    /// An `.ssh`-launch tab bound to a saved key, whose "ssh" is
+    /// `/bin/sleep` so it stays running the way a real ssh does at its
+    /// password prompt. Pair it with `SSHKeyMaterializer.debugMaterializeOverride`
+    /// to fail the unlock without a Keychain read.
+    func debugOpenKeyedTestTab(label: String, keyID: UUID) {
+        let launch = TabLaunch.ssh(label: label, executable: "/bin/sleep", hostArgs: ["30"],
+                                   keyID: keyID, startupSnippetID: nil)
+        addTab(launch: launch, name: label, select: true)
+    }
+
+    /// The current tab's child: its pid, and whether SwiftTerm still counts
+    /// it as running.
+    func debugCurrentChild() -> (pid: pid_t, running: Bool)? {
+        guard let process = currentTab?.terminal.process else { return nil }
+        return (process.shellPid, process.running)
+    }
+
     // MARK: Test support (tabs)
 
     /// Every open tab's id, in tab-bar order - so a test can find and select

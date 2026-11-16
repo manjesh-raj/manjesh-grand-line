@@ -30,6 +30,9 @@ enum SSHKeyMaterializer {
     /// `<name>-cert.pub` (OpenSSH's own convention for auto-loading a
     /// certificate next to its identity file - no extra `ssh` flags needed).
     static func materialize(key: SSHKey) throws -> Materialized {
+        #if FM_SELFTESTS
+        if let debugMaterializeOverride { return try debugMaterializeOverride(key) }
+        #endif
         let context = LAContext()
         context.localizedReason = "Unlock \"\(key.label)\" to connect"
         let privateKey = try KeychainKeyStore.loadPrivateKey(id: key.id, context: context)
@@ -51,6 +54,13 @@ enum SSHKeyMaterializer {
 
         return Materialized(privateKeyPath: keyPath.path)
     }
+
+    #if FM_SELFTESTS
+    /// GL-27: lets a suite drive `ConsoleController.connectSSH`'s real
+    /// fallback and retry wiring with an unlock that fails the way the
+    /// captain's did, without a Touch ID prompt or a Keychain read.
+    static var debugMaterializeOverride: ((SSHKey) throws -> Materialized)?
+    #endif
 
     /// Remove a materialized key's whole scratch directory (the identity file
     /// and, if present, its `-cert.pub`). Best-effort: a crash between

@@ -52,6 +52,7 @@ enum CredentialPathSelfTest {
         checkImportValidation(&ok)
         checkMaterializedFilePermissions(&ok)
         checkKeychainContract(&ok)
+        checkKeyReadFailuresAreNamed(&ok)
         print(ok ? "CredentialPathSelfTest: all checks passed" : "CredentialPathSelfTest: FAILED")
         return ok
     }
@@ -310,10 +311,77 @@ enum CredentialPathSelfTest {
             if !text.contains("dispatchPrecondition(condition: .notOnQueue(.main))") {
                 fail("the biometric gate lost its off-main precondition (GL-25)", &ok)
             }
+            // The behavioural half is `Phase2HardeningSelfTest`'s check that
+            // `unlockPolicy` keeps the password; this is the half that sees
+            // the gate stop using it.
+            if !text.contains("context.evaluatePolicy(unlockPolicy,") {
+                fail("the key unlock no longer evaluates `unlockPolicy` - a biometrics-only policy has no Mac password fallback", &ok)
+            }
         } else {
             fail("could not read KeychainKeyStore.swift to assert its accessibility class", &ok)
         }
         print("  OK - cancel vs. failure are distinct, ThisDeviceOnly and the off-main gate still pinned")
+    }
+
+    // MARK: Key read failures
+
+    /// The captain's report: Touch ID succeeded, then the tab printed "The
+    /// user name or passphrase you entered is not correct." and fell back to
+    /// a password, for a freshly created key too, and ⌘R never helped. That
+    /// text is the Keychain's own string for `errSecAuthFailed` (-25293),
+    /// which the old mapping printed raw; the app's log showed the read
+    /// refused (`CSSMERR_CSP_OPERATION_AUTH_DENIED`) while
+    /// `codesign --verify <pid>` said "the code on disk does not match what is
+    /// running". These pin the mapping that now names that cause instead.
+    private static func checkKeyReadFailuresAreNamed(_ ok: inout Bool) {
+        print("\n-- a refused Keychain read says why, and what to do --")
+
+        // The fixture's own discriminating power: this is the exact string the
+        // captain saw, so the checks below are about the right status.
+        check(KeychainError.osStatus(errSecAuthFailed).errorDescription
+                == "The user name or passphrase you entered is not correct.",
+              "errSecAuthFailed is the status behind the captain's message", &ok)
+
+        var asked = false
+        let missing = KeychainKeyStore.classifyRead(status: errSecItemNotFound) { asked = true; return true }
+        if case .notFound = missing {} else { fail("errSecItemNotFound mapped to \(missing), want .notFound", &ok) }
+        check(!asked, "a missing item does not pay for a code-signature check", &ok)
+
+        let replaced = KeychainKeyStore.classifyRead(status: errSecAuthFailed) { false }
+        if case .codeChangedOnDisk = replaced {} else {
+            fail("errSecAuthFailed with the running code off its bundle mapped to \(replaced), want .codeChangedOnDisk", &ok)
+        }
+        let denied = KeychainKeyStore.classifyRead(status: errSecAuthFailed) { true }
+        if case .accessDenied = denied {} else {
+            fail("errSecAuthFailed with the running code intact mapped to \(denied), want .accessDenied", &ok)
+        }
+        let locked = KeychainKeyStore.classifyRead(status: errSecInteractionNotAllowed) { true }
+        check(locked.recoverySuggestion?.contains("login keychain") == true,
+              "a locked login keychain says to unlock it (\(locked.recoverySuggestion ?? "nothing"))", &ok)
+
+        // What the tab prints. The relaunch case must not offer ⌘R - a retry
+        // from the same process is refused every time, which is exactly what
+        // kept the captain pressing it.
+        let replacedText = ConsoleController.savedKeyFallbackLines(keyLabel: "devops-prod-key-pair", error: replaced).joined()
+        check(replacedText.contains("Could not unlock \"devops-prod-key-pair\""), "the fallback names the key", &ok)
+        check(replacedText.contains("rebuilt or updated on disk"), "the fallback names the real cause", &ok)
+        check(replacedText.contains("Quit and reopen Grand Line"), "the fallback says to relaunch", &ok)
+        check(!replacedText.contains("⌘R"), "the fallback does not offer a ⌘R that cannot work", &ok)
+        check(!replacedText.contains("passphrase you entered"), "the fallback no longer blames a password nobody typed", &ok)
+
+        let fingerprintText = ConsoleController.savedKeyFallbackLines(
+            keyLabel: "k", error: KeychainKeyStore.classify(LAError(.authenticationFailed))).joined()
+        check(fingerprintText.contains("fingerprint") && fingerprintText.contains("Mac password"),
+              "a failed fingerprint is named as one, with the password as the way in", &ok)
+        check(fingerprintText.contains("press ⌘R to retry"), "a retryable failure still offers ⌘R", &ok)
+        check(!fingerprintText.contains("com.apple.LocalAuthentication"),
+              "the fallback never prints LocalAuthentication's bare error code", &ok)
+
+        // The detector itself, against a binary that has not been replaced:
+        // a check that always answered "replaced" would blame every refusal
+        // on a relaunch.
+        check(KeychainKeyStore.runningCodeMatchesDisk(), "this suite's own binary matches its file on disk", &ok)
+        print("  OK - errSecAuthFailed is split by cause, and the message says what to do")
     }
 }
 
