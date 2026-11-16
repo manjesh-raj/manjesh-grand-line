@@ -143,7 +143,8 @@ final class CommandLibraryPageView: NSObject {
     /// this app that needs its parent to present something).
     var onPresentEditor: ((CommandEditorController) -> Void)?
 
-    private let runbookStore = DocsRunbookStore()
+    /// R5-PROC-04: the shell's store when the app is up.
+    private let runbookStore = GrandLineServices.shared.docsRunbookStore ?? DocsRunbookStore()
     /// Phase 3's AI-actions popover. Owned here (rather than by the page's
     /// controller) for the same reason `runbookStore` is - this view is what
     /// knows which command is selected.

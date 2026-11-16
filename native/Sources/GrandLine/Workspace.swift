@@ -818,7 +818,8 @@ final class Workspace {
                                           notebookStore: notebookStore,
                                           stickyBoardStore: stickyBoardStore,
                                           codePreviewStore: codePreviewStore,
-                                          focusTimer: focusTimer)
+                                          focusTimer: focusTimer,
+                                          docsRunbookStore: docsRunbookStore)
         lock.prepareForLock = { [unowned self] in self.prepareForLock() }
         lock.resumeAfterUnlock = { [unowned self] in self.hosts.forEachConsole { $0.resumeAfterUnlock() } }
         content.hostPages = { [unowned self] in Array(self.hosts.hostConsoles.values) }

@@ -198,14 +198,10 @@ enum SRELead {
             return .failure(SRELeadSetupError(message: "could not create scratch directory: \(error.localizedDescription)"))
         }
 
-        // `DocsRunbookStore().root` is the same `GrandLineDocs/runbooks/`
-        // folder the Docs page reads/writes (see that type's own header) -
-        // constructing a fresh instance here is deliberate, matching this
-        // app's established "each page/session keeps an independent copy of
-        // the same underlying store" convention (`UpdatesController`/
-        // `BootstrapController` do the same for `DependencyCatalog`), not a
-        // shared singleton.
-        let runbooksDir = DocsRunbookStore().root
+        // The same `GrandLineDocs/runbooks/` folder the Docs page reads and
+        // writes. R5-PROC-04: the shell's store when the app is up, rather
+        // than a sixth instance built only to read its `root`.
+        let runbooksDir = (GrandLineServices.shared.docsRunbookStore ?? DocsRunbookStore()).root
 
         let mcpConfigPath = scratchDir.appendingPathComponent("mcp-config.json")
         do {

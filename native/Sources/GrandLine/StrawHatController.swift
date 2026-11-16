@@ -146,7 +146,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// override is set) is not run at app launch. `FM_SHIFT_DIR` and
     /// `FM_DOCS_RUNBOOKS_DIR` both redirect it, and `main.swift`'s self-test
     /// block sets both.
-    private lazy var docsStore = DocsRunbookStore()
+    private lazy var docsStore = GrandLineServices.shared.docsRunbookStore ?? DocsRunbookStore()
 
     // MARK: Views
     //
