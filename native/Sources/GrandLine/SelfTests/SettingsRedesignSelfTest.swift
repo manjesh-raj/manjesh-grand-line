@@ -637,12 +637,19 @@ enum SettingsRedesignSelfTest {
             return
         }
         check(rows.contains { $0 === row }, "the lid-closed row is not on the Security page", &ok)
-        check(row.titleLabel.stringValue == "Keep running with the lid closed",
+        check(row.titleLabel.stringValue == "Never sleep, even with the lid closed",
               "the row is titled \(row.titleLabel.stringValue)", &ok)
         check(settings.debugSections(in: .security).contains { $0.headingLabel?.stringValue == "Power" },
               "the Security page has no Power section", &ok)
         check(lidDescription(settings).contains("battery"),
               "the help text does not mention the battery downside: \(lidDescription(settings))", &ok)
+        // `pmset -a disablesleep 1` turns off every sleep, not only the
+        // lid's, and on battery too. Review #5 found the row saying only
+        // "with the lid closed", which undersold what the switch does.
+        check(lidDescription(settings).contains("all sleep")
+                && lidDescription(settings).contains("lid open or closed")
+                && lidDescription(settings).contains("on battery"),
+              "the help text does not say it turns off all sleep, lid open or closed, on battery too: \(lidDescription(settings))", &ok)
     }
 
     private static func checkItShowsTheSystemOnEveryVisit(_ settings: SettingsController,

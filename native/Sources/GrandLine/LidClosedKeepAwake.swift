@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Settings > Security > Power: "Keep running with the lid closed".
+// Settings > Security > Power: "Never sleep, even with the lid closed".
 //
 // The switch drives one macOS setting, `pmset -a disablesleep`, which stops
 // the Mac from sleeping at all - including when the lid closes - so the crew
@@ -77,7 +77,7 @@ final class PmsetKeepAwakeSystem: KeepAwakeSystem {
     /// The sentence in the administrator dialog. Without `with prompt` the
     /// dialog says only "osascript wants to make changes", which names
     /// nothing the captain just clicked.
-    static let promptText = "Grand Line wants to change whether this Mac sleeps when the lid is closed."
+    static let promptText = "Grand Line wants to change whether this Mac is allowed to sleep at all."
 
     /// The AppleScript handed to `osascript -e`. Built from the literals
     /// above and nothing else.

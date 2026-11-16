@@ -1301,6 +1301,14 @@ Not verified: a real toggle with an approved administrator prompt, because an ag
 Both AppleScripts were compiled with `osacompile` to confirm they parse.
 Whether the setting survives a restart is disputed in public reports and was not tested here, which is the reason the switch re-reads rather than remembers.
 
+### Renamed after review #5 (`fm/grand-line-bugfix-subprocess-terminal-misc`)
+
+Review #5 pointed out that the row said "Keep running with the lid closed", while `pmset -a disablesleep 1` turns off every sleep, with the lid open or closed, on battery too.
+The file header already said so and the row did not.
+The row is now "Never sleep, even with the lid closed", its description says it turns off all sleep with the lid open or closed and on battery as well as on power, and the administrator prompt asks whether this Mac "is allowed to sleep at all".
+Only text changed. The state machine and the two commands are untouched.
+Case 1 of `FM_RUN_SETTINGS_REDESIGN_TESTS` asserts the new title and that the description says all three things, and fails against the old text.
+
 ## Security > Xcode: the Metal Toolchain switch (`fm/grand-line-metal-toolchain-settings-toggle`)
 
 ### What it does

@@ -30,6 +30,7 @@
 // a suite - `Phase3PolishSelfTest` asserts every file here carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Darwin
 import Foundation
 import SwiftTerm
@@ -50,6 +51,7 @@ enum TerminalResizeReflowSelfTest {
         checkTheForegroundShellClassification(&ok)
         checkTheForegroundIsReadFromARealPTY(&ok)
         checkCockpitTerminalViewInstallsThePolicy(&ok)
+        checkALargeWidthStepIsTracedWithItsSuperview(&ok)
         print(ok ? "TerminalResizeReflowSelfTest: all checks passed"
                  : "TerminalResizeReflowSelfTest: FAILURES")
         return ok
@@ -566,6 +568,51 @@ enum TerminalResizeReflowSelfTest {
         check(calls == 2, "both initialisers call installResizeReflowPolicy() (found \(calls) calls)", &ok)
         check(code.contains { $0.contains("terminal?.cursorLineRedrawnOnResize =") },
               "installResizeReflowPolicy() sets the terminal's cursorLineRedrawnOnResize", &ok)
+    }
+
+    /// R5-BUG-08: an 18-column SIGWINCH that nothing here reproduces. The
+    /// breadcrumb must fire on that step and stay quiet on a live drag, and
+    /// it must name the ancestor that was narrow. The behavioural half calls
+    /// `record` directly, so a source guard covers the Console delegate that
+    /// is its only caller.
+    private static func checkALargeWidthStepIsTracedWithItsSuperview(_ ok: inout Bool) {
+        check(TerminalResizeTrace.isLargeWidthStep(from: 142, to: 18), "142 -> 18 columns is a large step", &ok)
+        check(TerminalResizeTrace.isLargeWidthStep(from: 18, to: 142), "and so is the step back", &ok)
+        check(!TerminalResizeTrace.isLargeWidthStep(from: 142, to: 141), "142 -> 141 (a window drag) is not", &ok)
+        check(!TerminalResizeTrace.isLargeWidthStep(from: 80, to: 100), "a 20-column step on an 80-column tab is not", &ok)
+        check(!TerminalResizeTrace.isLargeWidthStep(from: 30, to: 18), "a 12-column step is not, however narrow the tab", &ok)
+
+        let container = NSStackView(frame: NSRect(x: 0, y: 0, width: 150, height: 400))
+        let terminal = NSView(frame: container.bounds)
+        container.addSubview(terminal)
+        let chain = TerminalResizeTrace.superviewChain(of: terminal)
+        check(chain.hasPrefix("NSStackView 150pt"), "the chain starts at the terminal's own superview, with its width: \(chain)", &ok)
+        check(chain.hasSuffix("| no window"), "and says when the terminal is not in a window: \(chain)", &ok)
+
+        check(!TerminalResizeTrace.record(terminal, cols: 142, rows: 40), "a terminal's first size is not a step", &ok)
+        check(!TerminalResizeTrace.record(terminal, cols: 141, rows: 40), "a one-column change is not logged", &ok)
+        check(TerminalResizeTrace.record(terminal, cols: 18, rows: 40), "the 18-column step is logged", &ok)
+        check(TerminalResizeTrace.record(terminal, cols: 141, rows: 40), "and so is the step back", &ok)
+        let other = NSView(frame: .zero)
+        check(!TerminalResizeTrace.record(other, cols: 18, rows: 40), "each terminal is compared with its own last width", &ok)
+
+        guard let root = SelfTestSources.appSourceDirectory(),
+              let source = try? String(contentsOf: root.appendingPathComponent("ConsoleController+Tabs.swift"), encoding: .utf8) else {
+            fail("ConsoleController+Tabs.swift could not be read - the wiring check cannot run", &ok)
+            return
+        }
+        let code = source.components(separatedBy: "\n")
+            .map { line -> String in
+                guard let comment = line.range(of: "//") else { return line }
+                return String(line[..<comment.lowerBound])
+            }
+        guard let start = code.firstIndex(where: { $0.contains("func sizeChanged(source: LocalProcessTerminalView") }) else {
+            fail("the Console's sizeChanged delegate method was not found", &ok)
+            return
+        }
+        let body = code[start..<min(start + 4, code.count)].joined(separator: "\n")
+        check(body.contains("TerminalResizeTrace.record(source, cols: newCols, rows: newRows)"),
+              "the Console's sizeChanged delegate records every size change", &ok)
     }
 }
 
