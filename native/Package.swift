@@ -168,6 +168,15 @@ let package = Package(
                 // this project builds with Command Line Tools only, with no
                 // XCTest available (see any `SelfTests/*.swift` header).
                 .define("FM_SELFTESTS", .when(configuration: .debug)),
+                // R5-PROC-02 of review #5: Swift 6's actor-isolation and
+                // Sendable checks, at the `targeted` level, as warnings. CI's
+                // build job fails on any warning in this target (GL-07), so
+                // this is a gate: code that adopts `@MainActor`, `Sendable` or
+                // an actor is checked as it does, and a regression in code
+                // that already has is a failed build. `complete` is the next
+                // step, taken one area at a time - see
+                // docs/history/26-production-readiness.md.
+                .unsafeFlags(["-strict-concurrency=targeted"]),
             ]
         )
     ],

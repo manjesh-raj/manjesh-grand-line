@@ -627,3 +627,50 @@ Each fix was reverted once and failed a named check before it was restored.
 - **R2-SEC-11.** Of 16 `NSWorkspace.open` sites, 7 opened a URL that arrived as data with no scheme check. They go through `WebNavigationPolicy.openExternally` now.
 - **R2-SEC-12.** The two vendored web bundles record a SHA-256 of every shipped file in `BUILD-INFO.txt`, asserted by their suites. The vault's `.corrupt-*` copies are not staged. The widget snapshot is written at 0600. The vault's CSV import and the Log Analyzer's input are capped at the backup bundle's 8 MB per-file limit. Measured with the cap reverted, one 8 MB clipboard held the suite's main thread for over ten minutes.
   The report's honesty-only items (notification previews, unzeroed Swift strings, the "not checked" list) were deliberately left as they are.
+
+## Strict concurrency as a warning gate (R5-PROC-02, review #5)
+
+Review #5 counted 208 `DispatchQueue.main.async` hops, 47 `NSLock`s, 45 `dispatchPrecondition`s and 6 `@MainActor` annotations.
+That model works, and GL-28 is real discipline, but every new store or poller re-derives "which thread am I on" by hand.
+The review's two concrete defects of that kind (a stale record written back from a UI copy, duplicate runners under contention) are what strict concurrency reports at compile time.
+The recommendation was to adopt `@MainActor` and actors one area at a time, behind a `-strict-concurrency=targeted` warning gate, and not as a big-bang rewrite.
+
+### What landed
+
+- `Package.swift` builds the `GrandLine` target with `-strict-concurrency=targeted`.
+  CI's debug build already fails on any warning in `Sources/GrandLine` (GL-07), so the flag is a gate rather than a report.
+  `E2ETestingPolicySelfTest.checkTheStrictConcurrencyGateIsOn` asserts both halves, because either one alone gates nothing.
+- At `targeted`, the whole target produced exactly one warning.
+  `GrandLineIntentBridge.onMain` captured a non-`Sendable` main-actor closure in `MainActor.run`'s `@Sendable` closure.
+  Its parameter is `@MainActor @Sendable` now.
+- The first area taken to `complete` is the App Intents file, `GrandLineAppIntents.swift`.
+  Its 16 `static var` intent metadata properties (`title`, `description`, `openAppWhenRun`, `isDiscoverable`) were global mutable state and are `static let` now.
+  `awaitAction`'s `run` parameter is `@Sendable`, which closes the one region-isolation warning.
+
+### The measured size of the next step
+
+Measured with `swift build -Xswiftc -strict-concurrency=complete` into a separate scratch path, on Swift 6.3, after the changes above.
+There are 570 unique warnings in `Sources/GrandLine`, down from 587 before them.
+By kind:
+
+| Warnings | Kind |
+| --- | --- |
+| 193 | main actor-isolated default value in a nonisolated context |
+| 166 | static property is nonisolated global shared mutable state |
+| 94 | conformance crosses into main actor-isolated code |
+| 64 | static property of a non-`Sendable` type |
+| about 50 | main-actor members reached from a nonisolated context, and `sending` risks |
+
+The largest files are `DaylightModuleSelfTest.swift` (33), `Workspace.swift` (26), `CommandLibraryViews.swift` (22), `UpdatesController.swift` (19), `GitHubSyncController.swift` (16) and `WorkspaceToolbar.swift` (15).
+
+### How to take the next area
+
+1. Pick one area, such as a store and its controller, or one feature's files.
+2. Build with `-Xswiftc -strict-concurrency=complete` into a separate `--scratch-path`, so your own `.build` is not invalidated.
+   Fix every warning in that area's files.
+   Prefer `@MainActor` on a type whose header already says "main thread only".
+   Prefer `static let` over `static var` for a constant.
+   Use an actor only where the work is genuinely off main.
+   The review's natural candidates are `DependencyCheckCache`, `FleetTaskCache` and the git-sync queue.
+3. The `targeted` gate then checks that area's annotations on every build.
+4. When the count reaches zero, change the flag to `complete`, and later move the package to Swift 6 language mode.

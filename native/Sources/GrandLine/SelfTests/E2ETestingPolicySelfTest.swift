@@ -56,6 +56,7 @@ enum E2ETestingPolicySelfTest {
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
         checkTheReadmeEnvTableIsComplete(&ok)
         checkTestHooksStayOutOfTheReleaseBinary(&ok)
+        checkTheStrictConcurrencyGateIsOn(&ok)
         print(ok ? "E2ETestingPolicySelfTest: all checks passed"
                  : "E2ETestingPolicySelfTest: FAILED")
         return ok
@@ -989,6 +990,31 @@ enum E2ETestingPolicySelfTest {
     /// (`ReviewFourUISelfTest`) and into `MainSplitShellSelfTest`, which
     /// already mounts the shell.
     private static let windowBackedSuiteCeiling = 136
+
+    /// R5-PROC-02 of review #5: the app target builds with
+    /// `-strict-concurrency=targeted`, and CI's build job fails on any warning
+    /// in `Sources/GrandLine`. Together those are the gate - code that adopts
+    /// `@MainActor`, `Sendable` or an actor is checked as it does. Either half
+    /// on its own gates nothing, so both are asserted.
+    private static func checkTheStrictConcurrencyGateIsOn(_ ok: inout Bool) {
+        let native = runnerScript.deletingLastPathComponent().deletingLastPathComponent()
+        let ci = native.deletingLastPathComponent().appendingPathComponent(".github/workflows/ci.yml")
+        guard let manifest = try? String(contentsOf: native.appendingPathComponent("Package.swift"), encoding: .utf8),
+              let workflow = try? String(contentsOf: ci, encoding: .utf8) else {
+            fail("Package.swift or ci.yml is not readable - the guard cannot run", &ok)
+            return
+        }
+        func code(_ text: String) -> String {
+            text.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//")
+                && !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.joined(separator: "\n")
+        }
+        let gateOn = code(manifest).contains(#".unsafeFlags(["-strict-concurrency=targeted"])"#)
+            || code(manifest).contains(#"-strict-concurrency=complete"#)
+        check(gateOn, "Package.swift no longer builds the app target with -strict-concurrency=targeted (or stricter)", &ok)
+        check(code(workflow).contains(#"grep -E "Sources/GrandLine/.*warning:" build.log"#),
+              "ci.yml's debug build no longer fails on a warning in Sources/GrandLine, so the concurrency checks gate nothing", &ok)
+        if ok { print("  OK   strict concurrency is on at the targeted level and CI fails on its warnings") }
+    }
 
     private static func checkTheWindowBackedLaneDoesNotGrowUnasked(_ ok: inout Bool) {
         guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),
