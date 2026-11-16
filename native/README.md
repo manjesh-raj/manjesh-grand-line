@@ -203,10 +203,18 @@ an unsigned build, which gets a *different* ad-hoc identity on every rebuild,
 makes yesterday's saved key unreadable today. One fixed identity keeps that
 trust stable.
 
+The commands assume Homebrew's OpenSSL 3.x or later (`openssl version`). The
+`/usr/bin/openssl` macOS ships is LibreSSL, which builds the same certificate
+but has no `-legacy` flag, so drop that flag from step 2 if you use it.
+
 ```bash
-# 1. A self-signed cert with the codeSigning extended key usage.
+# 1. A self-signed leaf cert for code signing. All three extensions are
+#    needed. Without basicConstraints, OpenSSL 3.x marks the cert as a CA,
+#    and without keyUsage macOS rejects it as "Invalid Key Usage for policy".
 openssl req -x509 -newkey rsa:2048 -keyout /tmp/grandline.key -out /tmp/grandline.crt \
   -days 3650 -nodes -subj "/CN=Grand Line Local Dev" \
+  -addext "basicConstraints=critical,CA:false" \
+  -addext "keyUsage=critical,digitalSignature" \
   -addext "extendedKeyUsage=critical,codeSigning"
 
 # 2. As a .p12. `-legacy` is required - OpenSSL 3.x's default PKCS12
@@ -226,8 +234,51 @@ security add-trusted-cert -d -r trustRoot -p codeSign \
 rm -f /tmp/grandline.key /tmp/grandline.crt /tmp/grandline.p12
 ```
 
-Verify with
-`security find-identity -v -p codesigning | grep "Grand Line Local Dev"`.
+Verify that macOS accepts it for code signing. `-v` lists valid identities
+only, which is the same check the build script makes:
+
+```console
+$ security find-identity -v -p codesigning
+  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Grand Line Local Dev"
+     1 valid identities found
+```
+
+The hash is your certificate's own SHA-1 and will differ. Other valid
+identities on the machine, such as an Apple Development one, show up as extra
+numbered lines. What matters is that "Grand Line Local Dev" is listed here
+with no status in parentheses after it.
+
+**Troubleshooting.** If the build prints `No "Grand Line Local Dev"
+codesigning identity found - building unsigned`, or `codesign` fails with
+`Grand Line Local Dev: no identity found`, the certificate is either missing
+or present but invalid. Run the same command without `-v`, which also lists
+invalid identities and says why each one is rejected:
+
+```bash
+security find-identity -p codesigning
+```
+
+- `(Invalid Key Usage for policy)` after the name means the certificate was
+  made without the `basicConstraints` and `keyUsage` extensions in step 1.
+  An older version of this recipe did exactly that.
+- `(CSSMERR_TP_NOT_TRUSTED)` means step 4 did not run or did not succeed.
+- No "Grand Line Local Dev" line at all means step 3 did not import it.
+
+A bad certificate cannot be repaired in place. Remove it, then run the whole
+recipe again. Do the removal first, while only one certificate has the name,
+because `-c` matches by name and refuses an ambiguous match:
+
+```bash
+# Drop the trust setting step 4 added, then the certificate and its key.
+security find-certificate -c "Grand Line Local Dev" -p > /tmp/grandline-old.crt
+security remove-trusted-cert -d /tmp/grandline-old.crt
+security delete-identity -c "Grand Line Local Dev"
+rm -f /tmp/grandline-old.crt
+```
+
+If you already created a second, good certificate next to the bad one, delete
+the bad one by the hash `security find-identity -p codesigning` prints for it
+instead: `security delete-identity -Z <hash>`.
 
 ---
 
