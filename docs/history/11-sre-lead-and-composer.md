@@ -52,3 +52,25 @@ The session directory is now made by `AppPaths.makePrivateScratchDirectory(prefi
 The script it returns is the MCP server SRE Lead's `claude` runs, and the last two were honoured in release builds too.
 Both are now inside `#if FM_SELFTESTS`, so the shipped app only ever runs the bundled copy, and the debug `swift build` flow is unchanged.
 `SRELeadBridgeSelfTest.kubectlScriptOverrideAndSourceWalkAreDebugOnly` is a source guard (a release binary runs no suite), and removing the `#if` fails it.
+
+## The kubectl bridge's timeout test flake (`fm/grand-line-kubectl-bridge-timeout-flake`)
+
+`test_response_arriving_just_before_timeout_is_still_picked_up` failed once in CI with `could not read the bridge response: Expecting value: line 1 column 1 (char 0)`, then passed on a rerun.
+The test's responder thread wrote the response with a plain `open(..., "w")`, so the poll loop could see the file before any JSON was in it.
+`SRELeadBridge.writeResponse` writes a `.tmp` and renames it, so the shipped pair never had that window.
+
+Reproducing it turned up a second race in the same test.
+The responder slept 0.15s, looked for the request once, and returned if it was not there yet (its filter also matched the request's own `.tmp`).
+Under CPU load (30 busy loops on 15 cores) that failed 86 of 500 runs as a 5s timeout, and 0 of 500 idle.
+
+The poll loop itself had a real edge, found while fixing the test.
+It slept a full interval and then checked the deadline, so a response landing during the last sleep was orphaned behind a timeout error.
+It now cuts the last sleep short at the deadline and checks once more before giving up, and it uses `time.monotonic` rather than the wall clock.
+
+- The clock and sleep are module seams (`_now`, `_sleep`), and `BridgeTimeoutTests` drives them with a fake clock instead of a thread.
+  The boundary case drops the response at 0.95s inside a 0.9-1.0s final sleep, and a sibling asserts a response at 1.05s is not waited for.
+  Restoring the old loop fails all three timeout tests.
+- Every threaded responder in the file is now one `_BridgeResponder`, a context manager that answers through `_write_response` (the same tmp-and-rename as `writeResponse`).
+  The five hand-rolled copies it replaced each gave up after 5s of wall clock, which cost one loaded run of `test_fully_compliant_runbook_runs_every_step_in_order` a 30s bridge timeout.
+  It runs until the call it is answering returns, and an assertion inside it fails the test, where a bare `assert` in the old threads died with the thread.
+  A new bridge test should use it rather than writing the response path directly.
