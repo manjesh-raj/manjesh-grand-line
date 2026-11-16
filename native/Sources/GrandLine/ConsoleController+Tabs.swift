@@ -916,7 +916,12 @@ extension ConsoleController {
 
     // MARK: LocalProcessTerminalViewDelegate
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    /// SwiftTerm calls this right after it has sent the shell its new size.
+    /// R5-BUG-08: a large width step is logged with the superview chain that
+    /// caused it - see `TerminalResizeTrace`.
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        TerminalResizeTrace.record(source, cols: newCols, rows: newRows)
+    }
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
         // Only the active terminal drives the window title; keep the tab name too.
