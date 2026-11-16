@@ -23,6 +23,18 @@
 // Plus a source guard, because the gate is only as real as the vendored patch
 // underneath it and a SwiftTerm re-sync would silently drop that patch while
 // every property here still compiled and read back correctly.
+//
+// Full review #5 (R5-PERF-01, fix 7) added two more, both about the cost of a
+// terminal that *is* on screen:
+//
+//   3. A terminal in the active app that does not have the keyboard paints at
+//      30 Hz, not 60.
+//   4. A TUI frame repaints only the rows it changed (vendored patch 10), and
+//      no row is ever left showing stale text. "Stale" is checked against what
+//      real display passes painted, recorded through `rowPaintObserver` and
+//      fingerprinted from public API only, across every step the brief named:
+//      scrolling, resize, selection, the alternate screen, cursor moves, a
+//      theme change and a find highlight.
 
 #if FM_SELFTESTS
 
@@ -37,6 +49,8 @@ enum TerminalDisplayGatingSelfTest {
         checkModelKeepsReadingWhileSuspended(&ok)
         checkIntervalFollowsAppActivation(&ok)
         checkVendoredPatchIsPresent(&ok)
+        checkUnfocusedTerminalPaintsAtThirtyHertz(&ok)
+        checkDirtyRowRepaint(&ok)
         print(ok ? "TerminalDisplayGatingSelfTest: all checks passed"
                  : "TerminalDisplayGatingSelfTest: FAILED")
         return ok
@@ -192,6 +206,267 @@ enum TerminalDisplayGatingSelfTest {
             fail(&ok, "queuePendingDisplay() no longer reads displayIntervalNanos - the throttle would be a no-op")
         }
         if ok { print("  both hunks of patch 4 present") }
+    }
+
+    // MARK: 5 - a visible terminal without the keyboard paints at 30 Hz
+
+    private static func checkUnfocusedTerminalPaintsAtThirtyHertz(_ ok: inout Bool) {
+        print("TerminalDisplayGatingSelfTest: a visible terminal without the keyboard is capped at 30 Hz")
+        let fg = CockpitTerminalView.foregroundIntervalNanos
+        let unfocused = CockpitTerminalView.unfocusedIntervalNanos
+        let bg = CockpitTerminalView.backgroundIntervalNanos
+        if !(fg < unfocused && unfocused < bg) {
+            fail(&ok, "the intervals are not ordered focused < unfocused < inactive app: \(fg), \(unfocused), \(bg)")
+        }
+        if unfocused != 33_340_000 {
+            fail(&ok, "the unfocused interval is \(unfocused)ns, not 30 Hz")
+        }
+
+        // `NSApp.isActive` cannot be forced from in-process, so the suite pins
+        // the app-active half and drives the focus half for real.
+        let (window, term) = mount()
+        CockpitTerminalView.appIsActiveOverrideForTests = true
+        defer {
+            CockpitTerminalView.appIsActiveOverrideForTests = nil
+            window.orderOut(nil)
+        }
+        window.makeFirstResponder(nil)
+        term.refreshDisplayGating()
+        if term.displayIntervalNanos != unfocused {
+            fail(&ok, "an active app's terminal that is not first responder paints every \(term.displayIntervalNanos)ns, expected \(unfocused)")
+        }
+
+        // Becoming first responder has to reach the gate by itself: nothing
+        // else calls `refreshDisplayGating` when the captain clicks into a tab.
+        window.makeKey()
+        window.makeFirstResponder(term)
+        if term.hasFocus {
+            if term.displayIntervalNanos != fg {
+                fail(&ok, "the focused terminal paints every \(term.displayIntervalNanos)ns, expected \(fg) - "
+                     + "the focus change never reached the display gate")
+            }
+            window.makeFirstResponder(nil)
+            if term.displayIntervalNanos != unfocused {
+                fail(&ok, "losing focus left the terminal at \(term.displayIntervalNanos)ns, expected \(unfocused)")
+            }
+        } else {
+            print("  SKIP the focused half: this session cannot make the probe window key")
+        }
+
+        // The wiring, without needing a key window: change what the gate
+        // would compute, then fire only the signal under test and see the
+        // interval follow. A signal that does not reach `refreshDisplayGating`
+        // leaves the old interval in place.
+        CockpitTerminalView.appIsActiveOverrideForTests = false
+        term.hasFocus = false
+        if term.displayIntervalNanos != bg {
+            fail(&ok, "setting `hasFocus` (what becomeFirstResponder/resignFirstResponder do) did not reach the display gate")
+        }
+        CockpitTerminalView.appIsActiveOverrideForTests = true
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        if term.displayIntervalNanos != unfocused {
+            fail(&ok, "the window resigning key did not reach the display gate")
+        }
+        CockpitTerminalView.appIsActiveOverrideForTests = false
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+        if term.displayIntervalNanos != bg {
+            fail(&ok, "the window becoming key did not reach the display gate")
+        }
+
+        term.refreshDisplayGating()
+        if term.displayIntervalNanos != bg {
+            fail(&ok, "an inactive app's terminal paints every \(term.displayIntervalNanos)ns, expected \(bg)")
+        }
+        if ok { print("  focused \(fg)ns, unfocused \(unfocused)ns, inactive app \(bg)ns") }
+    }
+
+    // MARK: 6 - dirty-row repaint (Grand Line patch 10)
+
+    /// What a row should look like on screen, built only from public API so it
+    /// does not share a line of code with the patch it checks.
+    private static func fingerprint(_ term: CockpitTerminalView, row: Int) -> String {
+        let terminal = term.getTerminal()
+        guard let line = terminal.getLine(row: row) else { return "<no line>" }
+        var attributes = Hasher()
+        for col in 0..<line.count { attributes.combine(line[col].attribute) }
+        return line.translateToString()
+            + "|attrs \(attributes.finalize())"
+            + "|selection \(term.selectionActive) \(term.getSelection() ?? "")"
+            + "|ink \(term.nativeForegroundColor) on \(term.nativeBackgroundColor)"
+    }
+
+    /// The rows a real display pass painted, and what each one showed.
+    private final class PaintLog {
+        var painted: [Int: String] = [:]
+        var paintedThisStep: Set<Int> = []
+    }
+
+    /// Runs the run loop until the parser has nothing pending and AppKit has
+    /// nothing left to draw, so every check below reads a settled screen.
+    private static func settle(_ term: CockpitTerminalView) {
+        term.displayIntervalNanos = CockpitTerminalView.foregroundIntervalNanos
+        let deadline = Date().addingTimeInterval(2)
+        var quiet = 0
+        while quiet < 3 && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.03))
+            quiet = term.getTerminal().getUpdateRange() == nil && !term.needsDisplay ? quiet + 1 : 0
+        }
+    }
+
+    /// Every visible row must show what the buffer holds now. A row whose
+    /// paint is older than its content is exactly a missed repaint.
+    private static func checkNoStaleRows(_ term: CockpitTerminalView, _ log: PaintLog,
+                                         after step: String, _ ok: inout Bool) {
+        let rows = term.getTerminal().rows
+        var stale: [String] = []
+        for row in 0..<rows {
+            let live = fingerprint(term, row: row)
+            if log.painted[row] != live {
+                stale.append("row \(row) shows \"\(log.painted[row]?.prefix(40) ?? "never painted")\" "
+                             + "but holds \"\(live.prefix(40))\"")
+            }
+        }
+        if !stale.isEmpty {
+            fail(&ok, "after \(step), \(stale.count) row(s) are stale: " + stale.prefix(3).joined(separator: "; "))
+        }
+    }
+
+    private static func step(_ term: CockpitTerminalView, _ log: PaintLog, _ name: String,
+                             _ ok: inout Bool, _ action: () -> Void) -> Set<Int> {
+        log.paintedThisStep = []
+        action()
+        settle(term)
+        checkNoStaleRows(term, log, after: name, &ok)
+        return log.paintedThisStep
+    }
+
+    private static func checkDirtyRowRepaint(_ ok: inout Bool) {
+        print("TerminalDisplayGatingSelfTest: a TUI frame repaints only the rows it changed, and no row is ever left stale")
+        let (window, term) = mount()
+        defer {
+            term.rowPaintObserver = nil
+            window.orderOut(nil)
+        }
+        term.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        term.allowMouseReporting = false
+        let log = PaintLog()
+        term.rowPaintObserver = { [unowned term] row in
+            log.painted[row] = fingerprint(term, row: row)
+            log.paintedThisStep.insert(row)
+        }
+        let rows = term.getTerminal().rows
+        let sync = (begin: "\u{1b}[?2026h\u{1b}[?25l", end: "\u{1b}[?25h\u{1b}[?2026l")
+        func tuiRow(_ row: Int, _ text: String) -> String { "\u{1b}[\(row + 1);1H\u{1b}[2K" + text }
+        func fullFrame(spinner: String) -> String {
+            var frame = sync.begin
+            for row in 0..<rows {
+                frame += tuiRow(row, row == 4 ? "│ \(spinner) task-04 running" : "│ task-\(row) idle ─────────")
+            }
+            return frame + sync.end
+        }
+
+        // The baseline: a full paint, so every row has a known picture.
+        let baseline = step(term, log, "the first full paint", &ok) {
+            term.feed(text: "\u{1b}[?1049h" + fullFrame(spinner: "⠋"))
+            term.needsDisplay = true
+        }
+        if baseline.count < rows - 1 {
+            fail(&ok, "the first paint reported only \(baseline.count) of \(rows) rows - the observer is not "
+                 + "seeing real display passes, and every check below would pass vacuously")
+            return
+        }
+
+        // R5-PERF-01's frame: the TUI rewrites every row inside synchronized
+        // output and only the spinner differs. Stock SwiftTerm repaints all rows.
+        let spinnerFrame = step(term, log, "a synchronized frame that moves one spinner", &ok) {
+            term.feed(text: fullFrame(spinner: "⠙"))
+        }
+        if spinnerFrame.isEmpty || spinnerFrame.count > 3 {
+            fail(&ok, "a frame that changed one row repainted \(spinnerFrame.count) of \(rows) rows; "
+                 + "expected that row and at most its two neighbours")
+        }
+
+        let identical = step(term, log, "a synchronized frame identical to the last", &ok) {
+            term.feed(text: fullFrame(spinner: "⠙"))
+        }
+        if !identical.isEmpty {
+            fail(&ok, "a frame that changed nothing repainted \(identical.count) rows")
+        }
+
+        // A draw can run ahead of `updateDisplay` (anything else that dirties
+        // the view). It paints the newer text, so when the row goes back to
+        // what `updateDisplay` last recorded, the record is wrong and the row
+        // must still repaint. This is why a draw forgets records.
+        _ = step(term, log, "a draw that runs ahead of updateDisplay", &ok) {
+            term.feed(text: fullFrame(spinner: "⠹"))
+            term.display()
+            term.feed(text: fullFrame(spinner: "⠙"))
+        }
+
+        _ = step(term, log, "a change at the top and the bottom of one frame", &ok) {
+            term.feed(text: sync.begin + tuiRow(0, "top changed") + tuiRow(rows - 1, "bottom changed") + sync.end)
+        }
+        _ = step(term, log, "leaving the alternate screen", &ok) {
+            term.feed(text: "\u{1b}[?1049l")
+        }
+        _ = step(term, log, "output that scrolls the normal screen", &ok) {
+            term.feed(text: (0..<(rows + 5)).map { "line \($0) needle" }.joined(separator: "\r\n") + "\r\n")
+        }
+        _ = step(term, log, "scrolling back into the scrollback", &ok) {
+            term.scrollUp(lines: 4)
+        }
+        _ = step(term, log, "scrolling back to the bottom", &ok) {
+            term.scrollDown(lines: 4)
+        }
+        _ = step(term, log, "a cursor move with no new text", &ok) {
+            term.feed(text: "\u{1b}[3;5H\u{1b}[?25l\u{1b}[?25h")
+        }
+        _ = step(term, log, "a find that highlights a match", &ok) {
+            _ = term.findNext("needle", scrollToResult: false)
+        }
+
+        // A selection lives on absolute rows. When identical rows scroll under
+        // it, no cell changes and only the selection moves, so a row compared
+        // by content alone would keep its old highlight.
+        _ = step(term, log, "identical rows filling a cleared screen", &ok) {
+            term.selectNone()
+            term.feed(text: "\u{1b}[2J\u{1b}[H" + String(repeating: "same\r\n", count: rows - 1))
+        }
+        // Searching backwards from no selection lands on the last match, which
+        // is on screen; `scrollToResult: false` keeps the viewport where it is.
+        _ = step(term, log, "a find on identical rows", &ok) {
+            _ = term.findPrevious("same", scrollToResult: false)
+        }
+        guard term.getSelection() == "same" else {
+            fail(&ok, "the find on identical rows selected \(term.getSelection() ?? "nothing") - the "
+                 + "selection-under-scroll case below would measure nothing")
+            return
+        }
+        let selectionScroll = step(term, log, "identical rows scrolling under a selection", &ok) {
+            term.feed(text: "same\r\n")
+        }
+        if selectionScroll.isEmpty {
+            fail(&ok, "identical rows scrolled under an active selection and nothing repainted - the "
+                 + "highlight stayed on the row it left")
+        }
+        _ = step(term, log, "clearing the selection", &ok) {
+            term.selectNone()
+        }
+
+        _ = step(term, log, "a theme change", &ok) {
+            HelmTheme.daylight.apply(to: term)
+        }
+        _ = step(term, log, "a frame after the theme change", &ok) {
+            term.feed(text: "after the theme change\r\n")
+        }
+        _ = step(term, log, "a resize", &ok) {
+            term.setFrameSize(NSSize(width: 560, height: 300))
+        }
+        _ = step(term, log, "a frame after the resize", &ok) {
+            term.feed(text: "after the resize\r\n")
+        }
+        HelmTheme.dusk.apply(to: term)
+        if ok { print("  one changed row repainted \(spinnerFrame.count) rows of \(rows), an identical frame 0; no stale row across 19 steps") }
     }
 }
 

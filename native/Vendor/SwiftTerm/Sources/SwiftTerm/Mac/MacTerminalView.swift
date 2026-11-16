@@ -102,6 +102,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// from the memo. A suite reads it to prove the memo and the skips work.
     public internal(set) var rowHighlightScans: Int = 0
 
+    // MARK: - Grand Line patch 10: dirty-row repaint storage
+    //
+    // The logic lives in `Apple/AppleTerminalView.swift` (see
+    // `Vendor/SwiftTerm/README.md`'s "Tenth patch"); only the storage has to
+    // be declared on the concrete view class, as patch 7's is.
+    /// What each visible row was last invalidated with, keyed by screen row.
+    var paintedRows: [Int: PaintedRowState] = [:]
+    /// Called with the screen row of every row a draw pass painted in full.
+    /// `nil` (the default) costs one check per drawn row. A suite sets it to
+    /// see which rows a real display pass repainted.
+    public var rowPaintObserver: ((Int) -> Void)?
+
     public func applyMinimumColumnsIfNeeded() {
         guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
         _ = processSizeChange(newSize: frame.size)

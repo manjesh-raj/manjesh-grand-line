@@ -43,6 +43,11 @@ than launching a worktree build - see that script's header.
 - [ ] Open a Console tab with something producing continuous output, then
       switch to another destination. CPU should drop sharply - that is the
       display gating (`CockpitTerminalView.refreshDisplayGating`) working.
+- [ ] Leave the Console **frontmost and focused** on a live `herdr` tab for a
+      minute and run `top -stats pid,cpu,idlew,csw -pid <pid>`. Then click into
+      another pane so the terminal loses focus, and run it again. The second
+      reading should be lower (30 Hz instead of 60), and neither should come
+      near the 8-15% review #5 measured before vendored SwiftTerm patch 10.
 - [ ] With a Whiteboard or Code Preview tab open, navigate away. Its web
       content process should go quiet.
 
@@ -82,6 +87,11 @@ than launching a worktree build - see that script's header.
 - [ ] Toggle "Forward Drags to This Tab's Program" and confirm the two swap,
       and that the chip shows its indicator.
 - [ ] Switch themes with a terminal on screen and confirm scrollback survives.
+- [ ] With a live TUI (`herdr`, `htop`, `vim`) on screen, watch for a row that
+      keeps old text after it changed: scroll, resize the window, select text,
+      use Find, and switch themes. Patch 10 repaints only the rows whose
+      content changed, and a suite cannot see the real screen's pixels, so a
+      stale row is the failure to look for.
 
 ## 6. Terminal splits and configurable shortcuts
 
@@ -269,7 +279,7 @@ decision rule and the running record are in
 vendored copy, and the scheduled check".
 
 Here because it is a network fetch plus a judgement call: the question is not
-"is there a newer tag" (there always is) but "has any of the nine local patches'
+"is there a newer tag" (there always is) but "has any of the ten local patches'
 root cause been fixed upstream, or gained a `public`/`open` hook" - which needs
 reading upstream's current source and deciding, not a comparison a suite can
 make.
@@ -279,7 +289,7 @@ make.
       "stay pinned"** - a check that leaves no record is one nobody can tell was
       skipped.
 
-`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all nine patches are
+`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all ten patches are
 still present in the tree, so a sync that drops one fails by name) and prints a
 NOTE - never a failure - once the recorded date is older than the interval.
 
