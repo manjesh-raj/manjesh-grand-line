@@ -23,6 +23,12 @@ final class ScheduleEditorController: NSViewController {
     private let editing: AutomationSchedule?
 
     /// Called with the assembled schedule on Save. The caller persists it.
+    ///
+    /// When editing, the schedule is built on the copy this sheet was opened
+    /// with, so its run state (`lastFiredOccurrence`, `lastRun`, `isEnabled`)
+    /// can be stale by the time Save is pressed. Persist an edit through
+    /// `ScheduleStore.update(_:)`, which takes only the action, the cadence
+    /// and the notify setting from it (R5-BUG-01).
     var onSave: ((AutomationSchedule) -> Void)?
     /// Called with the schedule id on Delete (only offered when editing).
     var onDelete: ((UUID) -> Void)?
