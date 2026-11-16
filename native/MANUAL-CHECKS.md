@@ -386,6 +386,47 @@ it is the one open item F23 was scoped around.
 - [ ] **Both registers.** Switch the app between a Daylight and a Dusk theme;
       the widgets follow the *app's* register, not the system appearance.
 
+## 17a. Signing posture: Developer ID, hardened runtime, notarization (R2-SEC-02)
+
+Open since review #2, and confirmed again by full review #5 (R5-SEC-00).
+`/Applications/Grand Line.app` is signed by the local identity
+"Grand Line Local Dev": `TeamIdentifier=not set`, `flags=0x0(none)` (no
+hardened runtime), no entitlements, and `spctl --assess --type execute` says
+`rejected`. Nothing in this section can be done from a worktree, because every
+step needs the captain's Apple Developer account. It shares its first step with
+section 17.
+
+- [ ] **Developer ID certificate.** `security find-identity -v -p codesigning`
+      lists `Developer ID Application: <Name> (<TEAMID>)`.
+- [ ] **An entitlements file for the app.** Create
+      `native/GrandLine.entitlements` with exactly one key,
+      `com.apple.security.device.audio-input` set to `true`. Dictation records
+      through `AVAudioEngine`, and under the hardened runtime the microphone
+      needs it. Nothing else in the app needs one today: there is no JIT, no
+      unsigned dylib (SwiftTerm is compiled in), and the admin prompt runs in
+      an `osascript` child, not as Apple Events from this process.
+- [ ] **Sign with the runtime on.** In `build_native_app.sh`, the signing line
+      becomes
+      `codesign --force --options runtime --timestamp --entitlements GrandLine.entitlements --sign "Developer ID Application: <Name> (<TEAMID>)" --identifier "$BUNDLE_ID" "$APP_DIR"`,
+      and `SIGNING_IDENTITY` names the Developer ID. Keep the local identity as
+      the fallback for machines without the certificate.
+- [ ] **Notarize and staple.** `xcrun notarytool store-credentials grandline`
+      once, then for each release:
+      `ditto -c -k --keepParent "dist/Grand Line.app" /tmp/GrandLine.zip`,
+      `xcrun notarytool submit /tmp/GrandLine.zip --keychain-profile grandline --wait`,
+      and `xcrun stapler staple "dist/Grand Line.app"`.
+- [ ] **Verify.** `codesign -dv --verbose=4 "dist/Grand Line.app"` shows
+      `flags=0x10000(runtime)` and a real `TeamIdentifier`.
+      `codesign -d --entitlements - "dist/Grand Line.app"` shows the one key.
+      `spctl --assess --type execute -vv "dist/Grand Line.app"` says
+      `accepted` with `source=Notarized Developer ID`.
+- [ ] **Expect a one-time trust reset.** A new signing identity is a new
+      designated requirement. The saved SSH keys and the vault will ask once to
+      be allowed again (choose Always Allow), and the Microphone, Speech
+      Recognition and Accessibility grants have to be given again, the same
+      way section 18 describes.
+- [ ] **Then do section 17**, which this unblocks.
+
 ## 18. After the rename: the macOS privacy grants (one-time)
 
 macOS keys Accessibility, Automation and every other privacy grant to the
@@ -418,6 +459,27 @@ Do this once, after the first `./build_native_app.sh` on the renamed build.
 - [ ] **The data folder moved.** `~/Library/Application Support/GrandLine/`
       exists and `.../FirstmateCockpit/` does not. If both are there, the app
       is reading the new one and left the old one alone - reconcile by hand.
+
+## 18a. One-time: the shelved clipboard history copies from 2026-09-25 (B1)
+
+Full review #5 (R5-SEC-00) found three `clipboard-history.sealed.corrupt-*`
+files from the B1 incident still in `~/Library/Application Support/GrandLine/`.
+They are the history the app shelved when it could not open it with this Mac's
+clipboard key. They are still encrypted, and the clipboard history picker
+mentions them only when the live history is unavailable, so on a working
+machine nothing points at them. No code deletes them, on purpose: whether they
+are worth keeping is the captain's call.
+
+- [ ] **Look, without opening them.**
+      `ls -l ~/Library/Application\ Support/GrandLine/clipboard-history.sealed.corrupt-*`.
+      Expect three files of roughly 49 KB, all dated 2026-09-25.
+- [ ] **Decide.** The live history has been working since the B1 fix, so these
+      only matter if something from before 2026-09-25 is still wanted. They
+      cannot be read by the app as it is.
+- [ ] **If not wanted, move them to the Trash**, rather than `rm`:
+      select them in Finder (`open ~/Library/Application\ Support/GrandLine/`)
+      and press Command-Delete. The live `clipboard-history.sealed` beside them
+      is the one to leave alone.
 
 ## 19. Launch cost (the signpost baseline)
 

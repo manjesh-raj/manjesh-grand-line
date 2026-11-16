@@ -1719,3 +1719,11 @@ Re-measuring the captain's instance with this build is their own check.
   Confirmed to fail with the key cut down to the `.meta` alone (an append to `.status` and a `.busy-state` replace both missed), with settled reuse switched off, with the watcher's filter cut to `.meta`, with the debounce removed (five sweeps for one burst), with the tick handed `windowOnScreen: true`, and with the baseline guard removed.
 - `FleetCrewStateReaderSelfTest` (CI's blocking lane) holds 21 real-shaped fixtures with the script's verdict for each, and, where the script is installed, runs a temporary copy of it on every fixture the reader answers and compares the lines byte for byte.
   Confirmed to fail with values trimmed the way `parseMetaFile` trims them, and with `remote_host` ignored.
+
+## `FleetActions.reply` logs the case name only (R5-SEC-04, `fm/grand-line-security-ui-fixes`)
+
+`reply` logged `String(describing: outcome)` at `.public`.
+`.sentUnconfirmed` carries `fm-send.sh`'s whole stdout and stderr, so that line put the script's output (the reply text, the crewmate's pane) back into the unified log, one line after `Subprocess` had redacted the same run (R2-SEC-10).
+`FleetReplyOutcome.logName` is the case name and nothing else, and `reply` logs that.
+`FleetActionsSelfTest.checkTheLogLineCarriesNoScriptOutput` asserts both the name and the call site, and putting the old line back fails it by name.
+One trap when writing that fixture: Swift's description escapes an apostrophe (`captain\'s`), so a payload containing one does not match itself in `String(describing:)`.
