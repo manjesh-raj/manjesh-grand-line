@@ -202,6 +202,17 @@ enum ConnectionsCardsSelfTest {
         check(edgeCard.debugTitle == "edge-proxy-01" && edgeCard.debugSubtitle == edge.subtitle,
               "H1: a card reads \(edgeCard.debugTitle) / \(edgeCard.debugSubtitle)", &ok)
         check(bastionCard.debugSubtitle == "ops@bastion.stg.example.test:2222", "H1: a non-default port is missing from \(bastionCard.debugSubtitle)", &ok)
+        // R5-UI-06: at 1512 in the four-column grid that address is wider than
+        // the card, and a tail cut read `...:2…`. It loses its middle instead,
+        // so the port is what is still drawn. The fixture has to truncate for
+        // this to mean anything.
+        let address = bastionCard.debugSubtitleLabel
+        bastionCard.layoutSubtreeIfNeeded()
+        check(address.frame.width > 0 && address.frame.width < address.attributedStringValue.size().width,
+              "fixture: at 1512 the bastion's address fits its card (\(address.frame.width)pt for "
+              + "\(address.attributedStringValue.size().width)pt), so the truncation check measures nothing", &ok)
+        check(address.lineBreakMode == .byTruncatingMiddle,
+              "R5-UI-06: a host card's address truncates at its \(address.lineBreakMode == .byTruncatingTail ? "tail, cutting the port" : "\(address.lineBreakMode.rawValue)")", &ok)
         // Accessibility: one button per card that says what it is, with its
         // icon buttons reachable as its children.
         check(edgeCard.accessibilityRole() == .button, "H1: a card is not a button to VoiceOver", &ok)

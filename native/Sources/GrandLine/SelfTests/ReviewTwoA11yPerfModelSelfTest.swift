@@ -83,9 +83,9 @@ enum ReviewTwoA11yPerfModelSelfTest {
             let spoken = HealthCardView.runTicksSpoken(state)
             check(spoken == want, "\(name): the runs read \"\(spoken)\", want \"\(want)\"", &ok)
             // The words count the marks that are drawn, never a different set.
-            let marks = HealthCardView.runTicks(state)
-            let crosses = marks.filter { $0 == "\u{2715}" }.count
-            let ticks = marks.filter { $0 == "\u{2713}" }.count
+            let marks = HealthCardView.runDots(state)
+            let crosses = marks.filter { !$0 }.count
+            let ticks = marks.filter { $0 }.count
             let saidCrosses = crosses == 0 ? !spoken.contains("failure") : spoken.contains("\(crosses) failure")
             let saidTicks = ticks == 0 ? !spoken.contains("success") : spoken.contains("\(ticks) success")
             check(saidCrosses && saidTicks, "\(name): \"\(marks)\" is read as \"\(spoken)\"", &ok)

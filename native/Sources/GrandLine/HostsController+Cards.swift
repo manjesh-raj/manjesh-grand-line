@@ -297,6 +297,11 @@ extension HostsController {
                                      title: host.label, subtitle: host.subtitle,
                                      accessibilityLabel: Self.accessibilityLabel(for: host, session: session,
                                                                                  group: normalizedGroup(host)))
+        // R5-UI-06: `user@host:port` loses its middle, never its port. At
+        // 1512 in the four-column grid `ops@bastion.stg.example.test:2222`
+        // read `...:2…`, which hides the one part that tells two
+        // otherwise identical bastions apart.
+        card.subtitleTruncation = .byTruncatingMiddle
         if showsGroup, let group = normalizedGroup(host) {
             card.chip = (group, "Group: " + group)
         }

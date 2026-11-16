@@ -65,6 +65,11 @@ final class HelmCardGrid: NSView {
         var title: String
         var subtitle: String
         var subtitleIsCode = true
+        /// Where a subtitle too long for the card is cut. The tail by
+        /// default; the middle for an address whose end matters as much as
+        /// its start, such as a host's `user@host:port` (R5-UI-06), so the
+        /// port survives.
+        var subtitleTruncation: NSLineBreakMode = .byTruncatingTail
         /// A live state, drawn as `HelmStatusPill`'s dot and word.
         var status: (text: String, tint: HelmTint)?
         /// A quiet third line when there is no status ("Last connected 2h ago").
@@ -557,6 +562,7 @@ final class HelmGridCardView: HoverHighlightView {
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         titleLabel.toolTip = card.title.count > 26 ? card.title : nil
         subtitleLabel.stringValue = card.subtitle
+        subtitleLabel.lineBreakMode = card.subtitleTruncation
         subtitleLabel.font = card.subtitleIsCode ? HelmType.code() : HelmType.caption()
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         // The subtitle truncates (a long address, or the Larger text

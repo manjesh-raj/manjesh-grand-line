@@ -629,7 +629,10 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
 
     private func updateOverlay() {
         let isEmpty = visibleNotes.isEmpty
+        let wasShowing = !overlayContainer.isHidden
         overlayContainer.isHidden = !isEmpty
+        // R5-UI-05: the frame comes and goes with the cork it frames.
+        if wasShowing != isEmpty { applyBoardFrame() }
         guard isEmpty else { return }
         // UX10: an empty *archive* is a different state from an empty board -
         // "click New Note" is wrong advice on a screen where New Note would
@@ -804,14 +807,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         // theme token, for the same reason the cork is (see
         // `StickyBoardModels.swift`'s header); `applyCardSurface` still owns
         // the radius/shadow so the board keeps the app's own card geometry.
-        HelmCard.applyCardSurface(to: boardCard, theme: theme,
-                                  cornerRadius: HelmMetrics.rCard,
-                                  daylightRadius: HelmMetrics.dSurface)
+        applyBoardFrame()
         let dark = theme.mode == .dark
-        boardCard.layer?.backgroundColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark)).cgColor
-        boardCard.layer?.borderColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark))
-            .blended(withFraction: dark ? 0.25 : 0.18, of: .black)?.cgColor
-            ?? boardCard.layer?.borderColor
         scrollView.backgroundColor = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
         canvas.applyTheme(theme)
         applyBoardHeaderTheme()
@@ -819,6 +816,37 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         overlayContainer.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlay?.applyTheme(theme)
     }
+
+    /// The board card: the wood frame while there is cork to frame, and the
+    /// app's plain card while the empty state covers the cork.
+    ///
+    /// R5-UI-05 (full review #5): the empty state's container is the
+    /// chrome-coloured surface and fills the card, but a layer's border draws
+    /// above its sublayers, so the frame's darker 1pt edge stayed on top of
+    /// it. On Daylight that read as a stray brown keyline round a white card,
+    /// where every other page's empty state sits on a plain card. So the
+    /// frame is dropped until a note exists, and the empty board is that same
+    /// plain card.
+    private func applyBoardFrame() {
+        HelmCard.applyCardSurface(to: boardCard, theme: theme,
+                                  cornerRadius: HelmMetrics.rCard,
+                                  daylightRadius: HelmMetrics.dSurface)
+        guard overlayContainer.isHidden else { return }
+        let dark = theme.mode == .dark
+        boardCard.layer?.backgroundColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark)).cgColor
+        boardCard.layer?.borderColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark))
+            .blended(withFraction: dark ? 0.25 : 0.18, of: .black)?.cgColor
+            ?? boardCard.layer?.borderColor
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the board card is wearing the wood frame right now.
+    var debugBoardShowsFrame: Bool {
+        let frame = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: theme.mode == .dark))
+        guard let fill = boardCard.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)) else { return false }
+        return HelmContrast.components(fill) == HelmContrast.components(frame)
+    }
+    #endif
 
     /// The case-file header sits **on the cork**, not on a theme surface, so
     /// its ink is derived from the cork rather than from `chromeInkHex` - the
