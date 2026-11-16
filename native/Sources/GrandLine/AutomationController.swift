@@ -368,7 +368,8 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         // The Schedules page may have changed a schedule while this one was
         // away; its store's one change hook is that page's.
         if drawsSidebarLayout { renderAutomationList() }
-        if isLoadingDotfiles { refreshDotfiles() }
+        // A visit shares the last fetch of the clone (R5 energy fix 4).
+        if isLoadingDotfiles { refreshDotfiles(forceFetch: false) }
         if isLoadingSoftware { checkAllSoftware() }
         // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scrollView) { scrollToTop() }
@@ -591,7 +592,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         }
     }
 
-    private func refreshDotfiles(completion: (() -> Void)? = nil) {
+    /// `forceFetch` is true for every explicit action, which must see the
+    /// remote as it is now rather than as the last fetch left it.
+    private func refreshDotfiles(forceFetch: Bool = true, completion: (() -> Void)? = nil) {
         guard isViewLoaded else { completion?(); return }
         isLoadingDotfiles = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -599,7 +602,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             var state: DotfilesRepoState?
             var agents: [AgentInstructionsItem] = []
             if let resolved {
-                state = DotfilesSource.repoState(at: resolved)
+                state = DotfilesSource.repoState(at: resolved, forceFetch: forceFetch)
                 agents = DotfilesSource.agentInstructionItems(repoPath: resolved)
             } else {
                 agents = DotfilesSource.agentInstructionPaths.map {

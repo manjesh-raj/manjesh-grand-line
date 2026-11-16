@@ -178,14 +178,19 @@ enum DotfilesSource {
         return (location as NSString).resolvingSymlinksInPath
     }
 
-    static func repoState(at repoPath: String) -> DotfilesRepoState {
+    ///
+    /// `forceFetch` is for a captain's explicit refresh. Every other reader (a
+    /// page visit, the background sweep, a scheduled drift check) shares the
+    /// last fetch of this clone through `GitFetchCoalescer` while it is under
+    /// ten minutes old (R5 energy fix 4).
+    static func repoState(at repoPath: String, forceFetch: Bool = false) -> DotfilesRepoState {
         let remote = run("/usr/bin/git", ["-C", repoPath, "remote", "get-url", "origin"]).stdout
         let branch = run("/usr/bin/git", ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"]).stdout
         let statusOut = run("/usr/bin/git", ["-C", repoPath, "status", "--short", "--", "."]
                                 + DotfilesAutoSync.ignoredPathspecs).stdout
         let dirty = statusOut.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         let branchName = branch.isEmpty ? nil : branch
-        let behind = behindOrigin(repoPath: repoPath, branch: branchName)
+        let behind = behindOrigin(repoPath: repoPath, branch: branchName, forceFetch: forceFetch)
         return DotfilesRepoState(
             repoPath: repoPath,
             remoteURL: remote.isEmpty ? nil : remote,
@@ -235,10 +240,13 @@ enum DotfilesSource {
     /// remote-tracking ref happened to already be on disk. Read-only: this
     /// never touches the working tree, the local branch, or any ref besides
     /// the fetched remote-tracking one.
-    private static func behindOrigin(repoPath: String, branch: String?) -> (count: Int, commits: [DotfilesBehindCommit])? {
+    private static func behindOrigin(repoPath: String, branch: String?,
+                                     forceFetch: Bool) -> (count: Int, commits: [DotfilesBehindCommit])? {
         guard let branch else { return nil }
-        let fetch = run("/usr/bin/git", ["-C", repoPath, "fetch", "origin", branch])
-        guard fetch.status == 0 else { return nil }
+        let fetch = fetchCoalescer.fetch(clonePath: repoPath, branch: branch, force: forceFetch) {
+            run("/usr/bin/git", ["-C", repoPath, "fetch", "origin", branch])
+        }
+        guard fetch.succeeded else { return nil }
         let countResult = run("/usr/bin/git", ["-C", repoPath, "rev-list", "--count", "HEAD..origin/\(branch)"])
         guard countResult.status == 0, let count = Int(countResult.stdout) else { return nil }
         let logResult = run("/usr/bin/git", ["-C", repoPath, "log", "--pretty=format:%h\u{1F}%s", "HEAD..origin/\(branch)"])
@@ -328,6 +336,10 @@ enum DotfilesSource {
         let resolvedRepo = (repoPath as NSString).resolvingSymlinksInPath
         return resolved.hasPrefix(resolvedRepo + "/") ? .linked : .notLinked
     }
+
+    /// Which coalescer `behindOrigin` asks. `.shared` in the app, so this
+    /// read and `DotfilesAutoSync` share one fetch of the checkout.
+    static var fetchCoalescer: GitFetchCoalescer = .shared
 
     // MARK: Process plumbing (mirrors UpdatesData.swift's `run`)
 

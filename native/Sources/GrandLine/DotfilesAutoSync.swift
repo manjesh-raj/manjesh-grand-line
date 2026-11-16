@@ -180,6 +180,8 @@ final class DotfilesAutoSync {
     private let watcherLatency: CFTimeInterval
     private let isEnabled: () -> Bool
     private let queue: DispatchQueue
+    /// R5 energy fix 4. See `GitFetchCoalescer`.
+    private let fetchCoalescer: GitFetchCoalescer
 
     /// `<workingTree>/home` - what the FSEvents stream watches.
     var homeRoot: URL { workingTree.appendingPathComponent(Self.autoCommitSubpath, isDirectory: true) }
@@ -224,8 +226,10 @@ final class DotfilesAutoSync {
         safetyNetInterval: TimeInterval = 600,
         watcherLatency: CFTimeInterval = 1.0,
         queueLabel: String = "com.manjesh.grandline.dotfiles-auto-sync",
-        isEnabled: @escaping () -> Bool = { AppSettings.shared.dotfilesAutoCommitEnabled }
+        isEnabled: @escaping () -> Bool = { AppSettings.shared.dotfilesAutoCommitEnabled },
+        fetchCoalescer: GitFetchCoalescer = .shared
     ) {
+        self.fetchCoalescer = fetchCoalescer
         self.workingTree = workingTree
         self.remoteURL = remoteURL
         self.debounceInterval = debounceInterval
@@ -511,7 +515,8 @@ final class DotfilesAutoSync {
             // waiting to do, so the wait is over rather than duplicated.
             self.pendingCommit?.cancel()
             self.pendingCommit = nil
-            let outcome = self.syncNow()
+            // A captain's "Sync now" never settles for a fetch made minutes ago.
+            let outcome = self.syncNow(forceFetch: true)
             DispatchQueue.main.async { completion(outcome) }
         }
     }
@@ -525,8 +530,13 @@ final class DotfilesAutoSync {
     /// it on `queue`, through `fileSystemChanged`'s debounce, the safety-net
     /// timer, or `syncNowFromUI`. A UI call site that reaches this directly
     /// off a global queue is B25.
+    ///
+    /// The fetch goes through `fetchCoalescer` (R5 energy fix 4), so a pass
+    /// inside ten minutes of the last successful fetch of this checkout - by
+    /// this class or by Setup's drift read - reads the refs that fetch left.
+    /// `forceFetch` always fetches.
     @discardableResult
-    func syncNow() -> Outcome {
+    func syncNow(forceFetch: Bool = false) -> Outcome {
         guard isEnabled() else { setStatus(.off); return .off }
         guard hasCheckout() else { setStatus(.noRepo); return .noRepo }
         guard let branch = currentBranch() else {
@@ -547,8 +557,10 @@ final class DotfilesAutoSync {
 
         setStatus(.syncing)
 
-        let fetch = runGit(["fetch", "origin", branch], authenticated: true)
-        guard fetch.status == 0 else {
+        let fetch = fetchCoalescer.fetch(clonePath: workingTree.path, branch: branch, force: forceFetch) {
+            runGit(["fetch", "origin", branch], authenticated: true)
+        }
+        guard fetch.succeeded else {
             let reason = "git fetch failed: \(fetch.stderr.isEmpty ? "unreachable remote" : fetch.stderr)"
             setStatus(.failed(reason))
             return .failed(reason)
@@ -644,6 +656,10 @@ final class DotfilesAutoSync {
         // again.
         let push = runGit(["push", "origin", "HEAD:\(branch)"], authenticated: true)
         guard push.status == 0 else {
+            // The refs came from a reused fetch, so origin may have moved
+            // since. Run the pass again with a real fetch, which either
+            // fast-forwards and pushes or reports what the old code reported.
+            if fetch.wasReused { return syncNow(forceFetch: true) }
             let reason = "git push failed: \(push.stderr.isEmpty ? "unknown error" : push.stderr)"
             setStatus(.failed(reason))
             return .failed(reason)

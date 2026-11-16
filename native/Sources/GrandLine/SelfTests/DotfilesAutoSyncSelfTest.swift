@@ -567,7 +567,8 @@ enum DotfilesAutoSyncSelfTest {
                 if file.lastPathComponent == "DotfilesAutoSync.swift" {
                     // The owner reaches its own core on its own queue; that is
                     // the whole design.
-                    sawTheOwner = text.contains("func syncNow() -> Outcome")
+                    // `syncNow(forceFetch:)` since R5 energy fix 4.
+                    sawTheOwner = text.contains("func syncNow(forceFetch: Bool = false) -> Outcome")
                     continue
                 }
                 // Only files that actually hold one of these - `syncNow()` is
@@ -578,7 +579,7 @@ enum DotfilesAutoSyncSelfTest {
                 for (index, line) in text.components(separatedBy: "\n").enumerated() {
                     let code = line.trimmingCharacters(in: .whitespaces)
                     guard !code.hasPrefix("//"), !code.hasPrefix("///") else { continue }
-                    guard code.contains("syncNow()"), !code.contains("syncNowFromUI") else { continue }
+                    guard code.contains("syncNow("), !code.contains("syncNowFromUI") else { continue }
                     offenders.append("\(file.lastPathComponent):\(index + 1)")
                 }
             }

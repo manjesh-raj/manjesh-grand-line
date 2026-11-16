@@ -129,6 +129,10 @@ final class ShiftGitSync {
     /// migrate (and rename away) real local data on its very first run.
     private let migratesLegacyData: Bool
 
+    /// R5 energy fix 4: the one decision about whether this pull's `git
+    /// fetch` is needed. See `GitFetchCoalescer`.
+    private let fetchCoalescer: GitFetchCoalescer
+
     init(
         workingTree: URL,
         remoteURL: String,
@@ -136,8 +140,10 @@ final class ShiftGitSync {
         debounceInterval: TimeInterval = 3.0,
         periodicPullInterval: TimeInterval = 300,
         queueLabel: String = "com.manjesh.grandline.shift-git-sync",
-        migratesLegacyData: Bool = false
+        migratesLegacyData: Bool = false,
+        fetchCoalescer: GitFetchCoalescer = .shared
     ) {
+        self.fetchCoalescer = fetchCoalescer
         self.workingTree = workingTree
         self.dataRoot = workingTree.appendingPathComponent(Self.shiftSubpath, isDirectory: true)
         self.remoteURL = remoteURL
@@ -763,16 +769,23 @@ final class ShiftGitSync {
     /// and reports `.diverged` without touching the working tree or local
     /// commits at all - real conflict-resolution UI is
     /// `cockpit-shift-conflict-handling`, the next queued phase, not this one.
+    ///
+    /// The fetch goes through `fetchCoalescer`, so a periodic pull inside
+    /// ten minutes of the last successful fetch of this clone reads the refs
+    /// that fetch left. `forceFetch` always fetches, and is what a push
+    /// rejected after a reused fetch retries with.
     @discardableResult
-    func pullNow() -> PullOutcome {
+    func pullNow(forceFetch: Bool = false) -> PullOutcome {
         guard FileManager.default.fileExists(atPath: workingTree.appendingPathComponent(".git").path) else {
             let outcome = PullOutcome.failed("No local git checkout at \(workingTree.path)")
             setStatus(.failed("git pull failed: no local checkout"))
             return outcome
         }
         setStatus(.syncing)
-        let fetch = runGit(["fetch", "origin", branch], cwd: workingTree, authenticated: true)
-        guard fetch.status == 0 else {
+        let fetch = fetchCoalescer.fetch(clonePath: workingTree.path, branch: branch, force: forceFetch) {
+            runGit(["fetch", "origin", branch], cwd: workingTree, authenticated: true)
+        }
+        guard fetch.succeeded else {
             let reason = "git fetch failed: \(fetch.stderr.isEmpty ? "unreachable remote" : fetch.stderr)"
             setStatus(.failed(reason))
             return .failed(reason)
@@ -812,6 +825,9 @@ final class ShiftGitSync {
             // which is the case that "harmless success" was really covering.
             if !headBehindOrEqual {
                 if !pushOnly() {
+                    // The refs came from a reused fetch, so origin may have
+                    // moved since. Fetch for real before calling it a failure.
+                    if fetch.wasReused { return pullNow(forceFetch: true) }
                     return .failed("git push failed after an up-to-date pull")
                 }
                 return .upToDate
