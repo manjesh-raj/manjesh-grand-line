@@ -254,96 +254,92 @@ enum ReviewUIUXSelfTest {
 
     // MARK: U5 - the Health card's fraction
 
-    private typealias HealthReading = HomeCanvasController.HealthServiceReading
+    /// A service's state by bucket, the way the registry would hold it.
+    private static func healthState(_ bucket: ServiceHealthSummary.Bucket, running: Bool = false) -> ServiceHealthState {
+        let now = Date()
+        switch bucket {
+        case .healthy: return ServiceHealthState(lastSuccess: now, isRunning: running)
+        case .degraded: return ServiceHealthState(lastSuccess: now, lastFailure: now, lastFailureDetail: "probe",
+                                                  consecutiveFailures: 1, isRunning: running)
+        case .failing: return ServiceHealthState(lastFailure: now, lastFailureDetail: "probe",
+                                                 consecutiveFailures: ServiceHealthRegistry.failureThreshold,
+                                                 isRunning: running)
+        case .notRun: return ServiceHealthState(isRunning: running)
+        }
+    }
 
-    private static func reading(_ title: String,
-                                _ verdict: ServiceHealthState.Verdict,
-                                reported: Bool) -> HealthReading {
-        HealthReading(title: title, verdict: verdict, hasReported: reported)
+    private static func healthSummary(_ pairs: [(HealthService, ServiceHealthSummary.Bucket)]) -> ServiceHealthSummary {
+        ServiceHealthSummary(pairs.map { .init(service: $0.0, state: healthState($0.1)) })
     }
 
     private static func test_u5HealthRing() -> String? {
-        // The review's own state: six services, two reported and healthy,
-        // four never run. The defect was "2/6" beside "All reporting services
-        // healthy" - the fraction counting all six, the sentence counting the
-        // two.
-        let partial = [
-            reading("Background signals", .healthy, reported: true),
-            reading("Persistence", .healthy, reported: true),
-            reading("Fleet tasks", .unknown, reported: false),
-            reading("Shift git sync", .unknown, reported: false),
-            reading("Docs sync", .unknown, reported: false),
-            reading("Scheduled automations", .unknown, reported: false),
-        ]
-        let summary = HomeCanvasController.healthRingSummary(partial)
-        guard summary.value == 2, summary.total == 6 else {
-            return "a partly-reported fleet should count reporting over total, got "
-                 + "\(summary.value)/\(summary.total)"
+        // R5-BUG-02's own render: eight services, five healthy, one with a
+        // recent failure, one failing, one never run. The Health page said
+        // "Healthy 5/8", Home's ring said "Reporting 7/8" beside a "1
+        // failing" chip. One summary, one fraction.
+        let review = healthSummary([
+            (.backgroundSignals, .healthy), (.fleetTasks, .healthy), (.shiftGitSync, .healthy),
+            (.dotfilesAutoSync, .healthy), (.persistence, .healthy),
+            (.docsSync, .degraded), (.shiftDueItems, .failing), (.scheduledAutomations, .notRun),
+        ])
+        guard review.total == 8, review.healthy == 5, review.degraded == 1, review.failing == 1,
+              review.notRun == 1 else {
+            return "the fixture does not hold the review's 5/1/1/1 state - the checks below would prove nothing"
         }
-        guard summary.title == "Reporting" else {
-            return "the ring still claims to be counting \(summary.title.debugDescription) while "
-                 + "four of six services have never run"
+        let ring = HomeCanvasController.healthRingSummary(review)
+        guard ring.value == review.healthy, ring.total == review.total, ring.title == "Healthy" else {
+            return "Home's ring reads \(ring.title) \(ring.value)/\(ring.total) where the Health page reads "
+                 + "Healthy \(review.healthy)/\(review.total)"
         }
-        guard summary.note == "2 of 6 reporting so far." else {
-            return "the sentence does not name the same set as the fraction: \(summary.note.debugDescription)"
+        guard ring.note == "\(HealthService.shiftDueItems.title) needs a look." else {
+            return "the sentence does not name the failing service first: \(ring.note.debugDescription)"
+        }
+        guard review.allHealthyNote == nil else {
+            return "the footer still says \(review.allHealthyNote ?? "") over a failing service"
         }
 
-        // GL-14's half: a service mid-pass that has never finished one is not
-        // evidence of health. `.running` used to sit in the healthy bucket
-        // whatever it had reported.
-        let neverFinished = [
-            reading("Background signals", .running, reported: false),
-            reading("Persistence", .healthy, reported: true),
-        ]
-        let running = HomeCanvasController.healthRingSummary(neverFinished)
-        guard running.value == 1, running.title == "Reporting" else {
-            return "a service that is mid-pass and has never reported is being counted as healthy: "
-                 + "\(running.value)/\(running.total) \(running.title)"
+        // GL-14's half: a service mid-pass that has never finished one is
+        // not evidence of health, and one mid-pass that finished healthy is
+        // not un-counted for the second the pass takes.
+        let midPass = ServiceHealthSummary([
+            .init(service: .backgroundSignals, state: healthState(.notRun, running: true)),
+            .init(service: .persistence, state: healthState(.healthy, running: true)),
+        ])
+        let running = HomeCanvasController.healthRingSummary(midPass)
+        guard running.value == 1, running.total == 2, running.note == "1 of 2 not run yet." else {
+            return "a pass in flight moved the count: \(running.value)/\(running.total) - "
+                 + "\(running.note.debugDescription)"
         }
 
         // Singular: "All 1 services healthy." is what a bare count reads as
         // on a machine where only one service has registered, which is the
         // probe's own state.
-        let lone = HomeCanvasController.healthRingSummary([reading("Persistence", .healthy, reported: true)])
+        let lone = HomeCanvasController.healthRingSummary(healthSummary([(.persistence, .healthy)]))
         guard lone.note == "The only service is healthy." else {
             return "the one-service sentence is not grammatical: \(lone.note.debugDescription)"
         }
 
-        // Everything reported and well: the fraction and the word agree, and
-        // the sentence no longer hedges with "reporting".
-        let allWell = (1...3).map { reading("Service \($0)", .healthy, reported: true) }
+        // Everything reported and well: the fraction, the word and the
+        // footer agree.
+        let allWell = healthSummary([(.backgroundSignals, .healthy), (.fleetTasks, .healthy), (.persistence, .healthy)])
         let well = HomeCanvasController.healthRingSummary(allWell)
         guard well.value == 3, well.total == 3, well.title == "Healthy",
-              well.note == "All 3 services healthy." else {
+              well.note == "All 3 services healthy.", allWell.allHealthyNote == "3/3 services healthy" else {
             return "a fully healthy fleet reads \(well.value)/\(well.total) \(well.title) - "
-                 + "\(well.note.debugDescription)"
+                 + "\(well.note.debugDescription), footer \(allWell.allHealthyNote ?? "nil")"
         }
 
-        // A degraded service is no longer swept into "all healthy": the old
-        // sentence only ever looked at `.failing`.
-        let oneDegraded = [
-            reading("Docs sync", .degraded, reported: true),
-            reading("Persistence", .healthy, reported: true),
-        ]
-        let degraded = HomeCanvasController.healthRingSummary(oneDegraded)
-        guard degraded.value == 1, degraded.note == "Docs sync degraded." else {
+        // A degraded service is no longer swept into "all healthy", and is
+        // named in the Health page's word for it (R5-UI-04).
+        let degraded = HomeCanvasController.healthRingSummary(
+            healthSummary([(.docsSync, .degraded), (.persistence, .healthy)]))
+        guard degraded.value == 1, degraded.note == "\(HealthService.docsSync.title) had a recent failure." else {
             return "a degraded service still reads as healthy: \(degraded.value)/\(degraded.total) - "
                  + "\(degraded.note.debugDescription)"
         }
 
-        // A failing service is named, in both the outstanding and the
-        // complete case.
-        let failingWhileIncomplete = [
-            reading("Docs sync", .failing, reported: true),
-            reading("Persistence", .unknown, reported: false),
-        ]
-        guard HomeCanvasController.healthRingSummary(failingWhileIncomplete).note
-                == "Docs sync needs a look." else {
-            return "a failing service is not named while others are still outstanding"
-        }
-
         // And the empty case B9 established, unchanged.
-        let empty = HomeCanvasController.healthRingSummary([])
+        let empty = HomeCanvasController.healthRingSummary(ServiceHealthSummary())
         guard empty.total == 0, empty.note == "Nothing has reported yet." else {
             return "the no-services state changed: \(empty)"
         }

@@ -102,6 +102,35 @@ enum ShiftTasksPageSelfTest {
                   "the column's Overdue count must equal the subtitle's, got \(counts["overdue"] ?? "nil")")
         }
 
+        // MARK: Board and Calendar headers agree on overdue (R5-BUG-04)
+
+        // The review's render: one late task and one late follow-up. The
+        // Board header said "1 overdue" and the Calendar header "2 overdue",
+        // each counting in its own loop.
+        withScratchStore { store in
+            _ = seed(store, title: "Late task", status: .todo, due: dateString(daysFromNow: -2))
+            _ = seed(store, title: "Later task", status: .todo, due: dateString(daysFromNow: 4))
+            var lateFollowUp = ShiftFollowUp.fresh()
+            lateFollowUp.title = "Late follow-up"
+            lateFollowUp.followUpAt = dateString(daysFromNow: -1)
+            store.addFollowUp(lateFollowUp)
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            let c = controller.counts()
+            check(c.overdue == 1 && c.overdueFollowUps == 1,
+                  "fixture: one late task and one late follow-up, got \(c.overdue) and \(c.overdueFollowUps)")
+            let board = controller.drillHeaderSubtitle ?? ""
+            controller.debugSelectTasksView(ShiftController.ShiftTasksView.calendar.rawValue)
+            drainMainQueue(turns: 5)
+            check(controller.isShowingCalendar, "fixture: the Calendar view did not open")
+            let calendar = controller.drillHeaderSubtitle ?? ""
+            check(board.hasSuffix("\u{00B7} 1 overdue"), "the Board header reads \"\(board)\"")
+            check(calendar.contains("\u{00B7} 1 overdue") && !calendar.contains("2 overdue"),
+                  "the Calendar header counts overdue differently from the Board's \"\(board)\": \"\(calendar)\"")
+            check(calendar.hasSuffix("\u{00B7} 1 follow-up overdue"),
+                  "the Calendar header no longer names the late follow-up its tray lists: \"\(calendar)\"")
+        }
+
         // MARK: The counts follow the project filter (UI-18)
 
         withScratchStore { store in

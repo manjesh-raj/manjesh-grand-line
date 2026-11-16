@@ -1556,3 +1556,51 @@ final class ShiftStore {
         writeMappingGuarded(path: settingsPath, doc: ShiftYaml.toYaml(settings))
     }
 }
+
+// MARK: - The page's numbers (R5-BUG-04)
+
+extension ShiftStore {
+
+    /// The Tasks page's counts, from one pass over the store.
+    ///
+    /// R5-BUG-04: the Board header read "1 overdue" and the Calendar header
+    /// "2 overdue" over the same tasks, because the board counted overdue
+    /// tasks and the calendar counted overdue tasks plus overdue follow-ups,
+    /// each in its own loop. Both headers now read this, and keep the two
+    /// kinds apart: "overdue" is open tasks, the same set the Overdue filter
+    /// lists, and a late follow-up is named as one.
+    struct Summary: Equatable {
+        /// Open tasks.
+        let open: Int
+        /// Open tasks due today.
+        let dueToday: Int
+        /// Open tasks due before today.
+        let overdue: Int
+        /// Pending follow-ups.
+        let followUps: Int
+        /// Pending follow-ups due before today.
+        let overdueFollowUps: Int
+
+        /// "1 follow-up overdue", or nothing when none is.
+        static func overdueFollowUpsPhrase(_ count: Int) -> String? {
+            guard count > 0 else { return nil }
+            return count == 1 ? "1 follow-up overdue" : "\(count) follow-ups overdue"
+        }
+    }
+
+    /// Every open task and pending follow-up the two predicates keep - the
+    /// page passes its project filter for both, so the counts follow it.
+    func summary(now: Date = Date(), calendar: Calendar = .current,
+                 includingTask: (ShiftTask) -> Bool = { _ in true },
+                 includingFollowUp: (ShiftFollowUp) -> Bool = { _ in true }) -> Summary {
+        let startOfToday = calendar.startOfDay(for: now)
+        func day(_ string: String?) -> Date? { string.flatMap(ShiftDateFormatting.date(from:)) }
+        let tasks = activeTasks.filter(includingTask)
+        let dueToday = tasks.filter { day($0.dueDate).map { calendar.isDate($0, inSameDayAs: now) } ?? false }.count
+        let overdue = tasks.filter { day($0.dueDate).map { $0 < startOfToday } ?? false }.count
+        let pending = followUps.filter { $0.status == .pending && includingFollowUp($0) }
+        let overdueFollowUps = pending.filter { day($0.followUpAt).map { $0 < startOfToday } ?? false }.count
+        return Summary(open: tasks.count, dueToday: dueToday, overdue: overdue,
+                       followUps: pending.count, overdueFollowUps: overdueFollowUps)
+    }
+}

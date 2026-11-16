@@ -457,6 +457,13 @@ final class HomeCanvasController: NSViewController {
     /// its column has left (`dashboardRowViews`). The shelf keeps
     /// `maxPeekRows`.
     private var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
+    /// The background services as this render sees them - see
+    /// `ServiceHealthSummary`. Taken once at the top of `render()`, which the
+    /// registry's observer schedules on every report, and read by the
+    /// attention card's closing note and the Health card alike: R5-BUG-02's
+    /// footer said "7/7 services healthy" beside a card reading "7/8" because
+    /// each asked the registry for itself.
+    private var healthSummary = ServiceHealthSummary()
     /// Whether the hub's Health card lists its services under the ring -
     /// set by `dashboardRowViews` when its column has the room, never on the
     /// shelf.
@@ -892,6 +899,7 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func render() {
+        healthSummary = ServiceHealthRegistry.shared.summary()
         renderGreeting()
         renderAttention()
         rebuildGrid()
@@ -1298,15 +1306,8 @@ final class HomeCanvasController: NSViewController {
            snapshot.tasks.allSatisfy({ $0.status != "needs_decision" && $0.status != "blocked" }) {
             notes.append("Fleet idle")
         }
-        let readings = ServiceHealthRegistry.shared.knownServices().map { service -> HealthServiceReading in
-            let state = ServiceHealthRegistry.shared.state(service)
-            return HealthServiceReading(title: service.title,
-                                        verdict: state.verdict,
-                                        hasReported: state.hasReported)
-        }
-        let health = Self.healthRingSummary(readings)
-        if !hiddenModules.contains(.health), health.total > 0, health.value == health.total {
-            notes.append("\(health.value)/\(health.total) services healthy")
+        if !hiddenModules.contains(.health), let health = healthSummary.allHealthyNote {
+            notes.append(health)
         }
         if crew, let snapshot = quotaSnapshot,
            let plan = Self.claudePlanLimitsStatus(for: snapshot), plan.state == .ok {
@@ -2096,13 +2097,13 @@ final class HomeCanvasController: NSViewController {
     ///   - Column 3 is the Morning briefing and the Merge queue.
     ///
     /// The columns still end on one line, but a card is never stretched past
-    /// what it holds (UXP-04): columns 1 and 2 end in a spacer that takes the
-    /// leftover height, and every card in them sits at its own height
-    /// (`dashboardKeepsOwnHeight`). In column 3 the Merge queue fills
-    /// its column by *row count* instead (`mergeQueueRows`), so what the
-    /// briefing absorbs is less than one row. Measured: with the Merge queue
-    /// as the absorber, its peek list spread that remainder unevenly between
-    /// rows.
+    /// what it holds (UXP-04): every column ends in a spacer that takes the
+    /// leftover height, and every card sits at its own height
+    /// (`dashboardKeepsOwnHeight`). Column 3 used to fill by the Merge
+    /// queue's *row count* with the briefing absorbing the remainder; since
+    /// the queue is capped at `maxPeekRows` (R5-UI-03) that remainder is most
+    /// of the column, and an absorbing briefing rendered as a 600pt card
+    /// holding one sentence.
     private static let dashboardColumns: [[DaylightModule]] = [
         [.claudeStatus, .fleet, .health],
         [.briefing, .mergeQueue],
@@ -2196,11 +2197,17 @@ final class HomeCanvasController: NSViewController {
         }
 
         // Column 3: as many Merge queue rows as the column holds under the
-        // briefing; the briefing takes what is left, below its paragraph.
+        // briefing, up to the card's own `maxPeekRows`; the briefing takes
+        // what is left, below its paragraph.
+        //
+        // R5-UI-03 (R4-UI-10): uncapped, this listed 20 of 22 pull requests
+        // in an 850pt card, where the sidebar layout's same card shows three
+        // and a "Showing 3 of 22" footer. The cap is the sidebar's.
         let briefingContent = content(for: .briefing, placement: placement)
         let briefingHeight = probeHeight(briefingContent, width: width)
-        mergeQueueRowLimit = mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
-                                            placement: placement, width: width)
+        mergeQueueRowLimit = min(HelmModuleCard.maxPeekRows,
+                                 mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
+                                                placement: placement, width: width))
         let mergeContent = content(for: .mergeQueue, placement: placement)
         mergeQueueRowLimit = HelmModuleCard.maxPeekRows
         let mergeHeight = probeHeight(mergeContent, width: width)
@@ -2213,7 +2220,8 @@ final class HomeCanvasController: NSViewController {
             // column's slack, so at a narrow width - where it drops its
             // service rows - it kept the height it had with seven of them.
             ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight,
-                         .health: probeHeight(healthContent, width: width), .mergeQueue: mergeHeight])
+                         .health: probeHeight(healthContent, width: width),
+                         .briefing: briefingHeight, .mergeQueue: mergeHeight])
     }
 
     private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
@@ -2236,7 +2244,7 @@ final class HomeCanvasController: NSViewController {
                     dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
                                     absorbing: nil, ownHeights: plan.ownHeights, width: plan.width),
                     dashboardColumn([(.briefing, briefing), (.mergeQueue, merge)],
-                                    absorbing: .briefing, ownHeights: plan.ownHeights, width: plan.width)],
+                                    absorbing: nil, ownHeights: plan.ownHeights, width: plan.width)],
             spans: Self.dashboardSpans,
             containerWidth: available,
             spacing: Self.gridSpacing)
@@ -3447,13 +3455,6 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
-    /// One service as the Health ring's summary needs to see it.
-    struct HealthServiceReading {
-        let title: String
-        let verdict: ServiceHealthState.Verdict
-        let hasReported: Bool
-    }
-
     /// What the Health card's ring and its sentence both say.
     struct HealthRingSummary: Equatable {
         let value: Int
@@ -3462,31 +3463,20 @@ final class HomeCanvasController: NSViewController {
         let note: String
     }
 
-    /// **Review defect U5.** The ring counted healthy-or-running services over
-    /// *every* known service while the sentence beside it described only the
-    /// ones that had reported, so the card rendered "2/6" next to "Healthy -
-    /// All reporting services healthy." and later "4/6" next to the same
-    /// words. The numbers and the words disagreed about which set they were
-    /// talking about, and neither said what the other four were doing.
+    /// **Review defect U5**, then R5-BUG-02. U5: the ring counted one set
+    /// and its sentence another ("2/6" beside "All reporting services
+    /// healthy"). Its fix counted *reporting* services over total while any
+    /// had not reported ("Reporting 7 of 8"), which is a third number for
+    /// the same registry: the Health page said "Healthy 5/8" and the footer
+    /// "7/7 services healthy" on the same screen.
     ///
-    /// Two things are wrong there and both are fixed here. The fraction and
-    /// the sentence now count the *same* set; and a service that is mid-pass
-    /// but has never reported anything is no longer counted as healthy, which
-    /// is GL-14's "unknown is never rendered as good" in its usual disguise -
-    /// `.running` was in the healthy bucket regardless of whether the service
-    /// had ever finished a pass.
-    ///
-    /// While anything is still outstanding the ring counts *reporting* over
-    /// total and says so ("4 of 6 reporting"), which is the finding's own
-    /// first suggestion. Once every service has reported it goes back to
-    /// counting healthy over total, where the fraction and the word "Healthy"
-    /// genuinely agree.
-    ///
-    /// Pure, and separate from the registry, so it can be asserted against
-    /// fabricated readings rather than against whatever this Mac's own
-    /// services happen to be doing.
-    static func healthRingSummary(_ services: [HealthServiceReading]) -> HealthRingSummary {
-        guard !services.isEmpty else {
+    /// So the ring is now healthy over total, always, from the same
+    /// `ServiceHealthSummary` the Health page and the footer read, and the
+    /// sentence names whatever keeps the two apart, worst first. GL-14 still
+    /// holds: a service that has never finished a pass is "not run yet",
+    /// never healthy.
+    static func healthRingSummary(_ summary: ServiceHealthSummary) -> HealthRingSummary {
+        guard summary.total > 0 else {
             // B9: shorter copy as well as a third line - the note column
             // beside a 66pt gauge is genuinely narrow, and a summary that
             // needs three lines to say "fine" is not a summary.
@@ -3495,33 +3485,25 @@ final class HomeCanvasController: NSViewController {
             return HealthRingSummary(value: 0, total: 0, title: HelmReading<String>.unknownCaption,
                                      note: "Nothing has reported yet.")
         }
-        let total = services.count
-        let reported = services.filter(\.hasReported)
-        let failing = services.filter { $0.verdict == .failing }
-        let degraded = services.filter { $0.verdict == .degraded }
-        let names = { (list: [HealthServiceReading]) in
-            list.map(\.title).joined(separator: ", ")
+        let total = summary.total
+        let names = { (bucket: ServiceHealthSummary.Bucket) in
+            summary.services(in: bucket).map(\.title).joined(separator: ", ")
         }
-        guard reported.count == total else {
-            let note = failing.isEmpty
-                ? "\(reported.count) of \(total) reporting so far."
-                : "\(names(failing)) needs a look."
-            return HealthRingSummary(value: reported.count, total: total,
-                                     title: "Reporting", note: note)
-        }
-        let healthy = services.filter { $0.verdict == .healthy }
         let note: String
-        if !failing.isEmpty {
-            note = "\(names(failing)) needs a look."
-        } else if !degraded.isEmpty {
-            note = "\(names(degraded)) degraded."
+        if summary.failing > 0 {
+            note = "\(names(.failing)) needs a look."
+        } else if summary.degraded > 0 {
+            note = "\(names(.degraded)) had a recent failure."
+        } else if summary.notRun > 0 {
+            note = "\(summary.notRun) of \(total) \(ServiceHealthSummary.Bucket.notRun.phrase)."
         } else {
             // "All 1 services healthy." is what a bare count reads as on a
             // machine where only one service has registered - measured in
             // the probe.
             note = total == 1 ? "The only service is healthy." : "All \(total) services healthy."
         }
-        return HealthRingSummary(value: healthy.count, total: total, title: "Healthy", note: note)
+        return HealthRingSummary(value: summary.healthy, total: total,
+                                 title: ServiceHealthSummary.Bucket.healthy.label, note: note)
     }
 
     private func fillHealth(_ content: inout HelmModuleCard.Content) {
@@ -3529,18 +3511,12 @@ final class HomeCanvasController: NSViewController {
         // artwork, replacing the plain `waveform.path.ecg` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.health` case.
         content.artwork = HealthIcon.image
-        let readings = ServiceHealthRegistry.shared.knownServices().map { service -> HealthServiceReading in
-            let state = ServiceHealthRegistry.shared.state(service)
-            return HealthServiceReading(title: service.title,
-                                        verdict: state.verdict,
-                                        hasReported: state.hasReported)
-        }
+        let health = healthSummary
         content.subtitle = "background services"
-        let failingCount = readings.filter { $0.verdict == .failing }.count
-        if failingCount > 0 { content.chip = .bad("\(failingCount) failing") }
-        let summary = Self.healthRingSummary(readings)
-        let lines = Self.healthServiceLines(readings)
-        let spoken = Self.healthRingSpoken(readings)
+        if health.failing > 0 { content.chip = .bad("\(health.failing) \(ServiceHealthSummary.Bucket.failing.phrase)") }
+        let summary = Self.healthRingSummary(health)
+        let lines = Self.healthServiceLines(health)
+        let spoken = health.spoken
         content.body = healthListsServices && !lines.isEmpty
             ? .ringWithLines(value: summary.value, total: summary.total,
                              title: summary.title, note: summary.note, lines: lines, spoken: spoken)
@@ -3548,36 +3524,24 @@ final class HomeCanvasController: NSViewController {
                     title: summary.title, note: summary.note, spoken: spoken)
     }
 
-    /// R2-A11Y-04: the Health ring in words - "4 healthy, 1 failing" - one
-    /// count per verdict, in the order the Health page's own summary lists
-    /// them. The arc's sweep was the only carrier of how many were well.
-    static func healthRingSpoken(_ services: [HealthServiceReading]) -> String {
-        guard !services.isEmpty else { return "No background service has reported yet" }
-        let order: [(ServiceHealthState.Verdict, String)] = [
-            (.healthy, "healthy"), (.failing, "failing"), (.degraded, "recent failure"),
-            (.running, "checking"), (.unknown, "not run yet"),
-        ]
-        return order.compactMap { verdict, word -> String? in
-            let count = services.filter { $0.verdict == verdict }.count
-            return count > 0 ? "\(count) \(word)" : nil
-        }.joined(separator: ", ")
-    }
-
     /// One line per service for the hub's Health list, in the registry's
-    /// order. GL-14 holds per line: a service that has never reported says
-    /// "Not read" and one mid-pass says "Checking" - neither is "Healthy",
-    /// and neither takes a state colour it has not earned.
-    static func healthServiceLines(_ services: [HealthServiceReading]) -> [HelmModulePeekRow] {
-        services.map { service in
-            let (word, state): (String, HelmModuleRowState)
-            switch service.verdict {
-            case .healthy: (word, state) = ("Healthy", .ok)
-            case .degraded: (word, state) = ("Degraded", .warn)
-            case .failing: (word, state) = ("Failing", .bad)
-            case .running: (word, state) = ("Checking", .idle)
-            case .unknown: (word, state) = (HelmReading<String>.unknownCaption, .idle)
+    /// order, each in the Health page's own word for its state (R5-UI-04).
+    /// GL-14 holds per line: a service that has never reported says "Not run
+    /// yet" and one mid-pass says "Checking…" - neither is "Healthy", and
+    /// neither takes a state colour it has not earned.
+    ///
+    /// R2-A11Y-04's spoken ring is `ServiceHealthSummary.spoken`.
+    static func healthServiceLines(_ summary: ServiceHealthSummary) -> [HelmModulePeekRow] {
+        summary.entries.map { entry in
+            let verdict = entry.state.verdict
+            let state: HelmModuleRowState
+            switch verdict {
+            case .healthy: state = .ok
+            case .degraded: state = .warn
+            case .failing: state = .bad
+            case .running, .unknown: state = .idle
             }
-            return HelmModulePeekRow(state: state, text: service.title, value: word)
+            return HelmModulePeekRow(state: state, text: entry.service.title, value: verdict.label)
         }
     }
 

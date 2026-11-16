@@ -969,32 +969,19 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         return button
     }()
 
-    /// The page's four numbers, from **one** counting pass (UI-18).
+    /// The page's numbers, from **one** counting pass (UI-18) - the store's
+    /// own `summary`, which the Calendar view's header reads too
+    /// (R5-BUG-04).
     ///
     /// The subtitle and the sidebar both read this, so they cannot disagree,
     /// and both follow the project filter - picking "Ideas" in the sidebar
-    /// makes "11 open" become the number of open tasks in Ideas. The stat
+    /// makes "11 open" become the number of open tasks in Ideas, and the
+    /// follow-ups count the ones the board's follow-up lane lists. The stat
     /// tiles that used to say the same thing a third time are gone (UI-16).
-    struct Counts: Equatable {
-        let open: Int
-        let dueToday: Int
-        let followUps: Int
-        let overdue: Int
-    }
+    typealias Counts = ShiftStore.Summary
 
     func counts(now: Date = Date()) -> Counts {
-        let tasks = store.activeTasks.filter(matchesProjectFilter)
-        let cal = Calendar.current
-        let dueToday = tasks.filter { task in
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return cal.isDate(due, inSameDayAs: now)
-        }.count
-        let overdue = tasks.filter { task in
-            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return due < cal.startOfDay(for: now)
-        }.count
-        let followUps = store.followUps.filter { $0.status == .pending }.count
-        return Counts(open: tasks.count, dueToday: dueToday, followUps: followUps, overdue: overdue)
+        store.summary(now: now, includingTask: matchesProjectFilter, includingFollowUp: matchesProjectFilter)
     }
 
     /// §6.4's live subtitle. UI-16: it carries all four counts now - it is
@@ -1356,6 +1343,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private func matchesProjectFilter(_ task: ShiftTask) -> Bool {
         guard let projectFilter else { return true }
         return task.projectID == projectFilter
+    }
+
+    private func matchesProjectFilter(_ item: ShiftFollowUp) -> Bool {
+        guard let projectFilter else { return true }
+        return item.projectID == projectFilter
     }
 
     /// The sidebar's Workspace slice.

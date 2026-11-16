@@ -185,11 +185,7 @@ enum ReviewTwoA11yPerfSelfTest {
         settle(shell)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         settle(shell)
-        let readings = registry.knownServices().map { service -> HomeCanvasController.HealthServiceReading in
-            let state = registry.state(service)
-            return .init(title: service.title, verdict: state.verdict, hasReported: state.hasReported)
-        }
-        let want = HomeCanvasController.healthRingSpoken(readings)
+        let want = registry.summary().spoken
         let ring = shell.debugHomeCanvas.cardForTests(.health)?.debugRingGauge
         check(ring != nil, "Home's Health card draws no ring", &ok)
         check(ring?.isAccessibilityElement() == true && ring?.accessibilityLabel() == want,

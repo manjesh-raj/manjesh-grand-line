@@ -1203,6 +1203,10 @@ final class ShiftCalendarView: NSView {
     private var tasks: [ShiftTask] = []
     private var followUps: [ShiftFollowUp] = []
     private var projects: [ShiftProject] = []
+    /// The Tasks page's own counts, which the caption's overdue figures come
+    /// from so the Board and Calendar headers agree (R5-BUG-04). `nil` when
+    /// nothing hands them over; the tray's own records stand in then.
+    var pageSummary: ShiftStore.Summary?
     private(set) var tray = ShiftCalendarTray()
     private(set) var lastTrayPayload: [String: Any] = [:]
     /// The tray folded to a strip. The page asks, this side decides and
@@ -1532,7 +1536,8 @@ final class ShiftCalendarView: NSView {
         let today = ShiftDateFormatting.components(from: Date()).dateStr
         let period = ShiftCalendarModel.periodPhrase(scale: scale, visibleStart: visibleRange?.start, today: today)
         caption = Self.subtitle(total: tasksOnly.count, projected: tasksOnly.filter(\.isProjected).count,
-                                followUps: list.filter { $0.kind == .followUp }.count, tray: tray, period: period)
+                                followUps: list.filter { $0.kind == .followUp }.count, tray: tray, period: period,
+                                summary: pageSummary)
     }
 
     /// GL-14: what is on screen and what is not, in one line.
@@ -1543,9 +1548,18 @@ final class ShiftCalendarView: NSView {
     /// then the work the grid cannot show: tasks with no date, and overdue
     /// ones. An empty grid with open tasks behind it never reads as "nothing
     /// scheduled", which is what the captain saw with 13 undated tasks.
+    ///
+    /// R5-BUG-04: the overdue figures are the page's (`summary`), so this
+    /// header says the same "N overdue" the Board header does - open tasks -
+    /// and names late follow-ups as follow-ups. It used to count the tray's
+    /// overdue list, both kinds together, and read "2 overdue" beside the
+    /// Board's "1 overdue".
     static func subtitle(total: Int, projected: Int, followUps: Int = 0,
-                         tray: ShiftCalendarTray = ShiftCalendarTray(), period: String = "this month") -> String {
+                         tray: ShiftCalendarTray = ShiftCalendarTray(), period: String = "this month",
+                         summary: ShiftStore.Summary? = nil) -> String {
         let unscheduled = tray.unscheduledCount
+        let overdueTasks = summary?.overdue ?? tray.overdue.filter { $0.kind == .task }.count
+        let overdueFollowUps = summary?.overdueFollowUps ?? tray.overdue.filter { $0.kind == .followUp }.count
         if tray.isUndatedOnly, total + followUps == 0 {
             let open = tray.openTasks == 1 ? "1 open task" : "\(tray.openTasks) open tasks"
             return "\(open) · none on the calendar yet · \(unscheduled) unscheduled"
@@ -1562,13 +1576,14 @@ final class ShiftCalendarView: NSView {
                 text += ", \(projected) of them repeat dates not yet created"
             }
             parts.append(text)
-        } else if unscheduled + tray.overdue.count > 0 {
+        } else if unscheduled + overdueTasks + overdueFollowUps > 0 {
             parts.append("Nothing dated \(period)")
         } else {
             return "Nothing scheduled \(period)."
         }
         if unscheduled > 0 { parts.append("\(unscheduled) unscheduled") }
-        if !tray.overdue.isEmpty { parts.append("\(tray.overdue.count) overdue") }
+        if overdueTasks > 0 { parts.append("\(overdueTasks) overdue") }
+        if let late = ShiftStore.Summary.overdueFollowUpsPhrase(overdueFollowUps) { parts.append(late) }
         return parts.joined(separator: " · ")
     }
 

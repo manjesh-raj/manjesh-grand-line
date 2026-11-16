@@ -2900,6 +2900,9 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
         metaLabel.stringValue = Self.metaText(content)
         metaLabel.isHidden = metaLabel.stringValue.isEmpty
         metaLabel.font = content.metaIsCode ? HelmType.code() : HelmType.caption()
+        // gotcha (22): `labelWithString` builds a cell that does not wrap,
+        // and the line break mode alone does not change that.
+        metaLabel.cell?.wraps = content.metaWraps
         metaLabel.maximumNumberOfLines = content.metaWraps ? 0 : 1
         metaLabel.lineBreakMode = content.metaWraps ? .byWordWrapping : .byTruncatingTail
 
@@ -2920,6 +2923,27 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
             metaRow.isHidden = metaLabel.isHidden && chip.isHidden
         }
         applyTheme(theme)
+    }
+
+    /// The width a wrapping meta line (`Content.metaWraps`) breaks at, for a
+    /// row `rowWidth` wide. A host whose rows are measured by `fittingSize`
+    /// before they are laid out calls this first, or the line measures as
+    /// one long line.
+    ///
+    /// gotcha (22): never from the label's own width. It is the row's width,
+    /// less the bar and the content insets, less every other visible member
+    /// of the content row at its own fitting width and the spacing beside
+    /// it - none of which the meta line decides.
+    func setMetaWrapWidth(forRowWidth rowWidth: CGFloat) {
+        guard rowWidth > 0, let contentRow, let textColumn, metaLabel.maximumNumberOfLines != 1 else { return }
+        let siblings = contentRow.arrangedSubviews.filter { $0 !== textColumn && !$0.isHidden }
+        let rigid = siblings.reduce(CGFloat(0)) { $0 + ceil($1.fittingSize.width) }
+            + contentRow.spacing * CGFloat(siblings.count)
+        let chrome = metrics.barLeadingInset + Self.barWidth + metrics.contentLeading + metrics.contentTrailing
+        let available = max(120, floor(rowWidth - chrome - rigid))
+        guard abs(metaLabel.preferredMaxLayoutWidth - available) > 0.5 else { return }
+        metaLabel.preferredMaxLayoutWidth = available
+        metaLabel.invalidateIntrinsicContentSize()
     }
 
     /// The meta line as plain text: the coloured lead, then the rest. One
@@ -3222,6 +3246,23 @@ final class HelmAccentRow: NSView, NSGestureRecognizerDelegate {
     }
     var debugTrailingCaptionColor: NSColor? { trailingCaptionLabel.textColor }
     var debugMetaAttributed: NSAttributedString { metaLabel.attributedStringValue }
+    /// The meta line's whole text on one line, against the width it was
+    /// painted at - wider means one line cannot hold it.
+    var debugMetaOneLineWidth: CGFloat { ceil(metaLabel.attributedStringValue.size().width) }
+    var debugMetaPaintedWidth: CGFloat { metaLabel.frame.width }
+    /// Whether the meta line as painted holds its whole text: wrapped at the
+    /// label's own width, the text fits the label's frame. A line cut with an
+    /// ellipsis fails it whether or not the label was set to wrap.
+    var debugMetaFitsItsFrame: Bool {
+        // A cell that does not wrap paints one line, however tall its frame.
+        guard metaLabel.cell?.wraps == true, metaLabel.maximumNumberOfLines != 1 else {
+            return debugMetaOneLineWidth <= metaLabel.frame.width + 1
+        }
+        let needed = metaLabel.attributedStringValue.boundingRect(
+            with: NSSize(width: metaLabel.frame.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]).height
+        return ceil(needed) <= metaLabel.frame.height + 1
+    }
     var debugTitleAttributed: NSAttributedString { titleLabel.attributedStringValue }
     var debugBarHidden: Bool { accentBar.isHidden }
     var debugCardBorderWidth: CGFloat { card.layer?.borderWidth ?? 0 }

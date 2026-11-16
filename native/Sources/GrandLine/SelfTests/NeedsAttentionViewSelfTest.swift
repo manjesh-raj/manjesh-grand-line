@@ -48,6 +48,7 @@ enum NeedsAttentionViewSelfTest {
         checkTheSublineTicks(&ok)
         checkTheListScrollsInsideTheCard(&ok)
         checkASamePaletteRePushKeepsTheRows(&ok)
+        checkALongRowWrapsInsteadOfTruncating(&ok)
 
         if ok {
             print("NeedsAttentionViewSelfTest: all checks passed")
@@ -361,6 +362,52 @@ enum NeedsAttentionViewSelfTest {
     /// The real card, given less height than its rows need the way a page
     /// column gives it (a 499 tie, under the window's own 500), with the
     /// captain's ten-row worst case.
+    /// R5-UI-03: the fleet row's line - "Fleet · Needs you · 1 decision
+    /// waiting - the crew is holding for you." - rendered "the crew is
+    /// holding f…" in the hub's column. It wraps now, and the card measures
+    /// the taller row, so the list still ends at its last row.
+    private static func checkALongRowWrapsInsteadOfTruncating(_ ok: inout Bool) {
+        let window = OffScreenProbe.window(width: 700, height: 700, styleMask: [.titled, .resizable])
+        defer { window.orderOut(nil) }
+        let host = FlippedView(frame: NSRect(x: 0, y: 0, width: 700, height: 700))
+        window.contentView = host
+        window.orderFront(nil)
+        let card = NeedsAttentionCard()
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+            card.widthAnchor.constraint(equalToConstant: 470),
+        ])
+        card.setLayoutWidth(470)
+        card.render(ReviewTourLab.demoAttentionSummary(count: 3), subline: "Fleet read just now.",
+                    theme: ThemeManager.shared.theme)
+        host.layoutSubtreeIfNeeded()
+        card.layoutSubtreeIfNeeded()
+
+        let rows = card.debugRows.compactMap { $0 as? NeedsAttentionRowView }
+        guard rows.count == 3, let fleet = rows.last?.debugRow, let first = rows.first?.debugRow else {
+            fail("the fixture should draw three attention rows, got \(card.debugRows.count)", &ok)
+            return
+        }
+        // Discriminating power first: one line really cannot hold it.
+        check(fleet.debugMetaOneLineWidth > fleet.debugMetaPaintedWidth + 20,
+              "fixture: the fleet row's line (\(fleet.debugMetaOneLineWidth)pt) should not fit one line of "
+              + "\(fleet.debugMetaPaintedWidth)pt", &ok)
+        check(fleet.debugMetaFitsItsFrame,
+              "the fleet row's line is cut short: \"\(fleet.debugMetaText)\" in \(fleet.debugMetaPaintedWidth)pt", &ok)
+        check(first.debugMetaFitsItsFrame, "a one-line row's line is cut short: \"\(first.debugMetaText)\"", &ok)
+        check((rows.last?.frame.height ?? 0) > (rows.first?.frame.height ?? 0) + 8,
+              "the wrapped row should be taller than a one-line row, got \(rows.map(\.frame.height))", &ok)
+        // The list is as tall as its rows, so nothing is clipped under the
+        // card and no "+N more" cue claims a row is hidden.
+        let scroll = card.debugListScroll
+        let document = scroll.documentView?.frame.height ?? 0
+        check(document <= scroll.contentView.bounds.height + 0.5 && card.debugMoreCount == nil,
+              "the wrapped list (\(document)pt) does not fit its \(scroll.contentView.bounds.height)pt view, "
+              + "cue \(card.debugMoreCount.map(String.init) ?? "none")", &ok)
+    }
+
     private static func checkTheListScrollsInsideTheCard(_ ok: inout Bool) {
         let window = OffScreenProbe.window(width: 700, height: 700, styleMask: [.titled, .resizable])
         defer { window.orderOut(nil) }

@@ -1614,7 +1614,10 @@ enum ReviewTourLab {
             headline: NeedsAttentionComposer.headline(state: state, items: items, hidden: 0,
                                                       allClearHeadline: "Nothing needs you right now."),
             items: items, overflowNote: nil, gaps: [],
-            clearNotes: ["7/7 services healthy", "Claude plan limits comfortable"])
+            // R5-BUG-02: the services note is the registry's own, never a
+            // fixed "7/7" beside a Health card counting the live registry.
+            clearNotes: [ServiceHealthRegistry.shared.summary().allHealthyNote,
+                         "Claude plan limits comfortable"].compactMap { $0 })
     }
 
     /// The most rows `demoAttentionSummary` can produce, which is the most

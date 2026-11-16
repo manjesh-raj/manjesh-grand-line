@@ -73,10 +73,12 @@ final class HealthCardView: NSObject {
     /// Set once, by `adoptTableLayout()`. Never set in the floating bar.
     private(set) var drawsTable = false
     private lazy var tableRoot = NSStackView()
-    private lazy var healthyCard = HelmMetricCard(caption: "Healthy", tint: .good)
-    private lazy var warningsCard = HelmMetricCard(caption: "Warnings", tint: .warn)
-    private lazy var failingCard = HelmMetricCard(caption: "Failing", tint: .critical)
-    private lazy var pendingCard = HelmMetricCard(caption: "Not run yet")
+    // R5-UI-04: the bucket's own word, as everywhere else ("Warnings" here
+    // was a fourth name for a service with a recent failure).
+    private lazy var healthyCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.healthy.label, tint: .good)
+    private lazy var warningsCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.degraded.label, tint: .warn)
+    private lazy var failingCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.failing.label, tint: .critical)
+    private lazy var pendingCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.notRun.label)
     private lazy var crashHost = NSStackView()
     private lazy var servicesTable: HelmDataTable = {
         let table = HelmDataTable(columns: [
@@ -115,7 +117,8 @@ final class HealthCardView: NSObject {
 
     /// The summary cards and the table, from the registry's current state.
     private func rebuildTable() {
-        let counts = Self.verdictCounts()
+        // One snapshot for the figures and the rows (R5-BUG-02).
+        let counts = ServiceHealthRegistry.shared.summary()
         let known = counts.total > 0
         // Before anything has reported, every figure is unknown, not zero.
         let reason = "No background service has reported yet."
@@ -123,7 +126,7 @@ final class HealthCardView: NSObject {
                               unknownReason: reason)
         warningsCard.configure(count: known ? counts.degraded : nil, unknownReason: reason)
         failingCard.configure(count: known ? counts.failing : nil, unknownReason: reason)
-        pendingCard.configure(text: known ? "\(counts.pending)" : nil, signals: false, unknownReason: reason)
+        pendingCard.configure(text: known ? "\(counts.notRun)" : nil, signals: false, unknownReason: reason)
         for card in [healthyCard, warningsCard, failingCard, pendingCard] { card.applyTheme(theme) }
 
         for view in crashHost.arrangedSubviews {
@@ -136,8 +139,7 @@ final class HealthCardView: NSObject {
         }
         crashHost.isHidden = crashHost.arrangedSubviews.isEmpty
 
-        let services = ServiceHealthRegistry.shared.knownServices()
-        var rows = services.map(tableRow)
+        var rows = counts.entries.map(tableRow)
         if rows.isEmpty {
             rows = [.empty(
                 symbol: "waveform.path.ecg", title: "Nothing has reported yet",
@@ -150,8 +152,9 @@ final class HealthCardView: NSObject {
 
     /// One service: what it does (or its last error), its verdict, when it
     /// last ran, its run streak, and Retry where the service can be re-run.
-    private func tableRow(_ service: HealthService) -> HelmDataTable.Row {
-        let state = ServiceHealthRegistry.shared.state(service)
+    private func tableRow(_ entry: ServiceHealthSummary.Entry) -> HelmDataTable.Row {
+        let service = entry.service
+        let state = entry.state
         let (tint, chip) = Self.healthVisuals(state)
         var row = HelmDataTable.Row.record(service.rawValue)
         let detail: String
@@ -162,13 +165,13 @@ final class HealthCardView: NSObject {
         }
         let lastRun: HelmDataTable.Cell
         if state.verdict == .running {
-            lastRun = .muted("Checking\u{2026}")
+            lastRun = .muted(state.verdict.label)
         } else if let last = state.lastSuccess {
             lastRun = .text(Self.relative(last))
         } else if state.hasReported {
             lastRun = .muted("Never succeeded")
         } else {
-            lastRun = .muted("Not run yet")
+            lastRun = .muted(ServiceHealthSummary.Bucket.notRun.label)
         }
         let ticks = Self.runTicks(state)
         row.cells = [
@@ -350,24 +353,6 @@ final class HealthCardView: NSObject {
 
     // MARK: §7's KPI chips and run ticks
 
-    /// How many known services sit in each verdict bucket. Static because
-    /// `HealthController`'s own drill-header subtitle reads it too, and two
-    /// separate counts of one registry is how a header and its rows start
-    /// disagreeing.
-    static func verdictCounts() -> (total: Int, healthy: Int, degraded: Int, failing: Int, pending: Int) {
-        var healthy = 0, degraded = 0, failing = 0, pending = 0
-        let services = ServiceHealthRegistry.shared.knownServices()
-        for service in services {
-            switch ServiceHealthRegistry.shared.state(service).verdict {
-            case .healthy: healthy += 1
-            case .degraded: degraded += 1
-            case .failing: failing += 1
-            case .running, .unknown: pending += 1
-            }
-        }
-        return (services.count, healthy, degraded, failing, pending)
-    }
-
     /// §7's "run-tick strings", built strictly from what the registry actually
     /// records.
     ///
@@ -407,14 +392,13 @@ final class HealthCardView: NSObject {
     /// UI-56: the counts, quiet when a bucket is empty and tinted when it is
     /// the signal. Shown only once something has reported - an all-zero line
     /// over "Nothing has reported yet" would say the same thing twice.
-    private func refreshSummary() {
-        let counts = Self.verdictCounts()
+    private func refreshSummary(_ counts: ServiceHealthSummary) {
         summaryStrip.configure([
             .count(counts.total, caption: counts.total == 1 ? "Service" : "Services"),
-            .count(counts.failing, caption: "Failing", tintWhenNonZero: .critical),
-            .count(counts.degraded, caption: "Recent failure", tintWhenNonZero: .warn),
-            .count(counts.healthy, caption: "Healthy", tintWhenNonZero: .good),
-            .count(counts.pending, caption: "Not run yet"),
+            .count(counts.failing, caption: ServiceHealthSummary.Bucket.failing.label, tintWhenNonZero: .critical),
+            .count(counts.degraded, caption: ServiceHealthSummary.Bucket.degraded.label, tintWhenNonZero: .warn),
+            .count(counts.healthy, caption: ServiceHealthSummary.Bucket.healthy.label, tintWhenNonZero: .good),
+            .count(counts.notRun, caption: ServiceHealthSummary.Bucket.notRun.label),
         ], theme: theme)
     }
 
@@ -426,14 +410,16 @@ final class HealthCardView: NSObject {
             rebuildTable()
             return
         }
-        refreshSummary()
+        // One snapshot for the strip and the rows (R5-BUG-02).
+        let summary = ServiceHealthRegistry.shared.summary()
+        refreshSummary(summary)
         descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
             healthStack.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
 
-        let services = ServiceHealthRegistry.shared.knownServices()
+        let services = summary.entries
         var rows: [NSView] = []
 
         // P9: two SIGABRTs in 24 hours sat unnoticed in
@@ -476,9 +462,9 @@ final class HealthCardView: NSObject {
             rows.append(empty)
         } else {
             rows.append(summaryStrip)
-            for (index, service) in services.enumerated() {
+            for (index, entry) in services.enumerated() {
                 if index > 0 { rows.append(separator()) }
-                rows.append(healthRow(for: service))
+                rows.append(healthRow(for: entry))
             }
         }
 
@@ -510,8 +496,9 @@ final class HealthCardView: NSObject {
         return row
     }
 
-    private func healthRow(for service: HealthService) -> NSView {
-        let state = ServiceHealthRegistry.shared.state(service)
+    private func healthRow(for entry: ServiceHealthSummary.Entry) -> NSView {
+        let service = entry.service
+        let state = entry.state
         let (tint, chip) = Self.healthVisuals(state)
 
         var lines: [String] = [service.detail]
@@ -520,7 +507,7 @@ final class HealthCardView: NSObject {
         } else if state.hasReported {
             lines.append("Has never completed successfully.")
         } else {
-            lines.append("Not run yet.")
+            lines.append("\(ServiceHealthSummary.Bucket.notRun.label).")
         }
         if let failure = state.lastFailureDetail, let when = state.lastFailure {
             lines.append("Last error (\(Self.relative(when))): \(failure)")
@@ -596,8 +583,9 @@ final class HealthCardView: NSObject {
     /// Console.app under "com.manjesh.grandline.native".
     @objc private func copyDiagnostics() {
         var lines: [String] = ["Grand Line - service health"]
-        for service in ServiceHealthRegistry.shared.knownServices() {
-            let state = ServiceHealthRegistry.shared.state(service)
+        for entry in ServiceHealthRegistry.shared.summary().entries {
+            let service = entry.service
+            let state = entry.state
             let (_, chip) = Self.healthVisuals(state)
             var line = "- \(service.title): \(chip)"
             if let last = state.lastSuccess { line += ", last ran \(Self.relative(last))" }
@@ -636,14 +624,19 @@ final class HealthCardView: NSObject {
         PersistenceFailureReporter.acknowledge()
     }
 
+    /// The row's tint and its chip, in the one word per state every surface
+    /// uses (R5-UI-04). The chip used to read "1 recent failure" for a
+    /// service one *or two* failures in.
     private static func healthVisuals(_ state: ServiceHealthState) -> (HelmTint, String) {
+        let tint: HelmTint
         switch state.verdict {
-        case .unknown: return (.neutral, "Not run yet")
-        case .running: return (.info, "Checking\u{2026}")
-        case .healthy: return (.good, "Healthy")
-        case .degraded: return (.warn, "1 recent failure")
-        case .failing: return (.critical, "Failing")
+        case .unknown: tint = .neutral
+        case .running: tint = .info
+        case .healthy: tint = .good
+        case .degraded: tint = .warn
+        case .failing: tint = .critical
         }
+        return (tint, state.verdict.label)
     }
 
     private static func relative(_ date: Date) -> String {

@@ -105,7 +105,7 @@ enum HealthService: String, CaseIterable {
     }
 }
 
-struct ServiceHealthState {
+struct ServiceHealthState: Equatable {
     var lastSuccess: Date?
     var lastFailure: Date?
     var lastFailureDetail: String?
@@ -128,6 +128,101 @@ struct ServiceHealthState {
         if consecutiveFailures >= ServiceHealthRegistry.failureThreshold { return .failing }
         if consecutiveFailures > 0 { return .degraded }
         return .healthy
+    }
+
+    /// The bucket a summary counts this service in: its last *finished*
+    /// pass, so a pass in flight neither hides a failure nor un-counts a
+    /// healthy service for the second it takes. The row itself still says
+    /// "Checking…" (`Verdict.label`).
+    var bucket: ServiceHealthSummary.Bucket {
+        guard hasReported else { return .notRun }
+        if consecutiveFailures >= ServiceHealthRegistry.failureThreshold { return .failing }
+        if consecutiveFailures > 0 { return .degraded }
+        return .healthy
+    }
+}
+
+/// R5-UI-04: one word per state, on every surface that names one. Home's list
+/// said "Degraded" and "Not read" where the Health page said "1 recent
+/// failure" and "Not run yet" about the same two services.
+extension ServiceHealthState.Verdict {
+    var label: String {
+        switch self {
+        case .unknown: return ServiceHealthSummary.Bucket.notRun.label
+        case .running: return "Checking\u{2026}"
+        case .healthy: return ServiceHealthSummary.Bucket.healthy.label
+        case .degraded: return ServiceHealthSummary.Bucket.degraded.label
+        case .failing: return ServiceHealthSummary.Bucket.failing.label
+        }
+    }
+}
+
+/// R5-BUG-02: the one count of how the background services are doing.
+///
+/// Home's Needs Attention footer, Home's Health card and the Health page each
+/// used to count the registry for themselves, at their own moment and with
+/// their own filter, and one render read "7/7 services healthy", "7/8" beside
+/// "1 failing", and "Healthy 5/8". This is taken in one pass under the
+/// registry's lock (`ServiceHealthRegistry.summary()`), and every surface that
+/// states a count reads it, so they can only disagree by being stale - which
+/// is why Home keeps the last one it was told about rather than sampling.
+struct ServiceHealthSummary: Equatable {
+
+    enum Bucket: CaseIterable {
+        case healthy, degraded, failing, notRun
+
+        /// The state's name, capitalised for a chip or a caption.
+        var label: String {
+            switch self {
+            case .healthy: return "Healthy"
+            case .degraded: return "Recent failure"
+            case .failing: return "Failing"
+            case .notRun: return "Not run yet"
+            }
+        }
+
+        /// The same word inside a sentence ("2 healthy, 1 recent failure").
+        var phrase: String { label.lowercased() }
+    }
+
+    struct Entry: Equatable {
+        let service: HealthService
+        let state: ServiceHealthState
+    }
+
+    /// Every known service, in `HealthService`'s declaration order.
+    let entries: [Entry]
+
+    init(_ entries: [Entry] = []) { self.entries = entries }
+
+    var total: Int { entries.count }
+    var healthy: Int { count(.healthy) }
+    var degraded: Int { count(.degraded) }
+    var failing: Int { count(.failing) }
+    var notRun: Int { count(.notRun) }
+
+    func count(_ bucket: Bucket) -> Int { entries.filter { $0.state.bucket == bucket }.count }
+
+    func services(in bucket: Bucket) -> [HealthService] {
+        entries.filter { $0.state.bucket == bucket }.map(\.service)
+    }
+
+    /// "5 healthy, 1 failing, 1 recent failure, 1 not run yet" - one figure
+    /// per non-empty bucket, worst news after the good, the order the Health
+    /// page's summary lists them.
+    var spoken: String {
+        guard total > 0 else { return "No background service has reported yet" }
+        return [Bucket.healthy, .failing, .degraded, .notRun].compactMap { bucket -> String? in
+            let n = count(bucket)
+            return n > 0 ? "\(n) \(bucket.phrase)" : nil
+        }.joined(separator: ", ")
+    }
+
+    /// Home's closing note, only when it is the whole truth: every known
+    /// service healthy as of its last pass.
+    var allHealthyNote: String? {
+        guard total > 0, healthy == total else { return nil }
+        return "\(healthy)/\(total) services healthy"
     }
 }
 
@@ -204,6 +299,15 @@ final class ServiceHealthRegistry {
     func knownServices() -> [HealthService] {
         lock.lock(); defer { lock.unlock() }
         return HealthService.allCases.filter { states[$0] != nil }
+    }
+
+    /// Every known service and its state, read under one lock, so a count
+    /// and the rows beside it describe the same instant (R5-BUG-02).
+    func summary() -> ServiceHealthSummary {
+        lock.lock(); defer { lock.unlock() }
+        return ServiceHealthSummary(HealthService.allCases.compactMap { service in
+            states[service].map { ServiceHealthSummary.Entry(service: service, state: $0) }
+        })
     }
 
     /// Declare a service so its row appears (as "not run yet") before its

@@ -91,21 +91,25 @@ enum ReviewTwoA11yPerfModelSelfTest {
             check(saidCrosses && saidTicks, "\(name): \"\(marks)\" is read as \"\(spoken)\"", &ok)
         }
 
-        typealias Reading = HomeCanvasController.HealthServiceReading
-        func reading(_ verdict: ServiceHealthState.Verdict) -> Reading {
-            Reading(title: "Service", verdict: verdict, hasReported: verdict != .unknown && verdict != .running)
+        func entry(_ state: ServiceHealthState) -> ServiceHealthSummary.Entry {
+            .init(service: .backgroundSignals, state: state)
         }
-        let rings: [(String, [Reading], String)] = [
-            ("mixed", [reading(.healthy), reading(.healthy), reading(.failing), reading(.degraded)],
-             "2 healthy, 1 failing, 1 recent failure"),
-            ("all healthy", [reading(.healthy), reading(.healthy), reading(.healthy)], "3 healthy"),
-            ("all failing", [reading(.failing), reading(.failing)], "2 failing"),
+        let okEntry = entry(ServiceHealthState(lastSuccess: now))
+        let failingEntry = entry(ServiceHealthState(lastFailure: now, consecutiveFailures: ServiceHealthRegistry.failureThreshold))
+        let degradedEntry = entry(ServiceHealthState(lastFailure: now, consecutiveFailures: 1))
+        let runningEntry = entry(ServiceHealthState(isRunning: true))
+        let unknownEntry = entry(ServiceHealthState())
+        let rings: [(String, [ServiceHealthSummary.Entry], String)] = [
+            ("mixed", [okEntry, okEntry, failingEntry, degradedEntry], "2 healthy, 1 failing, 1 recent failure"),
+            ("all healthy", [okEntry, okEntry, okEntry], "3 healthy"),
+            ("all failing", [failingEntry, failingEntry], "2 failing"),
             ("nothing reported", [], "No background service has reported yet"),
-            ("still reporting", [reading(.healthy), reading(.running), reading(.unknown)],
-             "1 healthy, 1 checking, 1 not run yet"),
+            // A first pass in flight has not run yet, in the same words the
+            // Health page's figures use (R5-UI-04).
+            ("still reporting", [okEntry, runningEntry, unknownEntry], "1 healthy, 2 not run yet"),
         ]
-        for (name, readings, want) in rings {
-            let spoken = HomeCanvasController.healthRingSpoken(readings)
+        for (name, entries, want) in rings {
+            let spoken = ServiceHealthSummary(entries).spoken
             check(spoken == want, "\(name): the Health ring reads \"\(spoken)\", want \"\(want)\"", &ok)
         }
         if ok { print("  OK   runs and ring read as counts with their words: mixed, all passing, all failing, empty") }
