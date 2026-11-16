@@ -350,6 +350,7 @@ final class AppLockGate {
         }
         guard changed else { return }
         AppLog.lifecycle.info("lock gate: \(locked ? "locked" : "unlocked", privacy: .public)")
+        DiagnosticsLog.shared.activity(.lifecycle, "lock gate: \(locked ? "locked" : "unlocked")")
         for observer in observers { observer(locked) }
     }
 

@@ -491,7 +491,7 @@ final class HealthCardView: NSObject {
             title: "\(count) from this app",
             meta: "In ~/Library/Logs/DiagnosticReports: "
                 + crashes.joined(separator: ", ")
-                + ". \u{201C}Copy diagnostics\u{201D} includes these names and this app\u{2019}s own recent error log.",
+                + ". \u{201C}Copy diagnostics\u{201D} includes these names, this app\u{2019}s own recent error log and the last hour of background activity.",
             badgeSymbol: "exclamationmark.triangle.fill"), theme: theme)
         return row
     }
@@ -576,11 +576,14 @@ final class HealthCardView: NSObject {
     /// `diagnosticsButton` and positioned by whoever hosts the card (see that
     /// property's own doc comment). Assembles the same text the rows show plus
     /// the recent persistence failures, so a captain can paste it somewhere
-    /// without hand-transcribing timestamps. Deliberately not a log dump:
-    /// reading the unified log needs a separate tool, and this button must not
-    /// be the thing that surprises anyone by exporting more than what is on
-    /// screen. Everything stays on this machine - detailed logs are in
-    /// Console.app under "com.manjesh.grandline.native".
+    /// without hand-transcribing timestamps. It is not a dump of the unified
+    /// log, which needs a separate tool and holds far more than this page
+    /// describes. What it does add is the last hour of
+    /// `diagnostics/activity.log` (R5-PROC-01): tool names, durations and
+    /// outcomes, never argv or output, and redacted on the way to disk. The
+    /// card's crash row says so, so the copy holds no surprise. Everything
+    /// stays on this machine - detailed logs are in Console.app under
+    /// "com.manjesh.grandline.native".
     @objc private func copyDiagnostics() {
         var lines: [String] = ["Grand Line - service health"]
         for entry in ServiceHealthRegistry.shared.summary().entries {
@@ -616,6 +619,16 @@ final class HealthCardView: NSObject {
         if !recent.isEmpty {
             lines.append("Recent diagnostics (newest last):")
             lines.append(contentsOf: recent.map { "  \($0)" })
+        }
+        // R5-PROC-01: the last hour of the background timeline - polls,
+        // syncs, schedule runs, every child process and how it ended. It is
+        // the `.info` detail the unified log does not keep.
+        let activity = DiagnosticsLog.shared.recentActivity()
+        if activity.isEmpty {
+            lines.append("No background activity recorded in the last hour.")
+        } else {
+            lines.append("Background activity, last hour (oldest first):")
+            lines.append(contentsOf: activity.map { "  \($0)" })
         }
 
         NSPasteboard.general.clearContents()

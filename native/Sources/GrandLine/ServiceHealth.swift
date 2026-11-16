@@ -105,6 +105,17 @@ enum HealthService: String, CaseIterable {
     }
 }
 
+extension HealthService {
+    /// Which `activity.log` category a reading belongs to (R5-PROC-01). The
+    /// two sync services are git sync; everything else here is a poller.
+    var activityCategory: DiagnosticsLog.Activity {
+        switch self {
+        case .shiftGitSync, .dotfilesAutoSync, .docsSync: return .gitSync
+        default: return .poller
+        }
+    }
+}
+
 struct ServiceHealthState: Equatable {
     var lastSuccess: Date?
     var lastFailure: Date?
@@ -257,6 +268,7 @@ final class ServiceHealthRegistry {
 
     func recordSuccess(_ service: HealthService, at date: Date = Date()) {
         AppLog.poller.debug("\(service.rawValue, privacy: .public) ok")
+        DiagnosticsLog.shared.activity(service.activityCategory, "\(service.rawValue) ok", at: date)
         mutate(service) {
             $0.isRunning = false
             $0.lastSuccess = date
@@ -267,6 +279,8 @@ final class ServiceHealthRegistry {
 
     func recordFailure(_ service: HealthService, _ detail: String, at date: Date = Date()) {
         AppLog.poller.error("\(service.rawValue, privacy: .public) failed: \(detail, privacy: .public)")
+        DiagnosticsLog.shared.activity(service.activityCategory, "\(service.rawValue) failed: \(detail)",
+                                       failed: true, at: date)
         var crossedThreshold = false
         var count = 0
         mutate(service) {

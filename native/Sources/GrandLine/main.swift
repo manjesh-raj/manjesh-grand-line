@@ -94,6 +94,16 @@ case .alreadyRunning(let pid):
 DiagnosticsLog.shared.noteLaunch(
     version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unbundled")
 
+// R5-PROC-01: sleep and wake go on the activity timeline, because a run that
+// straddles a sleep looks exactly like a hang from inside the process (a
+// 1,000-second schedule run, a watchdog that fired on wake).
+for (name, event) in [(NSWorkspace.willSleepNotification, "system going to sleep"),
+                      (NSWorkspace.didWakeNotification, "system woke")] {
+    NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil) { _ in
+        DiagnosticsLog.shared.activity(.lifecycle, event)
+    }
+}
+
 let app = NSApplication.shared
 // Regular activation policy so a `swift run`-launched executable gets a real
 // Dock icon, menu bar, and key window instead of a background agent.

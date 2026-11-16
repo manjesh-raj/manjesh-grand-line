@@ -643,6 +643,22 @@ enum Subprocess {
     }()
 
     private static func logCompletion(_ result: SubprocessResult, name: String, argc: Int, log: os.Logger) {
+        // R5-PROC-01: the on-disk timeline gets which tool ran, for how long
+        // and how it ended - never argv and never output, which is where a
+        // prompt or a secret's name would be.
+        let seconds = String(format: "%.2f", result.duration)
+        switch result.outcome {
+        case .exited where result.status == 0:
+            DiagnosticsLog.shared.activity(.subprocess, "\(name) ok in \(seconds)s")
+        case .exited:
+            DiagnosticsLog.shared.activity(.subprocess, "\(name) exited \(result.status) after \(seconds)s",
+                                           failed: true)
+        case .timedOut:
+            DiagnosticsLog.shared.activity(.subprocess, "\(name) timed out after \(seconds)s and was killed",
+                                           failed: true)
+        case .launchFailed:
+            DiagnosticsLog.shared.activity(.subprocess, "\(name) failed to launch", failed: true)
+        }
         switch result.outcome {
         case .exited where result.status == 0:
             log.debug("\(name, privacy: .public) ok in \(result.duration, format: .fixed(precision: 2))s (\(argc) args)")
