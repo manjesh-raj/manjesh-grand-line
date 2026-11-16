@@ -148,3 +148,18 @@ The suspected cause was the biometrics-only Touch ID policy, and the log said ot
 - **Verified** by `CredentialPathSelfTest.checkKeyReadFailuresAreNamed`, `Phase2HardeningSelfTest.keyUnlockKeepsThePasswordAndNamesTheReason` and `BlockViewRestartIntegrationSelfTest`'s `manualReconnectRestartsAKeyFallbackSession`.
   Seven injections each failed by name: no stop on retry, no reap, the biometrics-only policy, the gate not using `unlockPolicy`, `errSecAuthFailed` left unsplit, ⌘R offered for a relaunch case, and `classify` returning the raw error.
   Not verified: a real Touch ID prompt or the captain's real keychain, neither of which a suite may touch.
+
+## A multi-line startup snippet ran on connect (R5-SEC-02, `fm/grand-line-security-ui-fixes`)
+
+S11 made a host's startup snippet *staged*: typed with no trailing newline, so the captain presses Return.
+That withholds only the last newline.
+Snippets are multi-line by design, and every newline inside one is still a Return to the remote shell, so `cd /srv⏎rm -rf cache⏎echo done` ran its first two lines on connect.
+The snippet store is git-synced and restorable from a `.glbackup`, which is the delivery vector S11 was about.
+
+- `StartupSnippetGate.decide` now refuses a snippet with a line break inside it, or any other control character (Ctrl-C, Ctrl-D, Escape, Tab), and the toast says why.
+- `.stage` carries the text to type, with newlines trimmed from the two ends, so a one-line snippet saved with a trailing Return still stages.
+  Leading spaces survive, because `HISTCONTROL=ignorespace` gives them a meaning.
+- Staging only the first line was considered and rejected: it types something the captain did not write as a unit.
+- **Verified** by `StartupSnippetGateSelfTest.checkAMultiLineSnippetIsNeverTyped`, which failed on all three multi-line fixtures before the change.
+  Typing `snippet.command` again at the send site fails the source guard by name.
+  Not verified: a live multi-line snippet against a real host.

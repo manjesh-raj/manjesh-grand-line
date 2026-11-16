@@ -389,6 +389,44 @@ enum DotfilesAutoSyncSelfTest {
             check(none.status == .noRepo, "case 8: status should read .noRepo")
         }
 
+        // MARK: 8b - off is the default (R5-SEC-03)
+
+        do {
+            // A fresh preference domain is a new or restored machine. It used
+            // to read as on, which pushed everything under `home/` to origin
+            // seconds after it appeared. The explicit `true` half is the
+            // discriminating one: the getter still honours a stored choice.
+            let suite = "fm.selftest.dotfiles-default.\(ProcessInfo.processInfo.processIdentifier)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.removePersistentDomain(forName: suite)
+            let settings = AppSettings(defaults: defaults)
+            check(!settings.dotfilesAutoCommitEnabled,
+                  "case 8b: dotfiles auto-commit must be off on a machine that never chose (R5-SEC-03)")
+            settings.dotfilesAutoCommitEnabled = true
+            check(settings.dotfilesAutoCommitEnabled, "case 8b: an explicit on must still read as on")
+            settings.dotfilesAutoCommitEnabled = false
+            check(!settings.dotfilesAutoCommitEnabled, "case 8b: an explicit off must read as off")
+
+            // Turning it off takes the Health row away rather than leaving it
+            // at "Not run yet" for good. Registered first, so the fixture
+            // really starts with a row to remove.
+            ServiceHealthRegistry.shared.register(.dotfilesAutoSync)
+            check(ServiceHealthRegistry.shared.knownServices().contains(.dotfilesAutoSync),
+                  "case 8b fixture: the Health row exists before the switch goes off")
+            let remote = makeBareRemote("case8b.git")
+            let tree = makeClone(of: remote, named: "case8b", seed: true)
+            let off = makeSync(tree, remote: remote, enabled: false)
+            defer { off.stop() }
+            off.settingChanged()
+            let deadline = Date().addingTimeInterval(5)
+            while ServiceHealthRegistry.shared.knownServices().contains(.dotfilesAutoSync), Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            check(!ServiceHealthRegistry.shared.knownServices().contains(.dotfilesAutoSync),
+                  "case 8b: switching auto-commit off removes its Health row")
+        }
+
         // MARK: 9 - the real file-system watcher drives the whole thing
 
         do {

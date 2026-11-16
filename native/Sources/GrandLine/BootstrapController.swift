@@ -2090,9 +2090,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let subpath = DotfilesAutoSync.autoCommitSubpath
         switch autoSyncStatus {
         case .off:
+            // R5-SEC-03: off is the default now, so this is the state a new
+            // machine lands in. Say what turning it on does, including where
+            // the files go, rather than only what is missing.
             let detail = pending > 0
-                ? "Auto-commit is off, so \(pendingPhrase) are uncommitted here: a fresh machine bootstrapping from origin right now would miss them."
-                : "Auto-commit is off. Changes under \(subpath)/ will need committing by hand."
+                ? "Auto-commit is off, so \(pendingPhrase) are uncommitted here: a fresh machine bootstrapping from origin right now would miss them. Turn it on to commit and push changes under \(subpath)/ to origin automatically."
+                : "Auto-commit is off. Changes under \(subpath)/ need committing by hand, or turn it on to commit and push them to origin automatically."
             return ("Auto-commit is off", detail, theme.ansiHex[3])
         case .noRepo:
             return ("Auto-commit unavailable",

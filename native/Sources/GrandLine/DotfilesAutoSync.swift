@@ -328,10 +328,13 @@ final class DotfilesAutoSync {
     /// Production entry point, called once from `main.swift`. Never blocks the
     /// caller: everything real happens on `queue`.
     func start() {
-        ServiceHealthRegistry.shared.register(.dotfilesAutoSync)
         queue.async { [weak self] in
             guard let self else { return }
+            // Off is the default (R5-SEC-03), so an unregistered row is the
+            // common case: the Health card lists a service that is running,
+            // not one the captain never turned on.
             guard self.isEnabled() else { self.setStatus(.off); return }
+            ServiceHealthRegistry.shared.register(.dotfilesAutoSync)
             guard self.hasCheckout() else { self.setStatus(.noRepo); return }
             self.startWatching()
             self.startSafetyNet()
@@ -364,6 +367,7 @@ final class DotfilesAutoSync {
         queue.async { [weak self] in
             guard let self else { return }
             if self.isEnabled() {
+                ServiceHealthRegistry.shared.register(.dotfilesAutoSync)
                 guard self.hasCheckout() else { self.setStatus(.noRepo); return }
                 self.startWatching()
                 self.startSafetyNet()
@@ -375,6 +379,7 @@ final class DotfilesAutoSync {
                 self.pendingCommit?.cancel()
                 self.pendingCommit = nil
                 self.setStatus(.off)
+                ServiceHealthRegistry.shared.unregister(.dotfilesAutoSync)
             }
         }
     }

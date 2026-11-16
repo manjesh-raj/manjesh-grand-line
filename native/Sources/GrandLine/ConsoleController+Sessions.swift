@@ -332,8 +332,8 @@ extension ConsoleController {
                 if let view = self?.view {
                     Toast.show(in: view, message: "Startup command held back - \(reason).")
                 }
-            case .stage:
-                tab.terminal.send(txt: snippet.command)
+            case .stage(let text):
+                tab.terminal.send(txt: text)
                 if let view = self?.view {
                     Toast.show(in: view, message: "Startup command ready - press Return to run it.")
                 }

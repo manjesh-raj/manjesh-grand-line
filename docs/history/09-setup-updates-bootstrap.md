@@ -1396,3 +1396,19 @@ The unstamped debug binary had `NSVisualEffectView(material 7)`, and the stamped
 The renders show the same split: the inset, rounded sidebar and capsule toolbar groups with the stamp, and the edge-to-edge sidebar and flat toolbar without it.
 
 Not verified: the composited window on the captain's display, because an off-screen render cannot draw the desktop-tinted material.
+
+## Dotfiles auto-commit is off by default (R5-SEC-03, `fm/grand-line-security-ui-fixes`)
+
+S15 landed the secret scan and the `home/` pathspec, but left auto-commit on when the preference was unset.
+So a new or restored machine pushed everything under `home/` to origin seconds after it appeared, with only `DotfilesSecretScan`'s pattern match between a dropped credential and GitHub.
+
+- `AppSettings.dotfilesAutoCommitEnabled` is off when unset.
+  There is deliberately no migration that writes `true` for existing installs, so a machine that relied on the old default reads as off after this change.
+- The Setup page's Dotfiles step already carried the switch in its auto-sync banner.
+  Its "off" wording now says what turning it on does, not only what is missing.
+- The Health card no longer lists Dotfiles auto-sync while it is off.
+  A switched-off service read as "Not run yet" forever, which would have been the common case now.
+  `ServiceHealthRegistry.unregister` is new, and `DotfilesAutoSync` registers only when it is on.
+- `DotfilesDriftRowSelfTest`'s "auto-sync healthy" case had been inheriting the old default.
+  It now turns the switch on explicitly in its own suite domain.
+- **Verified** by `DotfilesAutoSyncSelfTest` case 8b: putting back the old `nil ? true` getter fails it by name, and switching off removes the Health row.

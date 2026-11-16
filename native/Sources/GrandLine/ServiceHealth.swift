@@ -330,6 +330,21 @@ final class ServiceHealthRegistry {
         mutate(service) { _ in }
     }
 
+    /// Take a service's row away again, for one the captain has switched off.
+    /// A switched-off service is not "not run yet", and it is not a failure
+    /// either, so it has nothing to say on the Health card. Dotfiles
+    /// auto-sync is the one caller (it is off by default since R5-SEC-03).
+    func unregister(_ service: HealthService) {
+        lock.lock()
+        let removed = states.removeValue(forKey: service) != nil
+        let handlers = observers
+        lock.unlock()
+        guard removed, !handlers.isEmpty else { return }
+        DispatchQueue.main.async {
+            for handler in handlers { handler(service) }
+        }
+    }
+
     // MARK: Observation
 
     /// Fires on the main queue whenever any service's state changes. No
