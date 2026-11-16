@@ -265,14 +265,17 @@ final class ScheduleRunner {
                 for a scheduled run - catching up now.
                 """)
         }
-        execute(schedule, occurrence: occurrence)
+        // R5-BUG-01: take the occurrence before the run starts, not when it
+        // finishes, so nothing that happens to the run can leave it due.
+        store.markFired(id: schedule.id, occurrence: occurrence)
+        execute(schedule)
     }
 
-    /// The row's "Run now" action. Passes no occurrence, so a manual run never
+    /// The row's "Run now" action. Takes no occurrence, so a manual run never
     /// satisfies a scheduled one - tonight's 02:00 still happens.
     func runNow(_ schedule: AutomationSchedule) {
         guard !isRunning else { return }
-        execute(schedule, occurrence: nil)
+        execute(schedule)
     }
 
     var isBusy: Bool { isRunning }
@@ -296,7 +299,7 @@ final class ScheduleRunner {
     /// The schedule currently running, for the card's "Running…" row state.
     private(set) var runningScheduleID: UUID?
 
-    private func execute(_ schedule: AutomationSchedule, occurrence: Date?) {
+    private func execute(_ schedule: AutomationSchedule) {
         let runID = UUID()
         currentRunID = runID
         isRunning = true
@@ -338,7 +341,7 @@ final class ScheduleRunner {
 
                 let record = ScheduleRunRecord(verdict: result.verdict, summary: result.summary,
                                                at: Date(), failure: result.failure)
-                self.store?.recordRun(id: schedule.id, occurrence: occurrence, record: record)
+                self.store?.recordRun(id: schedule.id, record: record)
                 // F11's run history: kept separately from `record` above
                 // (which `ScheduleStore` only ever remembers the latest one
                 // of) so a schedule's last 7 days are browsable and so a

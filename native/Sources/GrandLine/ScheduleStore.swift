@@ -170,16 +170,37 @@ final class ScheduleStore: StoreObservable {
         persist()
     }
 
-    /// Replace in place, keeping ordering. A cadence edit deliberately keeps
-    /// the existing `lastFiredOccurrence`: moving a nightly run from 02:00 to
-    /// 03:00 at 09:00 should not fire immediately just because 03:00 today is
-    /// now the most recent occurrence and has never been "fired".
+    /// Applies an edit in place, keeping ordering. Only the fields the editor
+    /// owns are taken from `schedule`: the action, the cadence and the notify
+    /// setting.
+    ///
+    /// **R5-BUG-01: the run state is never taken from the caller.** The editor
+    /// hands back the copy it was opened with, so its `lastFiredOccurrence`,
+    /// `lastRun` and `isEnabled` are whatever they were when the sheet opened.
+    /// Writing them back forgot any run that happened while it was open, and
+    /// the forgotten occurrence then fired again on the next tick - ten "Fork
+    /// sync" runs in one day on the captain's machine. Those three fields have
+    /// their own writers (`markFired`, `recordRun` and `setEnabled`), and this is
+    /// not one of them.
+    ///
+    /// A cadence edit therefore keeps the existing `lastFiredOccurrence`:
+    /// moving a nightly run from 02:00 to 03:00 at 09:00 should not fire
+    /// immediately just because 03:00 today is now the most recent occurrence
+    /// and has never been "fired".
     func update(_ schedule: AutomationSchedule) {
         guard let idx = schedules.firstIndex(where: { $0.id == schedule.id }) else {
-            add(schedule)
+            // Deleted while the editor was open. Re-create it as a new
+            // schedule, anchored to now, rather than with the stale copy's
+            // run state.
+            var fresh = schedule
+            fresh.lastFiredOccurrence = nil
+            fresh.lastRun = nil
+            add(fresh)
             return
         }
-        schedules[idx] = schedule
+        schedules[idx].action = schedule.action
+        schedules[idx].cadence = schedule.cadence
+        schedules[idx].notifyOn = schedule.notifyOn
         persist()
     }
 
@@ -264,15 +285,33 @@ final class ScheduleStore: StoreObservable {
         persist()
     }
 
-    /// Records a completed run. Called by `ScheduleRunner` only.
-    func recordRun(id: UUID, occurrence: Date?, record: ScheduleRunRecord) {
+    /// Marks a scheduled occurrence as taken. Called by `ScheduleRunner` when
+    /// it **dispatches** a scheduled run, before the action starts.
+    ///
+    /// R5-BUG-01: this used to happen only when a run completed, so anything
+    /// between dispatch and completion could leave the occurrence untaken - a
+    /// run the watchdog gave up on, a quit that did not wait, or a stale copy
+    /// saved over the record mid-run. Each of those ran the same occurrence
+    /// again on a later tick. Taking it at dispatch means one occurrence is at
+    /// most one run, whatever happens to that run.
+    ///
+    /// Never moves the marker backward.
+    func markFired(id: UUID, occurrence: Date) {
+        guard let idx = schedules.firstIndex(where: { $0.id == id }) else { return }
+        if let fired = schedules[idx].lastFiredOccurrence, fired >= occurrence { return }
+        schedules[idx].lastFiredOccurrence = occurrence
+        persist()
+    }
+
+    /// Records a completed run's result. Called by `ScheduleRunner` only.
+    ///
+    /// It does not touch `lastFiredOccurrence`: a scheduled run already took
+    /// its occurrence at dispatch (`markFired`), and a manual "Run now"
+    /// satisfies nothing on the calendar, so tonight's scheduled run still
+    /// happens.
+    func recordRun(id: UUID, record: ScheduleRunRecord) {
         guard let idx = schedules.firstIndex(where: { $0.id == id }) else { return }
         schedules[idx].lastRun = record
-        // A manual "Run now" passes `nil` - it satisfies nothing on the
-        // calendar, so tonight's scheduled run still happens.
-        if let occurrence {
-            schedules[idx].lastFiredOccurrence = occurrence
-        }
         persist()
     }
 

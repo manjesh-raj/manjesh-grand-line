@@ -667,6 +667,24 @@ final class SchedulesCardView: NSObject {
         return "in \(hours / 24)d"
     }
 
+    /// R5-BUG-01: "ran 5 times today" when a schedule has run more than once
+    /// since local midnight, and `nil` otherwise.
+    ///
+    /// Every cadence here is at most daily, so a second run in one day is
+    /// either a "Run now" or a schedule firing again when it should not have.
+    /// Ten "Fork sync" runs in one day went unnoticed on the captain's machine
+    /// because the row only ever showed the latest one. One run is the normal
+    /// case and says nothing worth the row's space.
+    static func repeatedRunsNote(for scheduleID: UUID,
+                                 in history: [ScheduleRunHistoryEntry],
+                                 now: Date,
+                                 calendar: Calendar = .current) -> String? {
+        let today = history.filter {
+            $0.scheduleID == scheduleID && calendar.isDate($0.at, inSameDayAs: now)
+        }.count
+        return today > 1 ? "ran \(today) times today" : nil
+    }
+
     /// The kicker carries the run verdict (the most glanceable signal, and the
     /// one that drives the row's hue), the meta line carries the
     /// "cadence · notify-on · last run" trio, and the chip carries the
@@ -689,6 +707,9 @@ final class SchedulesCardView: NSObject {
         }
 
         var meta = schedule.metaLine(now: now)
+        if !isRunning, let repeats = Self.repeatedRunsNote(for: schedule.id, in: history, now: now) {
+            meta += " \u{00B7} \(repeats)"
+        }
         if isRunning {
             meta = "\(schedule.cadence.displayString) \u{00B7} running now\u{2026}"
         } else if let last = schedule.lastRun, last.verdict != .clean {

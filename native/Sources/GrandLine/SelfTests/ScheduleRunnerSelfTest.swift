@@ -54,6 +54,7 @@ enum ScheduleRunnerSelfTest {
         checkAQuitStopsARunAndRecordsIt(&ok)
         checkStopEndsARunAndRecordsIt(&ok)
         checkTheQuitGuardIsWiredToEveryInstall(&ok)
+        checkAStaleEditCannotReFireARun(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -285,7 +286,7 @@ enum ScheduleRunnerSelfTest {
         // A manual "Run now" records a result but satisfies nothing on the
         // calendar - tonight's scheduled run still happens.
         let beforeManual = store.schedule(id: created.id)?.lastFiredOccurrence
-        store.recordRun(id: created.id, occurrence: nil,
+        store.recordRun(id: created.id,
                         record: ScheduleRunRecord(verdict: .clean, summary: "manual", at: Date()))
         guard let afterManual = store.schedule(id: created.id) else {
             fail("schedule vanished after recordRun", &ok)
@@ -446,7 +447,8 @@ enum ScheduleRunnerSelfTest {
                                      isEnabled: false),
                   now: at(2026, 3, 10, 12, 0))
         let id = first.schedules.first?.id
-        first.recordRun(id: id ?? UUID(), occurrence: at(2026, 3, 6, 17, 0),
+        first.markFired(id: id ?? UUID(), occurrence: at(2026, 3, 6, 17, 0))
+        first.recordRun(id: id ?? UUID(),
                         record: ScheduleRunRecord(verdict: .didWork, summary: "pushed", at: at(2026, 3, 6, 17, 1)))
 
         // A fresh instance, so this is a real disk round trip rather than an
@@ -952,9 +954,15 @@ enum ScheduleRunnerSelfTest {
             fail("REL-06: the first run never started (the schedule was not due)", &ok)
             return
         }
-        // Past the 10-minute watchdog: the latch is released and the same
-        // occurrence, still unrecorded, starts again.
+        // Past the 10-minute watchdog the latch is released, but the wedged
+        // run already took today's occurrence at dispatch (R5-BUG-01), so
+        // the same occurrence must not start a second time.
         runner.tick(now: Date().addingTimeInterval(11 * 60))
+        if runner.isBusy {
+            fail("R5-BUG-01: the watchdog released the latch and the same occurrence ran a second time", &ok)
+        }
+        // The next day's occurrence is a genuinely newer run.
+        runner.tick(now: Date().addingTimeInterval(86_400 + 60))
         if !runner.isBusy { fail("REL-06: the run after the watchdog should be running", &ok) }
 
         // The wedged run finishes late; the newer one is now executing.
@@ -1086,6 +1094,103 @@ enum ScheduleRunnerSelfTest {
         }
         if store.schedules.first?.lastFiredOccurrence == nil {
             fail("REL-05: the stopped run's occurrence should be recorded, or the next launch runs it again", &ok)
+        }
+    }
+
+    // MARK: R5-BUG-01 - a stale edit must not make a schedule due again
+
+    /// R5-BUG-01 of the fifth full review: the daily "Fork sync" ran ten times
+    /// on one day, and the config backup behind it waited nine hours.
+    ///
+    /// The editor holds the copy of the schedule it was opened with, and its
+    /// Save used to write that whole copy back - including the
+    /// `lastFiredOccurrence` and `lastRun` from before a run that happened
+    /// while the sheet was open. The occurrence was forgotten, so the next
+    /// tick ran it again. This replays that history through the real runner:
+    /// open the editor (capture the copy), let the run happen, save an edit of
+    /// the captured copy, tick, and assert nothing runs.
+    private static func checkAStaleEditCannotReFireARun(_ ok: inout Bool) {
+        print("\n-- R5-BUG-01: saving a stale edit does not make a schedule due again --")
+        guard let (runner, store, history) = runnerFixture("r5bug01") else {
+            fail("R5-BUG-01: could not build the runner fixture", &ok)
+            return
+        }
+        defer { ScheduleRunner.actionOverrideForTests = nil }
+
+        guard let opened = store.schedules.first else {
+            fail("R5-BUG-01: the fixture has no schedule", &ok)
+            return
+        }
+        let start = Date()
+        // The fixture's own premise: today's occurrence is due.
+        if !ScheduleDueCalculator.verdict(for: opened, now: start, calendar: utc).isDue {
+            fail("R5-BUG-01: the fixture schedule should be due before the run - the check would be vacuous", &ok)
+            return
+        }
+
+        // The occurrence is taken at dispatch, before the action finishes:
+        // read it back from disk through a second store while the run is
+        // still in flight.
+        let release = DispatchSemaphore(value: 0)
+        ScheduleRunner.actionOverrideForTests = { _ in
+            release.wait()
+            return ScheduleActionResult(verdict: .clean, summary: "synced")
+        }
+        runner.tick(now: start)
+        if !runner.isBusy {
+            release.signal()
+            fail("R5-BUG-01: the first tick did not start a run", &ok)
+            return
+        }
+        let expectedOccurrence = ScheduleDueCalculator.mostRecentOccurrence(
+            of: opened.cadence, atOrBefore: start, calendar: utc)
+        let onDisk = ScheduleStore(calendar: utc).schedule(id: opened.id)
+        if onDisk?.lastFiredOccurrence == nil || onDisk?.lastFiredOccurrence != expectedOccurrence {
+            fail("R5-BUG-01: a dispatched run's occurrence should be on disk before the run finishes, got \(String(describing: onDisk?.lastFiredOccurrence))", &ok)
+        }
+        release.signal()
+        pumpMain(until: { !runner.isBusy && store.schedules.first?.lastRun != nil })
+        let runsAfterFirst = history.entries(for: opened.id).count
+        if runsAfterFirst != 1 {
+            fail("R5-BUG-01: the first tick should run the schedule once, got \(runsAfterFirst) runs", &ok)
+            return
+        }
+
+        // The captain pauses the schedule from its row while the editor is
+        // still open, then saves a notify change from the copy captured above.
+        store.setEnabled(false, id: opened.id, now: start)
+        var edited = opened
+        edited.notifyOn = .always
+        store.update(edited)
+
+        guard let saved = store.schedule(id: opened.id) else {
+            fail("R5-BUG-01: the schedule vanished on save", &ok)
+            return
+        }
+        if saved.notifyOn != .always {
+            fail("R5-BUG-01: the edited notify setting was not saved", &ok)
+        }
+        if saved.lastRun?.summary != "synced" {
+            fail("R5-BUG-01: saving an edit forgot the run that happened while the editor was open (lastRun \(String(describing: saved.lastRun?.summary)))", &ok)
+        }
+        if saved.isEnabled {
+            fail("R5-BUG-01: saving an edit re-enabled a schedule paused while the editor was open", &ok)
+        }
+        store.setEnabled(true, id: opened.id, now: start)
+
+        // The stale copy alone, with no pause in between: the schedule must
+        // not read as due, and the next tick must not run it.
+        store.update(edited)
+        let later = start.addingTimeInterval(60)
+        if let current = store.schedule(id: opened.id),
+           ScheduleDueCalculator.verdict(for: current, now: later, calendar: utc).isDue {
+            fail("R5-BUG-01: a schedule that already ran reads as due again after a stale edit was saved", &ok)
+        }
+        runner.tick(now: later)
+        pumpMain(until: { !runner.isBusy })
+        let runsAfterTick = history.entries(for: opened.id).count
+        if runsAfterTick != 1 {
+            fail("R5-BUG-01: the tick after a stale edit ran the schedule again (\(runsAfterTick) runs)", &ok)
         }
     }
 
