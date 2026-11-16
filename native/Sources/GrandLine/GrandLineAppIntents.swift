@@ -75,7 +75,7 @@ enum GrandLineIntentBridge {
     /// `@MainActor` instead looks tidier and is not available here: it makes
     /// the `AppIntent` conformance itself cross an actor boundary, which the
     /// compiler warns about, and GL-07 fails this build on any warning.
-    static func onMain(_ body: @escaping @MainActor () -> Result<IntentActionResult, IntentActionError>) async throws -> IntentActionResult {
+    static func onMain(_ body: @escaping @MainActor @Sendable () -> Result<IntentActionResult, IntentActionError>) async throws -> IntentActionResult {
         let result = await MainActor.run { body() }
         return try value(result)
     }
@@ -87,7 +87,7 @@ enum GrandLineIntentBridge {
     /// documents "main thread, exactly once, on every path" as a contract
     /// rather than a habit, and why both callbacks below funnel through one
     /// `finish` in that file.
-    static func awaitAction(_ run: @escaping @MainActor (@escaping (Result<IntentActionResult, IntentActionError>) -> Void) -> Void) async throws -> IntentActionResult {
+    static func awaitAction(_ run: @escaping @MainActor @Sendable (@escaping (Result<IntentActionResult, IntentActionError>) -> Void) -> Void) async throws -> IntentActionResult {
         try await withCheckedThrowingContinuation { continuation in
             Task { @MainActor in
                 run { result in
@@ -124,11 +124,11 @@ enum TaskPriorityAppValue: String, AppEnum {
 
 @available(macOS 13.0, *)
 struct GrandLineNewTaskIntent: AppIntent {
-    static var title: LocalizedStringResource = "New Task"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "New Task"
+    static let description = IntentDescription(
         "Add a task to Grand Line. The due date understands the same phrases quick capture does - \"tomorrow\", \"friday 3pm\".",
         categoryName: "Tasks")
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     @Parameter(title: "Title", requestValueDialog: "What's the task?")
     var taskTitle: String
@@ -171,11 +171,11 @@ struct GrandLineNewTaskIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct GrandLineNewNoteIntent: AppIntent {
-    static var title: LocalizedStringResource = "New Note"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "New Note"
+    static let description = IntentDescription(
         "Append a line to a Notebook page. With no page named it goes onto today's daily note.",
         categoryName: "Notebook")
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     @Parameter(title: "Text", requestValueDialog: "What should I note down?")
     var text: String
@@ -203,11 +203,11 @@ struct GrandLineNewNoteIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct GrandLineStartFocusTimerIntent: AppIntent {
-    static var title: LocalizedStringResource = "Start Focus Timer"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "Start Focus Timer"
+    static let description = IntentDescription(
         "Start Grand Line's focus timer on a task. With no task named it picks the one due soonest.",
         categoryName: "Tasks")
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     @Parameter(title: "Task", description: "Matched against your open tasks by name. Leave empty for the one due soonest.")
     var task: String?
@@ -237,16 +237,16 @@ struct GrandLineStartFocusTimerIntent: AppIntent {
 /// header and `GrandLineIntentActions`'s.
 @available(macOS 13.0, *)
 struct GrandLineCopyCredentialIntent: AppIntent {
-    static var title: LocalizedStringResource = "Copy Credential"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "Copy Credential"
+    static let description = IntentDescription(
         "Copy a Poneglyph credential to the clipboard. Always goes through the vault's own unlock, and never hands the secret back to the shortcut - it only ever lands on the clipboard, concealed, and clears itself.",
         categoryName: "Poneglyph")
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
     /// The one intent here that says so. A shortcut that copies a secret
     /// should not be silently runnable from a locked screen or a widget tap
     /// with no acknowledgement; this is the system's own affordance for that,
     /// and it costs one tap on the path that most deserves one.
-    static var isDiscoverable = true
+    static let isDiscoverable = true
 
     @Parameter(title: "Name", requestValueDialog: "Which credential?")
     var credentialName: String
@@ -282,11 +282,11 @@ struct GrandLineCopyCredentialIntent: AppIntent {
 
 @available(macOS 13.0, *)
 struct GrandLineAskCrewIntent: AppIntent {
-    static var title: LocalizedStringResource = "Ask the Crew"
-    static var description = IntentDescription(
+    static let title: LocalizedStringResource = "Ask the Crew"
+    static let description = IntentDescription(
         "Put one question to the Straw Hat crew and get the answer back as text.",
         categoryName: "Crew")
-    static var openAppWhenRun = false
+    static let openAppWhenRun = false
 
     @Parameter(title: "Question", requestValueDialog: "What should I ask the crew?")
     var prompt: String
