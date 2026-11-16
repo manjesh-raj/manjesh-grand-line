@@ -24,74 +24,80 @@
 # the runner's own `--rerun-failed`, which re-runs a failed suite once to name
 # it flaky and still fails the run.)
 #
-# So the decision and the re-run are two jobs now. `classify` reads the
-# verdict and only reports it; `rerun` starts only when the verdict is
-# `failure`. A suite failure leaves `rerun` skipped, so the list shows what
-# happened rather than a green re-run that never was.
+# So the decision and the re-run were split into two jobs, and a suite
+# failure left `rerun` skipped.
 #
-# `workflow_run` only fires for a workflow file on the default branch, so this
-# takes effect from the merge that changes it and cannot be exercised by the
-# pull request that changes it.
+# R5-PROC-03 of review #5 found the remaining noise: a `workflow_run` trigger
+# cannot filter on the conclusion, so this workflow still started for every
+# completed `main` run and showed up skipped in the Actions list and in
+# notifications - the last 15 runs, every one skipped. So it no longer listens.
+# `ci.yml`'s `CI infrastructure` job starts it with `workflow_dispatch`, only
+# for a first-attempt push to `main` whose verdict was infrastructure, and
+# passes the run id. This workflow still re-reads that verdict itself before
+# re-running anything, so a hand-started dispatch with the wrong id cannot
+# re-run a suite failure.
+#
+# The dispatch is sent while the CI run is still finishing (its other jobs may
+# be running), and `gh run rerun` needs a completed run, so the job first waits
+# for it.
+#
+# `workflow_dispatch` only works for a workflow file on the default branch, so
+# this takes effect from the merge that changes it and cannot be exercised by
+# the pull request that changes it.
 
 name: Re-run main after an infrastructure failure
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: The id of the failed CI run on main
+        required: true
+        type: string
 
 permissions:
   actions: write
   contents: read
 
 jobs:
-  classify:
-    name: read the CI infrastructure verdict
-    if: >-
-      github.event.workflow_run.conclusion == 'failure'
-      && github.event.workflow_run.event == 'push'
-      && github.event.workflow_run.run_attempt == 1
+  rerun:
+    name: re-run an infrastructure failure on main
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      verdict: ${{ steps.verdict.outputs.verdict }}
+    timeout-minutes: 60
     steps:
-      - name: Read the CI infrastructure check of the failed run
-        id: verdict
+      - name: Wait for the CI run to finish, then re-run its failed jobs once
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ID: ${{ inputs.run_id }}
         run: |
           set -euo pipefail
+          case "$RUN_ID" in
+            ''|*[!0-9]*) echo "::error::run_id must be a numeric run id, got '$RUN_ID'"; exit 1 ;;
+          esac
+          for _ in $(seq 1 110); do
+            status="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .status)"
+            [ "$status" = completed ] && break
+            sleep 30
+          done
+          run="$(gh api "repos/$REPO/actions/runs/$RUN_ID")"
+          name="$(jq -r .name <<<"$run")"
+          event="$(jq -r .event <<<"$run")"
+          branch="$(jq -r .head_branch <<<"$run")"
+          attempt="$(jq -r .run_attempt <<<"$run")"
+          conclusion="$(jq -r .conclusion <<<"$run")"
+          echo "run $RUN_ID: $name, $event on $branch, attempt $attempt, $conclusion"
+          if [ "$name" != CI ] || [ "$event" != push ] || [ "$branch" != main ] \
+             || [ "$attempt" != 1 ] || [ "$conclusion" != failure ]; then
+            echo "Not a failed first-attempt CI push run on main. It is not re-run."
+            exit 0
+          fi
           verdict="$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/1/jobs?per_page=100" \
             --jq '.jobs[] | select(.name == "CI infrastructure") | .conclusion')"
           echo "CI infrastructure: ${verdict:-not reported}"
-          echo "verdict=${verdict:-missing}" >> "$GITHUB_OUTPUT"
           if [ "$verdict" != failure ]; then
             echo "Run $RUN_ID failed for a build or suite reason, not infrastructure. It is not re-run."
+            exit 0
           fi
-
-  rerun:
-    name: re-run an infrastructure failure on main
-    needs: classify
-    # Only the conclusion this workflow is named for. Anything else - a suite
-    # failure, a build failure, a verdict that could not be read - leaves this
-    # job skipped and the run red.
-    if: ${{ needs.classify.outputs.verdict == 'failure' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Re-run the failed jobs once
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-        run: |
-          set -euo pipefail
           echo "Run $RUN_ID failed for an infrastructure reason. Re-running its failed jobs once."
           gh run rerun "$RUN_ID" --failed --repo "$REPO"

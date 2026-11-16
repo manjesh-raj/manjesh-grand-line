@@ -199,3 +199,62 @@ The rebuild is 8,451,183 bytes, the size that section measured in September.
 ### R4-PROC-05
 
 #552 had already added the state assertions after the hide-and-show round trip in `ShiftCalendarViewSelfTest`, so nothing was added.
+
+## Full review #5's test-lane finding (R5-PROC-03)
+
+### The window-backed audit, re-run
+
+`NEEDS_SESSION` held 136 entries, not the 174 the review counted.
+All 136 were mapped to their files and scanned for window, geometry and pixel calls, and about 35 were read in full.
+The bar was strict: a suite stays if any one check reads a frame after layout, samples pixels, needs a key window or first responder, uses a tracking area, a popover, a panel or a sheet, posts an `NSEvent`, or depends on window-server visibility.
+
+Five suites moved to the headless lane in this round.
+Each mounted a real `ConsoleController` in an off-screen window and asserted only model, control or string state:
+
+- `FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS`
+- `FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS`
+- `FM_RUN_HERDR_RESTART_BUTTON_TESTS`
+- `FM_RUN_SRE_LEAD_PER_TAB_TESTS`
+- `FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS`
+
+Each one now hosts the controller's view in a plain 900x600 `NSView`.
+The ceiling in `E2ETestingPolicySelfTest` drops from 136 to 131.
+To check that a moved suite still bites without a window, `quotaUsageButton.isHidden = !available` was inverted, and `FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS` failed three cases by name.
+
+These are candidates for the next round, each with its caveat:
+
+- `FM_RUN_COMMAND_LIBRARY_AI_TESTS`: its window hosts an empty view that nothing reads.
+- `FM_RUN_VAULT_LOADING_STATE_TESTS`: strings, badges and visibility only.
+- `FM_RUN_INCIDENT_RESUME_TESTS`: it already calls `viewDidAppear()` by hand.
+- `FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS`: model state only, but it has 17 `orderOut` defers to remove.
+- `FM_RUN_KEYED_LISTS_VIEW_TESTS`: the Reading List's column count reads the laid-out width, so give the view an explicit frame first.
+- `FM_RUN_REVIEW_LOADING_STATE_TESTS`: one check is a render time budget, which may time differently without a window.
+- `FM_RUN_BLOCK_VIEW_HIERARCHY_TESTS`: no check reads a frame, but its header argues the real window matters for constraint activation, so read that first.
+
+`ReviewTourLabSelfTest` needs its window: it checks the resized frame and sweeps rendered pixels.
+Its `checkTheGrammar` half is pure, and could be split into a headless suite of its own.
+The `*ViewSelfTest` suites the review named all read frames or pixels, apart from the ones listed above.
+
+### The debug-binary handoff and the re-run workflow
+
+- Both test jobs' "Make it executable" step now does two more things.
+  It raises a warning annotation when the first download attempt failed and the second supplied the binary.
+  It also fails by name if the artifact did not contain `.build/debug/GrandLine`, rather than leaving `--no-build` to fail with a runner error.
+  Nothing rebuilds in its place, as before.
+- `ci-rerun.yml` no longer listens on `workflow_run`.
+  A `workflow_run` trigger cannot filter on the run's conclusion, so it started, and showed up skipped, for every completed `main` run.
+  `CI infrastructure` now dispatches it with the run id, and only for a first-attempt push to `main` whose verdict was infrastructure.
+  It waits for the CI run to complete, re-reads the verdict and re-runs the failed jobs once.
+
+### Splitting the target (not done)
+
+The review's recommended end state is several SwiftPM targets:
+
+- `HelmKit` for the design system, so the widget extension could share it instead of the hand-duplicated `WidgetPalette`.
+- `GrandLineCore` for stores and subprocesses.
+- One target per feature family.
+
+It was not attempted here.
+The brief made it a final separate PR, only once the earlier work was merged and the split built green.
+The first thing such a split meets is GL-27: the suites reach `internal` members throughout, and `FM_SELFTESTS` is a compilation condition on one target.
+So a split needs either `package` access (Swift 5.9+) on what the suites touch, or per-target suite files.

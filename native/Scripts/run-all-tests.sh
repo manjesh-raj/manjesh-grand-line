@@ -546,8 +546,6 @@ NEEDS_SESSION=(
   # FM_RUN_AUDIT2_SECURITY_FIXES_TESTS - is deliberately not here and does run
   # in CI.
   "FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"
-  "FM_RUN_SRE_LEAD_PER_TAB_TESTS"
-  "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
   "FM_RUN_VAULT_LOADING_STATE_TESTS"
   "FM_RUN_AUDIT_UI_FIXES_TESTS"
   "FM_RUN_AUDIT_PERF_FIXES_TESTS"
@@ -707,22 +705,13 @@ NEEDS_SESSION=(
   # the Shortcuts page, through their real controls in a real window.
   "FM_RUN_SETTINGS_TERMINAL_SHORTCUTS_TESTS"
   "FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"
-  "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
-  "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"
   "FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"
-  # `fm/grand-line-herdr-restart-button`: mounts a real `ConsoleController` in
-  # a real window, like its FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS sibling. Its
-  # pure-logic half (FM_RUN_HERDR_RESTART_TESTS) is deliberately not here -
-  # that one runs in CI.
-  "FM_RUN_HERDR_RESTART_BUTTON_TESTS"
   # Mounts a real `DocsController` and loads a real scratch Playbook into its
   # WKWebView to prove the subresource-cache fix - a live web content process,
   # like its Whiteboard/Code Preview peers above.
   "FM_RUN_DOCS_PLAYBOOK_RELOAD_TESTS"
   # Mounts real `ConsoleController`s (both the Firstmate and host-page kinds)
-  # in real windows and forks real `.shell` children, like its
-  # FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS / FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS
-  # peers.
+  # in real windows and forks real `.shell` children.
   "FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS"
   # F2 (audit §2 item 1): mounts real `ConsoleController`/`ToolsController`/
   # `AppShellController` instances in real windows and forks real `.shell`

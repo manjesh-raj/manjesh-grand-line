@@ -988,7 +988,12 @@ enum E2ETestingPolicySelfTest {
     /// can answer it. Review #4's other UI checks went into a headless suite
     /// (`ReviewFourUISelfTest`) and into `MainSplitShellSelfTest`, which
     /// already mounts the shell.
-    private static let windowBackedSuiteCeiling = 136
+    ///
+    /// 131 after R5-PROC-03 of review #5 re-ran the audit and moved five
+    /// suites that mounted a `ConsoleController` in a window but assert only
+    /// model, control and string state: Claude usage, forward-drags toggle,
+    /// the herdr restart button, SRE Lead per tab and its notifications.
+    private static let windowBackedSuiteCeiling = 131
 
     private static func checkTheWindowBackedLaneDoesNotGrowUnasked(_ ok: inout Bool) {
         guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),

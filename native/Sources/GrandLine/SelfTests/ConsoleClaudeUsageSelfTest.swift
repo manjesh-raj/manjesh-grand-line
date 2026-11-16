@@ -13,7 +13,7 @@
 // This drives the *real* `ConsoleController.newShellTab`/`openCommandTab`/
 // `select(tabID:)` - not reimplementations - following
 // `BlockViewRestartIntegrationSelfTest.swift`'s construction pattern (a real
-// `ConsoleController` mounted in a real, off-screen `NSWindow`). What it does
+// `ConsoleController` hosted in a plain view with no window (R5-PROC-03)). What it does
 // NOT do: call `QuotaUsageController.toggle`/`NSPopover.show` - no self-test
 // in this codebase exercises a real `NSPopover.show(relativeTo:of:
 // preferredEdge:)` headlessly (checked before writing this), and that
@@ -70,16 +70,20 @@ enum ConsoleClaudeUsageSelfTest {
 
     // MARK: Helpers
 
-    /// A real `ConsoleController` mounted in a real `NSWindow`, with no tab
+    /// A real `ConsoleController` hosted in a plain view with no window (R5-PROC-03), with no tab
     /// open yet - `isFirstmateConsole` picks the shared-console shape
     /// (matching the task's own "the plain Shell tab" framing) or a
     /// dedicated-host-page shape.
-    private static func makeTestConsole(isFirstmateConsole: Bool) -> (window: NSWindow, controller: ConsoleController) {
+    private static func makeTestConsole(isFirstmateConsole: Bool) -> (host: NSView, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: isFirstmateConsole)
-        let window = OffScreenProbe.window(width: 900, height: 600)
-        window.contentViewController = controller
+        // R5-PROC-03 of review #5: no window. Every check here reads model,
+        // control or string state, and none of it changes with one, so this
+        // suite runs in CI's headless lane.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        controller.view.frame = host.bounds
+        host.addSubview(controller.view)
         controller.view.layoutSubtreeIfNeeded()
-        return (window, controller)
+        return (host, controller)
     }
 
     /// Both buttons exist and their `isHidden` states agree - the property

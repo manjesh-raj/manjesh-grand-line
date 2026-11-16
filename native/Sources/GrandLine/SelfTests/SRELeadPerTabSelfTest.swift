@@ -82,13 +82,17 @@ enum SRELeadPerTabSelfTest {
     // MARK: Helpers
 
     /// A real, non-Firstmate `ConsoleController` (a dedicated host page)
-    /// mounted in a real `NSWindow`, with `tabCount` real `.ssh` tabs opened
+    /// hosted in a plain view with no window (R5-PROC-03), with `tabCount` real `.ssh` tabs opened
     /// and started via the real `openSSH`/`viewDidAppear` path - mirrors
     /// `BlockViewRestartIntegrationSelfTest.makeStartedTestConsole()`.
-    private static func makeStartedTestConsole(tabCount: Int) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
+    private static func makeStartedTestConsole(tabCount: Int) -> (host: NSView, controller: ConsoleController, tabIDs: [UUID]) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = OffScreenProbe.window(width: 900, height: 600)
-        window.contentViewController = controller
+        // R5-PROC-03 of review #5: no window. Every check here reads model,
+        // control or string state, and none of it changes with one, so this
+        // suite runs in CI's headless lane.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        controller.view.frame = host.bounds
+        host.addSubview(controller.view)
         controller.view.layoutSubtreeIfNeeded()
 
         for i in 0..<tabCount {
@@ -100,7 +104,7 @@ enum SRELeadPerTabSelfTest {
         }
         controller.viewDidAppear()
         controller.view.layoutSubtreeIfNeeded()
-        return (window, controller, controller.debugAllTabIDs())
+        return (host, controller, controller.debugAllTabIDs())
     }
 
     /// The literal text `ConsoleController.processTerminated` feeds into a

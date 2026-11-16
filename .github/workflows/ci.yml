@@ -316,7 +316,21 @@ jobs:
       - name: Make it executable
         # `upload-artifact` does not carry the executable bit, and the runner
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
-        run: chmod +x .build/debug/GrandLine
+        #
+        # R5-PROC-03 of review #5: the first download attempt is
+        # `continue-on-error`, so a failure there used to show only as a
+        # collapsed step. Say so in the run's annotations, and check the binary
+        # really arrived before handing it to `--no-build`, so a bad handoff
+        # fails here by name rather than as a confusing runner error.
+        run: |
+          if [ "${{ steps.binary.outcome }}" = failure ]; then
+            echo "::warning title=Debug binary handoff::the first download of grandline-debug-binary failed; the second attempt supplied it"
+          fi
+          if [ ! -s .build/debug/GrandLine ]; then
+            echo "::error title=Debug binary handoff::grandline-debug-binary did not contain .build/debug/GrandLine - nothing was rebuilt in its place"
+            exit 1
+          fi
+          chmod +x .build/debug/GrandLine
 
       # R2-PROC-06: the per-suite history, kept between runs. The cache
       # restores the newest history this branch can see (a pull request also
@@ -444,7 +458,21 @@ jobs:
       - name: Make it executable
         # `upload-artifact` does not carry the executable bit, and the runner
         # script refuses to start without it (`[ ! -x "$BIN" ]`).
-        run: chmod +x .build/debug/GrandLine
+        #
+        # R5-PROC-03 of review #5: the first download attempt is
+        # `continue-on-error`, so a failure there used to show only as a
+        # collapsed step. Say so in the run's annotations, and check the binary
+        # really arrived before handing it to `--no-build`, so a bad handoff
+        # fails here by name rather than as a confusing runner error.
+        run: |
+          if [ "${{ steps.binary.outcome }}" = failure ]; then
+            echo "::warning title=Debug binary handoff::the first download of grandline-debug-binary failed; the second attempt supplied it"
+          fi
+          if [ ! -s .build/debug/GrandLine ]; then
+            echo "::error title=Debug binary handoff::grandline-debug-binary did not contain .build/debug/GrandLine - nothing was rebuilt in its place"
+            exit 1
+          fi
+          chmod +x .build/debug/GrandLine
 
       # R2-PROC-06: the per-suite history, kept between runs. The cache
       # restores the newest history this branch can see (a pull request also
@@ -567,8 +595,8 @@ jobs:
   # It never changes what the other checks report. A shard that could not run
   # its suites still fails `self-test suites (window-backed)`, because "every
   # window-backed suite passed" was not shown. This check only says why.
-  # `.github/workflows/ci-rerun.yml` reads it to decide whether a failed `main`
-  # run is re-run.
+  # On a first-attempt push to `main`, an infrastructure verdict also starts
+  # `.github/workflows/ci-rerun.yml`, which re-runs the failed jobs once.
   #
   # `ubuntu-latest` rather than the pinned macOS label: it builds nothing and
   # runs no suite, only `gh api` and `jq`, so the runner image does not matter.
@@ -579,7 +607,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: read
+      # `write` only for the dispatch step below.
+      actions: write
       contents: read
     steps:
       - name: Tell an infrastructure failure from a suite failure
@@ -635,6 +664,21 @@ jobs:
             fi
           done < failed.tsv
           exit "$infra"
+
+      # R5-PROC-03 of review #5: `ci-rerun.yml` used to listen for every
+      # completed CI run on `main` and decide inside, so the Actions list and
+      # the notifications carried a skipped "Re-run main after an
+      # infrastructure failure" for every push. It is started from here now,
+      # and only for the one case it exists for. A `workflow_dispatch` sent with
+      # `GITHUB_TOKEN` is one of the two events that token may start a run with.
+      - name: Ask for one re-run of an infrastructure failure on main
+        if: ${{ failure() && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == 1 }}
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: gh workflow run ci-rerun.yml --repo "$REPO" --ref main -f run_id="$RUN_ID"
 
   generated:
     name: generated files match their inputs
