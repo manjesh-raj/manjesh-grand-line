@@ -59,6 +59,7 @@ enum ShiftDueSelfTest {
         checkMissedRepeatRemindsForTheNextDate(check)
         checkTheMissedRepeatThroughThePoll(check)
         checkFollowUpsHaveRemindMe(check)
+        checkAnUnreadableTimeIsNoTime(check)
 
         print(ok ? "ShiftDueSelfTest: all checks passed" : "ShiftDueSelfTest: FAILED")
         return ok
@@ -173,6 +174,57 @@ enum ShiftDueSelfTest {
                    ShiftDue.taskTitle(date: today, time: nil, now: instant("2026-09-17", 9)),
                    ShiftDue.taskTitle(date: today, time: "15:00", now: instant(today, 14, 45))]).count == 3,
               "the three titles must be three different sentences")
+    }
+
+    // MARK: R5-BUG-11 - a `due_time` that does not parse is no time
+
+    /// The tree is captain-editable YAML, so a record can say
+    /// `due_time: "9am"`. `ShiftDateFormatting.dateTime` returns the bare day
+    /// for a time it cannot read, and every rule here branched on the time
+    /// being present rather than on it parsing - so the task was due at
+    /// 00:00: overdue all day, counted overdue in the Notification Center,
+    /// and reminded at 23:30 the night before. It reads as a date-only task
+    /// now, the way `all_day_reminder_at` already treats a value it cannot
+    /// read.
+    private static func checkAnUnreadableTimeIsNoTime(_ check: (Bool, String) -> Void) {
+        let thursday = "2026-11-19"
+        let friday = "2026-11-20"
+        // The fixture's own discriminating power: a real time and no time
+        // really do resolve differently, so "reads like no time" is not
+        // vacuous.
+        check(ShiftDue.overdueInstant(date: friday, time: "09:00")
+                != ShiftDue.overdueInstant(date: friday, time: nil),
+              "fixture: a timed and a date-only task must differ")
+        for garbage in ["9am", "25:00", "", "09:60", "noon"] {
+            check(ShiftDue.overdueInstant(date: friday, time: garbage)
+                    == ShiftDue.overdueInstant(date: friday, time: nil),
+                  "an unreadable due time (\"\(garbage)\") is overdue only once the day is over, got "
+                  + "\(String(describing: ShiftDue.overdueInstant(date: friday, time: garbage)))")
+            check(!ShiftDue.isOverdue(date: friday, time: garbage, now: instant(friday, 8)),
+                  "a task due today at \"\(garbage)\" is not overdue at 08:00")
+            check(ShiftDue.reminderInstant(date: friday, time: garbage) == instant(friday, 9),
+                  "an unreadable due time (\"\(garbage)\") reminds at the all-day time, never at midnight")
+            check(!fires(friday, garbage, at: instant(thursday, 23, 30)),
+                  "and never at 23:30 the night before (\"\(garbage)\")")
+            check(ShiftDue.taskTitle(date: friday, time: garbage, now: instant(friday, 8)) == "Task due today",
+                  "its banner reads like a date-only task's (\"\(garbage)\"), got "
+                  + ShiftDue.taskTitle(date: friday, time: garbage, now: instant(friday, 8)))
+        }
+        check(ShiftDue.overdueInstant(date: friday, time: "9:00") == instant(friday, 9),
+              "a hand-typed one-digit hour is still a real time")
+
+        // Through the poll, which is what posts and counts.
+        withScratchStore { store, _ in
+            store.addTask(task("malformed", due: friday, time: "9am"))
+            let scheduler = ShiftNotificationScheduler(store: store)
+            scheduler.poll(now: instant(thursday, 23, 30))
+            check(scheduler.debugNotifiedTaskIDs.isEmpty,
+                  "the poll at 23:30 on Thursday must not post for Friday's \"9am\" task, posted for "
+                  + scheduler.debugNotifiedTaskIDs.joined(separator: ","))
+            scheduler.poll(now: instant(friday, 9))
+            check(scheduler.debugNotifiedTaskIDs == ["malformed"],
+                  "it reminds at 09:00 on Friday, got " + scheduler.debugNotifiedTaskIDs.joined(separator: ","))
+        }
     }
 
     // MARK: 3 - a banner is taken back

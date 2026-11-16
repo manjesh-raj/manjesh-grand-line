@@ -26,7 +26,7 @@ enum ShiftDue {
                                time hhmm: String?,
                                calendar: Calendar = .current) -> Date? {
         guard let yyyyMMdd, let day = ShiftDateFormatting.date(from: yyyyMMdd) else { return nil }
-        if hhmm != nil, let exact = ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm) {
+        if let hhmm = readableTime(hhmm), let exact = ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm) {
             return exact
         }
         return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day))
@@ -65,7 +65,7 @@ enum ShiftDue {
     static func reminderInstant(date yyyyMMdd: String?,
                                 time hhmm: String?,
                                 allDayAt: String = defaultAllDayReminderAt) -> Date? {
-        if hhmm != nil { return ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm) }
+        if let hhmm = readableTime(hhmm) { return ShiftDateFormatting.dateTime(from: yyyyMMdd, time: hhmm) }
         return ShiftDateFormatting.dateTime(from: yyyyMMdd,
                                             time: clockTime(allDayAt) ?? defaultAllDayReminderAt)
     }
@@ -97,7 +97,7 @@ enum ShiftDue {
         if let minutesBefore {
             lead = TimeInterval(max(0, minutesBefore) * 60)
         } else {
-            lead = hhmm == nil ? 0 : defaultLookahead
+            lead = readableTime(hhmm) == nil ? 0 : defaultLookahead
         }
         return anchor.addingTimeInterval(-lead)
     }
@@ -114,18 +114,32 @@ enum ShiftDue {
         return String(format: "%02d:%02d", hour, minute)
     }
 
+    /// An item's own time as every rule here reads it: `clockTime`, so a
+    /// `due_time` that does not parse is no time at all (R5-BUG-11).
+    ///
+    /// The tree is captain-editable YAML, and `ShiftDateFormatting.dateTime`
+    /// answers an unreadable time with the bare day - local midnight. A rule
+    /// that branched on the time being present rather than on it parsing read
+    /// `due_time: "9am"` as due at 00:00: overdue all day, counted overdue in
+    /// the Notification Center, and reminded at 23:30 the night before. It is
+    /// a date-only item instead, the same way `all_day_reminder_at` already
+    /// treats a value it cannot read.
+    private static func readableTime(_ hhmm: String?) -> String? {
+        hhmm.flatMap(clockTime)
+    }
+
     /// The banner's own title for a task, given both instants above.
     static func taskTitle(date yyyyMMdd: String?, time hhmm: String?, now: Date,
                           calendar: Calendar = .current) -> String {
         if isOverdue(date: yyyyMMdd, time: hhmm, now: now, calendar: calendar) { return "Task due now" }
-        return hhmm == nil ? "Task due today" : "Task due soon"
+        return readableTime(hhmm) == nil ? "Task due today" : "Task due soon"
     }
 
     /// The same for a follow-up, whose vocabulary the app already differs on.
     static func followUpTitle(date yyyyMMdd: String?, time hhmm: String?, now: Date,
                               calendar: Calendar = .current) -> String {
         if isOverdue(date: yyyyMMdd, time: hhmm, now: now, calendar: calendar) { return "Follow-up due now" }
-        return hhmm == nil ? "Follow-up due today" : "Follow-up coming up"
+        return readableTime(hhmm) == nil ? "Follow-up due today" : "Follow-up coming up"
     }
 }
 

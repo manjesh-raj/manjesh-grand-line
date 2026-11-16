@@ -265,12 +265,12 @@ final class TaskCalendarController: NSViewController {
     /// longer open is left alone.
     ///
     /// Undo is a real restore (GL-33). The task is reopened with the status
-    /// it had, and the instance this completion spawned is withdrawn - but
-    /// only while it is exactly as it was spawned. Reopening alone would
-    /// leave two live instances of one series, which is why the store's own
-    /// reopen does not withdraw anything (`ShiftStore.nextOccurrence`'s
-    /// header). An instance edited since the check keeps its edits, and the
-    /// toast says so rather than pretending the series is back as it was.
+    /// it had, and the store's reopen withdraws the instance this completion
+    /// spawned - but only while it is untouched since
+    /// (`ShiftStore.keepOneLiveInstance`, R5-BUG-10), the one rule every
+    /// surface's un-tick shares. An instance edited since the check keeps its
+    /// edits and the series, and the toast says so rather than pretending the
+    /// series is back as it was.
     func completeTask(id: String, now: Date = Date()) {
         guard let task = store.activeTasks.first(where: { $0.id == id }),
               task.status != .completed, task.status != .cancelled else {
@@ -294,13 +294,9 @@ final class TaskCalendarController: NSViewController {
                 reopened.status = task.status
                 self.store.updateTask(reopened)
             }
-            if let spawned, let current = self.store.activeTasks.first(where: { $0.id == spawned.id }) {
-                if current == spawned {
-                    self.store.deleteTask(id: spawned.id)
-                } else {
-                    Toast.show(in: self.view,
-                               message: "Reopened. The next \u{201C}\(spawned.title)\u{201D} was edited, so it stays.")
-                }
+            if let spawned, self.store.activeTasks.contains(where: { $0.id == spawned.id }) {
+                Toast.show(in: self.view,
+                           message: "Reopened. The next \u{201C}\(spawned.title)\u{201D} was edited, so it stays.")
             }
             self.render()
         }
@@ -331,21 +327,38 @@ final class TaskCalendarController: NSViewController {
 
     /// The panel's draft, written into the task as the store has it now, so
     /// an edit that arrived while the panel was open (a sync, the sheet) is
-    /// kept. Undo restores the four fields this method read (GL-33).
+    /// kept. Undo restores every field `ShiftScheduleDraft.applied(to:)`
+    /// writes, and only those (GL-33).
+    ///
+    /// R5-BUG-12: that includes the slot's own time. Applying a new time
+    /// clears `occurrenceTime`, and an Undo that left it cleared brought an
+    /// instance moved "only this" back at the series' time rather than its
+    /// own slot.
     func commitSchedule(_ draft: ShiftScheduleDraft, taskID id: String) {
         guard let task = store.activeTasks.first(where: { $0.id == id }), draft.changes(task) else { return }
         let updated = draft.applied(to: task)
         store.updateTask(updated)
         render()
-        let previous = (task.dueDate, task.dueTime, task.recurrence, task.reminderMinutesBefore, task.occurrence)
         Toast.showUndo(in: view, message: Self.scheduleToast(from: task, to: updated)) { [weak self] in
             guard let self,
-                  var current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
-            (current.dueDate, current.dueTime, current.recurrence, current.reminderMinutesBefore,
-             current.occurrence) = previous
-            self.store.updateTask(current)
+                  let current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            self.store.updateTask(Self.restoringSchedule(of: task, into: current))
             self.render()
         }
+    }
+
+    /// `current` with the schedule `previous` had: the fields the When panel
+    /// writes, so anything else edited since is kept.
+    private static func restoringSchedule(of previous: ShiftTask, into current: ShiftTask) -> ShiftTask {
+        var restored = current
+        restored.dueDate = previous.dueDate
+        restored.dueTime = previous.dueTime
+        restored.recurrence = previous.recurrence
+        restored.reminderMinutesBefore = previous.reminderMinutesBefore
+        restored.seriesID = previous.seriesID
+        restored.occurrence = previous.occurrence
+        restored.occurrenceTime = previous.occurrenceTime
+        return restored
     }
 
     /// The same check on a pending follow-up: marked done, which takes it off
