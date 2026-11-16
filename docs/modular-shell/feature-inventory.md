@@ -950,6 +950,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.dictationLocalWhisperEnabled` | Saved preference `fm.dictationLocalWhisperEnabled` | declared in AppSettings | Dictation |  |
 | `state.fm.dictationShortcut` | Saved preference `fm.dictationShortcut` | declared in AppSettings | Dictation |  |
 | `state.fm.didSeedDailyGitHubSyncSchedule` | Saved preference `fm.didSeedDailyGitHubSyncSchedule` | declared in AppSettings | Schedules (one-time seeding marker) |  |
+| `state.fm.didSeedManualChecksSchedule` | Saved preference `fm.didSeedManualChecksSchedule` | declared in AppSettings | Schedules (one-time seeding marker) |  |
 | `state.fm.dotfilesAutoCommitEnabled` | Saved preference `fm.dotfilesAutoCommitEnabled` | declared in AppSettings | Setup › Setup steps |  |
 | `state.fm.fmHome` | Saved preference `fm.fmHome` | declared in AppSettings | Crew (the firstmate home the crew pages read) |  |
 | `state.fm.followSystemAppearance` | Saved preference `fm.followSystemAppearance` | declared in AppSettings | Settings › Appearance |  |

@@ -572,6 +572,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alreadySeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule },
             markSeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule = true }
         )
+        // R5-PROC-06: the weekly read of `native/MANUAL-CHECKS.md`, seeded
+        // once in the same way.
+        ScheduleSeeding.seedManualChecksIfNeeded(
+            store: scheduleStore,
+            alreadySeeded: { AppSettings.shared.didSeedManualChecksSchedule },
+            markSeeded: { AppSettings.shared.didSeedManualChecksSchedule = true }
+        )
 
         // F11: the schedule runner. Distinct from the poller above in the one
         // way that matters - the poller answers "is anything wrong right now"

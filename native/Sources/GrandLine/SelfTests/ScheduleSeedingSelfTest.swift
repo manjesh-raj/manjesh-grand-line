@@ -27,6 +27,7 @@ enum ScheduleSeedingSelfTest {
         checkDoesNotResurrectAfterDelete(&ok)
         checkDoesNotResurrectAfterEdit(&ok)
         checkNeverAddsANewActionKind(&ok)
+        checkManualChecksSeedsOnceAndQuietly(&ok)
         print(ok ? "ScheduleSeedingSelfTest: all checks passed" : "ScheduleSeedingSelfTest: FAILED")
         return ok
     }
@@ -195,11 +196,37 @@ enum ScheduleSeedingSelfTest {
     /// task that adds a schedulable action must update deliberately; this
     /// check's remaining job is narrower - confirming daily-github-sync
     /// itself still uses exactly `.forkSync` and introduced nothing new.
+    /// R5-PROC-06: the weekly "Manual checks due" schedule is seeded once,
+    /// enabled, on change only, and never resurrected after a delete.
+    private static func checkManualChecksSeedsOnceAndQuietly(_ ok: inout Bool) {
+        print("\n-- manual checks: seeds once, enabled, on change only --")
+        guard let store = scratchStore() else {
+            fail("could not create a scratch schedule store", &ok)
+            return
+        }
+        let flag = FakeFlag()
+        ScheduleSeeding.seedManualChecksIfNeeded(
+            store: store, alreadySeeded: { flag.seeded }, markSeeded: { flag.seeded = true })
+        guard store.schedules.count == 1, let seeded = store.schedules.first else {
+            fail("the first call should add exactly one schedule, got \(store.schedules.count)", &ok)
+            return
+        }
+        if seeded.action != .manualChecksDue { fail("seeded \(seeded.action.rawValue), want manualChecksDue", &ok) }
+        if seeded.cadence != ScheduleSeeding.manualChecksCadence { fail("seeded cadence \(seeded.cadence)", &ok) }
+        if seeded.notifyOn != .changeOnly { fail("a quiet week must not ring the bell; notifyOn is \(seeded.notifyOn)", &ok) }
+        if !seeded.isEnabled { fail("a read-only check has no reason to be seeded off", &ok) }
+        if seeded.action.writesRemotely { fail("manualChecksDue reads one local file and must not claim to write remotely", &ok) }
+        store.delete(id: seeded.id)
+        ScheduleSeeding.seedManualChecksIfNeeded(
+            store: store, alreadySeeded: { flag.seeded }, markSeeded: { flag.seeded = true })
+        if !store.schedules.isEmpty { fail("a deleted seed came back on the next launch", &ok) }
+    }
+
     private static func checkNeverAddsANewActionKind(_ ok: inout Bool) {
         print("\n-- no new schedulable action was introduced --")
         let reviewed: Set<String> = [
             "driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport",
-            "toolUpdateInstall",
+            "toolUpdateInstall", "manualChecksDue",
         ]
         let actual = Set(ScheduledActionKind.allCases.map { $0.rawValue })
         if actual != reviewed {

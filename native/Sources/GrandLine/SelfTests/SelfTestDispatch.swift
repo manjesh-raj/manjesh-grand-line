@@ -564,6 +564,13 @@ enum SelfTestDispatch {
             exit(DiagnosticsLogSelfTest.run() ? 0 : 1)
         }
 
+        // R5-PROC-06: the manual-check register reader behind the "Manual checks
+        // due" schedule. Pure logic plus real file round trips, so it guards CI's
+        // blocking lane.
+        if ProcessInfo.processInfo.environment["FM_RUN_MANUAL_CHECKS_REGISTER_TESTS"] == "1" {
+            exit(ManualChecksRegisterSelfTest.run() ? 0 : 1)
+        }
+
         // Review process issue P11: the tour lab's own coverage. Window-backed.
         if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_TOUR_LAB_TESTS"] == "1" {
             exit(ReviewTourLabSelfTest.run() ? 0 : 1)

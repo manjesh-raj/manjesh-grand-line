@@ -109,6 +109,11 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     /// established there was anything safe to act on.
     case toolUpdateInstall
 
+    /// Read-only. Reads `native/MANUAL-CHECKS.md` and reports any section
+    /// whose `Cadence:` line says it is due (R5-PROC-06). See
+    /// `ManualChecksRegister.swift`.
+    case manualChecksDue
+
     /// Card row title. Matches the captain-approved mockup's own wording for
     /// the three it shows.
     var title: String {
@@ -125,6 +130,8 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
             return "Grand Line config backup to GitHub"
         case .toolUpdateInstall:
             return "Tool update check + install - \(DependencyCatalog.items.count) tools"
+        case .manualChecksDue:
+            return "Manual checks due"
         }
     }
 
@@ -138,6 +145,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .vaultRecipeExport: return "Vault recipe export"
         case .configBackupExport: return "Grand Line config backup to GitHub"
         case .toolUpdateInstall: return "Tool update check + install (no confirmation)"
+        case .manualChecksDue: return "Manual checks due (MANUAL-CHECKS.md)"
         }
     }
 
@@ -149,6 +157,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .vaultRecipeExport: return "doc.text"
         case .configBackupExport: return "shippingbox"
         case .toolUpdateInstall: return "arrow.down.circle.fill"
+        case .manualChecksDue: return "checklist"
         }
     }
 
@@ -158,7 +167,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     /// matching the mockup's own two colours.
     var tint: HelmTint {
         switch self {
-        case .driftCheck, .toolUpdateCheck, .forkSync: return .info
+        case .driftCheck, .toolUpdateCheck, .forkSync, .manualChecksDue: return .info
         case .vaultRecipeExport, .configBackupExport, .toolUpdateInstall: return .violet
         }
     }
@@ -175,7 +184,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     /// forced through).
     var writesRemotely: Bool {
         switch self {
-        case .driftCheck, .toolUpdateCheck: return false
+        case .driftCheck, .toolUpdateCheck, .manualChecksDue: return false
         case .forkSync, .vaultRecipeExport, .configBackupExport, .toolUpdateInstall: return true
         }
     }
@@ -191,6 +200,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .vaultRecipeExport: return "on recipe change only"
         case .configBackupExport: return "on backup change only"
         case .toolUpdateInstall: return "on updates installed only"
+        case .manualChecksDue: return "on checks due only"
         }
     }
 
@@ -216,6 +226,9 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .forkSync: return .githubSync
         case .vaultRecipeExport: return .vault
         case .configBackupExport: return .settings
+        // The register is a file, not a page. Health is where this app reports
+        // on its own upkeep, which is the nearest honest hand-off.
+        case .manualChecksDue: return .health
         }
     }
 
@@ -243,6 +256,9 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
                 + "finds - with no confirmation prompt, including firstmate's own self-update and the Automic "
                 + "Vault security cask. A tool that isn't installed yet, or whose check itself fails, is left "
                 + "alone rather than force-installed."
+        case .manualChecksDue:
+            return "Reads native/MANUAL-CHECKS.md and reports every section whose Cadence line says it is due. "
+                + "Read-only: you record a check by editing its last-done date in the register."
         }
     }
 }

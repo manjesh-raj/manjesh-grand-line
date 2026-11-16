@@ -9,6 +9,16 @@ than left implicit, so a green
 Run this before a release, or after a change that touches one of the areas
 below. It is short on purpose - a checklist nobody finishes is worse than none.
 
+**A section that must be re-done on a schedule says so in one line of its own**:
+
+    Cadence: every 183 days, last done 2026-09-19.
+    Cadence: every 30 days, never done.
+
+The app's weekly "Manual checks due" schedule (`ManualChecksRegister.swift`,
+R5-PROC-06) reads those lines and rings the bell when one is due.
+Record a check by updating its `last done` date here.
+A section without the line is a before-a-release check and is not tracked.
+
 ## Why these cannot be automated
 
 A self-test process is **not a composited UI app**. It runs from a terminal,
@@ -271,6 +281,8 @@ These need a real bastion and cannot be faked meaningfully.
       statuses match reality.
 
 ## 15. Scheduled: the vendored SwiftTerm pin
+
+Cadence: every 183 days, last done 2026-09-19.
 
 **Every 183 days** (six months), or sooner on an upstream security fix. Last
 done 2026-09-19, against upstream `v1.20.0`: stay pinned. The recipe, the

@@ -198,6 +198,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SNIPPETS_FILE` | `snippets.json` |
 | `FM_SESSION_RESTORE_FILE` | `session-restore.json` (which destination, host pages and tabs were open at quit) |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
+| `FM_MANUAL_CHECKS_FILE` | The manual-check register the weekly "Manual checks due" schedule reads (R5-PROC-06). Defaults to `<firstmate home>/projects/grand-line/native/MANUAL-CHECKS.md`. Read-only |
 | `FM_SCHEDULE_HISTORY_DIR` | The Schedules page's 7-day run history (`schedule-history/runs.jsonl`) |
 | `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library and incident records |
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |

@@ -502,6 +502,7 @@ enum ScheduleActions {
         case .vaultRecipeExport: return vaultRecipeExport()
         case .configBackupExport: return configBackupExport(stores: backupStores)
         case .toolUpdateInstall: return toolUpdateInstall()
+        case .manualChecksDue: return ManualChecksRegister.check()
         }
     }
 
