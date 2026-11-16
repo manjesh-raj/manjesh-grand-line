@@ -327,21 +327,38 @@ final class TaskCalendarController: NSViewController {
 
     /// The panel's draft, written into the task as the store has it now, so
     /// an edit that arrived while the panel was open (a sync, the sheet) is
-    /// kept. Undo restores the four fields this method read (GL-33).
+    /// kept. Undo restores every field `ShiftScheduleDraft.applied(to:)`
+    /// writes, and only those (GL-33).
+    ///
+    /// R5-BUG-12: that includes the slot's own time. Applying a new time
+    /// clears `occurrenceTime`, and an Undo that left it cleared brought an
+    /// instance moved "only this" back at the series' time rather than its
+    /// own slot.
     func commitSchedule(_ draft: ShiftScheduleDraft, taskID id: String) {
         guard let task = store.activeTasks.first(where: { $0.id == id }), draft.changes(task) else { return }
         let updated = draft.applied(to: task)
         store.updateTask(updated)
         render()
-        let previous = (task.dueDate, task.dueTime, task.recurrence, task.reminderMinutesBefore, task.occurrence)
         Toast.showUndo(in: view, message: Self.scheduleToast(from: task, to: updated)) { [weak self] in
             guard let self,
-                  var current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
-            (current.dueDate, current.dueTime, current.recurrence, current.reminderMinutesBefore,
-             current.occurrence) = previous
-            self.store.updateTask(current)
+                  let current = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            self.store.updateTask(Self.restoringSchedule(of: task, into: current))
             self.render()
         }
+    }
+
+    /// `current` with the schedule `previous` had: the fields the When panel
+    /// writes, so anything else edited since is kept.
+    private static func restoringSchedule(of previous: ShiftTask, into current: ShiftTask) -> ShiftTask {
+        var restored = current
+        restored.dueDate = previous.dueDate
+        restored.dueTime = previous.dueTime
+        restored.recurrence = previous.recurrence
+        restored.reminderMinutesBefore = previous.reminderMinutesBefore
+        restored.seriesID = previous.seriesID
+        restored.occurrence = previous.occurrence
+        restored.occurrenceTime = previous.occurrenceTime
+        return restored
     }
 
     /// The same check on a pending follow-up: marked done, which takes it off

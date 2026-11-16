@@ -472,6 +472,7 @@ enum ShiftCalendarViewSelfTest {
         withScratchStore { store in checkTray(store: store, check: check) }
         withScratchStore { store in checkComplete(store: store, check: check) }
         withScratchStore { store in checkWhenPanel(store: store, check: check) }
+        withScratchStore { store in checkWhenPanelUndo(store: store, check: check) }
         withScratchStore { store in checkDragAndQuickAdd(store: store, check: check) }
         withScratchStore { store in checkExceptions(store: store, check: check) }
 
@@ -991,6 +992,69 @@ enum ShiftCalendarViewSelfTest {
               "the sheet's Save writes the panel's rule, got \(stored(chip)?.recurrence?.ruleText ?? "no rule")")
         check(stored(chip)?.dueTime == nil && stored(chip)?.reminderMinutesBefore == 15,
               "...an all-day date with no time, and keeps the reminder")
+    }
+
+    // MARK: The When panel's Undo
+
+    /// R5-BUG-12: the panel's Undo restored `occurrence` but not
+    /// `occurrenceTime`, while applying a new time clears it. So an instance
+    /// moved "only this" to another time, then edited in the panel and
+    /// undone, came back anchored at the series' time rather than its own
+    /// slot, and every later instance walked from the wrong time. Driven
+    /// through a real chip click, the panel's own controls and Done, and the
+    /// toast's real Undo button.
+    private static func checkWhenPanelUndo(store: ShiftStore, check: (Bool, String) -> Void) {
+        let todayDay = ShiftDateFormatting.components(from: Calendar.current.startOfDay(for: Date())).0
+        // A daily 09:00 series whose instance today was moved to 14:00 for
+        // this occurrence only.
+        var moved = ShiftTask.fresh()
+        moved.title = "Review the pager handoff"
+        moved.dueDate = todayDay
+        moved.dueTime = "14:00"
+        moved.recurrence = ShiftRecurrence(frequency: .daily)
+        moved.seriesID = "series-pager"
+        moved.occurrence = todayDay
+        moved.occurrenceTime = "09:00"
+        store.addTask(moved)
+        let stored = { store.activeTasks.first { $0.id == moved.id } }
+        check(stored()?.slotTime == "09:00", "fixture: the moved instance's slot is 09:00, got \(stored()?.slotTime ?? "nil")")
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }),
+              waitFor(timeout: 5, until: { eventIn(web, id: moved.id, day: todayDay) }) else {
+            check(false, "the When panel Undo case's page never drew its chip")
+            return
+        }
+        _ = js(web, "document.querySelector('[data-event-id=\"\(moved.id)\"]').click()")
+        guard waitFor(timeout: 3, until: { controller.debugSchedulePopover?.isShown == true }),
+              let popover = controller.debugSchedulePopover else {
+            check(false, "clicking the moved instance's chip should show the When panel")
+            return
+        }
+        popover.editor.debugTimeTabs.debugClickTab(id: "allDay")
+        popover.debugContent.debugDoneButton.performClick(nil)
+        _ = waitFor(timeout: 3) { !popover.isShown && stored()?.dueTime == nil }
+        // The discriminating half: the panel really did clear the slot's
+        // time, so restoring it is what Undo has to do.
+        check(stored()?.dueTime == nil && stored()?.occurrenceTime == nil,
+              "fixture: All day should clear the time and the slot's time, got \(stored()?.dueTime ?? "nil") / "
+              + "\(stored()?.occurrenceTime ?? "nil")")
+
+        let undo = undoButton(in: controller.view)
+        check(undo != nil, "a When panel change should offer Undo")
+        undo?.performClick(nil)
+        drain(turns: 10)
+        let undone = ShiftStore().activeTasks.first { $0.id == moved.id }
+        check(undone?.dueTime == "14:00" && undone?.occurrence == todayDay,
+              "Undo should restore the moved time and day, got \(undone?.dueTime ?? "nil") on \(undone?.occurrence ?? "nil")")
+        check(undone?.occurrenceTime == "09:00" && undone?.slotTime == "09:00",
+              "Undo should restore the instance's own 09:00 slot, not the series' moved time, got slot "
+              + "\(undone?.slotTime ?? "nil") (occurrenceTime \(undone?.occurrenceTime ?? "nil"))")
     }
 
     // MARK: Drag and quick add
