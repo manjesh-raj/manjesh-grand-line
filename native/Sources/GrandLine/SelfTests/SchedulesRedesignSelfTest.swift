@@ -46,6 +46,7 @@ enum SchedulesRedesignSelfTest {
         checkRowsUseTheFullWidth(&ok)
         checkSurfacesFollowTheLiveTheme(&ok)
         checkTheMinimumWindowHoldsWithNoSchedules(&ok)
+        checkARepeatedRunIsVisibleOnTheRow(&ok)
         print(ok ? "\nPASS" : "\nFAIL")
         return ok
     }
@@ -352,6 +353,55 @@ enum SchedulesRedesignSelfTest {
             ok = false
         }
         if ok { print("  OK - 2 active / 1 needing you / 0 recorded runs, and an honest empty feed") }
+    }
+
+    // MARK: R5-BUG-01 - a schedule that ran more than once today says so
+
+    /// R5-BUG-01: the daily "Fork sync" ran ten times in one day and the row
+    /// only ever showed the latest run, so nothing on the page said so. The
+    /// row's meta line now carries "ran N times today" from the same history
+    /// the sparkline reads, and only when there is more than one run.
+    private static func checkARepeatedRunIsVisibleOnTheRow(_ ok: inout Bool) {
+        print("\n-- R5-BUG-01: a schedule that ran more than once today says so on its row --")
+        let calendar = Calendar.current
+        // Local noon, so no runner's time zone puts a fixture run across
+        // midnight.
+        guard let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date()),
+              let yesterday = calendar.date(byAdding: .day, value: -1, to: noon) else {
+            print("  FAIL could not build the fixture dates")
+            ok = false
+            return
+        }
+        let ran = ScheduleRunRecord(verdict: .clean, summary: "synced", at: noon)
+        let repeated = AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 15), lastRun: ran)
+        let once = AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 6, minute: 0), lastRun: ran)
+        func run(_ id: UUID, at: Date) -> ScheduleRunHistoryEntry {
+            ScheduleRunHistoryEntry(scheduleID: id, at: at, verdict: .clean, summary: "synced", actionTitle: "Fork sync")
+        }
+        // Five runs today, the 20-second burst from the captain's log, plus
+        // one yesterday that must not count. The other schedule ran once
+        // today and once yesterday.
+        let history = (0..<5).map { run(repeated.id, at: noon.addingTimeInterval(-Double($0) * 20)) }
+            + [run(repeated.id, at: yesterday), run(once.id, at: noon), run(once.id, at: yesterday)]
+        if calendar.isDate(yesterday, inSameDayAs: noon) {
+            print("  FAIL the fixture's yesterday is today - the check would be vacuous")
+            ok = false
+            return
+        }
+
+        let card = SchedulesCardView()
+        card.setSchedules([repeated, once], runningID: nil, history: history, theme: ThemeManager.shared.theme)
+        let repeatedMeta = card.debugMetaLine(for: repeated, now: noon)
+        let onceMeta = card.debugMetaLine(for: once, now: noon)
+        if !repeatedMeta.contains("ran 5 times today") {
+            print("  FAIL a schedule with five runs today reads \"\(repeatedMeta)\"")
+            ok = false
+        }
+        if onceMeta.contains("times today") {
+            print("  FAIL a schedule that ran once today reads \"\(onceMeta)\"")
+            ok = false
+        }
+        if ok { print("  OK - \"\(repeatedMeta)\", and nothing extra for a single run") }
     }
 
     // MARK: 6 - the "Review" hand-off
