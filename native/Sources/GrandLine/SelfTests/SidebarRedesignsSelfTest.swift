@@ -817,6 +817,30 @@ enum SidebarRedesignsSelfTest {
         let subtitles = [shell.workspace.bootstrap.drillHeaderSubtitle, shell.workspace.automation.drillHeaderSubtitle]
         check(subtitles.allSatisfy { $0 == "4 of 5 steps done" },
               "the Setup tabs' subtitles read \(subtitles) beside a \"4 / 5\" card", &ok)
+
+        // R5-BUG-03: every tab's tiles follow a theme change, Setup steps'
+        // included, and a later count change does not put the old theme back.
+        // The first tile is a plain figure, so it paints in the theme's ink.
+        let ink = { (theme: HelmTheme) in HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex)) }
+        check(!sameColour(ink(.dusk), ink(.daylight)), "Dusk and Daylight share an ink, so the theme check is vacuous", &ok)
+        for theme in [HelmTheme.dusk, .daylight] {
+            ThemeManager.shared.setTheme(theme)
+            counts.toolsUpToDate = theme.id == HelmTheme.dusk.id ? 5 : 6
+            BackgroundSignalsPoller.shared.debugSetCounts(counts)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            for (name, row) in rows {
+                let painted = row.debugCards.first?.debugValueColor.map(HelmContrast.components)
+                check(painted.map { sameColour($0, ink(theme)) } == true,
+                      "\(name)'s summary tiles kept another theme's ink after switching to \(theme.id)", &ok)
+            }
+        }
+        // R5-PROC-04: one set of source observers, one feed observer per row.
+        check(SetupSummaryFeed.shared.debugObserverCount == rows.count,
+              "the summary feed has \(SetupSummaryFeed.shared.debugObserverCount) observers for \(rows.count) rows", &ok)
+    }
+
+    private static func sameColour(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Bool {
+        abs(a.0 - b.0) < 0.01 && abs(a.1 - b.1) < 0.01 && abs(a.2 - b.2) < 0.01
     }
 
     // MARK: 5 - The floating bar

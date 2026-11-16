@@ -1058,7 +1058,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         refreshProgressLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rows { applyThemeToRow(row) }
         if drawsSidebarLayout {
-            setupSummary.applyTheme(theme)
             forksTable.applyTheme(theme)
             forksSubtitle.textColor = HelmTheme.mutedInk(theme)
             applyPausedCard()

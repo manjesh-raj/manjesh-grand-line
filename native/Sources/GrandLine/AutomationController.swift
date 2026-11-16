@@ -1221,7 +1221,6 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         group.widthAnchor.constraint(equalTo: automationHost.widthAnchor).isActive = true
         automationGroup = group
         group.applyTheme(theme)
-        setupSummary.applyTheme(theme)
         view.needsLayout = true
     }
 
