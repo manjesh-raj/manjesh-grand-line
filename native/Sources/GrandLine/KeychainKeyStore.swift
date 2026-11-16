@@ -132,9 +132,10 @@ enum KeychainError: LocalizedError {
         case .codeChangedOnDisk:
             return "Quit and reopen Grand Line, then connect again."
         case .accessDenied:
-            return "Quit and reopen Grand Line. If it still fails, remove the key and add it again under Hosts > Keys."
+            return "Quit and reopen Grand Line. If it still fails, remove the key and add it again "
+                + "on the Keys tab of \(PlaceName.of(.hosts))."
         case .notFound:
-            return "Remove the key and add it again under Hosts > Keys."
+            return "Remove the key and add it again on the Keys tab of \(PlaceName.of(.hosts))."
         case .osStatus(errSecInteractionNotAllowed):
             return "Unlock your login keychain and try again."
         case .osStatus, .authenticationFailed, .userCancelled:
