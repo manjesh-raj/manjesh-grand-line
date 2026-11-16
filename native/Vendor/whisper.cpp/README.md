@@ -203,6 +203,30 @@ Apple Silicon hardware (Apple M5 Pro):
   `FM_WHISPER_METAL_RESOURCES_OVERRIDE` pointed at an empty directory, and asserts the child exits
   with status 0 and still produces the correct transcript.
 
+## Local patches
+
+There is one.
+Every other file under `Sources/CWhisper` is upstream's, byte for byte.
+
+### 1. The residency heartbeat parks once its keep-alive runs out (R5-PERF-02)
+
+File: `Sources/CWhisper/ggml-src/ggml-metal/ggml-metal-device.m`, in `ggml_metal_rsets_init`, `ggml_metal_rsets_free` and `ggml_metal_device_rsets_keep_alive`.
+
+Upstream starts a background loop with every Metal device that requests residency for the device's sets, then sleeps 5 ms.
+After `keep_alive_s` (3 minutes by default) without a graph computation it stops *requesting*, but it keeps *waking* every 5 ms for as long as the device lives.
+That is 200 wake-ups a second, and it is exactly what E2 of the e2e audit found in all 3259 samples of the captain's instance.
+The Swift side used to work around it by releasing the whole engine two minutes after the last dictation, which costs a 574MB model re-read and a Metal re-init on the next one (R5-PERF-02 of review #5).
+
+The patch adds a `dispatch_semaphore_t d_wake` to the residency-set collection.
+When the counter is spent the loop waits on it instead of sleeping, `keep_alive` signals it only on the spent-to-live transition, and `free` signals it so a parked loop can see `d_stop` and exit.
+With the patch, an idle resident engine has no waker, which is what lets `DictationEngine` keep it loaded on AC power.
+
+Re-apply: carry the three hunks marked `GRAND LINE LOCAL PATCH 1` into the new file.
+`FM_RUN_VENDORED_PATCHES_TESTS` fails by name if any of them is missing.
+
+Check after a re-sync: load a model through Dictation, wait past the 3-minute keep-alive, and `sample` the process for 5 seconds.
+No thread should be sitting in `usleep` under `ggml_metal_rsets_init`.
+
 ## Re-syncing
 
 If whisper.cpp is ever updated, re-diff upstream's `ggml/src/CMakeLists.txt`,

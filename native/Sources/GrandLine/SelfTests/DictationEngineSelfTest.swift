@@ -87,6 +87,8 @@ enum DictationEngineSelfTest {
             ("doubleFinishDeliversOnce", test_doubleFinishDeliversOnce),
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
+            ("whisperIdleDeadlineKeepsOnACAndReleasesOnBattery", test_whisperIdleDeadlinePolicy),
+            ("whisperEngineStaysResidentOnACPower", test_whisperStaysResidentOnAC),
             ("whisperEngineLifecycleIsNotIndefinite", test_whisperLifecycleSourceGuard),
             ("whisperEngineIsReleasedOnTerminate", test_whisperReleasedOnTerminate),
             ("cleanupPassCorrectsAVocabularyMisrecognition", test_cleanupCorrectsVocabularyMisrecognition),
@@ -398,12 +400,91 @@ enum DictationEngineSelfTest {
         guard h.engine.isWhisperEngineResident else {
             return "a successful load did not report the engine as resident"
         }
+        // R5-PERF-02: the release is the battery behaviour now. On AC the
+        // engine stays (see the next two cases).
+        PowerSource.reducedOverrideForTests = true
+        defer { PowerSource.reducedOverrideForTests = nil }
         DictationEngine.whisperIdleUnloadIntervalOverrideForTests = 0.4
         defer { DictationEngine.whisperIdleUnloadIntervalOverrideForTests = nil }
         h.engine.debugScheduleWhisperIdleUnloadForTests()
         RunLoop.current.run(until: Date().addingTimeInterval(1.2))
         guard !h.engine.isWhisperEngineResident else {
-            return "the engine was still resident after the idle window elapsed - the ggml waker never stops"
+            return "the engine was still resident on battery after the idle window elapsed"
+        }
+        guard !h.engine.debugIsWatchingMemoryPressureForTests else {
+            return "the memory-pressure source outlived the engine it was watching"
+        }
+        return nil
+    }
+
+    /// R5-PERF-02: the idle deadline's policy, without the model. Keep on AC,
+    /// release on battery or Low Power Mode, and do nothing when nothing is
+    /// loaded.
+    private static func test_whisperIdleDeadlinePolicy() -> String? {
+        let table: [(Bool, Bool, DictationEngine.IdleDeadlineDecision)] = [
+            (true, false, .stayResident),
+            (true, true, .release),
+            (false, false, .nothingResident),
+            (false, true, .nothingResident),
+        ]
+        for (resident, reduced, expected) in table {
+            let got = DictationEngine.idleDeadlineDecision(isResident: resident, prefersReducedPower: reduced)
+            if got != expected {
+                return "resident=\(resident) reducedPower=\(reduced) decided \(got), expected \(expected)"
+            }
+        }
+        // And the real deadline with nothing loaded disarms rather than
+        // re-arming forever.
+        let h = Harness()
+        PowerSource.reducedOverrideForTests = false
+        defer { PowerSource.reducedOverrideForTests = nil }
+        DictationEngine.whisperIdleUnloadIntervalOverrideForTests = 0.2
+        defer { DictationEngine.whisperIdleUnloadIntervalOverrideForTests = nil }
+        h.engine.debugScheduleWhisperIdleUnloadForTests()
+        guard h.engine.debugIsWhisperIdleDeadlineArmedForTests else {
+            return "arming the idle deadline did not arm it, so the next check would prove nothing"
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        guard !h.engine.debugIsWhisperIdleDeadlineArmedForTests else {
+            return "with no engine loaded the idle deadline re-armed itself - a timer with nothing to watch"
+        }
+        return nil
+    }
+
+    /// R5-PERF-02, model-backed: on AC the deadline passes, the engine stays,
+    /// the deadline re-arms (so unplugging still releases it), and a
+    /// memory-pressure source is watching it.
+    private static func test_whisperStaysResidentOnAC() -> String? {
+        guard let modelPath = ProcessInfo.processInfo.environment["FM_WHISPER_TEST_MODEL_PATH"],
+              !modelPath.isEmpty, FileManager.default.fileExists(atPath: modelPath) else {
+            print("  (skipping the model-backed half: FM_WHISPER_TEST_MODEL_PATH not set)")
+            return nil
+        }
+        let h = Harness()
+        defer { h.engine.releaseWhisperEngine(reason: "self-test") }
+        guard h.engine.debugLoadWhisperEngineForTests(modelPath: modelPath) else {
+            return "the real model at \(modelPath) failed to load, so residency could not be observed"
+        }
+        PowerSource.reducedOverrideForTests = false
+        defer { PowerSource.reducedOverrideForTests = nil }
+        DictationEngine.whisperIdleUnloadIntervalOverrideForTests = 0.4
+        defer { DictationEngine.whisperIdleUnloadIntervalOverrideForTests = nil }
+        h.engine.debugScheduleWhisperIdleUnloadForTests()
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        guard h.engine.isWhisperEngineResident else {
+            return "the engine was released on AC power - every dictation would re-read the model again"
+        }
+        guard h.engine.debugIsWhisperIdleDeadlineArmedForTests else {
+            return "on AC the deadline did not re-arm, so unplugging would never release the engine"
+        }
+        guard h.engine.debugIsWatchingMemoryPressureForTests else {
+            return "a resident engine has no memory-pressure source watching it"
+        }
+        // Unplugged: the re-armed deadline releases it within one interval.
+        PowerSource.reducedOverrideForTests = true
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        guard !h.engine.isWhisperEngineResident else {
+            return "after unplugging, the re-armed deadline did not release the engine"
         }
         return nil
     }
@@ -424,6 +505,15 @@ enum DictationEngineSelfTest {
         }
         guard text.contains("cachedWhisperEngine = nil") else {
             return "nothing releases the cached engine, so `whisper_free`/`ggml_metal_rsets_free` never runs"
+        }
+        // R5-PERF-02: the pre-warm has a definition and at least one call.
+        // Recording needs microphone and speech permission, which a suite
+        // does not have, so this half can only be a source guard.
+        guard text.components(separatedBy: "prewarmWhisperEngine()").count - 1 >= 2 else {
+            return "nothing calls prewarmWhisperEngine() any more - every dictation would load the model after the key comes up"
+        }
+        guard text.contains("PowerSource.prefersReducedBackgroundWork()") else {
+            return "the idle deadline no longer reads the power source, so the AC/battery policy is not wired"
         }
         return nil
     }
