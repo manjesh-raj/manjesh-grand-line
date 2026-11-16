@@ -2097,13 +2097,13 @@ final class HomeCanvasController: NSViewController {
     ///   - Column 3 is the Morning briefing and the Merge queue.
     ///
     /// The columns still end on one line, but a card is never stretched past
-    /// what it holds (UXP-04): columns 1 and 2 end in a spacer that takes the
-    /// leftover height, and every card in them sits at its own height
-    /// (`dashboardKeepsOwnHeight`). In column 3 the Merge queue fills
-    /// its column by *row count* instead (`mergeQueueRows`), so what the
-    /// briefing absorbs is less than one row. Measured: with the Merge queue
-    /// as the absorber, its peek list spread that remainder unevenly between
-    /// rows.
+    /// what it holds (UXP-04): every column ends in a spacer that takes the
+    /// leftover height, and every card sits at its own height
+    /// (`dashboardKeepsOwnHeight`). Column 3 used to fill by the Merge
+    /// queue's *row count* with the briefing absorbing the remainder; since
+    /// the queue is capped at `maxPeekRows` (R5-UI-03) that remainder is most
+    /// of the column, and an absorbing briefing rendered as a 600pt card
+    /// holding one sentence.
     private static let dashboardColumns: [[DaylightModule]] = [
         [.claudeStatus, .fleet, .health],
         [.briefing, .mergeQueue],
@@ -2197,11 +2197,17 @@ final class HomeCanvasController: NSViewController {
         }
 
         // Column 3: as many Merge queue rows as the column holds under the
-        // briefing; the briefing takes what is left, below its paragraph.
+        // briefing, up to the card's own `maxPeekRows`; the briefing takes
+        // what is left, below its paragraph.
+        //
+        // R5-UI-03 (R4-UI-10): uncapped, this listed 20 of 22 pull requests
+        // in an 850pt card, where the sidebar layout's same card shows three
+        // and a "Showing 3 of 22" footer. The cap is the sidebar's.
         let briefingContent = content(for: .briefing, placement: placement)
         let briefingHeight = probeHeight(briefingContent, width: width)
-        mergeQueueRowLimit = mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
-                                            placement: placement, width: width)
+        mergeQueueRowLimit = min(HelmModuleCard.maxPeekRows,
+                                 mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
+                                                placement: placement, width: width))
         let mergeContent = content(for: .mergeQueue, placement: placement)
         mergeQueueRowLimit = HelmModuleCard.maxPeekRows
         let mergeHeight = probeHeight(mergeContent, width: width)
@@ -2214,7 +2220,8 @@ final class HomeCanvasController: NSViewController {
             // column's slack, so at a narrow width - where it drops its
             // service rows - it kept the height it had with seven of them.
             ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight,
-                         .health: probeHeight(healthContent, width: width), .mergeQueue: mergeHeight])
+                         .health: probeHeight(healthContent, width: width),
+                         .briefing: briefingHeight, .mergeQueue: mergeHeight])
     }
 
     private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
@@ -2237,7 +2244,7 @@ final class HomeCanvasController: NSViewController {
                     dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
                                     absorbing: nil, ownHeights: plan.ownHeights, width: plan.width),
                     dashboardColumn([(.briefing, briefing), (.mergeQueue, merge)],
-                                    absorbing: .briefing, ownHeights: plan.ownHeights, width: plan.width)],
+                                    absorbing: nil, ownHeights: plan.ownHeights, width: plan.width)],
             spans: Self.dashboardSpans,
             containerWidth: available,
             spacing: Self.gridSpacing)

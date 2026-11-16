@@ -507,9 +507,14 @@ enum HomeDashboardViewSelfTest {
                 fail("the merge queue card should draw clickable peek rows", &ok)
                 return
             }
-            // Five PRs all fit the captain's window, so all five are rows.
-            check(card.debugPeekRows.count == 5,
-                  "every shown PR should be a clickable row, got \(card.debugPeekRows.count)", &ok)
+            // R5-UI-03: five PRs fit the captain's window, and the hub still
+            // shows three of them - the sidebar layout's cap - with a footer
+            // saying so. Uncapped, the floating Home listed 20 of 22.
+            check(card.debugPeekRows.count == HelmModuleCard.maxPeekRows,
+                  "the hub's Merge queue should show \(HelmModuleCard.maxPeekRows) of 5 PRs, "
+                  + "got \(card.debugPeekRows.count)", &ok)
+            check(card.debugFooter?.caption == "Showing \(HelmModuleCard.maxPeekRows) of 5",
+                  "and say how many it is not showing, got \(card.debugFooter?.caption ?? "no footer")", &ok)
             check(card.debugPeekRows.allSatisfy(\.isActivatable), "each row should be a button to VoiceOver", &ok)
             check(card.debugPeekChevronAlphas.allSatisfy { $0 == 0 }, "the chevron is hidden at rest", &ok)
             card.debugHoverPeekRow(0, true)
@@ -620,8 +625,11 @@ enum HomeDashboardViewSelfTest {
             canvas.view.layoutSubtreeIfNeeded()
             if let queue = card("Merge queue") {
                 let anatomy = queue.anatomyForTests
-                check(anatomy.peekRowCount == 4,
-                      "a failed scan should keep the last list (4 rows), got \(anatomy.peekRowCount) rows", &ok)
+                // Its first three rows (R5-UI-03's cap), and the count of
+                // all four, which is what says the list was kept.
+                check(anatomy.peekRowCount == HelmModuleCard.maxPeekRows && anatomy.subtitle.hasPrefix("4 open"),
+                      "a failed scan should keep the last list (4 open, \(HelmModuleCard.maxPeekRows) rows), "
+                      + "got \(anatomy.peekRowCount) rows, \"\(anatomy.subtitle)\"", &ok)
                 check(anatomy.chipText == "Can't reach", "and say it cannot reach GitHub", &ok)
                 check(anatomy.subtitle.contains("as of"), "and how old the list is, got \"\(anatomy.subtitle)\"", &ok)
             } else {

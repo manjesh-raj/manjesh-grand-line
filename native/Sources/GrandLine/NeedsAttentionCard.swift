@@ -366,7 +366,41 @@ final class NeedsAttentionCard: NSView {
 
     override func layout() {
         super.layout()
+        // A host that never states a width (`layoutWidth` 0) is measured
+        // here, once the list has one.
+        if layoutWidth <= 0, listScroll.contentView.bounds.width > 0 {
+            applyRowWidth(listScroll.contentView.bounds.width)
+        }
         updateMoreCue()
+    }
+
+    /// The rows the list holds, for re-measuring at a new width.
+    private var listRows: [NSView] = []
+    /// The width the rows were last measured at.
+    private var measuredRowWidth: CGFloat = -1
+
+    /// The width a row gets: the host's stated width less a legacy
+    /// scroller's track (gotcha (4)), or the list's own once it is laid out.
+    private func listRowWidth() -> CGFloat {
+        guard layoutWidth > 0 else { return listScroll.contentView.bounds.width }
+        let track = listScroll.scrollerStyle == .legacy
+            ? NSScroller.scrollerWidth(for: .small, scrollerStyle: .legacy) : 0
+        return layoutWidth - track
+    }
+
+    /// R5-UI-03: a row's meta line wraps, so its height depends on the
+    /// width - which is set on each row before the floor and the "+N more"
+    /// cue measure them.
+    private func applyRowWidth(_ width: CGFloat) {
+        guard measuredRowWidth < 0 || (width > 0 && abs(width - measuredRowWidth) > 0.5) else { return }
+        measuredRowWidth = width
+        for case let row as NeedsAttentionRowView in listRows { row.setRowWidth(width) }
+        listFloor?.constant = Self.floorHeight(of: listRows)
+        var bottom: CGFloat = 0
+        rowBottoms = listRows.enumerated().map { index, row in
+            bottom += row.fittingSize.height + (index > 0 ? 1 : 0)
+            return bottom
+        }
     }
 
     /// The host's laid-out width for this card. Below `compactHeaderWidth`
@@ -548,12 +582,9 @@ final class NeedsAttentionCard: NSView {
         rows += summary.gaps.map { gapRow($0) }
         list.setRows(rows, theme: theme)
         listScroll.isHidden = rows.isEmpty
-        listFloor?.constant = Self.floorHeight(of: rows)
-        var bottom: CGFloat = 0
-        rowBottoms = rows.enumerated().map { index, row in
-            bottom += row.fittingSize.height + (index > 0 ? 1 : 0)
-            return bottom
-        }
+        listRows = rows
+        measuredRowWidth = -1
+        applyRowWidth(listRowWidth())
 
         for view in notesStack.arrangedSubviews {
             notesStack.removeArrangedSubview(view)
@@ -929,6 +960,12 @@ final class NeedsAttentionRowView: NSView {
         if compact {
             content.hint = [item.source, state, item.meta].compactMap { $0 }.filter { !$0.isEmpty }
                 .joined(separator: " \u{00B7} ")
+        } else {
+            // R5-UI-03: the line wraps rather than ending "the crew is holding
+            // f…" - it carries the sentence that says why the row is here.
+            // The compact row's line is the state alone, with the rest on
+            // hover, so it stays one line.
+            content.metaWraps = true
         }
         row.configure(content, theme: theme)
         row.onClick = { [weak self] in self?.onOpen?() }
@@ -968,6 +1005,10 @@ final class NeedsAttentionRowView: NSView {
         case .info: return "info.circle.fill"
         }
     }
+
+    /// The row's width, for its wrapping meta line - see
+    /// `HelmAccentRow.setMetaWrapWidth(forRowWidth:)`.
+    func setRowWidth(_ width: CGFloat) { row.setMetaWrapWidth(forRowWidth: width) }
 
     @objc private func checkboxClicked() { onToggle?() }
 
