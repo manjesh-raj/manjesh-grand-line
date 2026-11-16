@@ -628,7 +628,7 @@ enum HomeDashboardViewSelfTest {
                 fail("the Merge queue card should be on the hub", &ok)
             }
 
-            let empty = HomeCanvasController.healthRingSummary([])
+            let empty = HomeCanvasController.healthRingSummary(ServiceHealthSummary())
             check(empty.title == "Not read" && empty.total == 0,
                   "nothing reported is 'Not read', never 'Healthy', got \(empty.title)", &ok)
         }

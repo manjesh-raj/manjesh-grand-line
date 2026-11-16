@@ -526,8 +526,8 @@ enum DaylightDrillPageSlice2SelfTest {
         let window = mount(health)
         defer { _ = window }
         health.view.layoutSubtreeIfNeeded()
-        let counts = HealthCardView.verdictCounts()
-        let expected = [counts.total, counts.failing, counts.degraded, counts.healthy, counts.pending].map { "\($0)" }
+        let counts = ServiceHealthRegistry.shared.summary()
+        let expected = [counts.total, counts.failing, counts.degraded, counts.healthy, counts.notRun].map { "\($0)" }
         if health.debugSummaryValues != expected {
             print("  FAIL Health's KPI line reads \(health.debugSummaryValues), want \(expected)")
             ok = false

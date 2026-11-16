@@ -140,18 +140,20 @@ enum HomeDashboardSelfTest {
     /// One line per service, and a service that has not reported - or is
     /// mid-pass - never reads "Healthy" or takes a state colour.
     private static func checkHealthServiceLinesNeverClaimHealthy(_ ok: inout Bool) {
-        typealias Reading = HomeCanvasController.HealthServiceReading
-        let lines = HomeCanvasController.healthServiceLines([
-            Reading(title: "A", verdict: .healthy, hasReported: true),
-            Reading(title: "B", verdict: .degraded, hasReported: true),
-            Reading(title: "C", verdict: .failing, hasReported: true),
-            Reading(title: "D", verdict: .running, hasReported: false),
-            Reading(title: "E", verdict: .unknown, hasReported: false),
+        let now = Date()
+        let summary = ServiceHealthSummary([
+            .init(service: .backgroundSignals, state: ServiceHealthState(lastSuccess: now)),
+            .init(service: .fleetTasks, state: ServiceHealthState(lastFailure: now, consecutiveFailures: 1)),
+            .init(service: .shiftGitSync, state: ServiceHealthState(
+                lastFailure: now, consecutiveFailures: ServiceHealthRegistry.failureThreshold)),
+            .init(service: .docsSync, state: ServiceHealthState(isRunning: true)),
+            .init(service: .persistence, state: ServiceHealthState()),
         ])
-        check(lines.map(\.text) == ["A", "B", "C", "D", "E"], "one line per service, in order", &ok)
-        check(lines.map(\.value) == ["Healthy", "Degraded", "Failing", "Checking",
-                                      HelmReading<String>.unknownCaption],
-              "each line says its own state, got \(lines.map(\.value))", &ok)
+        let lines = HomeCanvasController.healthServiceLines(summary)
+        check(lines.map(\.text) == summary.entries.map(\.service.title), "one line per service, in order", &ok)
+        // R5-UI-04: the Health page's words, not "Degraded" and "Not read".
+        check(lines.map(\.value) == ["Healthy", "Recent failure", "Failing", "Checking\u{2026}", "Not run yet"],
+              "each line says its own state in the Health page's words, got \(lines.map(\.value))", &ok)
         check(lines[3].state == .idle && lines[4].state == .idle,
               "a service mid-pass or never read takes no state colour", &ok)
         check(lines[0].state == .ok && lines[1].state == .warn && lines[2].state == .bad,

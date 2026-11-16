@@ -51,11 +51,11 @@ final class HealthController: NSViewController, DaylightDrillActions {
     // MARK: Drill header (Daylight §6.4)
 
     /// §7's "drill header with a live subtitle". Counted from the same
-    /// `ServiceHealthRegistry` state the rows below render, so the two can
-    /// never disagree - and honest about the launch case, where nothing has
-    /// reported yet.
+    /// `ServiceHealthSummary` the rows below and Home's Health card render
+    /// (R5-BUG-02), so they can never disagree - and honest about the launch
+    /// case, where nothing has reported yet.
     var drillHeaderSubtitle: String? {
-        let counts = HealthCardView.verdictCounts()
+        let counts = ServiceHealthRegistry.shared.summary()
         guard counts.total > 0 else { return "No background service has reported yet" }
         let services = counts.total == 1 ? "1 service" : "\(counts.total) services"
         if counts.failing > 0 { return "\(services) \u{00B7} \(counts.failing) failing" }

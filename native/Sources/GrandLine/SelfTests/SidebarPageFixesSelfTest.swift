@@ -289,9 +289,9 @@ enum SidebarPageFixesSelfTest {
         check(shell.toolbar.debugPrimaryAction === card.diagnosticsButton, "Copy diagnostics is not the far-right action", &ok)
         check(shell.toolbar.debugPageActions.contains { $0 === health.debugRefreshButton }, "Refresh is not in the toolbar", &ok)
 
-        let counts = HealthCardView.verdictCounts()
+        let counts = ServiceHealthRegistry.shared.summary()
         let values = card.debugMetricCards.map(\.debugValue)
-        check(values == ["\(counts.healthy) / \(counts.total)", "\(counts.degraded)", "\(counts.failing)", "\(counts.pending)"],
+        check(values == ["\(counts.healthy) / \(counts.total)", "\(counts.degraded)", "\(counts.failing)", "\(counts.notRun)"],
               "the summary cards read \(values) against \(counts)", &ok)
         check(counts.degraded >= 1 && counts.failing >= 1 && counts.healthy >= 1,
               "the seeded verdicts did not land - the checks below would pass vacuously", &ok)
