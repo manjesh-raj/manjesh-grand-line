@@ -67,6 +67,7 @@ enum SubprocessSelfTest {
         bothStreamsFloodTogether()
         discardedStderrFloodDoesNotDeadlock()
         timeoutKillsAHangingChild()
+        timeoutBoundsARunWithNoOpenPipe()
         exitStatusAndStreamsAreReported()
         outputIsObservedAsItArrives()
         stdinIsDelivered()
@@ -223,6 +224,42 @@ enum SubprocessSelfTest {
         check(elapsed < 10, "the caller was released promptly (\(String(format: "%.2f", elapsed))s, timeout was 2s)")
         check(result.stdout.contains("starting"), "output produced before the kill is preserved")
         check(result.failureSummary == "timed out", "the failure summary names the timeout")
+    }
+
+    /// The timeout used to bound only the pipes. With both streams
+    /// `.discard` there is no pipe at all, and a child that closes its own
+    /// pipes leaves nothing to reach EOF either - in both shapes the drain
+    /// wait finished at once and an unbounded `waitUntilExit()` decided how
+    /// long the caller waited. Measured before the fix: a 1 s timeout on
+    /// `sleep 6` with both streams discarded returned `.exited` after 6.1 s.
+    /// `VaultData`'s two `av` calls are the production callers of that shape.
+    private static func timeoutBoundsARunWithNoOpenPipe() {
+        print("- the timeout still bounds a run with no open pipe (both streams discarded, or closed by the child)")
+
+        var started = Date()
+        let discarded = Subprocess.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "sleep 30"],
+            env: [:],
+            timeout: 1,
+            stdout: .discard,
+            stderr: .discard
+        )
+        var elapsed = Date().timeIntervalSince(started)
+        check(discarded.timedOut, "a discarded-streams run is .timedOut (got \(discarded.outcome))")
+        check(elapsed < 8, "and the caller was released near the 1s deadline (\(String(format: "%.2f", elapsed))s), not when the child chose to exit")
+
+        started = Date()
+        let closed = Subprocess.run(
+            executable: "/bin/sh",
+            arguments: ["-c", "echo starting; exec >/dev/null 2>&1; sleep 30"],
+            env: [:],
+            timeout: 1
+        )
+        elapsed = Date().timeIntervalSince(started)
+        check(closed.timedOut, "a child that closes its captured pipes and keeps running is .timedOut (got \(closed.outcome))")
+        check(elapsed < 8, "and the caller was released near the 1s deadline (\(String(format: "%.2f", elapsed))s)")
+        check(closed.stdout == "starting", "the output written before the pipes closed is kept")
     }
 
     // MARK: - Basic contract

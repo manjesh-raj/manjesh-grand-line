@@ -392,12 +392,23 @@ enum Subprocess {
         outCollector.onChunk = onOutput
         if let outPipe { outCollector.attach(to: outPipe.fileHandleForReading, group: group) }
         if let errPipe { errCollector.attach(to: errPipe.fileHandleForReading, group: group) }
+        // The child's own exit is a member of the group too, not just its
+        // pipes. A run whose streams are all `.discard`, or a child that
+        // closes its pipes and keeps running, has no pipe left to reach EOF,
+        // so a pipes-only group finished at once and the unbounded
+        // `waitUntilExit()` below was the only wait there was - measured, a
+        // 1 s timeout on `sleep 6` with both streams discarded came back
+        // `.exited` after 6.1 s. Must be attached before `run()`, or a child
+        // that exits immediately would fire no handler.
+        let exitWatch = ExitWatch()
+        exitWatch.attach(to: proc, group: group)
 
         do {
             try proc.run()
         } catch {
             outCollector.detach()
             errCollector.detach()
+            exitWatch.detach()
             cancellation?.release()
             log.error("\(name, privacy: .public) failed to launch: \(error.localizedDescription, privacy: .public)")
             return .launchFailure(error.localizedDescription)
@@ -427,37 +438,38 @@ enum Subprocess {
         var outcome = SubprocessResult.Outcome.exited
         let deadline: DispatchTime? = timeout.map { .now() + $0 }
 
-        // Waiting on the drain group also waits for the process: both pipes
-        // reach EOF when the child (and anything holding its pipe ends) exits.
+        // The drain group is "both pipes at EOF and the child exited", so this
+        // one wait bounds the whole run, whatever the stream policies are.
         if let deadline, group.wait(timeout: deadline) == .timedOut {
             outcome = .timedOut
             log.error("\(name, privacy: .public) exceeded its \(timeout ?? 0, format: .fixed(precision: 1))s timeout - terminating")
             if proc.isRunning { proc.terminate() }
             if group.wait(timeout: .now() + terminationGrace) == .timedOut {
                 // SIGTERM was ignored, or a grandchild is still holding the
-                // pipe open. Kill the child, then stop reading regardless -
+                // pipe open. Kill the child, then stop waiting regardless -
                 // the handler teardown in `detach()` is what keeps this from
-                // leaking a permanently blocked reader.
+                // leaking a permanently blocked reader. This second grace is
+                // also the bounded chance to see the child exit, rather than
+                // blocking forever on one that somehow survived SIGKILL
+                // (unkillable D-state).
                 if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
                 _ = group.wait(timeout: .now() + terminationGrace)
             }
             outCollector.detach()
             errCollector.detach()
+            exitWatch.detach()
         } else if deadline == nil {
             group.wait()
         }
 
-        // Safe now: either both pipes hit EOF (so the child has exited), or we
-        // killed it above and reaped it here.
+        // Safe now: the group finished, so the child has exited and its
+        // status is set. A timed-out run reports `timedOutStatus` and never
+        // reads it. Nothing here has to reap a child that outlives the
+        // timeout path either: `Process` reaps its own child whenever it
+        // exits, with or without a `terminationHandler`, and even after the
+        // `Process` object is gone (measured for R5-BUG-06).
         if outcome != .timedOut {
             proc.waitUntilExit()
-        } else if proc.isRunning {
-            // Give the reap one bounded chance rather than blocking forever on
-            // a process that somehow survived SIGKILL (unkillable D-state).
-            let reaped = DispatchSemaphore(value: 0)
-            proc.terminationHandler = { _ in reaped.signal() }
-            _ = reaped.wait(timeout: .now() + terminationGrace)
-            proc.terminationHandler = nil
         }
 
         cancellation?.release()
@@ -718,6 +730,36 @@ enum Subprocess {
 }
 
 // MARK: - Concurrent stream drain
+
+/// The child's exit as a member of `Subprocess.run`'s drain group, released
+/// exactly once: by the termination handler, or by `detach()` on the launch
+/// failure and timeout paths, the same contract `StreamCollector` keeps for a
+/// pipe.
+private final class ExitWatch {
+
+    private let lock = NSLock()
+    private var group: DispatchGroup?
+
+    func attach(to process: Process, group: DispatchGroup) {
+        lock.lock()
+        self.group = group
+        lock.unlock()
+        group.enter()
+        process.terminationHandler = { [weak self] _ in self?.finish() }
+    }
+
+    func detach() {
+        finish()
+    }
+
+    private func finish() {
+        lock.lock()
+        let g = group
+        group = nil
+        lock.unlock()
+        g?.leave()
+    }
+}
 
 /// Reads one pipe end into a locked buffer via `readabilityHandler`, so both
 /// of a child's streams can be drained at the same time from one thread's
