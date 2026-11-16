@@ -50,6 +50,10 @@ final class GrandLineServices {
     private(set) weak var stickyBoardStore: StickyBoardStore?
     private(set) weak var codePreviewStore: CodePreviewStore?
     private(set) weak var focusTimer: FocusTimerController?
+    /// R5-PROC-04: the runbook store the shell hands to Runbooks, Postmortems,
+    /// the Log Analyzer and the canvas. The Console, the crew, the command
+    /// library and SRE Lead ask for it here rather than building their own.
+    private(set) weak var docsRunbookStore: DocsRunbookStore?
 
     /// Registered once, from `AppShellController.init`, with the instances it
     /// has just built. `weak` throughout: this registry must never be the
@@ -59,7 +63,9 @@ final class GrandLineServices {
                   notebookStore: NotebookStore,
                   stickyBoardStore: StickyBoardStore,
                   codePreviewStore: CodePreviewStore,
-                  focusTimer: FocusTimerController) {
+                  focusTimer: FocusTimerController,
+                  docsRunbookStore: DocsRunbookStore) {
+        self.docsRunbookStore = docsRunbookStore
         self.shiftStore = shiftStore
         self.notebookStore = notebookStore
         self.stickyBoardStore = stickyBoardStore

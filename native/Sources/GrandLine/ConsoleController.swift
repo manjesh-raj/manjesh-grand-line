@@ -568,11 +568,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     let sreLeadEmptyStateView = NSView()
     let sreLeadEmptyStateLabel = NSTextField(wrappingLabelWithString: "SRE Lead hasn't been started for this tab yet.")
     let sreLeadEmptyStateButton = HelmButton(title: "", variant: .primary)
-    /// Only ever created on demand (`generatePostmortemClicked`) - a fresh
-    /// `DocsRunbookStore()` shares `DocsRunbookGitSync.shared`'s singleton
-    /// clone/queue exactly like `DocsController`'s own instance does (see
-    /// that type's header), so this never opens a second clone of the repo.
-    lazy var docsRunbookStore = DocsRunbookStore()
+    /// Only ever reached on demand (`generatePostmortemClicked`). The shell's
+    /// own store when the app is up (R5-PROC-04); a fresh one otherwise, which
+    /// shares `DocsRunbookGitSync.shared`'s singleton clone/queue and the
+    /// process-wide listing cache, so it never opens a second clone of the repo.
+    lazy var docsRunbookStore = GrandLineServices.shared.docsRunbookStore ?? DocsRunbookStore()
     var sreLeadPaneWidthConstraint: NSLayoutConstraint!
     let sreLeadPaneWidth: CGFloat = 380
 

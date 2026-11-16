@@ -697,12 +697,10 @@ differ between rows and between runs with no code change.
 
 Set `distribution = .fill` **and** give every non-flexible arranged subview
 `.required` hugging and compression resistance, leaving only the one view meant
-to flex (usually the title/detail text stack) at `.defaultLow`. This has shipped
-four times: the Updates row's chevron, Bootstrap's step row, and twice more one
-level further in, where the row's *trailing control stack* was itself left at
-the default and its first member absorbed all the slack. `SettingsRow` applies
-the fix centrally to any control column still at the default - copy that shape
-for any component that accepts a caller-built control stack.
+to flex (usually the title/detail text stack) at `.defaultLow`. That applies one
+level in too: a row's *trailing control stack* left at the default lets its
+first member absorb all the slack. `SettingsRow` applies the fix centrally - copy
+that shape for any component that accepts a caller-built control stack.
 
 ### (1) `selectText(nil)` alone starts an edit session - never pair it with `makeFirstResponder`
 
@@ -1304,33 +1302,23 @@ noted.
   consult `AppLockGate`: the system crosshair draws *over* this app's lock
   overlay.
 - **`av list` is the one Automic Vault read that can raise an approval prompt,
-  and nothing unattended may call it.** Measured against a real `av` by counting
-  rows in Automic Vault's own authorization log: `av list` adds a row and
-  blocked 45s on a visible approval dialog on its first call, while
-  `av doctor --json`, `av hardeners --json` and `av --version` add none and
-  answer in well under a second. So a timer, a retry loop or any other
-  unattended caller takes `VaultSource.loadToolStatus()` (the `av doctor --json`
-  half, which produces the vault-attention signal); `VaultSource.loadSnapshot()`
-  is reached only from something the captain just did. Note this is not an
-  `AppActivityState` question - the captain's report was a prompt appearing
-  while the app was **frontmost**, where every backgrounded gate is open.
-  `VaultData.swift`'s "approval-prompt split" block has the numbers,
-  `BackgroundSignalsSelfTest` source-guards the poller, and the one sanctioned
-  exception (`ScheduleRunner.vaultRecipeExport`, whose content *is* the secret
-  names, and which only runs for a schedule the captain enabled) is documented
-  at its own call site.
+  and nothing unattended may call it.** A timer, a retry loop or any other
+  unattended caller takes `VaultSource.loadToolStatus()` (`av doctor --json`,
+  which never prompts); `VaultSource.loadSnapshot()` is reached only from
+  something the captain just did. It is not an `AppActivityState` question: the
+  prompt appears while the app is frontmost too. `BackgroundSignalsSelfTest`
+  source-guards the poller, and the one sanctioned exception
+  (`ScheduleRunner.vaultRecipeExport`) is documented at its call site. The
+  authorization-log measurements are in
+  [`14-poneglyph-and-vault.md`](docs/history/14-poneglyph-and-vault.md).
 
 - **`SubprocessResult.stdout` is trimmed, so never parse a fixed-column tool
-  output by offset.** `git status --short` is `XY <path>`, which invites a
-  `dropFirst(3)` - and the first line of a status whose field is ` M` (an
-  unstaged modification, the commonest case there is) arrives with its leading
-  space already gone, so the drop eats the first character of the path.
-  Measured: `GrandLineDocs/seed.txt` read back as `randLineDocs/seed.txt`, which
-  then classified into the wrong half of a scope split that exists precisely to
-  keep backup folders out of an automatic commit
-  (`BootstrapController.statusLinePath` is the copy to reach for). The same trap
-  waits for any other column-formatted tool this app shells out to; split on the
-  field separator, not on a byte offset.
+  output by offset.** The first line of a `git status --short` whose field is
+  ` M` loses its leading space, so a `dropFirst(3)` eats the first character of
+  the path. Split on the field separator instead;
+  `BootstrapController.statusLinePath` is the copy to reach for. The measured
+  case is in
+  [`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md).
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.

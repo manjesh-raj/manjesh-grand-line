@@ -402,6 +402,86 @@ final class DocsRunbookGitSync {
 
 // MARK: - Local CRUD store
 
+/// R5-PROC-04 of review #5: the parsed runbooks and postmortems, shared by
+/// every `DocsRunbookStore` in the process and keyed by file path.
+///
+/// Six call sites used to build their own store, and every `list` call read
+/// and re-parsed every markdown file in the folder. The live app now hands one
+/// store around (`GrandLineServices.docsRunbookStore`), and this cache is what
+/// makes a `list` cheap whichever instance asks: one directory listing with
+/// modification dates, and a file is only read again when its date moved.
+///
+/// Invalidation is by that date, which covers every writer at once - this
+/// store's own saves, a git pull into the folder, and the captain editing a
+/// file by hand. The store's own writes also drop their entry explicitly, so
+/// a save that lands within the file system's timestamp resolution of the
+/// previous one is still re-read. Locked, because `list` is reached from
+/// background queues as well as main (GL-28).
+final class DocsRunbookListingCache {
+
+    static let shared = DocsRunbookListingCache()
+
+    private struct Entry {
+        let modified: Date
+        let runbook: DocsRunbook
+    }
+
+    private let lock = NSLock()
+    private var entries: [String: Entry] = [:]
+
+    #if FM_SELFTESTS
+    /// How many files this cache has actually read, so a suite can tell a
+    /// cached listing from a re-read one.
+    private(set) var debugFileReads = 0
+    #endif
+
+    func list(in dir: URL, fileManager fm: FileManager = .default) -> [DocsRunbook] {
+        guard let urls = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey],
+                                                     options: [.skipsSubdirectoryDescendants]) else { return [] }
+        let markdown = urls.filter { $0.pathExtension.lowercased() == "md" }
+        lock.lock()
+        defer { lock.unlock() }
+        var listed: [DocsRunbook] = []
+        var seen = Set<String>()
+        for url in markdown {
+            let key = url.standardizedFileURL.path
+            seen.insert(key)
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? Date(timeIntervalSince1970: 0)
+            if let cached = entries[key], cached.modified == modified {
+                listed.append(cached.runbook)
+                continue
+            }
+            #if FM_SELFTESTS
+            debugFileReads += 1
+            #endif
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+                entries[key] = nil
+                continue
+            }
+            let slug = url.deletingPathExtension().lastPathComponent
+            let runbook = DocsRunbook(id: slug, title: DocsRunbookStore.titleFromContent(content, fallback: slug),
+                                      content: content, modifiedAt: modified)
+            entries[key] = Entry(modified: modified, runbook: runbook)
+            listed.append(runbook)
+        }
+        // A file that is gone from this folder is gone from the cache too, so
+        // the cache is bounded by what is on disk (GL-35).
+        let prefix = dir.standardizedFileURL.path + "/"
+        for key in entries.keys where key.hasPrefix(prefix) && !seen.contains(key)
+            && !key.dropFirst(prefix.count).contains("/") {
+            entries[key] = nil
+        }
+        return listed.sorted { $0.modifiedAt > $1.modifiedAt }
+    }
+
+    func invalidate(_ url: URL) {
+        lock.lock()
+        entries[url.standardizedFileURL.path] = nil
+        lock.unlock()
+    }
+}
+
 final class DocsRunbookStore {
     private let fm = FileManager.default
     let root: URL
@@ -481,17 +561,7 @@ final class DocsRunbookStore {
     }
 
     private func list(in dir: URL, onlyTopLevel: Bool) -> [DocsRunbook] {
-        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsSubdirectoryDescendants]) else { return [] }
-        return entries
-            .filter { $0.pathExtension.lowercased() == "md" }
-            .compactMap { url -> DocsRunbook? in
-                guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-                let attrs = try? fm.attributesOfItem(atPath: url.path)
-                let modified = (attrs?[.modificationDate] as? Date) ?? Date(timeIntervalSince1970: 0)
-                let slug = url.deletingPathExtension().lastPathComponent
-                return DocsRunbook(id: slug, title: Self.titleFromContent(content, fallback: slug), content: content, modifiedAt: modified)
-            }
-            .sorted { $0.modifiedAt > $1.modifiedAt }
+        DocsRunbookListingCache.shared.list(in: dir, fileManager: fm)
     }
 
     @discardableResult
@@ -538,6 +608,7 @@ final class DocsRunbookStore {
 
     func deleteRunbook(id: String) {
         let url = root.appendingPathComponent("\(id).md")
+        DocsRunbookListingCache.shared.invalidate(url)
         // REL-24: reported, never a silent `try?`.
         guard PersistenceFailureReporter.removeItem(at: url, what: "runbook \"\(id)\"") else { return }
         gitSync?.markDirty()
@@ -548,6 +619,7 @@ final class DocsRunbookStore {
     /// `postmortems/` directory, which is why the separate `createDirectory`
     /// call above is gone rather than merely converted.
     private func persist(what: String, to url: URL, content: String) {
+        DocsRunbookListingCache.shared.invalidate(url)
         do {
             try AtomicWrite.text(content, to: url)
             PersistenceFailureReporter.reportSuccess()

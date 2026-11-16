@@ -133,6 +133,58 @@ enum DocsRunbookDataSelfTest {
             check(store.listPostmortems().count == 3, "both postmortems should exist as separate files")
         }
 
+        // MARK: 2b. One listing cache, invalidated by modification date (R5-PROC-04)
+
+        // Six call sites used to build their own store, and every list read
+        // every file. Two instances over one folder now share one cache: a
+        // second listing reads nothing, and a file changed behind the store's
+        // back (a git pull, a hand edit) is re-read because its date moved.
+        do {
+            let dir = scratch.appendingPathComponent("listing-cache", isDirectory: true)
+            setenv("FM_DOCS_RUNBOOKS_DIR", dir.path, 1)
+            defer { unsetenv("FM_DOCS_RUNBOOKS_DIR") }
+            let writer = DocsRunbookStore()
+            let reader = DocsRunbookStore()
+            let cache = DocsRunbookListingCache.shared
+            let a = writer.createRunbook(title: "Cache A", content: "# Cache A\n\none")
+            _ = writer.createRunbook(title: "Cache B", content: "# Cache B\n\ntwo")
+
+            let firstReads = cache.debugFileReads
+            check(reader.listRunbooks().count == 2, "a second store over the same folder should see both runbooks")
+            // Discriminating power: the first listing really did read files,
+            // so "the second read none" below is the cache and not a no-op.
+            check(cache.debugFileReads - firstReads == 2,
+                  "the first listing should read both files, read \(cache.debugFileReads - firstReads)")
+            let secondReads = cache.debugFileReads
+            check(writer.listRunbooks().count == 2 && reader.listRunbooks().count == 2,
+                  "repeat listings from either store should still see both runbooks")
+            check(cache.debugFileReads == secondReads,
+                  "repeat listings must come from the cache, but read \(cache.debugFileReads - secondReads) file(s)")
+
+            // An edit that did not go through this store: new content and a
+            // newer modification date, as a git pull or an editor leaves it.
+            let fileA = dir.appendingPathComponent("\(a.id).md")
+            try? "# Cache A\n\nedited by hand".write(to: fileA, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)],
+                                                   ofItemAtPath: fileA.path)
+            let edited = reader.listRunbooks().first { $0.id == a.id }
+            check(edited?.content.contains("edited by hand") == true,
+                  "a file changed outside the store must be re-read once its date moves")
+            check(cache.debugFileReads == secondReads + 1,
+                  "only the changed file should be re-read, read \(cache.debugFileReads - secondReads)")
+
+            // The store's own save drops its entry, so it is re-read even if
+            // the file system's timestamp did not move.
+            let pinned = (try? FileManager.default.attributesOfItem(atPath: fileA.path))?[.modificationDate] as? Date
+            writer.updateRunbook(id: a.id, content: "# Cache A\n\nsaved by the app")
+            if let pinned { try? FileManager.default.setAttributes([.modificationDate: pinned], ofItemAtPath: fileA.path) }
+            check(reader.listRunbooks().first { $0.id == a.id }?.content.contains("saved by the app") == true,
+                  "a save through the store must be visible to every store, whatever the timestamp says")
+
+            writer.deleteRunbook(id: a.id)
+            check(reader.listRunbooks().map(\.id) == ["cache-b"], "a deleted runbook must leave every store's listing")
+        }
+
         // MARK: 3. Search across runbooks + postmortems, by title and by content
 
         do {
