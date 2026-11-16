@@ -65,7 +65,16 @@ enum SetupDataLayerSelfTest {
             ("anAppBundleAloneCountsAsInstalled", test_caskAppBundleOnly),
             ("aCaskAbsentEverywhereIsNotInstalled", test_caskAbsent),
             ("aFailedCaskUpgradeNamesBrewsOwnError", test_caskUpgradeFailureNamesTheError),
+            ("homebrewItemsShareOneListAndOneInfo", test_brewItemsShareOneRead),
+            ("brewListAndInfoRepliesParse", test_brewParse),
+            ("aFailedSharedBrewInfoFallsBackToEachItem", test_brewBatchFailureFallsBack),
             ("npmVersionsMapOntoTheRightStatus", test_npmStatusMapping),
+            ("anNpmCheckRunsNpmLsOnceAndLogsFromItsJSON", test_npmLogComesFromTheJSONRead),
+            ("everyNpmPackageSharesOneLsAndOneOutdated", test_npmPackagesShareOneRead),
+            ("npmOutdatedRepliesParseIncludingTheErrorShape", test_npmOutdatedParse),
+            ("anUnreachableRegistryIsCheckFailedNotUpToDate", test_npmRegistryFailure),
+            ("anUninstalledNpmPackageStillNamesTheLatest", test_npmUninstalledNamesLatest),
+            ("anNpmUpdateDropsTheSharedRead", test_npmUpdateInvalidates),
             ("aMissingToolIsAReportedFailureNotACrash", test_missingToolIsReported),
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
             ("dotfilesReadsBranchRemoteAndDirtyFilesFromGit", test_dotfilesParsesGit),
@@ -191,7 +200,10 @@ enum SetupDataLayerSelfTest {
             return "a cask installed under Caskroom/automic-vault was not found for the fully-qualified "
                  + "token automic-vault/isotopes/automic-vault - got \(outcome.installedLabel) (\(outcome.status))"
         }
-        guard args(matching: "list") == nil else {
+        // The shared Homebrew read runs one `brew list --versions` for the
+        // catalog's formulae (R5 energy fix 3). It must never name a cask.
+        let listCalls = UpdatesDataTestSeam.invocations.filter { $0.args.first == "list" }
+        guard !listCalls.contains(where: { $0.args.contains { $0.contains("automic-vault") } }) else {
             return "a cask's installed state must not be asked of `brew list` - it has to load the cask's "
                  + "definition and fails when a tap ships one this Homebrew cannot parse"
         }
@@ -308,6 +320,94 @@ enum SetupDataLayerSelfTest {
         return nil
     }
 
+    private static let brewCatalogItems = DependencyCatalog.items.filter {
+        switch $0.kind {
+        case .brewFormula, .brewCask: return true
+        default: return false
+        }
+    }
+
+    /// `brew info --json=v2` for the whole catalog, cut down to the fields the
+    /// checks read: two formulae and two casks, one of them fully qualified.
+    private static let catalogBrewInfo = #"""
+        {"formulae":[{"name":"gh","full_name":"gh","versions":{"stable":"2.104.0"}},
+                     {"name":"tmux","full_name":"tmux","versions":{"stable":"3.9"}}],
+         "casks":[{"token":"claude-code","full_token":"claude-code","version":"2.1.311"},
+                  {"token":"automic-vault","full_token":"automic-vault/isotopes/automic-vault","version":"4.23.0"}]}
+        """#
+
+    /// R5 energy fix 3: the Homebrew rows used to cost a `brew list` and a
+    /// `brew info` per formula and a `brew info --cask` per cask. A sweep of
+    /// all of them is now one of each read, plus the tap check a
+    /// fully-qualified cask always needed.
+    private static func test_brewItemsShareOneRead() -> String? {
+        guard brewCatalogItems.count > 1 else { return "the catalog has \(brewCatalogItems.count) Homebrew items - the case is vacuous" }
+        fakeUpdates(["list": result("gh 2.104.0\ntmux 3.7 3.8"), "info": result(catalogBrewInfo)])
+        installCaskFixture(token: "automic-vault", versions: ["4.23.0"])
+        installCaskFixture(token: "claude-code", versions: ["2.1.300"])
+        let outcomes = brewCatalogItems.map { UpdatesSource.check($0) }
+        let calls = UpdatesDataTestSeam.invocations.map { $0.args.first ?? "" }
+        let list = calls.filter { $0 == "list" }.count, info = calls.filter { $0 == "info" }.count
+        guard list == 1, info == 1 else {
+            return "\(brewCatalogItems.count) Homebrew checks ran list x\(list), info x\(info) - want 1 and 1 (\(UpdatesDataTestSeam.invocations.map { $0.args }))"
+        }
+        let want: [String: (DependencyStatus, String)] = [
+            "gh": (.upToDate, "2.104.0 - up to date"), "tmux": (.updateAvailable, "3.8 \u{2192} 3.9"),
+            "claude-code": (.updateAvailable, "2.1.300 \u{2192} 2.1.311"), "automic-vault": (.upToDate, "4.23.0 - up to date"),
+        ]
+        for (item, outcome) in zip(brewCatalogItems, outcomes) {
+            guard let expected = want[item.id] else { return "no expectation for catalog item \(item.id)" }
+            guard outcome.status == expected.0, outcome.detail == expected.1 else {
+                return "\(item.id) read \(outcome.status) (\(outcome.detail)), want \(expected.0) (\(expected.1))"
+            }
+        }
+        return nil
+    }
+
+    private static func test_brewParse() -> String? {
+        let installed = BrewBatchReading.installedVersions(fromList: "gh 2.104.0\ntmux 3.7 3.8\n")
+        guard installed == ["gh": "2.104.0", "tmux": "3.8"] else {
+            return "`brew list --versions` should read the newest of each line, got \(installed)"
+        }
+        let reading = BrewBatchReading(formulae: ["gh"], casks: ["automic-vault/isotopes/automic-vault"],
+                                       listResult: result(""), infoResult: result(catalogBrewInfo))
+        guard reading.cask("automic-vault/isotopes/automic-vault")?["version"] as? String == "4.23.0",
+              reading.cask("claude-code")?["version"] as? String == "2.1.311",
+              reading.formula("gh") != nil else {
+            return "a cask must be found by its full token or its short one, and a formula by name"
+        }
+        let failed = BrewBatchReading(formulae: ["gh"], casks: [], listResult: result(""),
+                                      infoResult: result(catalogBrewInfo, status: 1))
+        guard failed.formula("gh") == nil else { return "a failed `brew info` must never be read as an answer" }
+        return nil
+    }
+
+    /// One cask brew cannot load fails the whole shared `brew info`. Each
+    /// item must then ask on its own, so the formulae still get an answer and
+    /// the cask still names brew's error, exactly as before the batch.
+    private static func test_brewBatchFailureFallsBack() -> String? {
+        fakeUpdates([:])
+        UpdatesDataTestSeam.run = { _, args, _ in
+            switch args.first {
+            case "list": return result("gh 2.100.0")
+            case "info" where args.contains("--cask"): return brewCannotLoadCask
+            case "info" where args.count > 3: return brewCannotLoadCask
+            case "info": return result(#"{"formulae":[{"name":"gh","versions":{"stable":"2.104.0"}}]}"#)
+            default: return result("")
+            }
+        }
+        installCaskFixture(token: "automic-vault", versions: ["4.18.0"])
+        let gh = UpdatesSource.check(DependencyItem(id: "gh", name: "gh", category: "Homebrew", kind: .brewFormula(formula: "gh")))
+        guard gh.status == .updateAvailable, gh.detail == "2.100.0 \u{2192} 2.104.0" else {
+            return "a formula should still be answered when the shared info failed, got \(gh.status) (\(gh.detail))"
+        }
+        let vault = UpdatesSource.check(automicVault)
+        guard vault.status == .checkFailed, vault.log.contains("Homebrew error: Error: Cask 'automic-vault' definition is invalid") else {
+            return "the cask brew cannot load must still be .checkFailed and name brew's error, got \(vault.status): \(vault.log)"
+        }
+        return nil
+    }
+
     // MARK: Fixtures
 
     private static var fixtureRoots: [URL] = []
@@ -348,7 +448,7 @@ enum SetupDataLayerSelfTest {
 
         // Same version installed and latest -> up to date.
         fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
-                     "view": result("1.2.3")])
+                     "outdated": result("{}")])
         let same = UpdatesSource.check(item)
         guard same.status == .upToDate else {
             return "equal versions should be .upToDate, got \(same.status) (\(same.detail))"
@@ -357,13 +457,142 @@ enum SetupDataLayerSelfTest {
         // Newer available -> update available.
         UpdatesDataTestSeam.reset()
         fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
-                     "view": result("1.3.0")])
+                     "outdated": result(#"{"gh-axi":{"current":"1.2.3","wanted":"1.3.0","latest":"1.3.0"}}"#, status: 1)])
         let newer = UpdatesSource.check(item)
         guard newer.status == .updateAvailable else {
             return "a newer latest should be .updateAvailable, got \(newer.status) (\(newer.detail))"
         }
         guard newer.installedLabel == "1.2.3", newer.latestLabel == "1.3.0" else {
             return "expected 1.2.3 -> 1.3.0, got \(newer.installedLabel) -> \(newer.latestLabel ?? "nil")"
+        }
+        return nil
+    }
+
+    /// R5 energy fix 1: the row's log is built from the `--json` read the
+    /// check already made. A second, human-readable `npm ls` only to produce
+    /// that text was a whole `node` start-up per package per sweep.
+    private static func test_npmLogComesFromTheJSONRead() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
+                     "outdated": result("{}")])
+        let outcome = UpdatesSource.check(item)
+        let lsCalls = UpdatesDataTestSeam.invocations.filter { $0.args.first == "ls" }
+        guard lsCalls.count == 1 else {
+            return "one npm check ran `npm ls` \(lsCalls.count) times (\(lsCalls.map { $0.args })) - the log must come from the --json read"
+        }
+        guard lsCalls[0].args.contains("--json") else {
+            return "the one `npm ls` must be the --json read, got \(lsCalls[0].args)"
+        }
+        guard outcome.log.contains("gh-axi@1.2.3") else {
+            return "the log should still say what is installed, got: \(outcome.log)"
+        }
+        return nil
+    }
+
+    private static let npmCatalogItems = DependencyCatalog.items.filter {
+        if case .npmGlobal = $0.kind { return true } else { return false }
+    }
+
+    /// R5 energy fix 2: the five npm rows used to cost five `npm ls` plus five
+    /// `npm view` per sweep. A sweep of all of them is now one of each read,
+    /// and no per-package registry call at all while they are installed.
+    private static func test_npmPackagesShareOneRead() -> String? {
+        guard npmCatalogItems.count > 1 else { return "the catalog has \(npmCatalogItems.count) npm items - the case is vacuous" }
+        let installed = npmCatalogItems.map { "\"\($0.id)\":{\"version\":\"1.0.0\"}" }.joined(separator: ",")
+        fakeUpdates(["ls": result("{\"dependencies\":{\(installed)}}"),
+                     "outdated": result(#"{"gh-axi":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}"#, status: 1)])
+        let outcomes = npmCatalogItems.map { UpdatesSource.check($0) }
+        let calls = UpdatesDataTestSeam.invocations.map { $0.args.first ?? "" }
+        let ls = calls.filter { $0 == "ls" }.count, outdated = calls.filter { $0 == "outdated" }.count
+        let view = calls.filter { $0 == "view" }.count
+        guard ls == 1, outdated == 1, view == 0 else {
+            return "\(npmCatalogItems.count) npm checks ran ls x\(ls), outdated x\(outdated), view x\(view) - want 1, 1 and 0"
+        }
+        guard let outdatedArgs = UpdatesDataTestSeam.invocations.first(where: { $0.args.first == "outdated" })?.args,
+              outdatedArgs.contains("-g"), outdatedArgs.contains("--json"),
+              npmCatalogItems.allSatisfy({ outdatedArgs.contains($0.id) }) else {
+            return "the one `npm outdated` must be global, JSON, and name every catalog package"
+        }
+        for (item, outcome) in zip(npmCatalogItems, outcomes) {
+            let want: DependencyStatus = item.id == "gh-axi" ? .updateAvailable : .upToDate
+            guard outcome.status == want else {
+                return "\(item.id) read \(outcome.status) (\(outcome.detail)) from the shared read, want \(want)"
+            }
+        }
+        return nil
+    }
+
+    /// The three reply shapes measured from npm 11 on this machine: `{}` for
+    /// all current, one entry per outdated package (with exit 1), and an
+    /// `error` object when the registry was unreachable (also exit 1).
+    private static func test_npmOutdatedParse() -> String? {
+        guard NpmGlobalReading.parseOutdated("{}") == [:] else { return "`{}` must parse to nothing outdated" }
+        let behind = NpmGlobalReading.parseOutdated(
+            #"{"gh-axi":{"current":"0.1.40","wanted":"0.1.51","latest":"0.1.51","dependent":"lib","location":"/x/lib/node_modules/gh-axi"}}"#)
+        guard behind?["gh-axi"] == .init(current: "0.1.40", latest: "0.1.51") else {
+            return "an outdated entry should read current 0.1.40 latest 0.1.51, got \(String(describing: behind))"
+        }
+        let error = #"{"error":{"code":"ECONNREFUSED","summary":"FetchError: request to http://127.0.0.1:9/gh-axi failed"}}"#
+        guard NpmGlobalReading.parseOutdated(error) == nil else {
+            return "an `error` reply must read as a failure, never as an empty (all current) list"
+        }
+        guard NpmGlobalReading.parseOutdated("") == nil, NpmGlobalReading.parseOutdated("npm ERR! boom") == nil else {
+            return "a reply that is not JSON must read as a failure"
+        }
+        return nil
+    }
+
+    /// GL-14: a registry that did not answer is not "everything is current",
+    /// even though `npm outdated` then lists nothing.
+    private static func test_npmRegistryFailure() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
+                     "outdated": result(#"{"error":{"code":"ENOTFOUND","summary":"getaddrinfo ENOTFOUND registry.npmjs.org"}}"#,
+                                        stderr: "npm error code ENOTFOUND", status: 1)])
+        let outcome = UpdatesSource.check(item)
+        guard outcome.status == .checkFailed,
+              outcome.detail == "Installed 1.2.3 - could not reach npm registry for the latest version" else {
+            return "an unreachable registry must be .checkFailed with the old detail, got \(outcome.status) (\(outcome.detail))"
+        }
+        guard outcome.log.contains("ENOTFOUND") else { return "the log dropped npm's own error: \(outcome.log)" }
+        return nil
+    }
+
+    /// `npm outdated` says nothing about a package that is not installed, so
+    /// that one row still asks the registry, and still names the version.
+    private static func test_npmUninstalledNamesLatest() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"name":"lib"}"#, status: 1), "outdated": result("{}"), "view": result("2.0.0")])
+        let outcome = UpdatesSource.check(item)
+        guard outcome.status == .notInstalled, outcome.detail == "Not installed - 2.0.0 available" else {
+            return "a missing package should read \"Not installed - 2.0.0 available\", got \(outcome.status) (\(outcome.detail))"
+        }
+        return nil
+    }
+
+    /// The re-check after an install must not read the shared answer from
+    /// before it. `ScheduleRunner` and every page re-check this way.
+    private static func test_npmUpdateInvalidates() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        let installedLock = NSLock()
+        var installedVersion = "1.2.3"
+        fakeUpdates([:])
+        UpdatesDataTestSeam.run = { _, args, _ in
+            installedLock.lock(); defer { installedLock.unlock() }
+            switch args.first {
+            case "ls": return result("{\"dependencies\":{\"gh-axi\":{\"version\":\"\(installedVersion)\"}}}")
+            case "outdated":
+                return installedVersion == "1.3.0" ? result("{}")
+                    : result(#"{"gh-axi":{"current":"1.2.3","latest":"1.3.0"}}"#, status: 1)
+            case "install": installedVersion = "1.3.0"; return result("added 1 package")
+            default: return result("")
+            }
+        }
+        guard UpdatesSource.check(item).status == .updateAvailable else { return "the fixture should start behind" }
+        guard UpdatesSource.update(item).ok else { return "the fake install failed" }
+        let after = UpdatesSource.check(item)
+        guard after.status == .upToDate, after.installedLabel == "1.3.0" else {
+            return "the re-check after an install read \(after.status) \(after.installedLabel) - the shared read from before the install was reused"
         }
         return nil
     }

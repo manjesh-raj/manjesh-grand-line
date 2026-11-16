@@ -208,6 +208,12 @@ enum SelfTestDispatch {
                 setenv(DotfilesSource.locationOverrideVariable,
                        scratchRoot.appendingPathComponent("dotfiles", isDirectory: true).path, 1)
             }
+            // R5 energy fix 4: the git sync suites pull the same scratch clone
+            // several times in a row and assert each pull saw the remote as it
+            // is now. `.shared` would reuse the first fetch for ten minutes, so a
+            // self-test process turns that off. `GitFetchCoalescerSelfTest`
+            // drives its own instance with the real window.
+            GitFetchCoalescer.shared.debugSetFreshnessWindow(0)
             // SEC-01 (full review): `SSHKeyMaterializer` and `SRELead.setUp` make
             // their scratch directories under `AppPaths.privateScratchFolder()`, which
             // is the captain's real Application Support folder by default, and
@@ -2358,6 +2364,12 @@ enum SelfTestDispatch {
         // bypassing both).
         if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] == "1" {
             exit(DependencyCheckCacheSelfTest.run() ? 0 : 1)
+        }
+
+        // R5 energy fix 4: one `git fetch` per clone per ten minutes, shared by the
+        // Tasks pull, the dotfiles auto-sync and Setup's drift read.
+        if ProcessInfo.processInfo.environment["FM_RUN_GIT_FETCH_COALESCER_TESTS"] == "1" {
+            exit(GitFetchCoalescerSelfTest.run() ? 0 : 1)
         }
 
         // `fm/grandline-terminal-selection-sidebar-bleed`: the "Forward Drags to This

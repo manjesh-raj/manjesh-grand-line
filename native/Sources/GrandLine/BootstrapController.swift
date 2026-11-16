@@ -648,7 +648,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func refreshDotfilesIfStale() {
         if let last = lastDotfilesRefreshAt, Date().timeIntervalSince(last) < Self.dotfilesVisitTTL { return }
-        refreshDotfiles()
+        // A visit is not a request to fetch, so it shares the last fetch of
+        // the clone when that is recent (R5 energy fix 4).
+        refreshDotfiles(forceFetch: false)
     }
 
     private func settleDeferredThemeRebuild() {
@@ -1432,7 +1434,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// thread (git/file IO), mirroring `FleetController.refresh`. Shows a
     /// lightweight "Checking…" state first so navigating to the page never
     /// looks frozen while `git` runs.
-    private func refreshDotfiles(completion: (() -> Void)? = nil) {
+    /// `forceFetch` is true for every explicit action, which must see the
+    /// remote as it is now rather than as the last fetch left it.
+    private func refreshDotfiles(forceFetch: Bool = true, completion: (() -> Void)? = nil) {
         guard isViewLoaded else { completion?(); return }
         // Stamped here rather than at the visit call site, so an explicit
         // refresh (Run, Create link, Re-check now, the sequencer) also counts
@@ -1446,7 +1450,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             var managed: [ManagedItem] = []
             var agents: [AgentInstructionsItem] = []
             if let resolved {
-                state = DotfilesSource.repoState(at: resolved)
+                state = DotfilesSource.repoState(at: resolved, forceFetch: forceFetch)
                 managed = DotfilesSource.managedItems(repoPath: resolved)
                 agents = DotfilesSource.agentInstructionItems(repoPath: resolved)
             } else {

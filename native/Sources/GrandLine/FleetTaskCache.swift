@@ -68,7 +68,9 @@
 // at once, and that sweep (`Reuse.unchanged`) also reuses a *live* reading
 // whose files did not change, provided it is younger than the notifier's own
 // tick. So an event costs one script run for the task that changed, while the
-// 30-second tick is still what re-reads every live crew.
+// 30-second tick is still what re-reads every live crew. Since R5 energy fix 8
+// "changed" means, for a live reading, its `.status` or `.meta`: a busy record
+// or an inbox move alone no longer re-runs the script before the tick does.
 //
 // Thread-safety follows `DependencyCheckCache`/`ServiceHealthRegistry`: an
 // `NSLock`-guarded value plus a `DispatchGroup` to coalesce a genuine race.
@@ -246,16 +248,27 @@ enum FleetTaskCache {
         readingsLock.lock()
         let stored = readings[id]
         readingsLock.unlock()
-        if let stored, stored.fingerprint == fingerprint, fingerprint != .missing {
+        if let stored, fingerprint != .missing {
             let age = now.timeIntervalSince(stored.at)
             let settled = isSettled(stored.reading)
+            let sameFiles = stored.fingerprint == fingerprint
             switch reuse {
             case .none:
                 break
             case .settled:
-                if settled, age < settledMaxAge { return stored.reading }
+                if sameFiles, settled, age < settledMaxAge { return stored.reading }
             case .unchanged(let liveMaxAge):
-                if age < (settled ? settledMaxAge : liveMaxAge) { return stored.reading }
+                if sameFiles, age < (settled ? settledMaxAge : liveMaxAge) { return stored.reading }
+                // R5 energy fix 8: a live crew replaces its `.busy-state` and
+                // moves inbox files on every turn, and each of those woke the
+                // watcher and re-ran the script. What a crew writes when it
+                // changes state is its `.status` line, and a re-dispatch
+                // rewrites its `.meta`. An event that touched neither is not a
+                // transition, so a young live reading stands; the notifier's
+                // tick still re-reads every live crew.
+                if !settled, age < liveMaxAge, stored.fingerprint.sameTransitionFiles(as: fingerprint) {
+                    return stored.reading
+                }
             }
         }
         let fresh = compute()
@@ -330,6 +343,21 @@ struct FleetTaskFingerprint: Equatable {
     /// A task with no entry at all (its files vanished mid-sweep). Never
     /// matches a stored reading, so such a task is always read for real.
     static let missing = FleetTaskFingerprint(entries: [])
+
+    /// The files a state transition writes: the `.status` log a crew appends
+    /// to, and the `.meta` a dispatch writes.
+    private var transitionEntries: [Entry] {
+        entries.filter { $0.name.hasSuffix(".status") || $0.name.hasSuffix(".meta") }
+    }
+
+    /// R5 energy fix 8: whether the two fingerprints agree on every
+    /// transition file. A task with no `.status` yet never matches, because
+    /// then there is nothing that would announce its first transition.
+    func sameTransitionFiles(as other: FleetTaskFingerprint) -> Bool {
+        let mine = transitionEntries
+        guard mine.contains(where: { $0.name.hasSuffix(".status") }) else { return false }
+        return mine == other.transitionEntries
+    }
 
     /// Every task's fingerprint, from one directory listing that already
     /// carries `.contentModificationDateKey` and `.fileSizeKey`.

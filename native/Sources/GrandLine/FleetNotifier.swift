@@ -85,7 +85,12 @@ final class FleetNotifier {
     /// How long a state-file change waits before its sweep, on top of
     /// `FleetStateWatcher.latency`, so a burst of writes from one transition
     /// costs one sweep.
-    static let stateChangeSettle: TimeInterval = 1
+    ///
+    /// R5 energy fix 8: 3 seconds, up from 1. A live crew writes its status
+    /// line, then its busy record, then moves an inbox message, and at 1
+    /// second those often landed as two or three sweeps. The review counted
+    /// 271 `fm-crew-state.sh` spawns an hour from three live tasks.
+    static let stateChangeSettle: TimeInterval = 3
 
     /// E3: while the app has been backgrounded for >5 minutes - or, since
     /// R4-PERF-01, while no window of it is on screen at all (GL-13) - only

@@ -2,8 +2,9 @@
 //
 // R4-PERF-01 of the fourth full review: tell `FleetNotifier` the moment a
 // crew's own state files change, so a transition a crew writes down is seen
-// in about a second, and the 30-second tick is left as the watchdog for the
-// transitions nobody writes down.
+// within seconds (the stream's latency plus `FleetNotifier.stateChangeSettle`),
+// and the 30-second tick is left as the watchdog for the transitions nobody
+// writes down.
 //
 // **FSEvents with file events, not a `DispatchSource` on the folder.** The
 // review suggested either. Measured with both on one folder: a `>>` append to
