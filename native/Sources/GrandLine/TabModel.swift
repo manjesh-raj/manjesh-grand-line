@@ -178,6 +178,13 @@ final class TabModel {
     /// prompt is the easy way to hit that.
     var awaitingKeyUnlock = false
 
+    /// Whether the process this tab last started is an ssh started *without*
+    /// its saved key, because the unlock failed. Set by `connectSSH`'s
+    /// fallback branch, which tells the captain to press ⌘R, and read by the
+    /// next `connectSSH` to stop that ssh first - otherwise the retry is a
+    /// silent no-op while it sits at its password prompt.
+    var sshStartedWithoutSavedKey = false
+
     /// `fm/cockpit-block-view-stage0`: whether this tab is the one, single,
     /// opted-in host page block view applies to (`Host.blockViewOptIn`,
     /// threaded down from `AppShellController.connectHost` through

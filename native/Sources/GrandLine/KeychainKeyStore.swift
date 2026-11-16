@@ -62,6 +62,21 @@ enum KeychainError: LocalizedError {
     /// deliberate no aborts the connect outright rather than quietly
     /// downgrading it to agent auth (production review, section 15).
     case userCancelled
+    /// LocalAuthentication refused the unlock for a reason other than a
+    /// cancel. Carries the code so the message can name the real reason
+    /// rather than LocalAuthentication's own "The operation couldn't be
+    /// completed. (com.apple.LocalAuthentication error -1.)".
+    case unlockFailed(LAError.Code)
+    /// `errSecAuthFailed` from the Keychain read while this process's own
+    /// code no longer matches its bundle on disk. Measured on the captain's
+    /// machine: the running app had been rebuilt in place under it, Touch ID
+    /// succeeded, and every read - including of a key created after the
+    /// rebuild - was refused with no prompt. Only a relaunch clears it, so a
+    /// retry from the same process is pointless.
+    case codeChangedOnDisk
+    /// `errSecAuthFailed` with this process's code intact: the item's access
+    /// control does not trust this copy of the app.
+    case accessDenied
 
     var errorDescription: String? {
         switch self {
@@ -73,7 +88,66 @@ enum KeychainError: LocalizedError {
             return reason
         case .userCancelled:
             return "Authentication was cancelled."
+        case .unlockFailed(let code):
+            switch code {
+            case .authenticationFailed:
+                return "Touch ID did not recognise the fingerprint, or the Mac password was not accepted."
+            case .biometryLockout:
+                return "Touch ID is locked after too many failed attempts."
+            case .biometryNotEnrolled, .biometryNotAvailable:
+                return "Touch ID is not set up or not available right now."
+            case .passcodeNotSet:
+                return "This Mac account has no login password, so there is nothing to unlock the key with."
+            case .userFallback:
+                return "The Touch ID prompt was closed with its password button."
+            case .notInteractive:
+                return "macOS could not show the unlock prompt."
+            default:
+                return "macOS could not confirm it was you (LocalAuthentication error \(code.rawValue))."
+            }
+        case .codeChangedOnDisk:
+            return "Grand Line was rebuilt or updated on disk while this copy was running, "
+                + "so macOS will not hand this copy its saved keys."
+        case .accessDenied:
+            return "macOS refused Grand Line access to this key's Keychain item."
         }
+    }
+
+    /// What to do about it, in words that make sense outside the console too
+    /// (the credential vault shares `classify`). `ConsoleController.connectSSH`
+    /// adds its own "Press ⌘R" after this when `retryCanHelp`.
+    var recoverySuggestion: String? {
+        switch self {
+        case .unlockFailed(let code):
+            switch code {
+            case .biometryLockout:
+                return "Enter your Mac password when the prompt offers it, or lock the screen and log back in to reset Touch ID."
+            case .passcodeNotSet:
+                return "Set a login password in System Settings > Users & Groups."
+            case .notInteractive:
+                return "Bring Grand Line to the front and try again."
+            default:
+                return "Try again, and use your Mac password if Touch ID does not take."
+            }
+        case .codeChangedOnDisk:
+            return "Quit and reopen Grand Line, then connect again."
+        case .accessDenied:
+            return "Quit and reopen Grand Line. If it still fails, remove the key and add it again under Hosts > Keys."
+        case .notFound:
+            return "Remove the key and add it again under Hosts > Keys."
+        case .osStatus(errSecInteractionNotAllowed):
+            return "Unlock your login keychain and try again."
+        case .osStatus, .authenticationFailed, .userCancelled:
+            return nil
+        }
+    }
+
+    /// Whether trying again from this same process can succeed. False only
+    /// for `codeChangedOnDisk`, where macOS will keep refusing this copy until
+    /// it is relaunched - offering ⌘R there is what kept the captain retrying.
+    var retryCanHelp: Bool {
+        if case .codeChangedOnDisk = self { return false }
+        return true
     }
 }
 
@@ -87,13 +161,16 @@ enum KeychainKeyStore {
     static var debugServiceName: String { service }
     #endif
 
-    /// Whether Touch ID (or another biometric) is enrolled and usable right
-    /// now. When it isn't, the fallback below is the device passcode - still
-    /// a real authentication challenge, never an open door.
-    static var biometryAvailable: Bool {
-        var error: NSError?
-        return LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
-    }
+    /// The policy the key unlock evaluates: Touch ID when a finger is
+    /// enrolled, with the Mac password always on offer.
+    ///
+    /// This used to be `.deviceOwnerAuthenticationWithBiometrics` whenever a
+    /// finger was enrolled, which has no password fallback at all - a
+    /// fingerprint that stopped matching, or Touch ID locked out after too
+    /// many tries, left the captain no way to unlock a saved key from inside
+    /// the app. `.deviceOwnerAuthentication` shows the same Touch ID sheet and
+    /// adds the password, which is still a real challenge, never an open door.
+    static let unlockPolicy: LAPolicy = .deviceOwnerAuthentication
 
     // MARK: Private key
 
@@ -154,11 +231,10 @@ enum KeychainKeyStore {
     /// regressing the next time a caller is added.
     private static func authenticate(context: LAContext) throws {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let policy: LAPolicy = biometryAvailable ? .deviceOwnerAuthenticationWithBiometrics : .deviceOwnerAuthentication
         let reason = context.localizedReason.isEmpty ? "Unlock this key" : context.localizedReason
         var authError: Error?
         let semaphore = DispatchSemaphore(value: 0)
-        context.evaluatePolicy(policy, localizedReason: reason) { success, error in
+        context.evaluatePolicy(unlockPolicy, localizedReason: reason) { success, error in
             if !success {
                 authError = error ?? KeychainError.authenticationFailed("Authentication failed.")
             }
@@ -174,18 +250,53 @@ enum KeychainKeyStore {
     /// Not `private`: `Phase2HardeningSelfTest` drives it directly, which is the
     /// only way to test the cancel decision without a real biometric prompt.
     static func classify(_ error: Error) -> Error {
+        guard let laError = error as? LAError else {
+            let nsError = error as NSError
+            AppLog.keychain.error("key unlock failed: \(nsError.domain, privacy: .public) \(nsError.code) - \(error.localizedDescription, privacy: .public)")
+            return error
+        }
         // All three codes mean the same thing to us: the captain chose not to
         // unlock. `.userCancel` is the sheet's Cancel button, `.appCancel` and
         // `.systemCancel` are the app or the OS taking the sheet away - none of
         // them is a failed attempt, and none should silently downgrade a
         // connect to agent auth (see `ConsoleController.connectSSH`).
-        if let laError = error as? LAError,
-           [.userCancel, .appCancel, .systemCancel].contains(laError.code) {
-            AppLog.keychain.info("key unlock cancelled")
+        if [.userCancel, .appCancel, .systemCancel].contains(laError.code) {
+            AppLog.keychain.info("key unlock cancelled: LAError \(laError.code.rawValue)")
             return KeychainError.userCancelled
         }
-        AppLog.keychain.error("key unlock failed: \(error.localizedDescription, privacy: .public)")
-        return error
+        let classified = KeychainError.unlockFailed(laError.code)
+        AppLog.keychain.error("key unlock failed: LAError \(laError.code.rawValue) - \(classified.errorDescription ?? "", privacy: .public)")
+        return classified
+    }
+
+    /// Map a failed `SecItemCopyMatching` onto this file's vocabulary. Pure, so
+    /// the suites can drive every branch; `codeMatchesDisk` is only asked on
+    /// the `errSecAuthFailed` path, where it decides between the two causes
+    /// that share that status.
+    static func classifyRead(status: OSStatus, codeMatchesDisk: () -> Bool) -> KeychainError {
+        switch status {
+        case errSecItemNotFound:
+            return .notFound
+        case errSecAuthFailed:
+            return codeMatchesDisk() ? .accessDenied : .codeChangedOnDisk
+        default:
+            return .osStatus(status)
+        }
+    }
+
+    /// Whether this process's code still matches its own bundle on disk -
+    /// `codesign --verify <pid>`, asked from inside. Rebuilding or replacing
+    /// the app while it runs breaks it, and macOS then refuses this process's
+    /// Keychain reads with `errSecAuthFailed` and no prompt. "Could not ask"
+    /// answers true, so the app never claims a cause it did not establish.
+    static func runningCodeMatchesDisk() -> Bool {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return true }
+        let status = SecCodeCheckValidity(code, [], nil)
+        if status != errSecSuccess {
+            AppLog.keychain.error("this process's code no longer matches its bundle on disk: OSStatus \(status)")
+        }
+        return status == errSecSuccess
     }
 
     private static func save(account: String, data: Data) throws {
@@ -213,9 +324,15 @@ enum KeychainKeyStore {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { throw KeychainError.notFound }
         guard status == errSecSuccess, let data = result as? Data else {
-            throw KeychainError.osStatus(status)
+            let failure = classifyRead(status: status, codeMatchesDisk: runningCodeMatchesDisk)
+            if case .notFound = failure {
+                // Expected for a key with no passphrase; `loadPassphrase`
+                // turns it into nil, so it is not an error worth logging.
+                throw failure
+            }
+            AppLog.keychain.error("key read failed: OSStatus \(status) - \(failure.errorDescription ?? "", privacy: .public)")
+            throw failure
         }
         return data
     }

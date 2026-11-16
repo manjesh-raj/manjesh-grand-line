@@ -122,3 +122,29 @@ A 40-host `~/.ssh/config` was 40 atomic writes of `hosts.json` and 40 observer f
 `HostStoreSelfTest.checkBulkAdd` adds 40 hosts and counts one notification and 40 hosts in the file.
 `ConnectionsCardsSelfTest` counts the store's notifications around the preview's real Import button.
 Confirmed to fail with the import back on one `add` per host (two writes for two hosts).
+
+## A saved key that will not unlock says why, and ⌘R retries
+
+**`fm/grand-line-ssh-key-unlock-fallback`: the captain's Prod Bastion key fell back to a password with "The user name or passphrase you entered is not correct.", for a freshly created key too, and ⌘R never helped.**
+The suspected cause was the biometrics-only Touch ID policy, and the log said otherwise.
+
+- **What actually failed.** The app's own log at the failing connect shows `evaluatePolicy` returning success, then `SecItemCopyMatching` refused 9ms later with `CSSMERR_CSP_OPERATION_AUTH_DENIED` and no prompt.
+  That is `errSecAuthFailed` (-25293), and its system string is exactly the line the captain saw.
+  The running app had been started at 08:05 from `dist/Grand Line.app`, and that bundle was rebuilt in place at 12:24.
+  `codesign --verify <pid>` said "the code on disk does not match what is running".
+  A scratch-keychain probe reproduced it: replace a running binary on disk, then add a new item and read it back, and the read fails with -25293 while the process's own `SecCodeCheckValidity` returns -67034.
+  Only a relaunch clears it, which is why ⌘R and recreating the key both did nothing.
+- **The message now names the cause.** `KeychainKeyStore.classifyRead` splits `errSecAuthFailed` by asking `runningCodeMatchesDisk()`.
+  A mismatch reads as "Grand Line was rebuilt or updated on disk while this copy was running" with "Quit and reopen Grand Line", and no ⌘R, because a retry cannot work.
+  Every LocalAuthentication failure is `KeychainError.unlockFailed(code)` with a plain reason, instead of "The operation couldn't be completed. (com.apple.LocalAuthentication error -1.)".
+  Both paths log the raw `LAError` or `OSStatus` under `AppLog.keychain`.
+- **The policy is `.deviceOwnerAuthentication`.** It was `.deviceOwnerAuthenticationWithBiometrics` whenever a finger was enrolled, which has no Mac password fallback.
+  It was not this report's cause, but a changed fingerprint or a Touch ID lockout would have left no way in.
+  The credential vault still has its own biometrics-first policy (`CredentialVaultController.policy`) and was left alone.
+- **⌘R was a silent no-op on the fallback session.** SwiftTerm's `startProcess` returns early while a child is running, and the fallback ssh is still at its password prompt when the captain presses ⌘R.
+  So the retry unlocked again and then started nothing.
+  `TabModel.sshStartedWithoutSavedKey` marks that session, and the next `connectSSH` stops it (`stopRunningProcess`, which also reaps it) before unlocking.
+  The `awaitingKeyUnlock` guard was not stuck: it is cleared on every result.
+- **Verified** by `CredentialPathSelfTest.checkKeyReadFailuresAreNamed`, `Phase2HardeningSelfTest.keyUnlockKeepsThePasswordAndNamesTheReason` and `BlockViewRestartIntegrationSelfTest`'s `manualReconnectRestartsAKeyFallbackSession`.
+  Seven injections each failed by name: no stop on retry, no reap, the biometrics-only policy, the gate not using `unlockPolicy`, `errSecAuthFailed` left unsplit, ⌘R offered for a relaunch case, and `classify` returning the raw error.
+  Not verified: a real Touch ID prompt or the captain's real keychain, neither of which a suite may touch.

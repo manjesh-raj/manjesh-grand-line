@@ -58,6 +58,7 @@ enum Phase2HardeningSelfTest {
         mergeCommandCarriesTheTaskID()
         lockGatesOutOfWindowSurfaces()
         touchIDCancelIsNotAFallback()
+        keyUnlockKeepsThePasswordAndNamesTheReason()
         subprocessAdoptionIsComplete()
 
         print(failures.isEmpty
@@ -320,6 +321,40 @@ enum Phase2HardeningSelfTest {
         } else {
             check(true, "a non-LAError passes through unchanged")
         }
+    }
+
+    /// A changed or non-matching fingerprint used to leave no way in: the
+    /// unlock evaluated `.deviceOwnerAuthenticationWithBiometrics` whenever a
+    /// finger was enrolled, which has no password fallback. And every
+    /// non-cancel failure printed LocalAuthentication's own "The operation
+    /// couldn't be completed. (com.apple.LocalAuthentication error -1.)".
+    private static func keyUnlockKeepsThePasswordAndNamesTheReason() {
+        print("- Key unlock: Touch ID with the Mac password, and a named reason when it fails")
+
+        check(KeychainKeyStore.unlockPolicy == .deviceOwnerAuthentication,
+              "the key unlock offers the Mac password alongside Touch ID")
+
+        let expectations: [(LAError.Code, String)] = [
+            (.authenticationFailed, "fingerprint"),
+            (.biometryLockout, "locked"),
+            (.biometryNotEnrolled, "not set up"),
+            (.biometryNotAvailable, "not available"),
+            (.passcodeNotSet, "no login password"),
+            (.notInteractive, "could not show"),
+        ]
+        for (code, phrase) in expectations {
+            let classified = KeychainKeyStore.classify(LAError(code))
+            guard case KeychainError.unlockFailed(let carried) = classified, carried == code else {
+                check(false, "LAError.\(code.rawValue) should map to unlockFailed, got \(classified)")
+                continue
+            }
+            let text = classified.localizedDescription
+            check(text.contains(phrase) && !text.contains("com.apple.LocalAuthentication"),
+                  "LAError.\(code.rawValue) reads \"\(text)\"")
+        }
+        check((KeychainKeyStore.classify(LAError(.biometryLockout)) as? KeychainError)?
+                .recoverySuggestion?.contains("Mac password") == true,
+              "a Touch ID lockout says how to get past it")
     }
 
     // MARK: - GL-02 / GL-15 adoption
