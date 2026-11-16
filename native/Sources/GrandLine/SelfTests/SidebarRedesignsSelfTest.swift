@@ -860,6 +860,25 @@ enum SidebarRedesignsSelfTest {
         check(tasks.debugBoardView?.debugColumnViews.allSatisfy { !$0.usesWorkspaceStyle } == true,
               "the floating bar's board takes the sidebar layout's lanes", &ok)
         check(tasks.debugPushedBackCount == nil, "the floating bar's review draws the sidebar layout's count", &ok)
+        // R4-UX-09: the floating bar's Board is a board, not a board with
+        // Follow-ups and Projects stacked under it. Follow-ups is a lane in
+        // the classic board's shape, Projects is the column's, and List
+        // keeps both cards under its tasks.
+        let pending = shell.workspace.shiftStore.followUps.filter { $0.status == .pending }.count
+        check(pending > 0, "the demo tasks hold no pending follow-up, so the lane check is vacuous", &ok)
+        tasks.selectModuleTab(named: "Board")
+        settle(shell)
+        check(tasks.debugFollowUpLaneOnBoard && tasks.debugFollowUpsRowHidden && tasks.debugProjectsSectionHidden,
+              "the floating bar's Board stacks cards under the board (lane \(tasks.debugFollowUpLaneOnBoard), "
+              + "Follow-ups card hidden \(tasks.debugFollowUpsRowHidden), Projects hidden \(tasks.debugProjectsSectionHidden))", &ok)
+        check(tasks.followUpLane.debugUsesClassicStyle && tasks.followUpLane.debugCount == "\(pending)",
+              "the floating bar's Follow-ups lane is not the classic lane of \(pending) (\(tasks.followUpLane.debugCount))", &ok)
+        tasks.selectModuleTab(named: "List")
+        settle(shell)
+        check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden && !tasks.debugProjectsSectionHidden,
+              "the floating bar's List lost its Follow-ups or Projects card", &ok)
+        tasks.selectModuleTab(named: "Board")
+        settle(shell)
         for route in [RailDestination.updates, .bootstrap, .automation, .githubSync] {
             shell.workspace.navigator.show(route)
             settle(shell)

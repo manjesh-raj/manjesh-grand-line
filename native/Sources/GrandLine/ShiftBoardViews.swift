@@ -824,6 +824,12 @@ final class ShiftFollowUpLaneView: NSView {
     private let emptyState = HelmEmptyState(symbol: "bell", body: "No follow-ups waiting", size: .quiet)
     private var cards: [(host: HoverHighlightView, card: ShiftWorkspaceTaskCard, id: String)] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
+    /// The rule under the header, drawn only in the classic style.
+    private let headerRule = NSView()
+    private var headerMark: HelmSectionHeader.Leading = .none
+    private var usesClassicStyle = false
+    /// The lane's own geometry, which `adoptClassicStyle` swaps out.
+    private var laneConstraints: [NSLayoutConstraint] = []
 
     var onOpen: ((String) -> Void)?
     var onAdd: (() -> Void)?
@@ -857,23 +863,61 @@ final class ShiftFollowUpLaneView: NSView {
         moreLabel.font = HelmType.caption()
         moreLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        headerRule.wantsLayer = true
+        headerRule.isHidden = true
+        headerRule.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(headerRule)
+
         let inset = HelmMetrics.s2
         NSLayoutConstraint.activate([
             laneBackground.topAnchor.constraint(equalTo: topAnchor),
             laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
             laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
             laneBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: headerAdd.leadingAnchor, constant: -HelmMetrics.s2),
+            headerAdd.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+        ])
+        laneConstraints = [
             header.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: headerAdd.leadingAnchor, constant: -HelmMetrics.s2),
             header.heightAnchor.constraint(equalToConstant: 30),
-            headerAdd.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             cardsStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s1),
             cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             cardsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
-        ])
+        ]
+        NSLayoutConstraint.activate(laneConstraints)
+        applyTheme(theme)
+    }
+
+    /// R4-UX-09: the floating bar's board draws its status lanes untinted,
+    /// each a dot, a title and a count on a rule
+    /// (`ShiftBoardColumnView`'s classic style), so the lane takes the same
+    /// shape there rather than the sidebar layout's tinted one.
+    func adoptClassicStyle() {
+        guard !usesClassicStyle else { return }
+        usesClassicStyle = true
+        headerMark = .dot(.warn)
+        laneBackground.isHidden = true
+        headerRule.isHidden = false
+        NSLayoutConstraint.deactivate(laneConstraints)
+        laneConstraints = [
+            header.topAnchor.constraint(equalTo: topAnchor),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
+            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerRule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerRule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            headerRule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s2),
+            headerRule.heightAnchor.constraint(equalToConstant: 1),
+            cardsStack.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: HelmMetrics.s3),
+            cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            cardsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(laneConstraints)
+        header.configure(leading: headerMark, title: "Follow-ups", count: header.countLabel.stringValue)
         applyTheme(theme)
     }
 
@@ -887,7 +931,7 @@ final class ShiftFollowUpLaneView: NSView {
             view.removeFromSuperview()
         }
         cards.removeAll()
-        header.configure(leading: .none, title: "Follow-ups", count: "\(followUps.count)")
+        header.configure(leading: headerMark, title: "Follow-ups", count: "\(followUps.count)")
         guard !followUps.isEmpty else {
             cardsStack.addArrangedSubview(emptyState)
             emptyState.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
@@ -937,6 +981,8 @@ final class ShiftFollowUpLaneView: NSView {
         laneBackground.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
             .withAlphaComponent(theme.mode == .dark ? 0.05 : 0.035).cgColor
         header.applyTheme(theme)
+        headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
         emptyState.applyTheme(theme)
         moreLabel.textColor = HelmTheme.mutedInk(theme)
         for entry in cards { entry.card.applyTheme(theme) }
@@ -946,6 +992,7 @@ final class ShiftFollowUpLaneView: NSView {
     var debugCardTitles: [String] { cards.map(\.card.debugTitle) }
     var debugCardDues: [String?] { cards.map(\.card.debugDue) }
     var debugCount: String { header.countLabel.stringValue }
+    var debugUsesClassicStyle: Bool { usesClassicStyle }
     /// A real click's path: the card host's own recognizer and its action.
     func debugClickCard(at index: Int) -> Bool {
         guard cards.indices.contains(index) else { return false }
