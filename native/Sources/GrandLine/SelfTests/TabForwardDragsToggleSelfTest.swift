@@ -9,7 +9,7 @@
 // *real* `ConsoleController.newShellTab`/`duplicateTab`/
 // `toggleForwardDragsToChild` - not reimplementations - following
 // `ConsoleClaudeUsageSelfTest.swift`'s construction pattern (a real
-// `ConsoleController` mounted in a real, off-screen `NSWindow`).
+// `ConsoleController` hosted in a plain view with no window (R5-PROC-03)).
 //
 // Only `.shell` launches are used here, on purpose - see
 // `CockpitTerminalView.forwardDragsToChild`'s own doc comment and
@@ -76,13 +76,17 @@ enum TabForwardDragsToggleSelfTest {
     // MARK: Helpers
 
     /// Mirrors `ConsoleClaudeUsageSelfTest.makeTestConsole` - a real
-    /// `ConsoleController` mounted in a real, off-screen `NSWindow`.
-    private static func makeTestConsole() -> (window: NSWindow, controller: ConsoleController) {
+    /// `ConsoleController` hosted in a plain view with no window (R5-PROC-03).
+    private static func makeTestConsole() -> (host: NSView, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = OffScreenProbe.window(width: 900, height: 600)
-        window.contentViewController = controller
+        // R5-PROC-03 of review #5: no window. Every check here reads model,
+        // control or string state, and none of it changes with one, so this
+        // suite runs in CI's headless lane.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        controller.view.frame = host.bounds
+        host.addSubview(controller.view)
         controller.view.layoutSubtreeIfNeeded()
-        return (window, controller)
+        return (host, controller)
     }
 
     // MARK: Cases

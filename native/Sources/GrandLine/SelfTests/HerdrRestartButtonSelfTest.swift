@@ -1,8 +1,8 @@
 // Grand Line - native macOS app.
 //
-// Permanent, window-backed self-test for the Console toolbar's "Herdr"
+// Permanent self-test for the Console toolbar's "Herdr"
 // restart button (`fm/grand-line-herdr-restart-button`). Drives a real
-// `ConsoleController` mounted in a real, off-screen `NSWindow` -
+// `ConsoleController` hosted in a plain view with no window (R5-PROC-03) -
 // `ConsoleClaudeUsageSelfTest.swift`'s exact construction pattern - through
 // the actual `loadView()`/`refreshHerdrStatus()`/`herdrRestartButtonClicked()`
 // pipeline against a real, disposable fake `herdr` script, proving:
@@ -87,18 +87,22 @@ enum HerdrRestartButtonSelfTest {
 
     // MARK: Helpers
 
-    /// A real `ConsoleController` mounted in a real, off-screen `NSWindow` -
+    /// A real `ConsoleController` hosted in a plain view with no window (R5-PROC-03) -
     /// `ConsoleClaudeUsageSelfTest.makeTestConsole`'s exact shape. Callers
     /// MUST set `HerdrRestartSource`'s test overrides before calling this -
     /// `loadView()` fires the initial real status check as a side effect of
     /// construction, and by the time this returns it is already dispatched.
-    private static func makeTestConsole(isFirstmateConsole: Bool) -> (window: NSWindow, controller: ConsoleController) {
+    private static func makeTestConsole(isFirstmateConsole: Bool) -> (host: NSView, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
                                            isFirstmateConsole: isFirstmateConsole)
-        let window = OffScreenProbe.window(width: 900, height: 600)
-        window.contentViewController = controller
+        // R5-PROC-03 of review #5: no window. Every check here reads model,
+        // control or string state, and none of it changes with one, so this
+        // suite runs in CI's headless lane.
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        controller.view.frame = host.bounds
+        host.addSubview(controller.view)
         controller.view.layoutSubtreeIfNeeded()
-        return (window, controller)
+        return (host, controller)
     }
 
     /// Blocks (pumping the main run loop, `HerdrThemeSyncSelfTest.waitForFile`'s
