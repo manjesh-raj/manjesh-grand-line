@@ -286,7 +286,7 @@ enum ScheduleRunnerSelfTest {
         // A manual "Run now" records a result but satisfies nothing on the
         // calendar - tonight's scheduled run still happens.
         let beforeManual = store.schedule(id: created.id)?.lastFiredOccurrence
-        store.recordRun(id: created.id, occurrence: nil,
+        store.recordRun(id: created.id,
                         record: ScheduleRunRecord(verdict: .clean, summary: "manual", at: Date()))
         guard let afterManual = store.schedule(id: created.id) else {
             fail("schedule vanished after recordRun", &ok)
@@ -447,7 +447,8 @@ enum ScheduleRunnerSelfTest {
                                      isEnabled: false),
                   now: at(2026, 3, 10, 12, 0))
         let id = first.schedules.first?.id
-        first.recordRun(id: id ?? UUID(), occurrence: at(2026, 3, 6, 17, 0),
+        first.markFired(id: id ?? UUID(), occurrence: at(2026, 3, 6, 17, 0))
+        first.recordRun(id: id ?? UUID(),
                         record: ScheduleRunRecord(verdict: .didWork, summary: "pushed", at: at(2026, 3, 6, 17, 1)))
 
         // A fresh instance, so this is a real disk round trip rather than an
@@ -953,9 +954,15 @@ enum ScheduleRunnerSelfTest {
             fail("REL-06: the first run never started (the schedule was not due)", &ok)
             return
         }
-        // Past the 10-minute watchdog: the latch is released and the same
-        // occurrence, still unrecorded, starts again.
+        // Past the 10-minute watchdog the latch is released, but the wedged
+        // run already took today's occurrence at dispatch (R5-BUG-01), so
+        // the same occurrence must not start a second time.
         runner.tick(now: Date().addingTimeInterval(11 * 60))
+        if runner.isBusy {
+            fail("R5-BUG-01: the watchdog released the latch and the same occurrence ran a second time", &ok)
+        }
+        // The next day's occurrence is a genuinely newer run.
+        runner.tick(now: Date().addingTimeInterval(86_400 + 60))
         if !runner.isBusy { fail("REL-06: the run after the watchdog should be running", &ok) }
 
         // The wedged run finishes late; the newer one is now executing.
@@ -1108,9 +1115,6 @@ enum ScheduleRunnerSelfTest {
             fail("R5-BUG-01: could not build the runner fixture", &ok)
             return
         }
-        ScheduleRunner.actionOverrideForTests = { _ in
-            ScheduleActionResult(verdict: .clean, summary: "synced")
-        }
         defer { ScheduleRunner.actionOverrideForTests = nil }
 
         guard let opened = store.schedules.first else {
@@ -1124,7 +1128,27 @@ enum ScheduleRunnerSelfTest {
             return
         }
 
+        // The occurrence is taken at dispatch, before the action finishes:
+        // read it back from disk through a second store while the run is
+        // still in flight.
+        let release = DispatchSemaphore(value: 0)
+        ScheduleRunner.actionOverrideForTests = { _ in
+            release.wait()
+            return ScheduleActionResult(verdict: .clean, summary: "synced")
+        }
         runner.tick(now: start)
+        if !runner.isBusy {
+            release.signal()
+            fail("R5-BUG-01: the first tick did not start a run", &ok)
+            return
+        }
+        let expectedOccurrence = ScheduleDueCalculator.mostRecentOccurrence(
+            of: opened.cadence, atOrBefore: start, calendar: utc)
+        let onDisk = ScheduleStore(calendar: utc).schedule(id: opened.id)
+        if onDisk?.lastFiredOccurrence == nil || onDisk?.lastFiredOccurrence != expectedOccurrence {
+            fail("R5-BUG-01: a dispatched run's occurrence should be on disk before the run finishes, got \(String(describing: onDisk?.lastFiredOccurrence))", &ok)
+        }
+        release.signal()
         pumpMain(until: { !runner.isBusy && store.schedules.first?.lastRun != nil })
         let runsAfterFirst = history.entries(for: opened.id).count
         if runsAfterFirst != 1 {

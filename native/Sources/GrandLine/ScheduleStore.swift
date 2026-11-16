@@ -180,7 +180,7 @@ final class ScheduleStore: StoreObservable {
     /// Writing them back forgot any run that happened while it was open, and
     /// the forgotten occurrence then fired again on the next tick - ten "Fork
     /// sync" runs in one day on the captain's machine. Those three fields have
-    /// their own writers (`recordRun` and `setEnabled`), and this is
+    /// their own writers (`markFired`, `recordRun` and `setEnabled`), and this is
     /// not one of them.
     ///
     /// A cadence edit therefore keeps the existing `lastFiredOccurrence`:
@@ -285,15 +285,33 @@ final class ScheduleStore: StoreObservable {
         persist()
     }
 
-    /// Records a completed run. Called by `ScheduleRunner` only.
-    func recordRun(id: UUID, occurrence: Date?, record: ScheduleRunRecord) {
+    /// Marks a scheduled occurrence as taken. Called by `ScheduleRunner` when
+    /// it **dispatches** a scheduled run, before the action starts.
+    ///
+    /// R5-BUG-01: this used to happen only when a run completed, so anything
+    /// between dispatch and completion could leave the occurrence untaken - a
+    /// run the watchdog gave up on, a quit that did not wait, or a stale copy
+    /// saved over the record mid-run. Each of those ran the same occurrence
+    /// again on a later tick. Taking it at dispatch means one occurrence is at
+    /// most one run, whatever happens to that run.
+    ///
+    /// Never moves the marker backward.
+    func markFired(id: UUID, occurrence: Date) {
+        guard let idx = schedules.firstIndex(where: { $0.id == id }) else { return }
+        if let fired = schedules[idx].lastFiredOccurrence, fired >= occurrence { return }
+        schedules[idx].lastFiredOccurrence = occurrence
+        persist()
+    }
+
+    /// Records a completed run's result. Called by `ScheduleRunner` only.
+    ///
+    /// It does not touch `lastFiredOccurrence`: a scheduled run already took
+    /// its occurrence at dispatch (`markFired`), and a manual "Run now"
+    /// satisfies nothing on the calendar, so tonight's scheduled run still
+    /// happens.
+    func recordRun(id: UUID, record: ScheduleRunRecord) {
         guard let idx = schedules.firstIndex(where: { $0.id == id }) else { return }
         schedules[idx].lastRun = record
-        // A manual "Run now" passes `nil` - it satisfies nothing on the
-        // calendar, so tonight's scheduled run still happens.
-        if let occurrence {
-            schedules[idx].lastFiredOccurrence = occurrence
-        }
         persist()
     }
 
