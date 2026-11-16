@@ -68,6 +68,7 @@ enum SubprocessSelfTest {
         discardedStderrFloodDoesNotDeadlock()
         timeoutKillsAHangingChild()
         timeoutBoundsARunWithNoOpenPipe()
+        timedOutChildrenAreReaped()
         exitStatusAndStreamsAreReported()
         outputIsObservedAsItArrives()
         stdinIsDelivered()
@@ -260,6 +261,91 @@ enum SubprocessSelfTest {
         check(closed.timedOut, "a child that closes its captured pipes and keeps running is .timedOut (got \(closed.outcome))")
         check(elapsed < 8, "and the caller was released near the 1s deadline (\(String(format: "%.2f", elapsed))s)")
         check(closed.stdout == "starting", "the output written before the pipes closed is kept")
+    }
+
+    /// R5-BUG-06 read the timeout path's install-then-remove of a
+    /// `terminationHandler` as leaving a child that exits afterwards
+    /// unreaped, and the review's child log did show `<defunct>` entries
+    /// during the launch sweep. Measured, that is not what happens: `Process`
+    /// reaps its own child from its own exit source, with or without a
+    /// handler and even after the `Process` object is gone. Those log entries
+    /// are the instant between a child's exit and that reap, which a burst of
+    /// launches makes easy to catch. The runner now installs no reap of its
+    /// own, so this pins the behaviour it relies on, for every way a child
+    /// can leave the timeout path.
+    private static func timedOutChildrenAreReaped() {
+        print("- a child that leaves the timeout path, or outlives its Process, is reaped rather than left a zombie")
+
+        // The fixture's own power first: a child nobody reaps really does read
+        // as a zombie, so a "gone" below is evidence rather than a blind spot.
+        var unreaped: pid_t = 0
+        var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/usr/bin/true"), nil]
+        var envp: [UnsafeMutablePointer<CChar>?] = [nil]
+        defer { free(argv[0]) }
+        if posix_spawn(&unreaped, "/usr/bin/true", nil, nil, &argv, &envp) == 0 {
+            check(waitFor(.zombie, pid: unreaped, within: 5),
+                  "a spawned child nobody waits for reads as a zombie (\(childState(unreaped)))")
+            var status: Int32 = 0
+            waitpid(unreaped, &status, 0)
+            check(childState(unreaped) == .gone, "and as gone once it is reaped")
+        } else {
+            check(false, "the unreaped control child could not be spawned")
+        }
+
+        // Each child prints its own pid first, so the check can follow it.
+        let shapes = [
+            ("ignores SIGTERM and is killed", "echo $$; trap '' TERM; while :; do sleep 1; done"),
+            ("honours SIGTERM while a grandchild holds the pipe", "echo $$; sleep 5 & wait"),
+        ]
+        for (label, script) in shapes {
+            let result = Subprocess.run(executable: "/bin/sh", arguments: ["-c", script], env: [:], timeout: 1)
+            guard let pid = pid_t(result.stdout.split(separator: "\n").first.map(String.init) ?? "") else {
+                check(false, "\(label): the child's pid was not captured (stdout: \(result.stdout.prefix(40)))")
+                continue
+            }
+            check(result.timedOut, "\(label): the run timed out (got \(result.outcome))")
+            check(waitFor(.gone, pid: pid, within: 5),
+                  "\(label): the child is reaped, not left defunct (\(childState(pid)))")
+        }
+
+        // The child exits only after the `Process` that launched it is gone,
+        // so no handler and no `waitUntilExit()` can be what reaps it.
+        var orphanedPid: pid_t = 0
+        autoreleasepool {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/bin/sleep")
+            proc.arguments = ["1"]
+            proc.standardInput = FileHandle.nullDevice
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            if (try? proc.run()) != nil { orphanedPid = proc.processIdentifier }
+        }
+        check(orphanedPid > 0, "the outliving child was launched")
+        if orphanedPid > 0 {
+            check(waitFor(.gone, pid: orphanedPid, within: 5),
+                  "a child exiting after its Process was released is still reaped (\(childState(orphanedPid)))")
+        }
+    }
+
+    private enum ChildState: Equatable { case running, zombie, gone }
+
+    /// The kernel's own record for `pid`: a zombie stays in the process table
+    /// with `SZOMB` until its parent reaps it.
+    private static func childState(_ pid: pid_t) -> ChildState {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return .gone }
+        return info.kp_proc.p_stat == SZOMB ? .zombie : .running
+    }
+
+    private static func waitFor(_ state: ChildState, pid: pid_t, within seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if childState(pid) == state { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return childState(pid) == state
     }
 
     // MARK: - Basic contract

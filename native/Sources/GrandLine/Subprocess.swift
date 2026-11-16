@@ -467,7 +467,8 @@ enum Subprocess {
         // reads it. Nothing here has to reap a child that outlives the
         // timeout path either: `Process` reaps its own child whenever it
         // exits, with or without a `terminationHandler`, and even after the
-        // `Process` object is gone (measured for R5-BUG-06).
+        // `Process` object is gone (R5-BUG-06, measured, and pinned by
+        // `SubprocessSelfTest.timedOutChildrenAreReaped`).
         if outcome != .timedOut {
             proc.waitUntilExit()
         }
