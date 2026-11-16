@@ -40,6 +40,7 @@ extension ShiftController {
             guard let filter = self?.projectFilter else { return true }
             return item.projectID == filter
         }
+        calendar.pageSummary = { [weak self] in self?.counts() }
         calendar.onDrillSubtitleChanged = { [weak self] in
             guard let self, self.isShowingCalendar else { return }
             self.onDrillSubtitleChanged?()

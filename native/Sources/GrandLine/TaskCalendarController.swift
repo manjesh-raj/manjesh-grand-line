@@ -58,6 +58,9 @@ final class TaskCalendarController: NSViewController {
     /// The project filter for follow-ups, as the board's Follow-ups lane
     /// applies it.
     var followUpFilter: (ShiftFollowUp) -> Bool = { _ in true }
+    /// The Tasks page's counts - the same `ShiftStore.Summary` its Board
+    /// header reads - for this view's header line (R5-BUG-04).
+    var pageSummary: (() -> ShiftStore.Summary?)?
 
     /// The Tasks page's header line follows the visible period's count.
     var onDrillSubtitleChanged: (() -> Void)?
@@ -151,6 +154,7 @@ final class TaskCalendarController: NSViewController {
     /// twice.
     func render() {
         guard isViewLoaded else { return }
+        calendarView.pageSummary = pageSummary?() ?? nil
         calendarView.configure(tasks: store.activeTasks.filter(taskFilter),
                                followUps: store.followUps.filter(followUpFilter),
                                projects: store.projects)
