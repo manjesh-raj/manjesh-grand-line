@@ -74,3 +74,24 @@ It now cuts the last sleep short at the deadline and checks once more before giv
   The five hand-rolled copies it replaced each gave up after 5s of wall clock, which cost one loaded run of `test_fully_compliant_runbook_runs_every_step_in_order` a 30s bridge timeout.
   It runs until the call it is answering returns, and an assertion inside it fails the test, where a bare `assert` in the old threads died with the thread.
   A new bridge test should use it rather than writing the response path directly.
+
+## Full review #5: `--raw`, comma-joined resources and the `Task` tool (`fm/grand-line-security-ui-fixes`)
+
+**R5-SEC-01.** Both kubectl policies (`sre_kubectl_mcp.py` and `SRELeadBridgeCommandPolicy`) denied the `secrets` resource only by a positional token's head.
+Two shapes slipped past both of them.
+`kubectl get --raw /api/v1/secrets` names an API path, so there is no `secrets` positional to check.
+`kubectl get pods,secrets -o yaml` has a head of `pods,secrets`, because the head was split on `/` and `.` but never on `,`.
+Both are now refused in both copies.
+`--raw` is a new table, `_DENIED_PATH_FLAGS` / `deniedPathFlags`, and the table-sync check in `SRELeadBridgeSelfTest` reads it like the others.
+The head check is now `_resource_heads` / `resourceHeads`, which returns every member of a comma-joined list.
+
+The new must-refuse fixtures were confirmed to fail first.
+The Python suite failed six subtests before the change.
+The Swift suite failed `commandPolicyRefusesEveryDangerousShape` on `--raw`, then again on `pods,secrets` once only `--raw` was denied.
+A comma-joined list with no secret in it (`pods,services`, `deploy,sealedsecrets`) still passes, and is asserted so.
+
+**R5-SEC-06.** SRE Lead's built-in tools were `Task` and `TodoWrite`, and its persona asked for parallel subagents on independent checks.
+That delegation could not work as described.
+Every kubectl call goes through one shared terminal tab, and the bridge refuses a second request while one is in flight, so a parallel subagent got "busy" rather than a result.
+Each subagent was also one more model loop reading pod logs an attacker can write into.
+`Task` is gone from `allowedTools` and `builtInTools`, the persona now runs its checks one after another, and `ClaudeOneShotToolPolicySelfTest` fails if either `Task` or a subagent instruction comes back.

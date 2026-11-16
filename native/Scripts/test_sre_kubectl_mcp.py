@@ -247,6 +247,36 @@ class SecretsResourceTests(unittest.TestCase):
     def test_describe_and_logs_are_covered_too(self):
         self.assertIsNotNone(mcp._validate_args("describe", ["secret/db-password"]))
 
+    def test_a_comma_joined_resource_list_is_checked_member_by_member(self):
+        # R5-SEC-01: the head of `pods,secrets` used to be the whole string,
+        # so a secret hid behind any harmless resource in front of it.
+        for args in (
+            ["pods,secrets", "-o", "yaml"],
+            ["pods,secret/db-password"],
+            ["configmaps,Secrets.v1."],
+        ):
+            with self.subTest(args=args):
+                err = mcp._validate_args("get", args)
+                self.assertIsNotNone(err, f"{args} was allowed through")
+                self.assertIn("secrets", err)
+
+    def test_raw_api_paths_are_refused(self):
+        # R5-SEC-01: `--raw` names an API path, so the resource check never
+        # sees `secrets` in it at all.
+        for args in (
+            ["--raw", "/api/v1/secrets"],
+            ["--raw=/api/v1/namespaces/prod/secrets"],
+            ["--RAW=/healthz"],
+        ):
+            with self.subTest(args=args):
+                err = mcp._validate_args("get", args)
+                self.assertIsNotNone(err, f"{args} was allowed through")
+                self.assertIn("--raw", err)
+
+    def test_a_comma_joined_list_without_a_secret_still_passes(self):
+        self.assertIsNone(mcp._validate_args("get", ["pods,services", "-n", "raas-preprod"]))
+        self.assertIsNone(mcp._validate_args("get", ["deploy,sealedsecrets"]))
+
     def test_a_resource_that_merely_contains_the_word_still_passes(self):
         # Discriminating power: the check is on the resource head, not a
         # substring, or `sealedsecrets` and a `-l app=secrets-operator`

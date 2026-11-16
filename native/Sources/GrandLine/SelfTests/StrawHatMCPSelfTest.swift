@@ -15,7 +15,7 @@
 //
 //  - **M2.5c's pin, at the Swift layer.** `--allowedTools` names exactly the
 //    four read-only tools and nothing else - in particular no `Task` and no
-//    `TodoWrite`, which `SRELead.allowedTools` does carry. Asserted as a
+//    `TodoWrite` (`SRELead.allowedTools` carries the latter). Asserted as a
 //    literal set, so a fifth tool added without a fresh decision fails here.
 //  - **The negative half of the argv.** `--permission-mode` must never
 //    appear. That is not caution: it was measured (see `StrawHatTools.swift`'s
@@ -94,9 +94,9 @@ enum StrawHatMCPSelfTest {
               "the allowlist must be exactly \(expected.sorted()), got \(actual.sorted())", &ok)
         check(actual.count == 4, "exactly four tools, got \(actual.count)", &ok)
 
-        // Not `Task`/`TodoWrite`, which SRE Lead's own allowlist carries. Its
-        // persona asks for subagent delegation; the crew's does not, so
-        // listing them would permit a capability nothing uses.
+        // Not `Task`/`TodoWrite`. SRE Lead's allowlist carries `TodoWrite`;
+        // the crew's persona asks for neither, so listing them would permit
+        // a capability nothing uses.
         for absent in ["Task", "TodoWrite", "Bash", "Read", "Write", "Edit"] {
             check(!actual.contains(absent),
                   "the crew's allowlist must not carry \"\(absent)\"", &ok)

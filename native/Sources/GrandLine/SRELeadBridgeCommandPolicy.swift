@@ -70,6 +70,12 @@ enum SRELeadBridgeCommandPolicy {
     /// Restated from `_DENIED_FLAG_PREFIXES` (S2).
     static let deniedFlagPrefixes: [String] = ["--as", "--insecure", "--client-"]
 
+    /// Restated from `_DENIED_PATH_FLAGS` (R5-SEC-01): flags that name an API
+    /// *path* rather than a resource, so `deniedResources` never sees what
+    /// they read. `kubectl get --raw /api/v1/secrets` has no `secrets`
+    /// positional at all.
+    static let deniedPathFlags: Set<String> = ["--raw"]
+
     /// Restated from `_DENIED_RESOURCES` (S2).
     static let deniedResources: Set<String> = ["secret", "secrets"]
 
@@ -141,7 +147,10 @@ enum SRELeadBridgeCommandPolicy {
                 if deniedFlags.contains(flag) || deniedFlagPrefixes.contains(where: { flag.hasPrefix($0) }) {
                     throw Refusal(reason: "argument '\(arg)' uses '\(flag)', which changes where this command connects or who it authenticates as")
                 }
-            } else if deniedResources.contains(resourceHead(arg)) {
+                if deniedPathFlags.contains(flag) {
+                    throw Refusal(reason: "argument '\(arg)' uses '\(flag)', which reads a raw API path past the resource check")
+                }
+            } else if !deniedResources.isDisjoint(with: resourceHeads(arg)) {
                 throw Refusal(reason: "argument '\(arg)' reads the 'secrets' resource, which is never allowed through this bridge")
             }
             if let smuggled = writeVerbs.first(where: { low.contains($0) }) {
@@ -165,12 +174,15 @@ enum SRELeadBridgeCommandPolicy {
         return String(arg.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[0]).lowercased()
     }
 
-    /// The resource type in a positional token, lowercased. Mirrors the
-    /// script's `_resource_head`: `secret/foo` and `secrets.v1.` both answer
-    /// a denied head.
-    static func resourceHead(_ arg: String) -> String {
+    /// Every resource type in a positional token, lowercased. Mirrors the
+    /// script's `_resource_heads`: `secret/foo` and `secrets.v1.` both answer
+    /// a denied head, and so does any member of a comma-joined list such as
+    /// `pods,secrets` (R5-SEC-01), because kubectl reads that as two resources.
+    static func resourceHeads(_ arg: String) -> Set<String> {
         let beforeSlash = arg.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)[0]
-        return String(beforeSlash.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)[0]).lowercased()
+        return Set(beforeSlash.split(separator: ",", omittingEmptySubsequences: false).map {
+            String($0.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)[0]).lowercased()
+        })
     }
 
     /// Split a `shlex.quote`-produced string back into its tokens.

@@ -440,7 +440,7 @@ final class SRELeadBridge {
             // Still busy (either it was already running, or `checkInFlight`
             // just started it) - any other request that shows up while busy
             // is refused outright rather than silently queued, so a captain
-            // (or a parallel SRE Lead subagent) calling this tool twice at
+            // (or a model retrying too eagerly) calling this tool twice at
             // once gets a clear "busy" error instead of a long, surprising
             // wait or, worse, two commands' output getting interleaved.
             rejectAllPending(reason: "SRE Lead's shared terminal is already running another command - try again once it finishes.")
