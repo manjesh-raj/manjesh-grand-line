@@ -196,6 +196,23 @@ enum ReviewFourUISelfTest {
         let persistence = HealthService.persistence.detail
         check(persistence.contains(WorkspaceModule.connections.title) && persistence.contains(WorkspaceModule.tasks.title),
               "R4-UI-07: Health describes persistence as \"\(persistence)\"", &ok)
+
+        // The vault has one name in the sidebar layout: the row's. The tab
+        // and the unlock card used to say "Poneglyph" under a Secrets row.
+        let secrets = WorkspaceModule.secrets.title
+        let vaultTab = ModuleTable.tab(for: .poneglyph, pageTab: nil)?.name
+        check(vaultTab == secrets, "R4-UI-07: the vault's tab is \"\(vaultTab ?? "none")\" under the \(secrets) row", &ok)
+        let card = CredentialVaultUnlockView()
+        card.setMode(.unlock(touchIDAvailable: false))
+        check(card.debugTitle == secrets, "R4-UI-07: the unlock card reads \"\(card.debugTitle)\" under the \(secrets) row", &ok)
+        card.setMode(.create)
+        check(!card.debugPrimaryButton.title.contains("Poneglyph"),
+              "R4-UI-07: the create button reads \"\(card.debugPrimaryButton.title)\" under the \(secrets) row", &ok)
+        // The floating bar's page is titled Poneglyph, so its card keeps that.
+        PlaceName.layout = .floatingBar
+        card.setMode(.unlock(touchIDAvailable: false))
+        check(card.debugTitle == RailDestination.poneglyph.title,
+              "R4-UI-07: the floating bar's unlock card reads \"\(card.debugTitle)\" on its Poneglyph page", &ok)
     }
 
     // MARK: R4-UI-09 - Snippets

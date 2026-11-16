@@ -352,8 +352,10 @@ enum MainSplitShellSelfTest {
                   "\(destination.rawValue) did not light \(row.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
             check(shell.currentModule == module && window.title == module.title,
                   "the window is titled \"\(window.title)\" on \(destination.rawValue), want \"\(module.title)\"", &ok)
-            check(shell.toolbar.debugCrumb.hasSuffix(module.title) && window.titleVisibility == .hidden,
-                  "the crumb reads \"\(shell.toolbar.debugCrumb)\" on \(destination.rawValue)", &ok)
+            // R5-BUG-05: the crumb and the header name the lit row, which is
+            // the Calendar on the Calendar door's route.
+            check(shell.toolbar.debugCrumb.hasSuffix(row.title) && window.titleVisibility == .hidden,
+                  "the crumb reads \"\(shell.toolbar.debugCrumb)\" on \(destination.rawValue), want \(row.title)", &ok)
             // The big title, with the page's live subtitle under it - except
             // on Connections and Console, where the captain dropped it.
             let page = shell.debugSlotController(destination) as? DaylightDrillActions
@@ -361,8 +363,8 @@ enum MainSplitShellSelfTest {
             // Home has no live subtitle of its own, so its header carries the day.
             let subtitle = destination == .homeCanvas && live.isEmpty ? MainSplitShellController.homeSubtitle() : live
             if module.showsHeader {
-                check(shell.debugHeader?.title == module.title && shell.debugHeader?.subtitle == subtitle,
-                      "\(destination.rawValue)'s header is \(String(describing: shell.debugHeader)), want \(module.title) / \(subtitle)", &ok)
+                check(shell.debugHeader?.title == row.title && shell.debugHeader?.subtitle == subtitle,
+                      "\(destination.rawValue)'s header is \(String(describing: shell.debugHeader)), want \(row.title) / \(subtitle)", &ok)
             } else {
                 check(shell.debugHeader == nil, "\(module.title) draws a header the captain dropped", &ok)
             }
@@ -1319,15 +1321,19 @@ enum MainSplitShellSelfTest {
         check(shell.debugCurrentDestination == .shift && tasks.isShowingCalendar,
               "the calendar button went to \(String(describing: shell.debugCurrentDestination)), "
               + "Tasks on \(tasks.selectedModuleTabName)", &ok)
-        check(shell.currentModule == .tasks && shell.toolbar.debugCrumb.hasSuffix("Tasks"),
-              "the calendar button drew \(shell.currentModule.title)'s chrome (\(shell.toolbar.debugCrumb)), want Tasks'", &ok)
+        // R5-BUG-05: the crumb and the header name the row the sidebar
+        // lights, so the Calendar view reads "Work › Calendar" beside a lit
+        // Calendar row, while the tabs stay Tasks' own.
+        check(shell.currentModule == .tasks && shell.toolbar.debugCrumb.hasSuffix("Calendar"),
+              "the calendar button drew \(shell.currentModule.title)'s chrome (\(shell.toolbar.debugCrumb)), "
+              + "want Tasks' tabs under a Work \u{203A} Calendar crumb", &ok)
         check(shell.toolbar.debugTabNames == ["Board", "List", "Calendar", "Weekly review"]
                 && selectedTabName(shell) == "Calendar",
               "the calendar button lit \(selectedTabName(shell) ?? "no tab") of \(shell.toolbar.debugTabNames)", &ok)
         check(shell.sidebar.debugSelectedEntry == .module(.calendar),
               "Tasks' Calendar view lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Calendar row", &ok)
-        check(shell.debugHeader?.title == "Tasks" && shell.debugHeader?.subtitle == tasks.calendar.caption,
-              "the Calendar view's header is \(String(describing: shell.debugHeader)), want Tasks / the calendar's caption", &ok)
+        check(shell.debugHeader?.title == "Calendar" && shell.debugHeader?.subtitle == tasks.calendar.caption,
+              "the Calendar view's header is \(String(describing: shell.debugHeader)), want Calendar / the calendar's caption", &ok)
         check(!tasks.debugCalendarSection.isHidden && !tasks.debugWorkspaceFilterRow.isHidden,
               "the Calendar view should show the calendar under the filter row", &ok)
 
@@ -1344,11 +1350,15 @@ enum MainSplitShellSelfTest {
         clickTab("Board", shell)
         check(shell.sidebar.debugSelectedEntry == .module(.tasks) && tasks.debugCalendarSection.isHidden,
               "Board lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Tasks row", &ok)
+        check(shell.toolbar.debugCrumb.hasSuffix("Tasks") && shell.debugHeader?.title == "Tasks",
+              "Board's crumb and header read \(shell.toolbar.debugCrumb) / \(shell.debugHeader?.title ?? "none"), want Tasks", &ok)
         check(shell.sidebar.debugClick(.module(.calendar)), "the sidebar has no Calendar row", &ok)
         settle(shell)
         check(tasks.isShowingCalendar && selectedTabName(shell) == "Calendar"
                 && shell.sidebar.debugSelectedEntry == .module(.calendar),
               "the Calendar row opened Tasks on \(tasks.selectedModuleTabName)", &ok)
+        check(shell.toolbar.debugCrumb.hasSuffix("Calendar"),
+              "the Calendar row lit beside a \(shell.toolbar.debugCrumb) crumb", &ok)
         check(shell.sidebar.debugClick(.module(.tasks)), "the sidebar has no Tasks row", &ok)
         settle(shell)
         check(selectedTabName(shell) == "Board" && shell.sidebar.debugSelectedEntry == .module(.tasks),

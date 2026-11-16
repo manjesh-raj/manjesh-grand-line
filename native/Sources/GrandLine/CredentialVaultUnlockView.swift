@@ -49,7 +49,7 @@ final class CredentialVaultUnlockView: NSView {
 
     private let card = HelmCard()
     private let iconTile = IconTileView(size: HelmMetrics.tileLarge, cornerRadius: 12)
-    private let titleLabel = NSTextField(labelWithString: "Poneglyph")
+    private let titleLabel = NSTextField(labelWithString: CredentialVaultUnlockView.pageName)
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let passwordField = HelmSecureTextField(placeholder: "Master password")
     private let confirmField = HelmSecureTextField(placeholder: "Confirm master password")
@@ -259,7 +259,7 @@ final class CredentialVaultUnlockView: NSView {
             savedItRow.isOn = false
             printRecoveryKitRow.isHidden = false
             printRecoveryKitRow.isOn = true
-            primaryButton.title = "Create Poneglyph"
+            primaryButton.title = Self.createTitle
             primaryButton.isHidden = false
             orLabel.isHidden = true
             touchIDButton.isHidden = true
@@ -273,7 +273,7 @@ final class CredentialVaultUnlockView: NSView {
             self.usingRecoveryKey = false
             recoveryField.stringValue = ""
             iconTile.configure(symbol: "lock.fill", tint: .accent)
-            titleLabel.stringValue = "Poneglyph"
+            titleLabel.stringValue = Self.pageName
             subtitleLabel.stringValue = "Enter your master password to unlock."
             passwordField.isHidden = false
             passwordField.placeholderString = "Master password"
@@ -292,7 +292,7 @@ final class CredentialVaultUnlockView: NSView {
 
         case .unreadable(let reason, let backupPath):
             iconTile.configure(symbol: "exclamationmark.triangle.fill", tint: .critical)
-            titleLabel.stringValue = "Poneglyph unavailable"
+            titleLabel.stringValue = "\(Self.pageName) unavailable"
             subtitleLabel.stringValue = reason
             passwordField.isHidden = true
             confirmField.isHidden = true
@@ -337,7 +337,20 @@ final class CredentialVaultUnlockView: NSView {
         updateStrength()
     }
 
+    /// R4-UI-07: the vault as the running layout names it - "Secrets" beside
+    /// the sidebar's Secrets row and tab, "Poneglyph" in the floating bar,
+    /// whose page is titled that. The card used to say "Poneglyph" under a
+    /// "Work › Secrets" crumb.
+    static var pageName: String { PlaceName.short(.poneglyph) }
+
+    /// The create button. "Create Secrets" would read as making a secret, so
+    /// the sidebar layout's says what the card's title already calls it.
+    static var createTitle: String {
+        PlaceName.layout == .floatingBar ? "Create \(pageName)" : "Create vault"
+    }
+
     #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
     var debugPasswordField: HelmSecureTextField { passwordField }
     var debugConfirmField: HelmSecureTextField { confirmField }
     /// UX8's "confirm you saved it" step, and the gate it drives.

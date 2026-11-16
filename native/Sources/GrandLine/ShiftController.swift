@@ -60,7 +60,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The row Follow-ups sits in under the board, and the Projects section.
     private var followUpsRow: NSView?
     private var projectsSectionView: NSView?
-    /// R4-UI-09: the sidebar layout's Follow-ups lane on the board.
+    /// R4-UI-09: Follow-ups as a lane on the board, in both layouts
+    /// (R4-UX-09 for the floating bar's).
     let followUpLane = ShiftFollowUpLaneView()
     /// Whether four lanes fit the board at the page's width now
     /// (`followUpLaneMinimumBoardWidth`).
@@ -722,6 +723,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             // switch actually lands at the page's own trailing edge.
             tabRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
+        // Whether Follow-ups fits on the board follows the column's width, in
+        // both layouts (`contentColumnDidResize`).
+        contentStack.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(contentColumnDidResize),
+                                               name: NSView.frameDidChangeNotification, object: contentStack)
 
         scroll.documentView = content
         scroll.hasVerticalScroller = true
@@ -1225,6 +1231,17 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         boardSection.translatesAutoresizingMaskIntoConstraints = false
         boardSection.addArrangedSubview(boardView)
         boardView.widthAnchor.constraint(equalTo: boardSection.widthAnchor).isActive = true
+
+        // R4-UI-09, and R4-UX-09 for the floating bar: Follow-ups is a lane
+        // on the board in both layouts while four lanes fit, rather than a
+        // full-width card stacked under it.
+        boardView.setTrailingLane(followUpLane)
+        followUpLane.onOpen = { [weak self] id in
+            guard let self, let item = self.store.followUps.first(where: { $0.id == id }) else { return }
+            self.presentFollowUpEditor(for: item)
+        }
+        followUpLane.onAdd = { [weak self] in self?.newFollowUpClicked() }
+        followUpLane.menuFor = { [weak self] id in self?.followUpLaneMenu(id: id) }
     }
 
     private func buildFailedReadCard() {
@@ -1937,6 +1954,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
         renderProjectsSection()
         if topLevelView == .weeklyReview { renderWeeklyReview() }
+        let projectsByID = Dictionary(store.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        followUpLane.setFollowUps(followUpLaneItems(), projects: projectsByID, theme: theme)
         if drawsSidebarLayout { renderWorkspaceChrome() }
         // The calendar redraws only while it shows; switching to it renders it.
         if isShowingCalendar { calendar.render() }
@@ -1990,12 +2009,21 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // not by reading the constraints).
         tasksLeftColumn?.isHidden = hideTasks
         if !drawsSidebarLayout {
-            // The calendar fills the page under the tab row; Follow-ups and
-            // Projects are the board's and the list's company.
+            // The calendar fills the page under the tab row.
+            //
+            // R4-UX-09: on Board, Follow-ups is a lane on the board while four
+            // lanes fit, and Projects leaves the page - the column's Projects
+            // group filters by them, and the List tab keeps their cards. The
+            // board used to stack both as full-width cards under its lanes.
             // The Projects section is also what a project's detail hides
             // (`applyProjectDetailFullPage`), so it stays hidden for that too.
-            followUpsRow?.isHidden = calendarShowing
-            projectsSectionView?.isHidden = calendarShowing || isProjectDetailFullPage
+            // The lane takes the classic board's untinted shape here.
+            followUpLane.adoptClassicStyle()
+            let board = tasksView == .board && !isProjectDetailFullPage && !failed
+            let laneOnBoard = board && boardFitsFollowUpLane
+            boardView.trailingLaneShown = laneOnBoard
+            followUpsRow?.isHidden = laneOnBoard || calendarShowing
+            projectsSectionView?.isHidden = board || calendarShowing || isProjectDetailFullPage
         }
         if drawsSidebarLayout {
             // The table is the List tab; the floating bar's My Tasks card
@@ -2047,7 +2075,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// `viewDidLayout` read the width the column had *before* a resize -
     /// measured in the tour lab, 1512 to 1100 left Follow-ups on a 707pt board.
     @objc private func contentColumnDidResize() {
-        guard drawsSidebarLayout, contentStack.bounds.width > 0 else { return }
+        guard contentStack.bounds.width > 0 else { return }
         let fits = contentStack.bounds.width >= Self.followUpLaneMinimumBoardWidth
         if fits != boardFitsFollowUpLane {
             boardFitsFollowUpLane = fits
@@ -2962,16 +2990,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         contentStack.insertArrangedSubview(workspaceFilterRow, at: 0)
         workspaceFilterRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         boardView.adoptWorkspaceStyle()
-        boardView.setTrailingLane(followUpLane)
-        contentStack.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(contentColumnDidResize),
-                                               name: NSView.frameDidChangeNotification, object: contentStack)
-        followUpLane.onOpen = { [weak self] id in
-            guard let self, let item = self.store.followUps.first(where: { $0.id == id }) else { return }
-            self.presentFollowUpEditor(for: item)
-        }
-        followUpLane.onAdd = { [weak self] in self?.newFollowUpClicked() }
-        followUpLane.menuFor = { [weak self] id in self?.followUpLaneMenu(id: id) }
         if let index = dashboardContainer.arrangedSubviews.firstIndex(of: boardSection) {
             dashboardContainer.insertArrangedSubview(tasksTable.card, at: index + 1)
         } else {
@@ -3095,8 +3113,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         projectPopup.selectItem(at: selected)
         doneWindowNote.isHidden = tasksView != .board || filterRowCollapsed
         refreshFilterMenuTitle()
-        let projectsByID = Dictionary(store.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        followUpLane.setFollowUps(followUpLaneItems(), projects: projectsByID, theme: theme)
         tasksTable.setRows(taskTableRows())
         followUpsTable.setRows(followUpTableRows())
     }

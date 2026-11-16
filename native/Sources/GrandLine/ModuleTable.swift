@@ -625,10 +625,14 @@ enum ModuleTable {
         //   `AppShellController.applyDrillHeader` prefers - the same
         //   "conforming page wins, this is just what an unmigrated page would
         //   show" shape every other case in this switch already follows.
+        // Its tab:
+        //   R4-UI-07: "Secrets", the name the sidebar row gives it, so the
+        //   row, the crumb, the tab and the unlock card name the vault one way.
+        //   The floating bar keeps "Poneglyph", its page's own title there.
         ModuleDescriptor(route: .poneglyph, title: "Poneglyph", symbol: "doc.text.image", hue: .amber,
                          slot: .poneglyph, subtitle: "Your credentials, encrypted and one click from the clipboard",
                          mountsEagerly: false, space: .stores, homeCards: [.poneglyph],
-                         newAction: .credential, module: .secrets, child: "Poneglyph"),
+                         newAction: .credential, module: .secrets, child: "Secrets"),
         ModuleDescriptor(route: .settings, title: "Settings", symbol: "gearshape", hue: .slate,
                          slot: .settings, subtitle: "Connection, appearance, terminal, security and backup",
                          mountsEagerly: false, space: .engineering, homeCards: [.settings],
@@ -703,7 +707,7 @@ enum ModuleTable {
                                   children: ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"],
                                   symbol: "books.vertical"),
         WorkspaceModuleDescriptor(module: .secrets, title: "Secrets", group: .work,
-                                  children: ["Poneglyph", "Automic Vault"], symbol: "key.fill"),
+                                  children: ["Secrets", "Automic Vault"], symbol: "key.fill"),
         WorkspaceModuleDescriptor(module: .kubernetes, title: "Kubernetes", group: .observe,
                                   children: ["Cluster", "Log Tail"], pageTabHost: .kubernetes),
         WorkspaceModuleDescriptor(module: .logs, title: "Logs", group: .observe, children: []),

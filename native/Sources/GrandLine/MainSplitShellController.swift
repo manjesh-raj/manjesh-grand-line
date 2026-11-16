@@ -1104,6 +1104,19 @@ final class MainSplitShellController: WorkspaceShellController {
         return ModuleTable.tab(for: currentRoute, pageTab: host?.selectedModuleTabName)
     }
 
+    /// The module the sidebar lights for what is showing: the Calendar row on
+    /// Tasks' Calendar view, unless the captain hid that row, and otherwise
+    /// the module the page lives in (`WorkspaceSidebar.item(for:)`).
+    ///
+    /// R5-BUG-05: the crumb and the header name this module, so they agree
+    /// with the lit row. Opening the Calendar door used to light "Calendar"
+    /// beside a crumb and a header that read "Work › Tasks".
+    private var litModule: WorkspaceModule {
+        guard !showingHostPage else { return currentModule }
+        let lit = ModuleTable.sidebarModule(for: currentRoute, pageTab: currentTab?.name)
+        return AppSettings.shared.hiddenModules.contains(lit) ? currentModule : lit
+    }
+
     /// The first time a page that draws its module's tabs shows here, the
     /// toolbar takes them over: the page hides its own control, and reports
     /// every switch it makes by itself so the toolbar follows.
@@ -1145,10 +1158,11 @@ final class MainSplitShellController: WorkspaceShellController {
     private func refreshModuleChrome() {
         guard toolbar != nil else { return }
         let module = currentModule
+        let lit = litModule
         if showingHostPage {
             toolbar.setCrumb(group: module.title, module: hostPageLabel)
         } else {
-            toolbar.setCrumb(group: module.group?.title, module: module.title)
+            toolbar.setCrumb(group: lit.group?.title, module: lit.title)
         }
         // R2-UX-02: Home draws no tabs. Its five spaces were a second map of
         // the app over the sidebar's four groups; Home is its own arranged
@@ -1189,7 +1203,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // unless the profile hides the module it opens.
         let hidden = AppSettings.shared.hiddenModules
         toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
-        contentPane.setHeader(title: module.showsHeader ? module.title : nil, subtitle: pageSubtitle)
+        contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: pageSubtitle)
         contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
         // The lit row follows the showing tab too: Tasks' Calendar view is
         // the Calendar row's (`ModuleTable.sidebarModule(for:pageTab:)`).
@@ -1390,7 +1404,7 @@ final class MainSplitShellController: WorkspaceShellController {
     override func workspaceSubtitleMayHaveChanged() {
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
-        contentPane.setHeader(title: currentModule.showsHeader ? currentModule.title : nil, subtitle: pageSubtitle)
+        contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle)
     }
 
     override func workspaceActionsMayHaveChanged() {

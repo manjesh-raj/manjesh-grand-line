@@ -108,7 +108,7 @@ One row per `RailDestination`. The route id stays the deep-link id after the con
 | `dest.logAnalyzer` | Log Analyzer page | Operations space card; Log Analyzer menu (Open ⇧⌘L, Analyze Clipboard); Console's Analyze Logs button; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Logs (Observe group) |  |
 | `dest.notebook` | Notebook page | Stores space card; ⌘K notebook pages; the New Note App Intent appends to today's daily note; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Notebook |  |
 | `dest.overview` | Fleet page | Home's Fleet and Morning briefing cards; the fleet-task notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › In flight (its Needs your call list is Crew › Needs you in the sidebar layout, and its Log tab is Crew › Log) |  |
-| `dest.poneglyph` | Poneglyph page | Stores space card; quick-access square (default pin); ⌘K Lock Poneglyph; the Poneglyph menu bar extra; the Copy Credential App Intent; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Secrets › Poneglyph (a table, with the credential inspector in the shell's inspector; the lock state also shows on the sidebar item) |  |
+| `dest.poneglyph` | Poneglyph page | Stores space card; quick-access square (default pin); ⌘K Lock Poneglyph; the Poneglyph menu bar extra; the Copy Credential App Intent; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Secrets › Secrets (a table, with the credential inspector in the shell's inspector; the lock state also shows on the sidebar item) |  |
 | `dest.postmortems` | Postmortems page | Stores space card; ⌘K postmortems; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Postmortems |  |
 | `dest.readingList` | Reading List page | Stores space card; ⌘K saved links; ⌥Space quick capture files links here; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Reading list |  |
 | `dest.review` | Review page | Home's Merge queue card; the pr-ready notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › Review (a ready PR carries its Merge button there) |  |
@@ -217,7 +217,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Log Analyzer` | Go > Log Analyzer | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Logs) |  |
 | `menu.Go/Notebook` | Go > Notebook | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Notebook) |  |
 | `menu.Go/Operations` | Go > Operations | shortcut ⌘3 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
-| `menu.Go/Poneglyph` | Go > Poneglyph | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Poneglyph) |  |
+| `menu.Go/Poneglyph` | Go > Poneglyph | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Secrets) |  |
 | `menu.Go/Postmortems` | Go > Postmortems | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Postmortems) |  |
 | `menu.Go/Reading List` | Go > Reading List | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Reading list) |  |
 | `menu.Go/Review` | Go > Review | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › Review) |  |
@@ -604,14 +604,14 @@ The rows and headers of every page's own column (`HelmPageSidebar`): literal one
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `nav.CredentialCategory.apiKey` | Poneglyph column: API keys | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.cloud` | Poneglyph column: Cloud & AWS | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.email` | Poneglyph column: Email | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.other` | Poneglyph column: Other | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.All credentials` | Poneglyph column: All credentials | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Collections` | Poneglyph column: Collections | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Kinds` | Poneglyph column: Kinds | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Vault` | Poneglyph column: Vault | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) |  |
+| `nav.CredentialCategory.apiKey` | Poneglyph column: API keys | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialCategory.cloud` | Poneglyph column: Cloud & AWS | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialCategory.email` | Poneglyph column: Email | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialCategory.other` | Poneglyph column: Other | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialVaultSidebar.All credentials` | Poneglyph column: All credentials | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialVaultSidebar.Collections` | Poneglyph column: Collections | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialVaultSidebar.Kinds` | Poneglyph column: Kinds | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialVaultSidebar.Vault` | Poneglyph column: Vault | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
 | `nav.HostsController.Activity` | Hosts page column: Activity | Hosts page column | Crew › Log (the captain's log this row opens; Connections keeps an Activity link in its toolbar) |  |
 | `nav.HostsController.Add host` | Hosts page, the shortcut hints panel: Add host | Hosts page, the shortcut hints panel | Connections › Hosts (the shortcut hints panel, unchanged) |  |
 | `nav.HostsController.Command palette` | Hosts page, the shortcut hints panel: Command palette | Hosts page, the shortcut hints panel | Connections › Hosts (the shortcut hints panel, unchanged) |  |
@@ -683,10 +683,10 @@ The buttons a page hands the floating bar's drill header (`drillHeaderActions`, 
 | `toolbar.ConsoleController+Toolbar.toggleKubeContextBadge()` | Check Context (the Kubernetes context badge) | ConsoleController+Toolbar page toolbar (`toggleKubeContextBadge()`) | Console (in the sidebar layout the window toolbar's page actions, with an overflow menu form - R2-UX-06; the floating bar keeps the page's own toolbar row) |  |
 | `toolbar.ConsoleController+Toolbar.toggleQuotaUsage()` | Claude usage | ConsoleController+Toolbar page toolbar (`toggleQuotaUsage()`) | Console (in the sidebar layout the window toolbar's page actions, with an overflow menu form - R2-UX-06; the floating bar keeps the page's own toolbar row) |  |
 | `toolbar.ConsoleController+Toolbar.toggleSRELead()` | Toggle the SRE Lead investigation pane | ConsoleController+Toolbar page toolbar (`toggleSRELead()`) | Console (in the sidebar layout the window toolbar's page actions, with an overflow menu form - R2-UX-06; the floating bar keeps the page's own toolbar row) |  |
-| `toolbar.CredentialVaultController.addButton` | CredentialVaultController header action `addButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
-| `toolbar.CredentialVaultController.lockButton` | CredentialVaultController header action `lockButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
-| `toolbar.CredentialVaultController.recoveryButton` | CredentialVaultController header action `recoveryButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
-| `toolbar.CredentialVaultController.settingsButton` | CredentialVaultController header action `settingsButton` | the floating bar's drill header, right side | Secrets › Poneglyph (moves into the window toolbar as a module action) |  |
+| `toolbar.CredentialVaultController.addButton` | CredentialVaultController header action `addButton` | the floating bar's drill header, right side | Secrets › Secrets (moves into the window toolbar as a module action) |  |
+| `toolbar.CredentialVaultController.lockButton` | CredentialVaultController header action `lockButton` | the floating bar's drill header, right side | Secrets › Secrets (moves into the window toolbar as a module action) |  |
+| `toolbar.CredentialVaultController.recoveryButton` | CredentialVaultController header action `recoveryButton` | the floating bar's drill header, right side | Secrets › Secrets (moves into the window toolbar as a module action) |  |
+| `toolbar.CredentialVaultController.settingsButton` | CredentialVaultController header action `settingsButton` | the floating bar's drill header, right side | Secrets › Secrets (moves into the window toolbar as a module action) |  |
 | `toolbar.DictationController.refreshButton` | DictationController header action `refreshButton` | the floating bar's drill header, right side | Dictation (moves into the window toolbar as a module action) |  |
 | `toolbar.DocsController.backTapped()` | Back | DocsController page toolbar (`backTapped()`) | Knowledge › Docs |  |
 | `toolbar.DocsController.forwardTapped()` | Forward | DocsController page toolbar (`forwardTapped()`) | Knowledge › Docs |  |
@@ -760,14 +760,14 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `runClicked` | Console (Compose popover) |  |
 | `action.ConsoleController+SRELead` | ConsoleController+SRELead controls | `generatePostmortemClicked`, `startSRELeadForCurrentTabClicked` | Console (SRE Lead) |  |
 | `action.ConsoleController+Toolbar` | ConsoleController+Toolbar controls | `analyzeLogsTapped`, `herdrRestartButtonClicked`, `incidentButtonClicked`, `newShellTab`, `refreshBlockView`, `showFind`, `tailLogsTapped`, `toggleBlockView`, `toggleComposer`, `toggleDragForwarding`, `toggleKubeContextBadge`, `toggleQuotaUsage`, `toggleSRELead` | Console (the toolbar above the terminal, unchanged) |  |
-| `action.CredentialVaultController` | CredentialVaultController controls | `addTapped`, `clearClipboardNow`, `lockTapped`, `recoveryTapped`, `settingsTapped` | Secrets › Poneglyph |  |
-| `action.CredentialVaultEditorController` | CredentialVaultEditorController controls | `deleteTapped`, `pasteTOTPFromClipboard`, `toggleGenerator` | Secrets › Poneglyph |  |
+| `action.CredentialVaultController` | CredentialVaultController controls | `addTapped`, `clearClipboardNow`, `lockTapped`, `recoveryTapped`, `settingsTapped` | Secrets › Secrets |  |
+| `action.CredentialVaultEditorController` | CredentialVaultEditorController controls | `deleteTapped`, `pasteTOTPFromClipboard`, `toggleGenerator` | Secrets › Secrets |  |
 | `action.CredentialVaultInspector` | CredentialVaultInspector controls | `closeClicked`, `copyAccountClicked`, `copyClicked`, `deleteClicked`, `editClicked`, `revealClicked` | Inspector (the credential inspector, hosted in the shell's pane without its own head; the floating bar keeps its column) |  |
-| `action.CredentialVaultListSection` | CredentialVaultListSection controls | `copyClicked`, `copyCodeClicked`, `overflowClicked`, `overflowItemPicked`, `revealClicked` | Secrets › Poneglyph (the floating bar's list; the sidebar layout draws the table) |  |
-| `action.CredentialVaultRecoverySheet` | CredentialVaultRecoverySheet controls | `chooseFile`, `copyCode`, `printCard`, `printNewKey`, `removeKey`, `runImport`, `savePDF` | Secrets › Poneglyph |  |
-| `action.CredentialVaultSettingsController` | CredentialVaultSettingsController controls | `changePasswordClicked`, `syncNowClicked` | Secrets › Poneglyph |  |
-| `action.CredentialVaultTable` | CredentialVaultTable controls | `copyClicked`, `revealClicked` | Secrets › Poneglyph (a credential row's Reveal, Copy and 2FA code, in the sidebar layout's table) |  |
-| `action.CredentialVaultUnlockView` | CredentialVaultUnlockView controls | `primaryClicked`, `recoveryLinkClicked`, `touchIDClicked` | Secrets › Poneglyph |  |
+| `action.CredentialVaultListSection` | CredentialVaultListSection controls | `copyClicked`, `copyCodeClicked`, `overflowClicked`, `overflowItemPicked`, `revealClicked` | Secrets › Secrets (the floating bar's list; the sidebar layout draws the table) |  |
+| `action.CredentialVaultRecoverySheet` | CredentialVaultRecoverySheet controls | `chooseFile`, `copyCode`, `printCard`, `printNewKey`, `removeKey`, `runImport`, `savePDF` | Secrets › Secrets |  |
+| `action.CredentialVaultSettingsController` | CredentialVaultSettingsController controls | `changePasswordClicked`, `syncNowClicked` | Secrets › Secrets |  |
+| `action.CredentialVaultTable` | CredentialVaultTable controls | `copyClicked`, `revealClicked` | Secrets › Secrets (a credential row's Reveal, Copy and 2FA code, in the sidebar layout's table) |  |
+| `action.CredentialVaultUnlockView` | CredentialVaultUnlockView controls | `primaryClicked`, `recoveryLinkClicked`, `touchIDClicked` | Secrets › Secrets |  |
 | `action.DaylightBarController` | DaylightBarController controls | `avatarClicked`, `clicked`, `destinationButtonClicked`, `focusChipClicked`, `logoutRowClicked`, `pillClicked`, `quickAccessMenuPicked`, `quickAccessOverflowClicked`, `settingsRowClicked`, `themeToggleClicked` | Toolbar (the bar's controls move to the window toolbar and the sidebar - see the chrome rows) |  |
 | `action.DictationController` | DictationController controls | `cleanupToggled`, `localWhisperToggled`, `modelActionTapped`, `modelDeleteTapped`, `modelMoreTapped`, `refreshTapped`, `resetShortcutTapped`, `statusActionTapped` | Dictation |  |
 | `action.DictationHistoryAndVocabularyViews` | DictationHistoryAndVocabularyViews controls | `deleteClicked`, `removeTapped` | Dictation |  |
@@ -819,7 +819,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.NotebookController` | NotebookController controls | `ClosureSleeve.invoke`, `deleteTapped`, `newPageTapped`, `showFind`, `todayTapped`, `toggleRail`, `toolbarModePicked` | Knowledge › Notebook (in the sidebar layout every one of them is in the window toolbar - R2-UX-06) |  |
 | `action.NotificationBridgePanel` | NotificationBridgePanel controls (the triage cards' footer buttons, Hide, and the Snoozed list's Unsnooze) | `expandClicked`, `hideClicked`, `primaryClicked`, `snoozeClicked`, `unsnoozeClicked` | Toolbar (in the sidebar layout the notifications button opens the triage-card panel: one card per item with its action, Show N and a Snooze menu in the card's footer, an Inbox and Snoozed segment, and Hide on informational cards; the floating bar keeps the classic panel) |  |
 | `action.NotificationCenterPopover` | NotificationCenterPopover controls | `actionClicked`, `activate`, `bellClicked`, `disclosureClicked`, `markAllReadClicked`, `primaryActionClicked`, `restoreSnoozedClicked`, `undoClicked` | Toolbar (the notifications button opens the same Notification Center) |  |
-| `action.PasswordGeneratorPanel` | PasswordGeneratorPanel controls | `copyTapped`, `lengthChanged`, `regenerate`, `useTapped` | Secrets › Poneglyph (password generator) |  |
+| `action.PasswordGeneratorPanel` | PasswordGeneratorPanel controls | `copyTapped`, `lengthChanged`, `regenerate`, `useTapped` | Secrets › Secrets (password generator) |  |
 | `action.PoneglyphMenuBar` | PoneglyphMenuBar controls | `copyTapped`, `iconClicked`, `openVault` | Menu bar extra (Poneglyph, unchanged) |  |
 | `action.PortForwardingController` | PortForwardingController controls | `addRuleClicked`, `cancel`, `kindChanged`, `removeClicked`, `save` | Connections › Hosts (host editor) |  |
 | `action.PostmortemsController` | PostmortemsController controls | `openLogAnalyzerTapped`, `seedExamplePostmortemTapped` | Knowledge › Postmortems |  |
@@ -924,8 +924,8 @@ Every view that registers for dragged types.
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `drop.CodePreviewController` | Drop a file onto Code Preview to open it | CodePreviewController | Code |  |
-| `drop.CredentialVaultListSection` | Drag credentials to reorder them | CredentialVaultListSection | Secrets › Poneglyph (the floating bar's list; the sidebar layout's table reorders the same way) |  |
-| `drop.HelmDataTable` | Drag table rows to reorder them | HelmDataTable | Secrets › Poneglyph (the credential table, within a category) |  |
+| `drop.CredentialVaultListSection` | Drag credentials to reorder them | CredentialVaultListSection | Secrets › Secrets (the floating bar's list; the sidebar layout's table reorders the same way) |  |
+| `drop.HelmDataTable` | Drag table rows to reorder them | HelmDataTable | Secrets › Secrets (the credential table, within a category) |  |
 | `drop.KeyEditorController` | Drop a private key file into the SSH key editor | KeyEditorController | Connections › Keys (key editor) |  |
 | `drop.LogAnalyzerController` | Drop a log file onto the Log Analyzer | LogAnalyzerController | Logs |  |
 | `drop.ReadingListController` | Drop a URL or text onto the Reading List to save it | ReadingListController | Knowledge › Reading list |  |
@@ -1036,7 +1036,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `chrome.statusLine` | One row of live indicators: crew needs, sessions, a failing service, vault lock, Claude usage, sync | Not in the app today; the same signals are spread over Home cards and the bell | Sidebar (the layout draws no status strip on any module, the captain's call after stage 6, and the content runs to the foot of the window; each indicator it carried is where its module already shows it: the crew, Tasks, Poneglyph's lock and a failing service as badges on their sidebar rows, the live sessions on Console's row and in its session strip, Claude usage on Home's Claude card, Tasks sync in the Tasks page's sync pill, and the focus timer chip in the toolbar - row by row below) | `WorkspaceSignals.swift` `func badge(for module: WorkspaceModule`; `MainSplitShellController.swift` `body.bottomAnchor.constraint(equalTo: root.bottomAnchor)`; `MainSplitShellController.swift` `contentPane.sessionStrip.render(registry)` |
 | `chrome.statusLine.crew` | How many tasks are waiting on the captain, or "Crew all clear" | The bell's decision entry and the Fleet page | Crew (the attention pill on Crew's sidebar row, from Crew › Needs you's own read, with the count in its accessibility label and tooltip; Crew › Needs you lists the tasks, and the bell's decision entry opens it) | `WorkspaceSignals.swift` `private func crewBadge(`; `FleetController.swift` `var needsYouReading: FleetNeedsYouReading` |
 | `chrome.statusLine.health` | A background service that keeps failing, by name | The Health page and the bell | Health (a red dot on Health's sidebar row, whose tooltip and accessibility label name the failing service; the Health page lists every service) | `WorkspaceSignals.swift` `private func healthBadge(`; `WorkspaceSignalsMonitor.swift` `ServiceHealthRegistry.shared.observe` |
-| `chrome.statusLine.vault` | Whether Poneglyph is locked | Poneglyph's own page | Secrets (a lock on Secrets' sidebar row while Poneglyph is locked, and an alarm when its file cannot be read; Secrets › Poneglyph shows locked or unlocked) | `WorkspaceSignals.swift` `private var vaultBadge:`; `CredentialVaultStore.swift` `func observeLock(` |
+| `chrome.statusLine.vault` | Whether Poneglyph is locked | Poneglyph's own page | Secrets (a lock on Secrets' sidebar row while Poneglyph is locked, and an alarm when its file cannot be read; Secrets › Secrets shows locked or unlocked) | `WorkspaceSignals.swift` `private var vaultBadge:`; `CredentialVaultStore.swift` `func observeLock(` |
 | `chrome.statusLine.claude` | Claude usage in the five-hour window | Home's Claude card and Console's usage popover | Home (the Claude card, on Home in the standard card layout, from the Fleet page's quota reading, keeping the last reading through a failed one; Console's usage popover shows it too) | `HomeCanvasController.swift` `private func fillClaudeStatus`; `Workspace.swift` `self?.homeCanvas.applyQuota(result)`; `QuotaUsagePopover.swift` `final class QuotaUsageController` |
 | `chrome.statusLine.sync` | When Tasks last synced, or why it did not | The Tasks page's sync pill | Tasks (the Tasks page's own sync pill, in the window toolbar while Tasks shows, in its own words and with its tooltip) | `ShiftController.swift` `enum ShiftSyncPresentation`; `ShiftController.swift` `private let syncPill = HoverHighlightView()` |
 | `chrome.sidebarBadges` | A module's count, dot or lock on its sidebar row: Crew's waiting tasks, Tasks due, Poneglyph locked, a failing service on Health, Setup's updates, Console's live sessions | Not in the app; the floating bar has no per-module badges | Sidebar (each module row's trailing badge, from `WorkspaceSignals`; nothing while unknown, a dash while first reading, the last value with its time after a failed read; each carries an accessibility label) | `WorkspaceSignals.swift` `func badge(for module: WorkspaceModule`; `WorkspaceSidebar.swift` `final class WorkspaceSidebarBadgeView`; `WorkspaceSignalsMonitor.swift` `final class WorkspaceSignalsMonitor` |
@@ -1154,12 +1154,12 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `surface.poneglyph.unlock` | Unlock the vault with the password or Touch ID | Poneglyph page | Secrets › Poneglyph (lock state also on the sidebar item) | `CredentialVaultStore.swift` `func unlockWithTouchID` |
-| `surface.poneglyph.list` | Credential list, inspector, copy, reveal and TOTP ring | Poneglyph page | Secrets › Poneglyph (a table whose rows keep Reveal, Copy and the live 2FA code; the credential inspector is the shell's inspector) | `PoneglyphTOTPViews.swift` `final class TOTPRingView`; `CredentialVaultController.swift` `private func renderTable()`; `CredentialVaultTable.swift` `final class CredentialTOTPCell` |
-| `surface.poneglyph.kinds` | Filter credentials by kind: logins, 2FA codes, secure notes | Poneglyph column | Secrets › Poneglyph (the vault's own filter column, unchanged) | `CredentialVaultSidebar.swift` `title: "2FA codes"` |
-| `surface.poneglyph.import` | Import credentials from a CSV export | Poneglyph page | Secrets › Poneglyph (unchanged) | `CredentialVaultImport.swift` `enum CredentialVaultImport` |
-| `surface.poneglyph.recovery` | Recovery key enrolment and a printable recovery kit | Poneglyph page | Secrets › Poneglyph (unchanged) | `CredentialVaultRecovery.swift` `enum CredentialVaultRecovery` |
-| `surface.poneglyph.generator` | Password generator | Poneglyph editor | Secrets › Poneglyph (unchanged) | `PasswordGeneratorPanel.swift` `PasswordGeneratorPanel` |
+| `surface.poneglyph.unlock` | Unlock the vault with the password or Touch ID | Poneglyph page | Secrets › Secrets (lock state also on the sidebar item) | `CredentialVaultStore.swift` `func unlockWithTouchID` |
+| `surface.poneglyph.list` | Credential list, inspector, copy, reveal and TOTP ring | Poneglyph page | Secrets › Secrets (a table whose rows keep Reveal, Copy and the live 2FA code; the credential inspector is the shell's inspector) | `PoneglyphTOTPViews.swift` `final class TOTPRingView`; `CredentialVaultController.swift` `private func renderTable()`; `CredentialVaultTable.swift` `final class CredentialTOTPCell` |
+| `surface.poneglyph.kinds` | Filter credentials by kind: logins, 2FA codes, secure notes | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) | `CredentialVaultSidebar.swift` `title: "2FA codes"` |
+| `surface.poneglyph.import` | Import credentials from a CSV export | Poneglyph page | Secrets › Secrets (unchanged) | `CredentialVaultImport.swift` `enum CredentialVaultImport` |
+| `surface.poneglyph.recovery` | Recovery key enrolment and a printable recovery kit | Poneglyph page | Secrets › Secrets (unchanged) | `CredentialVaultRecovery.swift` `enum CredentialVaultRecovery` |
+| `surface.poneglyph.generator` | Password generator | Poneglyph editor | Secrets › Secrets (unchanged) | `PasswordGeneratorPanel.swift` `PasswordGeneratorPanel` |
 | `surface.vault.panel` | Automic Vault secret names, hardeners and recipes | Vault page | Secrets › Automic Vault (secret names and verified launchers as tables under their cards; the recipe card is unchanged) | `VaultRecipe.swift` `struct VaultRecipe`; `VaultController.swift` `extension VaultController: SidebarLayoutAdopting` |
 
 ## Observe and Workbench
@@ -1202,7 +1202,7 @@ The checks that stand between the captain and an irreversible or secret-revealin
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `gate.appLock` | App lock: idle and session timers and the lock screen | Whole app | Window (the lock overlay; every module sits under it) | `AppLockGate.swift` `enum AppLockedSurface` |
-| `gate.poneglyphReveal` | Touch ID before revealing a protected credential | Poneglyph | Secrets › Poneglyph (unchanged) | `CredentialVaultController.swift` `requiresTouchIDToReveal` |
+| `gate.poneglyphReveal` | Touch ID before revealing a protected credential | Poneglyph | Secrets › Secrets (unchanged) | `CredentialVaultController.swift` `requiresTouchIDToReveal` |
 | `gate.avApproval` | Nothing unattended calls `av list` | Vault and its poller | Secrets › Automic Vault (unchanged) | `VaultData.swift` `func loadToolStatus` |
 | `gate.commandRisk` | Risk confirmation before a destructive command runs | DevOps Commands and ⌘K | Connections › Commands (unchanged) | `CommandLibraryViews.swift` `enum CommandRiskConfirmation` |
 | `gate.aiAuthored` | An AI-authored command always asks first | Command library | Connections › Commands (unchanged) | `CommandLibraryViews.swift` `func confirmAIAuthored` |

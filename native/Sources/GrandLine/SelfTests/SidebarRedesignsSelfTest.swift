@@ -817,6 +817,30 @@ enum SidebarRedesignsSelfTest {
         let subtitles = [shell.workspace.bootstrap.drillHeaderSubtitle, shell.workspace.automation.drillHeaderSubtitle]
         check(subtitles.allSatisfy { $0 == "4 of 5 steps done" },
               "the Setup tabs' subtitles read \(subtitles) beside a \"4 / 5\" card", &ok)
+
+        // R5-BUG-03: every tab's tiles follow a theme change, Setup steps'
+        // included, and a later count change does not put the old theme back.
+        // The first tile is a plain figure, so it paints in the theme's ink.
+        let ink = { (theme: HelmTheme) in HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex)) }
+        check(!sameColour(ink(.dusk), ink(.daylight)), "Dusk and Daylight share an ink, so the theme check is vacuous", &ok)
+        for theme in [HelmTheme.dusk, .daylight] {
+            ThemeManager.shared.setTheme(theme)
+            counts.toolsUpToDate = theme.id == HelmTheme.dusk.id ? 5 : 6
+            BackgroundSignalsPoller.shared.debugSetCounts(counts)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            for (name, row) in rows {
+                let painted = row.debugCards.first?.debugValueColor.map(HelmContrast.components)
+                check(painted.map { sameColour($0, ink(theme)) } == true,
+                      "\(name)'s summary tiles kept another theme's ink after switching to \(theme.id)", &ok)
+            }
+        }
+        // R5-PROC-04: one set of source observers, one feed observer per row.
+        check(SetupSummaryFeed.shared.debugObserverCount == rows.count,
+              "the summary feed has \(SetupSummaryFeed.shared.debugObserverCount) observers for \(rows.count) rows", &ok)
+    }
+
+    private static func sameColour(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Bool {
+        abs(a.0 - b.0) < 0.01 && abs(a.1 - b.1) < 0.01 && abs(a.2 - b.2) < 0.01
     }
 
     // MARK: 5 - The floating bar
@@ -836,6 +860,25 @@ enum SidebarRedesignsSelfTest {
         check(tasks.debugBoardView?.debugColumnViews.allSatisfy { !$0.usesWorkspaceStyle } == true,
               "the floating bar's board takes the sidebar layout's lanes", &ok)
         check(tasks.debugPushedBackCount == nil, "the floating bar's review draws the sidebar layout's count", &ok)
+        // R4-UX-09: the floating bar's Board is a board, not a board with
+        // Follow-ups and Projects stacked under it. Follow-ups is a lane in
+        // the classic board's shape, Projects is the column's, and List
+        // keeps both cards under its tasks.
+        let pending = shell.workspace.shiftStore.followUps.filter { $0.status == .pending }.count
+        check(pending > 0, "the demo tasks hold no pending follow-up, so the lane check is vacuous", &ok)
+        tasks.selectModuleTab(named: "Board")
+        settle(shell)
+        check(tasks.debugFollowUpLaneOnBoard && tasks.debugFollowUpsRowHidden && tasks.debugProjectsSectionHidden,
+              "the floating bar's Board stacks cards under the board (lane \(tasks.debugFollowUpLaneOnBoard), "
+              + "Follow-ups card hidden \(tasks.debugFollowUpsRowHidden), Projects hidden \(tasks.debugProjectsSectionHidden))", &ok)
+        check(tasks.followUpLane.debugUsesClassicStyle && tasks.followUpLane.debugCount == "\(pending)",
+              "the floating bar's Follow-ups lane is not the classic lane of \(pending) (\(tasks.followUpLane.debugCount))", &ok)
+        tasks.selectModuleTab(named: "List")
+        settle(shell)
+        check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden && !tasks.debugProjectsSectionHidden,
+              "the floating bar's List lost its Follow-ups or Projects card", &ok)
+        tasks.selectModuleTab(named: "Board")
+        settle(shell)
         for route in [RailDestination.updates, .bootstrap, .automation, .githubSync] {
             shell.workspace.navigator.show(route)
             settle(shell)

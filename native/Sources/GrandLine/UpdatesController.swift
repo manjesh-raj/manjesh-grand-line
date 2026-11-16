@@ -1060,7 +1060,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         summaryStrip.applyTheme(theme)
         for row in rows { applyThemeToRow(row) }
         if drawsSidebarLayout {
-            setupSummary.applyTheme(theme)
             toolsTable.applyTheme(theme)
             toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
             renderToolsTable()

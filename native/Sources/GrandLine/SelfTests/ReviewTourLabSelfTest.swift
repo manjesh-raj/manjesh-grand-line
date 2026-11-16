@@ -144,8 +144,12 @@ enum ReviewTourLabSelfTest {
         autoreleasepool {
             let (window, shell) = ReviewTourLab.makeOffScreenShell()
             let before = Set(shell.mountedDestinationSlotsForTests)
+            // Seeded, so the sweep below lands on cards. An empty Board is its
+            // lanes and the ground alone since R4-UX-09 took the Follow-ups
+            // and Projects cards off it, which a 7x7 sweep reads as two
+            // colours. The store is the process's scratch one.
             let log = ReviewTourLab.run(
-                steps: [.resize(width: 1400, height: 900), .goto(.shift), .render(name: "tasks")],
+                steps: [.resize(width: 1400, height: 900), .demoTasks, .goto(.shift), .render(name: "tasks")],
                 shell: shell, window: window, outputDirectory: out)
 
             check(log.contains("goto shift"), "the log must record what it did, got \(log)", &ok)

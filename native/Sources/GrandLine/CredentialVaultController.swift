@@ -627,7 +627,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
                 self.unlockView.clearPasswordFields()
                 self.noteInteraction()
                 self.render()
-                Toast.show(in: self.view, message: "Poneglyph created")
+                // R4-UI-07: named as the create button named it.
+                Toast.show(in: self.view, message: PlaceName.layout == .floatingBar
+                    ? "\(CredentialVaultUnlockView.pageName) created" : "Vault created")
                 // R4-UX-02: the recovery step the creation copy promises.
                 // The vault was created unlocked, so this is the same sheet
                 // and the same gate as the toolbar's button.
@@ -1426,7 +1428,7 @@ enum LAContextFactory {
 
 // MARK: - The sidebar layout
 
-// In the sidebar layout Secrets › Poneglyph is the prototype's credential
+// In the sidebar layout Secrets › Secrets is the prototype's credential
 // table, and the credential inspector is the shell's own pane rather than a
 // column of this page. The vault's own filter column stays, and so does the
 // search row over the table.

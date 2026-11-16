@@ -154,7 +154,7 @@ enum SplitShellModelSelfTest {
             .knowledge: [("Notebook", .notebook, false), ("Runbooks", .runbooks, false),
                          ("Postmortems", .postmortems, false), ("Docs", .docs, false),
                          ("Reading list", .readingList, false)],
-            .secrets: [("Poneglyph", .poneglyph, false), ("Automic Vault", .vault, false)],
+            .secrets: [("Secrets", .poneglyph, false), ("Automic Vault", .vault, false)],
             .kubernetes: [("Cluster", .kubernetes, true), ("Log Tail", .kubernetes, true)],
             .setup: [("Updates", .updates, false), ("Setup steps", .bootstrap, false),
                      ("Automation", .automation, false), ("GitHub sync", .githubSync, false)],

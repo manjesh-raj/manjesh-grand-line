@@ -49,7 +49,10 @@ extension ShiftController {
             // the board first - the panel it scrolls to is not on that view.
             if self.topLevelView != .dashboard { self.switchTopLevelView(.dashboard) }
             switch id {
-            case Self.followUpsRowID: self.scrollToPanel(self.followUpPanel)
+            // R4-UX-09: on Board, Follow-ups is a lane on the board while it
+            // fits, and the card under the board is hidden.
+            case Self.followUpsRowID:
+                self.scrollToPanel(self.followUpPanel.isHiddenOrHasHiddenAncestor ? self.boardSection : self.followUpPanel)
             default: break
             }
         }

@@ -21,10 +21,11 @@
 // **Unknown is never zero (GL-14).** A figure whose reading has not been taken
 // this session is a dash, and the card's tooltip says why.
 //
-// Two halves: `SetupSummary` is the pure model (asserted headless by
-// `SidebarRedesignsModelSelfTest`), and `SetupSummaryRow` is the view each of
-// the four pages shows in the sidebar layout. The floating bar's pages draw
-// no summary row.
+// Three parts: `SetupSummary` is the pure model (asserted headless by
+// `SidebarRedesignsModelSelfTest`), `SetupSummaryFeed` observes the readings
+// once for every page, and `SetupSummaryRow` is the view each of the four
+// pages shows in the sidebar layout. The floating bar's pages draw no summary
+// row.
 
 import AppKit
 
@@ -178,19 +179,76 @@ enum SetupSummary {
     }
 }
 
-/// The five cards, kept current from the three readings. One per Setup page
-/// in the sidebar layout; each observes on its own and only repaints (GL-24).
-final class SetupSummaryRow: NSView {
-    private let cards = SetupSummary.captions.map { HelmMetricCard(caption: $0, tint: nil) }
-    private var countsToken: BackgroundSignalsPoller.CountsObservation?
-    private var configRepoToken: UUID?
-    private var stepsToken: UUID?
+/// The five cards' one reading, which every `SetupSummaryRow` shows.
+///
+/// R5-PROC-04: each of the four Setup pages used to build a row that
+/// registered its own observer on every source, so one counts change ran four
+/// identical derivations, and `DotfilesAutoSync` (which has no `unobserve`)
+/// kept a closure per row forever. The sources are observed here once, for the
+/// app's lifetime, and a row only repaints from `cards`.
+final class SetupSummaryFeed {
+    static let shared = SetupSummaryFeed()
+
+    private(set) var cards: [SetupSummary.Card] = []
     private var dotfiles: DotfilesAutoSync.Status?
     private var configRepo: ConfigRepoPrivacy.Reading?
+    private var observers: [UUID: () -> Void] = [:]
+
+    private init() {
+        _ = BackgroundSignalsPoller.shared.observeCounts { [weak self] _ in self?.refresh() }
+        DotfilesAutoSync.shared.observeStatus { [weak self] _ in
+            self?.dotfiles = DotfilesAutoSync.shared.reportedStatus
+            self?.refresh()
+        }
+        _ = ConfigRepoPrivacy.observe { [weak self] reading in
+            self?.configRepo = reading
+            self?.refresh()
+        }
+        _ = SetupStepsReading.shared.observe { [weak self] in self?.refresh() }
+        dotfiles = DotfilesAutoSync.shared.reportedStatus
+        configRepo = ConfigRepoPrivacy.lastReading
+        refresh()
+    }
+
+    /// `fn` runs after every change to `cards`.
+    func observe(_ fn: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        observers[token] = fn
+        return token
+    }
+
+    func unobserve(_ token: UUID) { observers[token] = nil }
+
+    /// Re-read the three readings and tell every row.
+    private func refresh() {
+        cards = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts,
+                                   steps: SetupStepsReading.shared.progress, dotfiles: dotfiles,
+                                   configRepo: configRepo)
+        for fn in observers.values { fn() }
+    }
+
+    #if FM_SELFTESTS
+    var debugObserverCount: Int { observers.count }
+    #endif
+}
+
+/// The five cards, drawn from `SetupSummaryFeed`. One per Setup page in the
+/// sidebar layout, and each only repaints (GL-24).
+///
+/// R5-BUG-03: the row follows the theme by itself. It used to wait for its
+/// page to forward the theme, Setup steps' page never did, and the row then
+/// re-applied the theme it was mounted with on every count change - five
+/// dark tiles on a Daylight page.
+final class SetupSummaryRow: NSView {
+    private let cards = SetupSummary.captions.map { HelmMetricCard(caption: $0, tint: nil) }
+    private let feed: SetupSummaryFeed
+    private var feedToken: UUID?
+    private var themeToken: ThemeObservation?
     private var theme: HelmTheme = ThemeManager.shared.theme
     private(set) var shown: [SetupSummary.Card] = []
 
-    init() {
+    init(feed: SetupSummaryFeed = .shared) {
+        self.feed = feed
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         let row = HelmMetricRow(cards)
@@ -202,34 +260,23 @@ final class SetupSummaryRow: NSView {
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         setAccessibilityElement(false)
-        countsToken = BackgroundSignalsPoller.shared.observeCounts { [weak self] _ in self?.render() }
-        DotfilesAutoSync.shared.observeStatus { [weak self] _ in
-            self?.dotfiles = DotfilesAutoSync.shared.reportedStatus
-            self?.render()
-        }
-        configRepoToken = ConfigRepoPrivacy.observe { [weak self] reading in
-            self?.configRepo = reading
-            self?.render()
-        }
-        stepsToken = SetupStepsReading.shared.observe { [weak self] in self?.render() }
-        dotfiles = DotfilesAutoSync.shared.reportedStatus
-        configRepo = ConfigRepoPrivacy.lastReading
+        feedToken = feed.observe { [weak self] in self?.render() }
         render()
+        // After `render`, so the first synchronous firing paints cards that
+        // already hold their figures (ThemeManager's checklist, item 4).
+        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     deinit {
-        if let countsToken { BackgroundSignalsPoller.shared.unobserveCounts(countsToken) }
-        if let configRepoToken { ConfigRepoPrivacy.unobserve(configRepoToken) }
-        if let stepsToken { SetupStepsReading.shared.unobserve(stepsToken) }
+        if let feedToken { feed.unobserve(feedToken) }
+        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
-    /// Re-read the three readings and repaint the cards.
-    func render() {
-        shown = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts,
-                                   steps: SetupStepsReading.shared.progress, dotfiles: dotfiles,
-                                   configRepo: configRepo)
+    /// Repaint the cards from the feed's figures.
+    private func render() {
+        shown = feed.cards
         for (card, figure) in zip(cards, shown) {
             card.setTint(figure.tint)
             card.configure(text: figure.text, signals: figure.signals, unknownReason: figure.unknownReason)
@@ -237,7 +284,7 @@ final class SetupSummaryRow: NSView {
         applyTheme(theme)
     }
 
-    func applyTheme(_ theme: HelmTheme) {
+    private func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         for card in cards { card.applyTheme(theme) }
     }
