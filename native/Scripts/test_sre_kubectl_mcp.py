@@ -46,6 +46,48 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sre_kubectl_mcp as mcp  # noqa: E402
 
 
+def _write_response(bridge_dir, request_id, payload):
+    """Answer a bridge request the way `SRELeadBridge.writeResponse` does:
+    write a `.tmp` file, then rename it into place. A plain `open(..., "w")`
+    makes the response path exist, empty, before any JSON is in it, and the
+    poll loop can read it in that window - which is how
+    `test_response_arriving_just_before_timeout_is_still_picked_up` flaked in
+    CI with "Expecting value: line 1 column 1 (char 0)"."""
+    final = os.path.join(bridge_dir, f"response-{request_id}.json")
+    tmp = final + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f)
+    os.rename(tmp, final)
+
+
+class _FakeClock:
+    """Stands in for `mcp._now` / `mcp._sleep`, so the poll loop's timeout is
+    driven by simulated time rather than by real sleeps on a loaded runner.
+    `at(t, action)` runs `action` the moment simulated time reaches `t`,
+    including partway through a sleep."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+        self._scheduled = []
+
+    def at(self, t, action):
+        self._scheduled.append((t, action))
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        end = self.now + seconds
+        for t, action in sorted(self._scheduled, key=lambda pair: pair[0]):
+            if self.now < t <= end:
+                self.now = t
+                action()
+        self._scheduled = [(t, a) for t, a in self._scheduled if t > end]
+        self.now = end
+
+
 class ValidationTests(unittest.TestCase):
     """Unaffected by the execution-model change - re-run to prove it stayed that way."""
 
@@ -285,8 +327,7 @@ class BridgeRequestTests(unittest.TestCase):
                         "*         preprod-eks    preprod-eks    aws        raas-uat\n"
                         "          dev-eks        dev-eks        aws        default\n"
                     )
-                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                        json.dump({"ok": True, "output": fake_output}, f)
+                    _write_response(self.bridge_dir, request_id, {"ok": True, "output": fake_output})
                     return
                 time.sleep(0.05)
             raise AssertionError("no request file appeared")
@@ -315,8 +356,7 @@ class BridgeRequestTests(unittest.TestCase):
                     # Mimics `SRELeadBridge.nextPendingRequest` claiming
                     # (deleting) the request file as soon as it's read.
                     os.remove(os.path.join(self.bridge_dir, reqs[0]))
-                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                        json.dump({"ok": True, "output": "pod/api-1   1/1   Running"}, f)
+                    _write_response(self.bridge_dir, request_id, {"ok": True, "output": "pod/api-1   1/1   Running"})
                     return
                 time.sleep(0.05)
             raise AssertionError("no request file appeared")
@@ -342,8 +382,7 @@ class BridgeRequestTests(unittest.TestCase):
                     request_id = reqs[0][len("request-"):-len(".json")]
                     with open(os.path.join(self.bridge_dir, reqs[0])) as f:
                         captured["command"] = json.load(f)["command"]
-                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                        json.dump({"ok": True, "output": ""}, f)
+                    _write_response(self.bridge_dir, request_id, {"ok": True, "output": ""})
                     return
                 time.sleep(0.05)
 
@@ -369,14 +408,34 @@ class BridgeRequestTests(unittest.TestCase):
 
 class BridgeTimeoutTests(unittest.TestCase):
     """A response that never appears must time out cleanly, not hang, and
-    must not leave a stale request file behind."""
+    must not leave a stale request file behind. A response that lands before
+    the deadline - even during the poll loop's last sleep - must still be
+    returned.
+
+    These run on `_FakeClock`, not real sleeps. The earlier versions raced a
+    background thread against `time.sleep`, and failed under CPU load in two
+    ways: the thread could look for the request once, before it existed (or
+    while only its `.tmp` was there), and give up; or its non-atomic write
+    could be read while still empty."""
+
+    _TIMEOUT = 1.0
+    _POLL = 0.3
 
     def setUp(self):
         import tempfile
+        from unittest import mock
         self._tmpdir_ctx = tempfile.TemporaryDirectory()
         self.bridge_dir = self._tmpdir_ctx.name
         self._old_env = os.environ.get("SRE_LEAD_BRIDGE_DIR")
         os.environ["SRE_LEAD_BRIDGE_DIR"] = self.bridge_dir
+
+        self.clock = _FakeClock()
+        for name, value in (("_now", self.clock.time), ("_sleep", self.clock.sleep),
+                            ("_TIMEOUT_SECONDS", self._TIMEOUT),
+                            ("_POLL_INTERVAL_SECONDS", self._POLL)):
+            patcher = mock.patch.object(mcp, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def tearDown(self):
         if self._old_env is None:
@@ -385,38 +444,61 @@ class BridgeTimeoutTests(unittest.TestCase):
             os.environ["SRE_LEAD_BRIDGE_DIR"] = self._old_env
         self._tmpdir_ctx.cleanup()
 
+    def _requests(self):
+        return [f for f in os.listdir(self.bridge_dir) if f.startswith("request-") and f.endswith(".json")]
+
+    def _respond_at(self, t, output):
+        """Answer the one pending request when simulated time reaches `t`."""
+        answered = []
+
+        def respond():
+            reqs = self._requests()
+            self.assertEqual(len(reqs), 1, reqs)
+            _write_response(self.bridge_dir, reqs[0][len("request-"):-len(".json")],
+                            {"ok": True, "output": output})
+            answered.append(self.clock.now)
+
+        self.clock.at(t, respond)
+        return answered
+
     def test_times_out_and_cleans_up_the_request_file(self):
-        from unittest import mock
-        with mock.patch.object(mcp, "_TIMEOUT_SECONDS", 0.3), \
-                mock.patch.object(mcp, "_POLL_INTERVAL_SECONDS", 0.05):
-            outcome = mcp._run_kubectl("get", ["pods"], None)
+        outcome = mcp._run_kubectl("get", ["pods"], None)
 
         self.assertFalse(outcome["ok"])
         self.assertIn("timed out", outcome["error"])
-        remaining = [f for f in os.listdir(self.bridge_dir) if f.startswith("request-")]
-        self.assertEqual(remaining, [])
+        self.assertEqual(self._requests(), [])
+        # It waited the whole timeout and no longer: the last sleep is cut
+        # short to land exactly on the deadline.
+        self.assertAlmostEqual(self.clock.now, self._TIMEOUT)
 
     def test_response_arriving_just_before_timeout_is_still_picked_up(self):
-        from unittest import mock
+        # 0.95 falls inside the final sleep (0.9 -> 1.0), after the last
+        # in-loop check and before the deadline. Guard the fixture: if the
+        # timings drift so 0.95 is no longer in that window, this stops
+        # testing the boundary.
+        last_check = (self._TIMEOUT // self._POLL) * self._POLL
+        arrival = 0.95
+        self.assertLess(last_check, arrival)
+        self.assertLess(arrival, self._TIMEOUT)
+        answered = self._respond_at(arrival, "node-1   Ready")
 
-        def respond_late():
-            time.sleep(0.15)
-            reqs = [f for f in os.listdir(self.bridge_dir) if f.startswith("request-")]
-            if not reqs:
-                return
-            request_id = reqs[0][len("request-"):-len(".json")]
-            with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                json.dump({"ok": True, "output": "node-1   Ready"}, f)
+        outcome = mcp._run_kubectl("get", ["nodes"], None)
 
-        t = threading.Thread(target=respond_late)
-        t.start()
-        with mock.patch.object(mcp, "_TIMEOUT_SECONDS", 5), \
-                mock.patch.object(mcp, "_POLL_INTERVAL_SECONDS", 0.05):
-            outcome = mcp._run_kubectl("get", ["nodes"], None)
-        t.join(timeout=5)
-
+        self.assertEqual(len(answered), 1)
         self.assertTrue(outcome["ok"], outcome)
         self.assertEqual(outcome["output"], "node-1   Ready")
+        # The response file was consumed, not left behind.
+        self.assertEqual([f for f in os.listdir(self.bridge_dir) if f.startswith("response-")], [])
+
+    def test_response_arriving_after_the_deadline_is_not_waited_for(self):
+        answered = self._respond_at(self._TIMEOUT + 0.05, "too late")
+
+        outcome = mcp._run_kubectl("get", ["nodes"], None)
+
+        self.assertFalse(outcome["ok"])
+        self.assertIn("timed out", outcome["error"])
+        self.assertEqual(answered, [])
+        self.assertEqual(self._requests(), [])
 
 
 class RunbookExecutionTests(unittest.TestCase):
@@ -462,8 +544,7 @@ class RunbookExecutionTests(unittest.TestCase):
                 if reqs:
                     request_id = reqs[0][len("request-"):-len(".json")]
                     os.remove(os.path.join(self.bridge_dir, reqs[0]))
-                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                        json.dump({"ok": True, "output": output_for(answered)}, f)
+                    _write_response(self.bridge_dir, request_id, {"ok": True, "output": output_for(answered)})
                     answered += 1
                 time.sleep(0.05)
 
@@ -654,8 +735,7 @@ class RunbookExecutionTests(unittest.TestCase):
                 if reqs:
                     request_id = reqs[0][len("request-"):-len(".json")]
                     os.remove(os.path.join(self.bridge_dir, reqs[0]))
-                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
-                        json.dump({"ok": False, "error": "busy"}, f)
+                    _write_response(self.bridge_dir, request_id, {"ok": False, "error": "busy"})
                     return
                 time.sleep(0.05)
 

@@ -204,6 +204,13 @@ def _resource_head(arg):
 _TIMEOUT_SECONDS = 30
 _POLL_INTERVAL_SECONDS = 0.2
 
+# The poll loop's clock and sleep, as module seams so a test can drive the
+# timeout deterministically instead of racing real sleeps. Monotonic rather
+# than wall clock: a wall-clock step (NTP, a manual change) must not shorten
+# or stretch the timeout.
+_now = time.monotonic
+_sleep = time.sleep
+
 
 def _validate_args(subcommand, args):
     if subcommand not in _ALLOWED_VERBS:
@@ -289,8 +296,11 @@ def _execute_via_bridge(remote_cmd):
     except OSError as e:
         return {"ok": False, "error": f"could not write the bridge request: {e}"}
 
-    deadline = time.time() + _TIMEOUT_SECONDS
-    while time.time() < deadline:
+    # The existence check runs once more after the last sleep, at the
+    # deadline, so a response that landed during that sleep is still picked
+    # up rather than orphaned behind a timeout error.
+    deadline = _now() + _TIMEOUT_SECONDS
+    while True:
         if os.path.exists(response_path):
             try:
                 with open(response_path) as f:
@@ -303,7 +313,10 @@ def _execute_via_bridge(remote_cmd):
                 except OSError:
                     pass
             return outcome
-        time.sleep(_POLL_INTERVAL_SECONDS)
+        remaining = deadline - _now()
+        if remaining <= 0:
+            break
+        _sleep(min(_POLL_INTERVAL_SECONDS, remaining))
 
     # Timed out waiting on the Swift side - clean up a still-pending request
     # file so it isn't picked up and acted on later, after this call has
