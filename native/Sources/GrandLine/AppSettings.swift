@@ -40,6 +40,7 @@ final class AppSettings {
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
+        static let didSeedManualChecksSchedule = "fm.didSeedManualChecksSchedule"
         static let terminalShortcuts = "fm.terminalShortcuts"
         static let terminalScrollbackRows = "fm.terminal.scrollbackRows"
         static let terminalTrimsBackgroundScrollback = "fm.terminal.trimBackgroundScrollback"
@@ -646,6 +647,14 @@ final class AppSettings {
     var didSeedDailyGitHubSyncSchedule: Bool {
         get { defaults.bool(forKey: Keys.didSeedDailyGitHubSyncSchedule) }
         set { defaults.set(newValue, forKey: Keys.didSeedDailyGitHubSyncSchedule) }
+    }
+
+    /// Guards the one-time seed of the weekly "Manual checks due" schedule
+    /// (R5-PROC-06) - see `ScheduleSeeding.seedManualChecksIfNeeded`. Same
+    /// "seed once, never resurrect" contract as the flag above.
+    var didSeedManualChecksSchedule: Bool {
+        get { defaults.bool(forKey: Keys.didSeedManualChecksSchedule) }
+        set { defaults.set(newValue, forKey: Keys.didSeedManualChecksSchedule) }
     }
 
     /// F2 (audit §2 item 1): where the captain was at quit - the showing

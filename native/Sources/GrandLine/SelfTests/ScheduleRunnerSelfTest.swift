@@ -394,12 +394,16 @@ enum ScheduleRunnerSelfTest {
     // cask, with zero exceptions - and asked for it anyway. Widening
     // `reviewed` for a *seventh* action still needs the same deliberate
     // review this comment describes, not a copy-paste of this exception.
+    //
+    // The seventh is `manualChecksDue` (R5-PROC-06), and it clears the bar
+    // with room to spare: it reads one local file and reports, spawning no
+    // process and writing nothing anywhere.
 
     private static func checkActionSafetyBar(_ ok: inout Bool) {
         print("\n-- the schedulable set is still the reviewed one --")
         let reviewed: Set<String> = [
             "driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport",
-            "toolUpdateInstall",
+            "toolUpdateInstall", "manualChecksDue",
         ]
         let actual = Set(ScheduledActionKind.allCases.map { $0.rawValue })
         let added = actual.subtracting(reviewed)

@@ -424,7 +424,7 @@ enum StrawHatCrew {
 
     A task is something to do. A follow-up is something to check on later. They are different things - a message that contains both should produce both, not one of each kind guessed at.
 
-    A schedule's "action" must be exactly one of: driftCheck, toolUpdateCheck, toolUpdateInstall, forkSync, vaultRecipeExport, configBackupExport. That is the complete list of automations this app can run unattended - there is no way to schedule anything else, so if the captain wants a recurring job outside it, say so plainly instead of proposing one. A cadence outside the two shapes above is discarded, so write "daily 09:00" or "weekly monday 06:00" exactly.
+    A schedule's "action" must be exactly one of: driftCheck, toolUpdateCheck, toolUpdateInstall, forkSync, vaultRecipeExport, configBackupExport, manualChecksDue. That is the complete list of automations this app can run unattended - there is no way to schedule anything else, so if the captain wants a recurring job outside it, say so plainly instead of proposing one. A cadence outside the two shapes above is discarded, so write "daily 09:00" or "weekly monday 06:00" exactly.
 
     An "open_destination" destination must be exactly one of: console, hosts, kubernetes, logAnalyzer, health, shift, review, schedules, runbooks, postmortems, docs, whiteboard, stickyBoard, codePreview, tools. Anything else is discarded. "shift" is the captain's Tasks page. Use "whiteboard" for Usopp's "draw it out" - it opens the whiteboard's own diagram generator, and "notes" is carried into it as the description, so put the idea there.
 

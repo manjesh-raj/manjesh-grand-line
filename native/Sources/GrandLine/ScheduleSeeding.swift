@@ -57,4 +57,26 @@ enum ScheduleSeeding {
         )
         markSeeded()
     }
+
+    /// R5-PROC-06: Monday at 9:00 AM local time. Weekly is plenty for a
+    /// register whose shortest real cadence is months, and a Monday morning
+    /// bell entry is one the captain sees at the start of a week rather than
+    /// in the middle of one.
+    static let manualChecksCadence = ScheduleCadence.weekly(weekday: 2, hour: 9, minute: 0)
+
+    /// Seeds the weekly "Manual checks due" schedule once, enabled. Unlike the
+    /// daily updates install (S16), this one is read-only - it reads one file
+    /// and reports - so there is no decision to withhold by seeding it off.
+    /// Notifies on change only, so a week with nothing due is silent.
+    static func seedManualChecksIfNeeded(store: ScheduleStore,
+                                         alreadySeeded: () -> Bool,
+                                         markSeeded: () -> Void,
+                                         now: Date = Date()) {
+        guard !alreadySeeded() else { return }
+        store.add(
+            AutomationSchedule(action: .manualChecksDue, cadence: manualChecksCadence, notifyOn: .changeOnly),
+            now: now
+        )
+        markSeeded()
+    }
 }
