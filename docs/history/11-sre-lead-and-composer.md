@@ -70,5 +70,7 @@ It now cuts the last sleep short at the deadline and checks once more before giv
 - The clock and sleep are module seams (`_now`, `_sleep`), and `BridgeTimeoutTests` drives them with a fake clock instead of a thread.
   The boundary case drops the response at 0.95s inside a 0.9-1.0s final sleep, and a sibling asserts a response at 1.05s is not waited for.
   Restoring the old loop fails all three timeout tests.
-- Every threaded responder in the file now answers through one `_write_response` helper that mirrors `writeResponse`'s tmp-and-rename.
-  A new responder should use it rather than writing the response path directly.
+- Every threaded responder in the file is now one `_BridgeResponder`, a context manager that answers through `_write_response` (the same tmp-and-rename as `writeResponse`).
+  The five hand-rolled copies it replaced each gave up after 5s of wall clock, which cost one loaded run of `test_fully_compliant_runbook_runs_every_step_in_order` a 30s bridge timeout.
+  It runs until the call it is answering returns, and an assertion inside it fails the test, where a bare `assert` in the old threads died with the thread.
+  A new bridge test should use it rather than writing the response path directly.
