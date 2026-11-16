@@ -826,6 +826,148 @@ extension TerminalView {
         lineRenderCache = lineRenderCache.filter { visible.contains($0.key) }
     }
 
+    #if os(macOS)
+    // MARK: - Grand Line patch 10: repaint only the rows whose content changed
+    //
+    // See `Vendor/SwiftTerm/README.md`'s "Tenth patch". The parser's dirty
+    // range is coarser than what changed on screen: `endSynchronizedOutput`
+    // marks every row dirty, and a TUI wraps every frame in synchronized
+    // output, so a frame that moved one spinner cell repainted the whole grid.
+    // `updateDisplay` now narrows the range to the rows whose painted state
+    // differs from what the row was last invalidated with.
+    //
+    // The record is written only where a row is invalidated, never in
+    // `draw(_:)`: a draw can also be a `cacheDisplay` render that never reaches
+    // the screen, and AppKit gives no way to tell the two apart from inside
+    // `draw`. A draw may only *forget* a record its live state contradicts,
+    // which can cost one extra repaint later and can never skip one.
+    struct PaintedRowState {
+        let line: BufferLine
+        let generation: UInt64
+        let cells: [CharData]
+        let renderMode: BufferLine.RenderLineMode
+        let cols: Int
+        let alternateBuffer: Bool
+        let selection: Range<Int>?
+        let linkRanges: [Terminal.LinkMatch.RowRange]?
+        let linkMode: LinkHighlightMode
+        let commandActive: Bool
+        let customBlockGlyphs: Bool
+        let useBrightColors: Bool
+        let selectionBackground: TTColor
+        let selectionForeground: TTColor
+        let styleEpoch: UInt64
+        let highlightVersion: UInt64
+    }
+
+    func paintedRowState (row: Int, line: BufferLine, cols: Int) -> PaintedRowState {
+        PaintedRowState(line: line,
+                        generation: line.generation,
+                        cells: line.getData(),
+                        renderMode: line.renderMode,
+                        cols: cols,
+                        alternateBuffer: terminal.isCurrentBufferAlternate,
+                        selection: selectedColumnsRange(row: row, cols: cols),
+                        linkRanges: linkHighlightRange,
+                        linkMode: linkHighlightMode,
+                        commandActive: commandActive,
+                        customBlockGlyphs: customBlockGlyphs,
+                        useBrightColors: useBrightColors,
+                        selectionBackground: selectedTextBackgroundColor,
+                        selectionForeground: selectedTextForegroundColor,
+                        styleEpoch: lineRenderStyleEpoch,
+                        highlightVersion: effectiveRowHighlightVersion)
+    }
+
+    /// Whether drawing `line` at absolute `row` now would paint exactly what
+    /// `state` records. Every input patch 7's cache key compares is compared
+    /// here too. The line's identity and generation settle the cells for a
+    /// row nothing wrote to; a row that was written is compared cell by cell,
+    /// because the generation moves on every write, even of identical text.
+    func paintedRowStateMatches (_ state: PaintedRowState, row: Int, line: BufferLine, cols: Int) -> Bool {
+        guard state.cols == cols,
+              state.renderMode == line.renderMode,
+              state.alternateBuffer == terminal.isCurrentBufferAlternate,
+              state.selection == selectedColumnsRange(row: row, cols: cols),
+              state.linkRanges == linkHighlightRange,
+              state.linkMode == linkHighlightMode,
+              state.commandActive == commandActive,
+              state.customBlockGlyphs == customBlockGlyphs,
+              state.useBrightColors == useBrightColors,
+              state.selectionBackground === selectedTextBackgroundColor,
+              state.selectionForeground === selectedTextForegroundColor,
+              state.styleEpoch == lineRenderStyleEpoch,
+              state.highlightVersion == effectiveRowHighlightVersion,
+              state.cells.count == line.count else {
+            return false
+        }
+        if state.line === line && state.generation == line.generation {
+            return true
+        }
+        for col in 0..<line.count {
+            let live = line[col]
+            let painted = state.cells[col]
+            if live.code != painted.code || live.width != painted.width
+                || live.payload.code != painted.payload.code || live.attribute != painted.attribute {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Narrows the parser's dirty rows to the ones whose painted state changed,
+    /// recording what each of those is about to be painted with. `nil` means
+    /// nothing visible changed. AppKit unions every rect invalidated before a
+    /// display pass into one (measured on macOS 26), so the answer is a single
+    /// band from the first changed row to the last.
+    func rowsNeedingRepaint (rowStart: Int, rowEnd: Int) -> (rowStart: Int, rowEnd: Int)? {
+        let buffer = terminal.displayBuffer
+        let rows = terminal.rows
+        if paintedRows.keys.contains(where: { $0 >= rows }) {
+            paintedRows = paintedRows.filter { $0.key < rows }
+        }
+        let first = max(0, rowStart)
+        let last = min(rows - 1, rowEnd)
+        // An image or a kitty placement paints across rows whose own cells did
+        // not change, so with either on screen the parser's range stands.
+        let carriesImages = (0..<rows).contains { screenRow in
+            let row = buffer.yDisp + screenRow
+            return row < buffer.lines.count && buffer.lines[row].images?.isEmpty == false
+        }
+        if first > last || carriesImages || !terminal.kittyGraphicsState.placementsByKey.isEmpty {
+            paintedRows.removeAll()
+            return (rowStart, rowEnd)
+        }
+        var changed: (rowStart: Int, rowEnd: Int)?
+        for screenRow in first...last {
+            let row = buffer.yDisp + screenRow
+            if row < buffer.lines.count {
+                let line = buffer.lines[row]
+                if let painted = paintedRows[screenRow],
+                   paintedRowStateMatches(painted, row: row, line: line, cols: buffer.cols) {
+                    continue
+                }
+                paintedRows[screenRow] = paintedRowState(row: row, line: line, cols: buffer.cols)
+            } else {
+                paintedRows[screenRow] = nil
+            }
+            changed = (changed?.rowStart ?? screenRow, screenRow)
+        }
+        return changed
+    }
+
+    /// The rect `updateDisplay` invalidates for a dirty range, or `nil` when
+    /// no row in it would paint anything different.
+    func repaintRegion (rowStart: Int, rowEnd: Int) -> CGRect? {
+        guard let band = rowsNeedingRepaint(rowStart: rowStart, rowEnd: rowEnd) else {
+            return nil
+        }
+        return TerminalView.invalidationRegion (
+            rowStart: band.rowStart, rowEnd: band.rowEnd, terminalRows: terminal.rows,
+            frameWidth: frame.width, frameHeight: frame.height, cellHeight: cellDimension.height)
+    }
+    #endif
+
     //
     // Given a line of text with attributes, returns column-aware segments that can be drawn later.
     //
@@ -1511,6 +1653,19 @@ extension TerminalView {
             } 
             #endif
             let line = displayBuffer.lines [row]
+            #if os(macOS)
+            // Grand Line patch 10: a draw only ever forgets a record, never
+            // writes one - see `rowsNeedingRepaint`.
+            let screenRow = row - bufferOffset
+            if let painted = paintedRows[screenRow],
+               !paintedRowStateMatches(painted, row: row, line: line, cols: displayBuffer.cols) {
+                paintedRows[screenRow] = nil
+            }
+            if let rowPaintObserver, dirtyRect.minY <= lineOrigin.y,
+               lineOrigin.y + cellDimension.height <= dirtyRect.maxY {
+                rowPaintObserver(screenRow)
+            }
+            #endif
             // Grand Line patch 7: cached per-row render (attributed segments +
             // their CTLines/runs), rebuilt only when this row actually changed.
             let cachedRender = preparedLineRender(row: row, line: line, cols: displayBuffer.cols)
@@ -2020,9 +2175,6 @@ extension TerminalView {
         terminal.clearUpdateRange ()
 
         #if os(macOS)
-        let region = TerminalView.invalidationRegion (
-            rowStart: rowStart, rowEnd: rowEnd, terminalRows: terminal.rows,
-            frameWidth: frame.width, frameHeight: frame.height, cellHeight: cellDimension.height)
 #if canImport(MetalKit)
         if metalView != nil {
             let buffer = terminal.displayBuffer
@@ -2052,11 +2204,14 @@ extension TerminalView {
             }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
-        } else {
+        } else if let region = repaintRegion(rowStart: rowStart, rowEnd: rowEnd) {
+            // Grand Line patch 10: only the rows whose painted state changed.
             setNeedsDisplay(region)
         }
 #else
-        setNeedsDisplay(region)
+        if let region = repaintRegion(rowStart: rowStart, rowEnd: rowEnd) {
+            setNeedsDisplay(region)
+        }
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real

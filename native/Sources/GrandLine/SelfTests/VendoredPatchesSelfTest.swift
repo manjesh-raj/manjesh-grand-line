@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Permanent guard on the nine local patches carried in
+// Permanent guard on the ten local patches carried in
 // `native/Vendor/SwiftTerm` (P9 of full review #3), and on the three carried
 // in `native/Vendor/YamlSwift`. Run with:
 //
@@ -9,10 +9,10 @@
 // **What this exists for, and what it deliberately does not do.**
 //
 // The review's finding about the pin is that "every sync is a five-patch
-// re-apply"; it is a nine-patch re-apply now. The hazard in that sentence is
+// re-apply"; it is a ten-patch re-apply now. The hazard in that sentence is
 // not the pin being old - a stale pin is a decision, recorded and re-taken on a
 // schedule in that directory's own README - it is a *re-apply that silently
-// drops one of them*. Six of the nine live in two files upstream rewrites
+// drops one of them*. Seven of the ten live in two files upstream rewrites
 // heavily (measured at v1.20.0:
 // `Apple/AppleTerminalView.swift` +813/-157, `Mac/MacTerminalView.swift`
 // +647/-54), so the realistic failure is a hunk lost in a merge, not a
@@ -20,8 +20,9 @@
 // project has already paid for once each: illegible dim text on a light theme,
 // a duplicated character at a wrap boundary, 6-16% CPU while backgrounded, a
 // corrupt `kubectl` table row, ~25ms of CoreText work per background frame,
-// terminal keyword highlighting that silently stops colouring anything, and a
-// copy that silently loses the middle of a long line after a resize.
+// terminal keyword highlighting that silently stops colouring anything, a
+// copy that silently loses the middle of a long line after a resize, and a
+// live TUI repainting the whole grid on every frame.
 //
 // So this asserts *presence*, by the narrowest marker each patch cannot exist
 // without. It is not a behavioural test: each patch already has one (see the
@@ -115,6 +116,13 @@ enum VendoredPatchesSelfTest {
             ("Sources/SwiftTerm/Buffer.swift", "struct ReflowedCursor"),
             ("Sources/SwiftTerm/Buffer.swift", "_lines[_y + _yBase].isWrapped = true"),
             ("Sources/SwiftTerm/Buffer.swift", "_lines [_y + _yBase].isWrapped = true"),
+        ]),
+        (10, "repaint only the rows that changed", [
+            ("Sources/SwiftTerm/Mac/MacTerminalView.swift", "var paintedRows"),
+            ("Sources/SwiftTerm/Mac/MacTerminalView.swift", "public var rowPaintObserver"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "func rowsNeedingRepaint"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "if let region = repaintRegion(rowStart: rowStart, rowEnd: rowEnd)"),
+            ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "paintedRows[screenRow] = nil"),
         ]),
     ]
 

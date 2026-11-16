@@ -111,6 +111,11 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     ///    `backgroundIntervalNanos` (~2 Hz) instead of 60 Hz. It cannot be
     ///    suspended, because a backgrounded window can still be partly
     ///    visible and must not freeze into a stale image.
+    ///  - **On screen in the active app, but not focused** (another tab, the
+    ///    inspector or another window has the keyboard): painting is capped
+    ///    at `unfocusedIntervalNanos` (30 Hz). Nobody is typing into it, so
+    ///    nothing needs the extra frames, and live output still reads as live.
+    ///    Full review #5's R5-PERF-01 named this case.
     ///
     /// The terminal **model** is never gated - every byte still reaches the
     /// buffer through the ordinary `feed` path, so scrollback stays exact and
@@ -123,14 +128,18 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// `updateDisplay`, `queuePendingDisplay` or `draw(_:)` is `open`, so
     /// there is no override point for this from outside that module.
 
-    /// 60 Hz - upstream's own hardcoded cadence, for a visible, active window.
+    /// 60 Hz - upstream's own hardcoded cadence, for the terminal being typed into.
     static let foregroundIntervalNanos: UInt64 = 16_670_000
+    /// 30 Hz, for a visible terminal in the active app that does not have the
+    /// keyboard.
+    static let unfocusedIntervalNanos: UInt64 = 33_340_000
     /// ~2 Hz, for a visible window whose app is not frontmost. Slow enough to
     /// take the redraw cost to near nothing, fast enough that a glance at a
     /// half-covered window still shows live output.
     static let backgroundIntervalNanos: UInt64 = 500_000_000
 
     private var occlusionObserver: NSObjectProtocol?
+    private var keyWindowObservers: [NSObjectProtocol] = []
     private var appActivityObservers: [NSObjectProtocol] = []
 
     /// Whether this view's window is currently *fully* covered, tracked only
@@ -157,6 +166,8 @@ final class CockpitTerminalView: LocalProcessTerminalView {
             NotificationCenter.default.removeObserver(occlusionObserver)
             self.occlusionObserver = nil
         }
+        for o in keyWindowObservers { NotificationCenter.default.removeObserver(o) }
+        keyWindowObservers = []
         if let window {
             windowOccluded = false
             occlusionObserver = NotificationCenter.default.addObserver(
@@ -167,6 +178,15 @@ final class CockpitTerminalView: LocalProcessTerminalView {
                     self.windowOccluded = !w.occlusionState.contains(.visible)
                 }
                 self.refreshDisplayGating()
+            }
+            // `hasFocus` reads the window's key state as well as this view's
+            // first-responder state, and only the second arrives through the
+            // `hasFocus` setter below.
+            for name: NSNotification.Name in [NSWindow.didBecomeKeyNotification,
+                                              NSWindow.didResignKeyNotification] {
+                keyWindowObservers.append(NotificationCenter.default.addObserver(
+                    forName: name, object: window, queue: .main
+                ) { [weak self] _ in self?.refreshDisplayGating() })
             }
         } else {
             windowOccluded = false
@@ -212,9 +232,30 @@ final class CockpitTerminalView: LocalProcessTerminalView {
             onScreen = false
         }
         displaySuspended = !onScreen
-        displayIntervalNanos = NSApp.isActive
-            ? Self.foregroundIntervalNanos
-            : Self.backgroundIntervalNanos
+        var appIsActive = NSApp.isActive
+        #if FM_SELFTESTS
+        if let forced = Self.appIsActiveOverrideForTests { appIsActive = forced }
+        #endif
+        if !appIsActive {
+            displayIntervalNanos = Self.backgroundIntervalNanos
+        } else if hasFocus {
+            displayIntervalNanos = Self.foregroundIntervalNanos
+        } else {
+            displayIntervalNanos = Self.unfocusedIntervalNanos
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// `NSApp.isActive` cannot be set from inside a suite, which runs as an
+    /// inactive accessory process.
+    static var appIsActiveOverrideForTests: Bool?
+    #endif
+
+    /// SwiftTerm sets this from `becomeFirstResponder`/`resignFirstResponder`,
+    /// neither of which is `open`, so this is the one place this module can
+    /// hear about a focus change.
+    override var hasFocus: Bool {
+        didSet { refreshDisplayGating() }
     }
 
     // MARK: Local, theme-coloured selection in a mouse-reporting tab
@@ -652,6 +693,7 @@ final class CockpitTerminalView: LocalProcessTerminalView {
             NSEvent.removeMonitor(keyActivityMonitor)
         }
         if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        for o in keyWindowObservers { NotificationCenter.default.removeObserver(o) }
         for o in appActivityObservers { NotificationCenter.default.removeObserver(o) }
     }
 }

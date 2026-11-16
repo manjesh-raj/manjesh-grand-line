@@ -480,6 +480,88 @@ cursor, the carriage-return case, the pending wrap, the cleared screen and the
 shell's redraw, fuzzes 1,800 seeded sequences, and reads the foreground from a
 real `/bin/sh` on a PTY.
 
+## Tenth patch: repaint only the rows that changed (`fm/grand-line-energy-fix-terminal-repaint`)
+
+**Files:** `Apple/AppleTerminalView.swift` (`PaintedRowState`,
+`paintedRowState`, `paintedRowStateMatches`, `rowsNeedingRepaint`,
+`repaintRegion`, the `updateDisplay` call site and a forget-only check plus
+the `rowPaintObserver` call in `drawTerminalContents`) and
+`Mac/MacTerminalView.swift` (the `paintedRows` storage and the public
+`rowPaintObserver`).
+
+**What it fixes.** R5-PERF-01 and fix 7 of full review #5: with the Console
+frontmost on a live `herdr` TUI the app burned 8-15% of a core. The stack
+sample put the main thread's time in `TerminalView.draw` and in
+`Terminal.setMode`/`resetMode`, which is a TUI wrapping every frame in
+synchronized output (`?2026h` ... `?2026l`).
+
+The review's description, "SwiftTerm has no dirty-row repaint", turned out to
+be half right, and the half matters for the fix. `updateDisplay` already
+invalidates only the parser's dirty row band, and with patch 3's geometry and
+the `RGBA8Uint` backing format AppKit really does hand `draw(_:)` that band:
+measured on macOS 26, a one-row edit drew a 45pt band in a 420pt view. The
+problem is the band itself. `Terminal.endSynchronizedOutput` calls
+`refresh(startRow: 0, endRow: rows - 1)`, so **every synchronized frame marks
+every row dirty**, however few cells the TUI actually wrote. A TUI that diffs
+its own output (ratatui, Ink) moves one spinner cell and gets a full-grid
+repaint, at up to the display cadence.
+
+**Why it has to be a patch.** `updateDisplay`, `draw(_:)` and
+`drawTerminalContents` are none of them `open`, and the over-wide range comes
+from `Terminal` itself.
+
+**What it does.**
+
+- `updateDisplay` narrows the parser's range to the rows whose painted state
+  changed. The state is recorded per screen row whenever a row is invalidated:
+  the cells, the render mode, the buffer (normal or alternate), and every
+  other input patch 7's cache key compares (columns, the row's selection,
+  link highlights, link mode, ⌘ state, glyph policy, selection colours, style
+  epoch, highlighter version). A row that nothing wrote to is settled by its
+  `BufferLine` identity and generation; a row that was written is compared
+  cell by cell, because the generation moves even when the text is identical.
+- The record is **written only where a row is invalidated, never in
+  `draw(_:)`**. A draw can also be a `cacheDisplay` render that never reaches
+  the screen, and nothing inside `draw` tells the two apart (measured: both
+  report an `NSBitmapGraphicsContext` that is drawing to the screen). A draw
+  may only *forget* a record its live state contradicts, so a draw that races
+  ahead of `updateDisplay`, or an off-screen render, can cost one extra repaint
+  later and can never skip one.
+- AppKit unions every rect invalidated before a display pass into one
+  (measured on macOS 26: two disjoint bands arrived as one rect spanning
+  both), so the result is one band from the first changed row to the last,
+  still extended by patch 3's `invalidationRegion`.
+- Any image or kitty placement on screen turns the narrowing off and the
+  parser's range stands, because those paint across rows whose own cells did
+  not change.
+
+**What it deliberately does not touch.** The terminal model, the parser's own
+dirty tracking, `endSynchronizedOutput`, the Metal renderer and the iOS path.
+Only which rows the CoreGraphics path asks AppKit to repaint changes.
+
+**Measured.** A herdr-shaped TUI at 60 frames a second (synchronized output,
+a box-drawn sidebar, a spinner every frame and a scrolling log pane four
+times a second) in a real window at 1100x700, 46 rows. Before the patch every
+draw repainted all 46 rows. After it a draw repaints 7.8 rows on average, and
+the rows painted per second fall from 1,528 to 258. The PR that added this
+patch has the `top` numbers.
+
+**Upstream at v1.99.3 (checked 2026-11-16):** `endSynchronizedOutput` still
+refreshes every row, and the view still invalidates the parser's range as it
+stands. Still needed.
+
+**Re-applying it after a SwiftTerm upgrade:** re-add the storage block to
+`MacTerminalView`, the `PaintedRowState` type and its four functions to
+`AppleTerminalView`, route `updateDisplay`'s CoreGraphics invalidation through
+`repaintRegion`, and re-add the forget-only check and the `rowPaintObserver`
+call at the top of `drawTerminalContents`' row loop.
+`VendoredPatchesSelfTest` names the patch if any of that is missing, and
+`FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` is the behavioural half: it drives a
+real window through a TUI frame, an identical frame, scrolling, scrollback,
+a find, a selection under scrolling identical rows, a theme change and a
+resize, and checks after every step that each visible row's last real paint
+matches what the buffer holds.
+
 ## Updating this vendored copy, and the scheduled check
 
 **Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
@@ -487,7 +569,7 @@ real `/bin/sh` on a PTY.
 **Re-check:** every 183 days (six months), or sooner if upstream publishes a
 security fix.
 
-The nine patches above are the price of this pin, and the review that filed
+The ten patches above are the price of this pin, and the review that filed
 this section (P9 of full review #3) is right that the cost of a sync is
 re-applying every one of them. So the standing decision is **stay pinned and
 re-check on a schedule**, not "bump when a newer tag exists" - and the check
@@ -507,7 +589,7 @@ the next scheduled check:
 
 A newer tag on its own is **not** a reason. Nothing in this app is waiting on
 an upstream feature, and every release since the pin has to be re-diffed against
-all nine patch sites by hand.
+all ten patch sites by hand.
 
 ### The check itself
 
@@ -519,11 +601,11 @@ why it is in `native/MANUAL-CHECKS.md` rather than a suite:
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
   | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
 
-# 2. How big is the gap, and did it touch our nine patch sites?
+# 2. How big is the gap, and did it touch our ten patch sites?
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer','/Buffer.swift','/Terminal.swift'))]"
 
-# 3. For each of the nine patches, read the upstream function and answer one
+# 3. For each of the ten patches, read the upstream function and answer one
 #    question: is the root cause fixed, or is there a hook now?
 curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
 
@@ -533,7 +615,7 @@ curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sourc
 ```
 
 `VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
-*other* hazard: it asserts all nine patches are still present in this tree, so a
+*other* hazard: it asserts all ten patches are still present in this tree, so a
 sync that silently drops one fails by name rather than being found in
 production. It also reads the `Last checked` date above and prints a NOTE (never
 a failure - a date cannot break somebody else's build) once it is older than the
@@ -548,7 +630,8 @@ and the eighth, added on 2026-10-26:
 `buildAttributedString` and `draw(_:)` are both still `internal`/non-`open` at
 v1.20.0, so neither a per-row cache nor a highlight hook has anywhere else to
 live. The ninth, added on 2026-11-09, *does* have an upstream question, and its
-own section records the answer at v1.99.3. The five verdicts
+own section records the answer at v1.99.3, as does the tenth's, added on
+2026-11-16. The five verdicts
 below are left exactly as they were recorded.)*
 
 Upstream is **three releases ahead** of the review that filed this (which said
@@ -579,7 +662,7 @@ scheduled check is the place to ask again.
 
 ### Re-applying the patches, if a sync does happen
 
-Replace `Sources/SwiftTerm` with the new tree, then re-apply all nine. Each
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all ten. Each
 patch's own section above ends with the specific hunks; in summary:
 
 | # | Files |
@@ -593,12 +676,13 @@ patch's own section above ends with the specific hunks; in summary:
 | 7 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the cache storage + counters), `Apple/AppleTerminalView.swift` (the cache types, `preparedLineRender`, the two `draw(_:)` call sites, the two invalidations) |
 | 8 | `Apple/RowHighlighting.swift` (new file, keep it), `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `rowHighlighter` storage), `Apple/AppleTerminalView.swift` (the two `CachedLineRender` fields, the `preparedLineRender` comparison, the glyph pass's `runIsHighlighted` branch) |
 | 9 | `Buffer.swift` (`resize`, both reflows, `getLinesToRemove`, `getNewLineLengths`; the two autowrap hunks are already upstream at v1.99.3), `Terminal.swift` (`cursorLineRedrawnOnResize` and `resizeBuffers`) |
+| 10 | `Mac/MacTerminalView.swift` (the `paintedRows` / `rowPaintObserver` storage), `Apple/AppleTerminalView.swift` (`PaintedRowState` and its four functions, the `repaintRegion` call in `updateDisplay`, the forget-only check and observer call in `drawTerminalContents`) |
 
 Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
 not come back - followed by the terminal suites that prove each one behaves:
 `FM_RUN_CONTRAST_TESTS` (patches 1-2, via `checkVendoredTerminalPairsSelection`),
 `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
-`FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
+`FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4 and 10), and
 `FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5),
 `FM_RUN_TERMINAL_ROW_RENDER_CACHE_TESTS` (7),
 `FM_RUN_TERMINAL_KEYWORD_HIGHLIGHT_TESTS` (8), and
