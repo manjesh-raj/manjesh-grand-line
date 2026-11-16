@@ -1,8 +1,9 @@
 // Grand Line - native macOS app.
 //
 // Permanent guard on the ten local patches carried in
-// `native/Vendor/SwiftTerm` (P9 of full review #3), and on the three carried
-// in `native/Vendor/YamlSwift`. Run with:
+// `native/Vendor/SwiftTerm` (P9 of full review #3), on the three carried
+// in `native/Vendor/YamlSwift`, and on the one in `native/Vendor/whisper.cpp`
+// (R5-PERF-02). Run with:
 //
 //   swift build && FM_RUN_VENDORED_PATCHES_TESTS=1 .build/debug/GrandLine; echo $?
 //
@@ -149,6 +150,7 @@ enum VendoredPatchesSelfTest {
         checkBothWithUnsafeBytesCallsDiscardTheirResult(vendor, &ok)
         checkTheUpstreamCheckIsRecorded(vendor, &ok)
         checkTheYamlSwiftPatchesArePresent(vendor.deletingLastPathComponent().appendingPathComponent("YamlSwift"), &ok)
+        checkTheWhisperPatchIsPresent(vendor.deletingLastPathComponent().appendingPathComponent("whisper.cpp"), &ok)
 
         print(ok ? "VendoredPatchesSelfTest: all checks passed"
                  : "VendoredPatchesSelfTest: FAILURES")
@@ -192,6 +194,38 @@ enum VendoredPatchesSelfTest {
         if sitesRead == 0 {
             print("  FAIL no YamlSwift file could be read - the check proved nothing")
             ok = false
+        }
+    }
+
+    /// R5-PERF-02: the one local patch in `native/Vendor/whisper.cpp` (its
+    /// README has the re-apply note). Without it a resident Whisper engine is
+    /// a 200Hz waker for as long as it stays loaded, which is E2's energy bug -
+    /// and `DictationEngine` now keeps the engine loaded on AC power on the
+    /// strength of this patch. A re-sync that drops it would bring the waker
+    /// back with every behavioural suite still green.
+    private static let whisperPatchFile = "Sources/CWhisper/ggml-src/ggml-metal/ggml-metal-device.m"
+    private static let whisperPatchMarkers = [
+        "dispatch_semaphore_t d_wake;",
+        "dispatch_semaphore_wait(res->d_wake, DISPATCH_TIME_FOREVER);",
+        "dispatch_semaphore_signal(dev->rsets->d_wake);",
+        "dispatch_semaphore_signal(rsets->d_wake);",
+    ]
+
+    private static func checkTheWhisperPatchIsPresent(_ vendor: URL, _ ok: inout Bool) {
+        guard let raw = try? String(contentsOf: vendor.appendingPathComponent(whisperPatchFile), encoding: .utf8) else {
+            print("  FAIL whisper.cpp heartbeat park: \(whisperPatchFile) is unreadable - the check proved nothing")
+            ok = false
+            return
+        }
+        let code = strippingComments(raw)
+        for marker in whisperPatchMarkers {
+            if code.contains(marker) {
+                print("  OK   whisper.cpp heartbeat park: \(marker)")
+            } else {
+                print("  FAIL whisper.cpp heartbeat park: \(whisperPatchFile) no longer contains \"\(marker)\" - "
+                      + "a re-sync dropped it; see Vendor/whisper.cpp/README.md")
+                ok = false
+            }
         }
     }
 

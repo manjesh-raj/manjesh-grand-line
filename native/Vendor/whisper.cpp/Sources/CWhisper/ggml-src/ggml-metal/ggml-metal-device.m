@@ -556,6 +556,10 @@ struct ggml_metal_rsets {
     atomic_int  d_loop;
 
     dispatch_group_t d_group;
+
+    // GRAND LINE LOCAL PATCH 1 (R5-PERF-02): the heartbeat parks on this once
+    // keep_alive_s has run out, instead of waking every 5 ms forever.
+    dispatch_semaphore_t d_wake;
 };
 
 #if defined(GGML_METAL_HAS_RESIDENCY_SETS)
@@ -610,6 +614,7 @@ ggml_metal_rsets_t ggml_metal_rsets_init(ggml_metal_device_t dev) {
     atomic_store_explicit(&res->d_loop, res->loops_per_s*res->keep_alive_s, memory_order_relaxed);
 
     res->d_group = dispatch_group_create();
+    res->d_wake  = dispatch_semaphore_create(0);
 
     // start a background thread that periodically requests residency for all the currently active sets in the collection
     // the requests stop after a certain amount of time (keep_alive_s) of inactivity
@@ -628,9 +633,13 @@ ggml_metal_rsets_t ggml_metal_rsets_init(ggml_metal_device_t dev) {
                       atomic_fetch_sub_explicit(&res->d_loop, 1, memory_order_relaxed);
 
                       [res->lock unlock];
-                  }
 
-                  usleep(res->time_per_loop_ms * 1000);
+                      usleep(res->time_per_loop_ms * 1000);
+                  } else {
+                      // GRAND LINE LOCAL PATCH 1: park until keep_alive or
+                      // free signals, rather than polling an expired counter.
+                      dispatch_semaphore_wait(res->d_wake, DISPATCH_TIME_FOREVER);
+                  }
               }
         }
 #endif
@@ -657,9 +666,12 @@ void ggml_metal_rsets_free(ggml_metal_rsets_t rsets) {
     GGML_ASSERT([rsets->data count] == 0);
 
     atomic_store_explicit(&rsets->d_stop, true, memory_order_relaxed);
+    // GRAND LINE LOCAL PATCH 1: a parked heartbeat has to wake to see d_stop.
+    dispatch_semaphore_signal(rsets->d_wake);
 
     dispatch_group_wait(rsets->d_group, DISPATCH_TIME_FOREVER);
     dispatch_release(rsets->d_group);
+    dispatch_release(rsets->d_wake);
 
     [rsets->data release];
     [rsets->lock release];
@@ -1018,7 +1030,12 @@ void ggml_metal_device_rsets_keep_alive(ggml_metal_device_t dev) {
         return;
     }
 
-    atomic_store_explicit(&dev->rsets->d_loop, dev->rsets->loops_per_s*dev->rsets->keep_alive_s, memory_order_relaxed);
+    // GRAND LINE LOCAL PATCH 1: wake the heartbeat only on the expired ->
+    // live transition, so a busy graph does not pile up semaphore counts.
+    const int previous = atomic_exchange_explicit(&dev->rsets->d_loop, dev->rsets->loops_per_s*dev->rsets->keep_alive_s, memory_order_relaxed);
+    if (previous <= 0) {
+        dispatch_semaphore_signal(dev->rsets->d_wake);
+    }
 }
 
 struct ggml_metal_event {

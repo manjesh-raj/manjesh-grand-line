@@ -347,6 +347,15 @@ A pane the captain has scrolled back in, and the Kubernetes feed tab, are left
 alone.
 `ConsoleController+Scrollback.swift` has the reasoning.
 
+### Reading Activity Monitor
+
+The **Energy** tab and the **CPU** tab count different things for this app (R5-PERF-05 of review #5).
+Energy Impact for an app's row includes its child processes, and the CPU column does not.
+Grand Line forks every terminal's shell in-process and runs its tool checks as children, so its Energy row also carries `git`, `brew`, `npm`, `bash`, `starship` and the `herdr` client.
+A `claude` session started from a herdr pane is not one of them: its parent chain is `launchd > bash > herdr server > zsh`, so it is billed to herdr's row, not this one.
+To see what the app itself costs, read the CPU tab, or `top -stats pid,cpu,idlew -pid <pid>`.
+To see what its children cost, read the Energy tab.
+
 ## Keyboard shortcuts
 
 The menu bar carries App, Edit, Hosts, Tasks, Log Analyzer, Keys and Snippets,

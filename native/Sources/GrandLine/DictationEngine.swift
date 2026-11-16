@@ -449,21 +449,34 @@ final class DictationEngine {
     /// the one `providerProviders?() ?? false` check.
     private let whisperResampler = DictationAudioResampler()
 
-    /// Lazily loaded and cached **only across a burst of dictations**, then
-    /// released - see `whisperIdleUnloadInterval` for why the "cached for the
-    /// app's whole lifetime" this used to say was an energy bug, not an
-    /// optimisation. Loading is not free (`WhisperCppEngine.init?` reads and
-    /// parses a ~547MB model), which is why a short warm window survives;
-    /// whether the model exists at all is still re-checked from
-    /// `beginCapture`, since a captain could delete/redownload it between
-    /// recordings.
+    /// Loaded when the dictation key goes down (R5-PERF-02's pre-warm) and
+    /// kept while the Mac is on AC power. On battery or in Low Power Mode it
+    /// is released after `whisperIdleUnloadInterval`, and under memory
+    /// pressure it is released at once. See `whisperIdleUnloadInterval` for why
+    /// "cached for the app's whole lifetime" used to be an energy bug, and
+    /// `idleDeadlineDecision` for why it no longer is on AC. Loading is not
+    /// free (`WhisperCppEngine.init?` reads and parses a ~574MB model), and
+    /// whether the model exists at all is still re-checked from `beginCapture`,
+    /// since a captain could delete/redownload it between recordings.
     ///
-    /// Guarded by `whisperEngineLock`: loaded on a background queue in
-    /// `finish(text:)` and released from the main thread by the idle timer,
-    /// which without a lock is a real data race on a reference (GL-28's rule).
+    /// Guarded by `whisperEngineLock`: loaded on `whisperLoadQueue` and
+    /// released from the main thread by the idle timer, which without a lock is
+    /// a real data race on a reference (GL-28's rule).
     private var cachedWhisperEngine: WhisperCppEngine?
     private var cachedWhisperEngineModelPath: String?
     private let whisperEngineLock = NSLock()
+
+    /// R5-PERF-02: every load goes through this one serial queue, so the
+    /// pre-warm started on key-down and the transcription at key-up never
+    /// parse the model twice. The second caller waits for the first load and
+    /// then finds it cached.
+    private let whisperLoadQueue = DispatchQueue(label: "com.manjesh.grandline.dictation.whisper-load",
+                                                 qos: .userInitiated)
+
+    /// R5-PERF-02: releases a resident engine as soon as the system reports
+    /// memory pressure. Installed while an engine is resident, cancelled when
+    /// it is released. Main-thread only.
+    private var whisperMemoryPressureSource: DispatchSourceMemoryPressure?
 
     /// T5: whether this engine currently has a tap on the input node. Reading
     /// `audioEngine.inputNode` instantiates it, which blocks in a process with
@@ -498,7 +511,33 @@ final class DictationEngine {
     /// exists for) while making "idle" mean idle. The reload it costs is a
     /// one-time Metal-accelerated model load, against a permanent 200Hz
     /// waker - which is not a close trade.
+    ///
+    /// **R5-PERF-02 changed the trade on AC power.** Review #5 measured that
+    /// reload as the 703MB peak footprint and a multi-second delay at the
+    /// start of most dictations, because most are more than two minutes
+    /// apart. The 200Hz waker is now gone once the engine is idle: the vendored
+    /// ggml parks its residency thread when the keep-alive runs out (local
+    /// patch 1 in `Vendor/whisper.cpp/README.md`). So a resident engine on AC
+    /// costs memory and nothing else, and this deadline only *releases* on
+    /// battery or in Low Power Mode. On AC it re-arms itself, which is how an
+    /// unplugged Mac still lets go within one interval.
     static let whisperIdleUnloadInterval: TimeInterval = 120
+
+    /// What the idle deadline does (R5-PERF-02). Pure, so the policy is
+    /// testable without the 574MB model.
+    enum IdleDeadlineDecision: Equatable {
+        /// Nothing is loaded, so there is nothing to keep or release.
+        case nothingResident
+        /// On AC power: stay loaded, look again after one more interval.
+        case stayResident
+        /// On battery or in Low Power Mode: release now.
+        case release
+    }
+
+    static func idleDeadlineDecision(isResident: Bool, prefersReducedPower: Bool) -> IdleDeadlineDecision {
+        guard isResident else { return .nothingResident }
+        return prefersReducedPower ? .release : .stayResident
+    }
 
     #if FM_SELFTESTS
     /// Shortens the idle window so `DictationEngineSelfTest` can prove the
@@ -598,6 +637,11 @@ final class DictationEngine {
         usingLocalWhisperThisRecording = localWhisperEnabledProvider?() ?? false
         if usingLocalWhisperThisRecording {
             whisperResampler.reset()
+            // R5-PERF-02: start loading now, while the captain is still
+            // speaking, rather than after the key comes up. A cold load is
+            // seconds of disk and Metal setup, and this overlaps it with the
+            // recording instead of adding it to the wait for the paste.
+            prewarmWhisperEngine()
             // E2 (tech debt): a dictation started just before the idle deadline
             // and held through it used to have the engine released mid-recording
             // and re-parse the 547MB model at finish. Correctness was never at
@@ -811,13 +855,34 @@ final class DictationEngine {
     }
 
     /// Loads (or reuses the cached) local Whisper engine for `modelPath` -
-    /// called only from the background queue in `finish(text:)` above, never
-    /// concurrently with itself (a second recording can't begin until this
-    /// one has fully finished, since `isRecording`/`isFinishing` gate that).
-    /// Caching across recordings avoids re-parsing the ~547MB model file on
-    /// every single dictation, which would otherwise be a real, noticeable
-    /// delay before the local engine could start transcribing at all.
+    /// called from the background queue in `finish(text:)` above. Serialised
+    /// on `whisperLoadQueue`, so a pre-warm still in flight is waited for
+    /// rather than duplicated. Caching across recordings avoids re-parsing the
+    /// ~574MB model file on every single dictation, which would otherwise be
+    /// a real, noticeable delay before the local engine could start
+    /// transcribing at all.
     private func loadWhisperEngine(modelPath: String) -> WhisperCppEngine? {
+        whisperLoadQueue.sync { loadWhisperEngineOnLoadQueue(modelPath: modelPath) }
+    }
+
+    /// R5-PERF-02: load the engine in the background, when the dictation key
+    /// goes down. A no-op unless local Whisper is on and its model is ready,
+    /// and a cheap one when the engine is already resident.
+    private func prewarmWhisperEngine() {
+        guard WhisperModelManager.shared.isReady else { return }
+        let modelPath = WhisperModelManager.shared.modelPathOnDisk
+        whisperLoadQueue.async { [weak self] in
+            guard self?.loadWhisperEngineOnLoadQueue(modelPath: modelPath) != nil else { return }
+            // Armed here as well as after a transcription, because a recording
+            // can end without reaching the local-Whisper finish (too short,
+            // cancelled, a permission lost), and an engine nobody arms a
+            // deadline for would stay resident on battery.
+            DispatchQueue.main.async { self?.scheduleWhisperIdleUnload() }
+        }
+    }
+
+    private func loadWhisperEngineOnLoadQueue(modelPath: String) -> WhisperCppEngine? {
+        dispatchPrecondition(condition: .onQueue(whisperLoadQueue))
         whisperEngineLock.lock()
         if let cachedWhisperEngine, cachedWhisperEngineModelPath == modelPath {
             whisperEngineLock.unlock()
@@ -837,7 +902,19 @@ final class DictationEngine {
         cachedWhisperEngine = engine
         cachedWhisperEngineModelPath = modelPath
         whisperEngineLock.unlock()
+        DispatchQueue.main.async { [weak self] in self?.watchMemoryPressureWhileResident() }
         return engine
+    }
+
+    /// R5-PERF-02: a resident engine is the largest thing this app holds, so
+    /// it is the first thing to give back when the system asks.
+    private func watchMemoryPressureWhileResident() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard whisperMemoryPressureSource == nil, isWhisperEngineResident else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in self?.releaseWhisperEngine(reason: "memory pressure") }
+        whisperMemoryPressureSource = source
+        source.resume()
     }
 
     /// E2: arm (or re-arm) the idle release. Called on the main thread after
@@ -845,13 +922,34 @@ final class DictationEngine {
     /// keeps pushing the release out and a genuinely idle app stops waking.
     private func scheduleWhisperIdleUnload() {
         whisperIdleUnload?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.releaseWhisperEngine(reason: "idle") }
+        let item = DispatchWorkItem { [weak self] in self?.whisperIdleDeadlineReached() }
         whisperIdleUnload = item
         var interval = Self.whisperIdleUnloadInterval
         #if FM_SELFTESTS
         if let override = Self.whisperIdleUnloadIntervalOverrideForTests { interval = override }
         #endif
         DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: item)
+    }
+
+    /// R5-PERF-02: on AC power a resident engine stays, and the deadline
+    /// re-arms so unplugging still releases it within one interval.
+    private func whisperIdleDeadlineReached() {
+        // Never mid-dictation: the pre-warm arms this while the key is still
+        // held, and a long recording must not lose the engine it is about to
+        // use.
+        guard !isRecording, !isFinishing else {
+            scheduleWhisperIdleUnload()
+            return
+        }
+        switch Self.idleDeadlineDecision(isResident: isWhisperEngineResident,
+                                         prefersReducedPower: PowerSource.prefersReducedBackgroundWork()) {
+        case .nothingResident:
+            whisperIdleUnload = nil
+        case .stayResident:
+            scheduleWhisperIdleUnload()
+        case .release:
+            releaseWhisperEngine(reason: "idle on battery")
+        }
     }
 
     /// Drop the cached engine, which runs `whisper_free` -> the ggml Metal
@@ -864,6 +962,8 @@ final class DictationEngine {
         whisperEngineLock.unlock()
         whisperIdleUnload?.cancel()
         whisperIdleUnload = nil
+        whisperMemoryPressureSource?.cancel()
+        whisperMemoryPressureSource = nil
         if had {
             AppLog.lifecycle.info("released the local Whisper engine (\(reason, privacy: .public))")
         }
@@ -1100,6 +1200,14 @@ final class DictationEngine {
     /// E2: arm the idle release exactly as a finished local-Whisper dictation
     /// does.
     func debugScheduleWhisperIdleUnloadForTests() { scheduleWhisperIdleUnload() }
+
+    /// R5-PERF-02: whether the idle deadline is still armed, so a suite can
+    /// tell "re-armed on AC" from "released on battery".
+    var debugIsWhisperIdleDeadlineArmedForTests: Bool { whisperIdleUnload != nil }
+
+    /// R5-PERF-02: whether a memory-pressure source is watching the resident
+    /// engine.
+    var debugIsWatchingMemoryPressureForTests: Bool { whisperMemoryPressureSource != nil }
 
     static func debugHardCeilingDurationForTests(capturedAudioSeconds: TimeInterval) -> TimeInterval {
         hardCeilingDuration(forCapturedAudioSeconds: capturedAudioSeconds)
