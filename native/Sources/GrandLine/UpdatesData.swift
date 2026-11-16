@@ -474,10 +474,12 @@ enum UpdatesSource {
 
     private static func checkNpm(_ package: String) -> CheckOutcome {
         guard let npm = resolveExecutable("npm") else { return missingToolOutcome("npm") }
-        let installed = installedNpmVersion(npm: npm, package: package)
+        let lsResult = run(npm, ["ls", "-g", package, "--depth=0", "--json"])
+        let installed = npmInstalledVersions(fromLsJSON: lsResult.stdout)[package]
         let latestResult = run(npm, ["view", package, "version"])
         let latest = latestResult.status == 0 && !latestResult.stdout.isEmpty ? latestResult.stdout : nil
-        let log = [installedNpmLog(npm: npm, package: package), latestResult.combinedLog].filter { !$0.isEmpty }.joined(separator: "\n")
+        let log = [npmLsLog(package: package, installed: installed, result: lsResult), latestResult.combinedLog]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
 
         guard let installed else {
             return CheckOutcome(
@@ -496,17 +498,32 @@ enum UpdatesSource {
 
     private static func installedNpmVersion(npm: String, package: String) -> String? {
         let result = run(npm, ["ls", "-g", package, "--depth=0", "--json"])
-        guard let data = result.stdout.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let deps = obj["dependencies"] as? [String: Any],
-              let entry = deps[package] as? [String: Any],
-              let version = entry["version"] as? String
-        else { return nil }
-        return version
+        return npmInstalledVersions(fromLsJSON: result.stdout)[package]
     }
 
-    private static func installedNpmLog(npm: String, package: String) -> String {
-        run(npm, ["ls", "-g", package, "--depth=0"]).combinedLog
+    /// `name -> version` for every package an `npm ls -g --depth=0 --json`
+    /// reply lists. A package that is not installed is simply absent: npm
+    /// answers `{"name":"lib"}` with no `dependencies` at all for it.
+    static func npmInstalledVersions(fromLsJSON json: String) -> [String: String] {
+        guard let data = json.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let deps = obj["dependencies"] as? [String: Any]
+        else { return [:] }
+        return deps.compactMapValues { ($0 as? [String: Any])?["version"] as? String }
+    }
+
+    /// The log line for the installed half of an npm check, written from the
+    /// `--json` reply already in hand.
+    ///
+    /// R5 energy fix 1: this used to run `npm ls -g <pkg> --depth=0` a second
+    /// time, without `--json`, only to have a human-readable string for the
+    /// row's log. That was one extra `node` start-up per package per sweep,
+    /// about a CPU-second each, for text the JSON already carried. npm's own
+    /// stderr (a registry or permissions error) is kept, because that is the
+    /// part a captain reads when a check fails.
+    static func npmLsLog(package: String, installed: String?, result: SubprocessResult) -> String {
+        let line = installed.map { "npm ls -g: \(package)@\($0)" } ?? "npm ls -g: \(package) is not installed globally"
+        return [line, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     private static func updateNpm(_ package: String) -> UpdateOutcome {

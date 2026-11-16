@@ -66,6 +66,7 @@ enum SetupDataLayerSelfTest {
             ("aCaskAbsentEverywhereIsNotInstalled", test_caskAbsent),
             ("aFailedCaskUpgradeNamesBrewsOwnError", test_caskUpgradeFailureNamesTheError),
             ("npmVersionsMapOntoTheRightStatus", test_npmStatusMapping),
+            ("anNpmCheckRunsNpmLsOnceAndLogsFromItsJSON", test_npmLogComesFromTheJSONRead),
             ("aMissingToolIsAReportedFailureNotACrash", test_missingToolIsReported),
             ("aFailedCheckCarriesTheToolsRealOutput", test_failureCarriesLog),
             ("dotfilesReadsBranchRemoteAndDirtyFilesFromGit", test_dotfilesParsesGit),
@@ -364,6 +365,27 @@ enum SetupDataLayerSelfTest {
         }
         guard newer.installedLabel == "1.2.3", newer.latestLabel == "1.3.0" else {
             return "expected 1.2.3 -> 1.3.0, got \(newer.installedLabel) -> \(newer.latestLabel ?? "nil")"
+        }
+        return nil
+    }
+
+    /// R5 energy fix 1: the row's log is built from the `--json` read the
+    /// check already made. A second, human-readable `npm ls` only to produce
+    /// that text was a whole `node` start-up per package per sweep.
+    private static func test_npmLogComesFromTheJSONRead() -> String? {
+        let item = DependencyItem(id: "gh-axi", name: "gh-axi", category: "npm", kind: .npmGlobal(package: "gh-axi"))
+        fakeUpdates(["ls": result(#"{"dependencies":{"gh-axi":{"version":"1.2.3"}}}"#),
+                     "view": result("1.3.0")])
+        let outcome = UpdatesSource.check(item)
+        let lsCalls = UpdatesDataTestSeam.invocations.filter { $0.args.first == "ls" }
+        guard lsCalls.count == 1 else {
+            return "one npm check ran `npm ls` \(lsCalls.count) times (\(lsCalls.map { $0.args })) - the log must come from the --json read"
+        }
+        guard lsCalls[0].args.contains("--json") else {
+            return "the one `npm ls` must be the --json read, got \(lsCalls[0].args)"
+        }
+        guard outcome.log.contains("gh-axi@1.2.3") else {
+            return "the log should still say what is installed, got: \(outcome.log)"
         }
         return nil
     }
