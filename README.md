@@ -228,7 +228,7 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_CODE_PREVIEW_WEB_DIR` | The vendored Monaco bundle the Code Preview panel loads (same lookup order) |
 | `FM_TASK_CALENDAR_WEB_DIR` | The vendored Schedule-X bundle Tasks' Calendar view loads (same lookup order) |
 | `FM_GITHUB_SYNC_CLONE_ROOT` | Where GitHub Sync keeps its scratch clones (never the captain's own working copies) |
-| `FM_DIAGNOSTICS_DIR` | The on-disk diagnostics log (`diagnostics/app.log`, one 256KB file plus one rotated generation) and the `last-launch` stamp `crashReportsSinceLastLaunch()` compares against. Errors and lifecycle events only - the unified log is still where detail goes |
+| `FM_DIAGNOSTICS_DIR` | The on-disk diagnostics log (`diagnostics/app.log`, one 256KB file plus one rotated generation) and the `last-launch` stamp `crashReportsSinceLastLaunch()` compares against. Errors and lifecycle events only - the unified log is still where detail goes. The same folder holds `activity.log` (512KB plus one rotated generation): the poller, git-sync, subprocess and lifecycle timeline that Health's Copy diagnostics includes for the last hour (R5-PROC-01) |
 
 ### Tooling and test fixtures
 

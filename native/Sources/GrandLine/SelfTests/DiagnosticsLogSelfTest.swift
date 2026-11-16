@@ -41,6 +41,8 @@ enum DiagnosticsLogSelfTest {
         ok = checkItRotates(in: scratch.appendingPathComponent("rotate")) && ok
         ok = checkCrashReportsAreScopedToTheLastLaunch(in: scratch.appendingPathComponent("crash")) && ok
         ok = checkItHonoursItsOverride(in: scratch.appendingPathComponent("override")) && ok
+        ok = checkActivityIsATimelineOfTheLastHour(in: scratch.appendingPathComponent("activity")) && ok
+        ok = checkActivityIsBoundedAndRedacted(in: scratch.appendingPathComponent("activity-bound")) && ok
         print(ok ? "DiagnosticsLogSelfTest: OK" : "DiagnosticsLogSelfTest: FAILED")
         return ok
     }
@@ -141,6 +143,56 @@ enum DiagnosticsLogSelfTest {
             check(abs(when.timeIntervalSinceNow) < 120,
                   "the stamp must be this run's, got \(when)", &ok)
         }
+        return ok
+    }
+
+    /// R5-PROC-01: `activity.log` is the background timeline "Copy
+    /// diagnostics" includes, and "the last hour" has to mean a real
+    /// timestamp comparison across both generations.
+    private static func checkActivityIsATimelineOfTheLastHour(in dir: URL) -> Bool {
+        var ok = true
+        let log = DiagnosticsLog(directory: dir)
+        let now = Date()
+        log.activity(.poller, "background signals: pass started", at: now.addingTimeInterval(-7_200))
+        log.activity(.subprocess, "git fetch ok in 0.40s", at: now.addingTimeInterval(-600))
+        log.activity(.gitSync, "shiftGitSync failed: offline", failed: true, at: now.addingTimeInterval(-60))
+
+        let all = log.recentActivity(within: 86_400, now: now)
+        // Discriminating power: the two-hour-old line is really on disk, so
+        // its absence from the hour below is the window working.
+        check(all.count == 3, "expected all 3 activity lines inside a day, got \(all)", &ok)
+        let hour = log.recentActivity(now: now)
+        check(hour.count == 2, "only the last hour may be copied, got \(hour)", &ok)
+        check(hour.first?.contains("INFO [subprocess] git fetch ok") == true,
+              "oldest first, with level and category, got \(hour.first ?? "nothing")", &ok)
+        check(hour.last?.contains("ERROR [git-sync] shiftGitSync failed: offline") == true,
+              "a failure must be marked ERROR, got \(hour.last ?? "nothing")", &ok)
+        // A separate file: the activity timeline must not push the error log's
+        // lines out, which is why it is not written to `app.log`.
+        check(log.recentLines().isEmpty, "activity must not be written to app.log", &ok)
+        return ok
+    }
+
+    private static func checkActivityIsBoundedAndRedacted(in dir: URL) -> Bool {
+        var ok = true
+        let log = DiagnosticsLog(directory: dir)
+        let filler = String(repeating: "y", count: 300)
+        for i in 0..<4_000 { log.activity(.subprocess, "run \(i) \(filler)") }
+        log.activity(.gitSync, "push failed: Authorization: Bearer abcdef0123456789abcdef", failed: true)
+
+        let lines = log.recentActivity(limit: 10_000)
+        let fm = FileManager.default
+        func size(_ name: String) -> Int {
+            ((try? fm.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.size] as? NSNumber)?
+                .intValue ?? -1
+        }
+        check(size("activity.log.1") > 0, "the fixture must have written enough to rotate", &ok)
+        check(size("activity.log") <= DiagnosticsLog.maxActivityBytes,
+              "the live activity file must stay within its bound, got \(size("activity.log"))", &ok)
+        check(lines.last?.contains("[REDACTED]") == true && lines.last?.contains("abcdef0123456789") == false,
+              "an activity line must be redacted before it reaches disk, got \(lines.last ?? "nothing")", &ok)
+        check(lines.count <= 10_000 && lines.count > 1_000,
+              "both generations must be read back, got \(lines.count) lines", &ok)
         return ok
     }
 

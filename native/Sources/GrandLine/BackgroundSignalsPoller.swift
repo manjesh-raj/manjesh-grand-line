@@ -506,6 +506,9 @@ final class BackgroundSignalsPoller {
                 return
             }
             cancelledPassCount += 1
+            DiagnosticsLog.shared.activity(
+                .poller, "background signals: cancelled a pass hung for \(age)s (\(cancelledPassCount) this session)",
+                failed: true)
             AppLog.poller.error("""
                 background signals: pass started \(age)s ago has not finished - cancelling it and \
                 starting a new one when it returns (GL-03 watchdog, \(self.cancelledPassCount) so far this session).
@@ -524,6 +527,7 @@ final class BackgroundSignalsPoller {
         passStartedAt = Date()
         powerCadence.noteRun(at: passStartedAt ?? Date())
         ServiceHealthRegistry.shared.markRunning(.backgroundSignals)
+        DiagnosticsLog.shared.activity(.poller, "background signals: pass started")
         currentPassID += 1
         let passID = currentPassID
         let token = SubprocessCancellation()

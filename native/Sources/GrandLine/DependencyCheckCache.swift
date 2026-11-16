@@ -213,6 +213,9 @@ final class DependencyCheckCache {
                     // exactly when the first was about to finish. Only with no
                     // answer at all does it run its own, since GL-14 forbids
                     // making one up.
+                    DiagnosticsLog.shared.activity(
+                        .poller, "dependency check: \(item.id) waited \(Int(Self.inFlightWaitTimeout))s on another check",
+                        failed: true)
                     if let stale = staleOutcome(for: item) {
                         AppLog.poller.error("dependency check: \(item.id, privacy: .public) waited \(Self.inFlightWaitTimeout, privacy: .public)s on another check - returning the answer from \(stale.gatheredAt, privacy: .public)")
                         return stale

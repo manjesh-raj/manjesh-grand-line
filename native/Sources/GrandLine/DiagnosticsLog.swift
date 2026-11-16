@@ -40,6 +40,30 @@
 // fails is dropped, because a logger that can fail a caller is worse than a
 // logger that misses a line. That is the one place in this app where a silent
 // failure is the right call, and it is stated rather than implied.
+//
+// R5-PROC-01 of review #5 measured the same zero again: `log show` over the
+// last 30 minutes of the captain's instance returned nothing, and `app.log`
+// held only `launched`/`quitting`. The schedule re-fire in R5-BUG-01, the
+// watchdog cancelling a hung background pass and the "waited 120 s on another
+// check" events all happened with nothing on disk to say so, because they are
+// `.info` events and the unified log does not keep those. So there is a second
+// file here, `activity.log`, for the background timeline:
+//
+//   * **Four categories only** (`Activity`): the poller, git sync, subprocess
+//     runs and lifecycle. These are the events that happen while nobody is
+//     watching, which is the whole reason they need a file.
+//   * **Written at choke points, not mirrored from every `AppLog` call.** A
+//     subprocess line comes from `Subprocess`'s one completion hook and says
+//     which tool ran, for how long and how it ended. It never carries argv or
+//     output, which is where a prompt or a secret's name would be. Every
+//     message also goes through `LogRedactor` before it reaches disk.
+//   * **Bounded** like `app.log`, at 512KB plus one rotated generation, which
+//     is many hours of a normal day.
+//   * **Off the caller's thread.** An activity line is written on a private
+//     serial queue, because the subprocess hook runs for every child and some
+//     of those finish on main.
+//
+// "Copy diagnostics" on Health includes the last hour of it.
 
 import Foundation
 
@@ -56,10 +80,28 @@ final class DiagnosticsLog {
     /// last few hundred lines, not a week.
     private static let maxBytes = 256 * 1024
 
+    /// R5-PROC-01: the categories that reach `activity.log`. Deliberately a
+    /// closed set - see the header for why this is not every `AppLog` line.
+    enum Activity: String {
+        case poller
+        case gitSync = "git-sync"
+        case subprocess
+        case lifecycle
+    }
+
+    /// The activity file's bound. Larger than `app.log`'s because it is a
+    /// timeline: at about 80 bytes a line, one generation is several thousand
+    /// events, and a busy hour is a few hundred.
+    static let maxActivityBytes = 512 * 1024
+
     private let lock = NSLock()
     private let directory: URL
     private let fileURL: URL
     private let rotatedURL: URL
+    private let activityURL: URL
+    private let rotatedActivityURL: URL
+    private let activityQueue = DispatchQueue(label: "com.manjesh.grandline.diagnostics.activity",
+                                              qos: .utility)
 
     /// The moment the previous run of this app started, read once at init -
     /// before `noteLaunch()` overwrites it. `nil` on a machine that has never
@@ -70,6 +112,8 @@ final class DiagnosticsLog {
         self.directory = directory ?? Self.defaultDirectory(environment: environment)
         self.fileURL = self.directory.appendingPathComponent("app.log")
         self.rotatedURL = self.directory.appendingPathComponent("app.log.1")
+        self.activityURL = self.directory.appendingPathComponent("activity.log")
+        self.rotatedActivityURL = self.directory.appendingPathComponent("activity.log.1")
         self.previousLaunch = Self.readLaunchStamp(in: self.directory)
     }
 
@@ -86,7 +130,10 @@ final class DiagnosticsLog {
     // MARK: - Writing
 
     func error(_ category: String, _ message: String) { record(.error, category, message) }
-    func lifecycle(_ category: String, _ message: String) { record(.lifecycle, category, message) }
+    func lifecycle(_ category: String, _ message: String) {
+        record(.lifecycle, category, message)
+        activity(.lifecycle, message)
+    }
 
     func record(_ level: Level, _ category: String, _ message: String) {
         let line = "\(Self.stamp(Date())) \(level.rawValue) [\(category)] \(message)\n"
@@ -114,12 +161,49 @@ final class DiagnosticsLog {
         return Array(lines.suffix(limit))
     }
 
+    // MARK: - Activity (R5-PROC-01)
+
+    /// One background event. `failed` marks the line `ERROR` rather than
+    /// `INFO`, so a failure is findable in a timeline of successes.
+    func activity(_ category: Activity, _ message: String, failed: Bool = false, at date: Date = Date()) {
+        let level = failed ? "ERROR" : "INFO"
+        let text = LogRedactor.redact(message).text.replacingOccurrences(of: "\n", with: " ")
+        let line = "\(Self.stamp(date)) \(level) [\(category.rawValue)] \(text)\n"
+        activityQueue.async { [self] in
+            append(line, to: activityURL, rotatingTo: rotatedActivityURL, maxBytes: Self.maxActivityBytes)
+        }
+    }
+
+    /// The activity lines from the last `window` seconds, oldest first, at
+    /// most `limit` of them (the newest win). Reads both generations, so an
+    /// hour that straddles a rotation is still a whole hour.
+    func recentActivity(within window: TimeInterval = 3_600, now: Date = Date(), limit: Int = 400) -> [String] {
+        activityQueue.sync {
+            let cutoff = now.addingTimeInterval(-window)
+            var lines: [String] = []
+            for url in [rotatedActivityURL, activityURL] {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+                for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                    guard let space = line.firstIndex(of: " "),
+                          let when = Self.stampFormatter.date(from: String(line[..<space])),
+                          when >= cutoff else { continue }
+                    lines.append(String(line))
+                }
+            }
+            return Array(lines.suffix(limit))
+        }
+    }
+
     private func append(_ line: String) {
+        append(line, to: fileURL, rotatingTo: rotatedURL, maxBytes: Self.maxBytes)
+    }
+
+    private func append(_ line: String, to fileURL: URL, rotatingTo rotatedURL: URL, maxBytes: Int) {
         ensureDirectory()
         guard let data = line.data(using: .utf8) else { return }
         let fm = FileManager.default
         if let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
-           let size = attrs[.size] as? NSNumber, size.intValue + data.count > Self.maxBytes {
+           let size = attrs[.size] as? NSNumber, size.intValue + data.count > maxBytes {
             try? fm.removeItem(at: rotatedURL)
             try? fm.moveItem(at: fileURL, to: rotatedURL)
         }

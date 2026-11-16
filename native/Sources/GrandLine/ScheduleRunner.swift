@@ -230,6 +230,9 @@ final class ScheduleRunner {
         if isRunning {
             guard let startedAt = runStartedAt, now.timeIntervalSince(startedAt) > runWatchdog else { return }
             let age = Int(now.timeIntervalSince(startedAt))
+            DiagnosticsLog.shared.activity(
+                .poller, "schedules: a run started \(age)s ago has not finished - watchdog allows a new one",
+                failed: true)
             AppLog.poller.error("""
                 schedules: a run started \(age)s ago has not finished - allowing a new one \
                 (watchdog).
@@ -260,6 +263,8 @@ final class ScheduleRunner {
         // missed-run behaviour working", which is otherwise indistinguishable
         // from the outside.
         if lateBy > tickInterval * 2 {
+            DiagnosticsLog.shared.activity(
+                .poller, "schedules: \(schedule.action.rawValue) is \(Int(lateBy))s late - catching up now")
             AppLog.poller.info("""
                 schedules: \(schedule.action.rawValue, privacy: .public) is \(Int(lateBy))s late \
                 for a scheduled run - catching up now.
@@ -308,6 +313,7 @@ final class ScheduleRunner {
         ServiceHealthRegistry.shared.markRunning(.scheduledAutomations)
         onRunStateChanged?(schedule.id)
         AppLog.poller.info("schedules: running \(schedule.action.rawValue, privacy: .public)")
+        DiagnosticsLog.shared.activity(.poller, "schedules: running \(schedule.action.rawValue)")
 
         let action = schedule.action
         let stores = backupStores
@@ -391,6 +397,8 @@ extension ScheduleRunner {
     /// ran after it (REL-06).
     fileprivate func recordAbandonedRun(schedule: AutomationSchedule, action: ScheduledActionKind,
                                         result: ScheduleActionResult) {
+        DiagnosticsLog.shared.activity(
+            .poller, "schedules: \(action.rawValue) finished after the watchdog gave up on it", failed: true)
         AppLog.poller.error("""
             schedules: \(action.rawValue, privacy: .public) finished after the watchdog gave up on it - \
             kept in history only
