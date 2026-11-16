@@ -198,6 +198,18 @@ extension ConsoleController {
         }
         tabsStack.addArrangedSubview(plusButton)
         styleChips()
+        collapseTabBarIfEmpty()
+    }
+
+    /// R5-UI-02: in the sidebar layout the tab bar's actions are the window
+    /// toolbar's (`drillHeaderActions`), so all it can hold is this page's tab
+    /// chips and "+". With no tab yet - a host page whose session has not
+    /// connected - that is nothing, and the row was a 44pt blank band
+    /// between the shell's Sessions strip and the terminal card. It collapses
+    /// then, and comes back with the first tab. The floating bar keeps its
+    /// actions in this row, so it is never collapsed there.
+    func collapseTabBarIfEmpty() {
+        tabBar.setCollapsed(drawsSidebarLayout && tabs.isEmpty)
     }
 
     // MARK: Compose (`fm/grandline-console-command-composer`)
@@ -564,5 +576,6 @@ extension ConsoleController: SidebarLayoutAdopting {
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        collapseTabBarIfEmpty()
     }
 }

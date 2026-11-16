@@ -686,6 +686,24 @@ enum ReviewTwoUXSelfTest {
         check(!console.pageToolViews.contains(where: inPage), "a Console action is still in the page's own row", &ok)
         check(console.pageToolViews.contains { $0 === console.findButton } && console.pageToolViews.contains { $0 === console.zoomStepper },
               "Console's Find or text-size stepper is missing from the toolbar", &ok)
+        // R5-UI-02: with its actions in the window toolbar, the page's tab
+        // row holds only its tab chips. The Firstmate console always has a
+        // tab, so its row stays; a host page with no tab (not connected yet,
+        // or its last tab closed) collapses the row rather than drawing a
+        // blank band under the Sessions strip.
+        check(!console.tabs.isEmpty && !console.tabBar.isHidden,
+              "the Firstmate console's tab row is hidden although it has \(console.tabs.count) tab(s)", &ok)
+        autoreleasepool {
+            let hostPage = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
+            _ = hostPage.view
+            check(hostPage.tabs.isEmpty && !hostPage.tabBar.isHidden,
+                  "fixture: a host page with no tab, in the floating bar's layout, keeps its tab row (its actions live there)", &ok)
+            hostPage.adoptSidebarLayout()
+            hostPage.view.layoutSubtreeIfNeeded()
+            check(hostPage.tabBar.isHidden && hostPage.tabBar.frame.height == 0,
+                  "R5-UI-02: a host page with no tab still draws a \(hostPage.tabBar.frame.height)pt tab row in the sidebar layout", &ok)
+            hostPage.shutdown()
+        }
         // Code: since the captain's Workbench concept, the page's tools are in
         // its own toolbar card and the window toolbar carries none of them -
         // still one toolbar, now the page's. Two do not stack: the page's old
@@ -701,30 +719,33 @@ enum ReviewTwoUXSelfTest {
         } else {
             fail("Code did not build its sidebar-layout presentation", &ok)
         }
-        // Notebook: no page row at all; its controls are up here.
+        // Notebook: no page row of its own; its controls are up here, except
+        // the view mode, which since R5-UI-01 sits on the module header's
+        // subtitle line - still one row, and not the window toolbar's.
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
         check(!notebook.debugPageToolbarIsShown, "Notebook still draws its own toolbar row", &ok)
         let popUp = notebook.debugToolbarModePopUp
-        check(shell.toolbar.debugPageActions.contains { $0 === popUp }, "Notebook's view mode is not in the toolbar", &ok)
+        check(!shell.toolbar.debugPageActions.contains { $0 === popUp },
+              "Notebook's view mode is in the window toolbar again (R5-UI-01)", &ok)
+        check(shell.debugContentPaneHeader.accessory === popUp && popUp.isDescendant(of: shell.debugContentPaneHeader),
+              "Notebook's view mode is not on the module header's row (R5-UI-01)", &ok)
         popUp.selectItem(at: 2)
         _ = popUp.sendAction(popUp.action, to: popUp.target)
         settle(shell)
         check(notebook.debugMode == .preview, "picking Preview in the toolbar left Notebook in \(notebook.debugMode)", &ok)
         notebook.debugSetMode(.split)
         settle(shell)
-        check(popUp.titleOfSelectedItem == "Split", "the toolbar's view mode did not follow the page (\(popUp.titleOfSelectedItem ?? ""))", &ok)
-        // The overflow form runs a control, through the control.
-        let menuItems = WorkspaceToolbar.menuItems(for: [popUp])
-        if let preview = menuItems.first?.submenu?.items.first(where: { $0.title == "Preview" }),
-           let action = preview.action {
-            _ = (preview.target as? NSObject)?.perform(action, with: preview)
-            settle(shell)
-            check(notebook.debugMode == .preview, "the overflow menu's Preview did not switch Notebook", &ok)
-        } else {
-            fail("the view mode's overflow form has no Preview row", &ok)
-        }
+        check(popUp.titleOfSelectedItem == "Split", "the header's view mode did not follow the page (\(popUp.titleOfSelectedItem ?? ""))", &ok)
+        // Leaving the page takes its control off the header.
+        shell.workspace.navigator.show(.docs)
+        settle(shell)
+        check(shell.debugContentPaneHeader.accessory == nil && !popUp.isDescendant(of: shell.debugContentPaneHeader),
+              "Notebook's view mode stayed on the header after leaving Notebook", &ok)
+        shell.workspace.navigator.show(.notebook)
+        settle(shell)
+        check(shell.debugContentPaneHeader.accessory === popUp, "Notebook's view mode did not come back on return", &ok)
         notebook.debugSetMode(.split)
         settle(shell)
         shell.workspace.navigator.show(.homeCanvas)

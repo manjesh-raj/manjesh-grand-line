@@ -147,7 +147,9 @@ enum MainSplitShellSelfTest {
         check(abs(window.frame.width - 1100) < 0.5 || !shell.debugSidebarIsCollapsed,
               "bringing the sidebar back at 1100 on Notebook left it away", &ok)
         resize(window, width: 1100, shell)
-        check(shell.toolbar.debugPageActionsMenuTitles == ["View", "Today's note", "More"],
+        // The view mode is not among them: since R5-UI-01 it sits on the
+        // module header's row, so it never overflows.
+        check(shell.toolbar.debugPageActionsMenuTitles == ["Today's note", "More"],
               "Notebook's page actions overflow as \(shell.toolbar.debugPageActionsMenuTitles)", &ok)
         // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
         resize(window, width: 1512, shell)
