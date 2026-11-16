@@ -289,7 +289,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    /// Security > Power's "Keep running with the lid closed" switch. The
+    /// Security > Power's "Never sleep, even with the lid closed" switch. The
     /// system side is injectable so a suite can drive the row with no
     /// administrator prompt (`LidClosedKeepAwake.swift`).
     private let lidKeepAwake: LidClosedKeepAwakeModel
@@ -2136,7 +2136,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     // MARK: - Power (lid closed)
 
-    static let lidClosedHelp = "Stops this Mac from sleeping, even with the lid closed, so agents keep running. A closed Mac in a bag gets hot and drains its battery quickly, so turn this off when you no longer need it."
+    static let lidClosedHelp = "Turns off all sleep on this Mac, with the lid open or closed and on battery as well as on power, so agents keep running. A closed Mac in a bag gets hot and drains its battery quickly, so turn this off when you no longer need it."
 
     /// Every time the Security page comes on screen, not once: both the lid
     /// setting and the Metal Toolchain are the system's, they outlive this
@@ -2148,7 +2148,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     }
 
     private func buildLidClosedRow() -> SettingsRow {
-        lidClosedSwitch.setAccessibilityLabel("Keep running with the lid closed")
+        lidClosedSwitch.setAccessibilityLabel("Never sleep, even with the lid closed")
         lidClosedSwitch.onToggle = { [weak self] in
             guard let self else { return }
             self.lidKeepAwake.requestChange(to: self.lidClosedSwitch.isOn)
@@ -2159,7 +2159,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
         trailing.spacing = HelmMetrics.s2
-        let row = SettingsRow(title: "Keep running with the lid closed",
+        let row = SettingsRow(title: "Never sleep, even with the lid closed",
                               description: Self.lidClosedHelp, control: trailing)
         lidClosedRow = row
         lidKeepAwake.onChange = { [weak self] in self?.renderLidClosedRow() }
