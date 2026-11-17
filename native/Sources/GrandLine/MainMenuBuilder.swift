@@ -658,6 +658,14 @@ extension AppDelegate {
         shortcutsItem.keyEquivalentModifierMask = [.command, .shift]
         shortcutsItem.target = self
         helpMenu.addItem(shortcutsItem)
+        // R5-UX-03: ⌘/, the short sheet for the page on screen. Checked
+        // free: "/" is taken only with ⇧ (the full list above).
+        let pageShortcutsItem = NSMenuItem(title: "Shortcuts for This Page",
+                                           action: #selector(AppDelegate.showPageShortcuts),
+                                           keyEquivalent: "/").withSymbol("keyboard.badge.ellipsis")
+        pageShortcutsItem.keyEquivalentModifierMask = [.command]
+        pageShortcutsItem.target = self
+        helpMenu.addItem(pageShortcutsItem)
         let manualChecksItem = NSMenuItem(title: "Manual Checks",
                                           action: #selector(AppDelegate.showManualChecks),
                                           keyEquivalent: "").withSymbol("checklist")

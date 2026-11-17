@@ -1566,6 +1566,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         })
     }
 
+    /// Help → "Shortcuts for This Page" (⌘/) - R5-UX-03. The chords for the
+    /// page on screen and the few that work everywhere; its button opens the
+    /// full list above.
+    @objc func showPageShortcuts() {
+        let place = appShell.shortcutsPlace
+        let sections = PageShortcuts.sections(module: place.module, route: place.route,
+                                              layout: PlaceName.layout, settings: .shared)
+        appShell.presentAsSheet(KeyboardShortcutsSheetController(
+            sections: sections, heading: "Shortcuts for \(place.module.title)",
+            subheading: "What works on this page, and anywhere in Grand Line.",
+            actionTitle: "All Shortcuts\u{2026}") { [weak self] in
+                // After this sheet has gone, so the full one is not stacked.
+                DispatchQueue.main.async { self?.showKeyboardShortcuts() }
+            })
+    }
+
     /// Settings > Shortcuts, from anywhere: the Settings module, then its
     /// Shortcuts page.
     func showShortcutsSettings() {

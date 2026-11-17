@@ -22,6 +22,7 @@ enum ReviewFiveUXSelfTest {
         checkPersonalHomeLeadsWithWhatYouCanActOn(&ok)
         checkOneWordPerState(&ok)
         checkFailuresSayWhatToDo(&ok)
+        checkTheHiddenPowerIsVisible(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -315,6 +316,58 @@ enum ReviewFiveUXSelfTest {
                   "R5-UX-08: an Updates row no longer says what to do in both layouts and its details", &ok)
             check(health.components(separatedBy: "FailureExplainer.explain(service: service").count == 3,
                   "R5-UX-08: a Health row no longer says what to do in both layouts", &ok)
+        }
+    }
+
+    // MARK: R5-UX-03 - the first week's tips and ⌘/
+
+    private static func checkTheHiddenPowerIsVisible(_ ok: inout Bool) {
+        let cal = Calendar.current
+        guard let start = cal.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) else { return }
+        let tips = HomeTips.all(settings: AppSettings.shared, layout: .sidebar)
+        func day(_ n: Int) -> Date { cal.date(byAdding: .day, value: n, to: start) ?? start }
+        // One a day for seven days, each different, then none.
+        let week = (0..<HomeTips.days).compactMap { HomeTips.tip(firstShown: start, now: day($0), dismissed: false, tips: tips) }
+        check(week.count == 7 && Set(week.map(\.title)).count == 7,
+              "R5-UX-03: the first week shows \(week.map(\.title))", &ok)
+        check(HomeTips.tip(firstShown: start, now: day(7), dismissed: false, tips: tips) == nil,
+              "R5-UX-03: a tip still shows on day eight", &ok)
+        check(HomeTips.tip(firstShown: start, now: day(1), dismissed: true, tips: tips) == nil,
+              "R5-UX-03: a dismissed strip came back", &ok)
+        // The tips name the keys the app really has: the recorded capture
+        // and dictation chords, and the layout's own navigation.
+        let titles = tips.map(\.title).joined(separator: " | ")
+        check(titles.contains(AppSettings.shared.quickCaptureShortcut.displayString)
+                && titles.contains(AppSettings.shared.dictationShortcut.displayString)
+                && titles.contains("\u{2318}K") && titles.contains(";abbreviation") && titles.contains("\u{2325}\u{2318}I"),
+              "R5-UX-03: the tips are \(titles)", &ok)
+        let floating = HomeTips.all(settings: AppSettings.shared, layout: .floatingBar).map(\.title).joined(separator: " | ")
+        check(!floating.contains("sidebar") && !floating.contains("inspector"),
+              "R5-UX-03: the floating bar's tips name the sidebar layout's chrome: \(floating)", &ok)
+
+        // ⌘/: the page's chords, then the ones that work everywhere.
+        let tasks = PageShortcuts.sections(module: .tasks, route: .shift, layout: .sidebar, settings: AppSettings.shared)
+        check(tasks.map(\.title) == ["On Tasks", "Everywhere"]
+                && tasks[0].entries.contains { $0.title == ContextualNewAction.task.menuTitle && $0.chord == "\u{2318}N" }
+                && tasks[0].entries.contains { $0.title == "Previous or next tab" }
+                && tasks[1].entries.contains { $0.chord == "\u{2318}K" }
+                && tasks[1].entries.contains { $0.chord == "\u{2325}\u{2318}I" },
+              "R5-UX-03: ⌘/ on Tasks lists \(tasks)", &ok)
+        let console = PageShortcuts.sections(module: .console, route: .console, layout: .floatingBar, settings: AppSettings.shared)
+        check(console[0].entries.count > TerminalShortcutAction.allCases.count - 1
+                && !console[1].entries.contains { $0.chord == "\u{2325}\u{2318}I" },
+              "R5-UX-03: ⌘/ on the floating bar's Console lists \(console)", &ok)
+        // The chord is real, in the Help menu, once.
+        let menu = AppDelegate().buildMenu(installing: false)
+        let help = menu.items.compactMap(\.submenu).first { $0.title == "Help" }
+        let item = help?.items.first { $0.action == #selector(AppDelegate.showPageShortcuts) }
+        check(item?.keyEquivalent == "/" && item?.keyEquivalentModifierMask == [.command],
+              "R5-UX-03: Help has no ⌘/ Shortcuts for This Page", &ok)
+        // Home starts the week at a real launch, never in a test process.
+        if let settings = source("AppSettings.swift"), let home = source("HomeCanvasController.swift") {
+            check(settings.contains("if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }")
+                    && home.contains("stack.addArrangedSubview(tipRow)"),
+                  "R5-UX-03: Home's tip strip or its week is no longer wired", &ok)
         }
     }
 

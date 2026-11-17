@@ -68,6 +68,8 @@ final class AppSettings {
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
         static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
+        static let homeTipsFirstShown = "fm.homeTips.firstShown"
+        static let homeTipsDismissed = "fm.homeTips.dismissed"
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
         static let hostTagMatchAll = "fm.connections.tagMatchAll"
@@ -828,6 +830,24 @@ final class AppSettings {
         // Before the profile below writes a set of this build's shape.
         settleKnowledgeSplit()
         if workspaceProfile == nil { setProfile(existing ? .operator : .personal) }
+        // R5-UX-03: the week of Home tips starts at the first launch that
+        // has them. A self-test or tour process never runs this, so its
+        // Home shows no tip unless a suite starts the week itself.
+        if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }
+    }
+
+    /// R5-UX-03: the day Home's "Things you can do" strip first showed, which
+    /// starts its week (`HomeTips`). `nil` until a launch settles it.
+    var homeTipsFirstShown: Date? {
+        get { defaults.object(forKey: Keys.homeTipsFirstShown) as? Date }
+        set { defaults.set(newValue, forKey: Keys.homeTipsFirstShown) }
+    }
+
+    /// R5-UX-03: the captain hid the tips. For good - the strip does not
+    /// come back the next day.
+    var homeTipsDismissed: Bool {
+        get { defaults.bool(forKey: Keys.homeTipsDismissed) }
+        set { defaults.set(newValue, forKey: Keys.homeTipsDismissed) }
     }
 
     /// R5-UX-05: Knowledge split into Knowledge (Notebook, Docs, Reading

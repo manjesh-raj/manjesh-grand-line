@@ -55,6 +55,17 @@ final class KeyboardShortcutsSheetController: NSViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
+    /// R5-UX-03: ⌘/'s short sheet for the page on screen - its own heading
+    /// and line, and its button opens the full list instead of Settings.
+    convenience init(sections: [KeyboardShortcutSection], heading: String, subheading: String,
+                     actionTitle: String, onAction: @escaping () -> Void) {
+        self.init(sections: sections, onCustomize: onAction)
+        customHeading = (heading, subheading)
+        customizeButton.title = actionTitle
+    }
+
+    private var customHeading: (title: String, line: String)?
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
@@ -65,6 +76,10 @@ final class KeyboardShortcutsSheetController: NSViewController {
         inkLabels.append(heading)
         let total = sections.reduce(0) { $0 + $1.entries.count }
         subheading.stringValue = "\(total) bindings across \(sections.count) menus and panels."
+        if let customHeading {
+            heading.stringValue = customHeading.title
+            subheading.stringValue = customHeading.line
+        }
         subheading.font = HelmType.caption()
         mutedLabels.append(subheading)
 

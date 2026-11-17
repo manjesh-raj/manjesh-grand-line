@@ -599,7 +599,9 @@ final class HomeCanvasController: NSViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(heroCard)
         stack.addArrangedSubview(attentionCard)
+        stack.addArrangedSubview(tipRow)
         stack.addArrangedSubview(gridStack)
+        tipRow.isHidden = true
 
         attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
         attentionCard.onOpenItem = { [weak self] item in self?.openAttentionItem(item) }
@@ -674,6 +676,7 @@ final class HomeCanvasController: NSViewController {
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        tipRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
         attentionTie.isActive = true
         attentionWidthTie = attentionTie
@@ -926,8 +929,61 @@ final class HomeCanvasController: NSViewController {
         healthSummary = ServiceHealthRegistry.shared.summary()
         renderGreeting()
         renderAttention()
+        renderTip()
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
+    }
+
+    // MARK: R5-UX-03 - Things you can do
+
+    /// Home's "Things you can do" strip: one tip a day for the first week,
+    /// under the attention card, until the captain hides it.
+    private lazy var tipDismissButton: HelmButton = {
+        let button = HelmButton(title: "Hide tips", variant: .quiet, size: .small,
+                                target: self, action: #selector(dismissTipsTapped))
+        button.toolTip = "Hide these tips for good. \u{2318}/ still lists the shortcuts for any page."
+        return button
+    }()
+    private lazy var tipRow = HelmAccentRow(trailingAccessory: tipDismissButton, hover: false, gradientBadge: true)
+    private var shownTip: HomeTips.Tip?
+    private var shownTipDay = 0
+
+    private func renderTip(now: Date = Date()) {
+        let settings = AppSettings.shared
+        guard space == .overview, let first = settings.homeTipsFirstShown,
+              let tip = HomeTips.tip(firstShown: first, now: now, dismissed: settings.homeTipsDismissed,
+                                     tips: HomeTips.all()) else {
+            shownTip = nil
+            tipRow.isHidden = true
+            return
+        }
+        shownTip = tip
+        shownTipDay = (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: first),
+                                                       to: Calendar.current.startOfDay(for: now)).day ?? 0) + 1
+        tipRow.isHidden = false
+        paintTip(ThemeManager.shared.theme)
+    }
+
+    private func paintTip(_ theme: HelmTheme) {
+        guard let tip = shownTip else { return }
+        tipRow.configure(HelmAccentRow.Content(
+            tint: .info,
+            kicker: "THINGS YOU CAN DO \u{00B7} DAY \(shownTipDay) OF \(HomeTips.days)",
+            title: tip.title,
+            meta: tip.body,
+            badgeSymbol: tip.symbol,
+            metaWraps: true), theme: theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugTipTitle: String? { tipRow.isHidden ? nil : shownTip?.title }
+    func debugDismissTips() { tipDismissButton.performClick(nil) }
+    #endif
+
+    @objc private func dismissTipsTapped() {
+        AppSettings.shared.homeTipsDismissed = true
+        renderTip()
+        Toast.show(in: view, message: "Tips hidden. \u{2318}/ lists the shortcuts for any page.")
     }
 
     /// §5.4's copy. Overview reuses `FleetGreeting`'s time-of-day logic and
@@ -2686,6 +2742,7 @@ final class HomeCanvasController: NSViewController {
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         paintHeroBand(theme)
+        paintTip(theme)
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         // Plain `body()` on every space now. The step up to `sectionTitle()`
@@ -4154,7 +4211,7 @@ final class HomeCanvasController: NSViewController {
         guard !rows.isEmpty else {
             content.chip = .mute("clear")
             content.body = .note("Nothing dated in the next two weeks. Give a task a due date, or "
-                                 + "double-click a day on the Calendar to add one.")
+                                 + "double-click a day on \(PlaceName.of(.calendar)) to add one.")
             return
         }
         content.chip = .mute(rows.count == 1 ? "1 coming up" : "\(rows.count) coming up")

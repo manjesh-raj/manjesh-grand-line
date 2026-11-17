@@ -289,6 +289,17 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     /// module's first page.
     func openModule(_ module: WorkspaceModule) { workspace.navigator.show(module.primaryRoute) }
 
+    /// R5-UX-03: the page ⌘/ lists the chords for - the route on screen and
+    /// the module it reads as. A host page is Console's.
+    var shortcutsPlace: (module: WorkspaceModule, route: RailDestination?) {
+        switch workspace.navigator.currentDestinationKind {
+        case .rail(let route)?:
+            return (ModuleTable.litModule(for: route, hidden: AppSettings.shared.hiddenModules), route)
+        case .host?: return (.console, .console)
+        case nil: return (.home, .homeCanvas)
+        }
+    }
+
     /// One of a module's tabs. The sidebar layout selects a page's own tab
     /// through the page; a shell with no toolbar tabs shows the tab's page.
     func openModuleTab(_ tab: ModuleTab) { workspace.navigator.show(tab.route) }
