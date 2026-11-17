@@ -1103,7 +1103,7 @@ noted.
 | `HelmAccentRow` | a hand-rolled alert/record row (accent bar, badge, kicker, body, chip) |
 | `ToolRowLayout` | a hand-rolled dense checklist row (fixed columns, actions, chevron, expandable log) |
 | `HelmModuleCard.Body.usageReport` | a hand-rolled quota/budget readout on a canvas card. Rows whose bars must line up are an `NSGridView` with the bar column left unconstrained (gotcha (2)), never nested stacks, and every content priority inside sits in the 251-498 band (gotcha (13)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 526pt-to-227pt measurement |
-| `HelmStatTile`, `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | four, two, three and two prior copies respectively |
+| `HelmKPIStrip` (`.inline` in a card, `.boxed` for a page's summary row), `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | a hand-rolled number row or stat tile (`HelmStatTile` and `HelmMetricCard` were retired into the strip), and two, three and two prior copies respectively |
 | `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
 | `HelmRevealableSecretField` | a hand-rolled masked field plus Show/Hide toggle. Wire **both** `editableFields` (gotcha (19)), and ask `owns(_:)` in a delegate - the sender is one of its two halves, never the control |

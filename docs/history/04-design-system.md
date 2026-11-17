@@ -1012,3 +1012,63 @@ Settings' column and header sit 32pt past the band's visible edge with the slack
 The real macOS 26 toolbar capsules (the off-screen render draws no glass), hover and press states, and motion.
 `AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` fails on this machine for nord-snow (0.906 against 0.928), and fails the same way on the baseline binary built before any UI change here.
 
+
+## The UI/UX proposals S12 to S27 (`fm/grand-line-uiux-proposals-s12-s27`)
+
+Fourteen of the 2026-11-17 proposals, one commit each, taking the kit from Helm 1.7.0 to 4.0.0.
+S03, S19 and S22 were not part of this branch.
+The release notes in `docs/design-system/helm-kit-versions.md` carry every bump; this records what each measured and what changed shape on the way.
+
+**S13, project colours.**
+A project's colour is stored on the project (`ShiftProject.hue`) and resolved through `HelmDomainHue.categoricalHex`, never a theme's `warn` or `critical`.
+The categorical ramp has seven hues, so the identity set is seven, not the eight the mock drew.
+Existing projects keep a hash colour, now from the categorical set, until edited.
+
+**S12, one glyph per meaning.**
+`HelmSymbol.Role` is the table.
+Today's note keeps the short word "Today" in the compact toolbar, and the toolbar's overflow menu now prefers a button's explicit menu title, so the menu still reads "Today's note".
+
+**S17, HelmNotice.**
+The edge rule is code: info has no edge, warn and critical carry the attention edge in their hue.
+`SetupPausedPushNotice` and Secrets' filled band are gone.
+
+**S15, card headers.**
+`HelmSectionHeader(size: .card)` with `HelmCard.setHeader(_: HelmSectionHeader)`.
+The header's row has clipping resistance 495, above its text's 490, after a render showed Dictation's "Request Accessibility Access" clipped by the Status card.
+The same render pass found the Status and Cleanup sentences cut off at their cards' bottoms after a live 1512 to 1100 resize (Cleanup already was on `main`).
+Env-gated instrumentation showed `viewDidLayout` reading the rows inside the scroll view before they had their new width; it now lays the document out first.
+A standalone window-resize case did not reproduce the shell's ordering and did not catch the injection, so it was not kept: that fix is verified in the tour lab only.
+
+**S14, one number recipe.**
+`HelmKPIStrip(density: .boxed)` replaced `HelmStatTile` and `HelmMetricCard`, both deleted.
+Boxed captions are sentence case, so Crew's "working" became "Working" and the caption-matching suites followed.
+
+**S16, HelmFilterBar.**
+Tasks (Board, List, Calendar), Updates, Logs and Secrets use it; Tasks' R4-UI-08 Filter menu became the bar's popover holding the folded controls themselves.
+Connections keeps its own row: its search and Online filter are re-slotted when the sidebar layout adopts the page, and its spacer carries the measured 74pt column-collapse fix, so it needs the two layouts' rows unified first.
+
+**S25 and S26, the welcome sheet and the theme tiles.**
+`HelmChoiceCard` is new; `SettingsThemeCard.family(_:mode:isActive:)` is the one family tile, now drawing both registers.
+A pair whose dark name only adds "Dark" reads "High Contrast · Dark", because the full pair truncated in a tile.
+Settings › Profile keeps its three-way switch, which has a Custom state the two cards do not.
+
+**S18, loaders.** `HelmSkeletonList(island:caption:)` with editor, canvas and month-grid shapes; a fading loader counts as gone from the moment the page is ready.
+
+**S23, Kubernetes.** The Pods header over skeleton rows fills the page until a feed tab exists.
+Its bottom tie is 490: required, it grew a 760pt window to 790pt in `MainSplitShellSelfTest` (gotcha 13), fixed in a follow-up commit.
+The Session card stays a card rather than the proposal's flat row, because it holds three independently shown sections.
+
+**S24, GitHub sync.** gh's failure cases map onto `ScheduleFailureExplanation`; the fallback is short enough that its next step survives the fork column.
+
+**S20, HelmIconButton.** Card actions, the inspector close and the lanes' "+" are 28pt targets.
+The session-pill and tab-chip closes are exempt (a 28pt target would overflow them), along with the other glyph-only buttons listed in the release notes, each with its reason on its own line.
+
+**S21, tab chords.** ⌘⇧[ and ⌘⇧] already existed (R2-UX-03; the menu stores "{" and "}"); ⌃1 to ⌃9 and the sheet's row are new.
+
+**S27, the inspector's crew panel.** Operator-only, the page's summary line as visible context, and `StrawHatMenuBarPopoverController` (the narrow crew composer the menu bar and compact mode already host) instead of a new chat, so the ask is `StrawHatController.send`.
+Tests stub the ask; nothing reaches `claude` or the network.
+
+**Not verified on this branch.**
+The full local suite (targeted suites per change, as the captain prefers; CI runs everything).
+Hover and press states, motion (the loaders' cross-fade, the shimmer), the popover's real presentation, and a real crew reply in the inspector.
+Anything inside the web islands themselves.
