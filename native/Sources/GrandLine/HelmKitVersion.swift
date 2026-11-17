@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "3.4.2"
+    static let version = "3.5.0"
 
     struct Component {
         let name: String
@@ -76,7 +76,7 @@ enum HelmKit {
         Component("HelmBarPanelWindow", "1.0.0", file: "HelmBarPanel.swift"),
         // HelmCardGrid.swift
         Component("HelmCardGrid", "1.0.0", file: "HelmCardGrid.swift"),
-        Component("HelmGridCardView", "1.0.0", file: "HelmCardGrid.swift"),
+        Component("HelmGridCardView", "1.1.0", file: "HelmCardGrid.swift"),
         // HelmConfirm.swift
         Component("HelmConfirm", "1.0.0", file: "HelmConfirm.swift"),
         Component("HelmConfirmView", "1.0.0", file: "HelmConfirm.swift"),
@@ -206,6 +206,8 @@ enum HelmKit {
         Component("HelmFilterBar", "1.0.0", file: "HelmFilterBar.swift"),
         // HelmChoiceCard.swift
         Component("HelmChoiceCard", "1.0.0", file: "HelmChoiceCard.swift"),
+        // HelmIconButton.swift
+        Component("HelmIconButton", "1.0.0", file: "HelmIconButton.swift"),
     ]
 
     /// App-level views the proposals version alongside the kit. Not hashed;
@@ -234,12 +236,13 @@ enum HelmKit {
 
     /// One recorded digest per kit file.
     static let sourceDigests: [SourceDigest] = [
+        SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.0.0", sha256: "c6f40bf8ac9a2a13f6d86156cf5d616ae103f8d1cca6f241cb0cfedfd9d127bb"),
         SourceDigest(file: "HelmChoiceCard.swift", stamp: "HelmChoiceCard@1.0.0", sha256: "61392738ce874320cc5c6e4b261921f969545e264122a1094f6be6eb6fdc676b"),
         SourceDigest(file: "HelmFilterBar.swift", stamp: "HelmFilterBar@1.0.0", sha256: "7076d771e3679b999841576f33339fc81821003667155251e7e2a5bd9fdc0b39"),
         SourceDigest(file: "HelmNotice.swift", stamp: "HelmNotice@1.0.0", sha256: "a59b3764652021b83e43237d6f3f48c4c11abed019e03e1a3bd2155e8370f8c2"),
         SourceDigest(file: "HelmBackgroundReload.swift", stamp: "HelmBackgroundReload@1.0.0,HelmParseThread@1.0.0", sha256: "9fdf57f19f0187aaaf3f29774bde5659a79547ea20b5b21eb2c71552e1621d4b"),
         SourceDigest(file: "HelmBarPanel.swift", stamp: "HelmBarPanel@1.0.0,HelmBarPanelWindow@1.0.0", sha256: "6811b25ea2dc491014342b855ce2b8eefcbd29118920f1007fafcbaf74d7c5e9"),
-        SourceDigest(file: "HelmCardGrid.swift", stamp: "HelmCardGrid@1.0.0,HelmGridCardView@1.0.0", sha256: "c671a7649823f2e01e4c16e749c03461b1de084728104d8c64e27f5e90cf63e6"),
+        SourceDigest(file: "HelmCardGrid.swift", stamp: "HelmCardGrid@1.0.0,HelmGridCardView@1.1.0", sha256: "89e235d25316c70985446783d0ad9457098ec8d387e0ab37ad6a119172a0f7e2"),
         SourceDigest(file: "HelmConfirm.swift", stamp: "HelmConfirm@1.0.0,HelmConfirmView@1.0.0", sha256: "f963808036b62ebe6d2ee5c85bc522c8c55cae7d927417525faacb79d8f389e0"),
         SourceDigest(file: "HelmDataTable.swift", stamp: "HelmDataTable@1.0.0,HelmDataTableActionsCell@1.0.0,HelmDataTableRowView@1.0.0,HelmDataTableRunDotsCell@1.0.0,HelmTagChip@1.0.0", sha256: "86d47ee1a1d1e68003ac63f882f31bd55a49fbc1a4348039729ffe907093b294"),
         SourceDigest(file: "HelmDateField.swift", stamp: "HelmDateField@1.0.0", sha256: "5f99cbfec49aa505d830385f27c038c793791c8f4f90be50896823841be934be"),

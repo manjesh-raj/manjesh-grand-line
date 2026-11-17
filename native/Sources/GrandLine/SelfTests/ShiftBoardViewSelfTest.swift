@@ -301,7 +301,7 @@ enum ShiftBoardViewSelfTest {
                 // The Done lane takes no new task (UI-25) - a task is finished
                 // by moving it there - so only the open lanes owe an action.
                 if column != .done {
-                    check(!view.debugAddButton.isHidden && view.debugAddButton.variant == .quiet,
+                    check(!view.debugAddButton.isHidden && view.debugAddButton.fittingSize.width >= HelmIconButton.minimumSide,
                           "U1/UI-25: an empty \(column.title) lane should offer its quiet Add task")
                 }
             }

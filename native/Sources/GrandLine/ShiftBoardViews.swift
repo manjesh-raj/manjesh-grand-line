@@ -871,7 +871,8 @@ final class ShiftFollowUpLaneView: NSView {
 
     private let laneBackground = NSView()
     private let header = HelmSectionHeader(size: .lane)
-    private let headerAdd = HelmButton(title: "", variant: .quiet, size: .small, symbol: "plus")
+    /// S20: the lane's "+" is a 28pt `HelmIconButton` target.
+    private let headerAdd = HelmIconButton(symbol: "plus", label: "New task")
     private let cardsStack = NSStackView()
     private let moreLabel = NSTextField(labelWithString: "")
     private let emptyState = HelmEmptyState(symbol: "bell", body: "No follow-ups waiting", size: .quiet)
@@ -1105,6 +1106,7 @@ final class ShiftFollowUpLaneView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        headerAdd.applyTheme(theme)
         // The status lanes' own tint (`ShiftBoardColumnView.applyTheme`).
         laneBackground.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
             .withAlphaComponent(theme.mode == .dark ? 0.05 : 0.035).cgColor
@@ -1130,7 +1132,7 @@ final class ShiftFollowUpLaneView: NSView {
         guard cards.indices.contains(index) else { return false }
         return cards[index].host.performPrimaryAction()
     }
-    var debugAddButton: HelmButton { headerAdd }
+    var debugAddButton: HelmIconButton { headerAdd }
     /// S08: the lane's foot and whether its dashed outline shows.
     var debugAddRow: (button: HelmButton, outlined: Bool, inLane: Bool) {
         (addButton, !addOutline.isHidden, addHost.superview === cardsStack)
@@ -1272,7 +1274,8 @@ final class ShiftBoardColumnView: NSView {
     /// muted text beside it, and a quiet "+" on the trailing edge (UI-25).
     private let header = HelmSectionHeader(size: .lane)
     private let headerRule = NSView()
-    private let headerAdd = HelmButton(title: "", variant: .quiet, size: .small, symbol: "plus")
+    /// S20: the lane's "+" is a 28pt `HelmIconButton` target.
+    private let headerAdd = HelmIconButton(symbol: "plus", label: "New task")
     private let dropView = ShiftBoardDropView()
     /// UI-27: the drop target's dashed outline, shown with the wash.
     private let dropOutline = CAShapeLayer()
@@ -1703,6 +1706,7 @@ final class ShiftBoardColumnView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        headerAdd.applyTheme(theme)
         header.applyTheme(theme)
         headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor

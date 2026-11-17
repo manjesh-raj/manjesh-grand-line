@@ -56,7 +56,7 @@ final class WorkspaceInspectorController: NSViewController {
     private let panel = NSView()
     private let edge = NSView()
     private let titleLabel = NSTextField(labelWithString: "Inspector")
-    private let closeButton = NSButton()
+    private let closeButton = HelmIconButton(symbol: "xmark", label: "Close inspector")
     private let divider = NSView()
     private let empty = HelmEmptyState(
         symbol: HelmSymbol.Role.inspector.name,
@@ -96,14 +96,10 @@ final class WorkspaceInspectorController: NSViewController {
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.image = HelmSymbol.image("xmark", pointSize: HelmType.scaled(11), weight: .semibold)
-        closeButton.imagePosition = .imageOnly
-        closeButton.isBordered = false
+        // S20: a `HelmIconButton` - the 28pt target with its hover fill and
+        // focus ring.
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        closeButton.toolTip = "Close the inspector"
-        closeButton.setAccessibilityLabel("Close inspector")
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
         empty.translatesAutoresizingMaskIntoConstraints = false
         contentScroll.documentView = contentDocument
         contentScroll.hasVerticalScroller = true
@@ -229,7 +225,7 @@ final class WorkspaceInspectorController: NSViewController {
         edge.isHidden = !drawsOwnPane
         divider.layer?.backgroundColor = line.withAlphaComponent(line.alphaComponent * HelmCard.dividerAlpha).cgColor
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        closeButton.contentTintColor = HelmTheme.mutedInk(theme)
+        closeButton.applyTheme(theme)
     }
 
     #if FM_SELFTESTS

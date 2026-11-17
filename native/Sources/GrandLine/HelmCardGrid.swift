@@ -473,7 +473,8 @@ final class HelmGridCardView: HoverHighlightView {
     /// and the badges the card has.
     private let metaRow = NSStackView()
     private let actionRow = NSStackView()
-    private var actionButtons: [HelmButton] = []
+    /// S20: 28pt `HelmIconButton` targets under the 14pt glyphs.
+    private var actionButtons: [HelmIconButton] = []
     private var actionRuns: [() -> Void] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var isFocused = false
@@ -630,8 +631,8 @@ final class HelmGridCardView: HoverHighlightView {
         if actionButtons.count != actions.count || zip(actionButtons, actions).contains(where: { $0.symbolName != $1.symbol }) {
             actionButtons.forEach { $0.removeFromSuperview() }
             actionButtons = actions.enumerated().map { index, action in
-                let button = HelmButton(symbol: action.symbol, variant: .quiet, size: .small,
-                                        target: self, action: #selector(actionClicked(_:)))
+                let button = HelmIconButton(symbol: action.symbol, label: action.label,
+                                            target: self, action: #selector(actionClicked(_:)))
                 button.tag = index
                 button.setContentHuggingPriority(.required, for: .horizontal)
                 button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -640,8 +641,8 @@ final class HelmGridCardView: HoverHighlightView {
             }
         }
         for (button, action) in zip(actionButtons, actions) {
-            button.toolTip = action.label
-            button.setAccessibilityLabel(action.label)
+            button.setLabel(action.label)
+            button.applyTheme(theme)
         }
     }
 
@@ -671,7 +672,10 @@ final class HelmGridCardView: HoverHighlightView {
         layer?.borderColor = (isSelected ? accent : edge).cgColor
         layer?.borderWidth = isSelected ? 1.5 : 1
         let tint: HelmTint? = iconsAreEmphasised ? .accent : nil
-        actionButtons.forEach { if $0.tint != tint { $0.tint = tint } }
+        actionButtons.forEach {
+            $0.applyTheme(theme)
+            if $0.tint != tint { $0.tint = tint }
+        }
     }
 
     // MARK: Mouse and keyboard
@@ -752,7 +756,7 @@ final class HelmGridCardView: HoverHighlightView {
     override func accessibilityChildren() -> [Any]? { actionButtons }
 
     #if FM_SELFTESTS
-    var debugActionButtons: [HelmButton] { actionButtons }
+    var debugActionButtons: [HelmIconButton] { actionButtons }
     var debugTitle: String { titleLabel.stringValue }
     var debugSubtitle: String { subtitleLabel.stringValue }
     var debugSubtitleLabel: NSTextField { subtitleLabel }

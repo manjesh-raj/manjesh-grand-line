@@ -39,6 +39,7 @@ enum UIUXProposalsSelfTest {
             ("S18 loading states for the web islands", checkIslandLoaders),
             ("S23 Kubernetes shows its shape", checkKubernetesShowsItsShape),
             ("S24 GitHub sync rows say what to do", checkGitHubSyncRowsSayWhatToDo),
+            ("S20 28pt icon targets", checkIconTargets),
         ]
         for (name, body) in cases {
             var ok = true
@@ -529,7 +530,7 @@ enum UIUXProposalsSelfTest {
     private static func checkKubernetesShowsItsShape(_ ok: inout Bool) {
         guard sourcesAvailable else { print("  SKIP: S23, no app sources"); return }
         let page = source("KubernetesController.swift"), render = source("KubernetesController+Render.swift")
-        check(page.contains("HelmSkeletonList(rows: 5)") && page.contains("titleLabel: NSTextField(labelWithString: \"Pods\")"),
+        check(page.contains("HelmSkeletonList(rows: 4)") && page.contains("titleLabel: NSTextField(labelWithString: \"Pods\")"),
               "S23: the pending table is the Pods header over skeleton rows", &ok)
         check(render.contains("pendingTablePreview.isHidden = !(hasScope && !ready)"),
               "S23: the skeleton shows exactly while a scope has no feed tab", &ok)
@@ -562,6 +563,55 @@ enum UIUXProposalsSelfTest {
               "S24: a failed sync says so", &ok)
         check(ScheduleFailureExplanation(whatFailed: "A", why: "B", whatToDo: "C").sentence == "A \u{00B7} B \u{00B7} C",
               "S24: the three parts read as one line", &ok)
+    }
+
+    // MARK: - S20
+
+    /// A glyph-only button is a 28pt target with a hover fill, a focus ring
+    /// and one label for tooltip and VoiceOver; card actions, the inspector
+    /// close and the lane "+" use it; a bare `.imageOnly` button outside the
+    /// kit says why it is exempt.
+    private static func checkIconTargets(_ ok: inout Bool) {
+        let button = HelmIconButton(symbol: "bolt.fill", label: "Connect to grafana")
+        button.layoutSubtreeIfNeeded()
+        check(button.fittingSize.width >= HelmIconButton.minimumSide && button.fittingSize.height >= HelmIconButton.minimumSide,
+              "S20: the target is at least 28pt square (\(button.fittingSize))", &ok)
+        check(button.toolTip == "Connect to grafana" && button.accessibilityLabel() == "Connect to grafana",
+              "S20: one label is the tooltip and what VoiceOver reads", &ok)
+        check(button.focusRingType == .exterior, "S20: keyboard focus draws an exterior ring (GL-16)", &ok)
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            button.applyTheme(theme)
+            button.debugHover(false)
+            check((button.debugHoverFill?.alphaComponent ?? 0) == 0, "S20 \(theme.id): invisible at rest", &ok)
+            button.debugHover(true)
+            check(button.debugHoverFill.map { same($0, HelmField.fill(theme)) } ?? false,
+                  "S20 \(theme.id): the hover fill is the inset field fill", &ok)
+        }
+        let grid = HelmGridCardView(frame: .zero)
+        var card = HelmCardGrid.Card(key: "h", symbol: "server.rack", tint: .accent, tintHex: nil, title: "grafana",
+                                     subtitle: "ops@grafana", accessibilityLabel: "grafana")
+        card.actions = [.init(symbol: "bolt.fill", label: "Connect", run: {}),
+                        .init(symbol: "pencil", label: "Edit", run: {})]
+        grid.configure(card, theme: .daylight)
+        check(grid.debugActionButtons.count == 2, "S20: a host card's two actions are icon targets", &ok)
+
+        guard sourcesAvailable, let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP: S20 source half, no app sources")
+            return
+        }
+        check(source("WorkspaceInspector.swift").contains("HelmIconButton(symbol: \"xmark\""),
+              "S20: the inspector close is an icon target", &ok)
+        check(source("ShiftBoardViews.swift").contains("HelmIconButton(symbol: \"plus\""), "S20: the lane + is an icon target", &ok)
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+            .filter { $0.hasSuffix(".swift") && !$0.hasPrefix("Helm") }
+        var bare: [String] = []
+        for name in names {
+            for line in source(name).split(separator: "\n") where line.contains("imagePosition = .imageOnly")
+                && !line.contains("HelmIconButton-exempt:") {
+                bare.append(name)
+            }
+        }
+        check(bare.isEmpty, "S20: no bare glyph-only NSButton outside the kit without a reason (\(bare))", &ok)
     }
 
     // MARK: - S13

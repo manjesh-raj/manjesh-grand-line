@@ -367,7 +367,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     private func buildControls() {
         sidebarButton.image = symbol("sidebar.left")
-        sidebarButton.imagePosition = .imageOnly
+        sidebarButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         sidebarButton.target = self
         sidebarButton.action = #selector(sidebarClicked)
         applySidebarButtonState()
@@ -386,7 +386,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         setHistory(canGoBack: false, canGoForward: false)
 
         recentsButton.image = symbol("clock.arrow.circlepath")
-        recentsButton.imagePosition = .imageOnly
+        recentsButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         recentsButton.target = self
         recentsButton.action = #selector(recentsClicked)
         recentsButton.toolTip = "Recents"
@@ -435,7 +435,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         primaryActionHost.setHuggingPriority(.required, for: .horizontal)
 
         bellButton.image = symbol("bell")
-        bellButton.imagePosition = .imageOnly
+        bellButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         bellButton.target = self
         bellButton.action = #selector(notificationsClicked)
         bellButton.toolTip = "Notifications"

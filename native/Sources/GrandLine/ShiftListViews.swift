@@ -319,7 +319,7 @@ final class ShiftTaskCheckBadge: NSButton {
         super.init(frame: .zero)
         title = ""
         isBordered = false
-        imagePosition = .imageOnly
+        imagePosition = .imageOnly  // HelmIconButton-exempt: the list row check badge, a toggle sized with its row
         setButtonType(.momentaryChange)
         wantsLayer = true
         layer?.cornerRadius = diameter / 2

@@ -1184,7 +1184,7 @@ final class StickyChecklistRowView: NSView {
         // in `applyInk` for the same reason the note's own chrome is: it
         // sits on literal paper, where a themed control does not belong.
         box.isBordered = false
-        box.imagePosition = .imageOnly
+        box.imagePosition = .imageOnly  // HelmIconButton-exempt: a checklist checkbox inside a sticky note
         box.target = self
         box.action = #selector(boxClicked)
         // GL-16: a real control, so it carries a real label rather than

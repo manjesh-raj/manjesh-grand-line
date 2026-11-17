@@ -165,7 +165,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         // `intrinsicContentSize` and `imageRect` with and without it - so the
         // line this used to carry was dead, and its only remaining effect was
         // to keep this file in the audit's stock-bezel count.
-        closeButton.imagePosition = .imageOnly
+        closeButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a tab close inside a tab chip; a 28pt target would overflow the chip
         closeButton.imageScaling = .scaleProportionallyDown
         closeButton.image = HelmSymbol.image("xmark", pointSize: 9,
                                      weight: HelmSymbol.weight(for: .semibold),
