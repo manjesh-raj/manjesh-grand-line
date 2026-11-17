@@ -1563,10 +1563,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                                            containerWidth: appearanceContainer.frame.width,
                                            minItemWidth: Self.themeCardMinWidth,
                                            spacing: HelmMetrics.s3) { family, _ in
-            let register = family.register(current.mode)
-            let card = SettingsThemeCard(theme: register, isActive: family == activeFamily, kind: .app,
-                                         title: family.title,
-                                         detail: "\(register.mode == .dark ? "Dark" : "Light"): \(register.name)")
+            let card = SettingsThemeCard.family(family, mode: current.mode, isActive: family == activeFamily)
             card.onSelect = { [weak self] in self?.familyChosen(family) }
             card.applyTheme(self.theme)
             self.themeCards.append(card)

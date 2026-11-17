@@ -71,6 +71,24 @@ final class SettingsThemeCard: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// S25: one app-theme family as a tile, the one construction Settings ›
+    /// Appearance and the welcome sheet's look step both use, so the tile is
+    /// hostable outside Settings rather than a Settings-only private shape.
+    static func family(_ family: AppThemeFamily, mode: HelmTheme.Mode, isActive: Bool) -> SettingsThemeCard {
+        let register = family.register(mode)
+        return SettingsThemeCard(theme: register, isActive: isActive, kind: .app, title: family.title,
+                                 detail: "\(register.mode == .dark ? "Dark" : "Light"): \(register.name)")
+    }
+
+    /// Marks this tile as the active one, or not, without rebuilding it.
+    func setActive(_ active: Bool) {
+        guard active != isActive else { return }
+        isActive = active
+        check.isHidden = !active
+        nameLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: active ? .semibold : .regular)
+        applyTheme(ThemeManager.shared.theme)
+    }
+
     private func build() {
         preview.wantsLayer = true
         preview.layer?.cornerRadius = HelmMetrics.rControl

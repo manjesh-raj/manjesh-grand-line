@@ -34,6 +34,7 @@ enum UIUXProposalsSelfTest {
             ("S15 one card header recipe", checkOneCardHeaderRecipe),
             ("S14 one number recipe", checkOneNumberRecipe),
             ("S16 one filter row", checkOneFilterRow),
+            ("S25 welcome choice cards and tiles", checkWelcomeChoiceCards),
         ]
         for (name, body) in cases {
             var ok = true
@@ -427,6 +428,36 @@ enum UIUXProposalsSelfTest {
         }
         check(source("ShiftController+Calendar.swift").contains("HelmPopUpButton()"),
               "S16: Calendar's Colour by is a pop-up in the trailing slot", &ok)
+    }
+
+    // MARK: - S25
+
+    /// The profile step is two equal choice cards with the description inside,
+    /// the look step is Settings' seven family tiles, and the sheet is as tall
+    /// as its content.
+    private static func checkWelcomeChoiceCards(_ ok: inout Bool) {
+        let previousHidden = AppSettings.shared.hiddenModules
+        defer { AppSettings.shared.hiddenModules = previousHidden }
+        let sheet = WelcomeSheetController()
+        sheet.loadView()
+        let cards = sheet.debugProfileCards
+        check(cards.count == WorkspaceProfile.allCases.count, "S25: one choice card per profile", &ok)
+        check(cards.map(\.debugTitle) == WorkspaceProfile.allCases.map(\.title)
+                && cards.map(\.debugBody) == WorkspaceProfile.allCases.map(\.summary),
+              "S25: each card carries its profile's title and description", &ok)
+        sheet.debugPickProfile(.personal)
+        check(cards.filter(\.isSelected).count == 1 && cards.first(where: \.isSelected)?.debugTitle == WorkspaceProfile.personal.title,
+              "S25: picking Personal selects exactly that card", &ok)
+        check(cards.allSatisfy { $0.debugBorderWidth == ($0.isSelected ? HelmChoiceCard.ringWidth : 1) },
+              "S25: only the chosen card wears the ring", &ok)
+        sheet.debugProfileCards.first?.debugKey(124)
+        check(sheet.debugProfileCards.last?.isSelected == true, "S25: the right arrow moves the choice to the next card", &ok)
+        check(sheet.debugThemeCards.count == AppThemeFamily.allCases.count,
+              "S25: the look step shows the seven family tiles", &ok)
+        check(sheet.preferredContentSize.height > 200 && sheet.preferredContentSize.height < 470,
+              "S25: the sheet hugs its content (\(sheet.preferredContentSize.height)pt, was a fixed 470)", &ok)
+        check(abs(sheet.view.frame.height - sheet.preferredContentSize.height) < 0.5,
+              "S25: the sheet's frame is its content's height", &ok)
     }
 
     // MARK: - S13
