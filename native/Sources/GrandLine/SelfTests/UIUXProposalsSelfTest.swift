@@ -40,6 +40,7 @@ enum UIUXProposalsSelfTest {
             ("S23 Kubernetes shows its shape", checkKubernetesShowsItsShape),
             ("S24 GitHub sync rows say what to do", checkGitHubSyncRowsSayWhatToDo),
             ("S20 28pt icon targets", checkIconTargets),
+            ("S21 page-tab chords", checkPageTabChords),
         ]
         for (name, body) in cases {
             var ok = true
@@ -612,6 +613,30 @@ enum UIUXProposalsSelfTest {
             }
         }
         check(bare.isEmpty, "S20: no bare glyph-only NSButton outside the kit without a reason (\(bare))", &ok)
+    }
+
+    // MARK: - S21
+
+    /// ⌘⇧[ and ] are in the Go menu, ⌃1 to ⌃9 pick a tab by number from
+    /// hidden rows, and ⌘/ on Tasks lists both.
+    private static func checkPageTabChords(_ ok: inout Bool) {
+        let menu = AppDelegate().buildMenu(installing: false)
+        let items = menu.items.flatMap { $0.submenu?.items ?? [] }
+        let numbered = items.filter { $0.action == #selector(WorkspaceShellController.selectModuleTabByNumber(_:)) }
+        check(numbered.map(\.keyEquivalent) == (1...9).map(String.init)
+                && numbered.allSatisfy { $0.keyEquivalentModifierMask == [.control] && $0.isHidden
+                    && $0.allowsKeyEquivalentWhenHidden },
+              "S21: ⌃1 to ⌃9 are hidden Go menu rows (\(numbered.map(\.keyEquivalent)))", &ok)
+        check(numbered.map(\.tag) == Array(1...9), "S21: each row carries its tab number", &ok)
+        check(items.contains { $0.action == #selector(WorkspaceShellController.selectNextModuleTab(_:)) && $0.keyEquivalent == "}" }
+                && items.contains { $0.action == #selector(WorkspaceShellController.selectPreviousModuleTab(_:)) && $0.keyEquivalent == "{" },
+              "S21: Previous and Next Tab are ⌘⇧[ and ⌘⇧]", &ok)
+        let sections = PageShortcuts.sections(module: .tasks, route: .shift, layout: .sidebar, settings: .shared)
+        let page = sections.first?.entries ?? []
+        let names = WorkspaceModule.tasks.tabs.map(\.name)
+        check(page.contains { $0.title == "Previous or next tab" }, "S21: ⌘/ on Tasks lists the tab chords", &ok)
+        check(page.contains { $0.keys.first == "\u{2303}" && $0.title == names.joined(separator: " \u{00B7} ") },
+              "S21: ⌘/ on Tasks lists ⌃1 to ⌃\(names.count) by tab name", &ok)
     }
 
     // MARK: - S13

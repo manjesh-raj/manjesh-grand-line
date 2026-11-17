@@ -1057,6 +1057,13 @@ final class MainSplitShellController: WorkspaceShellController {
         open(tabs[(index + offset + tabs.count) % tabs.count])
     }
 
+    override func selectModuleTab(atIndex index: Int) {
+        guard shownCalendar == nil, !showsDoorAsOwnPlace else { return }
+        let tabs = currentModule.tabs
+        guard tabs.count > 1, tabs.indices.contains(index) else { return }
+        open(tabs[index])
+    }
+
     /// R2-UX-03: one ⌘K row per module in the sidebar, in its order, with
     /// the chord that opens it - "Tasks ⌘2" - so the palette teaches them.
     override func paletteModuleActions() -> [UnifiedSearchActionProvider.Action] {

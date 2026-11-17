@@ -36,6 +36,11 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 3.6.0 - S21: page tabs by number
+
+- `WorkspaceGoMenu` 1.0.0 → 1.1.0 (minor): ⌃1 to ⌃9 as hidden Go menu rows (key equivalents still work while hidden) that open the showing module's tab by number, in both window layouts. Previous Tab ⌘⇧[ and Next Tab ⌘⇧] were already there (R2-UX-03). It enters the table at this release.
+- `PageShortcuts` 1.0.0 → 1.1.0 (minor): a module with tabs lists them by name with ⌃1 to ⌃n beside "Previous or next tab". It enters the table at this release.
+
 ## 3.5.0 - S20: HelmIconButton, 28pt targets
 
 - `HelmIconButton` none → 1.0.0 (new): a glyph-only button: the glyph at 14pt in at least a 28 x 28pt target, invisible at rest, the inset field fill under the pointer, a real `.exterior` focus ring, an optional contrast-corrected tint, and one label for the tooltip and VoiceOver.

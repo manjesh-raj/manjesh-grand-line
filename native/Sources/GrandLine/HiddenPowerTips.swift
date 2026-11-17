@@ -91,6 +91,10 @@ enum PageShortcuts {
                 page.append(.init(title: "Previous or next period", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
             } else if module.tabs.count > 1 {
                 page.append(.init(title: "Previous or next tab", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
+                // S21: the tabs by number, named in order.
+                let tabs = module.tabs.prefix(9)
+                page.append(.init(title: tabs.map(\.name).joined(separator: " \u{00B7} "),
+                                  keys: ["\u{2303}", "1\u{2013}\(tabs.count)"]))
             }
         }
         if module == .console {
