@@ -293,7 +293,7 @@ enum ReviewFiveUXSelfTest {
         let gh = FailureExplainer.explain(service: .backgroundSignals,
                                           detail: "gh: could not reach api.github.com", canRetry: true)
         check(FailureExplainer.cause(of: "gh: could not reach api.github.com") == .network
-                && gh.why == "Gh: could not reach api.github.com." && gh.whatToDo.contains("connection")
+                && gh.why == "gh: could not reach api.github.com." && gh.whatToDo.contains("connection")
                 && gh.whatToDo.contains("press Retry") && !gh.whatFailed.isEmpty,
               "R5-UX-08: the Health page's network error reads \(gh)", &ok)
         // A row with no Retry never names one.

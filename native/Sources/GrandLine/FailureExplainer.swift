@@ -62,17 +62,17 @@ enum FailureExplainer {
         let next: String
         switch cause(of: detail) {
         case .network:
-            next = "Check your connection, then \(again). Nothing is lost while it waits."
+            next = "Check your connection, then \(again)."
         case .signedOut:
             next = "Sign in again with gh auth login in a terminal, then \(again)."
         case .diskFull:
             next = "Free some disk space, then \(again)."
         case .permission:
-            next = "Check that Grand Line can write to its folders in Application Support and your config repo, then \(again)."
+            next = "Check Grand Line can write to its folders, then \(again)."
         case .timedOut:
             next = "It may have been slow rather than broken: \(again)."
         case .missingTool:
-            next = "Install the missing tool from \(PlaceName.of(.bootstrap))'s software checklist, then \(again)."
+            next = "Install the missing tool from \(PlaceName.of(.bootstrap)), then \(again)."
         case .unknown:
             next = service.generalNextStep(again: again)
         }
@@ -93,11 +93,11 @@ enum FailureExplainer {
         let again = status == .updateFailed ? "Update" : "Check"
         switch cause(of: detail + "\n" + log) {
         case .network:
-            next = "Check your connection, then press \(again) on this row. Nothing was installed or changed."
+            next = "Check your connection, then press \(again). Nothing was changed."
         case .signedOut:
             next = "Sign in again with gh auth login in a terminal, then press Check."
         case .missingTool:
-            next = "Install it from \(PlaceName.of(.bootstrap))'s software checklist, or check that your shell's PATH finds it, then press Check."
+            next = "Install it from \(PlaceName.of(.bootstrap)), or check your shell's PATH, then press Check."
         case .diskFull:
             next = "Free some disk space, then press Check."
         case .permission:
@@ -112,12 +112,12 @@ enum FailureExplainer {
         return ScheduleFailureExplanation(whatFailed: whatFailed, why: sentence(detail), whatToDo: next)
     }
 
-    /// The error as a sentence: trimmed, capitalised, with a full stop.
+    /// The error as a sentence: trimmed, with a full stop. Not capitalised,
+    /// because it so often starts with a command's own name ("gh: ...").
     static func sentence(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "No reason was recorded." }
-        let first = trimmed.prefix(1).uppercased() + trimmed.dropFirst()
-        return ".!?\u{2026}".contains(first.last ?? " ") ? first : first + "."
+        return ".!?\u{2026}".contains(trimmed.last ?? " ") ? trimmed : trimmed + "."
     }
 }
 
@@ -125,6 +125,11 @@ extension ScheduleFailureExplanation {
     /// The three parts on one line, for a row's subtitle or a tooltip:
     /// the reason, then the next step.
     var rowLine: String { "\(why) \(whatToDo)" }
+
+    /// A row whose status column already says it failed: the next step
+    /// first, so a one-line subtitle that truncates loses the error text
+    /// (still in its tooltip) rather than the thing to do about it.
+    func rowLine(failedAt when: String) -> String { "\(whatToDo) Last error \(when): \(why)" }
 }
 
 extension HealthService {

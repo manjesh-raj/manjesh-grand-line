@@ -162,7 +162,7 @@ final class HealthCardView: NSObject {
             // R5-UX-08: the reason and the next step, not the reason alone.
             let explanation = FailureExplainer.explain(service: service, detail: failure,
                                                        canRetry: retryActions[service] != nil)
-            detail = "Last error (\(Self.relative(when))): \(explanation.rowLine)"
+            detail = explanation.rowLine(failedAt: Self.relative(when))
         } else {
             detail = service.detail
         }
@@ -521,7 +521,7 @@ final class HealthCardView: NSObject {
             // R5-UX-08: the reason and the next step, not the reason alone.
             let explanation = FailureExplainer.explain(service: service, detail: failure,
                                                        canRetry: retryActions[service] != nil)
-            lines.append("Last error (\(Self.relative(when))): \(explanation.rowLine)")
+            lines.append(explanation.rowLine(failedAt: Self.relative(when)))
         }
 
         // §6.5's "34pt gradient tile (solid semantic fill ... when the row's
