@@ -944,3 +944,21 @@ In the sidebar layout `HomeCanvasController.shownLayout` is the captain's layout
 A hidden card used to leave a hole: the default arrangement's Merge queue sat alone at half width.
 `HomeCardGrid.rows(fillingShortRows:)` now fills the rows without it, but only when the captain's full arrangement had no short row of its own.
 Three suites that measure the five-card Home now switch the briefing on in their own suite domain, and two new checks cover it switched off.
+
+## The UI/UX proposals S01 to S11 (`fm/grand-line-uiux-proposals-s01-s11`)
+
+The captain approved ten of the 2026-11-17 proposals (S01, S02, S04 to S11) for one pull request, each in its own commit.
+The proposals, their BEFORE renders and AFTER mocks are in the firstmate task data for `grand-line-uiux-enhancement-proposals`.
+
+**S01: the Helm kit has a version.**
+`HelmKitVersion.swift` holds `HelmKit.version`, a table with one semantic version per kit type (every top-level `Helm*` type in a `Helm*.swift` file), and a short list of app-level surfaces the proposals also version.
+The kit at `30e26ac3` is Helm 1.0.0, with every component at 1.0.0.
+`docs/design-system/helm-kit-versions.md` is the release notes, newest first.
+It is not called `CHANGELOG.md` on purpose: the captain's standing rule is that no agent edits a file of that name by hand.
+`FM_RUN_HELM_KIT_VERSION_TESTS` (pure logic, blocking lane) hashes every kit file with its comments and blank lines stripped.
+A changed file whose components did not move fails the run, and the suite prints the digest to record only once a version has moved.
+It also fails on a kit type missing from the table, on a stale entry, on a release-notes line whose written bump kind does not match its numbers, and on a kit version that did not move by the largest bump of its release.
+Surfaces carry a version and a release-notes line but are not hashed, because page files change for many reasons that are not design-system releases.
+Confirmed by injection: one added line in `HelmPlateCard.swift` failed the digest check by name, and restoring the file passed.
+The pull request template gained a "Design system" section for the one-line-per-component summary.
+

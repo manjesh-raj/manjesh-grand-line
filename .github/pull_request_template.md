@@ -13,6 +13,17 @@ section that genuinely does not apply rather than leaving it empty.
 
 <!-- Why the change was needed. -->
 
+## Design system
+
+<!--
+S01 of the 2026-11-17 UI/UX proposals: the Helm kit is versioned in
+`native/Sources/GrandLine/HelmKitVersion.swift`, with release notes in
+`docs/design-system/helm-kit-versions.md`. One line per component that moved,
+or "No design-system change".
+
+Design system: component · before → after · bump
+-->
+
 ## Verification
 
 <!--
