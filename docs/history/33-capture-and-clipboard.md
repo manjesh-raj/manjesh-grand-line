@@ -434,3 +434,31 @@ Nothing needed migrating, because nothing could have stored it.
 - Injections, each failing its case by name: an 8pt anchor, a 42pt hole left before the separator, the anchor never installed, a "Clipboard History" button added back to the bar, a decoder that resets the whole row on an unknown entry, and the Edit menu item renamed.
 - Not verified: a real screenshot of the bar.
   `screencapture` does not work from the agent shell, so the bar's look is asserted through laid-out frames rather than pixels.
+
+## Stale shelved copies are removed (R5-SEC-00)
+
+Full review #5 found the three `clipboard-history.sealed.corrupt-*` files from the B1 incident (2026-09-25) still in the captain's data folder seven weeks later.
+Each one is an encrypted transcript of about 200 real copies.
+`native/MANUAL-CHECKS.md` §18a had left them to the captain on purpose, and the captain then asked for the app to clean them up.
+
+### What changed
+
+- `ClipboardHistoryStore.removeStaleShelvedBackups(now:retention:)` deletes shelved copies older than `shelvedBackupRetention` (30 days), and the store's `init` calls it on every launch that builds the store.
+- It runs only after this process has opened the live `clipboard-history.sealed` with its key.
+  A missing live file, a file this key cannot open, or any `loadStatus` other than clean all mean "not confirmed healthy", and nothing is removed.
+  In those states a shelved copy may be the only copy left.
+- The age comes from the epoch the store wrote into the file name, not from the file's dates.
+  `moveItem` keeps the original's modification time, which is when the history was last written rather than when it was shelved.
+- A name with no parsable epoch, a directory, a symlink, a future-dated name and another store's `.corrupt-` file are all left alone.
+- Each removal is logged by name under the `store` category, and a failed removal is logged as an error.
+- `shelvedBackups` is re-read afterwards, so the picker's "N earlier copies kept" count matches what is on disk.
+
+### Verified
+
+- `FM_RUN_CLIPBOARD_HISTORY_TESTS`: `checkStaleShelvedCopiesAreRemovedFromAHealthyHistory` and `checkShelvedCopiesStayWhileTheHistoryIsUnhealthy`, all in temporary directories with throwaway keys.
+- Injections, each failing its case by name: dropping the health guard failed the three "kept while unhealthy" checks, and removing the call from `init` failed the four "removed once healthy" checks.
+- Not verified in a launched app.
+  A probe runs with `FM_CLIPBOARD_HISTORY_EPHEMERAL=1`, a fresh key per process, so no probe launch can ever open a history an earlier launch wrote, which is the one state the cleanup acts in.
+  Opening one across launches needs the real Keychain key, and the task did not touch the captain's Keychain.
+- Not verified on the captain's own machine either: no task process opens or lists their real data folder.
+  `native/MANUAL-CHECKS.md` §18a has the two-line check for that.

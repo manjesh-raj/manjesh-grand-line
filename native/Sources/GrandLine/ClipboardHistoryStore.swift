@@ -396,6 +396,21 @@ final class ClipboardHistoryStore: StoreObservable {
     /// key mismatch into a loss the captain only found by listing the folder.
     private(set) var shelvedBackups: [URL] = []
 
+    /// How long a shelved copy is kept once the live history opens again.
+    ///
+    /// R5-SEC-00 of full review #5: the three B1 copies from 2026-09-25 were
+    /// still on disk seven weeks later, each an encrypted transcript of about
+    /// 200 real copies, and nothing would ever remove them. Thirty days is
+    /// long enough to notice a lost history and recover the key that opens it,
+    /// which is the only thing a shelved copy is good for.
+    static let shelvedBackupRetention: TimeInterval = 30 * 24 * 60 * 60
+
+    /// True once this process has opened the sealed file with its key. The
+    /// one state in which an old shelved copy is safe to delete: the history
+    /// the captain uses now is intact, so a shelved one is no longer the only
+    /// copy of anything they are still reading.
+    private var openedLiveHistory = false
+
     /// Told after the history changes. R2-ARCH-08: any number of readers,
     /// through `observe(_:)`, rather than one `onChange` the last assignment
     /// owned.
@@ -415,6 +430,7 @@ final class ClipboardHistoryStore: StoreObservable {
         // captain's three orphaned files were written by earlier launches and
         // the next launch said nothing about them.
         if shelvedBackups.isEmpty { refreshShelvedBackups() }
+        removeStaleShelvedBackups()
     }
 
     static func resolveFileURL() -> URL {
@@ -461,6 +477,7 @@ final class ClipboardHistoryStore: StoreObservable {
                                                      from: box,
                                                      vaultKey: key,
                                                      purpose: Self.sealPurpose)
+            openedLiveHistory = true
         } catch {
             // Reaching here means the bytes are real but this key does not open
             // them, which - now that a Keychain error can no longer masquerade
@@ -497,6 +514,49 @@ final class ClipboardHistoryStore: StoreObservable {
             .filter { $0.hasPrefix(prefix) }
             .sorted(by: >)
             .map { directory.appendingPathComponent($0) }
+    }
+
+    /// Delete shelved copies older than `retention`, but only when the live
+    /// history opened cleanly in this process. Returns what it removed.
+    ///
+    /// The age is the epoch the store wrote into the name when it shelved the
+    /// file, not the file's own dates: `moveItem` keeps the original's
+    /// modification time, which is when the history was last written rather
+    /// than when it was given up on. A name this store did not write (no
+    /// parsable epoch), a directory, a link, or a copy dated in the future is
+    /// left alone. Each removal is logged by name, so `log show` says what
+    /// went and when.
+    @discardableResult
+    func removeStaleShelvedBackups(now: Date = Date(),
+                                   retention: TimeInterval = shelvedBackupRetention) -> [URL] {
+        guard openedLiveHistory, !loadFailed, loadStatus == .clean, !shelvedBackups.isEmpty else {
+            return []
+        }
+        let prefix = fileURL.lastPathComponent + ".corrupt-"
+        var removed: [URL] = []
+        for url in shelvedBackups {
+            let digits = url.lastPathComponent.dropFirst(prefix.count).prefix { $0.isASCII && $0.isNumber }
+            guard let epoch = TimeInterval(String(digits)) else { continue }
+            let age = now.timeIntervalSince1970 - epoch
+            guard age > retention else { continue }
+            let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
+            guard type == .typeRegular else { continue }
+            do {
+                try FileManager.default.removeItem(at: url)
+                removed.append(url)
+                AppLog.store.notice("""
+                    clipboard history: removed shelved copy \(url.lastPathComponent, privacy: .public), \
+                    \(Int(age / 86_400), privacy: .public) days old - the live history opens cleanly
+                    """)
+            } catch {
+                AppLog.store.error("""
+                    clipboard history: could not remove shelved copy \(url.lastPathComponent, privacy: .public): \
+                    \(error.localizedDescription, privacy: .public)
+                    """)
+            }
+        }
+        if !removed.isEmpty { refreshShelvedBackups() }
+        return removed
     }
 
     /// Newest first, pinned entries ahead of the rest - the picker's own

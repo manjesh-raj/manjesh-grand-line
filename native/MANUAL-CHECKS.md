@@ -465,21 +465,29 @@ Do this once, after the first `./build_native_app.sh` on the renamed build.
 Full review #5 (R5-SEC-00) found three `clipboard-history.sealed.corrupt-*`
 files from the B1 incident still in `~/Library/Application Support/GrandLine/`.
 They are the history the app shelved when it could not open it with this Mac's
-clipboard key. They are still encrypted, and the clipboard history picker
-mentions them only when the live history is unavailable, so on a working
-machine nothing points at them. No code deletes them, on purpose: whether they
-are worth keeping is the captain's call.
+clipboard key, still encrypted, and nothing on a working machine points at them.
 
-- [ ] **Look, without opening them.**
-      `ls -l ~/Library/Application\ Support/GrandLine/clipboard-history.sealed.corrupt-*`.
-      Expect three files of roughly 49 KB, all dated 2026-09-25.
-- [ ] **Decide.** The live history has been working since the B1 fix, so these
-      only matter if something from before 2026-09-25 is still wanted. They
-      cannot be read by the app as it is.
-- [ ] **If not wanted, move them to the Trash**, rather than `rm`:
-      select them in Finder (`open ~/Library/Application\ Support/GrandLine/`)
-      and press Command-Delete. The live `clipboard-history.sealed` beside them
-      is the one to leave alone.
+The app now removes them itself.
+When the clipboard history store opens the live `clipboard-history.sealed`
+cleanly, it deletes every shelved copy whose name dates it more than 30 days
+ago (`ClipboardHistoryStore.shelvedBackupRetention`) and logs each one by name.
+It removes nothing while the live history is missing or cannot be opened,
+because a shelved copy may then be the only one left.
+The store is built the first time a launch uses the history (the first copy
+anywhere, or the first ⌘⇧V), and only while the history is switched on in
+Settings, so that is when the cleanup runs.
+
+- [ ] **Confirm it ran**, after launching a build that has it with the
+      clipboard history on, and copying something:
+
+      log show --last 1h --predicate \
+        'subsystem == "com.manjesh.grandline.native" && category == "store"' \
+        | grep "removed shelved copy"
+
+      Expect one line per file from 2026-09-25.
+- [ ] **Look, without opening anything.**
+      `ls -l ~/Library/Application\ Support/GrandLine/clipboard-history.sealed*`
+      should list only the live file (plus any copy shelved in the last 30 days).
 
 ## 19. Launch cost (the signpost baseline)
 
