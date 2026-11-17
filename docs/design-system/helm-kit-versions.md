@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 3.3.0 - S26: theme tiles show the pair
+
+- `SettingsThemeCard` 1.1.0 → 1.2.0 (minor): a family tile draws both registers side by side (light left, dark right, each in its own tokens) with the check on the half that is showing, and its caption names the pair once ("Daylight · Dusk"). The "Light:" / "Dark:" line is gone. `setActiveMode(_:)` moves the check. A terminal scheme card is unchanged.
+
 ## 3.2.0 - S25: the welcome sheet's choice cards, theme tiles and height
 
 - `HelmChoiceCard` none → 1.0.0 (new): a choice as a card: a title, the description inside, a selected ring with a check, a radio button to VoiceOver, Return or Space to pick, and the arrow keys to move the choice within its group.

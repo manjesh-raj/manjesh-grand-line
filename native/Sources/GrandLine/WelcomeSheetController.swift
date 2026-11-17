@@ -390,6 +390,7 @@ final class WelcomeSheetController: NSViewController {
         // The chosen palette and the chosen profile read as chosen.
         for (family, card) in themeCards {
             card.setActive(family == theme.app?.family)
+            card.setActiveMode(theme.mode)
             card.applyTheme(theme)
         }
         let chosen = WorkspaceProfile.matching(AppSettings.shared.hiddenModules)

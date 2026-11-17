@@ -35,6 +35,7 @@ enum UIUXProposalsSelfTest {
             ("S14 one number recipe", checkOneNumberRecipe),
             ("S16 one filter row", checkOneFilterRow),
             ("S25 welcome choice cards and tiles", checkWelcomeChoiceCards),
+            ("S26 theme tiles show the pair", checkThemeTilesShowThePair),
         ]
         for (name, body) in cases {
             var ok = true
@@ -458,6 +459,29 @@ enum UIUXProposalsSelfTest {
               "S25: the sheet hugs its content (\(sheet.preferredContentSize.height)pt, was a fixed 470)", &ok)
         check(abs(sheet.view.frame.height - sheet.preferredContentSize.height) < 0.5,
               "S25: the sheet's frame is its content's height", &ok)
+    }
+
+    // MARK: - S26
+
+    /// A family tile draws both registers and names them once; a terminal
+    /// scheme card is still one theme.
+    private static func checkThemeTilesShowThePair(_ ok: inout Bool) {
+        for family in AppThemeFamily.allCases {
+            let card = SettingsThemeCard.family(family, mode: .light, isActive: true)
+            let light = family.register(.light), dark = family.register(.dark)
+            check(card.pair?.light.id == light.id && card.pair?.dark.id == dark.id,
+                  "S26: \(family.title)'s tile carries both registers", &ok)
+            let caption = card.nameLabel.stringValue
+            check(!caption.hasPrefix("Light:") && !caption.hasPrefix("Dark:") && caption.hasPrefix(light.name)
+                    && (caption.contains(dark.name) || dark.name.hasPrefix(light.name)),
+                  "S26: \(family.title)'s caption names the pair (\(caption))", &ok)
+            check(card.detailLabel.isHidden, "S26: \(family.title)'s tile has no second \"Light:\" line", &ok)
+        }
+        check(SettingsThemeCard.pairCaption(light: "High Contrast", dark: "High Contrast Dark") == "High Contrast \u{00B7} Dark"
+                && SettingsThemeCard.pairCaption(light: "Daylight", dark: "Dusk") == "Daylight \u{00B7} Dusk",
+              "S26: the caption names the pair once without repeating the family word", &ok)
+        let scheme = SettingsThemeCard(theme: .dusk, isActive: false, kind: .terminal)
+        check(scheme.pair == nil, "S26: a terminal scheme card is still one theme", &ok)
     }
 
     // MARK: - S13

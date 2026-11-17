@@ -55,15 +55,27 @@ final class SettingsThemeCard: NSView {
     /// gesture recognizer.
     var onSelect: (() -> Void)?
 
+    /// S26: a family tile draws both registers side by side, light on the
+    /// left and dark on the right, each in its own tokens, with the check on
+    /// the half that is showing. `nil` for a single-theme card (Terminal's
+    /// schemes).
+    private(set) var pair: (light: HelmTheme, dark: HelmTheme)?
+    /// Which register is showing, for the check on the active half.
+    private var activeMode: HelmTheme.Mode = ThemeManager.shared.theme.mode
+    private let halfCheck = NSImageView()
+    private var halfCheckLeading: NSLayoutConstraint?
+
     let hoverView = HoverHighlightView()
 
     init(theme: HelmTheme, isActive: Bool, kind: PreviewKind = .app,
-         title: String? = nil, detail: String? = nil) {
+         title: String? = nil, detail: String? = nil, pair: (light: HelmTheme, dark: HelmTheme)? = nil) {
         self.theme = theme
         self.isActive = isActive
         self.kind = kind
         self.title = title ?? theme.name
         self.detail = detail
+        self.pair = pair
+        self.activeMode = theme.mode
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -74,17 +86,42 @@ final class SettingsThemeCard: NSView {
     /// S25: one app-theme family as a tile, the one construction Settings ›
     /// Appearance and the welcome sheet's look step both use, so the tile is
     /// hostable outside Settings rather than a Settings-only private shape.
+    ///
+    /// S26: the tile shows the pair it stands for - both registers drawn side
+    /// by side, the caption naming them once ("Daylight · Dusk"), the check
+    /// on the half that is showing. The "Light:" prefix, which repeated the
+    /// mode the segmented control above already states, is gone.
     static func family(_ family: AppThemeFamily, mode: HelmTheme.Mode, isActive: Bool) -> SettingsThemeCard {
-        let register = family.register(mode)
-        return SettingsThemeCard(theme: register, isActive: isActive, kind: .app, title: family.title,
-                                 detail: "\(register.mode == .dark ? "Dark" : "Light"): \(register.name)")
+        let light = family.register(.light), dark = family.register(.dark)
+        let caption = pairCaption(light: light.name, dark: dark.name)
+        let card = SettingsThemeCard(theme: family.register(mode), isActive: isActive, kind: .app, title: caption,
+                                     detail: nil, pair: (light, dark))
+        card.hoverView.accessibilityLabelOverride = "\(family.title): light \(light.name), dark \(dark.name)"
+        return card
+    }
+
+    /// "Daylight · Dusk"; a dark register that only adds "Dark" to the light
+    /// one's name says so without repeating it ("High Contrast · Dark"), so
+    /// the caption fits a tile.
+    static func pairCaption(light: String, dark: String) -> String {
+        if light == dark { return light }
+        if dark.hasPrefix(light + " ") { return "\(light) \u{00B7} \(dark.dropFirst(light.count + 1))" }
+        return "\(light) \u{00B7} \(dark)"
+    }
+
+    /// The register that is showing changed (a light/dark switch): the check
+    /// moves to the other half.
+    func setActiveMode(_ mode: HelmTheme.Mode) {
+        activeMode = mode
+        placeHalfCheck()
     }
 
     /// Marks this tile as the active one, or not, without rebuilding it.
     func setActive(_ active: Bool) {
         guard active != isActive else { return }
         isActive = active
-        check.isHidden = !active
+        check.isHidden = !active || pair != nil
+        placeHalfCheck()
         nameLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: active ? .semibold : .regular)
         applyTheme(ThemeManager.shared.theme)
     }
@@ -95,7 +132,35 @@ final class SettingsThemeCard: NSView {
         preview.layer?.masksToBounds = true
         preview.translatesAutoresizingMaskIntoConstraints = false
         switch kind {
-        case .app: buildAppPreview()
+        case .app:
+            if let pair {
+                // S26: two halves, each a whole preview in its register.
+                let halves = [pair.light, pair.dark].map { register -> NSView in
+                    let half = NSView()
+                    half.wantsLayer = true
+                    half.translatesAutoresizingMaskIntoConstraints = false
+                    preview.addSubview(half)
+                    buildAppPreview(in: half, theme: register, compact: true)
+                    return half
+                }
+                NSLayoutConstraint.activate([
+                    halves[0].leadingAnchor.constraint(equalTo: preview.leadingAnchor),
+                    halves[0].topAnchor.constraint(equalTo: preview.topAnchor),
+                    halves[0].bottomAnchor.constraint(equalTo: preview.bottomAnchor),
+                    halves[1].leadingAnchor.constraint(equalTo: halves[0].trailingAnchor),
+                    halves[1].trailingAnchor.constraint(equalTo: preview.trailingAnchor),
+                    halves[1].topAnchor.constraint(equalTo: preview.topAnchor),
+                    halves[1].bottomAnchor.constraint(equalTo: preview.bottomAnchor),
+                    halves[1].widthAnchor.constraint(equalTo: halves[0].widthAnchor),
+                ])
+                halfCheck.image = HelmSymbol.image("checkmark.circle.fill", pointSize: 12, weight: .semibold)
+                halfCheck.translatesAutoresizingMaskIntoConstraints = false
+                preview.addSubview(halfCheck)
+                halfCheck.topAnchor.constraint(equalTo: preview.topAnchor, constant: 4).isActive = true
+                placeHalfCheck()
+            } else {
+                buildAppPreview(in: preview, theme: theme, compact: false)
+            }
         case .terminal: buildTerminalPreview()
         }
         preview.heightAnchor.constraint(equalToConstant: Self.previewHeight).isActive = true
@@ -112,7 +177,7 @@ final class SettingsThemeCard: NSView {
 
         check.image = HelmSymbol.image("checkmark.circle.fill", pointSize: 11, weight: .regular)
         check.contentTintColor = HelmTheme.nsColor(theme.accentHex)
-        check.isHidden = !isActive
+        check.isHidden = !isActive || pair != nil
         check.translatesAutoresizingMaskIntoConstraints = false
         check.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -170,7 +235,23 @@ final class SettingsThemeCard: NSView {
 
     /// The prototype's `.mini`: ground, a nav column in the theme's `side`,
     /// two text lines, and a card with the ok, warn and accent chips.
-    private func buildAppPreview() {
+    /// On the active half's top-trailing corner, visible only on the active
+    /// family's tile.
+    private func placeHalfCheck() {
+        guard let pair, halfCheck.superview != nil else { return }
+        halfCheckLeading?.isActive = false
+        let lightShowing = activeMode == .light
+        halfCheckLeading = lightShowing
+            ? halfCheck.trailingAnchor.constraint(equalTo: preview.centerXAnchor, constant: -4)
+            : halfCheck.trailingAnchor.constraint(equalTo: preview.trailingAnchor, constant: -4)
+        halfCheckLeading?.isActive = true
+        halfCheck.isHidden = !isActive
+        halfCheck.contentTintColor = HelmTheme.nsColor((lightShowing ? pair.light : pair.dark).accentHex)
+    }
+
+    /// `compact`: half of a pair tile, so the status chips are narrower and
+    /// all three fit the half's mini card.
+    private func buildAppPreview(in preview: NSView, theme: HelmTheme, compact: Bool) {
         let tokens = theme.isDaylight ? theme.daylightTokens : nil
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
@@ -206,7 +287,7 @@ final class SettingsThemeCard: NSView {
 
         let chips = NSStackView(views: [HelmTint.good, HelmTint.warn, HelmTint.accent].map { tint in
             let chip = Self.bar(color: HelmTheme.nsColor(tint.hex(in: theme)), height: 6)
-            chip.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            chip.widthAnchor.constraint(equalToConstant: compact ? 7 : 12).isActive = true
             return chip
         })
         chips.orientation = .horizontal
