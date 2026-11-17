@@ -296,16 +296,24 @@ enum ReviewTwoUXModelSelfTest {
         defer { AppSettings.shared.hiddenModules = savedHidden }
         let sheet = WelcomeSheetController()
         sheet.loadView()
-        sheet.debugNext()
-        check(sheet.debugStepTitle == "How will you use Grand Line?" && !sheet.debugProfileChoiceIsHidden,
-              "the welcome sheet's second step is \(sheet.debugStepTitle), not the profile choice", &ok)
+        // R5-UX-01: who the app is for is the first question, not the second.
+        check(sheet.debugStepIndex == 0 && sheet.debugStepTitle == "How will you use Grand Line?"
+                && !sheet.debugProfileChoiceIsHidden,
+              "the welcome sheet's first step is \(sheet.debugStepTitle), not the profile choice", &ok)
         sheet.debugPickProfile(.personal)
         check(AppSettings.shared.hiddenModules == WorkspaceProfile.personal.hiddenModules,
               "picking Personal on the welcome sheet did not hide its modules", &ok)
         sheet.debugPickProfile(.operator)
         check(AppSettings.shared.hiddenModules.isEmpty, "picking Operator on the welcome sheet left modules hidden", &ok)
+        // R5-UX-01: the floating bar asks too - the profile decides Home's
+        // cards and the Console's toolbar there - and says so without
+        // promising a sidebar it does not have.
         PlaceName.layout = .floatingBar
-        check(WelcomeSheetController.debugStepCount == 3, "the floating bar's welcome sheet offers a profile it cannot use", &ok)
+        check(WelcomeSheetController.debugStepCount == 4, "the floating bar's welcome sheet no longer asks for a profile", &ok)
+        let floating = WelcomeSheetController()
+        floating.loadView()
+        check(floating.debugStepTitle == "How will you use Grand Line?" && !floating.debugBlurb.contains("sidebar"),
+              "the floating bar's profile step reads \(floating.debugBlurb)", &ok)
     }
 
     // MARK: R2-UX-01 (c) - plain language outside the operator modules

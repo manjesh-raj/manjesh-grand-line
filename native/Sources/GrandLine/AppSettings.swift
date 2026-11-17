@@ -834,6 +834,14 @@ final class AppSettings {
         defaults.string(forKey: Keys.workspaceProfile).flatMap(WorkspaceProfile.init(rawValue:))
     }
 
+    /// R5-UX-01: the profile the current hidden set reads as - the one
+    /// Settings shows selected - or, for a set edited into neither (Custom),
+    /// the one last chosen. What a Personal install leaves out beyond the
+    /// sidebar (Setup's firstmate steps) follows this.
+    var effectiveProfile: WorkspaceProfile? {
+        WorkspaceProfile.matching(hiddenModules) ?? workspaceProfile
+    }
+
     /// Choose a profile: its hidden set replaces the current one.
     func setProfile(_ profile: WorkspaceProfile) {
         defaults.set(profile.rawValue, forKey: Keys.workspaceProfile)

@@ -49,6 +49,29 @@ enum SetupStepKind: CaseIterable, Hashable {
     }
 }
 
+extension SetupStepKind {
+    /// R5-UX-01: the steps that are about a firstmate fleet or the captain's
+    /// dotfiles. The global agent instructions are linked out of the dotfiles
+    /// checkout (`<dotfiles>/home/AGENTS.md`), so they go with them.
+    var isOperatorOnly: Bool {
+        switch self {
+        case .firstmateHome, .dotfiles, .agentInstructions: return true
+        case .software, .restoreConfig: return false
+        }
+    }
+
+    /// The steps a profile shows and counts, in order. A Personal install
+    /// has no firstmate home and needs none, so a step asking for one would
+    /// only ever read "not done". With no profile at all every step shows,
+    /// which is what an Operator sees.
+    static func shown(for profile: WorkspaceProfile?) -> [SetupStepKind] {
+        profile == .personal ? allCases.filter { !$0.isOperatorOnly } : allCases
+    }
+
+    /// The steps this install shows and counts.
+    static var shown: [SetupStepKind] { shown(for: AppSettings.shared.effectiveProfile) }
+}
+
 /// Pure "is this step satisfied right now" predicates - every function takes
 /// already-fetched state as parameters rather than reading `self` off a
 /// specific controller, so both `BootstrapController` and
@@ -246,7 +269,8 @@ struct SetupPipelineProgress: Equatable {
     ///     rather than derived.
     static func of(_ verdicts: [SetupStepKind: Bool?], failedSteps: Int = 0) -> SetupPipelineProgress {
         var done = 0, checking = 0
-        for kind in SetupStepKind.allCases {
+        let steps = SetupStepKind.shown
+        for kind in steps {
             switch verdicts[kind] ?? nil {
             case true?: done += 1
             case false?: break
@@ -254,7 +278,7 @@ struct SetupPipelineProgress: Equatable {
             }
         }
         return SetupPipelineProgress(done: done, checking: checking,
-                                     failed: failedSteps, total: SetupStepKind.allCases.count)
+                                     failed: failedSteps, total: steps.count)
     }
 }
 

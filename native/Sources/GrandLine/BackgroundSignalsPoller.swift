@@ -913,7 +913,9 @@ extension BackgroundSignalsPoller {
     /// of an answer, it is an answer that could still move.
     static func setupDriftCount(from results: [SetupStepKind: Bool?]) -> Int? {
         var drifted = 0
-        for kind in SetupStepKind.allCases {
+        // R5-UX-01: only the steps this profile shows; a Personal install
+        // has no firstmate home to drift.
+        for kind in SetupStepKind.shown {
             guard let answer = results[kind], let done = answer else { return nil }
             if !done { drifted += 1 }
         }
@@ -1019,7 +1021,7 @@ extension BackgroundSignalsPoller {
         lastCounts = counts
         // The drifted steps name themselves - the reading is keyed by
         // `SetupStepKind`, so no page has to hand them over separately.
-        let children = SetupStepKind.allCases
+        let children = SetupStepKind.shown
             .filter { verdicts[$0] == .some(false) }
             .map { AppNotificationChild(id: "\($0)", name: $0.title, meta: "Not satisfied") }
         NotificationSources.setSetupDrift(count: count, children: children) {

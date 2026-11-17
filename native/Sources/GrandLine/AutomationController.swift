@@ -175,8 +175,16 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         let kind: SetupStepKind
         var status: AutomationStepStatus = .pending
     }
-    private var steps: [AutomationStepState] = SetupStepKind.allCases.map { AutomationStepState(kind: $0) }
+    /// R5-UX-01: the steps this profile shows - a run never works through a
+    /// step the page does not list.
+    private var steps: [AutomationStepState] = SetupStepKind.shown.map { AutomationStepState(kind: $0) }
     private var isRunning = false
+    /// R5-UX-01: a change of profile changes which steps a run works through.
+    private var profileObserver: NSObjectProtocol?
+
+    deinit {
+        if let profileObserver { NotificationCenter.default.removeObserver(profileObserver) }
+    }
 
     /// The app's one page-level Refresh control - the same
     /// `HelmButton(.primary)` + `arrow.clockwise` recipe `ReviewController`,
@@ -265,6 +273,14 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             self?.theme = theme
             self?.applyTheme()
             self?.rebuildAfterThemeChangeIfVisible { self?.rebuildStepper() }
+        }
+        profileObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            // A run in progress keeps the steps it started with.
+            guard let self, !self.isRunning else { return }
+            self.steps = SetupStepKind.shown.map { AutomationStepState(kind: $0) }
+            self.rebuildStepper()
         }
 
         refreshButton.target = self
@@ -456,7 +472,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     @objc private func runAutomationClicked() {
         guard !isRunning else { return }
         isRunning = true
-        steps = SetupStepKind.allCases.map { AutomationStepState(kind: $0) }
+        steps = SetupStepKind.shown.map { AutomationStepState(kind: $0) }
         rebuildStepper()
         runStep(at: 0)
     }
@@ -1032,7 +1048,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// GL-14: a step whose check could not answer is reported as unknown, never
     /// folded into the satisfied count or silently dropped.
     private func reportRefreshOutcome() {
-        let results = SetupStepKind.allCases.map { stepIsDone($0) }
+        let results = SetupStepKind.shown.map { stepIsDone($0) }
         let total = results.count
         let satisfied = results.filter { $0 == true }.count
         let unknown = results.filter { $0 == nil }.count

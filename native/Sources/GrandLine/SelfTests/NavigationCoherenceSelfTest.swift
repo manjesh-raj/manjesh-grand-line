@@ -1011,23 +1011,25 @@ enum NavigationCoherenceSelfTest {
         // state, and `loadView` builds views with no window server.
         let sheet = WelcomeSheetController()
         sheet.loadView()
-        // Three steps, plus R2-UX-01 (b)'s profile choice in the sidebar
-        // layout - the floating bar has no modules to choose between.
-        let wantSteps = PlaceName.layout == .sidebar ? 4 : 3
+        // Three steps, plus R2-UX-01 (b)'s profile choice, which R5-UX-01
+        // made the first step in both layouts.
+        let wantSteps = 4
         check(WelcomeSheetController.debugStepCount == wantSteps,
               "UX13: the sheet has \(WelcomeSheetController.debugStepCount) steps, want \(wantSteps)", &ok)
         check(sheet.debugStepIndex == 0, "UX13: the sheet should open on its first step", &ok)
         check(sheet.debugBackIsHidden, "UX13: there is nothing to go back to on the first step", &ok)
-        check(!sheet.debugThemeGridIsHidden, "UX13: step one should show the theme picker", &ok)
+        check(!sheet.debugProfileChoiceIsHidden, "R5-UX-01: step one should ask who the app is for", &ok)
+        check(sheet.debugThemeGridIsHidden, "R5-UX-01: the theme picker is step two now", &ok)
         check(sheet.debugCommandWellIsHidden, "UX13: the lock command belongs on the last step only", &ok)
 
         sheet.debugNext()
         check(sheet.debugStepIndex == 1, "UX13: Next did not advance the sheet", &ok)
         check(!sheet.debugBackIsHidden, "UX13: Back should be available past the first step", &ok)
-        check(sheet.debugThemeGridIsHidden, "UX13: the theme picker belongs on step one only", &ok)
+        check(!sheet.debugThemeGridIsHidden && sheet.debugProfileChoiceIsHidden,
+              "R5-UX-01: step two should show the theme picker and only it", &ok)
 
         sheet.debugNext()
-        if wantSteps == 4 { sheet.debugNext() }
+        sheet.debugNext()
         check(sheet.debugStepIndex == wantSteps - 1, "UX13: Next did not reach the last step", &ok)
         check(!sheet.debugCommandWellIsHidden,
               "UX13: the last step should show the lock-setup command", &ok)

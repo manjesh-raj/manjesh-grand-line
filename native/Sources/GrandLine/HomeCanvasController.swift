@@ -3712,7 +3712,7 @@ final class HomeCanvasController: NSViewController {
                                    stale: "Setup status hasn't been checked yet this session.")
             return
         }
-        let total = SetupStepKind.allCases.count
+        let total = SetupStepKind.shown.count
         let done = max(0, total - drift)
         content.chip = drift == 0 ? .ok("Current") : .warn("\(drift) drifted")
         content.body = .progress(value: done, total: total,
@@ -3740,7 +3740,7 @@ final class HomeCanvasController: NSViewController {
                                    stale: "Setup status hasn't been checked yet this session.")
             return
         }
-        let total = SetupStepKind.allCases.count
+        let total = SetupStepKind.shown.count
         guard drift > 0 else {
             content.chip = .ok("Nothing to run")
             content.body = .note("All \(total) steps are already satisfied - a full run would skip every one.")

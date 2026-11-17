@@ -37,8 +37,12 @@ enum WorkspaceProfile: String, CaseIterable {
     /// One sentence for the first-run choice and Settings.
     var summary: String {
         switch self {
-        case .personal: return "Tasks, notes, secrets and a few tools - the modules anyone can use."
-        case .operator: return "Everything, including the crew, hosts, the console and the operations modules."
+        case .personal:
+            return "Tasks, a calendar, notes, sticky notes, saved links and secrets. "
+                + "No firstmate home, terminal or machine setup needed."
+        case .operator:
+            return "Everything in Personal, plus the crew, hosts, the console, logs, health, schedules "
+                + "and machine setup for a firstmate fleet."
         }
     }
 

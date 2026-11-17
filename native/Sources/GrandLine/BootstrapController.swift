@@ -234,6 +234,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private var isRefreshingAll = false
     /// `SetupStepsReading`'s observation, so the header follows its verdicts.
     private var readingToken: UUID?
+    /// R5-UX-01: a change of profile changes which steps show.
+    private var profileObserver: NSObjectProtocol?
 
     private let currentPathLabel = NSTextField(labelWithString: "")
     /// UXP-06: "In use instead" plus `currentPathLabel`, shown only when the
@@ -365,7 +367,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         var status: SetupStepStatus = .pending
     }
 
-    private var setupSteps: [SetupStepState] = SetupStepKind.allCases.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
+    private var setupSteps: [SetupStepState] = SetupStepKind.shown.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
     private var isRunningFullSetup = false
     private let runFullSetupButton = HelmButton(title: "", variant: .primary)
     private let fullSetupSubtitleLabel = NSTextField(wrappingLabelWithString: "")
@@ -400,6 +402,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let contentBox: NSView
         let bodyStack: NSStackView
         let titleRow: NSStackView
+        /// The whole step, which a profile that does not show it hides
+        /// (R5-UX-01).
+        let row: NSView
     }
     private var stepRowViews: [SetupStepKind: StepRowViews] = [:]
 
@@ -604,10 +609,25 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         // suite once a test process stopped running the real `npm`
         // (R2-SEC-01) and those answers began arriving early.
         readingToken = SetupStepsReading.shared.observe { [weak self] in self?.onDrillSubtitleChanged?() }
+        profileObserver = NotificationCenter.default.addObserver(
+            forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.stepsShownDidChange() }
     }
 
     deinit {
         if let readingToken { SetupStepsReading.shared.unobserve(readingToken) }
+        if let profileObserver { NotificationCenter.default.removeObserver(profileObserver) }
+    }
+
+    /// R5-UX-01: the profile changed, so the steps that show may have. A
+    /// full setup already running keeps the steps it started with.
+    private func stepsShownDidChange() {
+        if !isRunningFullSetup {
+            setupSteps = SetupStepKind.shown.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
+        }
+        refreshStepperVisuals()
+        rebuildDriftSection()
+        onDrillSubtitleChanged?()
     }
 
 
@@ -1084,7 +1104,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     @objc private func runFullSetupClicked() {
         guard !isRunningFullSetup else { return }
         isRunningFullSetup = true
-        setupSteps = SetupStepKind.allCases.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
+        setupSteps = SetupStepKind.shown.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
         rebuildSetupSection()
         runSetupStepHome()
     }
@@ -1191,7 +1211,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// as not-done for ordering purposes, so the stepper never claims a step
     /// is finished before its check has actually returned.
     private func stepperDotState(for kind: SetupStepKind) -> StepperDotState {
-        let order = SetupStepKind.allCases
+        let order = SetupStepKind.shown
         guard let targetIndex = order.firstIndex(of: kind) else { return .pending }
         let doneFlags = order.map { stepIsDone($0) ?? false }
         if doneFlags[targetIndex] { return .done }
@@ -1347,7 +1367,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         leftColumn.heightAnchor.constraint(equalTo: bodyStack.heightAnchor).isActive = true
 
         stepRowViews[kind] = StepRowViews(dot: dot, line: line, titleLabel: titleLabel, chip: chip, detailLabel: detailLabel,
-                                          contentBox: contentBox, bodyStack: bodyStack, titleRow: titleRow)
+                                          contentBox: contentBox, bodyStack: bodyStack, titleRow: titleRow, row: row)
         return row
     }
 
@@ -1411,8 +1431,13 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func refreshStepperVisuals() {
         publishSetupDriftSignal()
         defer { refreshSidebarSteps() }
-        for (index, kind) in SetupStepKind.allCases.enumerated() {
+        // R5-UX-01: a step the profile does not show keeps its row, hidden,
+        // and the rows that show are numbered among themselves.
+        let shown = SetupStepKind.shown
+        for kind in SetupStepKind.allCases {
             guard let rowViews = stepRowViews[kind] else { continue }
+            rowViews.row.isHidden = !shown.contains(kind)
+            guard let index = shown.firstIndex(of: kind) else { continue }
             let state = stepperDotState(for: kind)
             rowViews.dot.configure(number: index + 1, state: state, theme: theme)
             rowViews.titleLabel.textColor = state == .pending ? HelmTheme.mutedInk(theme) : HelmTheme.nsColor(theme.chromeInkHex)
@@ -1619,7 +1644,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             driftStatusLabel.stringValue = "Not checked yet"
             driftStatusLabel.textColor = HelmTheme.mutedInk(theme)
         } else {
-            let driftedKinds = SetupStepKind.allCases.filter { driftResults[$0] == false }
+            let driftedKinds = SetupStepKind.shown.filter { driftResults[$0] == false }
             if driftedKinds.isEmpty {
                 driftStatusLabel.stringValue = "Everything matches"
                 driftStatusLabel.textColor = HelmTheme.nsColor(theme.ansiHex[2])

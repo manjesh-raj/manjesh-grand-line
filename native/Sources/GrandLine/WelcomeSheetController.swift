@@ -6,8 +6,11 @@
 // when unconfigured'. A second user (or the captain on a new Mac) sees a lock
 // screen demanding an Automic Vault secret with a shell command to run."
 //
-// Three steps, which is the finding's own shape: theme -> what this app is ->
-// the lock.
+// Four steps: who the app is for -> theme -> what this app is -> the lock.
+// R5-UX-01 of review #5 put the profile first. A person who wants tasks,
+// notes and a vault used to meet "point Grand Line at your firstmate home"
+// before anything else, so the first question is now who they are, and the
+// answer decides what the rest of the app starts with.
 //
 // # One honest departure from the finding's wording
 //
@@ -43,10 +46,12 @@ final class WelcomeSheetController: NSViewController {
     var onFinish: (() -> Void)?
 
     private enum Step: Int, CaseIterable {
-        case theme
-        /// R2-UX-01 (b): the first-run choice of profile. The sidebar
-        /// layout's only - the floating bar has no modules to hide.
+        /// R2-UX-01 (b) added the choice of profile, and R5-UX-01 made it the
+        /// first step in both layouts: the profile decides Home's cards and
+        /// the Console's toolbar in the floating bar too, not only the
+        /// sidebar's modules.
         case profile
+        case theme
         case tour
         case lock
 
@@ -59,10 +64,8 @@ final class WelcomeSheetController: NSViewController {
             }
         }
 
-        /// The steps a layout shows, in order.
-        static func steps(for layout: WorkspaceLayout) -> [Step] {
-            layout == .sidebar ? allCases : allCases.filter { $0 != .profile }
-        }
+        /// The steps a layout shows, in order. Both layouts ask every one.
+        static func steps(for layout: WorkspaceLayout) -> [Step] { allCases }
 
         var blurb: String {
             switch self {
@@ -71,8 +74,14 @@ final class WelcomeSheetController: NSViewController {
                     + "applies as you click, and you can change it any time from \(PlaceName.of(.settings)) "
                     + "\u{203A} Appearance. The terminal's own colours are on the Terminal page."
             case .profile:
-                return "Pick the modules your sidebar starts with. You can show or hide any of them later in "
-                    + "\(PlaceName.of(.settings)) \u{203A} Appearance, and nothing you hide is deleted."
+                // What the choice changes differs by layout: the floating
+                // bar has no sidebar, so it is Home and the Console there.
+                let shapes = PlaceName.layout == .sidebar
+                    ? "your sidebar, Home's cards and the Console's toolbar"
+                    : "Home's cards and the Console's toolbar"
+                return "This sets what \(shapes) start with. Change it any time in "
+                    + "\(PlaceName.of(.settings)) \u{203A} Appearance, where Custom picks module by module. "
+                    + "Nothing you hide is deleted."
             case .tour:
                 // R2-UX-02: the sidebar layout has one map, the sidebar, so
                 // its tour describes that and not the floating bar's spaces.
@@ -356,6 +365,7 @@ final class WelcomeSheetController: NSViewController {
     var debugStepIndex: Int { stepIndex }
     static var debugStepCount: Int { Step.steps(for: PlaceName.layout).count }
     var debugStepTitle: String { step.title }
+    var debugBlurb: String { blurbLabel.stringValue }
     var debugProfileChoiceIsHidden: Bool { profileStack.isHidden }
     /// Pick a profile through its button's own target and action.
     func debugPickProfile(_ profile: WorkspaceProfile) {
