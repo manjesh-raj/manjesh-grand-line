@@ -373,6 +373,10 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     /// so it toggles the showing page's column; the sidebar layout overrides
     /// this with its own sidebar.
     @objc func toggleSidebarFromMenu() { workspace.navigator.toggleSidebarFromMenu() }
+
+    /// R5-UX-09: Go › Toggle Inspector (⌥⌘I). Only the sidebar layout has an
+    /// inspector, and only its Go menu lists the item.
+    @objc func toggleInspectorFromMenu() {}
     /// R2-UX-09: the showing page's own column, where it has one - the
     /// sidebar layout's ⌥⇧⌘S, now that ⌥⌘S is always its sidebar.
     @objc func togglePageColumnFromMenu() { workspace.navigator.toggleSidebarFromMenu() }

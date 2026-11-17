@@ -23,6 +23,7 @@ enum ReviewFiveUXSelfTest {
         checkOneWordPerState(&ok)
         checkFailuresSayWhatToDo(&ok)
         checkTheHiddenPowerIsVisible(&ok)
+        checkTheKeyboardReachesEveryPage(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -368,6 +369,56 @@ enum ReviewFiveUXSelfTest {
             check(settings.contains("if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }")
                     && home.contains("stack.addArrangedSubview(tipRow)"),
                   "R5-UX-03: Home's tip strip or its week is no longer wired", &ok)
+        }
+    }
+
+    // MARK: R5-UX-09 - keyboard and accessibility
+
+    private static func checkTheKeyboardReachesEveryPage(_ ok: inout Bool) {
+        // The floating bar steps through Knowledge's and Setup's pages, which
+        // it draws as separate pages.
+        check(AppShellController.steppablePages(from: .docs) == [.notebook, .docs, .readingList]
+                && AppShellController.steppablePages(from: .bootstrap) == [.updates, .bootstrap, .automation, .githubSync]
+                && AppShellController.steppablePages(from: .postmortems) == [.runbooks, .postmortems],
+              "R5-UX-09: the floating bar steps through \(AppShellController.steppablePages(from: .docs)) and \(AppShellController.steppablePages(from: .bootstrap))", &ok)
+        check(AppShellController.steppablePages(from: .calendar).count == 1,
+              "R5-UX-09: the floating bar's Tasks steps to another page", &ok)
+
+        // ⌥⌘I, the platform's inspector chord, in the layout that has one.
+        let sidebarMenu = ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar)
+        let floatingMenu = ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar)
+        func inspectorItem(_ menu: NSMenu) -> NSMenuItem? {
+            menu.items.compactMap(\.submenu).flatMap(\.items)
+                .first { $0.action == #selector(WorkspaceShellController.toggleInspectorFromMenu) }
+        }
+        let inspector = inspectorItem(sidebarMenu)
+        check(inspector?.keyEquivalent == "i" && inspector?.keyEquivalentModifierMask == [.command, .option]
+                && inspectorItem(floatingMenu) == nil,
+              "R5-UX-09: Go › Toggle Inspector is not ⌥⌘I in the sidebar layout alone", &ok)
+
+        // The dictation key asks for Accessibility once, at the first press
+        // without it, naming the key that was pressed.
+        check(DictationPermissions.shouldAskForAccessibility(trusted: false, alreadyAsked: false)
+                && !DictationPermissions.shouldAskForAccessibility(trusted: false, alreadyAsked: true)
+                && !DictationPermissions.shouldAskForAccessibility(trusted: true, alreadyAsked: false),
+              "R5-UX-09: the dictation key's Accessibility question is asked at the wrong time", &ok)
+        let request = DictationPermissions.accessibilityRequest(key: KeyChord.dictationDefault.displayString)
+        check(request.body.contains(KeyChord.dictationDefault.displayString) && request.confirmTitle.contains("Accessibility"),
+              "R5-UX-09: the dictation question reads \(request.title): \(request.body)", &ok)
+        if let composition = source("AppComposition.swift") {
+            check(composition.contains("settings.dictationAccessibilityAsked = true")
+                    && composition.contains("_ = DictationPermissions.requestAccessibility()"),
+                  "R5-UX-09: the dictation key no longer asks for Accessibility at the moment of intent", &ok)
+        }
+
+        // Labels: a host card says its live state, and Health's run dots
+        // are spoken, so neither is a colour alone.
+        let host = Host(label: "DEV Bastion", address: "bastion.dev.example.test")
+        check(HostsController.accessibilityLabel(for: host, session: nil, group: "Staging").contains("group Staging"),
+              "R5-UX-09: a host card's VoiceOver label is \(HostsController.accessibilityLabel(for: host, session: nil, group: "Staging"))", &ok)
+        if let health = source("HealthCardView.swift") {
+            check(health.contains(".runDots(runs, spoken: Self.runTicksSpoken(state))"),
+                  "R5-UX-09: Health's recent runs are no longer spoken", &ok)
         }
     }
 

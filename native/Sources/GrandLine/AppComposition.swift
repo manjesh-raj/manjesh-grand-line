@@ -236,6 +236,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 AppLog.lifecycle.info("dictation hotkey refused - app is locked (GL-09)")
                 return
             }
+            // R5-UX-09: the first press without Accessibility asks for it -
+            // the same grant the Dictation page's button asks for - instead
+            // of recording, once. After that the key records as it always
+            // has, and the page's button stays for a later change of mind.
+            let settings = AppSettings.shared
+            if DictationPermissions.shouldAskForAccessibility(trusted: DictationPermissions.isAccessibilityTrusted,
+                                                             alreadyAsked: settings.dictationAccessibilityAsked) {
+                settings.dictationAccessibilityAsked = true
+                let request = DictationPermissions.accessibilityRequest(key: settings.dictationShortcut.displayString)
+                // After this key event, so the question is not a modal
+                // session inside the monitor's own callback.
+                DispatchQueue.main.async {
+                    if HelmConfirm.confirm(request) == .confirm { _ = DictationPermissions.requestAccessibility() }
+                }
+                return
+            }
             self?.dictationEngine.startRecording()
         },
         onUp: { [weak self] in self?.dictationEngine.stopRecording() }

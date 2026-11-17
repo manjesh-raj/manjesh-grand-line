@@ -1056,6 +1056,27 @@ final class AppShellController: WorkspaceShellController {
 
     override func workspaceSubtitleMayHaveChanged() { refreshDrillHeaderSubtitle() }
 
+    /// R5-UX-09: ⇧⌘[ and ⇧⌘] here step through the showing module's pages
+    /// - Knowledge's Notebook, Docs and Reading list, Setup's four, Crew's
+    /// three - which the floating bar draws as separate pages, so no chord
+    /// reached them. A page's own tabs (Console, Tools) are
+    /// `TabKeyboardShortcuts`', which sees the chord first.
+    override func stepModuleTab(by offset: Int) {
+        guard case .rail(let route)? = workspace.navigator.currentDestinationKind else { return }
+        let pages = Self.steppablePages(from: route)
+        guard pages.count > 1, let index = pages.firstIndex(of: ModuleTable.landing(for: route).route) else { return }
+        workspace.navigator.show(pages[(index + offset + pages.count) % pages.count])
+    }
+
+    /// The pages ⇧⌘[ and ⇧⌘] step through from `route`: its module's, each
+    /// once, the way a tab row orders them. A door's route that lands on
+    /// another page's view (the Calendar, on Tasks) is that page, not a
+    /// step of its own.
+    static func steppablePages(from route: RailDestination) -> [RailDestination] {
+        ModuleTable.module(for: ModuleTable.landing(for: route).route).pages
+            .filter { ModuleTable.landing(for: $0).route == $0 }
+    }
+
     override func workspaceActionsMayHaveChanged() { refreshDrillHeaderActions() }
 
     override func workspaceSessionsDidChange(_ registry: HostSessionRegistry) { applySessionRegistry(registry) }

@@ -408,8 +408,11 @@ enum ReviewTwoUXModelSelfTest {
         check(previous?.keyEquivalent == "{" && next?.keyEquivalent == "}"
                 && previous?.keyEquivalentModifierMask == [.command] && next?.keyEquivalentModifierMask == [.command],
               "the sidebar layout's Go menu has no \u{2318}\u{21E7}[ / \u{2318}\u{21E7}] tab items", &ok)
-        check(item(floating, #selector(WorkspaceShellController.selectNextModuleTab(_:))) == nil,
-              "the floating bar's Go menu offers module tabs it does not draw", &ok)
+        // R5-UX-09: the floating bar steps through a module's pages with
+        // the same two chords (`AppShellController.stepModuleTab`).
+        let floatingNext = item(floating, #selector(WorkspaceShellController.selectNextModuleTab(_:)))
+        check(floatingNext?.keyEquivalent == "}" && floatingNext?.keyEquivalentModifierMask == [.command],
+              "the floating bar's Go menu has no \u{2318}\u{21E7}] to step through a module's pages", &ok)
         // The palette's module rows say their chords.
         var provider = UnifiedSearchActionProvider(actions: [])
         provider.moduleActions = {

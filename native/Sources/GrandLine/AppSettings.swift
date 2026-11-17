@@ -70,6 +70,7 @@ final class AppSettings {
         static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
         static let homeTipsFirstShown = "fm.homeTips.firstShown"
         static let homeTipsDismissed = "fm.homeTips.dismissed"
+        static let dictationAccessibilityAsked = "fm.dictation.accessibilityAsked"
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
         static let hostTagMatchAll = "fm.connections.tagMatchAll"
@@ -841,6 +842,14 @@ final class AppSettings {
     var homeTipsFirstShown: Date? {
         get { defaults.object(forKey: Keys.homeTipsFirstShown) as? Date }
         set { defaults.set(newValue, forKey: Keys.homeTipsFirstShown) }
+    }
+
+    /// R5-UX-09: the dictation key's one-time Accessibility question has been
+    /// asked. Once asked, whatever the answer, it is not asked again; the
+    /// Dictation page's own button stays for a later change of mind.
+    var dictationAccessibilityAsked: Bool {
+        get { defaults.bool(forKey: Keys.dictationAccessibilityAsked) }
+        set { defaults.set(newValue, forKey: Keys.dictationAccessibilityAsked) }
     }
 
     /// R5-UX-03: the captain hid the tips. For good - the strip does not

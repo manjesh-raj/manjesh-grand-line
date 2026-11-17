@@ -814,6 +814,11 @@ final class MainSplitShellController: WorkspaceShellController {
         setSidebarCollapsed(collapse, animated: true)
     }
 
+    /// R5-UX-09: ⌥⌘I does what the toolbar's inspector button does.
+    override func toggleInspectorFromMenu() {
+        toolbar.onToggleInspector?()
+    }
+
     /// The captain's own request, from the inspector button, the pane's close
     /// button, or a page's Show in Inspector: the only route that may widen
     /// the window for it.
