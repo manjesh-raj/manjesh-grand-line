@@ -541,6 +541,16 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_GUARD_TESTS"] == "1" {
             exit(HelmKitSourceGuardSelfTest.run() ? 0 : 1)
         }
+        // S01 of the 2026-11-17 UI/UX proposals: the Helm kit's version table,
+        // its digests and its release notes agree. Pure source reads.
+        if ProcessInfo.processInfo.environment["FM_RUN_HELM_KIT_VERSION_TESTS"] == "1" {
+            exit(HelmKitVersionSelfTest.run() ? 0 : 1)
+        }
+        // The approved 2026-11-17 UI/UX proposals, the halves that need no
+        // window. See `UIUXProposalsSelfTest`'s header.
+        if ProcessInfo.processInfo.environment["FM_RUN_UIUX_PROPOSALS_TESTS"] == "1" {
+            exit(UIUXProposalsSelfTest.run() ? 0 : 1)
+        }
 
         // The UI/UX revamp's component kit (UI-39): what each piece paints. Pure
         // logic; its window-backed geometry half is FM_RUN_HELM_KIT_VIEW_TESTS.

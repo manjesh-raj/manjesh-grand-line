@@ -78,6 +78,11 @@ enum ShiftBoardViewSelfTest {
             check(board.debugColumn(.backlog)?.debugCountText == "1",
                   "Backlog's count badge should read 1, got "
                   + "\(board.debugColumn(.backlog)?.debugCountText ?? "nil")")
+            // S09: the Done lane states its window beside its own number,
+            // since the filter row no longer carries a note for it.
+            check(board.debugColumn(.done)?.debugCountText == "1 \u{00B7} last 7 days",
+                  "Done's count should read \"1 · last 7 days\", got "
+                  + "\(board.debugColumn(.done)?.debugCountText ?? "nil")")
 
             // MARK: A real press and drag starts a real drag session
             //

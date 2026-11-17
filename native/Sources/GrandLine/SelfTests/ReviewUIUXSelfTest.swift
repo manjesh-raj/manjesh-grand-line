@@ -287,11 +287,17 @@ enum ReviewUIUXSelfTest {
             return "the fixture does not hold the review's 5/1/1/1 state - the checks below would prove nothing"
         }
         let ring = HomeCanvasController.healthRingSummary(review)
-        guard ring.value == review.healthy, ring.total == review.total, ring.title == "Healthy" else {
-            return "Home's ring reads \(ring.title) \(ring.value)/\(ring.total) where the Health page reads "
+        guard ring.value == review.healthy, ring.total == review.total else {
+            return "Home's ring reads \(ring.value)/\(ring.total) where the Health page reads "
                  + "Healthy \(review.healthy)/\(review.total)"
         }
-        guard ring.note == "\(HealthService.shiftDueItems.title) needs a look." else {
+        // S11: one verdict per card. The title is the worst state, in its
+        // colour, never "Healthy" beside a failing service.
+        guard ring.title == "1 failing", ring.tint == .critical else {
+            return "the card's headline is \(ring.title) (\(String(describing: ring.tint))) over a failing service"
+        }
+        guard ring.note == "\(HealthService.shiftDueItems.title) needs a look. "
+                + "5 of 8 healthy, 1 recent failure, 1 not run yet." else {
             return "the sentence does not name the failing service first: \(ring.note.debugDescription)"
         }
         guard review.allHealthyNote == nil else {
@@ -323,7 +329,7 @@ enum ReviewUIUXSelfTest {
         // footer agree.
         let allWell = healthSummary([(.backgroundSignals, .healthy), (.fleetTasks, .healthy), (.persistence, .healthy)])
         let well = HomeCanvasController.healthRingSummary(allWell)
-        guard well.value == 3, well.total == 3, well.title == "Healthy",
+        guard well.value == 3, well.total == 3, well.title == "Healthy", well.tint == nil,
               well.note == "All 3 services healthy.", allWell.allHealthyNote == "3/3 services healthy" else {
             return "a fully healthy fleet reads \(well.value)/\(well.total) \(well.title) - "
                  + "\(well.note.debugDescription), footer \(allWell.allHealthyNote ?? "nil")"
@@ -333,9 +339,19 @@ enum ReviewUIUXSelfTest {
         // named in the Health page's word for it (R5-UI-04).
         let degraded = HomeCanvasController.healthRingSummary(
             healthSummary([(.docsSync, .degraded), (.persistence, .healthy)]))
-        guard degraded.value == 1, degraded.note == "\(HealthService.docsSync.title) had a recent failure." else {
+        guard degraded.value == 1, degraded.title == "1 recent failure", degraded.tint == .warn,
+              degraded.note == "\(HealthService.docsSync.title) had a recent failure. 1 of 2 healthy." else {
             return "a degraded service still reads as healthy: \(degraded.value)/\(degraded.total) - "
                  + "\(degraded.note.debugDescription)"
+        }
+
+        // S11: nothing has a verdict yet, so the headline says so in ink
+        // rather than calling a fleet of unrun services healthy.
+        let unrun = HomeCanvasController.healthRingSummary(
+            healthSummary([(.docsSync, .notRun), (.persistence, .notRun)]))
+        guard unrun.title == ServiceHealthSummary.Bucket.notRun.label, unrun.tint == nil,
+              unrun.note == "2 of 2 not run yet." else {
+            return "services that have not run read as \(unrun.title) - \(unrun.note.debugDescription)"
         }
 
         // And the empty case B9 established, unchanged.

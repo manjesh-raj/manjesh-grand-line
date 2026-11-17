@@ -487,16 +487,17 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         // P9: the page tree is a real split-view sidebar - draggable,
         // collapsible and answering Toggle Sidebar - where it was pinned
         // before. The cards and the rail are the content pane.
-        let split = HelmSplitPage(sidebarWidth: Self.gutter + HelmPageSidebar.width,
-                                  minimum: HelmPageSidebar.width * 0.8,
-                                  maximum: HelmPageSidebar.width * 1.6,
-                                  surface: .pageGround)
+        // S04: Settings' band - the column's region in the side-panel fill,
+        // edged by the divider, with Settings' padding.
+        let split = HelmSplitPage(sidebarWidth: HelmPageSidebar.bandPaneWidth,
+                                  minimum: HelmPageSidebar.bandPaneWidth - HelmPageSidebar.width * 0.2,
+                                  maximum: HelmPageSidebar.bandPaneWidth + HelmPageSidebar.width * 0.6,
+                                  surface: .sidePanel)
         addChild(split)
         root.addSubview(split.view)
         // Gotcha (16): the column's height is still tied to the page, through
         // the pane's top and bottom insets.
-        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
-                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter, bottom: Self.gutter, right: 0))
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane, insets: HelmPageSidebar.bandInsets)
         let pane = split.contentPane
         pane.addSubview(editorCard)
         pane.addSubview(previewCard)

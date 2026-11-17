@@ -180,27 +180,60 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
                 .foregroundColor: ink,
             ]
             if clause.target.isLink {
-                // The hue is corrected against the surface it actually lands
-                // on - a `HelmTint` is safe as a fill and is NOT automatically
-                // safe as text (audit §5.7, `HelmContrast`'s own rule).
-                attributes[.foregroundColor] = HelmContrast.legibleTintedText(
-                    tintHex: clause.target.tint.hex(in: theme), over: surface, theme: theme)
+                // S10: prose, not a warning. The clause stays in ink and a
+                // dot in its target's hue leads it (`HelmContrast.quietLink`);
+                // the hue is a fill there, never the text. The dot is outside
+                // the link range, so the hover underline runs under the words
+                // only.
+                let link = HelmContrast.quietLink(tintHex: clause.target.tint.hex(in: theme), theme: theme)
+                let dot = NSMutableAttributedString(attributedString: HelmContrast.quietLinkDot(link.dot,
+                                                                                               font: HelmType.body()))
+                dot.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: dot.length))
+                out.append(dot)
+                attributes[.foregroundColor] = link.text
+                hoverUnderlineColor = link.hoverUnderline
                 // R4-UI-04: no underline at rest. Every clause the fleet and
                 // the follow-ups produce is a link, so the mockup's dotted
                 // underline ran under the whole paragraph and stopped saying
-                // which part was clickable. The tint and the pointing hand say
+                // which part was clickable. The dot and the pointing hand say
                 // it at rest, and the clause under the pointer takes the
                 // dotted underline (`setHoveredClause`).
                 // The clause index, not a URL: this never leaves the process,
                 // and `clickedOnLink` hands it straight back.
                 attributes[.link] = index
             }
-            out.append(NSAttributedString(string: clause.text, attributes: attributes))
+            let text = NSMutableAttributedString(string: clause.text, attributes: attributes)
+            if clause.target.isLink {
+                // S10: a bad state word inside a clause ("overdue") keeps its
+                // state colour, corrected for the surface it lands on. Only
+                // words whose state tint is critical: a clause's own warn hue
+                // already lives on its dot.
+                for (word, tint) in Self.badStateWords {
+                    var search = text.string.startIndex..<text.string.endIndex
+                    while let found = text.string.range(of: word, options: [.caseInsensitive], range: search) {
+                        text.addAttribute(.foregroundColor,
+                                          value: HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme),
+                                                                                over: surface, theme: theme),
+                                          range: NSRange(found, in: text.string))
+                        search = found.upperBound..<text.string.endIndex
+                    }
+                }
+            }
+            out.append(text)
         }
         textView.textStorage?.setAttributedString(out)
         hoveredRange = nil
         needsLayout = true
     }
+
+    /// The state words that keep their colour inside a quiet link (S10):
+    /// every `StateWord` whose tint is critical, by its in-sentence phrase.
+    static let badStateWords: [(String, HelmTint)] = StateWord.allCases.compactMap { word in
+        word.tint == .critical ? (word.phrase, .critical) : nil
+    }
+
+    /// The hover underline's colour, from the quiet-link recipe (S10).
+    private var hoverUnderlineColor: NSColor?
 
     // MARK: Hover (R4-UI-04)
 
@@ -243,15 +276,26 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
             .contains(point) else { return nil }
         let index = manager.characterIndexForGlyph(at: glyph)
         guard index < storage.length else { return nil }
+        // The longest range, not the effective one: a clause whose state word
+        // keeps its colour (S10) is two attribute runs under one link, and the
+        // effective range would stop the underline at the coloured word.
         var range = NSRange()
-        return storage.attribute(.link, at: index, effectiveRange: &range) == nil ? nil : range
+        return storage.attribute(.link, at: index, longestEffectiveRange: &range,
+                                 in: NSRange(location: 0, length: storage.length)) == nil ? nil : range
     }
 
     private func setHoveredClause(_ range: NSRange?) {
         guard range != hoveredRange, let manager = textView.layoutManager,
               let length = textView.textStorage?.length else { return }
-        manager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: NSRange(location: 0, length: length))
-        if let range { manager.addTemporaryAttribute(.underlineStyle, value: Self.hoverUnderline, forCharacterRange: range) }
+        let all = NSRange(location: 0, length: length)
+        manager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: all)
+        manager.removeTemporaryAttribute(.underlineColor, forCharacterRange: all)
+        if let range {
+            manager.addTemporaryAttribute(.underlineStyle, value: Self.hoverUnderline, forCharacterRange: range)
+            if let hoverUnderlineColor {
+                manager.addTemporaryAttribute(.underlineColor, value: hoverUnderlineColor, forCharacterRange: range)
+            }
+        }
         hoveredRange = range
     }
 
@@ -286,7 +330,21 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
 
     /// What the paragraph actually reads as - used to pin that a degraded card
     /// renders exactly `MorningBriefingLocal.statLine`.
-    var debugPlainText: String { textView.string }
+    /// S10's leading dots are text attachments (U+FFFC), not words, so they
+    /// are left out.
+    var debugPlainText: String { textView.string.replacingOccurrences(of: "\u{FFFC}", with: "") }
+
+    /// S10: each character's painted foreground colour and whether it is a
+    /// dot attachment, for the "ink, not tint" check.
+    var debugRuns: [(text: String, color: NSColor?, isDot: Bool)] {
+        guard let storage = textView.textStorage else { return [] }
+        var runs: [(String, NSColor?, Bool)] = []
+        storage.enumerateAttributes(in: NSRange(location: 0, length: storage.length)) { attrs, range, _ in
+            runs.append(((storage.string as NSString).substring(with: range),
+                         attrs[.foregroundColor] as? NSColor, attrs[.attachment] != nil))
+        }
+        return runs
+    }
 
     /// How many characters carry an `.link` attribute - zero for a briefing
     /// made entirely of `.none` clauses.

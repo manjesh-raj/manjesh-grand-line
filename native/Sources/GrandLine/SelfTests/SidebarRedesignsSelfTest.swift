@@ -353,11 +353,14 @@ enum SidebarRedesignsSelfTest {
         let positions = ids.compactMap { toolbarIDs.firstIndex(of: $0) }
         check(positions.count == 2 && positions[1] - positions[0] == 1,
               "Console's toolbar does not show Console, then Hosts: \(toolbarIDs.map(\.rawValue))", &ok)
-        // Adjacent icons share one capsule, so a space keeps the two icons
-        // their own group rather than the first two of the trailing cluster.
-        check(positions.count == 2 && positions[1] + 2 < toolbarIDs.count && toolbarIDs[positions[1] + 1] == .space
-                && toolbarIDs[positions[1] + 2] == WorkspaceToolbar.ItemID.theme,
-              "Quick Connect's icons are not their own group at the head of the trailing cluster: \(toolbarIDs.map(\.rawValue))", &ok)
+        // Adjacent icons share one capsule. S02: Quick Connect's icons and the
+        // calendar are the Open group, and a space closes it before the
+        // Window group's light/dark toggle.
+        check(positions.count == 2 && positions[1] + 3 < toolbarIDs.count
+                && toolbarIDs[positions[1] + 1] == WorkspaceToolbar.ItemID.calendar
+                && toolbarIDs[positions[1] + 2] == .space
+                && toolbarIDs[positions[1] + 3] == WorkspaceToolbar.ItemID.theme,
+              "Quick Connect and the calendar are not the Open group at the head of the trailing cluster: \(toolbarIDs.map(\.rawValue))", &ok)
         check(shell.toolbar.debugModuleActionButton == nil, "Console still draws a one-button Quick Connect", &ok)
 
         // Hosts: the quick-connect host picker, as Quick Connect always was.
@@ -922,6 +925,10 @@ enum SidebarRedesignsSelfTest {
               + "Follow-ups card hidden \(tasks.debugFollowUpsRowHidden), Projects hidden \(tasks.debugProjectsSectionHidden))", &ok)
         check(tasks.followUpLane.debugUsesClassicStyle && tasks.followUpLane.debugCount == "\(pending)",
               "the floating bar's Follow-ups lane is not the classic lane of \(pending) (\(tasks.followUpLane.debugCount))", &ok)
+        // S08: the classic lane's foot is the quiet text button the classic
+        // status lanes have, with no dashed box.
+        check(!tasks.followUpLane.debugAddRow.outlined && tasks.followUpLane.debugAddRow.inLane,
+              "S08: the floating bar's Follow-ups lane foot is not the classic quiet add", &ok)
         tasks.selectModuleTab(named: "List")
         settle(shell)
         check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden && !tasks.debugProjectsSectionHidden,

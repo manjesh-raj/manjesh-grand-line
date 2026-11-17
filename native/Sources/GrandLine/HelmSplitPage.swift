@@ -54,6 +54,62 @@ final class HelmSplitPage: NSSplitViewController {
         case sidePanel
     }
 
+    /// S05 of the 2026-11-17 UI/UX proposals (1.1.0): where a page's capped
+    /// content column sits beside the sidebar.
+    ///
+    /// The cap is the same either way, and so is gotcha (13)'s mechanics -
+    /// required maxima, a grow tie at `contentGrowPriority` (480), nothing
+    /// that can be a floor on the window. Only the anchor differs.
+    enum ContentAlignment {
+        /// Centred in the visible space beside the sidebar, a `pageGutter`
+        /// either side at least - the slack splits evenly.
+        case centered
+        /// Glued to the sidebar: `leadingContentGutter` from the content
+        /// pane's edge, and the slack all on the right. What System Settings,
+        /// Mail and Xcode's preferences do, and Settings' choice (the
+        /// captain's call on S05): at 1512 the centred column left 155pt of
+        /// ground between the nav and the page it shows.
+        case leading
+    }
+
+    /// The gap between the sidebar's edge and a `.leading` column.
+    static let leadingContentGutter: CGFloat = HelmMetrics.s6
+
+    /// The position half of a capped column: what puts `column` inside
+    /// `container` (the scroll view's clip view, gotcha (4)) for `alignment`.
+    /// The caller still owns the cap (`width <=`) and the grow tie; these are
+    /// the anchor and the two margins. Every constraint returned is a
+    /// position or a maximum, so none of them can be a window floor
+    /// (gotcha (13)).
+    static func alignCappedColumn(_ column: NSView, in container: NSView,
+                                  alignment: ContentAlignment) -> [NSLayoutConstraint] {
+        switch alignment {
+        case .centered:
+            return [
+                column.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                column.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor,
+                                                constant: HelmMetrics.pageGutter),
+                column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor,
+                                                 constant: -HelmMetrics.pageGutter),
+            ]
+        case .leading:
+            return [
+                column.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: leadingContentGutter),
+                column.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor,
+                                                 constant: -HelmMetrics.pageGutter),
+            ]
+        }
+    }
+
+    /// What a capped column's grow tie subtracts from its container's width:
+    /// both margins, as `alignCappedColumn` lays them out.
+    static func horizontalMargins(for alignment: ContentAlignment) -> CGFloat {
+        switch alignment {
+        case .centered: return 2 * HelmMetrics.pageGutter
+        case .leading: return leadingContentGutter + HelmMetrics.pageGutter
+        }
+    }
+
     let sidebarPane = NSView()
     let contentPane = NSView()
     private let sidebarSurface: SidebarSurface

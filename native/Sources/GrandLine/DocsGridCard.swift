@@ -33,6 +33,8 @@ struct DocGridItem {
     let tint: HelmTint
     let onOpen: () -> Void
     let onDelete: (() -> Void)?
+    /// S07: a duplicate action, shown on aim beside delete.
+    var onDuplicate: (() -> Void)? = nil
 }
 
 enum DocsGridSupport {
@@ -49,7 +51,11 @@ enum DocsGridSupport {
         let rows = HelmResponsiveGrid.rows(items,
                                            containerWidth: containerWidth,
                                            minItemWidth: minCardWidth,
-                                           spacing: cardSpacing) { item, _ in
+                                           spacing: cardSpacing,
+                                           // S06: each row as tall as its tallest
+                                           // plate - a two-line title beside a
+                                           // one-line one - and no taller.
+                                           equalHeights: true) { item, _ in
             // The width the grid computed is unused: a plate takes its width
             // from the row's `.fillEqually` distribution and its height from
             // its own constant, and it reads the real text-column width back
@@ -63,10 +69,13 @@ enum DocsGridSupport {
 
     /// Daylight §7: a "module-style plate" - `HelmPlateCard`, the shared
     /// sibling of the canvas's own `HelmModuleCard` (see that file's header
-    /// for why it is a separate type). The compact `IconTileView` card this
-    /// replaced had no visible affordance at all: the whole surface was a
-    /// click target and nothing said so. The plate keeps that whole-surface
-    /// click and adds §7's explicit Open button.
+    /// for why it is a separate type).
+    ///
+    /// S07 of the 2026-11-17 UI/UX proposals: the plate is the control. The
+    /// Open button §7 added sat beside a card that already opened on click,
+    /// and the trash glyph showed at rest, so two runbooks drew four controls
+    /// for two actions. `.onAim` makes the whole card the button (hover wash,
+    /// focus ring, Return) and shows duplicate and delete only on aim.
     ///
     /// The per-kind hue comes from the item's own `HelmTint` through
     /// `HelmDomainHue(tint:)` rather than a second mapping, so a runbook
@@ -81,7 +90,9 @@ enum DocsGridSupport {
                               tooltip: item.tooltip,
                               onOpen: item.onOpen,
                               onDelete: item.onDelete,
-                              deleteTooltip: "Delete"))
+                              deleteTooltip: "Delete",
+                              actionReveal: .onAim,
+                              onDuplicate: item.onDuplicate))
         return plate
     }
 
@@ -94,6 +105,21 @@ enum DocsGridSupport {
     }()
 
     static func relativeDate(_ date: Date) -> String {
-        relativeFormatter.localizedString(for: date, relativeTo: Date())
+        // A file written this instant reads "in 0 sec" from the formatter,
+        // which treats zero as the future. Under a second is "just now", the
+        // wording the Claude card's "Updated just now" already uses.
+        let now = Date()
+        guard now.timeIntervalSince(date) >= 1 else { return "just now" }
+        return relativeFormatter.localizedString(for: date, relativeTo: now)
+    }
+
+    /// S07: a plate's one meta line - what the document says about itself,
+    /// and when it changed. `leadingUpdate` puts the time first, for a
+    /// description long enough to truncate (a postmortem's root cause), so
+    /// the time is the part that survives.
+    static func metaLine(_ detail: String?, modifiedAt: Date, leadingUpdate: Bool = false) -> String {
+        let when = relativeDate(modifiedAt)
+        guard let detail, !detail.isEmpty else { return "Updated \(when)" }
+        return leadingUpdate ? "Updated \(when) \u{00B7} \(detail)" : "\(detail) \u{00B7} updated \(when)"
     }
 }

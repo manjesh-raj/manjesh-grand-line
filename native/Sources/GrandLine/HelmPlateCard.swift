@@ -32,6 +32,19 @@
 //   2. an action row - the primary "Open" leading, an optional destructive
 //      glyph pinned to the trailing edge.
 //
+// **S07 (1.1.0): `.onAim`, the card is the control.** UI-10 removed a "View
+// all" button beside a clickable card from the Merge queue; Runbooks and
+// Postmortems kept the same duplicate - an Open button on a card that already
+// opens on click, plus a trash glyph at rest, so two runbooks drew four
+// controls for two actions. `Content.actionReveal = .onAim` drops the action
+// row: the whole card opens (click, Return, Space, VoiceOver press), the
+// subtitle is the record's meta line, and the secondary actions (duplicate,
+// delete) sit in the top-trailing corner as 28pt glyph buttons that show only
+// while the card is aimed at - hovered, or focused, or one of them focused -
+// the same rule `HelmAccentRow.actionReveal` has. ⌫ deletes and ⌘D
+// duplicates while the card has focus. `.always` (the default) is the plate as
+// it was, so a caller that does not opt in is unchanged.
+//
 // Chrome comes from the shared helpers (`HelmCard.applyCardSurface`,
 // `HelmCard.elevation`), which already branch Daylight vs. the other twelve
 // palettes internally - so this file states no colour of its own, and the
@@ -73,6 +86,20 @@ final class HelmPlateCard: NSView {
         /// when the record cannot be deleted from here.
         var onDelete: (() -> Void)? = nil
         var deleteTooltip: String = "Delete"
+        /// S07: where the secondary actions live. `.always` draws the action
+        /// row; `.onAim` makes the card the control (see the file header).
+        var actionReveal: ActionReveal = .always
+        /// S07: a "duplicate" glyph beside delete, `.onAim` only.
+        var onDuplicate: (() -> Void)? = nil
+        var duplicateTooltip: String = "Duplicate"
+    }
+
+    /// The same two cases `HelmAccentRow.ActionReveal` has.
+    enum ActionReveal {
+        /// The action row: Open leading, delete trailing, at rest.
+        case always
+        /// No action row. The card opens; duplicate and delete show on aim.
+        case onAim
     }
 
     // MARK: Geometry
@@ -88,6 +115,9 @@ final class HelmPlateCard: NSView {
     /// horizontal padding even with an empty title (measured 87pt on a 265pt
     /// card by the card this replaces).
     static let deleteButtonSide: CGFloat = 24
+    /// S07: an `.onAim` corner glyph's hit area - the macOS pointer-target
+    /// minimum, and the inspector close's size.
+    static let aimButtonSide: CGFloat = 28
 
     /// **Every plate in a grid is exactly this tall.**
     ///
@@ -120,6 +150,15 @@ final class HelmPlateCard: NSView {
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let openButton = HelmButton(title: "Open", variant: .secondary, size: .small)
     private let deleteButton = HelmButton(symbol: "trash", variant: .quiet, size: .small)
+    /// S07's corner actions, shown on aim.
+    private let aimDuplicateButton = HelmButton(symbol: "plus.square.on.square", variant: .quiet, size: .small)
+    private let aimDeleteButton = HelmButton(symbol: "trash", variant: .quiet, size: .small)
+    private let aimActions = NSStackView()
+    private var aimFocusRegistration: HelmFocusRegistration?
+    private var aimHoldsFocus = false
+    /// The constraints only one of the two reveals uses.
+    private var alwaysConstraints: [NSLayoutConstraint] = []
+    private var onAimConstraints: [NSLayoutConstraint] = []
     private let headerRow: NSStackView
     private let textStack: NSStackView
 
@@ -140,6 +179,7 @@ final class HelmPlateCard: NSView {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let aimFocusRegistration { HelmFocusSensing.shared.unregister(aimFocusRegistration) }
     }
 
     private func buildChrome() {
@@ -204,18 +244,56 @@ final class HelmPlateCard: NSView {
         deleteButton.isHidden = true
         card.addSubview(deleteButton)
 
+        // S07's corner pair, built for every plate and shown by `.onAim` only.
+        for (button, action) in [(aimDuplicateButton, #selector(duplicateClicked)),
+                                 (aimDeleteButton, #selector(deleteClicked))] {
+            button.target = self
+            button.action = action
+            button.translatesAutoresizingMaskIntoConstraints = false
+            let insets = button.alignmentRectInsets
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: Self.aimButtonSide - insets.left - insets.right),
+                button.heightAnchor.constraint(equalToConstant: Self.aimButtonSide - insets.top - insets.bottom),
+            ])
+        }
+        aimActions.setViews([aimDuplicateButton, aimDeleteButton], in: .leading)
+        aimActions.orientation = .horizontal
+        aimActions.spacing = HelmMetrics.s0
+        aimActions.translatesAutoresizingMaskIntoConstraints = false
+        aimActions.isHidden = true
+        card.addSubview(aimActions)
+        card.onHoverChange = { [weak self] _ in self?.applyAimReveal(animated: true) }
+        card.onKeyDown = { [weak self] event in self?.handleAimKey(event) ?? false }
+
         let deleteInsets = deleteButton.alignmentRectInsets
         NSLayoutConstraint.activate([
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: Self.height),
 
             headerRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
-            headerRow.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
             headerRow.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.verticalInset),
-
+        ])
+        // `.onAim`: the header stops short of the corner pair, and the card is
+        // as tall as its header (the grid decides whether a row matches).
+        onAimConstraints = [
+            aimActions.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -HelmMetrics.s2),
+            aimActions.topAnchor.constraint(equalTo: card.topAnchor, constant: HelmMetrics.s2),
+            headerRow.trailingAnchor.constraint(equalTo: aimActions.leadingAnchor, constant: -HelmMetrics.s1),
+            // S06 (1.1.1): at least the header's height, and exactly that
+            // unless a row asks for more - `HelmResponsiveGrid`'s per-row
+            // `equalHeights` ties at 499, above this preference.
+            card.bottomAnchor.constraint(greaterThanOrEqualTo: headerRow.bottomAnchor, constant: Self.verticalInset),
+            {
+                let hug = card.bottomAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: Self.verticalInset)
+                hug.priority = .defaultLow
+                return hug
+            }(),
+        ]
+        alwaysConstraints = [
+            heightAnchor.constraint(equalToConstant: Self.height),
+            headerRow.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.horizontalInset),
             openButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: Self.horizontalInset),
             openButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.verticalInset),
             openButton.topAnchor.constraint(greaterThanOrEqualTo: headerRow.bottomAnchor,
@@ -230,7 +308,8 @@ final class HelmPlateCard: NSView {
                 equalToConstant: Self.deleteButtonSide - deleteInsets.left - deleteInsets.right),
             deleteButton.heightAnchor.constraint(
                 equalToConstant: Self.deleteButtonSide - deleteInsets.top - deleteInsets.bottom),
-        ])
+        ]
+        NSLayoutConstraint.activate(alwaysConstraints)
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(openClicked))
         card.addGestureRecognizer(click)
@@ -245,17 +324,70 @@ final class HelmPlateCard: NSView {
         subtitleLabel.isHidden = content.subtitle.isEmpty
         tile.configure(symbol: content.symbol, hue: content.hue)
         openButton.title = content.actionTitle
-        deleteButton.isHidden = content.onDelete == nil
+        let onAim = content.actionReveal == .onAim
+        openButton.isHidden = onAim
+        deleteButton.isHidden = onAim || content.onDelete == nil
         deleteButton.toolTip = content.deleteTooltip
+        aimActions.isHidden = !onAim || (content.onDelete == nil && content.onDuplicate == nil)
+        aimDeleteButton.isHidden = content.onDelete == nil
+        aimDuplicateButton.isHidden = content.onDuplicate == nil
+        for (button, tooltip) in [(aimDeleteButton, content.deleteTooltip),
+                                  (aimDuplicateButton, content.duplicateTooltip)] {
+            button.toolTip = tooltip
+            button.setAccessibilityLabel("\(tooltip) \(content.title)")
+        }
+        NSLayoutConstraint.deactivate(onAim ? alwaysConstraints : onAimConstraints)
+        NSLayoutConstraint.activate(onAim ? onAimConstraints : alwaysConstraints)
+        if onAim, aimFocusRegistration == nil {
+            aimFocusRegistration = HelmFocusSensing.shared.register(card, includesDescendants: true) {
+                [weak self] focused in
+                self?.aimHoldsFocus = focused
+                self?.applyAimReveal(animated: true)
+            }
+        }
         card.toolTip = content.tooltip
         toolTip = content.tooltip
-        card.setAccessibilityLabel([content.title, content.subtitle]
-            .filter { !$0.isEmpty }.joined(separator: ", "))
+        // `.onAim`: the card is a button named for the record (the meta line
+        // is its value), since nothing else on it says "open".
+        card.setAccessibilityLabel(onAim
+            ? content.title
+            : [content.title, content.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+        card.accessibilityValueOverride = onAim && !content.subtitle.isEmpty ? content.subtitle : nil
+        applyAimReveal(animated: false)
         applyTheme(lastTheme)
     }
 
     @objc private func openClicked() { content?.onOpen() }
     @objc private func deleteClicked() { content?.onDelete?() }
+    @objc private func duplicateClicked() { content?.onDuplicate?() }
+
+    /// S07: the corner pair fades in while the card is aimed at. `alphaValue`,
+    /// not `isHidden`, for `HelmAccentRow.applyActionReveal`'s reasons: the
+    /// buttons stay in VoiceOver and the title does not re-flow on hover.
+    private func applyAimReveal(animated: Bool) {
+        guard content?.actionReveal == .onAim else { return }
+        let revealed = card.isHovering || aimHoldsFocus
+        HelmMotion.fade(aimActions, to: revealed ? 1 : 0, duration: HelmMotion.stateDuration, animated: animated)
+    }
+
+    /// S07: ⌫ deletes (through the caller's own confirm) and ⌘D duplicates,
+    /// while the card has keyboard focus. Return and Space stay the card's
+    /// press.
+    private func handleAimKey(_ event: NSEvent) -> Bool {
+        guard let content, content.actionReveal == .onAim else { return false }
+        let flags = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        // 51 = Delete (⌫), 117 = Forward Delete.
+        if (event.keyCode == 51 || event.keyCode == 117), flags.isEmpty, let onDelete = content.onDelete {
+            onDelete()
+            return true
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "d", flags == .command,
+           let onDuplicate = content.onDuplicate {
+            onDuplicate()
+            return true
+        }
+        return false
+    }
 
     // MARK: Layout / theme
 
@@ -346,6 +478,15 @@ final class HelmPlateCard: NSView {
         openClicked()
         return true
     }
+
+    /// S07: the `.onAim` corner pair - its alpha (the reveal), which buttons
+    /// it carries, and whether the action row is gone.
+    var debugAim: (alpha: CGFloat, delete: Bool, duplicate: Bool, openRowHidden: Bool) {
+        (aimActions.isHidden ? 0 : aimActions.alphaValue, !aimDeleteButton.isHidden,
+         !aimDuplicateButton.isHidden, openButton.isHidden && deleteButton.isHidden)
+    }
+    var debugCardHit: HoverHighlightView { card }
+    var debugAimButtons: (duplicate: HelmButton, delete: HelmButton) { (aimDuplicateButton, aimDeleteButton) }
 
     @discardableResult
     func debugActivateDelete() -> Bool {

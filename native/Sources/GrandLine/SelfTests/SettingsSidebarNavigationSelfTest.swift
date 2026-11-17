@@ -1064,39 +1064,30 @@ enum SettingsSidebarNavigationSelfTest {
         }
     }
 
-    // MARK: 12. The column is centred, not left-pinned
+    // MARK: 12. The column sits beside the nav (S05)
 
-    /// **The captain reported this three times.** Every settings page
-    /// rendered flush against the sidebar with a large empty gap on the
-    /// right only, because the content column was positioned by a required
-    /// `leading == content.leading + pageGutter` underneath its width cap -
-    /// deliberate left-alignment with a ceiling, so past the cap every extra
-    /// point of window became slack on one side.
-    ///
-    /// Case 11 above cannot see this: it asserts the header and the column
-    /// share both *ends*, which was true throughout - the two were left-
-    /// pinned together. Nor can case 6, which only asserts the cap never
-    /// becomes a window floor. Centring is a third, independent property and
-    /// needs its own assertion.
+    /// **S05 of the 2026-11-17 UI/UX proposals, the captain's call.** This
+    /// case used to assert the opposite: the column centred in the space
+    /// beside the sidebar, equal visible margins left and right (287.5 /
+    /// 287.5 at 1512). That centring left 155pt of ground between the nav and
+    /// the page it selects, so the column is now `.leading`: a
+    /// `HelmSplitPage.leadingContentGutter` past the band's visible edge, the
+    /// slack all on the right, and the header on the same left edge.
     ///
     /// Measured against the sidebar's **visible** edge rather than the
-    /// scroll area's leading edge, which are 25pt apart: `scroll.leading` is
-    /// `sidebarColumn.trailing`, while `sidebarPanel` paints a further
-    /// `pageGutter` past that column with `sidebarEdge`'s 1pt rule on top.
-    /// The captain sees the panel, not the clip view, so the panel is what
-    /// the margins have to be equal about - and a version of this check
-    /// written against the clip view would pass on a page that visibly is
-    /// not centred.
+    /// scroll area's leading edge: the captain sees the band and its 1pt
+    /// rule, so that is what the gutter has to be measured from - a version
+    /// of this check written against a different edge would pass on a page
+    /// that visibly is not where it should be.
     private static func checkTheColumnIsCentredInTheVisibleSpace(_ ok: inout Bool) {
-        print("-- the content column is centred in the space beside the sidebar --")
+        print("-- the content column sits a gutter past the sidebar's visible edge --")
         // Counts the cases where the cap actually binds, so this cannot pass
-        // vacuously on a run where every page happened to fill its pane -
-        // at which point equal margins prove nothing about centring.
+        // on a run where every page filled its pane - where a centred and a
+        // leading column would land in the same place.
         var discriminating = 0
-        // 1512.5 is deliberate: it puts the ideal centre *off* the backing
-        // grid even on a retina machine, which is the only way a dev box
-        // reproduces what CI's 1x runner hits at every even width. Without
-        // it this case passed locally and failed on CI.
+        // 1512.5 is deliberate: it puts the edge *off* the backing grid even
+        // on a retina machine, which is how a dev box reproduces what CI's 1x
+        // runner hits at every even width.
         for width in [CGFloat(1512), CGFloat(1512.5), CGFloat(1400), CGFloat(1100)] {
             autoreleasepool {
                 let settings = makeSettings()
@@ -1115,63 +1106,43 @@ enum SettingsSidebarNavigationSelfTest {
                     let header = settings.debugToolbarFrameInRoot
                     let left = column.minX - edge.maxX
                     let right = root.bounds.maxX - column.maxX
-                    // **One device pixel, not half a point.** The visible
-                    // region beside the sidebar is an odd number of points
-                    // wide at every even window width (the sidebar's visible
-                    // edge lands on an odd coordinate, and the column's cap
-                    // is even), so the exact centre is a half point - and
-                    // Auto Layout aligns a frame to the *backing store*.
-                    // Shifting the column by d grows one margin by d and
-                    // shrinks the other by d, so the two differ by 2d, and d
-                    // is at most half a device pixel: 1.0pt on a 1x runner,
-                    // 0.5pt on a retina Mac. Measured both ways - 1512pt on
-                    // 2x gives an exact 287.5/287.5, 1512.5pt on 2x gives
-                    // 288.0/287.5, and CI's 1x runner at 1512pt gives
-                    // 288.0/287.0.
-                    //
-                    // This cannot mask the defect the case exists for: the
-                    // pre-fix left-pin put the column *one point left of the
-                    // sidebar's visible edge* with the whole slack on the
-                    // right, which is 577pt of asymmetry at 1512.
+                    // One device pixel: a frame lands on the backing grid, so
+                    // an edge at a half point can move by up to half a device
+                    // pixel - 1.0pt on CI's 1x runner, 0.5pt on a retina Mac.
                     let tolerance = 1.0 / max(window.backingScaleFactor, 1)
+                    let gutter = HelmSplitPage.leadingContentGutter
 
-                    guard left > 0.5, right > 0.5 else {
+                    guard right > 0.5 else {
                         fail("\(category.rawValue) at \(fmt(width)): the column runs "
-                             + "\(fmt(column.minX))..\(fmt(column.maxX)) against a visible "
-                             + "sidebar edge of \(fmt(edge.maxX)) and a page edge of "
-                             + "\(fmt(root.bounds.maxX)) - one margin is gone entirely", &ok)
+                             + "\(fmt(column.minX))..\(fmt(column.maxX)) to a page edge of "
+                             + "\(fmt(root.bounds.maxX)) - the right margin is gone", &ok)
                         continue
                     }
-                    if left > 40 { discriminating += 1 }
+                    // Real slack on the right that a centred column would
+                    // have split: this combination tells the two apart.
+                    if right - left > 40 { discriminating += 1 }
 
-                    let delta = abs(left - right)
-                    check(delta <= tolerance,
-                          "\(category.rawValue) at \(fmt(width)): \(fmt(left))pt of visible "
-                          + "margin on the left against \(fmt(right))pt on the right - "
-                          + "\(fmt(delta))pt apart against a \(fmt(tolerance))pt device-pixel "
-                          + "tolerance, so the column is not centred beside the sidebar", &ok)
-
-                    // The header rides the same centre. Asserted here as well
-                    // as in case 11 because that case compares the two to
-                    // each other, and two equally off-centre things agree.
+                    check(abs(left - gutter) <= tolerance,
+                          "\(category.rawValue) at \(fmt(width)): \(fmt(left))pt from the sidebar's visible "
+                          + "edge, want the \(fmt(gutter))pt gutter - the column is not beside the nav", &ok)
+                    check(right >= HelmMetrics.pageGutter - tolerance,
+                          "\(category.rawValue) at \(fmt(width)): \(fmt(right))pt on the right, under the "
+                          + "\(fmt(HelmMetrics.pageGutter))pt page gutter", &ok)
+                    // The header rides the same left edge.
                     let headerLeft = header.minX - edge.maxX
-                    let headerRight = root.bounds.maxX - header.maxX
-                    let headerDelta = abs(headerLeft - headerRight)
-                    check(headerDelta <= tolerance,
-                          "\(category.rawValue) at \(fmt(width)): the header has "
-                          + "\(fmt(headerLeft))pt of visible margin on the left against "
-                          + "\(fmt(headerRight))pt on the right", &ok)
+                    check(abs(headerLeft - gutter) <= tolerance,
+                          "\(category.rawValue) at \(fmt(width)): the header is \(fmt(headerLeft))pt from "
+                          + "the sidebar's visible edge, want \(fmt(gutter))pt", &ok)
 
-                    guard delta <= tolerance, headerDelta <= tolerance else { continue }
-                    print("  ok   \(category.rawValue) at \(fmt(width)): visible margins "
-                          + "\(fmt(left)) / \(fmt(right)), column "
-                          + "\(fmt(column.minX))..\(fmt(column.maxX))")
+                    guard abs(left - gutter) <= tolerance, abs(headerLeft - gutter) <= tolerance else { continue }
+                    print("  ok   \(category.rawValue) at \(fmt(width)): gutter \(fmt(left)), right "
+                          + "\(fmt(right)), column \(fmt(column.minX))..\(fmt(column.maxX))")
                 }
             }
         }
         check(discriminating > 0,
-              "no width x category combination left real slack beside the column, so every "
-              + "equal-margin comparison above was vacuous - the fixture widths need raising "
+              "no width x category combination left real slack beside the column, so a centred "
+              + "column would have passed every check above - the fixture widths need raising "
               + "above the widest contentMaxWidth", &ok)
     }
 

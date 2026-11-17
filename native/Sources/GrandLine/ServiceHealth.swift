@@ -221,6 +221,18 @@ struct ServiceHealthSummary: Equatable {
         entries.filter { $0.state.bucket == bucket }.map(\.service)
     }
 
+    /// The bucket a one-line summary leads with (S11 of the 2026-11-17 UI/UX
+    /// proposals): the worst verdict on record, so a card that says one word
+    /// cannot say "Healthy" over a failing service. Failing beats a recent
+    /// failure, which beats healthy. Not run yet leads only when nothing has
+    /// a verdict at all, because a service that has not run is unknown, not
+    /// worse than healthy (GL-14). `nil` when nothing is registered.
+    var headline: Bucket? {
+        guard total > 0 else { return nil }
+        for bucket in [Bucket.failing, .degraded, .healthy] where count(bucket) > 0 { return bucket }
+        return .notRun
+    }
+
     /// "5 healthy, 1 failing, 1 recent failure, 1 not run yet" - one figure
     /// per non-empty bucket, worst news after the good, the order the Health
     /// page's summary lists them.

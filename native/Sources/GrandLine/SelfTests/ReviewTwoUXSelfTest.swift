@@ -437,10 +437,14 @@ enum ReviewTwoUXSelfTest {
             settle(shell)
             let toolbar = shell.toolbar.debugItemIdentifiers
             let positions = ids.compactMap { toolbar.firstIndex(of: $0) }
+            // S02: Quick Connect leads the Open group, with the calendar, and a
+            // space closes the group before the Window group.
             check(positions.count == 2 && positions[1] == positions[0] + 1
-                    && positions[1] + 2 < toolbar.count && toolbar[positions[1] + 1] == .space
-                    && toolbar[positions[1] + 2] == WorkspaceToolbar.ItemID.theme,
-                  "\(module.title)'s toolbar has no Quick Connect group before the trailing cluster: \(toolbar.map(\.rawValue))", &ok)
+                    && positions[1] + 3 < toolbar.count
+                    && toolbar[positions[1] + 1] == WorkspaceToolbar.ItemID.calendar
+                    && toolbar[positions[1] + 2] == .space
+                    && toolbar[positions[1] + 3] == WorkspaceToolbar.ItemID.theme,
+                  "\(module.title)'s toolbar has no Open group before the Window group: \(toolbar.map(\.rawValue))", &ok)
             check(!toolbar.contains(NSToolbarItem.Identifier("workspace.quickConnect.caption")),
                   "\(module.title)'s toolbar still carries Quick Connect's caption", &ok)
         }
@@ -460,8 +464,24 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
-        check(!shell.toolbar.debugItemIdentifiers.contains { ids.contains($0) || $0 == .space },
-              "a Personal toolbar still offers Quick Connect to modules it hides: \(shell.toolbar.debugItemIdentifiers.map(\.rawValue))", &ok)
+        // S02: the calendar is still the Open group, so the one space left is
+        // the one closing it - and no second space where Quick Connect was.
+        let personal = shell.toolbar.debugItemIdentifiers
+        let spaces = personal.indices.filter { personal[$0] == .space }
+        check(!personal.contains { ids.contains($0) }
+                && spaces.count == 1 && spaces.first.map { $0 > 0 && personal[$0 - 1] == WorkspaceToolbar.ItemID.calendar } == true,
+              "a Personal toolbar still offers Quick Connect to modules it hides: \(personal.map(\.rawValue))", &ok)
+        // S02: a page's own action comes before the Open group, never between
+        // the Open and Window groups.
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        let home = shell.toolbar.debugItemIdentifiers
+        if let action = home.firstIndex(of: WorkspaceToolbar.ItemID.moduleAction),
+           let calendar = home.firstIndex(of: WorkspaceToolbar.ItemID.calendar) {
+            check(action < calendar, "Home's Customize sits inside the trailing groups: \(home.map(\.rawValue))", &ok)
+        } else {
+            fail("the Personal Home toolbar lost Customize or the calendar: \(home.map(\.rawValue))", &ok)
+        }
         AppSettings.shared.hiddenModules = [.console]
         settle(shell)
         check(shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.quickConnectHosts)

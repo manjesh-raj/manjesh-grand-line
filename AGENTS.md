@@ -846,11 +846,15 @@ Three consequences:
   divider-drag priority, measured), `HelmPageSidebar` yields its own `208`
   preference inside a pane, and a page's grow tie that could move the divider
   sits at `HelmSplitPage.contentGrowPriority` (480).
-- **A capped column is centred, never left-pinned**, and the centre to measure
-  against is the *visible* one. In a split page the scroll area starts at the
-  content pane, so the clip view's centre is the visible centre; Settings'
-  old `visibleCentreNudge` existed only because its scroll area started under
-  the band.
+- **A capped column is placed by `HelmSplitPage.alignCappedColumn`, never by
+  a hand-written pin**: `.centered` centres it, and `.leading` (Settings, since
+  S05 of the 2026-11-17 UI/UX proposals) puts it `leadingContentGutter` past
+  the sidebar with the slack on the right. Either way the cap and the grow tie
+  keep their priorities, and the edge or centre to measure against is the
+  *visible* one. In a split page the scroll area starts at the content pane,
+  so the clip view's edges are the visible ones; Settings' old
+  `visibleCentreNudge` existed only because its scroll area started under the
+  band.
 - **A content hugging priority travels the same chain as a width *ceiling*.**
   Wherever a required equality ties a container to its content, one `.required`
   hug on a label inside says "never wider than my text" about the container too

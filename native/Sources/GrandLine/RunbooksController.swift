@@ -361,16 +361,19 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
             // (`DocsRunbookMetadata`). "Updated N ago" is the fallback for a
             // document with no steps yet, and stays on the card's tooltip
             // either way so the timestamp is never lost.
-            let updated = "Updated \(DocsGridSupport.relativeDate(runbook.modifiedAt))"
-            let subtitle = DocsRunbookMetadata.runbookSubtitle(runbook) ?? updated
+            // S07: the timestamp joins the metadata on the one meta line,
+            // now that the card has no action row to make room for.
+            let subtitle = DocsGridSupport.metaLine(DocsRunbookMetadata.runbookSubtitle(runbook),
+                                                    modifiedAt: runbook.modifiedAt)
             return DocGridItem(
                 title: runbook.title,
                 subtitle: subtitle,
-                tooltip: subtitle == updated ? runbook.title : "\(runbook.title) - \(updated)",
+                tooltip: "\(runbook.title) - \(subtitle)",
                 icon: "doc.text",
                 tint: .info,
                 onOpen: { [weak self] in self?.beginEditRunbook(runbook.id) },
-                onDelete: { [weak self] in self?.confirmDeleteRunbook(id: runbook.id, title: runbook.title) }
+                onDelete: { [weak self] in self?.confirmDeleteRunbook(id: runbook.id, title: runbook.title) },
+                onDuplicate: { [weak self] in self?.duplicateRunbook(runbook) }
             )
         }
         rebuildRunbookGrid()
@@ -501,6 +504,21 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     func debugConfirmDeleteRunbook(id: String, title: String) {
         confirmDeleteRunbook(id: id, title: title)
     }
+    #endif
+
+    /// S07: a copy beside the original, titled "<title> copy" so the two are
+    /// told apart on the grid, through the store's own create (a new file,
+    /// synced like any other).
+    private func duplicateRunbook(_ runbook: DocsRunbook) {
+        let title = "\(runbook.title) copy"
+        let body = runbook.content
+        runbookStore.createRunbook(title: title, content: Self.contentWithHeading(title: title, body: body))
+        reloadRunbooksList()
+        if let container = view.window?.contentView { Toast.show(in: container, message: "Runbook duplicated") }
+    }
+
+    #if FM_SELFTESTS
+    func debugDuplicateRunbook(_ runbook: DocsRunbook) { duplicateRunbook(runbook) }
     #endif
 
     private func confirmDeleteRunbook(id: String, title: String, dismissingEditor: Bool = false) {

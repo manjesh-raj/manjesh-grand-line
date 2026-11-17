@@ -47,6 +47,24 @@ enum StateWord: CaseIterable {
     /// The same word inside a sentence ("2 healthy, 1 failing").
     var phrase: String { label.prefix(1).lowercased() + label.dropFirst() }
 
+    /// The state's colour when a surface leads with it (S01's StateVocabulary
+    /// 1.1.0, from S11 of the 2026-11-17 UI/UX proposals): the hue a headline,
+    /// a ring or a tile takes for this state. `nil` is a state that is not a
+    /// verdict yet (not run, checking, not checked, updating), which stays in
+    /// ink, never in a colour it has not earned (GL-14).
+    ///
+    /// The values are the ones the pages already paint these words in
+    /// (`HealthCardView.healthVisuals`, `UpdatesController`'s and Setup's
+    /// status pills), written down once.
+    var tint: HelmTint? {
+        switch self {
+        case .healthy, .upToDate, .verified: return .good
+        case .recentFailure, .updateAvailable, .notInstalled, .notSetUp, .dueToday: return .warn
+        case .failing, .checkFailed, .updateFailed, .overdue: return .critical
+        case .notRunYet, .checking, .notChecked, .updating: return nil
+        }
+    }
+
     /// The word with a count in front, as a summary line says it: "3 up to
     /// date", "1 update available", "2 checks failed".
     func counted(_ count: Int) -> String {

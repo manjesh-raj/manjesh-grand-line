@@ -298,12 +298,14 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             // A postmortem's own `## Root Cause` section is what its card
             // says; the timestamp falls back in when the document has no
             // root cause written yet.
-            let updated = "Updated \(DocsGridSupport.relativeDate(postmortem.modifiedAt))"
-            let subtitle = DocsRunbookMetadata.postmortemSubtitle(postmortem) ?? updated
+            // S07: one meta line, the time first so a long root cause is the
+            // part that truncates.
+            let subtitle = DocsGridSupport.metaLine(DocsRunbookMetadata.postmortemSubtitle(postmortem),
+                                                    modifiedAt: postmortem.modifiedAt, leadingUpdate: true)
             return DocGridItem(
                 title: postmortem.title,
                 subtitle: subtitle,
-                tooltip: subtitle == updated ? postmortem.title : "\(postmortem.title) - \(updated)",
+                tooltip: "\(postmortem.title) - \(subtitle)",
                 icon: "exclamationmark.triangle",
                 tint: .warn,
                 onOpen: { [weak self] in self?.showPostmortem(postmortem.id) },

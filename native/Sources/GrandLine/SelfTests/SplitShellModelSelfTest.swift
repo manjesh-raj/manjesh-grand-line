@@ -859,9 +859,18 @@ enum SplitShellModelSelfTest {
         }
         check(lastFlexible < theme && theme < bell && bell < search,
               "the light/dark toggle and the notifications button are no longer the trailing cluster: \(ids.map(\.rawValue))", &ok)
-        // The captain's ask: a calendar button right after the bell.
-        check(ids.firstIndex(of: WorkspaceToolbar.ItemID.calendar) == bell + 1,
-              "the calendar button does not follow the notifications button: \(ids.map(\.rawValue))", &ok)
+        // S02 of the 2026-11-17 UI/UX proposals: two groups. Open - the
+        // calendar (the captain's ask), which Quick Connect joins per page -
+        // then Window: the light/dark toggle, the bell and the inspector, side
+        // by side, then Search.
+        let calendar = ids.firstIndex(of: WorkspaceToolbar.ItemID.calendar)
+        check(calendar.map { lastFlexible < $0 && $0 < theme } == true,
+              "the calendar button does not open the trailing cluster's Open group: \(ids.map(\.rawValue))", &ok)
+        check(Array(ids[theme..<min(ids.count, theme + 3)]) == WorkspaceToolbar.Group.window
+                && ids.firstIndex(of: WorkspaceToolbar.ItemID.search) == theme + 3,
+              "the Window group is not the toggle, the bell and the inspector before Search: \(ids.map(\.rawValue))", &ok)
+        check(WorkspaceToolbar.Group.open == WorkspaceToolbar.ItemID.quickConnect + [WorkspaceToolbar.ItemID.calendar],
+              "the Open group is not Quick Connect's two icons and the calendar", &ok)
         check(WorkspaceToolbar.customizableItems.contains(WorkspaceToolbar.ItemID.calendar),
               "the calendar button cannot be moved or removed in Customize Toolbar", &ok)
         check(ids.first == WorkspaceToolbar.ItemID.sidebar && ids.contains(.sidebarTrackingSeparator),

@@ -246,10 +246,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         // the content to the activity panel, which with the column inside the
         // document would have scrolled the filters themselves off the top
         // (seen in a real render before this was moved out).
-        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter + HelmPageSidebar.width,
-                                  minimum: HelmPageSidebar.width * 0.8,
-                                  maximum: HelmPageSidebar.width * 1.6,
-                                  surface: .pageGround)
+        // S04: Settings' band - the column's region in the side-panel fill,
+        // edged by the divider, with Settings' padding.
+        let split = HelmSplitPage(sidebarWidth: HelmPageSidebar.bandPaneWidth,
+                                  minimum: HelmPageSidebar.bandPaneWidth - HelmPageSidebar.width * 0.2,
+                                  maximum: HelmPageSidebar.bandPaneWidth + HelmPageSidebar.width * 0.6,
+                                  surface: .sidePanel)
         addChild(split)
         root.addSubview(split.view)
         NSLayoutConstraint.activate([
@@ -258,9 +260,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
             split.view.topAnchor.constraint(equalTo: root.topAnchor),
             split.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
-        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
-                          insets: NSEdgeInsets(top: 18, left: HelmMetrics.pageGutter,
-                                               bottom: HelmMetrics.pageGutter, right: 0),
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane, insets: HelmPageSidebar.bandInsets,
                           bottomIsCeiling: true)
         // The scroll view started at the column's trailing edge; the divider's
         // width is taken back so it still does.

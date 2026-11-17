@@ -305,14 +305,15 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         // content preference - a container whose height nothing ties lets its
         // content escape it, and that shipped once as a panel drawn over the
         // app's top bar.
-        let split = HelmSplitPage(sidebarWidth: Self.gutter + HelmPageSidebar.width,
-                                  minimum: HelmPageSidebar.width * 0.8,
-                                  maximum: HelmPageSidebar.width * 1.6,
-                                  surface: .pageGround)
+        // S04: Settings' band - the column's region in the side-panel fill,
+        // edged by the divider, with Settings' padding.
+        let split = HelmSplitPage(sidebarWidth: HelmPageSidebar.bandPaneWidth,
+                                  minimum: HelmPageSidebar.bandPaneWidth - HelmPageSidebar.width * 0.2,
+                                  maximum: HelmPageSidebar.bandPaneWidth + HelmPageSidebar.width * 0.6,
+                                  surface: .sidePanel)
         addChild(split)
         root.addSubview(split.view)
-        HelmSplitPage.pin(sidebar, in: split.sidebarPane,
-                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter, bottom: Self.gutter, right: 0))
+        HelmSplitPage.pin(sidebar, in: split.sidebarPane, insets: HelmPageSidebar.bandInsets)
         HelmSplitPage.pin(gridScroll, in: split.contentPane,
                           insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter - HelmSplitPage.dividerThickness,
                                                bottom: Self.gutter, right: Self.gutter))
