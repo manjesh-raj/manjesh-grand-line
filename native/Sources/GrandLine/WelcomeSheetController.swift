@@ -128,10 +128,14 @@ final class WelcomeSheetController: NSViewController {
     private let profileStack = NSStackView()
     private var profileButtons: [(profile: WorkspaceProfile, button: HelmButton)] = []
     private let commandWell = NSTextField(labelWithString: "")
+    /// The sunken well the command sits in, with room around it. The label
+    /// used to be the well itself, so its first letter sat against the
+    /// well's rounded edge and was cut ("av save" read "v save").
+    private let commandBox = NSView()
     private let commandCopyButton = HelmButton(title: "Copy", variant: .secondary, symbol: "doc.on.doc")
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 430))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 470))
         view = root
 
         titleLabel.font = HelmType.pageTitle()
@@ -152,7 +156,7 @@ final class WelcomeSheetController: NSViewController {
         buildCommandWell()
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
-        for child in [themeGrid, profileStack, commandWell, commandCopyButton] as [NSView] {
+        for child in [themeGrid, profileStack, commandBox, commandCopyButton] as [NSView] {
             bodyContainer.addSubview(child)
         }
         NSLayoutConstraint.activate([
@@ -164,12 +168,19 @@ final class WelcomeSheetController: NSViewController {
             themeGrid.trailingAnchor.constraint(lessThanOrEqualTo: bodyContainer.trailingAnchor),
             themeGrid.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
 
-            commandWell.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            commandWell.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            commandWell.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
+            commandBox.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            commandBox.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            commandBox.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
             commandCopyButton.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            commandCopyButton.topAnchor.constraint(equalTo: commandWell.bottomAnchor, constant: HelmMetrics.s2),
+            commandCopyButton.topAnchor.constraint(equalTo: commandBox.bottomAnchor, constant: HelmMetrics.s2),
         ])
+        // The container is as tall as its tallest step body. Pinned at the
+        // top only, it had no height at all, so the column never knew the
+        // body was there: the footer could not keep its distance, and a
+        // render clipped the theme grid and the profile choice away.
+        for child in [themeGrid, profileStack, commandCopyButton] as [NSView] {
+            bodyContainer.bottomAnchor.constraint(greaterThanOrEqualTo: child.bottomAnchor).isActive = true
+        }
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -211,7 +222,7 @@ final class WelcomeSheetController: NSViewController {
         blurbLabel.stringValue = step.blurb
         themeGrid.isHidden = step != .theme
         profileStack.isHidden = step != .profile
-        commandWell.isHidden = step != .lock
+        commandBox.isHidden = step != .lock
         commandCopyButton.isHidden = step != .lock
         backButton.isHidden = stepIndex == 0
         nextButton.title = stepIndex == steps.count - 1 ? "Get started" : "Next"
@@ -321,7 +332,15 @@ final class WelcomeSheetController: NSViewController {
         commandWell.isSelectable = true
         commandWell.lineBreakMode = .byTruncatingMiddle
         commandWell.translatesAutoresizingMaskIntoConstraints = false
-        HelmField.makeSunken(commandWell)
+        commandBox.translatesAutoresizingMaskIntoConstraints = false
+        HelmField.makeSunken(commandBox)
+        commandBox.addSubview(commandWell)
+        NSLayoutConstraint.activate([
+            commandWell.leadingAnchor.constraint(equalTo: commandBox.leadingAnchor, constant: HelmMetrics.s3),
+            commandWell.trailingAnchor.constraint(equalTo: commandBox.trailingAnchor, constant: -HelmMetrics.s3),
+            commandWell.topAnchor.constraint(equalTo: commandBox.topAnchor, constant: HelmMetrics.s2),
+            commandWell.bottomAnchor.constraint(equalTo: commandBox.bottomAnchor, constant: -HelmMetrics.s2),
+        ])
         commandCopyButton.target = self
         commandCopyButton.action = #selector(copyCommandTapped)
         commandCopyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -345,7 +364,7 @@ final class WelcomeSheetController: NSViewController {
         blurbLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         stepLabel.textColor = HelmField.mutedInk(theme)
         commandWell.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        HelmField.applySunken(to: commandWell, theme: theme)
+        HelmField.applySunken(to: commandBox, theme: theme)
         // The chosen palette reads as chosen.
         for button in themeButtons {
             button.variant = button.identifier?.rawValue == theme.app?.family.rawValue ? .primary : .secondary
@@ -376,7 +395,7 @@ final class WelcomeSheetController: NSViewController {
     func debugSkip() { skipTapped() }
     var debugNextButtonTitle: String { nextButton.title }
     var debugBackIsHidden: Bool { backButton.isHidden }
-    var debugCommandWellIsHidden: Bool { commandWell.isHidden }
+    var debugCommandWellIsHidden: Bool { commandBox.isHidden }
     var debugThemeGridIsHidden: Bool { themeGrid.isHidden }
     #endif
 }
