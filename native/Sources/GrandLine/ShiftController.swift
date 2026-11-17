@@ -963,8 +963,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// fresh copy each time could not carry state (the property
     /// `DaylightDrillPageSlice4SelfTest` pins for Vault's own Refresh).
     var drillHeaderActions: [NSView] {
-        // R5-UX-04: the Calendar's toolbar carries Today while it shows.
-        let today: [NSView] = tasksView == .calendar ? [calendarTodayButton] : []
+        // R5-UX-04: the Calendar's toolbar carries Today while it shows, in
+        // the sidebar layout, where the card leaves its own Today to it. The
+        // floating bar's card keeps its own, so the drill header does not
+        // repeat it.
+        let today: [NSView] = tasksView == .calendar && drawsSidebarLayout ? [calendarTodayButton] : []
         return today + (store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton])
     }
 
