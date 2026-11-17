@@ -3003,6 +3003,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        // R5-UX-04: a calendar embedded before this (a Calendar route lands
+        // on its tab before the shell adopts the page) hands its Today and
+        // periods to the window toolbar now.
+        if calendarSection.superview != nil { calendar.setPeriodControlsInToolbar(true) }
         splitPage?.pageForcesCollapse = true
         applyContentLeadingInset()
         topToolbar?.isHidden = true

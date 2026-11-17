@@ -1337,6 +1337,15 @@ final class ShiftCalendarView: NSView {
         missingBundleState = state
     }
 
+    /// R5-UX-04: the window toolbar carries Today and the periods (the
+    /// sidebar layout's Calendar), so the card leaves its own copies out.
+    var periodControlsInToolbar = false {
+        didSet {
+            guard periodControlsInToolbar != oldValue, isConfigured else { return }
+            webView.setPeriodControlsHidden(periodControlsInToolbar)
+        }
+    }
+
     private func pageDidBecomeReady() {
         isConfigured = false
         let theme = ThemeManager.shared.theme
@@ -1350,6 +1359,8 @@ final class ShiftCalendarView: NSView {
                 return
             }
             self.isConfigured = true
+            // A reloaded page starts with its own controls again.
+            if self.periodControlsInToolbar { self.webView.setPeriodControlsHidden(true) }
             self.pushEvents()
             self.pushTray()
         }

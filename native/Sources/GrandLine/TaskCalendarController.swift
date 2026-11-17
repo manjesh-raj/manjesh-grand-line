@@ -167,6 +167,11 @@ final class TaskCalendarController: NSViewController {
     var scale: ShiftCalendarScale { calendarView.scale }
     func show(scale: ShiftCalendarScale) { calendarView.show(scale: scale) }
     func showToday() { calendarView.showToday() }
+    /// The sidebar layout's toolbar carries Today and the periods.
+    func setPeriodControlsInToolbar(_ inToolbar: Bool) {
+        _ = view
+        calendarView.periodControlsInToolbar = inToolbar
+    }
 
     /// The visible period's own count, or its stated absence (GL-14). The
     /// Tasks page's header carries it while this view shows.

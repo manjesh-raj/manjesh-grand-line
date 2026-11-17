@@ -52,6 +52,9 @@ extension ShiftController {
     /// shows, after the board, so a session that never opens it builds no
     /// web view and lays out nothing for it.
     func embedCalendarIfNeeded() {
+        // R5-UX-04: in the sidebar layout the window toolbar is the
+        // Calendar's, with Today and the periods on it.
+        calendar.setPeriodControlsInToolbar(drawsSidebarLayout)
         guard calendarSection.superview == nil else { return }
         _ = view
         calendarSection.translatesAutoresizingMaskIntoConstraints = false

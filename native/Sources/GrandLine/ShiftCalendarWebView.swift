@@ -240,6 +240,28 @@ final class ShiftCalendarWebView: WKWebView {
 
     static let callTimeout: TimeInterval = 10
 
+    /// R5-UX-04: hide or show the card's own Today and Day / Week / Month /
+    /// Agenda pills. In the sidebar layout the window toolbar carries them
+    /// for the Calendar, and two copies of one control clipped the card's
+    /// header at 1100pt ("A…", and no room for the month). The vendored
+    /// bundle is not rebuilt for this: it is one fixed stylesheet the native
+    /// side adds or removes, with nothing interpolated into the script. The
+    /// previous and next arrows and the period's title stay on the card.
+    func setPeriodControlsHidden(_ hidden: Bool) {
+        guard hasLoaded else { return }
+        evaluateJavaScript(hidden ? Self.hidePeriodControls : Self.showPeriodControls) { _, error in
+            if let error {
+                AppLog.lifecycle.error("task calendar: period controls: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    static let hidePeriodControls = "(function(){var s=document.getElementById('gl-native-period');"
+        + "if(!s){s=document.createElement('style');s.id='gl-native-period';document.head.appendChild(s);}"
+        + "s.textContent='#gl-today,#gl-views{display:none !important}';})();"
+    static let showPeriodControls = "(function(){var s=document.getElementById('gl-native-period');"
+        + "if(s){s.remove();}})();"
+
     private func resetAfterPageLoss(_ reason: String) {
         AppLog.lifecycle.error("task calendar: \(reason, privacy: .public) - reloading")
         isReady = false
