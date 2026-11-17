@@ -465,21 +465,29 @@ Do this once, after the first `./build_native_app.sh` on the renamed build.
 Full review #5 (R5-SEC-00) found three `clipboard-history.sealed.corrupt-*`
 files from the B1 incident still in `~/Library/Application Support/GrandLine/`.
 They are the history the app shelved when it could not open it with this Mac's
-clipboard key. They are still encrypted, and the clipboard history picker
-mentions them only when the live history is unavailable, so on a working
-machine nothing points at them. No code deletes them, on purpose: whether they
-are worth keeping is the captain's call.
+clipboard key, still encrypted, and nothing on a working machine points at them.
 
-- [ ] **Look, without opening them.**
-      `ls -l ~/Library/Application\ Support/GrandLine/clipboard-history.sealed.corrupt-*`.
-      Expect three files of roughly 49 KB, all dated 2026-09-25.
-- [ ] **Decide.** The live history has been working since the B1 fix, so these
-      only matter if something from before 2026-09-25 is still wanted. They
-      cannot be read by the app as it is.
-- [ ] **If not wanted, move them to the Trash**, rather than `rm`:
-      select them in Finder (`open ~/Library/Application\ Support/GrandLine/`)
-      and press Command-Delete. The live `clipboard-history.sealed` beside them
-      is the one to leave alone.
+The app now removes them itself.
+When the clipboard history store opens the live `clipboard-history.sealed`
+cleanly, it deletes every shelved copy whose name dates it more than 30 days
+ago (`ClipboardHistoryStore.shelvedBackupRetention`) and logs each one by name.
+It removes nothing while the live history is missing or cannot be opened,
+because a shelved copy may then be the only one left.
+The store is built the first time a launch uses the history (the first copy
+anywhere, or the first ⌘⇧V), and only while the history is switched on in
+Settings, so that is when the cleanup runs.
+
+- [ ] **Confirm it ran**, after launching a build that has it with the
+      clipboard history on, and copying something:
+
+      log show --last 1h --predicate \
+        'subsystem == "com.manjesh.grandline.native" && category == "store"' \
+        | grep "removed shelved copy"
+
+      Expect one line per file from 2026-09-25.
+- [ ] **Look, without opening anything.**
+      `ls -l ~/Library/Application\ Support/GrandLine/clipboard-history.sealed*`
+      should list only the live file (plus any copy shelved in the last 30 days).
 
 ## 19. Launch cost (the signpost baseline)
 
@@ -507,46 +515,56 @@ so that measurement is one table rather than a call tree.
       [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
       so the next change to the launch path has a baseline to compare against.
 
-**Open as of 2026-10-28: this has never been done.** No real-data Instruments
-baseline is recorded anywhere - not in `docs/history/26-production-readiness.md`
-and not here. The only launch numbers this project has are the in-process ones
-below: a debug build, empty scratch stores, no process start, about 600 ms to
-the first frame against the 400 ms target. The fourth full review (R4-PERF-02)
-filed that as a finding, and its recommended shape for the baseline is:
+**The real-data Instruments pass is still open.**
+No per-interval baseline against a copy of the captain's data is recorded anywhere.
+What is recorded now is the whole-launch number for a release build on an empty data root, in the table below.
 
-- one signpost interval from `main` to the first `windowDidBecomeKey`.
-  **This exists now**: `Launch.mainToFirstKeyWindow`, opened on the first line
-  of `main.swift` and closed by the first window that becomes key
-  (`LaunchSignposts.beginLaunch()`, guarded by `FM_RUN_LAUNCH_PATH_TESTS`).
-  It also writes its length to the unified log on every launch, release
-  builds included, so the baseline no longer needs Instruments;
-- a **release** build, on the captain's machine, recorded once.
+`Launch.mainToFirstKeyWindow` is the one interval from `main` to the first
+window that becomes key (R4-PERF-02 of the fourth full review).
+It is opened on the first line of `main.swift`, closed by the first window
+that becomes key, and guarded by `FM_RUN_LAUNCH_PATH_TESTS`.
+It writes its length to the unified log on every launch, release builds
+included, so the whole-launch number needs no Instruments.
 
-The release half could not be taken from an agent shell, for two reasons.
-A release build has no Keychain isolation (`FM_KEYCHAIN_SERVICE_PREFIX` is
-debug-only), so even a separately-identified release copy would read the
-captain's real Keychain items. And the window only becomes key when the app is
-activated: two background launches of the debug probe (`open -g`) logged no
-"main to first key window" line at all. Activating a copy takes the keyboard
-focus from whatever the captain is doing, which is the captain's call rather
-than a background measurement. So it is recorded like this:
+### The release baseline (R5-PERF-04)
 
-- [ ] Build and install the release app as usual (`./build_native_app.sh`
-      from `native/`), quit Grand Line, then open it from the Dock or Finder.
-      Do it three times, so a cold launch and two warm ones are recorded.
-- [ ] Read the three numbers:
+Recorded 2026-11-17 on an Apple M5 Pro, macOS 26.7 (25G229), on AC power, load average about 2.3.
+Build: `main` at `v0.2.0-67-g30e26ac3`, `swift build -c release` with the real SDK stamped (`sdk 27.0`), as `build_native_app.sh` builds it.
+Five launches in a row, each stopped by pid once its window was key:
 
-      log show --last 10m --predicate \
-        'subsystem == "com.manjesh.grandline.native" && category == "lifecycle"' \
+| Run | Main to first key window |
+| --- | --- |
+| 1 (first launch on the data root) | 1108.9 ms |
+| 2 | 1173.9 ms |
+| 3 | 956.0 ms |
+| 4 | 1003.8 ms |
+| 5 | 1130.2 ms |
+
+Median **1108.9 ms**, range 956 to 1174 ms.
+That is well over the 400 ms target, and slower than the in-process debug figure below, because it includes process start, `dyld`, and a real window being composited and made key.
+None of the runs was disk-cold, since the binary had been launched before in the same session.
+
+How it was taken, so the next run is comparable:
+
+- The release binary was assembled into a separately-identified bundle the way `Scripts/build-probe-app.sh` builds its debug probe (bundle id `com.manjesh.grandline.native.probe`, ad-hoc signed), so it never contended with the captain's running app.
+- It was launched with `open -n` and the probe script's own environment (`FM_SCRATCH_ROOT`, `FM_INSTANCE_LOCK_FILE`, `FM_CLIPBOARD_HISTORY_EPHEMERAL=1`), plus `FM_HOME` pointed at a stub firstmate home so the launch lands on Home rather than Setup, and `HERDR_CONFIG_PATH` pointed at scratch.
+  A release build has no `FM_KEYCHAIN_SERVICE_PREFIX`, and those variables are what keep it off the captain's Keychain items and data.
+- The number was read for that pid only:
+
+      log show --predicate \
+        'processID == <pid> && subsystem == "com.manjesh.grandline.native" && category == "lifecycle"' \
         | grep "main to first key window"
 
-- [ ] Record them here, beside the in-process numbers below, and in
-      [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
-      with the date, the machine and the commit (`git describe`).
+- The window has to be activated to become key, so a launch with `open -g` logs nothing. Each run takes the keyboard focus for about a second.
 
-Until that run exists, "first frame under 400 ms" is a target nobody has
-measured a release build against, and a change to the launch path has only
-the debug numbers below to compare with.
+Two earlier runs of the same build restored a Console with three shell tabs, each printing 12,000 lines at startup.
+They measured 1246.6 ms and 1041.9 ms, under a higher load (about 4 to 5).
+Two runs are too few to say what the restore itself costs.
+
+- [ ] **Still the captain's**: the same five launches of the installed app against real data (the `log show` line above, with `--last 10m` instead of a pid), and the Instruments pass for the per-interval rows.
+      Record them beside the table above and in
+      [`docs/history/26-production-readiness.md`](../docs/history/26-production-readiness.md),
+      with the date, the machine and `git describe`.
 
 ### The in-process numbers (not the real-data baseline)
 

@@ -110,6 +110,7 @@ enum DestinationMountingSelfTest {
             ("aFirstVisitConstructsExactlyThePageAskedFor", test_aFirstVisitConstructsExactlyThePageAskedFor),
             ("reachInsThatDoNotNavigateBuildNothing", test_reachInsThatDoNotNavigateBuildNothing),
             ("theLaunchReadsNoYamlStoreOnTheMainThread", test_theLaunchReadsNoYamlStoreOnTheMainThread),
+            ("leavingTheConsoleMarksItOutOfSight", test_leavingTheConsoleMarksItOutOfSight),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -456,6 +457,47 @@ enum DestinationMountingSelfTest {
                 return "tools was rebuilt on revisit - permanent retention is what stops in-progress page state being thrown away"
             }
             guard second.isHidden == false else { return "tools should be visible again after the second show" }
+            return nil
+        }
+    }
+
+    /// R5-PERF-03: the background scrollback trim treats a hidden page's
+    /// current tab as out of sight, and the only thing that tells the console
+    /// its page is hidden is `viewDidDisappear`. `BackgroundScrollbackSelfTest`
+    /// calls that directly, so this is the link it cannot see: the shell
+    /// hiding the Console really does deliver it, and showing it again
+    /// delivers `viewDidAppear`.
+    ///
+    /// Injection: drop `pageIsOutOfSight = true` from
+    /// `ConsoleController.viewDidDisappear` and the second guard fails.
+    private static func test_leavingTheConsoleMarksItOutOfSight() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.orderFront(nil)
+            defer { window.orderOut(nil) }
+            shell.workspace.navigator.show(.console)
+            let console = shell.workspace.console
+            guard console.view.window != nil, !console.view.isHiddenOrHasHiddenAncestor else {
+                return "the Console is not on screen after show(.console) - the hide below would prove nothing"
+            }
+            guard !console.pageIsOutOfSight else {
+                return "the Console reads as out of sight while it is the page on screen"
+            }
+            // Minimising or ⌘H orders the window out, which AppKit also
+            // reports as `viewDidDisappear`. That is not the page being left.
+            window.orderOut(nil)
+            guard !console.pageIsOutOfSight else {
+                return "ordering the window out marked the Console out of sight - a minimised window would lose its history"
+            }
+            window.orderFront(nil)
+            shell.workspace.navigator.show(.tools)
+            guard console.pageIsOutOfSight else {
+                return "navigating away never reached the Console as viewDidDisappear, so its current tab would keep its full history"
+            }
+            shell.workspace.navigator.show(.console)
+            guard !console.pageIsOutOfSight else {
+                return "coming back to the Console never reached it as viewDidAppear"
+            }
             return nil
         }
     }

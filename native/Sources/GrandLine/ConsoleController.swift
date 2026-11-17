@@ -751,8 +751,22 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// mid-session.
     var activityObservation: UUID?
 
+    /// Set by `viewDidDisappear` and cleared by `viewDidAppear`, so the
+    /// background scrollback trim treats this page's current tab as out of
+    /// sight while the page itself is (R5-PERF-03). False until the page has
+    /// been shown and hidden once, so a console that never appeared keeps the
+    /// behaviour it always had.
+    ///
+    /// Only a page the shell hid counts. `viewDidDisappear` also fires when
+    /// the window is ordered out (minimised, or the app hidden with ⌘H), and
+    /// the captain coming back to a minimised window expects the history they
+    /// left, so that case leaves the flag false.
+    var pageIsOutOfSight = false
+
     override func viewDidAppear() {
         super.viewDidAppear()
+        pageIsOutOfSight = false
+        syncBackgroundScrollback()
         // `refreshPeriodicWorkGating` is unconditional: it only *computes*
         // whether cadenced background work may run, and a locked app wants
         // that recomputed too. Everything else this page does on appearing is
@@ -853,6 +867,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
+        // The shell hiding this page leaves the window on screen; minimising
+        // or ⌘H takes the window away. AppKit calls this from inside the
+        // shell's `isHidden = true`, before the view reads as hidden, which
+        // is why the window is the test and not only the view.
+        pageIsOutOfSight = view.isHiddenOrHasHiddenAncestor || (view.window?.isVisible ?? false)
+        syncBackgroundScrollback()
         refreshPeriodicWorkGating()
     }
 

@@ -339,6 +339,11 @@ Terminal memory still scales with tabs x panes, so a tab that has been out of
 sight for five minutes keeps only `ConsoleController.backgroundScrollbackLines`
 (2,000, about 10 MB at 200 columns) and gets its full depth back the moment it
 is selected.
+The selected tab of a Console or host page the captain has navigated away from
+counts as out of sight too, and gets its depth back when the page is shown
+again (R5-PERF-03).
+A minimised window or a hidden app does not count: only the page being left
+does.
 Settings › Terminal can turn that trim off, and the depth itself scales the
 figure above: about 5.2 MB per 1,000 rows of a full 200-column pane.
 The trim is real: the oldest lines above the most recent 2,000 are dropped, not

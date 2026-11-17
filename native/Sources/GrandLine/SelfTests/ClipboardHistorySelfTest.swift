@@ -61,6 +61,8 @@ enum ClipboardHistorySelfTest {
         checkAKeychainErrorNeverMintsANewKey(check)
         checkTheLegacyServiceKeyIsAdoptedBeforeMinting(check)
         checkShelvedFilesAreReported(check)
+        checkStaleShelvedCopiesAreRemovedFromAHealthyHistory(check)
+        checkShelvedCopiesStayWhileTheHistoryIsUnhealthy(check)
         checkFilter(check)
         checkTheSharedChangeWatch(check)
         checkARapidBurstOfCopiesAllReachDisk(check)
@@ -573,6 +575,122 @@ enum ClipboardHistorySelfTest {
               + "\(relaunched.shelvedBackups.count)")
         check(!relaunched.loadFailed,
               "with the bad file shelved away, the next launch itself reads clean")
+    }
+
+    // MARK: R5-SEC-00 - stale shelved copies
+
+    /// A shelved copy's name, dated `daysAgo` before now, the way `load()`
+    /// writes it.
+    private static func shelvedName(daysAgo: Double, suffix: String = "") -> String {
+        let epoch = Int(Date().timeIntervalSince1970 - daysAgo * 86_400)
+        return "clipboard-history.sealed.corrupt-\(epoch)\(suffix)"
+    }
+
+    /// Review #5's R5-SEC-00: three B1 copies sat beside a working history for
+    /// seven weeks. Once the live history opens, a shelved copy past the
+    /// retention is removed at the next launch - and nothing else is.
+    private static func checkStaleShelvedCopiesAreRemovedFromAHealthyHistory(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-stale-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        guard let key = ClipboardHistoryKey.ephemeralKey() else {
+            check(false, "could not build a throwaway key")
+            return
+        }
+        let seeded = ClipboardHistoryStore(fileURL: file, key: key)
+        withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString("the live history", forType: .string)
+            _ = seeded.record(from: pasteboard)
+        }
+        seeded.flush()
+
+        let fm = FileManager.default
+        let stale = [shelvedName(daysAgo: 53), shelvedName(daysAgo: 53, suffix: "-2")]
+        let recent = shelvedName(daysAgo: 5)
+        let unparsable = "clipboard-history.sealed.corrupt-unknown"
+        let staleDirectory = shelvedName(daysAgo: 60)
+        let otherStore = "hosts.json.corrupt-\(Int(Date().timeIntervalSince1970 - 60 * 86_400))"
+        for name in stale + [recent, unparsable, otherStore] {
+            try? Data("shelved bytes".utf8).write(to: root.appendingPathComponent(name))
+        }
+        try? fm.createDirectory(at: root.appendingPathComponent(staleDirectory), withIntermediateDirectories: false)
+        // The age is the epoch in the name. A recent copy whose file dates are
+        // old (`moveItem` keeps the original's) must still be kept.
+        try? fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -90 * 86_400)],
+                              ofItemAtPath: root.appendingPathComponent(recent).path)
+
+        let before = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+        guard before.isSuperset(of: stale + [recent, unparsable, staleDirectory, otherStore]) else {
+            check(false, "the fixture did not write every shelved file, found \(before.sorted()) - the checks below would be vacuous")
+            return
+        }
+
+        let relaunched = ClipboardHistoryStore(fileURL: file, key: key)
+        let after = Set((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+        check(!relaunched.loadFailed && relaunched.entries.count == 1,
+              "the live history still opens, with its one entry")
+        check(stale.allSatisfy { !after.contains($0) },
+              "copies shelved 53 days ago are removed once the live history opens, left \(after.sorted())")
+        check(after.contains(recent), "a copy shelved 5 days ago is kept, whatever its file dates say")
+        check(after.contains(unparsable), "a name this store did not write is kept")
+        check(after.contains(staleDirectory), "a directory is never removed, however old its name")
+        check(after.contains(otherStore), "another store's shelved file is not this store's to remove")
+        check(after.contains("clipboard-history.sealed"), "the live file itself is untouched")
+        check(Set(relaunched.shelvedBackups.map(\.lastPathComponent)) == [recent, unparsable, staleDirectory],
+              "the picker's count reflects what is left, found \(relaunched.shelvedBackups.map(\.lastPathComponent))")
+
+        let again = relaunched.removeStaleShelvedBackups()
+        check(again.isEmpty, "a second pass finds nothing more to remove, removed \(again.map(\.lastPathComponent))")
+    }
+
+    /// The other half: nothing is removed while the live history is not
+    /// known to be intact. A file this key cannot open, and a history with no
+    /// file at all, are both "not confirmed healthy".
+    private static func checkShelvedCopiesStayWhileTheHistoryIsUnhealthy(_ check: (Bool, String) -> Void) {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("grandline-clipboard-unhealthy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("clipboard-history.sealed")
+        let stale = shelvedName(daysAgo: 53)
+        try? Data("shelved bytes".utf8).write(to: root.appendingPathComponent(stale))
+        guard let key = ClipboardHistoryKey.ephemeralKey() else {
+            check(false, "could not build a throwaway key")
+            return
+        }
+        func staleIsThere() -> Bool {
+            FileManager.default.fileExists(atPath: root.appendingPathComponent(stale).path)
+        }
+
+        // No live file yet: nothing has been confirmed.
+        let empty = ClipboardHistoryStore(fileURL: file, key: key)
+        check(!empty.loadFailed && staleIsThere(),
+              "with no live history file, an old shelved copy is kept")
+
+        // A live file this key cannot open: B1's own state.
+        try? Data("sealed by a key that is gone".utf8).write(to: file)
+        let broken = ClipboardHistoryStore(fileURL: file, key: key)
+        check(broken.loadFailed, "the fixture's live file really is unopenable")
+        check(staleIsThere(), "while the live history cannot be opened, an old shelved copy is kept")
+        check(broken.removeStaleShelvedBackups().isEmpty && staleIsThere(),
+              "and an explicit pass removes nothing either")
+
+        // And the discriminating half: the same old copy does go once a
+        // healthy history exists, so the two checks above are not passing
+        // against a store that never removes anything.
+        try? FileManager.default.removeItem(at: file)
+        let seeded = ClipboardHistoryStore(fileURL: file, key: key)
+        withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString("a fresh history", forType: .string)
+            _ = seeded.record(from: pasteboard)
+        }
+        seeded.flush()
+        _ = ClipboardHistoryStore(fileURL: file, key: key)
+        check(!staleIsThere(), "once the live history opens, the same old copy is removed")
     }
 
     // MARK: PF2 - the off-main write must lose nothing
