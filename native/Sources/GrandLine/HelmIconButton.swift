@@ -102,11 +102,13 @@ final class HelmIconButton: NSButton {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
         isHovering = true
         HelmMotion.withoutImplicitAnimation { restyle() }
     }
 
     override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
         isHovering = false
         HelmMotion.withoutImplicitAnimation { restyle() }
     }

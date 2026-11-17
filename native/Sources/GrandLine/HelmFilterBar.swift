@@ -128,6 +128,9 @@ final class HelmFilterBar: NSView, NSPopoverDelegate {
         popoverStack.edgeInsets = NSEdgeInsets(top: HelmMetrics.s4, left: HelmMetrics.s4,
                                                bottom: HelmMetrics.s4, right: HelmMetrics.s4)
         setAccessibilityElement(false)
+        // GL-09: a popover left open when the app locks would stay readable
+        // and interactive above the overlay, so the lock closes it.
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.popover }
     }
 
     @available(*, unavailable)

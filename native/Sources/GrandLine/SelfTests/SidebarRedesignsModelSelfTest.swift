@@ -359,8 +359,9 @@ enum SidebarRedesignsModelSelfTest {
         check(ShiftController.ShiftTaskScope.allCases.count == 5,
               "the scopes changed; the filter row lists \(ShiftController.ShiftTaskScope.allCases.count)", &ok)
         for needle in ["ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) }",
-                       // R4-UI-08: the Filter button stands in for the two pop-ups when the row is narrow.
-                       "[scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup]",
+                       // R4-UI-08, then S16: the row is a HelmFilterBar, whose Filter button
+                       // stands in for the folded controls when the row is narrow.
+                       "HelmFilterBar(scope: scopeFilter, popups: [projectPopup], chips: [followUpsJump],",
                        "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
                        "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
                        "boardView.adoptWorkspaceStyle()"] {

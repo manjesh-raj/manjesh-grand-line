@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "4.0.0"
+    static let version = "4.0.2"
 
     struct Component {
         let name: String
@@ -203,11 +203,11 @@ enum HelmKit {
         // HelmNotice.swift
         Component("HelmNotice", "1.0.0", file: "HelmNotice.swift"),
         // HelmFilterBar.swift
-        Component("HelmFilterBar", "1.0.0", file: "HelmFilterBar.swift"),
+        Component("HelmFilterBar", "1.0.1", file: "HelmFilterBar.swift"),
         // HelmChoiceCard.swift
         Component("HelmChoiceCard", "1.0.0", file: "HelmChoiceCard.swift"),
         // HelmIconButton.swift
-        Component("HelmIconButton", "1.0.0", file: "HelmIconButton.swift"),
+        Component("HelmIconButton", "1.0.1", file: "HelmIconButton.swift"),
     ]
 
     /// App-level views the proposals version alongside the kit. Not hashed;
@@ -241,9 +241,9 @@ enum HelmKit {
 
     /// One recorded digest per kit file.
     static let sourceDigests: [SourceDigest] = [
-        SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.0.0", sha256: "c6f40bf8ac9a2a13f6d86156cf5d616ae103f8d1cca6f241cb0cfedfd9d127bb"),
+        SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.0.1", sha256: "2bdb4a69dd6b6b98010799797ddf8f87ce9df79f61d256922d521c73d8abc880"),
         SourceDigest(file: "HelmChoiceCard.swift", stamp: "HelmChoiceCard@1.0.0", sha256: "61392738ce874320cc5c6e4b261921f969545e264122a1094f6be6eb6fdc676b"),
-        SourceDigest(file: "HelmFilterBar.swift", stamp: "HelmFilterBar@1.0.0", sha256: "7076d771e3679b999841576f33339fc81821003667155251e7e2a5bd9fdc0b39"),
+        SourceDigest(file: "HelmFilterBar.swift", stamp: "HelmFilterBar@1.0.1", sha256: "1b8f2acace87634cb6575687afc07fa63b9f4aa0ef00f0928ce99221f9248a36"),
         SourceDigest(file: "HelmNotice.swift", stamp: "HelmNotice@1.0.0", sha256: "a59b3764652021b83e43237d6f3f48c4c11abed019e03e1a3bd2155e8370f8c2"),
         SourceDigest(file: "HelmBackgroundReload.swift", stamp: "HelmBackgroundReload@1.0.0,HelmParseThread@1.0.0", sha256: "9fdf57f19f0187aaaf3f29774bde5659a79547ea20b5b21eb2c71552e1621d4b"),
         SourceDigest(file: "HelmBarPanel.swift", stamp: "HelmBarPanel@1.0.0,HelmBarPanelWindow@1.0.0", sha256: "6811b25ea2dc491014342b855ce2b8eefcbd29118920f1007fafcbaf74d7c5e9"),

@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 4.0.2 - S16 follow-up: the Filter popover closes on lock
+
+- `HelmFilterBar` 1.0.0 → 1.0.1 (patch): registers its popover with `AppLockGate.registerLockDismissiblePopover`, so a Filter popover left open when the app locks does not stay readable above the overlay (GL-09, `LockGateCoverageSelfTest`).
+
+## 4.0.1 - S20 follow-up: HelmIconButton hands hover to AppKit
+
+- `HelmIconButton` 1.0.0 → 1.0.1 (patch): `mouseEntered` and `mouseExited` call `super`, so AppKit's own tracking sees the hover and can never fire the button's action from it (`AppKitAuditSelfTest`'s Hover_hoverNeverActivatesAControl).
+
 ## 4.0.0 - S27: the inspector's crew panel
 
 - `WorkspaceInspector` 1.0.0 → 2.0.0 (major): the content model has a default: a page that never fills the pane shows `WorkspaceInspectorCrewPanel` instead of "No details for this page", and a page with details keeps showing them. `modulesWithDetails` and the "No details" copy are retired. It enters the table at this release.
