@@ -49,7 +49,7 @@ enum HomeTips {
                 body: "A page, a task, a note, a saved link or a command, from wherever you are."),
             Tip(symbol: "square.and.pencil", title: "\(capture) captures a thought from any app",
                 body: "A task, a note, a link or a sticky note, without leaving what you are doing."),
-            Tip(symbol: "doc.on.clipboard", title: "\u{2318}\u{21E7}V brings back what you copied",
+            Tip(symbol: "doc.on.clipboard", title: "\u{21E7}\u{2318}V brings back what you copied",
                 body: settings.clipboardHistoryEnabled
                     ? "Your recent clipboard, searchable, kept encrypted on this Mac."
                     : "Turn on clipboard history in \(PlaceName.of(.settings)) first. It stays encrypted on this Mac."),
@@ -102,7 +102,7 @@ enum PageShortcuts {
             .init(title: "Search anything", keys: ["\u{2318}", "K"]),
             .init(title: "Capture a thought from any app", keys: [settings.quickCaptureShortcut.displayString]),
             .init(title: "Dictate", keys: [settings.dictationShortcut.displayString]),
-            .init(title: "Clipboard history", keys: ["\u{2318}", "\u{21E7}", "V"]),
+            .init(title: "Clipboard history", keys: ["\u{21E7}", "\u{2318}", "V"]),
         ]
         if layout == .sidebar {
             everywhere += [

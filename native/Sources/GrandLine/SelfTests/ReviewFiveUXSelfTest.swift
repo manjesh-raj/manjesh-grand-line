@@ -486,6 +486,18 @@ enum ReviewFiveUXSelfTest {
         check(WorkspaceModule.notebook.primaryRoute == .notebook && WorkspaceModule.readingList.primaryRoute == .readingList
                 && WorkspaceModule.knowledge.primaryRoute == .docs,
               "R5-UX-05: the rows open \(WorkspaceModule.notebook.primaryRoute), \(WorkspaceModule.readingList.primaryRoute) and \(WorkspaceModule.knowledge.primaryRoute)", &ok)
+        // Copy names a listed door row as the sidebar does.
+        let savedLayout = PlaceName.layout
+        PlaceName.layout = .sidebar
+        withProfile(.personal) {
+            check(PlaceName.of(.notebook) == "Notebook" && PlaceName.of(.calendar) == "Calendar",
+                  "R5-UX-05: a Personal Notebook is called \(PlaceName.of(.notebook))", &ok)
+        }
+        withProfile(.operator) {
+            check(PlaceName.of(.notebook) == "Knowledge \u{203A} Notebook" && PlaceName.of(.runbooks) == "Runbooks",
+                  "R5-UX-05: an Operator's Notebook is called \(PlaceName.of(.notebook))", &ok)
+        }
+        PlaceName.layout = savedLayout
         // Every profile still matches the set it writes.
         for profile in WorkspaceProfile.allCases {
             check(WorkspaceProfile.matching(profile.hiddenModules) == profile,

@@ -30,6 +30,10 @@ enum PlaceName {
             return route.title
         case .sidebar:
             guard let row = ModuleTable.descriptor(for: route) else { return route.title }
+            // R5-UX-04 / R5-UX-05: a listed door row is a place of its own
+            // (the Calendar, a Personal Notebook), so it is named as the
+            // sidebar names it rather than as the tab behind it.
+            if let door = row.door, !AppSettings.shared.hiddenModules.contains(door) { return door.title }
             let module = row.module.title
             guard let child = row.child, child != module else { return module }
             return "\(module) \u{203A} \(child)"
