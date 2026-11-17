@@ -1225,7 +1225,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func stepChip(for kind: SetupStepKind) -> (String, HelmTint, HelmStatusPill.Style)? {
         switch kind {
         case .firstmateHome:
-            return stepIsDone(.firstmateHome) == true ? ("Verified", .good, .pill) : ("Not set up", .warn, .pill)
+            return stepIsDone(.firstmateHome) == true ? (StateWord.verified.label, .good, .pill) : (StateWord.notSetUp.label, .warn, .pill)
         case .dotfiles:
             guard !isLoadingDotfiles else { return nil }
             guard dotfilesRepoPath != nil else { return ("Not found", .warn, .pill) }
@@ -1233,15 +1233,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             if let state = repoState, state.isBehindOnMachineConfig, let behind = state.commitsBehindOrigin {
                 return ("\(behind) behind origin", .warn, .pill)
             }
-            return ("Verified", .good, .pill)
+            return (StateWord.verified.label, .good, .pill)
         case .agentInstructions:
             guard !isLoadingDotfiles else { return nil }
             let unresolved = agentItems.filter { $0.status != .linked }.count
-            return unresolved == 0 ? ("Verified", .good, .pill) : ("\(unresolved) unresolved", .warn, .pill)
+            return unresolved == 0 ? (StateWord.verified.label, .good, .pill) : ("\(unresolved) unresolved", .warn, .pill)
         case .software:
             guard !isLoadingSoftware else { return nil }
             let missing = softwareRows.filter { $0.status == .notInstalled }.count
-            return missing == 0 ? ("Verified", .good, .pill) : ("\(missing) missing", .warn, .pill)
+            return missing == 0 ? (StateWord.verified.label, .good, .pill) : ("\(missing) missing", .warn, .pill)
         case .restoreConfig:
             let hostCount = hostStore.hosts.count
             let snippetCount = snippetStore.snippets.count
@@ -2443,15 +2443,17 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     }
 
     private func softwareStatusVisuals(_ status: DependencyStatus) -> (String, HelmTint, HelmStatusPill.Style) {
+        // R5-UX-02: the tool's one word, the one Updates shows for it.
+        let word = status.stateWord.label
         switch status {
-        case .unknown: return ("Not checked", .neutral, .dotWord)
-        case .checking: return ("Checking\u{2026}", .neutral, .dotWord)
-        case .upToDate: return ("Installed", .good, .dotWord)
-        case .updateAvailable: return ("Update available", .warn, .pill)
-        case .notInstalled: return ("Not installed", .warn, .pill)
-        case .checkFailed: return ("Check failed", .critical, .pill)
-        case .updating: return ("Installing\u{2026}", .info, .dotWord)
-        case .updateFailed: return ("Install failed", .critical, .pill)
+        case .unknown: return (word, .neutral, .dotWord)
+        case .checking: return (word, .neutral, .dotWord)
+        case .upToDate: return (word, .good, .dotWord)
+        case .updateAvailable: return (word, .warn, .pill)
+        case .notInstalled: return (word, .warn, .pill)
+        case .checkFailed: return (word, .critical, .pill)
+        case .updating: return (word, .info, .dotWord)
+        case .updateFailed: return (word, .critical, .pill)
         }
     }
 

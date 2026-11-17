@@ -20,6 +20,7 @@ enum ReviewFiveUXSelfTest {
         checkTheCalendarIsAPlace(&ok)
         checkTheConsoleToolbarFollowsTheProfile(&ok)
         checkPersonalHomeLeadsWithWhatYouCanActOn(&ok)
+        checkOneWordPerState(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -220,6 +221,55 @@ enum ReviewFiveUXSelfTest {
             check(home.contains("guard key != focusCardKey else { return }"),
                   "R5-UX-07: Home re-renders the Focus timer card on every timer tick", &ok)
         }
+    }
+
+    // MARK: R5-UX-02 - one vocabulary for state
+
+    private static func checkOneWordPerState(_ ok: inout Bool) {
+        // The table names every state once, and no two states share a word.
+        let labels = StateWord.allCases.map(\.label)
+        check(!labels.contains("") && Set(labels).count == labels.count,
+              "R5-UX-02: the state table has a missing or repeated word: \(labels)", &ok)
+        check(StateWord.checkFailed.counted(1) == "1 check failed" && StateWord.checkFailed.counted(3) == "3 checks failed"
+                && StateWord.upToDate.counted(2) == "2 up to date" && StateWord.recentFailure.counted(2) == "2 recent failures",
+              "R5-UX-02: a counted state reads \(StateWord.checkFailed.counted(3)) / \(StateWord.recentFailure.counted(2))", &ok)
+        // The registries' and stores' summaries speak it.
+        for bucket in ServiceHealthSummary.Bucket.allCases {
+            check(bucket.label == bucket.word.label, "R5-UX-02: the \(bucket) service state has a word of its own", &ok)
+        }
+        let statuses: [DependencyStatus] = [.unknown, .checking, .upToDate, .updateAvailable, .notInstalled,
+                                            .checkFailed, .updating, .updateFailed]
+        check(Set(statuses.map(\.stateWord)).count == statuses.count,
+              "R5-UX-02: two tool states share a word", &ok)
+        check(UpdatesSummary([.checkFailed, .upToDate]).parts == ["1 up to date", "1 check failed"],
+              "R5-UX-02: Updates' summary reads \(UpdatesSummary([.checkFailed, .upToDate]).parts)", &ok)
+        check(ShiftController.ShiftTaskScope.overdue.title == StateWord.overdue.label && ShiftController.ShiftTaskScope.dueToday.title == StateWord.dueToday.label,
+              "R5-UX-02: Tasks' filters name overdue and due today their own way", &ok)
+        // Setup's software step and the Updates page say the same thing about
+        // the same tool, and neither spells it itself.
+        if let bootstrap = source("BootstrapController.swift"), let updates = source("UpdatesController.swift") {
+            check(bootstrap.contains("let word = status.stateWord.label"),
+                  "R5-UX-02: Setup's software step names a tool's state its own way again", &ok)
+            check(updates.contains(".muted(StateWord.upToDate.label)") && updates.contains(".status(StateWord.checkFailed.label"),
+                  "R5-UX-02: Updates names a tool's state its own way again", &ok)
+        }
+        // No retired word comes back in a string the app shows. Comments
+        // are stripped, so a note naming the old word does not count.
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            fail("R5-UX-02: the app's sources are not readable, so the retired words are unchecked", &ok)
+            return
+        }
+        var scanned = 0
+        for file in files where file.hasSuffix(".swift") && file != "StateVocabulary.swift" {
+            guard let text = try? String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8) else { continue }
+            scanned += 1
+            let code = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            for (word, state) in StateVocabulary.retired where code.contains(where: { $0.contains(word) }) {
+                fail("R5-UX-02: \(file) says \(word) for what is now \"\(state.label)\"", &ok)
+            }
+        }
+        check(scanned > 100, "R5-UX-02: the retired-word scan read only \(scanned) files", &ok)
     }
 
     // MARK: R5-UX-05 - Knowledge split

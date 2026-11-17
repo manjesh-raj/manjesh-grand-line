@@ -96,13 +96,14 @@ enum UpdatesFailureSelfTest {
         guard !message.contains("updates available") && !message.contains("update available") else {
             return "a sweep with no update available still says so: \(message)"
         }
-        guard message == "Checked 13 tools: 5 up to date, 2 not installed, 3 could not be checked, 3 updates failed" else {
+        // R5-UX-02: the rows' own words - a failed check is "check failed".
+        guard message == "Checked 13 tools: 5 up to date, 2 not installed, 3 checks failed, 3 updates failed" else {
             return "the toast does not state each count separately: \(message)"
         }
         guard mixed.subtitle == "13 tools \u{00B7} 8 need attention" else { return "subtitle: \(mixed.subtitle)" }
 
         let unreachable = UpdatesSummary(Array(repeating: DependencyStatus.checkFailed, count: 13))
-        guard unreachable.completionMessage == "Checked 13 tools: 13 could not be checked" else {
+        guard unreachable.completionMessage == "Checked 13 tools: 13 checks failed" else {
             return "brew unreachable reads \(unreachable.completionMessage)"
         }
         let two = UpdatesSummary([.updateAvailable, .updateAvailable, .upToDate])

@@ -582,7 +582,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let known = summary.isKnown
         summaryStrip.configure([
             .init(.value("\(summary.total)"), caption: "Tools tracked"),
-            known ? .count(summary.upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
+            known ? .count(summary.upToDate, caption: StateWord.upToDate.label) : .init(.unread, caption: StateWord.upToDate.label),
             known ? .count(summary.needsAttention, caption: "Need attention", tintWhenNonZero: .warn)
                   : .init(.unread, caption: "Need attention"),
             .init(.value(relativeLastChecked()), caption: "Last checked"),
@@ -1330,18 +1330,19 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
     /// the row's state while it has no version to offer.
     private func availableCell(_ row: UpdateRow) -> HelmDataTable.Cell {
         switch row.status {
-        case .upToDate: return .muted("Up to date")
+        case .upToDate: return .muted(StateWord.upToDate.label)
         case .updateAvailable:
             return .status("\u{2191} \(row.latestLabel ?? "newer version")", tint: .warn)
         case .notInstalled:
-            return .status(row.latestLabel.map { "Not installed \u{00B7} \($0)" } ?? "Not installed", tint: .warn)
-        case .checking: return .muted("Checking\u{2026}")
-        case .updating: return .muted("Updating\u{2026}")
-        case .checkFailed: return .status("Check failed", tint: .critical)
+            let word = StateWord.notInstalled.label
+            return .status(row.latestLabel.map { "\(word) \u{00B7} \($0)" } ?? word, tint: .warn)
+        case .checking: return .muted(StateWord.checking.label)
+        case .updating: return .muted(StateWord.updating.label)
+        case .checkFailed: return .status(StateWord.checkFailed.label, tint: .critical)
         case .updateFailed:
             return row.terminalCommand != nil ? .status("Needs password", tint: .warn)
-                                              : .status("Update failed", tint: .critical)
-        case .unknown: return .muted("Not checked")
+                                              : .status(StateWord.updateFailed.label, tint: .critical)
+        case .unknown: return .muted(StateWord.notChecked.label)
         }
     }
 

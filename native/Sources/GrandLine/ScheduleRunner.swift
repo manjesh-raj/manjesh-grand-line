@@ -745,7 +745,7 @@ enum ScheduleActions {
         if synced > 0 { parts.append("\(synced) fork\(synced == 1 ? "" : "s") fast-forwarded") }
         if !diverged.isEmpty { parts.append("\(diverged.count) diverged, left alone (\(diverged.joined(separator: ", ")))") }
         if !failed.isEmpty { parts.append("\(failed.count) failed (\(failed.joined(separator: ", ")))") }
-        if checkFailed > 0 { parts.append("\(checkFailed) could not be checked") }
+        if checkFailed > 0 { parts.append(StateWord.checkFailed.counted(checkFailed)) }
         let log = logBlocks.joined(separator: "\n\n")
 
         let summary = parts.joined(separator: "; ") + "."
@@ -1023,7 +1023,7 @@ enum ScheduleActions {
             parts.append("\(needsManualInstall) tool\(needsManualInstall == 1 ? "" : "s") not installed - see Bootstrap")
         }
         if checkFailed > 0 {
-            parts.append("\(checkFailed) could not be checked")
+            parts.append(StateWord.checkFailed.counted(checkFailed))
         }
 
         let summary = parts.joined(separator: "; ") + "."

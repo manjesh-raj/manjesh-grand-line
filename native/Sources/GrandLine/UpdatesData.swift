@@ -197,15 +197,12 @@ struct UpdatesSummary: Equatable {
     /// Each non-zero count, worded for a sentence, updates first.
     var parts: [String] {
         var parts: [String] = []
-        if updatesAvailable > 0 {
-            parts.append(updatesAvailable == 1 ? "1 update available" : "\(updatesAvailable) updates available")
-        }
-        if upToDate > 0 { parts.append("\(upToDate) up to date") }
-        if notInstalled > 0 { parts.append("\(notInstalled) not installed") }
-        if couldNotCheck > 0 { parts.append("\(couldNotCheck) could not be checked") }
-        if updatesFailed > 0 {
-            parts.append(updatesFailed == 1 ? "1 update failed" : "\(updatesFailed) updates failed")
-        }
+        // R5-UX-02: the words the rows show (`StateVocabulary`).
+        if updatesAvailable > 0 { parts.append(StateWord.updateAvailable.counted(updatesAvailable)) }
+        if upToDate > 0 { parts.append(StateWord.upToDate.counted(upToDate)) }
+        if notInstalled > 0 { parts.append(StateWord.notInstalled.counted(notInstalled)) }
+        if couldNotCheck > 0 { parts.append(StateWord.checkFailed.counted(couldNotCheck)) }
+        if updatesFailed > 0 { parts.append(StateWord.updateFailed.counted(updatesFailed)) }
         return parts
     }
 

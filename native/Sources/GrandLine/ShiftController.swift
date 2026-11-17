@@ -200,8 +200,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         var title: String {
             switch self {
             case .all: return "All tasks"
-            case .dueToday: return "Due today"
-            case .overdue: return "Overdue"
+            case .dueToday: return StateWord.dueToday.label
+            case .overdue: return StateWord.overdue.label
             case .myPriorities: return "My priorities"
             case .recentlyUpdated: return "Recently updated"
             }
@@ -1024,9 +1024,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         let c = counts()
         let parts = [
             "\(c.open) open",
-            "\(c.dueToday) due today",
+            StateWord.dueToday.counted(c.dueToday),
             "\(c.followUps) follow-up\(c.followUps == 1 ? "" : "s")",
-            "\(c.overdue) overdue",
+            StateWord.overdue.counted(c.overdue),
         ]
         let line = parts.joined(separator: " \u{00B7} ")
         guard let filter = projectFilter,
@@ -1304,8 +1304,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         switch taskScope {
         case .all: break
-        case .dueToday: parts.append("due today")
-        case .overdue: parts.append("overdue")
+        case .dueToday: parts.append(StateWord.dueToday.phrase)
+        case .overdue: parts.append(StateWord.overdue.phrase)
         case .myPriorities: parts.append("marked high")
         case .recentlyUpdated: parts.append("updated this week")
         }

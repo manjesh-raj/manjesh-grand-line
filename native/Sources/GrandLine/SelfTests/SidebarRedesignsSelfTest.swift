@@ -736,7 +736,7 @@ enum SidebarRedesignsSelfTest {
         // GL-14: a test process refuses `gh`, so every check failed - which
         // the subtitle used to report as "all in sync".
         let subtitle = github.drillHeaderSubtitle ?? ""
-        check(!subtitle.contains("all in sync") && subtitle.contains("could not be checked"),
+        check(!subtitle.contains("all in sync") && subtitle.contains("every check failed"),
               "with every check failed the subtitle reads \"\(subtitle)\"", &ok)
         check(!github.debugPausedCardIsShown, "the paused card shows with no confirmed public repo", &ok)
         ConfigRepoPrivacy.debugRecord(.unknown("offline"))

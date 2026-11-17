@@ -160,7 +160,7 @@ extension ServiceHealthState.Verdict {
     var label: String {
         switch self {
         case .unknown: return ServiceHealthSummary.Bucket.notRun.label
-        case .running: return "Checking\u{2026}"
+        case .running: return StateWord.checking.label
         case .healthy: return ServiceHealthSummary.Bucket.healthy.label
         case .degraded: return ServiceHealthSummary.Bucket.degraded.label
         case .failing: return ServiceHealthSummary.Bucket.failing.label
@@ -182,18 +182,21 @@ struct ServiceHealthSummary: Equatable {
     enum Bucket: CaseIterable {
         case healthy, degraded, failing, notRun
 
-        /// The state's name, capitalised for a chip or a caption.
-        var label: String {
+        /// The state's one word (R5-UX-02's `StateVocabulary`).
+        var word: StateWord {
             switch self {
-            case .healthy: return "Healthy"
-            case .degraded: return "Recent failure"
-            case .failing: return "Failing"
-            case .notRun: return "Not run yet"
+            case .healthy: return .healthy
+            case .degraded: return .recentFailure
+            case .failing: return .failing
+            case .notRun: return .notRunYet
             }
         }
 
+        /// The state's name, capitalised for a chip or a caption.
+        var label: String { word.label }
+
         /// The same word inside a sentence ("2 healthy, 1 recent failure").
-        var phrase: String { label.lowercased() }
+        var phrase: String { word.phrase }
     }
 
     struct Entry: Equatable {
@@ -225,7 +228,7 @@ struct ServiceHealthSummary: Equatable {
         guard total > 0 else { return "No background service has reported yet" }
         return [Bucket.healthy, .failing, .degraded, .notRun].compactMap { bucket -> String? in
             let n = count(bucket)
-            return n > 0 ? "\(n) \(bucket.phrase)" : nil
+            return n > 0 ? bucket.word.counted(n) : nil
         }.joined(separator: ", ")
     }
 
