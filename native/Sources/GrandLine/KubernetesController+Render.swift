@@ -15,6 +15,7 @@ extension KubernetesController {
         let hasSession = !sessions.isEmpty
         scopeTabsHost.isHidden = !hasSession
         scopeEmptyState.isHidden = hasSession
+        sessionCard.isHidden = !hasSession
 
         let hasScope = hasSession && scopeHostID != nil
         feedSection.isHidden = !hasScope

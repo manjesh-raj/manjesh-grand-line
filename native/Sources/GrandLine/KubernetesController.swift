@@ -363,7 +363,13 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         // the table genuinely fill the page: the card above it sizes to its
         // content, and everything left over is the table's.
         buildPendingTablePreview()
-        for child in [sessionCard!, workArea!, pendingTablePreview!] { container.addSubview(child) }
+        for child in [sessionCard!, workArea!, pendingTablePreview!, scopeEmptyState!] { container.addSubview(child) }
+        NSLayoutConstraint.activate([
+            scopeEmptyState.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            scopeEmptyState.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            scopeEmptyState.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor,
+                                                   constant: -2 * HelmMetrics.pageGutter),
+        ])
         NSLayoutConstraint.activate([
             sessionCard.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
             sessionCard.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
@@ -473,7 +479,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
         buildFeedSection()
 
-        let body = NSStackView(views: [scopeTabsHost, scopeEmptyState, feedSection])
+        // UXP-13 / S23: the no-session wall is the page's whole content, so it
+        // sits centred in the page (loadView places it), not at the top of the
+        // Session card, which hides while there is no session.
+        let body = NSStackView(views: [scopeTabsHost, feedSection])
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = HelmMetrics.s3
@@ -488,7 +497,6 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         sessionCard.setBody(body, insets: HelmCard.contentInsets)
         NSLayoutConstraint.activate([
             scopeTabsHost.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            scopeEmptyState.widthAnchor.constraint(equalTo: body.widthAnchor),
             feedSection.widthAnchor.constraint(equalTo: body.widthAnchor),
         ])
     }
