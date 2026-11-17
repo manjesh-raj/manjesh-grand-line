@@ -17,6 +17,7 @@ enum ReviewFiveUXSelfTest {
         checkPersonalLeavesOutTheFirstmateSteps(&ok)
         checkTheLaunchLandingFollowsTheProfileInBothLayouts(&ok)
         checkKnowledgeIsSplitPerProfile(&ok)
+        checkTheCalendarIsAPlace(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -96,6 +97,30 @@ enum ReviewFiveUXSelfTest {
               "R5-UX-01: the launch landing no longer skips a hidden Setup in both layouts", &ok)
         check(!workspace.contains("PlaceName.layout == .sidebar && AppSettings.shared.hiddenModules.contains(.setup)"),
               "R5-UX-01: the launch landing still opens a Personal floating-bar install on Setup", &ok)
+    }
+
+    // MARK: R5-UX-04 - the Calendar as its own place
+
+    /// The Calendar's own toolbar is its periods in the card's order, its row
+    /// takes ⌘0, Tasks' Calendar tab still lands on it, and the Tasks page
+    /// hands it Today. The window-backed half is `MainSplitShellSelfTest`.
+    private static func checkTheCalendarIsAPlace(_ ok: inout Bool) {
+        check(ShiftCalendarScale.toolbarOrder == [.day, .week, .month, .agenda],
+              "R5-UX-04: the Calendar's tabs are \(ShiftCalendarScale.toolbarOrder.map(\.title))", &ok)
+        check(Set(ShiftCalendarScale.toolbarOrder) == Set(ShiftCalendarScale.allCases),
+              "R5-UX-04: a calendar period has no tab of its own", &ok)
+        check(WorkspaceGoMenu.chord(for: .calendar, hidden: WorkspaceProfile.personal.hiddenModules) == 0
+                && WorkspaceGoMenu.chord(for: .calendar, hidden: WorkspaceProfile.operator.hiddenModules) == 0,
+              "R5-UX-04: the Calendar lost its ⌘0 in a profile", &ok)
+        check(ModuleTable.litModule(for: .shift, pageTab: "Calendar", hidden: []) == .calendar
+                && WorkspaceModule.tasks.tabs.contains { $0.name == "Calendar" },
+              "R5-UX-04: Tasks' Calendar tab is no longer a shortcut to the Calendar", &ok)
+        if let shift = source("ShiftController.swift"), let shell = source("MainSplitShellController.swift") {
+            check(shift.contains("tasksView == .calendar ? [calendarTodayButton] : []"),
+                  "R5-UX-04: the Calendar's toolbar lost Today", &ok)
+            check(shell.contains("} else if let calendar = shownCalendar {"),
+                  "R5-UX-04: the shell no longer draws the Calendar's own tabs", &ok)
+        }
     }
 
     // MARK: R5-UX-05 - Knowledge split

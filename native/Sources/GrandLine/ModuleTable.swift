@@ -711,8 +711,13 @@ enum ModuleTable {
         WorkspaceModuleDescriptor(module: .home, title: "Home", group: nil, children: []),
         WorkspaceModuleDescriptor(module: .tasks, title: "Tasks", group: .work,
                                   children: ["Board", "List", "Calendar", "Weekly review"], pageTabHost: .shift),
-        // A door, not a page: Tasks' Calendar view (`ModuleDescriptor.door`).
-        // Month, Week, Day and Agenda are the calendar card's own pills.
+        // A door, not a page: Tasks' Calendar view (`ModuleDescriptor.door`),
+        // so the Tasks page's filters stay the calendar's (decision 1A).
+        // R5-UX-04 made it a place of its own in the chrome: while its row is
+        // lit, the window toolbar draws Day, Week, Month and Agenda - the
+        // card's own pills - as its tabs, with Today and New task, rather
+        // than Tasks' views. It has no children, because those tabs are the
+        // calendar's periods rather than pages (`ShiftCalendarScale`).
         WorkspaceModuleDescriptor(module: .calendar, title: "Calendar", group: .work, children: []),
         WorkspaceModuleDescriptor(module: .crew, title: "Crew", group: .work,
                                   children: ["Needs you", "In flight", "Review", "Ask the crew", "Log"],

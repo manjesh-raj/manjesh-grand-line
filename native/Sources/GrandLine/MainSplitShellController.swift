@@ -1033,6 +1033,14 @@ final class MainSplitShellController: WorkspaceShellController {
     /// R2-UX-03: the module's tabs, wrapping at either end like a browser's.
     /// A module of one page has nowhere to go.
     override func stepModuleTab(by offset: Int) {
+        // R5-UX-04: on the Calendar, ⌘⇧[ and ] step through its periods.
+        if let calendar = shownCalendar {
+            let scales = ShiftCalendarScale.toolbarOrder
+            let index = scales.firstIndex(of: calendar.scale) ?? 0
+            calendar.show(scale: scales[(index + offset + scales.count) % scales.count])
+            refreshModuleChrome()
+            return
+        }
         // R5-UX-05: a door row that is a place of its own (Notebook) has no
         // tabs to step through, even though its page is one of Knowledge's.
         guard !showsDoorAsOwnPlace else { return }
@@ -1101,6 +1109,13 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func tabClicked(_ index: Int) {
+        if let calendar = shownCalendar {
+            let scales = ShiftCalendarScale.toolbarOrder
+            guard scales.indices.contains(index) else { return }
+            calendar.show(scale: scales[index])
+            refreshModuleChrome()
+            return
+        }
         let tabs = currentModule.tabs
         guard tabs.indices.contains(index) else { return }
         open(tabs[index])
@@ -1124,6 +1139,15 @@ final class MainSplitShellController: WorkspaceShellController {
         guard !showingHostPage else { return currentModule }
         return ModuleTable.litModule(for: currentRoute, pageTab: currentTab?.name,
                                      hidden: AppSettings.shared.hiddenModules)
+    }
+
+    /// R5-UX-04: the calendar, while the Calendar row is lit - Tasks'
+    /// Calendar view reached by its row, its ⌘0, its toolbar button or the
+    /// Tasks page's own Calendar tab, which stays a shortcut to it.
+    private var shownCalendar: TaskCalendarController? {
+        guard !showingHostPage, litModule == .calendar,
+              let shift = pageController as? ShiftController, shift.isShowingCalendar else { return nil }
+        return shift.calendar
     }
 
     /// R5-UX-05: whether what shows is a door row's page of its own - the
@@ -1186,6 +1210,14 @@ final class MainSplitShellController: WorkspaceShellController {
         // cards now, and Customize adds any other space's card to them.
         if module == .home {
             toolbar.setTabs([], selected: nil)
+        } else if let calendar = shownCalendar {
+            // R5-UX-04: the Calendar is a place of its own. Its toolbar is
+            // its periods - Day, Week, Month and Agenda, the card's pills -
+            // with Today and New task beside them, not Tasks' views.
+            let scales = ShiftCalendarScale.toolbarOrder
+            toolbar.setTabs(scales.map(\.title), counts: scales.map { _ in nil },
+                            selected: scales.firstIndex(of: calendar.scale),
+                            accessibilityLabel: "Calendar periods")
         } else if showsDoorAsOwnPlace {
             // R5-UX-05: a door row to a page of its own (Notebook, Reading
             // list) is its own place: the crumb, the header and the toolbar
@@ -1430,6 +1462,10 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func workspaceSubtitleMayHaveChanged() {
+        // R5-UX-04: the calendar reports a new period through its caption,
+        // and the card's own pills can change the scale, so the Calendar's
+        // tabs follow it.
+        if shownCalendar != nil { refreshModuleChrome() }
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
         contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle)

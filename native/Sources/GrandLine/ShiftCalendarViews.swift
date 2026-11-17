@@ -53,7 +53,11 @@ enum ShiftCalendarScale: String, CaseIterable {
     case day
     case agenda = "list"
 
-    /// Also the Calendar module's tab names (`ModuleTable.modules`).
+    /// R5-UX-04: the Calendar's own tabs in the window toolbar, in the order
+    /// the card's pills draw them.
+    static let toolbarOrder: [ShiftCalendarScale] = [.day, .week, .month, .agenda]
+
+    /// Also the Calendar's tab names in the window toolbar (`toolbarOrder`).
     var title: String {
         switch self {
         case .month: return "Month"
@@ -1412,6 +1416,19 @@ final class ShiftCalendarView: NSView {
             if self?.requestedScale == scale { self?.requestedScale = nil }
             if case .failure(let error) = result {
                 AppLog.lifecycle.error("task calendar: setView failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
+    /// R5-UX-04: the window toolbar's Today, through the page's own
+    /// `showDate`, which is the card's Today button's path too. Which day
+    /// "today" is belongs to the native clock.
+    func showToday(now: Date = Date()) {
+        guard isConfigured else { return }
+        let today = ShiftDateFormatting.components(from: now).dateStr
+        webView.call("showDate", payload: ["date": today]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: showDate failed: \(error.message, privacy: .public)")
             }
         }
     }
