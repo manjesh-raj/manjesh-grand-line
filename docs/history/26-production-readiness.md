@@ -753,3 +753,19 @@ The probe cannot show the hidden-page path, because it has no way to navigate wi
   - dropping the `syncBackgroundScrollback()` from `viewDidAppear`,
   - dropping the flag from `viewDidDisappear`,
   - setting it on every `viewDidDisappear`, which failed both window-ordered-out checks.
+
+## The release launch baseline (R5-PERF-04, review #5)
+
+`LaunchSignposts` landed in #556 with `Launch.mainToFirstKeyWindow`, which logs its length on every launch, release builds included.
+Review #5 found that no release number had been recorded against it, so the 600 ms figure from R4-PERF-02 (an in-process debug measurement) was the only one.
+
+Recorded 2026-11-17 on an Apple M5 Pro, macOS 26.7 (25G229), on AC power, load average about 2.3.
+The build was a release build of `main` at `v0.2.0-67-g30e26ac3`, with the real SDK stamped.
+It ran as a separately-identified probe bundle on an empty scratch data root, landing on Home.
+Over five launches the median was **1108.9 ms**, with a range of 956 to 1174 ms.
+`native/MANUAL-CHECKS.md` §19 has each run, the method and the exact `log show` line.
+
+This is roughly twice the in-process debug figure, because it includes process start, `dyld`, and a real window being composited and made key.
+It is nearly three times the 400 ms target.
+Nothing here says where the time goes.
+That is the Instruments pass §19 still leaves to the captain, against a copy of real data.
