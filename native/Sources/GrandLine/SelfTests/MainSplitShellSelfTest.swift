@@ -1618,10 +1618,14 @@ enum MainSplitShellSelfTest {
             let inside = settleInspectorInsideWindow(shell, window)
             check(inside.isInside,
                   "the open inspector on \(destination.rawValue) ends at \(inside.maxX)pt, past the \(window.frame.width)pt window", &ok)
-            // A page that fills nothing opens on the pane's own empty state.
+            // S27: a page that fills nothing opens on the crew panel (or, on
+            // a Personal install, the page's shortcuts), never an empty pane.
             if !fillsInspector {
-                check(!shell.inspector.debugIsShowingContent && !shell.inspector.debugEmptyState.isHidden,
-                      "the inspector on \(destination.rawValue) does not show its empty state", &ok)
+                check(shell.inspector.hostedContentView === shell.crewPanel.view
+                        && shell.inspector.debugTitle == shell.crewPanel.paneTitle,
+                      "S27: the inspector on \(destination.rawValue) does not show the crew panel", &ok)
+                check(shell.crewPanel.context.module == shell.currentModule,
+                      "S27: the crew panel on \(destination.rawValue) holds \(shell.crewPanel.context.module)'s context", &ok)
             }
             _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
             settle(shell)

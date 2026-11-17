@@ -298,6 +298,28 @@ final class StrawHatMenuBarPopoverController: NSViewController {
 
     var onAsk: ((String, @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) -> Void)?
     var onOpenFullChat: (() -> Void)?
+
+    /// S27: the open-the-page button's words, so a host that is about a page
+    /// (the inspector's crew panel) can say "Continue in Crew".
+    var openFullChatTitle: String {
+        get { openFullChatButton.title }
+        set { openFullChatButton.title = newValue }
+    }
+
+    /// S27: the idle line under the field. The inspector's panel sends the
+    /// page's summary, so the default "doesn't know what's on your screen"
+    /// would be untrue there.
+    var idleHint: String {
+        get { hintLabel.stringValue }
+        set { hintLabel.stringValue = newValue }
+    }
+
+    /// S27: ask `text` as if typed - a suggested ask in the inspector.
+    func askQuestion(_ text: String) {
+        _ = view
+        guard !isThinking else { return }
+        ask(text)
+    }
     /// Forwarded straight to `popover.contentSize` - see
     /// `RecentDestinationsPopover`'s own "compute then set" convention,
     /// which this content genuinely needs: the reply area's height varies a

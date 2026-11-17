@@ -41,6 +41,7 @@ enum UIUXProposalsSelfTest {
             ("S24 GitHub sync rows say what to do", checkGitHubSyncRowsSayWhatToDo),
             ("S20 28pt icon targets", checkIconTargets),
             ("S21 page-tab chords", checkPageTabChords),
+            ("S27 the inspector's crew panel", checkInspectorCrewPanel),
         ]
         for (name, body) in cases {
             var ok = true
@@ -637,6 +638,68 @@ enum UIUXProposalsSelfTest {
         check(page.contains { $0.title == "Previous or next tab" }, "S21: ⌘/ on Tasks lists the tab chords", &ok)
         check(page.contains { $0.keys.first == "\u{2303}" && $0.title == names.joined(separator: " \u{00B7} ") },
               "S21: ⌘/ on Tasks lists ⌃1 to ⌃\(names.count) by tab name", &ok)
+    }
+
+    // MARK: - S27
+
+    /// The context chip names exactly what is sent, a question goes out with
+    /// the page and its summary through the shell's one crew ask (stubbed
+    /// here: no test reaches the real `claude` CLI or the network), the panel
+    /// is Operator-only, and a Personal install gets the page's shortcuts.
+    private static func checkInspectorCrewPanel(_ ok: inout Bool) {
+        let context = WorkspaceInspectorCrewPanel.PageContext(module: .tasks, summary: "7 open \u{00B7} 1 overdue")
+        check(WorkspaceInspectorCrewPanel.contextLine(context) == "About Tasks \u{00B7} 7 open \u{00B7} 1 overdue",
+              "S27: the chip names the page and its summary line", &ok)
+        check(WorkspaceInspectorCrewPanel.question("Plan my week", context: context)
+                == "About the Tasks page (7 open \u{00B7} 1 overdue): Plan my week",
+              "S27: the question carries exactly the chip's context", &ok)
+        check(WorkspaceInspectorCrewPanel.suggestedAsks(for: .tasks).count == 3
+                && WorkspaceInspectorCrewPanel.suggestedAsks(for: .dictation).isEmpty,
+              "S27: three suggested asks where the table has a row, none elsewhere", &ok)
+
+        let previous = AppSettings.shared.hiddenModules
+        defer { AppSettings.shared.hiddenModules = previous }
+        AppSettings.shared.setProfile(.operator)
+        let panel = WorkspaceInspectorCrewPanel()
+        var sent: [String] = []
+        panel.onAsk = { text, completion in
+            sent.append(text)
+            completion(.failure(StrawHatError(message: "stubbed in the self-test")))
+        }
+        var continued = false
+        panel.onContinueInCrew = { continued = true }
+        panel.setContext(context)
+        _ = panel.view
+        check(panel.debugCrewShown && panel.paneTitle == "Ask the crew", "S27: Operator sees the crew panel", &ok)
+        check(panel.debugContextChip == WorkspaceInspectorCrewPanel.contextLine(context),
+              "S27: the visible chip says what context is sent (\(panel.debugContextChip))", &ok)
+        check(panel.debugAskTitles == WorkspaceInspectorCrewPanel.suggestedAsks(for: .tasks),
+              "S27: the panel offers Tasks' three asks", &ok)
+        panel.debugTapAsk(0)
+        check(sent == [WorkspaceInspectorCrewPanel.question(WorkspaceInspectorCrewPanel.suggestedAsks(for: .tasks)[0],
+                                                             context: context)],
+              "S27: a suggested ask goes out once, with the page's context, through the shell's ask (\(sent))", &ok)
+        check(panel.debugCrew.openFullChatTitle == "Continue in Crew", "S27: the panel offers Continue in Crew", &ok)
+        panel.debugCrew.onOpenFullChat?()
+        check(continued, "S27: Continue in Crew reaches the shell", &ok)
+
+        AppSettings.shared.setProfile(.personal)
+        let personal = WorkspaceInspectorCrewPanel()
+        personal.setContext(context)
+        _ = personal.view
+        check(!personal.debugCrewShown && personal.debugPersonalRowCount > 0 && personal.paneTitle == "On Tasks",
+              "S27: a Personal install gets the page's shortcuts, not the crew", &ok)
+
+        guard sourcesAvailable else { print("  SKIP: S27 source half, no app sources"); return }
+        // Code only: the header names `ClaudeOneShot` to say it is untouched.
+        let file = source("WorkspaceInspectorCrewPanel.swift").split(separator: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+        check(!file.contains("ClaudeOneShot") && file.contains("StrawHatMenuBarPopoverController("),
+              "S27: the panel reuses the crew's own composer and never runs claude itself", &ok)
+        check(source("MainSplitShellController.swift").contains("askCrewFromMenuBar(text"),
+              "S27: the shell routes the panel's ask into the one crew conversation", &ok)
+        check(!source("WorkspaceInspector.swift").contains("modulesWithDetails"),
+              "S27: the hard-coded list of modules with details is retired", &ok)
     }
 
     // MARK: - S13

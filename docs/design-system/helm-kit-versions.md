@@ -36,6 +36,12 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 4.0.0 - S27: the inspector's crew panel
+
+- `WorkspaceInspector` 1.0.0 → 2.0.0 (major): the content model has a default: a page that never fills the pane shows `WorkspaceInspectorCrewPanel` instead of "No details for this page", and a page with details keeps showing them. `modulesWithDetails` and the "No details" copy are retired. It enters the table at this release.
+- `WorkspaceInspectorCrewPanel` none → 1.0.0 (new): Operator-only "Ask the crew": a chip naming the context sent (the page's own summary line), three suggested asks per module from a small table, the crew's own composer and reply at inspector width, the trust line, and Continue in Crew. A Personal install gets the page's shortcuts and the tip of the day.
+- `StrawHatMenuBarPopoverController` 1.0.0 → 1.1.0 (minor): `openFullChatTitle` and `askQuestion(_:)`, so the inspector hosts this same composer (it already took `init(width:showsOwnHeader:)`) instead of a third crew chat. It enters the table at this release.
+
 ## 3.6.0 - S21: page tabs by number
 
 - `WorkspaceGoMenu` 1.0.0 → 1.1.0 (minor): ⌃1 to ⌃9 as hidden Go menu rows (key equivalents still work while hidden) that open the showing module's tab by number, in both window layouts. Previous Tab ⌘⇧[ and Next Tab ⌘⇧] were already there (R2-UX-03). It enters the table at this release.
