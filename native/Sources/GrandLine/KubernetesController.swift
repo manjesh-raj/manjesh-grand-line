@@ -377,9 +377,15 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             pendingTablePreview.leadingAnchor.constraint(equalTo: workArea.leadingAnchor),
             pendingTablePreview.trailingAnchor.constraint(equalTo: workArea.trailingAnchor),
             pendingTablePreview.topAnchor.constraint(equalTo: workArea.topAnchor),
-            pendingTablePreview.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor,
-                                                        constant: -HelmMetrics.s4),
         ])
+        // A placeholder must never be a height floor on the window (gotcha
+        // (13)): below 500 it yields, and a short window clips the skeleton
+        // rather than growing to fit it. Measured: required, it grew a 760pt
+        // window to 790pt in MainSplitShellSelfTest.
+        let previewFits = pendingTablePreview.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor,
+                                                                      constant: -HelmMetrics.s4)
+        previewFits.priority = NSLayoutConstraint.Priority(490)
+        previewFits.isActive = true
 
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
@@ -434,7 +440,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         _ = pendingTablePreview.setHeader(symbol: "shippingbox", tint: .info,
                                           titleLabel: NSTextField(labelWithString: "Pods"),
                                           subtitleLabel: pendingTableSubtitle)
-        let rows = HelmSkeletonList(rows: 5)
+        let rows = HelmSkeletonList(rows: 4)
         pendingTablePreview.setBody(rows, insets: HelmCard.contentInsets)
         pendingTablePreview.setAccessibilityLabel("Pods, appears once a feed tab is logged in")
         pendingTablePreview.isHidden = true
