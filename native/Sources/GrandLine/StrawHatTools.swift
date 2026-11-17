@@ -175,11 +175,11 @@ extension StrawHatCrew {
 
     /// M2.5c: `--allowedTools`, pinned to exactly the four read-only tools.
     ///
-    /// **No `Task` and no `TodoWrite`**, unlike `SRELead.allowedTools`. SRE
-    /// Lead's persona explicitly asks for subagent delegation on independent
-    /// checks; the crew's does not ask for either, so listing them would
-    /// permit a capability nothing uses and widen the surface this milestone
-    /// exists to narrow. M2.5c says "exactly the four read-only tools" and
+    /// **No `Task` and no `TodoWrite`**. `SRELead.allowedTools` carries
+    /// `TodoWrite` for its multi-step investigations (and carried `Task`
+    /// until R5-SEC-06); the crew's persona asks for neither, so listing
+    /// them would permit a capability nothing uses and widen the surface
+    /// this milestone exists to narrow. M2.5c says "exactly the four read-only tools" and
     /// that is what this is.
     ///
     /// The allowlist is a real gate, not a hint - measured live, see this

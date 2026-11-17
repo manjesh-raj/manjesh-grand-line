@@ -171,11 +171,19 @@ _DENIED_FLAGS = {
 # `--client-key`.
 _DENIED_FLAG_PREFIXES = ("--as", "--insecure", "--client-")
 
+# R5-SEC-01. Flags that name an API *path* rather than a resource, so the
+# resource check below never sees what they read: `kubectl get --raw
+# /api/v1/secrets` returns every Secret the context can list with no
+# `secrets` positional anywhere. Matched on the flag name, like the two
+# tables above.
+_DENIED_PATH_FLAGS = {"--raw"}
+
 # Resource types this tool will never read, whatever the verb. `kubectl get
 # secrets -o yaml` is a read - and it puts every base64'd secret in the
 # cluster into the model transcript, which is exactly the thing the vault
 # rules elsewhere in this app exist to prevent. Matched on the resource head,
-# so `secret/foo`, `secrets.v1.` and a bare `secrets` all land here.
+# so `secret/foo`, `secrets.v1.` and a bare `secrets` all land here, and on
+# every member of a comma-joined list, so `pods,secrets` does too.
 _DENIED_RESOURCES = {"secret", "secrets"}
 
 
@@ -190,12 +198,14 @@ def _flag_name(arg):
     return arg.split("=", 1)[0].lower()
 
 
-def _resource_head(arg):
-    """The resource type in a positional token, lowercased.
+def _resource_heads(arg):
+    """Every resource type in a positional token, lowercased.
 
-    `secret/foo` -> `secret`; `secrets.v1.` -> `secrets`; `pods` -> `pods`.
+    `secret/foo` -> `{secret}`; `secrets.v1.` -> `{secrets}`; `pods` ->
+    `{pods}`; `pods,secrets` -> `{pods, secrets}` (R5-SEC-01: kubectl reads a
+    comma-joined list as several resources, so each one is a head).
     """
-    return arg.split("/", 1)[0].split(".", 1)[0].lower()
+    return {part.split(".", 1)[0].lower() for part in arg.split("/", 1)[0].split(",")}
 
 
 # How long to wait for `SRELeadBridge` to write a response file. Comfortably
@@ -250,7 +260,12 @@ def _validate_args(subcommand, args):
                     f"argument {arg!r} uses '{flag}', which changes where this command "
                     "connects or who it authenticates as - never allowed from this tool"
                 )
-        elif _resource_head(arg) in _DENIED_RESOURCES:
+            if flag in _DENIED_PATH_FLAGS:
+                return (
+                    f"argument {arg!r} uses '{flag}', which reads a raw API path past the "
+                    "resource check - never allowed from this tool"
+                )
+        elif _resource_heads(arg) & _DENIED_RESOURCES:
             return (
                 f"argument {arg!r} reads the 'secrets' resource, which is never allowed "
                 "from this tool - secret material must not enter a model transcript"

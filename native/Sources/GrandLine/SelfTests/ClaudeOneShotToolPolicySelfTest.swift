@@ -204,6 +204,15 @@ enum ClaudeOneShotToolPolicySelfTest {
         check(sreNonMCP == Set(SRELead.builtInTools),
               "SRE Lead: the non-MCP half of --allowedTools is exactly builtInTools "
               + "(allowlist: \(sreNonMCP.sorted()), --tools: \(SRELead.builtInTools.sorted()))")
+        // R5-SEC-06: no subagents. The bridge runs one kubectl command at a
+        // time, so a parallel subagent only collided on "busy", and each one
+        // was another model loop over pod logs an attacker can write into.
+        // The persona must not ask for one either, or it asks for a tool it
+        // cannot use.
+        check(!sreAllowed.contains("Task") && !SRELead.builtInTools.contains("Task"),
+              "SRE Lead: `Task` is neither allowed nor granted (R5-SEC-06)")
+        check(!SRELead.persona.contains("Task tool") && !SRELead.persona.lowercased().contains("subagent"),
+              "SRE Lead: the persona no longer asks for subagent delegation (R5-SEC-06)")
 
         // The crew asks for no built-in tool at all, which is the whole claim
         // `StrawHatTools.swift` makes about its surface. Assert it rather than

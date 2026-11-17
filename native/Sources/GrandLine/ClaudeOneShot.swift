@@ -79,7 +79,7 @@
 // (`--disallowedTools Bash,Edit,...`) goes stale the moment the CLI gains a
 // built-in tool nobody here has heard of, and this list is the one place that
 // would silently not cover it. A caller that genuinely needs a built-in tool
-// names it (SRE Lead's `Task`/`TodoWrite`); a caller that says nothing gets
+// names it (SRE Lead's `TodoWrite`); a caller that says nothing gets
 // none. `ClaudeOneShotToolPolicySelfTest` guards both the argv and the call
 // sites.
 

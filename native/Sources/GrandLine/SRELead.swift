@@ -46,8 +46,8 @@
 // `get`/`describe`/`logs`/`top`/`events` and validating every argument's
 // character set before it ever reaches the shared terminal. `sre-kubectl` is
 // also the *only* MCP tool exposed, and `--allowedTools` restricts the agent
-// to it plus `Task`/`TodoWrite` - it has no path to a raw Bash/Read/Write
-// tool, in the old tmux-hosted session or this one.
+// to it plus `TodoWrite` - it has no path to a raw Bash/Read/Write tool, in
+// the old tmux-hosted session or this one.
 //
 // `fm/cockpit-sre-lead-reply-formatting` addressed a captain complaint after
 // the ux-fixes task above: findings-first and terse was right, but the reply
@@ -123,13 +123,15 @@ struct SRELeadSession {
 
 enum SRELead {
 
-    /// The SRE Lead persona (design brief: "SRE Manager -> SRE Lead -> SRE
-    /// Engineers", mirroring this whole Firstmate system's own supervision
-    /// rule). Delegation to subagents for independent checks is Claude
-    /// Code's own Task-tool capability - this prompt only asks for it, it
-    /// does not implement any orchestration itself. Not `private`:
-    /// `SRELeadRunner` passes this as `--append-system-prompt` for every
-    /// turn.
+    /// The SRE Lead persona. It used to ask the model to delegate
+    /// independent checks to parallel subagents through the `Task` tool.
+    /// Full review #5's R5-SEC-06 removed that: every kubectl call goes
+    /// through one shared terminal tab that refuses a second request while
+    /// one is in flight, so parallel subagents only collided on "busy", and
+    /// each one was another model loop reading attacker-influenceable pod
+    /// logs. The persona now runs its checks one after another itself. Not
+    /// `private`: `SRELeadRunner` passes this as `--append-system-prompt`
+    /// for every turn.
     static let persona = """
     You are the SRE Lead for this Kubernetes cluster, reporting to the captain (the human at the other end of this session).
 
@@ -137,7 +139,7 @@ enum SRELead {
 
     run_runbook runs every kubectl step of a named runbook from Docs > Runbooks (e.g. "run the API latency spike runbook") - call it with the runbook's title, not a filename or slug. It validates every step against the exact same read-only allowlist before running any of them; if the tool refuses the whole runbook, tell the captain plainly which step failed and why, and point them at running it manually via a Console tab instead - never try to run the remaining steps yourself one at a time as a workaround. If it succeeds, summarize what each step found, not just that it ran.
 
-    When an investigation has genuinely independent parts (e.g. "check pod events" + "check node capacity" + "check recent logs" for one incident), delegate each part to a subagent (the Task tool) so they run in parallel, then synthesize what they found into ONE finding. The captain talks to you, not to your subagents - never relay raw tool output or a subagent's full transcript verbatim.
+    When an investigation has several parts (e.g. "check pod events" + "check node capacity" + "check recent logs" for one incident), run them one after another yourself - the tab runs one command at a time - then synthesize what they found into ONE finding. Never relay raw tool output verbatim.
 
     How to reply, every time, with no exceptions: lead with the finding or the answer to what the captain asked, in the first sentence. Do not open with what you checked, what commands you ran, what you ruled out, or hedge about tool limitations before getting there - the captain wants the conclusion first, not a walkthrough of how you reached it. Do not describe your own methodology ("I checked X, then Y, then ruled out Z") unless the captain explicitly asks "how did you check" or "what did you rule out" - if you were genuinely unable to check something because of the read-only restriction, say so in one short clause, not a paragraph. Default to terse: a few sentences, not a report.
 
@@ -151,26 +153,26 @@ enum SRELead {
     """
 
     /// The `--allowedTools` value for every `claude -p` turn - the kubectl
-    /// MCP tool plus `Task`/`TodoWrite`, nothing else. Not `private`:
+    /// MCP tools plus `TodoWrite`, nothing else. Not `private`:
     /// `SRELeadRunner` needs it too.
-    static let allowedTools = "mcp__sre-kubectl__kubectl_readonly,mcp__sre-kubectl__run_runbook,Task,TodoWrite"
+    static let allowedTools = "mcp__sre-kubectl__kubectl_readonly,mcp__sre-kubectl__run_runbook,TodoWrite"
 
     /// The built-in tools this pane's `--tools` grants (full review #3's S1).
     ///
-    /// These are exactly the two non-MCP names in `allowedTools` above, and
-    /// they are the *only* built-ins any persona in this app asks for: the
-    /// persona explicitly delegates independent checks to subagents, which
-    /// needs `Task`, and `TodoWrite` is how it tracks a multi-step
-    /// investigation in the pane. Every other built-in - `Bash` first among
-    /// them - is denied by omission rather than by a denylist, so a future
-    /// CLI's new tool is denied here without anyone editing this line.
+    /// This is exactly the one non-MCP name in `allowedTools` above, and it
+    /// is the *only* built-in any persona in this app asks for: `TodoWrite`
+    /// is how the pane tracks a multi-step investigation. `Task` was here
+    /// until R5-SEC-06 (see `persona`'s comment for why it went). Every
+    /// other built-in - `Bash` first among them - is denied by omission
+    /// rather than by a denylist, so a future CLI's new tool is denied here
+    /// without anyone editing this line.
     ///
     /// `ClaudeOneShotToolPolicySelfTest` asserts these stay a subset of
     /// `allowedTools`, because granting a built-in here that the allowlist
     /// does not name would be a capability nothing can reach, and granting
     /// one in `allowedTools` that this omits would be a tool the pane silently
     /// cannot use.
-    static let builtInTools = ["Task", "TodoWrite"]
+    static let builtInTools = ["TodoWrite"]
 
     /// Prepare a fresh SRE Lead session: writes this spawn's MCP config into
     /// a private scratch directory and creates the bridge directory the MCP
