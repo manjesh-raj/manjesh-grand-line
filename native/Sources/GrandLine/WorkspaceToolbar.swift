@@ -24,13 +24,14 @@
 //   - while a focus timer runs, F7's chip (the floating bar shows it beside
 //     its search pill), just before the trailing cluster - it was on the
 //     layout's status strip until the captain had the strip removed,
-//   - Quick Connect, at the head of the trailing cluster on every module:
-//     two separate icons, one for a Console terminal and one for a host, in a
-//     capsule of their own (stage 7 drew them with a caption on Console only;
-//     U-02, the captain's call, took the caption out and put them everywhere),
-//   - the trailing cluster: the light/dark toggle and the notifications
-//     button (the captain kept both), the calendar button (Tasks' Calendar
-//     view from any page, the captain's ask), the inspector toggle, then Search,
+//   - the trailing cluster, in two groups (S02 of the 2026-11-17 UI/UX
+//     proposals, `Group`): **Open** - Quick Connect's two icons (one for a
+//     Console terminal, one for a host; U-02, the captain's call, put them on
+//     every module with no caption) and the calendar button (Tasks' Calendar
+//     view from any page, the captain's ask), the three that open a place -
+//     then a space, then **Window** - the light/dark toggle, the
+//     notifications button (the captain kept both) and the inspector toggle,
+//     the three that change this window - then Search,
 //   - and last, at the far right after Search, the page's one primary action
 //     where it has one (Add Host, Analyze, Copy diagnostics), as the
 //     prototype draws it (stage 6, `WorkspacePrimaryActionProviding`).
@@ -96,6 +97,30 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         static let hostsLabel = "Quick Connect to a Host"
         static let consoleHelp = "Quick Connect to Console: go to your Console session, or open one if there is none"
         static let hostsHelp = "Quick Connect to a host: pick a saved host, or type ssh user@host"
+    }
+
+    /// S02: the trailing cluster's two groups. Seven glyph-only items sat in
+    /// one run - three that open a place, three that change the window, one
+    /// that searches - and nothing said which was which. Mac toolbars that
+    /// carry this many icons (Mail, Finder) group them with space; the system
+    /// draws adjacent icon items as one capsule, so a group is its items side
+    /// by side and a space after it.
+    ///
+    /// **Not `NSToolbarItemGroup`**, which the proposal named: the captain's
+    /// customised toolbar is saved by item identifier
+    /// (`AppSettings.workspaceToolbarItems`), so folding these items into two
+    /// group items would drop every saved arrangement that names them, and
+    /// the bell's popover hangs off the bell's own item. The groups are an
+    /// order, a space and one overflow priority per group instead, which keeps
+    /// every identifier and the captain's arrangement.
+    enum Group {
+        /// Opens a place: Quick Connect's two icons (placed per page) and the
+        /// calendar. Shares Quick Connect's overflow priority, so a narrow
+        /// window moves the whole group to the overflow menu together.
+        static let open: [NSToolbarItem.Identifier] = ItemID.quickConnect + [ItemID.calendar]
+        /// Changes this window: the light/dark toggle, the bell and the
+        /// inspector toggle, in that order.
+        static let window: [NSToolbarItem.Identifier] = [ItemID.theme, ItemID.notifications, ItemID.inspector]
     }
 
     /// The calendar button's glyph, shared by its live item and its palette
@@ -268,10 +293,10 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     private var savedConfigurationApplied = false
 
     /// The customisable items and spaces as they stand, in order - what is
-    /// saved. The space `reconcileDynamicItems()` puts after Quick Connect
+    /// saved. The space `reconcileDynamicItems()` puts after the Open group
     /// is the toolbar's, not the captain's, so it is left out.
     var customizedIdentifiers: [NSToolbarItem.Identifier] {
-        let ownSpace = quickConnectSpaceIndex
+        let ownSpace = openGroupSpaceIndex
         return toolbar.items.enumerated().compactMap { index, item in
             let id = item.itemIdentifier
             guard index != ownSpace else { return nil }
@@ -479,11 +504,12 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     // MARK: NSToolbarDelegate
 
     /// Two flexible spaces, so the tabs - inserted between them - sit in the
-    /// middle rather than against the trailing cluster.
+    /// middle rather than against the trailing cluster. Then the Open group's
+    /// calendar (Quick Connect joins it per page), and the Window group
+    /// (S02). The space between the two groups is `reconcileDynamicItems()`'s.
     static let defaultIdentifiers: [NSToolbarItem.Identifier] = [
         ItemID.sidebar, .sidebarTrackingSeparator, ItemID.navigation, ItemID.recents, ItemID.crumb, .flexibleSpace,
-        .flexibleSpace, ItemID.theme, ItemID.notifications, ItemID.calendar, ItemID.inspector, ItemID.search,
-    ]
+        .flexibleSpace, ItemID.calendar] + Group.window + [ItemID.search]
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         Self.defaultIdentifiers
@@ -527,7 +553,9 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         case ItemID.inspector: item?.visibilityPriority = inspectorPriorityNow
         case ItemID.crumb: item?.visibilityPriority = crumbPriorityNow
         case ItemID.moduleAction: item?.visibilityPriority = Self.moduleActionPriority
-        case ItemID.quickConnectConsole, ItemID.quickConnectHosts: item?.visibilityPriority = quickConnectPriorityNow
+        case ItemID.quickConnectConsole, ItemID.quickConnectHosts, ItemID.calendar:
+            // S02: the Open group overflows as one.
+            item?.visibilityPriority = quickConnectPriorityNow
         case ItemID.focusTimer: item?.visibilityPriority = Self.focusChipPriority
         case ItemID.pageActions: item?.visibilityPriority = pageActionsPriorityNow
         case ItemID.search, ItemID.notifications, ItemID.theme, ItemID.tabs, ItemID.sidebar, ItemID.navigation,
@@ -712,7 +740,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     func setCompact(_ compact: Bool) {
         guard compact != isCompact else { return }
         isCompact = compact
-        for item in toolbar.items where ItemID.quickConnect.contains(item.itemIdentifier) {
+        for item in toolbar.items where Group.open.contains(item.itemIdentifier) {
             item.visibilityPriority = quickConnectPriorityNow
         }
         toolbar.items.first { $0.itemIdentifier == ItemID.pageActions }?.visibilityPriority = pageActionsPriorityNow
@@ -863,21 +891,23 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         } else if moduleActionIndex == nil {
             toolbar.insertItem(withItemIdentifier: ItemID.moduleAction, at: beforeTheFocusChipAndTheCluster)
         }
-        // Quick Connect's icons go in together and in order, just before the
-        // light/dark toggle, and a space follows them. Without it the system
-        // draws adjacent icons as one capsule, and the two icons became the
-        // first two of five with the trailing cluster's (measured in a real
-        // render), which is not the one group of two the captain asked for.
+        // Quick Connect's icons go in together and in order at the head of the
+        // Open group, just before the calendar (or the light/dark toggle, if
+        // the captain took the calendar out), and a space closes the group.
+        // Without it the system draws adjacent icons as one capsule, and the
+        // Open group ran into the Window group's (measured in a real render).
         let shownQuickConnect = toolbar.items.filter { ItemID.quickConnect.contains($0.itemIdentifier) }
         if wantedQuickConnect.isEmpty {
             removeQuickConnect()
-        } else if shownQuickConnect.map(\.itemIdentifier) != wantedQuickConnect || quickConnectSpaceIndex == nil {
+        } else if shownQuickConnect.map(\.itemIdentifier) != wantedQuickConnect {
             removeQuickConnect()
-            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
-            for (offset, identifier) in (wantedQuickConnect + [.space]).enumerated() {
+            let at = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.calendar }
+                ?? toolbar.items.firstIndex { $0.itemIdentifier == ItemID.theme } ?? toolbar.items.count
+            for (offset, identifier) in wantedQuickConnect.enumerated() {
                 toolbar.insertItem(withItemIdentifier: identifier, at: at + offset)
             }
         }
+        closeTheOpenGroup()
         let focusIndex = toolbar.items.firstIndex { $0.itemIdentifier == ItemID.focusTimer }
         if !wantsFocusChip {
             if let focusIndex { toolbar.removeItem(at: focusIndex) }
@@ -901,30 +931,55 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// when it shows, and before the trailing cluster otherwise - so the
     /// chip stays beside the cluster whichever came into the toolbar first.
     private var beforeTheFocusChipAndTheCluster: Int {
+        // S02: the cluster starts at the Open group - the calendar too, not
+        // only Quick Connect - so a page's action never lands between the
+        // Open and Window groups (measured on the Personal Home, where no
+        // Quick Connect shows and Customize split the two).
         toolbar.items.firstIndex {
-            $0.itemIdentifier == ItemID.focusTimer || ItemID.quickConnect.contains($0.itemIdentifier)
+            $0.itemIdentifier == ItemID.focusTimer || Group.open.contains($0.itemIdentifier)
                 || $0.itemIdentifier == ItemID.theme
         } ?? toolbar.items.count
     }
 
-    /// Where the focus chip goes in: before Quick Connect's icons when they
-    /// show, and before the light/dark toggle otherwise.
+    /// Where the focus chip goes in: before the Open group when it shows,
+    /// and before the light/dark toggle otherwise.
     private var beforeQuickConnectAndTheCluster: Int {
         toolbar.items.firstIndex {
-            ItemID.quickConnect.contains($0.itemIdentifier) || $0.itemIdentifier == ItemID.theme
+            Group.open.contains($0.itemIdentifier) || $0.itemIdentifier == ItemID.theme
         } ?? toolbar.items.count
     }
 
-    /// The space Quick Connect puts after its last icon, when it is there.
-    /// Found by position, so a space anywhere else is never taken for it.
-    private var quickConnectSpaceIndex: Int? {
-        guard let last = toolbar.items.lastIndex(where: { ItemID.quickConnect.contains($0.itemIdentifier) }),
-              last + 1 < toolbar.items.count, toolbar.items[last + 1].itemIdentifier == .space else { return nil }
-        return last + 1
+    /// The Open group's last item: the run of Open items that starts at the
+    /// first one. Only the items side by side are the group - a calendar the
+    /// captain dragged elsewhere is not.
+    private var openGroupEnd: Int? {
+        guard var end = toolbar.items.firstIndex(where: { Group.open.contains($0.itemIdentifier) }) else { return nil }
+        while end + 1 < toolbar.items.count, Group.open.contains(toolbar.items[end + 1].itemIdentifier) { end += 1 }
+        return end
+    }
+
+    /// The space that closes the Open group, when it is there. Found by
+    /// position, so a space anywhere else is never taken for it.
+    private var openGroupSpaceIndex: Int? {
+        guard let end = openGroupEnd, end + 1 < toolbar.items.count,
+              toolbar.items[end + 1].itemIdentifier == .space else { return nil }
+        return end + 1
+    }
+
+    /// S02: a space after the Open group, unless the group already ends at a
+    /// space of its own or at the toolbar's end.
+    private func closeTheOpenGroup() {
+        guard let end = openGroupEnd, openGroupSpaceIndex == nil, end + 1 < toolbar.items.count,
+              toolbar.items[end + 1].itemIdentifier != .flexibleSpace else { return }
+        toolbar.insertItem(withItemIdentifier: .space, at: end + 1)
     }
 
     private func removeQuickConnect() {
-        if let space = quickConnectSpaceIndex { toolbar.removeItem(at: space) }
+        // When Quick Connect was the whole group (the captain took the
+        // calendar out), the group's space goes with it.
+        if !toolbar.items.contains(where: { $0.itemIdentifier == ItemID.calendar }), let space = openGroupSpaceIndex {
+            toolbar.removeItem(at: space)
+        }
         for index in toolbar.items.indices.reversed()
         where ItemID.quickConnect.contains(toolbar.items[index].itemIdentifier) {
             toolbar.removeItem(at: index)

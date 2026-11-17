@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "1.4.0"
+    static let version = "1.5.0"
 
     struct Component {
         let name: String
@@ -213,7 +213,7 @@ enum HelmKit {
         Component("MorningBriefingCard", "1.0.1", file: "MorningBriefingCard.swift"),
         Component("StateVocabulary", "1.1.0", file: "StateVocabulary.swift"),
         Component("Tasks board (page)", "1.0.2", file: "ShiftBoardViews.swift"),
-        Component("WorkspaceToolbar", "1.0.0", file: "WorkspaceToolbar.swift"),
+        Component("WorkspaceToolbar", "1.1.0", file: "WorkspaceToolbar.swift"),
     ]
 
     struct SourceDigest {
