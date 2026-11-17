@@ -2285,6 +2285,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let detailNameField = HelmTextField()
     private let detailDescriptionField = HelmTextField()
     private let detailStatusPopup = HelmPopUpButton()
+    /// S13: the open project's stored identity colour.
+    private let detailHuePicker = ShiftProjectHuePicker(selected: ShiftProjectPalette.hues[0])
     private let detailStartDateField = HelmTextField(placeholder: "YYYY-MM-DD")
     private let detailDueDateField = HelmTextField(placeholder: "YYYY-MM-DD")
     private let detailSaveButton = HelmButton(title: "Save", variant: .primary, target: nil, action: nil)
@@ -2411,6 +2413,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             [gridLabel("Name"), detailNameField],
             [gridLabel("Description"), detailDescriptionField],
             [gridLabel("Status"), detailStatusPopup],
+            [gridLabel("Colour"), detailHuePicker],
             [gridLabel("Start date"), detailStartDateField],
             [gridLabel("Due date"), detailDueDateField],
         ])
@@ -2462,6 +2465,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             if let idx = ShiftProjectStatus.allCases.firstIndex(of: project.status) {
                 detailStatusPopup.selectItem(at: idx)
             }
+            detailHuePicker.select(ShiftProjectPalette.hue(for: project) ?? ShiftProjectPalette.hues[0])
         }
         applyDetailHeader(project)
         rebuildDetailTasks(project)
@@ -2525,6 +2529,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         project.startDate = detailStartDateField.stringValue.isEmpty ? nil : detailStartDateField.stringValue
         project.dueDate = detailDueDateField.stringValue.isEmpty ? nil : detailDueDateField.stringValue
+        project.hue = detailHuePicker.selectedHue
         store.updateProject(project)
         Toast.show(in: view, message: "Project saved")
         render()
@@ -2596,6 +2601,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// without navigating away and back, exactly like a new task/follow-up.
     private func presentProjectEditor() {
         let editor = ShiftProjectEditorController()
+        editor.initialHue = ShiftProjectPalette.firstFreeHue(among: store.projects)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             self.store.addProject(saved)
@@ -3136,8 +3142,8 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             for project in store.projects {
                 projectPopup.addItem(withTitle: project.name.isEmpty ? "Untitled project" : project.name)
                 projectPopup.lastItem?.representedObject = project.id
-                projectPopup.lastItem?.image = Self.projectDot(ShiftProjectPalette.tint(forProjectID: project.id),
-                                                              theme: theme)
+                projectPopup.lastItem?.image = Self.projectDot(
+                    ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project), in: theme))
             }
         }
         let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
@@ -3259,9 +3265,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     }
 
     /// A project's dot for its popup item, in the hue its cards and lanes use.
-    private static func projectDot(_ tint: HelmTint, theme: HelmTheme) -> NSImage {
+    private static func projectDot(_ hex: String) -> NSImage {
         let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
-            HelmTheme.nsColor(tint.hex(in: theme)).setFill()
+            HelmTheme.nsColor(hex).setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
             return true
         }
@@ -3312,9 +3318,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         row.cells["task"] = .title(task.title, subtitle: subtitle, subtitleIsCode: false, symbol: nil,
                                    tint: .neutral, tintHex: nil)
         let project = task.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
-        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
-                                                     tint: ShiftProjectPalette.tint(forProjectID: task.projectID),
-                                                     theme: theme))
+        row.cells["project"] = .view(ShiftProjectTag(
+            name: project?.name ?? "No project",
+            hex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: task.projectID), in: theme),
+            theme: theme))
         row.cells["status"] = .muted(column.title)
         if let pill = ShiftTaskSignals.priorityPill(task.priority) {
             let chip = HelmStatusPill(style: .pill)
@@ -3412,9 +3419,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         row.cells["followUp"] = .title(item.title, subtitle: nil, subtitleIsCode: false, symbol: nil,
                                        tint: .neutral, tintHex: nil)
         let project = item.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
-        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
-                                                     tint: ShiftProjectPalette.tint(forProjectID: item.projectID),
-                                                     theme: theme))
+        row.cells["project"] = .view(ShiftProjectTag(
+            name: project?.name ?? "No project",
+            hex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: item.projectID), in: theme),
+            theme: theme))
         row.cells["status"] = .muted(isDone ? "Done" : "Pending")
         if let pill = ShiftTaskSignals.priorityPill(item.priority) {
             let chip = HelmStatusPill(style: .pill)
@@ -3613,12 +3621,12 @@ final class ShiftProjectTag: NSView {
     private let dot = NSView()
     private let label = NSTextField(labelWithString: "")
 
-    init(name: String, tint: HelmTint, theme: HelmTheme) {
+    init(name: String, hex: String, theme: HelmTheme) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         dot.wantsLayer = true
         dot.layer?.cornerRadius = Self.dotSide / 2
-        dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+        dot.layer?.backgroundColor = HelmTheme.nsColor(hex).cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = name
         label.font = HelmType.body()

@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "1.7.0"
+    static let version = "2.0.0"
 
     struct Component {
         let name: String
@@ -92,7 +92,7 @@ enum HelmKit {
         Component("HelmDomainHue", "1.0.0", file: "HelmDaylight.swift"),
         // HelmDesignSystem.swift
         Component("HelmAccentRow", "1.0.0", file: "HelmDesignSystem.swift"),
-        Component("HelmButton", "1.0.0", file: "HelmDesignSystem.swift"),
+        Component("HelmButton", "1.1.0", file: "HelmDesignSystem.swift"),
         Component("HelmCard", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmCountBadge", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmEmptyState", "1.0.0", file: "HelmDesignSystem.swift"),
@@ -171,7 +171,7 @@ enum HelmKit {
         // HelmOverflowHint.swift
         Component("HelmOverflowHint", "1.0.0", file: "HelmOverflowHint.swift"),
         // HelmPageSidebar.swift
-        Component("HelmPageSidebar", "1.1.0", file: "HelmPageSidebar.swift"),
+        Component("HelmPageSidebar", "1.2.0", file: "HelmPageSidebar.swift"),
         // HelmPlateCard.swift
         Component("HelmPlateCard", "1.1.1", file: "HelmPlateCard.swift"),
         // HelmRevealableSecretField.swift
@@ -209,6 +209,7 @@ enum HelmKit {
     /// App-level views the proposals version alongside the kit. Not hashed;
     /// see the file header.
     static let surfaces: [Component] = [
+        Component("ShiftProjectPalette", "2.0.0", file: "ShiftBoardViews.swift"),
         Component("Home Health card", "1.0.1", file: "HomeCanvasController.swift"),
         Component("Home Tasks card", "1.0.1", file: "HomeCanvasController.swift"),
         Component("MorningBriefingCard", "1.0.1", file: "MorningBriefingCard.swift"),
@@ -235,7 +236,7 @@ enum HelmKit {
         SourceDigest(file: "HelmDataTable.swift", stamp: "HelmDataTable@1.0.0,HelmDataTableActionsCell@1.0.0,HelmDataTableRowView@1.0.0,HelmDataTableRunDotsCell@1.0.0,HelmTagChip@1.0.0", sha256: "86d47ee1a1d1e68003ac63f882f31bd55a49fbc1a4348039729ffe907093b294"),
         SourceDigest(file: "HelmDateField.swift", stamp: "HelmDateField@1.0.0", sha256: "5f99cbfec49aa505d830385f27c038c793791c8f4f90be50896823841be934be"),
         SourceDigest(file: "HelmDaylight.swift", stamp: "HelmDomainHue@1.0.0", sha256: "4cf96b3b4987874ec79c91382329d21684cf1ce2ddc275809ad26690510f073e"),
-        SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.0.0,HelmCard@1.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.0,HelmFocusRing@1.0.0,HelmMetrics@1.0.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.0.0,HelmStatTile@1.0.0,HelmType@1.0.0", sha256: "14b78ba80501a7369e4456d64ee431bfc193b30873481d79c83b1f4f6a5171c1"),
+        SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.1.0,HelmCard@1.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.0,HelmFocusRing@1.0.0,HelmMetrics@1.0.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.0.0,HelmStatTile@1.0.0,HelmType@1.0.0", sha256: "6157747c2f7db9aa3565de64096825f470c4035a4b2066704a998da379d6ab87"),
         SourceDigest(file: "HelmDrillHeader.swift", stamp: "HelmDrillHeader@1.0.0", sha256: "73712c9e058defa127936a03d9b47618e039e031d7713652d471db2c1a29480b"),
         SourceDigest(file: "HelmFocusVisibility.swift", stamp: "HelmFocusVisibility@1.0.0", sha256: "de4eab8dd4eac530b4f2c41fe9a9da80ae8e1665b02c9a4424df5c8dd6f9872f"),
         SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.0.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.0.0,HelmFieldCard@1.0.0,HelmFieldCentering@1.0.0,HelmFormSheet@1.0.0,HelmSearchField@1.0.0,HelmSecureTextField@1.0.0,HelmTextField@1.0.0,HelmTextView@1.0.0,HelmToggle@1.0.0,HelmToggleRow@1.0.0", sha256: "fd963300a638f252103670c0759a6ec0949c589421a171f8d9311ae7b1a1b366"),
@@ -250,7 +251,7 @@ enum HelmKit {
         SourceDigest(file: "HelmMotion.swift", stamp: "HelmDisplayAccessibility@1.0.0,HelmMotion@1.0.0", sha256: "d4c8c1bfa26b3f14604b271d024f5e4445656c3989364b80cf9dc29dc058173b"),
         SourceDigest(file: "HelmNestedScrollView.swift", stamp: "HelmNestedScrollView@1.0.0", sha256: "f7f7f1af0345d92201f8d86b3a02625e31e887258cb7ca078a2c978c8fbf2ede"),
         SourceDigest(file: "HelmOverflowHint.swift", stamp: "HelmOverflowHint@1.0.0", sha256: "5ad0c7b7fcd180a18f38e1f0de119b44a752bc3dd93990b7ce3b1d68759233f6"),
-        SourceDigest(file: "HelmPageSidebar.swift", stamp: "HelmPageSidebar@1.1.0", sha256: "512627a57ea2fec95ad28cece079d331dee08765d120c0f82497642d00d7aa1a"),
+        SourceDigest(file: "HelmPageSidebar.swift", stamp: "HelmPageSidebar@1.2.0", sha256: "0e9d15e7fdeb8196d36a67c0615732240bf114aabdd63806115bc9c889ca8a60"),
         SourceDigest(file: "HelmPlateCard.swift", stamp: "HelmPlateCard@1.1.1", sha256: "1865ad7c7c199b05745191c02d520312deae694e72149d67184841bea0c0d4d8"),
         SourceDigest(file: "HelmRevealableSecretField.swift", stamp: "HelmRevealableSecretField@1.0.0", sha256: "0c7ef5b228b5bb38c51c646e74d1985cb220e26998251f86f7b1fe3845d65398"),
         SourceDigest(file: "HelmScrollMemory.swift", stamp: "HelmScrollMemory@1.0.0", sha256: "462b598c2a7fe6105bb84271f16a5829fd8ae1fd5c5f221b2a02801c066f18a2"),

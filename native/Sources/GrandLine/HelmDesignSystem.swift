@@ -1076,6 +1076,13 @@ final class HelmButton: NSButton {
         didSet { if tint != oldValue { restyle() } }
     }
 
+    /// A literal hue for the label, overriding `tint`, for a button that
+    /// stands for a record carrying its own stored colour (a Tasks project's
+    /// filter chip since S13). Contrast-corrected exactly as `tint` is.
+    var tintHex: String? {
+        didSet { if tintHex != oldValue { restyle() } }
+    }
+
     /// The page's own domain hue (Daylight §6.6): what a `.primary` button on
     /// this page is filled with, and what a focus ring on it takes.
     ///
@@ -1373,7 +1380,8 @@ final class HelmButton: NSButton {
     }
 
     static func palette(variant: Variant, tint: HelmTint?, theme: HelmTheme,
-                        domainHue: HelmDomainHue? = nil) -> Palette {
+                        domainHue: HelmDomainHue? = nil, tintHex: String? = nil) -> Palette {
+        let tint = tintHex ?? tint?.hex(in: theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let hoverWash = line.withAlphaComponent(0.30)
@@ -1473,7 +1481,7 @@ final class HelmButton: NSButton {
     ///   action, which is what `HelmPageToolbar.iconButton` needs and asserts.
     /// - `.quiet` - "ghost": transparent, `muted` label, `inset` on hover.
     /// - `.destructive` - a `bad` wash with §2.4's corrected `badText` label.
-    private static func daylightPalette(variant: Variant, tint: HelmTint?, theme: HelmTheme,
+    private static func daylightPalette(variant: Variant, tint: String?, theme: HelmTheme,
                                         domainHue: HelmDomainHue?) -> Palette {
         let ink = HelmTheme.nsColor(theme.daylightTokens.ink)
         let muted = HelmTheme.nsColor(theme.daylightTokens.muted)
@@ -1674,9 +1682,9 @@ final class HelmButton: NSButton {
     /// the same way rather than re-deriving it (two of the three stat-tile
     /// copies it replaced set a metric label to the raw hue - the §5.7
     /// mistake).
-    private static func label(tint: HelmTint?, over surface: NSColor, theme: HelmTheme) -> NSColor? {
+    private static func label(tint: String?, over surface: NSColor, theme: HelmTheme) -> NSColor? {
         guard let tint else { return nil }
-        return HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme), over: surface, theme: theme)
+        return HelmContrast.legibleTintedText(tintHex: tint, over: surface, theme: theme)
     }
 
     /// E1's micro-states.
@@ -1760,7 +1768,7 @@ final class HelmButton: NSButton {
         // UI2: a disabled button is a different recipe, not the same one at a
         // lower alpha. See `disabledPalette`.
         let p = isEnabled
-            ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
+            ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue, tintHex: tintHex)
             : Self.disabledPalette(variant: variant, theme: theme)
 
         let fill: NSColor

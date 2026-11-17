@@ -279,7 +279,7 @@ enum ShiftTasksPageSelfTest {
                 // `HelmContrast.ratio` is a luminance comparison, so two
                 // different hues of similar brightness pass it.
                 let expected = HelmTheme.nsColor(
-                    ShiftProjectPalette.tint(forProjectID: ids[index]).hex(in: ThemeManager.shared.theme))
+                    ShiftProjectPalette.hex(forProjectID: ids[index], in: store.projects, theme: ThemeManager.shared.theme))
                 guard let painted = column.debugDotColor(id: id) else {
                     check(false, "\(name) should be led by a dot, not a symbol")
                     continue

@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
-// The 2026-11-17 UI/UX proposals the captain approved (S01, S02, S04 to S11),
-// checked where a check can be made without a window. Each case names its
+// The 2026-11-17 UI/UX proposals the captain approved (S01, S02, S04 to S18,
+// S20, S21, S23 to S27), checked where a check can be made without a window. Each case names its
 // proposal. The window-backed halves (geometry that needs a real layout pass
 // in a real window) live in the existing window suites that already measure
 // those pages.
@@ -15,6 +15,7 @@
 #if FM_SELFTESTS
 
 import AppKit
+import Yaml
 
 enum UIUXProposalsSelfTest {
 
@@ -27,6 +28,7 @@ enum UIUXProposalsSelfTest {
             ("S11 one verdict per card", checkTheHealthCardHasOneVerdict),
             ("S10 the briefing reads as prose", checkTheBriefingIsInk),
             ("S04 one page-sidebar surface", checkOneSidebarSurface),
+            ("S13 project colours are a stored identity", checkProjectHuesAreIdentity),
         ]
         for (name, body) in cases {
             var ok = true
@@ -188,6 +190,71 @@ enum UIUXProposalsSelfTest {
         for page in ["ShiftController.swift", "HostsController.swift", "CredentialVaultSidebar.swift"] {
             check(source(page).contains("HelmPageSidebar(surface: .plain)"), "S04: \(page) keeps its plain column", &ok)
         }
+    }
+
+    // MARK: - S13
+
+    /// Project colours come from the categorical ramp, never a theme's status
+    /// tokens; a new project takes the first free hue and keeps it on disk; a
+    /// record written before the field existed still decodes (GL-01) and
+    /// falls back to the hash.
+    private static func checkProjectHuesAreIdentity(_ ok: inout Bool) {
+        let identity = Set(ShiftProjectPalette.hues.map { $0.categoricalHex.uppercased() })
+        check(identity.count == ShiftProjectPalette.hues.count, "S13: the identity hues are all distinct", &ok)
+        for theme in HelmTheme.appThemes {
+            let status = [HelmTint.critical, .warn].map { $0.hex(in: theme).uppercased() }
+            check(identity.isDisjoint(with: status),
+                  "S13: \(theme.id): no project hue is the theme's overdue red or warning amber", &ok)
+        }
+
+        // Three projects, three colours, in the documented order.
+        var projects: [ShiftProject] = []
+        for name in ["Infra hardening", "Release 4.20", "SRE hiring"] {
+            var p = ShiftProject.fresh()
+            p.name = name
+            p.hue = ShiftProjectPalette.firstFreeHue(among: projects)
+            projects.append(p)
+        }
+        check(projects.compactMap(\.hue) == [.blue, .teal, .violet],
+              "S13: three new projects take blue, teal and violet, got \(projects.compactMap(\.hue))", &ok)
+        // A legacy project (no stored hue) still counts as wearing its fallback.
+        var legacy = ShiftProject.fresh()
+        legacy.id = "legacy-project"
+        let legacyHue = ShiftProjectPalette.fallbackHue(forProjectID: legacy.id)
+        check(ShiftProjectPalette.firstFreeHue(among: [legacy]) != legacyHue,
+              "S13: a new project never repeats a legacy project's fallback hue while one is free", &ok)
+
+        // The YAML round trip, and a record with no `hue` key.
+        var stored = ShiftProject.fresh()
+        stored.hue = .rose
+        check(ShiftYaml.project(from: ShiftYaml.toYaml(stored))?.hue == .rose, "S13: the hue round-trips through YAML", &ok)
+        var withoutKey = YamlOrderedMap()
+        withoutKey[.string("id", quoted: .double)] = .string("old", quoted: .double)
+        withoutKey[.string("name", quoted: .double)] = .string("Old project", quoted: .double)
+        let decoded = ShiftYaml.project(from: .dictionary(withoutKey))
+        check(decoded != nil && decoded?.hue == nil, "S13: a record written before the field decodes with no hue", &ok)
+        check(ShiftProjectPalette.hue(for: decoded) == ShiftProjectPalette.fallbackHue(forProjectID: "old"),
+              "S13: a record with no stored hue resolves through the hash fallback", &ok)
+
+        // The store assigns on create, through its real API, in a scratch root.
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("uiux-s13-\(UUID().uuidString)")
+        setenv("FM_SHIFT_DIR", root.path, 1)
+        defer {
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: root)
+        }
+        let store = ShiftStore()
+        for name in ["One", "Two", "Three"] {
+            var p = ShiftProject.fresh()
+            p.name = name
+            store.addProject(p)
+        }
+        let hues = store.projects.filter { ["One", "Two", "Three"].contains($0.name) }.compactMap(\.hue)
+        check(Set(hues).count == 3, "S13: the store gives three new projects three different hues, got \(hues)", &ok)
+        let reread = ShiftStore()
+        check(reread.projects.compactMap(\.hue) == store.projects.compactMap(\.hue),
+              "S13: the assigned hues are stored on disk, not recomputed", &ok)
     }
 
     // MARK: - Helpers

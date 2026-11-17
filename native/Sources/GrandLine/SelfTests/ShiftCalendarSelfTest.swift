@@ -755,7 +755,7 @@ enum ShiftCalendarSelfTest {
         let groups = payload["groups"] as? [[String: Any]] ?? []
         check(groups.map { $0["title"] as? String ?? "" } == ["Infra", "No project"] && groups.first?["count"] as? Int == 1,
               "groups cross in order with their counts")
-        check(groups.first?["dot"] as? String == "#" + ShiftProjectPalette.tint(forProjectID: "p-infra").hex(in: theme),
+        check(groups.first?["dot"] as? String == "#" + ShiftProjectPalette.hex(forProjectID: "p-infra", in: [], theme: theme),
               "a project group's dot is its project's colour")
         check(groups.last?["dot"] as? String == "",
               "No project's dot is left to the page's faint ink, never page ink (the .neutral rule)")
@@ -928,9 +928,9 @@ enum ShiftCalendarSelfTest {
 
         // A project's chip is its board hue; no project is the neutral well,
         // never a wash of page ink (AGENTS.md's `.neutral` rule).
-        let infraColours = ShiftCalendarPalette.projectColours(infra.id, theme: theme)
+        let infraColours = ShiftCalendarPalette.projectColours(infra.id, theme: theme, projects: projects)
         check(infraColours["main"]?.uppercased()
-                == "#" + ShiftProjectPalette.tint(forProjectID: infra.id).hex(in: theme).uppercased(),
+                == "#" + ShiftProjectPalette.hex(forProjectID: infra.id, in: projects, theme: theme).uppercased(),
               "a project's chip edge is its board hue, got \(infraColours["main"] ?? "nil")")
         for palette in HelmTheme.appThemes {
             let none = ShiftCalendarPalette.projectColours(nil, theme: palette)
