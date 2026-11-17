@@ -831,6 +831,9 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         inspectorWanted = shown
         inspectorPinnedOpen = shown
+        // S27: a page with no details shows the crew panel while the pane is
+        // open, and lets go of it when the pane closes.
+        if inspectorSource == nil { inspector.setContent(shown ? crewPanelContent() : nil) }
         let details = shown && inspectorSource?.inspectorContent != nil
         if shown {
             if details { contentItem.minimumThickness = Self.inspectorColumnMinimum }
@@ -932,8 +935,11 @@ final class MainSplitShellController: WorkspaceShellController {
         // pane shows the crew panel (Operator) or its shortcuts (Personal)
         // instead of "No details". Only the page's own details open the pane
         // by themselves, below.
-        inspector.setContent(content ?? (inspectorSource == nil ? crewPanelContent() : nil),
-                             emptyText: inspectorSource?.inspectorEmptyText)
+        // Mounted only while the captain has the pane open: a collapsed pane
+        // holding the panel kept its constraints in the window's graph
+        // (gotcha (15)) for nothing anyone could see.
+        let crewPanel = inspectorSource == nil && inspectorPinnedOpen ? crewPanelContent() : nil
+        inspector.setContent(content ?? crewPanel, emptyText: inspectorSource?.inspectorEmptyText)
         // The captain's standing request (`inspectorPinnedOpen`) holds on
         // every page, so an inspector they opened stays open across a page
         // change, on the page's empty state where it fills nothing. R4-UX-05

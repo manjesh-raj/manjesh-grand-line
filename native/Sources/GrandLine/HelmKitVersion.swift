@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "4.0.3"
+    static let version = "4.0.4"
 
     struct Component {
         let name: String
@@ -214,7 +214,7 @@ enum HelmKit {
     /// see the file header.
     static let surfaces: [Component] = [
         Component("StrawHatMenuBarPopoverController", "1.1.0", file: "StrawHatMenuBar.swift"),
-        Component("WorkspaceInspectorCrewPanel", "1.0.0", file: "WorkspaceInspectorCrewPanel.swift"),
+        Component("WorkspaceInspectorCrewPanel", "1.0.1", file: "WorkspaceInspectorCrewPanel.swift"),
         Component("WorkspaceInspector", "2.0.0", file: "WorkspaceInspector.swift"),
         Component("PageShortcuts", "1.1.0", file: "HiddenPowerTips.swift"),
         Component("WorkspaceGoMenu", "1.1.0", file: "MainMenuBuilder.swift"),

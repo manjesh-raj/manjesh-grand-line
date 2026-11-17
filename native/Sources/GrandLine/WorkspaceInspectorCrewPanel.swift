@@ -114,9 +114,16 @@ final class WorkspaceInspectorCrewPanel: NSViewController {
         stack.spacing = HelmMetrics.s3
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
+        // The composer inside holds a required width of its own. Tied to the
+        // pane at 490, under the window's 500, it can never be a width floor
+        // on the window or the split view when the pane collapses (gotcha
+        // (13)); measured, a required tie collapsed the sidebar at Home's
+        // narrowest width on a 1x CI runner.
+        let trailing = stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3)
+        trailing.priority = NSLayoutConstraint.Priority(490)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
+            trailing,
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -HelmMetrics.s3),
         ])

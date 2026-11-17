@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 4.0.4 - S27 follow-up: the crew panel is never a width floor
+
+- `WorkspaceInspectorCrewPanel` 1.0.0 → 1.0.1 (patch): the panel's tie to the inspector pane yields at 490, so the composer's own required width can never be a floor on the window or the split view, and the shell mounts the panel only while the captain has the pane open. A collapsed pane holding it collapsed the sidebar at Home's narrowest width on CI's 1x runner (`MainSplitShellSelfTest`, "homeCanvas at 898pt").
+
 ## 4.0.3 - S23 follow-up: the no-session wall sits in the middle of the page
 
 - `Kubernetes (page)` 1.0.1 → 1.0.2 (patch): with no live host session the page is the "No live host session" wall centred in the page, and the Session card hides. Shortening the card's explanation in S23 had moved the wall out of the middle third UXP-13 requires (`PagePolishUXPSelfTest`).
