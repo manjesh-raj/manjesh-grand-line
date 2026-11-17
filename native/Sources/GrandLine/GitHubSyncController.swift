@@ -1207,7 +1207,13 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         let failed = row.status == .checkFailed || row.status == .syncFailed || row.status.isDiverged
         // The reason an action stopped outranks the status line: "Diverged"
         // is already in the Behind column, and the conflict is the news.
-        let subtitle = row.problem.map { "Not changed: \($0.reason)" } ?? (failed || row.status.hasOwnCommits ? row.detail : nil)
+        // S24: a failed check or sync says what failed, why and what to do -
+        // the shape Health and Updates already use - and keeps the raw
+        // command for Show Details.
+        let explained = (row.status == .checkFailed || row.status == .syncFailed)
+            ? Self.failureExplanation(detail: row.detail, syncing: row.status == .syncFailed).sentence : nil
+        let subtitle = row.problem.map { "Not changed: \($0.reason)" }
+            ?? explained ?? (failed || row.status.hasOwnCommits ? row.detail : nil)
         tableRow.cells["fork"] = .title(row.repo.fullName, subtitle: subtitle, subtitleIsCode: false,
                                         symbol: "point.3.connected.trianglepath.dotted", tint: .neutral, tintHex: nil)
         if let upstream = row.upstreamFullName ?? row.repo.manualUpstreamFullName {
@@ -1243,6 +1249,37 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         }
         tableRow.activate = { [weak self] in self?.showForkDetails(row) }
         return tableRow
+    }
+
+    /// S24: the gh failure a fork row shows, as what failed, why and what to
+    /// do (`ScheduleFailureExplanation`, R5-UX-08's shape), from the cases gh
+    /// actually reports. The raw output stays in Show Details.
+    static func failureExplanation(detail: String, syncing: Bool) -> ScheduleFailureExplanation {
+        let text = detail.lowercased()
+        let what = syncing ? "Couldn't sync with upstream" : "Couldn't reach GitHub"
+        func has(_ words: [String]) -> Bool { words.contains { text.contains($0) } }
+        if has(["auth login", "not logged", "authentication", "http 401", "bad credentials"]) {
+            return .init(whatFailed: what, why: "gh is not signed in on this Mac",
+                         whatToDo: "run gh auth login, then Check again")
+        }
+        if has(["command not found", "no such file", "not installed", "executable"]) {
+            return .init(whatFailed: what, why: "gh is not installed",
+                         whatToDo: "install it from \(PlaceName.of(.updates)), then Check again")
+        }
+        if has(["rate limit", "http 403", "secondary rate"]) {
+            return .init(whatFailed: what, why: "GitHub's API rate limit was reached",
+                         whatToDo: "wait a few minutes, then Check again")
+        }
+        if has(["http 404", "not found", "could not resolve to a repository"]) {
+            return .init(whatFailed: what, why: "GitHub does not know this repository, or it is private to another account",
+                         whatToDo: "check its name, then Check again")
+        }
+        if has(["could not resolve host", "network", "offline", "timed out", "timeout", "connection"]) {
+            return .init(whatFailed: what, why: "this Mac could not reach github.com",
+                         whatToDo: "check the network, then Check again")
+        }
+        // Short enough that the next step survives the fork column's width.
+        return .init(whatFailed: what, why: "no answer from gh", whatToDo: "Show Details, then Check again")
     }
 
     private func behindCell(_ status: GitHubSyncStatus) -> HelmDataTable.Cell {

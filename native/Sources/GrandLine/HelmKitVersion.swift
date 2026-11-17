@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "3.4.1"
+    static let version = "3.4.2"
 
     struct Component {
         let name: String
@@ -211,6 +211,7 @@ enum HelmKit {
     /// App-level views the proposals version alongside the kit. Not hashed;
     /// see the file header.
     static let surfaces: [Component] = [
+        Component("GitHub sync (page)", "1.0.1", file: "GitHubSyncController.swift"),
         Component("Kubernetes (page)", "1.0.1", file: "KubernetesController.swift"),
         Component("SettingsThemeCard", "1.2.0", file: "SettingsThemeCard.swift"),
         Component("ShiftProjectPalette", "2.0.0", file: "ShiftBoardViews.swift"),

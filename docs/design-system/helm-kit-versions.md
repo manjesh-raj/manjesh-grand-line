@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 3.4.2 - S24: GitHub sync rows say what to do
+
+- `GitHub sync (page)` 1.0.0 → 1.0.1 (patch): a fork whose check or sync failed reads what failed, why and what to do ("Couldn't reach GitHub · gh is not signed in on this Mac · run gh auth login, then Check again"), mapped from gh's cases (not signed in, not installed, rate limited, repository missing, no network, anything else). The raw command and output stay in Show Details. It enters the table at this release.
+
 ## 3.4.1 - S23: the Kubernetes page shows its shape
 
 - `Kubernetes (page)` 1.0.0 → 1.0.1 (patch): until a feed tab exists, the Pods table's header (naming the namespace, "appears once a feed tab is logged in") over skeleton rows fills the page under the Session card, and the card's two-sentence explanation is one shorter line that keeps the pause warning. It enters the table at this release.

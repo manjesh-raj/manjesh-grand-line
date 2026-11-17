@@ -38,6 +38,7 @@ enum UIUXProposalsSelfTest {
             ("S26 theme tiles show the pair", checkThemeTilesShowThePair),
             ("S18 loading states for the web islands", checkIslandLoaders),
             ("S23 Kubernetes shows its shape", checkKubernetesShowsItsShape),
+            ("S24 GitHub sync rows say what to do", checkGitHubSyncRowsSayWhatToDo),
         ]
         for (name, body) in cases {
             var ok = true
@@ -535,6 +536,32 @@ enum UIUXProposalsSelfTest {
         check(render.contains("appears once a feed tab is logged in"), "S23: its header names the namespace", &ok)
         check(!page.contains("Typing into the feed tab yourself pauses automated commands until it goes quiet again.\")"),
               "S23: the session card's explanation is shorter, keeping the pause warning", &ok)
+    }
+
+    // MARK: - S24
+
+    /// gh's failure cases map to what failed, why and what to do, never the
+    /// raw command, and every case ends in a next step.
+    private static func checkGitHubSyncRowsSayWhatToDo(_ ok: inout Bool) {
+        let cases: [(String, String)] = [
+            ("gh api repos/manjesh-raj/treehouse failed: To get started with GitHub CLI, please run: gh auth login", "gh is not signed in"),
+            ("gh: command not found", "gh is not installed"),
+            ("HTTP 403: API rate limit exceeded", "rate limit"),
+            ("gh api repos/x/y failed: HTTP 404: Not Found", "does not know this repository"),
+            ("error connecting to api.github.com: dial tcp: lookup api.github.com: no such host - could not resolve host", "could not reach github.com"),
+            ("gh api repos/x/y failed", "no answer from gh"),
+        ]
+        for (detail, why) in cases {
+            let explained = GitHubSyncController.failureExplanation(detail: detail, syncing: false)
+            check(explained.whatFailed == "Couldn't reach GitHub" && explained.why.contains(why),
+                  "S24: \"\(detail.prefix(40))\" explains as \(explained.why)", &ok)
+            check(explained.whatToDo.hasSuffix("Check again") && !explained.sentence.contains("gh api"),
+                  "S24: the row says what to do and never prints the command", &ok)
+        }
+        check(GitHubSyncController.failureExplanation(detail: "x", syncing: true).whatFailed == "Couldn't sync with upstream",
+              "S24: a failed sync says so", &ok)
+        check(ScheduleFailureExplanation(whatFailed: "A", why: "B", whatToDo: "C").sentence == "A \u{00B7} B \u{00B7} C",
+              "S24: the three parts read as one line", &ok)
     }
 
     // MARK: - S13
