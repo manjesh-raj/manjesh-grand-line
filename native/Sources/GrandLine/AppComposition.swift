@@ -1582,6 +1582,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         })
     }
 
+    /// Settings > Shortcuts, from anywhere: the Settings module, then its
+    /// Shortcuts page.
+    func showShortcutsSettings() {
+        appShell.workspace.navigator.show(.settings)
+        appShell.workspace.settings.select(.shortcuts)
+    }
+
     /// Help → "Shortcuts for This Page" (⌘/) - R5-UX-03. The chords for the
     /// page on screen and the few that work everywhere; its button opens the
     /// full list above.
@@ -1596,13 +1603,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // After this sheet has gone, so the full one is not stacked.
                 DispatchQueue.main.async { self?.showKeyboardShortcuts() }
             })
-    }
-
-    /// Settings > Shortcuts, from anywhere: the Settings module, then its
-    /// Shortcuts page.
-    func showShortcutsSettings() {
-        appShell.workspace.navigator.show(.settings)
-        appShell.workspace.settings.select(.shortcuts)
     }
 
     /// Help → "Manual Checks" - UX3's second Help item.

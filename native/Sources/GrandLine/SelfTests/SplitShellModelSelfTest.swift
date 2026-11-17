@@ -796,11 +796,18 @@ enum SplitShellModelSelfTest {
             return
         }
         // Home's arranged cards are the sidebar layout's: it hands the canvas
-        // the captain's layout, the floating bar never does, and without one
-        // the hub keeps its hand-placed dashboard.
+        // the captain's layout. R5-UX-07: the floating bar hands one only to a
+        // Personal profile, and an Operator's floating Home keeps the
+        // hand-placed hub - it is handed `nil`.
         check(shell.contains("workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout"),
               "the sidebar layout no longer gives Home the captain's arranged cards", &ok)
-        check(!classic.contains("cardLayout"), "the floating bar hands Home a card layout, which would replace its hub", &ok)
+        let personalOnly = classic.range(of: "guard AppSettings.shared.effectiveProfile == .personal else {")
+        let operatorHub = classic.range(of: "canvas.cardLayout = nil")
+        let personalLayout = classic.range(of: "canvas.cardLayout = AppSettings.shared.homeCardLayout")
+        check(personalOnly != nil && operatorHub != nil && personalLayout != nil
+                && personalOnly!.lowerBound < operatorHub!.lowerBound && operatorHub!.lowerBound < personalLayout!.lowerBound
+                && classic.components(separatedBy: "cardLayout =").count == 3,
+              "the floating bar hands Home a card layout outside a Personal profile, which would replace its hub", &ok)
         check(canvas.contains("private var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
               "Home's hub no longer keeps its dashboard when no layout is set", &ok)
         // The four pages whose own tabs are a module's tabs.
