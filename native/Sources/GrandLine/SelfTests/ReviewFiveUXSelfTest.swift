@@ -21,6 +21,7 @@ enum ReviewFiveUXSelfTest {
         checkTheConsoleToolbarFollowsTheProfile(&ok)
         checkPersonalHomeLeadsWithWhatYouCanActOn(&ok)
         checkOneWordPerState(&ok)
+        checkFailuresSayWhatToDo(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -270,6 +271,51 @@ enum ReviewFiveUXSelfTest {
             }
         }
         check(scanned > 100, "R5-UX-02: the retired-word scan read only \(scanned) files", &ok)
+    }
+
+    // MARK: R5-UX-08 - errors that say what to do
+
+    private static func checkFailuresSayWhatToDo(_ ok: inout Bool) {
+        // The review's own example, on the Health page.
+        let gh = FailureExplainer.explain(service: .backgroundSignals,
+                                          detail: "gh: could not reach api.github.com", canRetry: true)
+        check(FailureExplainer.cause(of: "gh: could not reach api.github.com") == .network
+                && gh.why == "Gh: could not reach api.github.com." && gh.whatToDo.contains("connection")
+                && gh.whatToDo.contains("press Retry") && !gh.whatFailed.isEmpty,
+              "R5-UX-08: the Health page's network error reads \(gh)", &ok)
+        // A row with no Retry never names one.
+        let noRetry = FailureExplainer.explain(service: .fleetTasks, detail: "connection refused", canRetry: false)
+        check(!noRetry.whatToDo.contains("Retry"), "R5-UX-08: a row without Retry tells the captain to press it", &ok)
+        // Each cause reads its own way, and an unclassified error still has
+        // a next step.
+        let causes: [(String, FailureExplainer.Cause)] = [
+            ("fatal: Authentication failed for 'https://github.com/x/y'", .signedOut),
+            ("write failed: No space left on device", .diskFull),
+            ("'herdr' not found on PATH", .missingTool),
+            ("open: Operation not permitted", .permission),
+            ("git fetch timed out after 60s", .timedOut),
+            ("exit 1", .unknown),
+        ]
+        for (text, want) in causes {
+            check(FailureExplainer.cause(of: text) == want, "R5-UX-08: \"\(text)\" reads as \(FailureExplainer.cause(of: text))", &ok)
+        }
+        for service in HealthService.allCases {
+            let e = FailureExplainer.explain(service: service, detail: "exit 1", canRetry: false)
+            check(!e.whatFailed.isEmpty && !e.whatToDo.isEmpty, "R5-UX-08: \(service) has no next step for an unknown error", &ok)
+        }
+        // Updates: "Check failed" with the reason and what to do.
+        let npm = FailureExplainer.explain(tool: "claude", status: .checkFailed,
+                                           detail: "Installed 1.0.3 - could not reach npm registry for the latest version", log: "")
+        check(npm.whatFailed == "claude couldn\u{2019}t be checked for updates." && npm.whatToDo.contains("press Check"),
+              "R5-UX-08: a failed npm check reads \(npm)", &ok)
+        if let updates = source("UpdatesController.swift"), let health = source("HealthCardView.swift") {
+            check(updates.contains("let subtitle = failed ? Self.failureExplanation(row).rowLine : nil")
+                    && updates.contains("row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail")
+                    && updates.contains("detail.fields.append(.init(\"What to do\", failure.whatToDo))"),
+                  "R5-UX-08: an Updates row no longer says what to do in both layouts and its details", &ok)
+            check(health.components(separatedBy: "FailureExplainer.explain(service: service").count == 3,
+                  "R5-UX-08: a Health row no longer says what to do in both layouts", &ok)
+        }
     }
 
     // MARK: R5-UX-05 - Knowledge split

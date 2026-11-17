@@ -976,7 +976,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     }
 
     private func render(_ row: UpdateRow) {
-        row.detailLabel.stringValue = row.detail
+        // R5-UX-08: the floating bar's row too says why and what to do.
+        let failed = row.status == .checkFailed || row.status == .updateFailed
+        row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
         // The pill itself is painted by `applyThemeToRow` (called further
@@ -1275,7 +1277,10 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
     private func toolRow(_ row: UpdateRow) -> HelmDataTable.Row {
         var tableRow = HelmDataTable.Row.record(row.item.id)
         let failed = row.status == .checkFailed || row.status == .updateFailed
-        tableRow.cells["tool"] = .title(row.item.name, subtitle: failed ? row.detail : nil, subtitleIsCode: false,
+        // R5-UX-08: a failed row says why and what to do, not "Check failed"
+        // alone.
+        let subtitle = failed ? Self.failureExplanation(row).rowLine : nil
+        tableRow.cells["tool"] = .title(row.item.name, subtitle: subtitle, subtitleIsCode: false,
                                         symbol: row.item.kind.symbol,
                                         tint: DependencyCatalog.tint(for: row.item.category), tintHex: nil)
         if let installed = row.installedLabel, row.status != .notInstalled {
@@ -1353,6 +1358,12 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         onShowInspector?()
     }
 
+    /// R5-UX-08: a failed row's what, why and what to do
+    /// (`FailureExplainer`), from the reason and output the row already has.
+    static func failureExplanation(_ row: UpdateRow) -> ScheduleFailureExplanation {
+        FailureExplainer.explain(tool: row.item.name, status: row.status, detail: row.detail, log: row.log)
+    }
+
     private func toolDetail(for row: UpdateRow) -> WorkspaceDetail {
         var detail = WorkspaceDetail(symbol: row.item.kind.symbol, kicker: row.item.category, title: row.item.name,
                                      subtitle: row.detail)
@@ -1364,6 +1375,13 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         detail.fields.append(.init("Source", row.item.kind.sourceName))
         let (word, _, _) = pillVisuals(row)
         if !word.isEmpty { detail.fields.append(.init("Status", word)) }
+        // R5-UX-08: the three parts the Schedules run log shows for a failure.
+        if row.status == .checkFailed || row.status == .updateFailed {
+            let failure = Self.failureExplanation(row)
+            detail.fields.append(.init("What failed", failure.whatFailed))
+            detail.fields.append(.init("Why", failure.why))
+            detail.fields.append(.init("What to do", failure.whatToDo))
+        }
         if let command = row.terminalCommand { detail.sections.append(.init("Command", [command], isCode: true)) }
         let lines = row.log.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         detail.sections.append(.init("Output", row.log.isEmpty ? ["No output yet."] : lines, isCode: !row.log.isEmpty))
