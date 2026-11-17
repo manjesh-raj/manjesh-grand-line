@@ -164,10 +164,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The Colour by control, beside the filters while the calendar shows.
     lazy var colourControl: NSStackView = makeColourControl()
 
-    /// The toolbar's quiet right-hand pair: how lanes and the list are
-    /// sorted, and the Done lane's window stated once (UI-29).
+    /// The toolbar's quiet right-hand control: how lanes and the list are
+    /// sorted. S09 of the 2026-11-17 UI/UX proposals moved the Done lane's
+    /// window out of this row, where a plain label at control size read as a
+    /// disabled control. It is the Done lane's count now
+    /// (`ShiftBoardColumnView`) and the List's Done group header.
     let sortPopup = HelmPopUpButton()
-    let doneWindowNote = NSTextField(labelWithString: "Done \u{00B7} last 7 days")
 
     /// Which slice of the captain's tasks the page is showing - the sidebar's
     /// Workspace and Smart views rows.
@@ -324,6 +326,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// matches the window Weekly Review already reasons in, and anything
     /// older is still reachable through a project's own detail page.
     static let doneColumnLookbackDays = 7
+
+    /// The Done window as the lane count and the List's group header say it
+    /// (S09): "last 7 days".
+    static var doneWindowCaption: String { "last \(doneColumnLookbackDays) days" }
 
     private let reviewGreeting = NSTextField(labelWithString: "")
     private let reviewSubtitle = NSTextField(labelWithString: "What got done, what got pushed back, what's coming.")
@@ -1658,15 +1664,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         sortPopup.action = #selector(sortChanged)
         sortPopup.setContentHuggingPriority(.required, for: .horizontal)
 
-        doneWindowNote.font = HelmType.chip()
-        doneWindowNote.toolTip = "The Done lane shows tasks completed in the last \(Self.doneColumnLookbackDays) days. "
-            + "Older ones stay on their project's own page."
-        doneWindowNote.setContentHuggingPriority(.required, for: .horizontal)
-
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         colourControl.isHidden = true
-        let row = NSStackView(views: [viewTabs, spacer, sortPopup, doneWindowNote, colourControl])
+        let row = NSStackView(views: [viewTabs, spacer, sortPopup, colourControl])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = HelmMetrics.s4
@@ -2842,7 +2843,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         detailTaskListView.applyTheme(theme)
 
         viewTabs.applyTheme(theme)
-        doneWindowNote.textColor = muted
         paintColourControl(theme)
         sidebar.applyTheme(theme)
         boardView.applyTheme(theme)
@@ -3072,9 +3072,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         projectPopup.setAccessibilityLabel("Project")
         projectPopup.setContentHuggingPriority(.required, for: .horizontal)
         followUpsJump.setContentHuggingPriority(.required, for: .horizontal)
-        // The sort, the Done window and the calendar's Colour by move here
-        // from the tab row the toolbar's tabs replaced.
-        for view in [sortPopup, doneWindowNote, colourControl] as [NSView] {
+        // The sort and the calendar's Colour by move here from the tab row
+        // the toolbar's tabs replaced.
+        for view in [sortPopup, colourControl] as [NSView] {
             view.removeFromSuperview()
         }
         let spacer = NSView()
@@ -3096,7 +3096,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         filterMenuButton.toolTip = "Show one project's tasks, or change the sort"
         filterMenuButton.setContentHuggingPriority(.required, for: .horizontal)
         filterMenuButton.isHidden = true
-        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup, doneWindowNote] as [NSView] {
+        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup] as [NSView] {
             workspaceFilterRow.addArrangedSubview(view)
         }
         // The calendar's Colour by, at the trailing end where the sort sits
@@ -3138,7 +3138,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         }
         let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
         projectPopup.selectItem(at: selected)
-        doneWindowNote.isHidden = tasksView != .board || filterRowCollapsed
         refreshFilterMenuTitle()
         tasksTable.setRows(taskTableRows())
         followUpsTable.setRows(followUpTableRows())
@@ -3147,8 +3146,8 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// R4-UI-08: at 960pt the filter row ran past the page's right edge and
     /// cut "Due date" in half with nothing to say there was more. When the
     /// row's controls at their own widths do not fit, the project and sort
-    /// pop-ups collapse into one Filter button, and the Follow-ups jump and
-    /// the Done window's note move into its menu. Measured from the expanded controls' fitting
+    /// pop-ups collapse into one Filter button, and the Follow-ups jump moves
+    /// into its menu. Measured from the expanded controls' fitting
     /// widths whichever form shows, so it cannot flip back and forth.
     fileprivate func fitFilterRow() {
         // The row is tied to the content column's width, and the column
@@ -3161,13 +3160,12 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         let available = contentStack.bounds.width
         guard drawsSidebarLayout, available > 0 else { return }
         let calendarShowing = tasksView == .calendar
-        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, doneWindowNote, colourControl]
+        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, colourControl]
             .filter { view in
                 view === projectPopup || view === scopeFilter
                     || (view === sortPopup && !calendarShowing)
                     || (view === colourControl && calendarShowing)
                     || (view === followUpsJump && followUpsJumpWanted)
-                    || (view === doneWindowNote && tasksView == .board)
             }
         let needed = expanded.reduce(0) { $0 + $1.fittingSize.width }
             + workspaceFilterRow.spacing * CGFloat(max(0, expanded.count - 1))
@@ -3180,7 +3178,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             (sortPopup, collapse || topLevelView != .dashboard || calendarShowing),
             (filterMenuButton, !collapse),
             (followUpsJump, collapse || !followUpsJumpWanted),
-            (doneWindowNote, collapse || tasksView != .board || topLevelView != .dashboard),
             (colourControl, collapse || !calendarShowing || topLevelView != .dashboard),
         ]
         for (view, hidden) in wanted where view.isHidden != hidden { view.isHidden = hidden }
@@ -3192,7 +3189,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     }
 
     /// The collapsed row's menu: Project and Sort by, each item ticked as its
-    /// pop-up is, and the Done window's note when the board shows.
+    /// pop-up is.
     func filterMenu() -> NSMenu {
         let menu = NSMenu()
         func header(_ title: String) {
@@ -3239,10 +3236,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             item.state = index == sortPopup.indexOfSelectedItem ? .on : .off
             menu.addItem(item)
         }
-        if tasksView == .board {
-            menu.addItem(.separator())
-            header(doneWindowNote.stringValue)
-        }
         return menu
     }
 
@@ -3280,8 +3273,13 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         let tasks = (board[.backlog] ?? []) + (board[.inProgress] ?? [])
         let open = tasks.sorted(by: taskSort.areInOrder)
         let done = board[.done] ?? []
+        // S09: the Done window is said where it applies, as the Done group's
+        // header, rather than as a label in the filter row.
+        let doneGroup: [HelmDataTable.Row] = done.isEmpty
+            ? []
+            : [.group("\(ShiftBoardColumn.done.title) \u{00B7} \(Self.doneWindowCaption)")]
         let rows = open.map { taskRow($0, column: ShiftBoardColumn.column(for: $0.status) ?? .backlog) }
-            + done.map { taskRow($0, column: .done) }
+            + doneGroup + done.map { taskRow($0, column: .done) }
         guard rows.isEmpty else { return rows }
         let filter = filterDescription()
         return [.empty(symbol: "checklist", title: filter.text == nil ? "No tasks yet" : "No tasks match",

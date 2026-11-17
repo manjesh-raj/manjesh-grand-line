@@ -174,15 +174,14 @@ extension ShiftController {
     /// The content stack's distance from the top of the scroll document.
     static let contentTopInset: CGFloat = 24
 
-    /// The floating bar's tab row: the sort and the Done window belong to
-    /// the board and the list, and Colour by to the calendar. The sidebar
+    /// The floating bar's tab row: the sort belongs to the board and the
+    /// list, and Colour by to the calendar. The sidebar
     /// layout's filter row decides the same in `fitFilterRow`.
     func applyTabRowAccessories() {
         guard !drawsSidebarLayout else { return }
         let dashboard = topLevelView == .dashboard
         let calendar = tasksView == .calendar
         sortPopup.isHidden = !dashboard || calendar
-        doneWindowNote.isHidden = !dashboard || calendar
         colourControl.isHidden = !dashboard || !calendar
     }
 

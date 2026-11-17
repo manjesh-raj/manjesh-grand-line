@@ -1252,6 +1252,10 @@ final class ShiftBoardColumnView: NSView {
         // The Done lane takes no new task - a task is finished by moving it
         // there, not created there.
         header.setActions(column == .done ? [] : [headerAdd])
+        if column == .done {
+            header.countLabel.toolTip = "The Done lane shows tasks completed in the last "
+                + "\(ShiftController.doneColumnLookbackDays) days. Older ones stay on their project's own page."
+        }
         headerRule.wantsLayer = true
         headerRule.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1543,7 +1547,11 @@ final class ShiftBoardColumnView: NSView {
         })
         cardViews = cardRows.orderedRows.compactMap { $0 as? ShiftBoardCardView }
 
-        header.countLabel.stringValue = "\(tasks.count)"
+        // S09: the Done lane says its own window beside its number, where
+        // the filter row's free-standing note used to say it.
+        header.countLabel.stringValue = column == .done
+            ? "\(tasks.count) \u{00B7} \(ShiftController.doneWindowCaption)"
+            : "\(tasks.count)"
         let hidden = max(0, tasks.count - Self.maxCards)
         overflowLabel.isHidden = hidden == 0
         overflowLabel.stringValue = hidden == 0
