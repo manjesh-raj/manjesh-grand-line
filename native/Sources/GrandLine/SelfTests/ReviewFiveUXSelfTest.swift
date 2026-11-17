@@ -19,6 +19,7 @@ enum ReviewFiveUXSelfTest {
         checkKnowledgeIsSplitPerProfile(&ok)
         checkTheCalendarIsAPlace(&ok)
         checkTheConsoleToolbarFollowsTheProfile(&ok)
+        checkPersonalHomeLeadsWithWhatYouCanActOn(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -157,6 +158,67 @@ enum ReviewFiveUXSelfTest {
                 check(console.operatorToolViews.allSatisfy { $0.isDescendant(of: console.view) },
                       "R5-UX-06: choosing Operator again did not bring the tools back", &ok)
             }
+        }
+    }
+
+    // MARK: R5-UX-07 - Home's default cards per profile
+
+    private static func checkPersonalHomeLeadsWithWhatYouCanActOn(_ ok: inout Bool) {
+        // The review's six, in its order; the Operator keeps the hub's own.
+        check(HomeCardLayout.standard(for: .personal).shown == [.tasks, .calendar, .notebook, .stickyBoard, .readingList, .focusTimer],
+              "R5-UX-07: a Personal Home starts with \(HomeCardLayout.standard(for: .personal).shown.map(\.rawValue))", &ok)
+        check(HomeCardLayout.standard(for: .operator) == .standard, "R5-UX-07: the Operator's Home changed its default cards", &ok)
+        check(DaylightModule.calendar.opens == .calendar && DaylightModule.focusTimer.opens == .shift
+                && !DaylightModule.calendar.appearsOnOverview && !DaylightModule.focusTimer.appearsOnOverview,
+              "R5-UX-07: the new cards open the wrong page or joined the floating hub", &ok)
+
+        // Next up: a fixed clock, and the calendar's own day words.
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        guard let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) else { return }
+        func day(_ offset: Int) -> String {
+            ShiftDateFormatting.components(from: cal.date(byAdding: .day, value: offset, to: noon) ?? noon).dateStr
+        }
+        var earlier = ShiftTask.fresh()
+        earlier.title = "Call the bank"
+        earlier.dueDate = day(0)
+        earlier.dueTime = "09:00"
+        var later = ShiftTask.fresh()
+        later.title = "Dentist"
+        later.dueDate = day(0)
+        later.dueTime = "15:30"
+        var tomorrow = ShiftTask.fresh()
+        tomorrow.title = "Pay rent"
+        tomorrow.dueDate = day(1)
+        var overdue = ShiftTask.fresh()
+        overdue.title = "Renew passport"
+        overdue.dueDate = day(-3)
+        var faraway = ShiftTask.fresh()
+        faraway.title = "Book flights"
+        faraway.dueDate = day(HomeNextUpCard.horizonDays + 5)
+        let rows = HomeNextUpCard.rows(tasks: [faraway, overdue, tomorrow, later, earlier], followUps: [], now: noon, calendar: cal)
+        check(rows.map(\.title) == ["Dentist", "Pay rent"],
+              "R5-UX-07: next up lists \(rows.map(\.title)), want what is still ahead within two weeks", &ok)
+        check(rows.first?.when == "Today 15:30" && rows.last?.when == "Tomorrow",
+              "R5-UX-07: next up reads \(rows.map(\.when))", &ok)
+
+        // Focus: idle, running and paused say different things.
+        check(HomeFocusCard.state(session: nil, focusedSecondsToday: 25 * 60, now: noon) == .idle(minutesToday: 25),
+              "R5-UX-07: an idle focus card does not count today's minutes", &ok)
+        var session = FocusSession(taskID: "t1", taskTitle: "Write the report", plannedSeconds: 25 * 60,
+                                   accumulatedSeconds: 0, segmentStartedAt: noon, startedAt: noon)
+        let running = HomeFocusCard.state(session: session, focusedSecondsToday: 0, now: noon.addingTimeInterval(5 * 60))
+        check(running == .running(task: "Write the report", endsAt: noon.addingTimeInterval(25 * 60)),
+              "R5-UX-07: a running session reads \(running)", &ok)
+        session.accumulatedSeconds = 10 * 60
+        session.segmentStartedAt = nil
+        check(HomeFocusCard.state(session: session, focusedSecondsToday: 0, now: noon) == .paused(task: "Write the report", minutesLeft: 15),
+              "R5-UX-07: a paused session does not say what is left", &ok)
+
+        // The card re-renders when the session changes, not on every tick.
+        if let home = source("HomeCanvasController.swift") {
+            check(home.contains("guard key != focusCardKey else { return }"),
+                  "R5-UX-07: Home re-renders the Focus timer card on every timer tick", &ok)
         }
     }
 

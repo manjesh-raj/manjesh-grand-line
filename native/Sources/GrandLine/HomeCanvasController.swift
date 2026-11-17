@@ -94,6 +94,10 @@ final class HomeCanvasController: NSViewController {
         /// copy would diverge from the board's within a session and race its
         /// writes.
         let stickyBoardStore: StickyBoardStore
+        /// R5-UX-07: the Focus timer card's session. The shell's one timer,
+        /// which the Tasks page and the toolbar's chip also read; `nil` where
+        /// no shell built one, and the card then says what a session is.
+        var focusTimer: FocusTimerController? = nil
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
@@ -486,11 +490,31 @@ final class HomeCanvasController: NSViewController {
     init(sources: Sources) {
         self.sources = sources
         super.init(nibName: nil, bundle: nil)
+        // R5-UX-07: the Focus timer card follows a session starting, pausing
+        // and stopping. The timer's observers fire every second while one
+        // runs; the card says when it ends rather than counting down, so it
+        // re-renders only when that answer changes.
+        focusTimerToken = sources.focusTimer?.observe { [weak self] in self?.focusTimerDidChange() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// What the Focus timer card last said about the session, so a tick
+    /// that changes nothing it shows asks for no render.
+    private var focusCardKey: String?
+    private var focusTimerToken: UUID?
+
+    private func focusTimerDidChange() {
+        let session = sources.focusTimer?.session
+        let key = session.map { "\($0.taskID)|\($0.isPaused)|\($0.plannedSeconds)" }
+        guard key != focusCardKey else { return }
+        focusCardKey = key
+        guard isViewLoaded else { return }
+        setNeedsRender()
+    }
+
     deinit {
+        if let focusTimerToken { sources.focusTimer?.unobserve(focusTimerToken) }
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
@@ -2765,6 +2789,8 @@ final class HomeCanvasController: NSViewController {
         case .stickyBoard: fillStickyBoard(&content)
         case .codePreview: fillCodePreview(&content)
         case .commandLibrary: fillCommandLibrary(&content)
+        case .calendar: fillCalendar(&content)
+        case .focusTimer: fillFocusCard(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -4113,6 +4139,50 @@ final class HomeCanvasController: NSViewController {
     /// from the canvas, which `checkCanvasConstructsNoStores` exists to
     /// forbid - the canvas never fires a fetch, and a store construction here
     /// is one, not just a read.
+    /// R5-UX-07: what the calendar has next - the open tasks and follow-ups
+    /// dated from now to two weeks out, from the entries the calendar itself
+    /// draws (`HomeNextUpCard`). Overdue work is the Tasks card's.
+    private func fillCalendar(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "next up"
+        // GL-14: a task list that would not read is not an empty calendar.
+        guard !sources.shiftStore.isInFailedLoadState else {
+            content.chip = .warn("Can't read")
+            content.body = .note("The task list could not be read, so nothing upcoming can be shown.")
+            return
+        }
+        let rows = HomeNextUpCard.rows(tasks: sources.shiftStore.activeTasks, followUps: sources.shiftStore.followUps)
+        guard !rows.isEmpty else {
+            content.chip = .mute("clear")
+            content.body = .note("Nothing dated in the next two weeks. Give a task a due date, or "
+                                 + "double-click a day on the Calendar to add one.")
+            return
+        }
+        content.chip = .mute(rows.count == 1 ? "1 coming up" : "\(rows.count) coming up")
+        content.setBoundedPeekRows(rows.prefix(HelmModuleCard.maxPeekRows).map { row in
+            HelmModulePeekRow(state: .idle, text: row.isFollowUp ? "Follow up: \(row.title)" : row.title,
+                              value: row.when)
+        }, total: rows.count)
+    }
+
+    /// R5-UX-07: the focus timer - the session running now, or today's
+    /// focused minutes (`HomeFocusCard`).
+    private func fillFocusCard(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "deep work"
+        let state = HomeFocusCard.state(session: sources.focusTimer?.session,
+                                        focusedSecondsToday: sources.shiftStore.focusSecondsToday())
+        switch state {
+        case .running:
+            content.chip = .ok("Focusing")
+            content.body = .note(HomeFocusCard.note(for: state))
+        case .paused:
+            content.chip = .warn("Paused")
+            content.body = .note(HomeFocusCard.note(for: state))
+        case .idle(let minutes):
+            content.chip = .mute(minutes == 0 ? "not started" : "today")
+            content.body = .metric(value: "\(minutes)", unit: "min", note: HomeFocusCard.note(for: state))
+        }
+    }
+
     private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-card-shortcut-icons`: the captain's own sticky-note
         // artwork, replacing the plain `note.text` glyph - matches

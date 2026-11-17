@@ -804,7 +804,8 @@ final class Workspace {
             notebookStore: notebookStore,
             readingListStore: readingListStore,
             commandLibraryStore: commandLibraryStore,
-            stickyBoardStore: stickyBoardStore))
+            stickyBoardStore: stickyBoardStore,
+            focusTimer: focusTimer))
         self.homeCanvas = homeCanvas
         // The canvas renders "reading" for either card until its store has
         // loaded; this is what puts the real contents there once it has.

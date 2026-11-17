@@ -344,7 +344,7 @@ enum ModuleTable {
         //   `DaylightDrillActions` and always supplies its own live subtitle.
         ModuleDescriptor(route: .shift, title: "Tasks", symbol: "checkmark.circle", hue: .rose,
                          slot: .shift, subtitle: "A task board, follow-ups and projects",
-                         mountsEagerly: false, space: .command, homeCards: [.tasks],
+                         mountsEagerly: false, space: .command, homeCards: [.tasks, .focusTimer],
                          newAction: .task, module: .tasks, child: nil),
         // Its symbol:
         //   A calendar with a check: what it shows is tasks by their due
@@ -368,7 +368,7 @@ enum ModuleTable {
         //   slot is the Tasks page's (`docs/history/34-recurrence-and-calendar.md`).
         ModuleDescriptor(route: .calendar, title: "Calendar", symbol: "calendar.badge.checkmark", hue: .rose,
                          slot: .shift, subtitle: "Tasks and follow-ups by the day they are due",
-                         mountsEagerly: false, space: .command, homeCards: [],
+                         mountsEagerly: false, space: .command, homeCards: [.calendar],
                          newAction: .task, module: .tasks, child: "Calendar", door: .calendar),
         // Its hue:
         //   Merge queue

@@ -144,6 +144,7 @@ One row per `DaylightModule`. Every card stays available in Home's configurable 
 | `home.automation` | Automation card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.bootstrap` | Bootstrap card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.briefing` | Morning briefing card | Home canvas only | Home (a card in the configurable set, on by default) |  |
+| `home.calendar` | Calendar card: what is dated next, from the calendar's own entries (R5-UX-07) | Command canvas | Home (a card in the configurable set; on by default for the Personal profile) |  |
 | `home.claudeStatus` | Claude card | Home canvas only | Home (a card in the configurable set, on by default) |  |
 | `home.codePreview` | Code Preview card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.commandLibrary` | DevOps Commands card | Command canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
@@ -151,6 +152,7 @@ One row per `DaylightModule`. Every card stays available in Home's configurable 
 | `home.dictation` | Dictation card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.docs` | Docs card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.fleet` | Fleet card | Home canvas only | Home (a card in the configurable set, on by default) |  |
+| `home.focusTimer` | Focus timer card: the running session and when it ends, or today's focused minutes (R5-UX-07) | Command canvas | Home (a card in the configurable set; on by default for the Personal profile) |  |
 | `home.githubSync` | GitHub Sync card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.health` | Health card | Home canvas and the Operations canvas | Home (a card in the configurable set, on by default) |  |
 | `home.hosts` | Hosts card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
@@ -719,6 +721,7 @@ The buttons a page hands the floating bar's drill header (`drillHeaderActions`, 
 | `toolbar.RunbooksController.newRunbookButton` | RunbooksController header action `newRunbookButton` | the floating bar's drill header, right side | Runbooks › Runbooks (moves into the window toolbar as a module action) |  |
 | `toolbar.SchedulesController.refreshButton` | SchedulesController header action `refreshButton` | the floating bar's drill header, right side | Schedules (moves into the window toolbar as a module action) |  |
 | `toolbar.SchedulesController.schedulesCard.addButton` | SchedulesController header action `schedulesCard.addButton` | the floating bar's drill header, right side | Schedules (moves into the window toolbar as a module action) |  |
+| `toolbar.ShiftController.calendarTodayButton` | ShiftController header action `calendarTodayButton` | Not in the app | Calendar (Today beside New task while the Calendar shows, in the window toolbar and the floating bar's drill header - R5-UX-04) |  |
 | `toolbar.ShiftController.newTaskButton` | ShiftController header action `newTaskButton` | the floating bar's drill header, right side | Tasks (the window toolbar's far-right primary action, after Search - stage 7) |  |
 | `toolbar.ShiftController.syncPill` | ShiftController header action `syncPill` | the floating bar's drill header, right side | Tasks (moves into the window toolbar as a module action) |  |
 | `toolbar.StickyBoardController.archiveButton` | StickyBoardController header action `archiveButton` | the floating bar's drill header, right side | Sticky Board (moves into the window toolbar as a module action) |  |
@@ -842,7 +845,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `cardClicked`, `chipClicked`, `clearFilterTapped`, `fire`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
 | `action.ShiftConflictController` | ShiftConflictController controls | `applyClicked`, `cancelClicked`, `choiceClicked` | Tasks (sync conflict sheet) |  |
-| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `detailBackClicked`, `detailSaveClicked`, `filterMenuClicked`, `followUpTableCheckClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
+| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `calendarTodayClicked`, `detailBackClicked`, `detailSaveClicked`, `filterMenuClicked`, `followUpTableCheckClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
 | `action.ShiftFollowUpEditorController` | ShiftFollowUpEditorController controls | `deleteFollowUp` | Tasks (follow-up editor; also opened from Calendar) |  |
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
 | `action.ShiftListViews` | ShiftListViews controls | `checkboxClicked`, `deleteClicked`, `doneClicked`, `editClicked`, `focusClicked`, `openClicked`, `pushClicked`, `reopenClicked`, `snooze30`, `snoozeCustom`, `snoozeHour`, `snoozeNextWeek`, `snoozeTomorrow`, `stopFocusClicked` | Tasks › List |  |

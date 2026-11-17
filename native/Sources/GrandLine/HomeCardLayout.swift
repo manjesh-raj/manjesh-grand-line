@@ -107,14 +107,14 @@ struct HomeCardLayout: Equatable {
 
     /// R2-UX-01 (b): Home before the captain arranges it, for a profile. The
     /// Operator's is the hub's own five above. A Personal Home leads with what
-    /// a general user keeps here - tasks, notes, stickies, saved links, code
-    /// and credentials - rather than the fleet, and fills two rows at four
-    /// columns the same way.
+    /// a general user can act on, in R5-UX-07's order: today's tasks, what
+    /// the calendar has next, recent notes, the sticky board, unread links
+    /// and the focus timer. It fills two rows at four columns the same way.
     static func standard(for profile: WorkspaceProfile) -> HomeCardLayout {
         switch profile {
         case .operator: return standard
         case .personal:
-            return HomeCardLayout(shown: [.tasks, .notebook, .stickyBoard, .readingList, .codePreview, .poneglyph],
+            return HomeCardLayout(shown: [.tasks, .calendar, .notebook, .stickyBoard, .readingList, .focusTimer],
                                   sizes: [.tasks: .large, .readingList: .large])
         }
     }
