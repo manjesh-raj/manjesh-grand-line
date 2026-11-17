@@ -1432,6 +1432,16 @@ extension NotebookController: WorkspacePrimaryActionProviding {
     var workspacePrimaryAction: NSView? { newPageButton }
 }
 
+// R5-UI-01: Source, Split or Preview changes how this page lays itself out,
+// so in the sidebar layout it sits on the page's own row, at the trailing end
+// of the header's subtitle line. In the window toolbar, beside Knowledge's
+// five tabs, it pushed the inspector button into the overflow menu at the
+// captain's 1512pt. It stays one of `drillHeaderActions`, which the shell
+// leaves out of the toolbar for it, so the pop-up's state has one owner.
+extension NotebookController: WorkspaceHeaderAccessoryProviding {
+    var workspaceHeaderAccessory: NSView? { drawsSidebarLayout ? toolbarModePopUp : nil }
+}
+
 // R2-UX-06: the sidebar layout's Notebook has no page toolbar row. Its
 // controls go up into the window toolbar (`drillHeaderActions`), keeping
 // R2-BUG-07's icon-only actions below `compactToolbarActionsBelow`, and the

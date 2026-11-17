@@ -1224,12 +1224,17 @@ final class MainSplitShellController: WorkspaceShellController {
         guard !isHome else {
             toolbar.setPageActions([])
             toolbar.setPrimaryAction(nil)
+            contentPane.setHeaderAccessory(nil)
             return
         }
         let primary = (controller as? WorkspacePrimaryActionProviding)?.workspacePrimaryAction
+        // R5-UI-01: a control that lays out the page itself goes on the
+        // page's own row, so the window toolbar keeps its room.
+        let accessory = (controller as? WorkspaceHeaderAccessoryProviding)?.workspaceHeaderAccessory
         let actions = (controller as? DaylightDrillActions)?.drillHeaderActions ?? []
-        toolbar.setPageActions(actions.filter { $0 !== primary })
+        toolbar.setPageActions(actions.filter { $0 !== primary && $0 !== accessory })
         toolbar.setPrimaryAction(primary)
+        contentPane.setHeaderAccessory(accessory)
     }
 
     /// R2-UX-02: Home has one space in this layout, its own. A route that
@@ -1560,10 +1565,21 @@ final class WorkspaceContentPaneController: NSViewController {
     /// The module's title and its page's subtitle, or no header at all.
     func setHeader(title: String?, subtitle: String) {
         _ = view
+        headerTitle = title
         if let title { header.configure(title: title, subtitle: subtitle) }
-        // R2-UX-05: the header is its subtitle, so with none there is no header.
-        header.isHidden = title == nil || subtitle.isEmpty
+        // R2-UX-05: the header is its subtitle, so with none there is no
+        // header - unless the page has a control on that row (R5-UI-01).
+        header.isHidden = title == nil || (subtitle.isEmpty && header.accessory == nil)
     }
+
+    /// The page's header control (`WorkspaceHeaderAccessoryProviding`), or
+    /// none. Shows the header for it when the page has no subtitle.
+    func setHeaderAccessory(_ accessory: NSView?) {
+        _ = view
+        header.setAccessory(accessory)
+        header.isHidden = headerTitle == nil || (!header.hasSubtitle && accessory == nil)
+    }
+    private var headerTitle: String?
 
     func setSessionStripVisible(_ visible: Bool) {
         _ = view

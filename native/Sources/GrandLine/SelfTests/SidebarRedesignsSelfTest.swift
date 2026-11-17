@@ -85,7 +85,7 @@ enum SidebarRedesignsSelfTest {
                 resize(window, width: 1512, shell)
                 ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
-                for check in [checkTheSidebar, checkHomeStaysInSight, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
+                for check in [checkTheSidebar, checkHomeStaysInSight, checkSectionHeadingComesWithTheLitRow, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
                               checkTasksReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
                     var ok = true
@@ -202,6 +202,54 @@ enum SidebarRedesignsSelfTest {
         let visible = outline.visibleRect
         check(visible.contains(NSPoint(x: lastRow.midX, y: lastRow.maxY - 1)),
               "at 950pt the sidebar's last row is below the fold (\(lastRow.maxY) of \(visible.maxY))", &ok)
+    }
+
+    // MARK: 1c - the lit row's section heading comes with it (R5-UI-09)
+
+    /// The review's own sequence at 1100x760 with one session: a visit to
+    /// Settings scrolls the list to its foot, and Knowledge is then lit
+    /// under a "Work" heading cut off at the top.
+    private static func checkSectionHeadingComesWithTheLitRow(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                              _ ok: inout Bool) {
+        let registry = shell.workspace.hosts.sessions
+        let session = UUID()
+        registry.register(hostID: session, label: "DEV Bastion", accentHex: nil, state: .connected)
+        var frame = window.frame
+        frame.size = NSSize(width: 1100, height: 760)
+        window.setFrame(frame, display: false)
+        settle(shell)
+        defer {
+            registry.unregister(hostID: session)
+            resize(window, width: 1512, shell)
+            shell.workspace.navigator.show(.homeCanvas)
+            settle(shell)
+        }
+        let outline = shell.sidebar.outlineView
+        guard let clip = outline.enclosingScrollView?.contentView,
+              let work = (0..<outline.numberOfRows).first(where: {
+                  (outline.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == .section("Work")
+              }) else {
+            fail("the sidebar has no scroll view or no Work heading", &ok)
+            return
+        }
+        func headingInSight() -> Bool {
+            let heading = outline.rect(ofRow: work)
+            return heading.minY >= clip.bounds.minY - 0.5 && heading.maxY <= clip.bounds.maxY + 0.5
+        }
+        shell.workspace.navigator.show(.settings)
+        settle(shell)
+        // Discriminating power: the visit to Settings really has to leave the
+        // heading out of sight, or the next assertion holds without the fix.
+        check(clip.bounds.minY > outline.rect(ofRow: work).minY + 1,
+              "fixture: at 1100x760 Settings did not scroll the Work heading out of sight "
+              + "(list at \(clip.bounds.minY), heading at \(outline.rect(ofRow: work).minY))", &ok)
+        shell.workspace.navigator.show(.docs)
+        settle(shell)
+        check(headingInSight(), "R5-UI-09: Knowledge is lit with its Work heading cut at the top "
+              + "(list at \(clip.bounds.minY), heading \(outline.rect(ofRow: work)))", &ok)
+        let lit = outline.rect(ofRow: outline.selectedRow)
+        check(lit.minY >= clip.bounds.minY - 0.5 && lit.maxY <= clip.bounds.maxY + 0.5,
+              "R5-UI-09: Knowledge's own row is not fully in sight", &ok)
     }
 
     // MARK: 1b - Home stays in sight (R4-BUG-03)

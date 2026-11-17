@@ -1579,3 +1579,33 @@ It also checks that the open and closed states carry across Home, Console and Se
 Reverting the toolbar and reconcile gates fails it on all 26 pages by name.
 Reverting the priority to 270 did not fail it in the suite, because that failure is timing-dependent, so the inside-the-window check guards the outcome rather than forcing the race.
 The tour lab's `inspector toggle` verb presses the same button and logs whether it was enabled and whether the pane is open after it.
+
+## Full review #5: Notebook's toolbar, Console's blank row, the sidebar's cut heading (`fm/grand-line-security-ui-fixes`)
+
+**R5-UI-01: Notebook overflowed the window toolbar at 1512.**
+`WorkspaceToolbarSelfTest` measured only each module's first page, and Knowledge's first page is Docs, so Notebook was never visited.
+Measured on every route at Default text and 1512pt, Notebook was the only one that overflowed, and what it pushed out was the inspector button.
+The Source / Split / Preview pop-up now sits on the page's own row, at the trailing end of the module header's subtitle line.
+That is a new seam, `WorkspaceHeaderAccessoryProviding`, beside `WorkspacePrimaryActionProviding`: the shell leaves the control out of the toolbar's actions and hands it to `WorkspaceModuleHeader.setAccessory`.
+New page stays the toolbar's far-right primary, like every other page's, which the review also suggested moving.
+Moving the pop-up alone was enough for nothing to overflow, and keeping New page where every page keeps its primary is the more consistent shape.
+`WorkspaceToolbarSelfTest` now visits Notebook too, and `ReviewTwoUXSelfTest` asserts where the pop-up lives.
+
+**R5-UI-02: the blank band under Console's Sessions strip.**
+It was Console's own tab row.
+In the sidebar layout its actions are the window toolbar's, so it holds only the page's tab chips and "+", and a host page with no tab yet (or with its last tab closed, which the code allows on purpose) drew an empty 44pt row.
+The tour could not connect the demo host, which is how the review saw it.
+`ConsoleController.collapseTabBarIfEmpty` collapses the row in that state, and the first tab brings it back.
+The floating bar keeps its actions in that row, so it never collapses there.
+Not changed: the Sessions strip's side margin is the floating bar's, so in the sidebar layout the strip's edges sit 12pt inside a host page's card.
+No single inset would line up with both kinds of Console card (a host page's card has a 12pt margin, the Firstmate console's has none).
+
+**R5-UI-09: the sidebar's section heading cut at the top.**
+`scrollRowToVisible` moves only as far as the lit row, so wherever the previous scroll left the list is where the top edge cut.
+After a visit to Settings at 1100x760, Knowledge was lit under a "Work" heading that was off the top, or cut through it.
+`WorkspaceSidebar.reveal(row:)` now brings the row's section heading into sight with it when the two fit together, and keeps R4-BUG-03's rule first.
+`SidebarRedesignsSelfTest.checkSectionHeadingComesWithTheLitRow` replays the review's sequence.
+
+Found on the way, not fixed here: visiting Automation in an off-screen 720pt-tall window and then navigating on throws AppKit's "more Update Constraints in Window passes than there are views".
+`AutomationController.viewDidLayout` calls `SettingsRow.relayoutDescription`, which invalidates a label's intrinsic size from inside a layout pass.
+It showed up only in a throwaway probe that visited every route of every module in one window.

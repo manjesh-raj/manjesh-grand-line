@@ -73,3 +73,19 @@ protocol WorkspacePrimaryActionProviding: AnyObject {
     /// page says its actions may have changed.
     var workspacePrimaryAction: NSView? { get }
 }
+
+/// A page control that belongs on the page's own row rather than in the
+/// window toolbar: the sidebar layout draws it at the trailing end of the
+/// module header, on the subtitle's line (R5-UI-01). For a control that
+/// changes how the page itself is laid out, where the window toolbar's room
+/// is better spent on the chrome every page shares. Notebook's Source /
+/// Split / Preview switch is the one today: in the toolbar beside
+/// Knowledge's five tabs it pushed the inspector button into the overflow
+/// menu at 1512pt. Like the primary action, the view is one of the page's own
+/// controls, the shell leaves it out of the page's other actions, and the
+/// floating bar never asks.
+protocol WorkspaceHeaderAccessoryProviding: AnyObject {
+    /// The control for the header right now, or `nil`. Re-read whenever the
+    /// page says its actions may have changed.
+    var workspaceHeaderAccessory: NSView? { get }
+}

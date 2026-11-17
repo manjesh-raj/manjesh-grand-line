@@ -348,6 +348,14 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// bottom row would lift the whole column by the overflow and push Home
     /// under the header, to show a few more points of a row that is already
     /// mostly in sight (R4-BUG-03).
+    ///
+    /// R5-UI-09: otherwise the row's section header comes into sight with it,
+    /// when the two fit together. At 1100x760 a visit to Settings scrolled
+    /// the list to the bottom, and Knowledge was then lit under a "Work"
+    /// heading cut in half at the top: `scrollRowToVisible` alone moves only
+    /// as far as the row, so wherever the last scroll left the list is where
+    /// the top edge cut. A section taller than the list reveals the row
+    /// alone, as before.
     private func reveal(row: Int) {
         let clip = scrollView.contentView
         let rect = outlineView.rect(ofRow: row)
@@ -357,7 +365,22 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             scrollView.reflectScrolledClipView(clip)
             return
         }
-        outlineView.scrollRowToVisible(row)
+        var target = rect
+        if let section = sectionRow(containing: row) {
+            let withHeading = rect.union(outlineView.rect(ofRow: section))
+            if withHeading.height <= clip.bounds.height { target = withHeading }
+        }
+        outlineView.scrollToVisible(target)
+    }
+
+    /// The row of the section heading `row` sits under, however deep (a
+    /// session row is a module's child), or `nil` for a row in no section.
+    private func sectionRow(containing row: Int) -> Int? {
+        var item = outlineView.item(atRow: row)
+        while let parent = outlineView.parent(forItem: item) { item = parent }
+        guard let top = item as? WorkspaceSidebarItem, top.isSection else { return nil }
+        let sectionRow = outlineView.row(forItem: top)
+        return sectionRow >= 0 && sectionRow != row ? sectionRow : nil
     }
 
     private func applySelection(reveal shouldReveal: Bool = true) {

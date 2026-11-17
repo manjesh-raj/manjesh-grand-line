@@ -14,6 +14,11 @@
 //      the first item AppKit pushed into the overflow menu, on the one module
 //      where the inspector is the editing surface. Whatever does overflow at
 //      Default runs from the overflow menu.
+//   3. **R5-UI-01: Knowledge > Notebook overflows nothing at Default text.**
+//      It is not a module's first page, so (1) and (2) never visited it, and
+//      with its Split pop-up in the toolbar beside Knowledge's five tabs it
+//      pushed the inspector button into the overflow menu at 1512pt. The
+//      pop-up now sits on the module header's row.
 //
 // Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
 //
@@ -106,6 +111,15 @@ enum WorkspaceToolbarSelfTest {
         // Connections is the page the review measured; without a page that
         // fills the inspector the inspector half above asserts nothing.
         check(sawInspectorPage, "no module's first page fills the inspector - the check is vacuous", &ok)
+
+        // R5-UI-01: Notebook, the one sub-page that ran out of room.
+        shell.workspace.navigator.show(.notebook)
+        settle(shell)
+        let notebookOverflow = overflowedItems(window).map(\.itemIdentifier.rawValue)
+        check(notebookOverflow.isEmpty,
+              "at \(step.title) text and 1512pt Knowledge > Notebook overflowed \(notebookOverflow) (R5-UI-01)", &ok)
+        check(!shell.toolbar.debugPageActions.isEmpty,
+              "fixture: Notebook put no actions in the toolbar - the overflow check measures an empty page", &ok)
     }
 
     private static func overflowedItems(_ window: NSWindow) -> [NSToolbarItem] {

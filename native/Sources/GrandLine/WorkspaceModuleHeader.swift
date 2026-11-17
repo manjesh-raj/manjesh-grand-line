@@ -21,6 +21,10 @@ import AppKit
 final class WorkspaceModuleHeader: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// R5-UI-01: a page control on the subtitle's line, at its trailing end
+    /// (`WorkspaceHeaderAccessoryProviding`). Never more than one view.
+    private let accessoryHost = NSStackView()
+    private(set) var accessory: NSView?
     private var themeToken: ThemeObservation?
 
     override init(frame frameRect: NSRect) {
@@ -38,11 +42,22 @@ final class WorkspaceModuleHeader: NSView {
         }
         // The title is kept, hidden, only as the accessibility label's source.
         titleLabel.isHidden = true
+        accessoryHost.orientation = .horizontal
+        accessoryHost.translatesAutoresizingMaskIntoConstraints = false
+        accessoryHost.setHuggingPriority(.required, for: .horizontal)
+        addSubview(accessoryHost)
         NSLayoutConstraint.activate([
             subtitleLabel.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
             subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.pageGutter),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.pageGutter),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryHost.leadingAnchor, constant: -HelmMetrics.s3),
             subtitleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s1),
+            // On the subtitle's line, and never taller than the header: a
+            // control taller than the line grows the header rather than
+            // spilling over the page under it.
+            accessoryHost.centerYAnchor.constraint(equalTo: subtitleLabel.centerYAnchor),
+            accessoryHost.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.pageGutter),
+            accessoryHost.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: HelmMetrics.s1),
+            accessoryHost.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ])
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
     }
@@ -51,6 +66,23 @@ final class WorkspaceModuleHeader: NSView {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+    }
+
+    /// Whether the subtitle's line has any text.
+    var hasSubtitle: Bool { !subtitleLabel.isHidden }
+
+    /// Show `view` at the trailing end of the subtitle's line, or nothing.
+    func setAccessory(_ view: NSView?) {
+        guard view !== accessory else { return }
+        accessory?.removeFromSuperview()
+        accessory = view
+        if let view {
+            // Moved here from wherever it last sat (the toolbar draws the
+            // same control in the floating bar's layout), so it carries
+            // nothing over from that parent's layout.
+            view.removeFromSuperview()
+            accessoryHost.addArrangedSubview(view)
+        }
     }
 
     func configure(title: String, subtitle: String) {
