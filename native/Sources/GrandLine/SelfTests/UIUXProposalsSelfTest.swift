@@ -26,6 +26,7 @@ enum UIUXProposalsSelfTest {
         let cases: [(String, (inout Bool) -> Void)] = [
             ("S11 one verdict per card", checkTheHealthCardHasOneVerdict),
             ("S10 the briefing reads as prose", checkTheBriefingIsInk),
+            ("S04 one page-sidebar surface", checkOneSidebarSurface),
         ]
         for (name, body) in cases {
             var ok = true
@@ -145,6 +146,47 @@ enum UIUXProposalsSelfTest {
             }
             check(paragraph.debugPlainText == clauses.map(\.text).joined(separator: " "),
                   "S10 \(theme.id): the paragraph still reads as its clauses: \(paragraph.debugPlainText)", &ok)
+        }
+    }
+
+    // MARK: - S04
+
+    /// The band is the default surface and paints Settings' two colours; the
+    /// pages the proposal moved hold their column in it; Tasks, Hosts and
+    /// Poneglyph keep the plain column on purpose.
+    private static func checkOneSidebarSurface(_ ok: inout Bool) {
+        check(HelmPageSidebar().debugSurface == .band, "S04: a new page sidebar is a band by default", &ok)
+        check(HelmPageSidebar.bandPaneWidth == HelmPageSidebar.width + 2 * HelmMetrics.pageGutter,
+              "S04: the band is the column plus a gutter either side", &ok)
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            let band = HelmPageSidebar.Band()
+            band.applyTheme(theme)
+            check(band.debugFill.map { same($0, HelmTheme.sidePanelFill(theme)) } == true
+                    && band.debugEdge.map { same($0, HelmTheme.sidePanelEdge(theme)) } == true,
+                  "S04 \(theme.id): the band paints the side-panel fill and edge", &ok)
+            check(!same(HelmTheme.sidePanelFill(theme), HelmTheme.nsColor(theme.backgroundHex)),
+                  "S04 \(theme.id): the band really differs from the page ground", &ok)
+        }
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP: app sources not next to this binary")
+            return
+        }
+        func source(_ name: String) -> String {
+            (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
+        }
+        for page in ["SchedulesController.swift", "ReadingListController.swift", "NotebookController.swift"] {
+            let text = source(page)
+            check(!text.isEmpty, "S04: read \(page)", &ok)
+            check(text.contains("surface: .sidePanel") && text.contains("HelmPageSidebar.bandInsets"),
+                  "S04: \(page) holds its column in the band", &ok)
+        }
+        check(source("CommandLibraryController.swift").contains("HelmPageSidebar.Band()"),
+              "S04: Commands' column sits on the band", &ok)
+        let workbench = source("CodePreviewWorkbench.swift")
+        check(workbench.contains("HelmPageSidebar.Band()") && !workbench.contains("quickActionsCard"),
+              "S04: Code's snippets and quick actions are one band, not two cards", &ok)
+        for page in ["ShiftController.swift", "HostsController.swift", "CredentialVaultSidebar.swift"] {
+            check(source(page).contains("HelmPageSidebar(surface: .plain)"), "S04: \(page) keeps its plain column", &ok)
         }
     }
 

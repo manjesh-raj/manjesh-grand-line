@@ -73,6 +73,11 @@ final class CommandLibraryPageView: NSObject {
     private let searchField = HelmSearchField(placeholder: "Search commands\u{2026}")
 
     private let leftPanel = NSView()
+    /// The column's width, the band's own (S04). The band behind it is
+    /// `HelmPageSidebar.bandPaneWidth` wide.
+    static let columnWidth: CGFloat = HelmPageSidebar.width
+    /// The column plus the gap after it, as it was before S04: 236 + 16.
+    static let rowSum: CGFloat = 252
     private let leftPanelStack = NSStackView()
 
     private let detailPanel = NSView()
@@ -170,7 +175,14 @@ final class CommandLibraryPageView: NSObject {
         let columns = NSStackView(views: [leftPanel, detailPanel])
         columns.orientation = .horizontal
         columns.alignment = .top
-        columns.spacing = 16
+        // S04: the column sits in the page's band (`HelmPageSidebar.Band`,
+        // painted by `CommandLibraryController` behind the scroll view), and
+        // the band's edge lands a gutter after the column. The gap is what
+        // the old 236pt column and its 16pt gap summed to, less the band's
+        // 208pt column: this row's width is a required chain up to the window
+        // (gotcha (13)), and a wider sum grew a 1218pt window to 1262pt in
+        // `MainSplitShellSelfTest`. So the detail starts 20pt after the edge.
+        columns.spacing = Self.rowSum - Self.columnWidth
         // `.fill`, explicitly - AGENTS.md gotcha (10). Left at the default
         // `.gravityAreas` this stack ignored the hugging priorities below
         // entirely and laid both panes out at their natural width, which is
@@ -179,7 +191,7 @@ final class CommandLibraryPageView: NSObject {
         // right-hand pane does.
         columns.distribution = .fill
         columns.translatesAutoresizingMaskIntoConstraints = false
-        leftPanel.widthAnchor.constraint(equalToConstant: 236).isActive = true
+        leftPanel.widthAnchor.constraint(equalToConstant: Self.columnWidth).isActive = true
         leftPanel.setContentHuggingPriority(.required, for: .horizontal)
         leftPanel.setContentCompressionResistancePriority(.required, for: .horizontal)
         detailPanel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -223,12 +235,14 @@ final class CommandLibraryPageView: NSObject {
         leftPanelStack.spacing = HelmMetrics.s0
         leftPanelStack.translatesAutoresizingMaskIntoConstraints = false
         leftPanel.addSubview(leftPanelStack)
+        // S04: no inner padding at the sides - that was the card's, and on
+        // the band the column's edges are the band's own 24pt, as Settings'.
         NSLayoutConstraint.activate([
-            searchField.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: HelmMetrics.s3),
-            searchField.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -HelmMetrics.s3),
+            searchField.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor),
+            searchField.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor),
             searchField.topAnchor.constraint(equalTo: leftPanel.topAnchor, constant: HelmMetrics.s3),
-            leftPanelStack.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor, constant: HelmMetrics.s3),
-            leftPanelStack.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor, constant: -HelmMetrics.s3),
+            leftPanelStack.leadingAnchor.constraint(equalTo: leftPanel.leadingAnchor),
+            leftPanelStack.trailingAnchor.constraint(equalTo: leftPanel.trailingAnchor),
             leftPanelStack.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: HelmMetrics.s3),
             leftPanelStack.bottomAnchor.constraint(equalTo: leftPanel.bottomAnchor, constant: -HelmMetrics.s3),
         ])
@@ -466,9 +480,10 @@ final class CommandLibraryPageView: NSObject {
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
 
-        // UI-45: `HelmPageSidebar.Surface.panel`'s surface, and the detail
-        // pane the app's one card surface - not two hand-rolled boxes.
-        HelmCard.applyCardSurface(to: leftPanel, theme: theme)
+        // S04: the column's rows sit straight on the page's band, the way
+        // Settings' do - no card of their own (it was `.panel`'s card, a
+        // fifth sidebar look). The detail pane stays the app's one card.
+        leftPanel.layer?.backgroundColor = .clear
         HelmCard.applyCardSurface(to: detailPanel, theme: theme)
         searchField.applyTheme(theme)
 

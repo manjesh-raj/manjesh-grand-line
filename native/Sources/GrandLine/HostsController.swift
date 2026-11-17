@@ -252,7 +252,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// plain surface with muted counts, the Tasks sidebar the revamp kept.
     /// A boxed panel around the nav was a second bordered surface beside the
     /// page's own cards (Rule 1).
-    let sidebar = HelmPageSidebar()
+    let sidebar = HelmPageSidebar(surface: .plain)
     /// P9: the page's split view, which holds `sidebar` as a real sidebar.
     private(set) var splitPage: HelmSplitPage?
     let keychainCard = HostsKeychainCard()

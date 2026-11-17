@@ -391,12 +391,19 @@ final class CodePreviewWorkbenchView: NSView {
     }
 
     let parts: Parts
-    let snippetCard = CodePreviewCardSurface()
-    let quickActionsCard = CodePreviewCardSurface()
+    /// S04 of the 2026-11-17 UI/UX proposals: the snippet list, its sync line
+    /// and the two quick actions in one band - `HelmPageSidebar.Band`, the
+    /// page-sidebar surface every page with a column now wears - where they
+    /// were two stacked cards ("Snippets", "Quick actions"). The band runs
+    /// from the page's leading edge down to the status bar; the actions are
+    /// its footer.
+    let snippetBand = HelmPageSidebar.Band()
+    /// The band's column: `snippetColumnWidth` wide, a gap in from either
+    /// edge of the band.
+    let snippetColumn = NSLayoutGuide()
     let toolbarCard = CodePreviewCardSurface()
     let editorFrame = CodePreviewCardSurface()
     let inspectorScroll = NSScrollView()
-    private let quickActionsTitle = NSTextField(labelWithString: "Quick actions")
     private let tabRow = NSView()
     private let tabRowSeparator = NSView()
     private let titleRowSeparator = NSView()
@@ -435,33 +442,33 @@ final class CodePreviewWorkbenchView: NSView {
 
     private func build() {
         let gap = CodePreviewWorkbenchMetrics.gap
-        for card in [snippetCard, quickActionsCard, toolbarCard, editorFrame] { addSubview(card) }
+        addSubview(snippetBand)
+        for card in [toolbarCard, editorFrame] { addSubview(card) }
         addSubview(inspectorScroll)
         addSubview(parts.statusBar)
         editorFrame.layer?.masksToBounds = true
         toolbarCard.layer?.masksToBounds = true
 
-        // The snippet card: the list, then the sync line at its foot.
-        for view in [parts.snippetList, parts.syncFooter] { snippetCard.addSubview(view) }
-        snippetCard.setAccessibilityElement(true)
-        snippetCard.setAccessibilityRole(.group)
-        snippetCard.setAccessibilityLabel("Snippets")
-
-        // Quick actions.
-        quickActionsTitle.translatesAutoresizingMaskIntoConstraints = false
-        quickActionsCard.addSubview(quickActionsTitle)
-        quickActionsCard.setAccessibilityElement(true)
-        quickActionsCard.setAccessibilityRole(.group)
-        quickActionsCard.setAccessibilityLabel("Quick actions")
-        var previous: NSView = quickActionsTitle
+        // The band: the list, the sync line under it, and the quick actions
+        // as its footer.
+        snippetBand.addLayoutGuide(snippetColumn)
+        for view in [parts.snippetList, parts.syncFooter] { snippetBand.addSubview(view) }
+        snippetBand.setAccessibilityElement(true)
+        snippetBand.setAccessibilityRole(.group)
+        snippetBand.setAccessibilityLabel("Snippets")
+        var footerTop: NSView?
+        var previous: NSView?
         for action in parts.quickActions {
-            quickActionsCard.addSubview(action)
+            snippetBand.addSubview(action)
             NSLayoutConstraint.activate([
-                action.leadingAnchor.constraint(equalTo: quickActionsCard.leadingAnchor, constant: gap),
-                action.trailingAnchor.constraint(equalTo: quickActionsCard.trailingAnchor, constant: -gap),
-                action.topAnchor.constraint(equalTo: previous.bottomAnchor,
-                                            constant: previous === quickActionsTitle ? HelmMetrics.s2 + 2 : HelmMetrics.s2),
+                action.leadingAnchor.constraint(equalTo: snippetColumn.leadingAnchor),
+                action.trailingAnchor.constraint(equalTo: snippetColumn.trailingAnchor),
             ])
+            if let previous {
+                action.topAnchor.constraint(equalTo: previous.bottomAnchor, constant: HelmMetrics.s2).isActive = true
+            } else {
+                footerTop = action
+            }
             previous = action
         }
 
@@ -523,11 +530,11 @@ final class CodePreviewWorkbenchView: NSView {
         inspectorScroll.setAccessibilityLabel("Run configuration, script checks and editor preferences")
 
         let initialWidth = CodePreviewWorkbenchMetrics.snippetColumnWidth
-        snippetWidth = snippetCard.widthAnchor.constraint(equalToConstant: initialWidth)
+        snippetWidth = snippetColumn.widthAnchor.constraint(equalToConstant: initialWidth)
         snippetWidth.priority = HelmDaylightPriority.contentTie
         let inspectorWidth = inspectorScroll.widthAnchor.constraint(equalToConstant: CodePreviewWorkbenchMetrics.inspectorWidth)
         inspectorWidth.priority = HelmDaylightPriority.contentTie
-        mainBesideSnippets = toolbarCard.leadingAnchor.constraint(equalTo: snippetCard.trailingAnchor, constant: gap)
+        mainBesideSnippets = toolbarCard.leadingAnchor.constraint(equalTo: snippetBand.trailingAnchor, constant: gap)
         mainAtPageEdge = toolbarCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: gap)
         editorBesideInspector = editorFrame.trailingAnchor.constraint(equalTo: inspectorScroll.leadingAnchor, constant: -gap)
         editorAtColumnEdge = editorFrame.trailingAnchor.constraint(equalTo: toolbarCard.trailingAnchor)
@@ -552,27 +559,25 @@ final class CodePreviewWorkbenchView: NSView {
             parts.statusBar.bottomAnchor.constraint(equalTo: bottomAnchor),
             statusHeight,
 
-            // The snippet column: the list card hugs its rows until the quick
-            // actions card would leave the page, then the list scrolls.
-            snippetCard.leadingAnchor.constraint(equalTo: leadingAnchor, constant: gap),
-            snippetCard.topAnchor.constraint(equalTo: topAnchor, constant: gap),
+            // The band: flush with the page's leading edge and top, down to
+            // the status bar, its column a gap in from either side. The list
+            // takes the height the footer leaves and scrolls past it.
+            snippetBand.leadingAnchor.constraint(equalTo: leadingAnchor),
+            snippetBand.topAnchor.constraint(equalTo: topAnchor),
+            snippetBand.bottomAnchor.constraint(equalTo: parts.statusBar.topAnchor),
+            snippetColumn.leadingAnchor.constraint(equalTo: snippetBand.leadingAnchor, constant: gap),
+            snippetBand.trailingAnchor.constraint(equalTo: snippetColumn.trailingAnchor, constant: gap),
             snippetWidth,
-            quickActionsCard.leadingAnchor.constraint(equalTo: snippetCard.leadingAnchor),
-            quickActionsCard.trailingAnchor.constraint(equalTo: snippetCard.trailingAnchor),
-            quickActionsCard.topAnchor.constraint(equalTo: snippetCard.bottomAnchor, constant: HelmMetrics.s2 + 2),
-            quickActionsCard.bottomAnchor.constraint(lessThanOrEqualTo: parts.statusBar.topAnchor, constant: -gap),
 
-            parts.snippetList.leadingAnchor.constraint(equalTo: snippetCard.leadingAnchor, constant: HelmMetrics.s1 + 2),
-            parts.snippetList.trailingAnchor.constraint(equalTo: snippetCard.trailingAnchor, constant: -(HelmMetrics.s1 + 2)),
-            parts.snippetList.topAnchor.constraint(equalTo: snippetCard.topAnchor, constant: HelmMetrics.s3),
+            parts.snippetList.leadingAnchor.constraint(equalTo: snippetColumn.leadingAnchor),
+            parts.snippetList.trailingAnchor.constraint(equalTo: snippetColumn.trailingAnchor),
+            parts.snippetList.topAnchor.constraint(equalTo: snippetBand.topAnchor, constant: gap),
             parts.syncFooter.topAnchor.constraint(equalTo: parts.snippetList.bottomAnchor, constant: HelmMetrics.s2),
-            parts.syncFooter.leadingAnchor.constraint(equalTo: snippetCard.leadingAnchor, constant: HelmMetrics.s3 + 2),
-            parts.syncFooter.trailingAnchor.constraint(equalTo: snippetCard.trailingAnchor, constant: -HelmMetrics.s3),
-            parts.syncFooter.bottomAnchor.constraint(equalTo: snippetCard.bottomAnchor, constant: -HelmMetrics.s3),
-
-            quickActionsTitle.leadingAnchor.constraint(equalTo: quickActionsCard.leadingAnchor, constant: gap + 2),
-            quickActionsTitle.topAnchor.constraint(equalTo: quickActionsCard.topAnchor, constant: gap),
-            previous.bottomAnchor.constraint(equalTo: quickActionsCard.bottomAnchor, constant: -gap),
+            parts.syncFooter.leadingAnchor.constraint(equalTo: snippetColumn.leadingAnchor, constant: HelmMetrics.s1),
+            parts.syncFooter.trailingAnchor.constraint(equalTo: snippetColumn.trailingAnchor),
+            (footerTop ?? parts.syncFooter).topAnchor.constraint(greaterThanOrEqualTo: parts.syncFooter.bottomAnchor,
+                                                                  constant: HelmMetrics.s4),
+            (previous ?? parts.syncFooter).bottomAnchor.constraint(equalTo: snippetBand.bottomAnchor, constant: -gap),
 
             // The toolbar card.
             toolbarCard.topAnchor.constraint(equalTo: topAnchor, constant: gap),
@@ -630,8 +635,9 @@ final class CodePreviewWorkbenchView: NSView {
             inspectorStack.topAnchor.constraint(equalTo: inspectorDocument.topAnchor),
             inspectorStack.bottomAnchor.constraint(equalTo: inspectorDocument.bottomAnchor),
         ])
-        // The list card hugs its content below everything else that decides
-        // a height, so the cap above wins once the rows outgrow the page.
+        // The list hugs its content below everything else that decides a
+        // height, so the footer stays at the band's foot and the list scrolls
+        // once its rows outgrow the room above it.
         if let hug = (parts.snippetList as? CodePreviewFileSidebar)?.contentHeightPreference() {
             hug.priority = NSLayoutConstraint.Priority(240)
             hug.isActive = true
@@ -689,8 +695,7 @@ final class CodePreviewWorkbenchView: NSView {
         let showSnippets = snippetColumnWanted && !expanded
         let showInspector = !expanded && CodePreviewWorkbenchMetrics.showsInspector(pageWidth: pageWidth)
         snippetWidth.constant = CodePreviewWorkbenchMetrics.snippetColumnWidth(pageWidth: pageWidth)
-        snippetCard.isHidden = !showSnippets
-        quickActionsCard.isHidden = !showSnippets
+        snippetBand.isHidden = !showSnippets
         inspectorScroll.isHidden = !showInspector
         // Deactivate before activating: two active ties on one edge are a
         // required conflict AppKit resolves by resizing something.
@@ -733,7 +738,8 @@ final class CodePreviewWorkbenchView: NSView {
     // MARK: Theme
 
     func applyTheme(_ theme: HelmTheme) {
-        for card in [snippetCard, quickActionsCard, toolbarCard, editorFrame] { card.applyTheme(theme) }
+        snippetBand.applyTheme(theme)
+        for card in [toolbarCard, editorFrame] { card.applyTheme(theme) }
         for card in parts.inspectorCards { card.applyTheme(theme) }
         for separator in toolbarSeparators { separator.applyTheme(theme) }
         let line = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha)
@@ -742,8 +748,6 @@ final class CodePreviewWorkbenchView: NSView {
         // The tab row is the card's sunken well, the way a file-tab strip
         // sits under its tabs; the selected tab takes the card fill above it.
         tabRow.layer?.backgroundColor = HelmField.fill(theme).cgColor
-        quickActionsTitle.font = HelmType.rowTitle()
-        quickActionsTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         parts.titleRow.applyTheme(theme)
         parts.runStatus.applyTheme(theme)
         parts.syncFooter.applyTheme(theme)
@@ -757,6 +761,8 @@ final class CodePreviewWorkbenchView: NSView {
     var debugToolbarLeadingViews: [NSView] { leadingTools.arrangedSubviews }
     var debugToolbarTrailingViews: [NSView] { trailingTools.arrangedSubviews }
     var debugTabRow: NSView { tabRow }
+    /// S04: the band's column, in this view's coordinates.
+    var debugSnippetColumnFrame: NSRect { snippetColumn.frame }
     #endif
 }
 

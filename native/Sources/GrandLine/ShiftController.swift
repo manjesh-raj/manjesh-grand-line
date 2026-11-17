@@ -236,7 +236,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// The page's own left nav column - `HelmPageSidebar`, the component
     /// Schedules and Poneglyph already share (see its header for why a
     /// page-scoped column is not the deleted app-wide rail coming back).
-    let sidebar = HelmPageSidebar()
+    let sidebar = HelmPageSidebar(surface: .plain)
 
     /// The hairline between the nav column and the page - the reference's own
     /// `border-right` on its `aside`, and the one thing that makes the column

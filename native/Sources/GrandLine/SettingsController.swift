@@ -721,9 +721,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // and answering Toggle Sidebar. The split sits under the page's own
         // toolbar and scroll area; the band and the nav column fill its
         // sidebar pane, so the column widens with the divider.
-        let split = HelmSplitPage(sidebarWidth: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width,
-                                  minimum: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width * 0.8,
-                                  maximum: HelmMetrics.pageGutter * 2 + HelmPageSidebar.width * 1.6,
+        // S04: the band's numbers are `HelmPageSidebar`'s now, so every page
+        // wearing the band is this width and keeps this padding.
+        let split = HelmSplitPage(sidebarWidth: HelmPageSidebar.bandPaneWidth,
+                                  minimum: HelmPageSidebar.bandPaneWidth - HelmPageSidebar.width * 0.2,
+                                  maximum: HelmPageSidebar.bandPaneWidth + HelmPageSidebar.width * 0.6,
                                   surface: .pageGround)
         addChild(split)
         root.addSubview(split.view)
@@ -734,9 +736,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // has a footer, and `HelmPageSidebar.setFooter` pins that footer to
         // the column's own bottom edge - which only reaches the page's bottom
         // if the page says so (see that method's own note).
-        HelmSplitPage.pin(sidebarColumn, in: split.sidebarPane,
-                          insets: NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.pageGutter,
-                                               bottom: HelmMetrics.pageGutter, right: HelmMetrics.pageGutter))
+        HelmSplitPage.pin(sidebarColumn, in: split.sidebarPane, insets: HelmPageSidebar.bandInsets)
         splitPage = split
         // The edge rule is painted over the divider rather than by it, and
         // lets every click through, so the divider underneath still drags.

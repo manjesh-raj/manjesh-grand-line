@@ -28,9 +28,13 @@ enum SplitSidebarSelfTest {
     /// for Settings the band's padding on both sides - i.e. exactly where the
     /// pinned column used to end, so the content starts where it did.
     private static let pages: [(RailDestination, CGFloat)] = [
-        (.schedules, 24 + 208),
-        (.readingList, HelmMetrics.s3 + 208),
-        (.notebook, HelmMetrics.s3 + 208),
+        // S04 of the 2026-11-17 UI/UX proposals: Schedules, Reading list and
+        // Notebook hold their column in Settings' band, so they open at the
+        // band's width (a gutter either side of the 208pt column), as Settings
+        // always has.
+        (.schedules, 24 + 208 + 24),
+        (.readingList, 24 + 208 + 24),
+        (.notebook, 24 + 208 + 24),
         (.poneglyph, 24 + 208),
         (.hosts, 24 + 208),
         (.shift, 24 + 208 + 16),
@@ -95,7 +99,7 @@ enum SplitSidebarSelfTest {
             check(abs(window.frame.width - 960) < 0.5,
                   "\(dest.rawValue) grew the 960pt window to \(window.frame.width)pt", &ok)
         }
-        if ok { print("  OK   7 pages, each column at its old width, the window still 960pt") }
+        if ok { print("  OK   7 pages, each column at its width, the window still 960pt") }
     }
 
     private static func checkToggleSidebarCollapsesAndRestores(_ ok: inout Bool) {
@@ -141,8 +145,11 @@ enum SplitSidebarSelfTest {
               "a wider window moved the dragged column to \(split.debugSidebarWidth)pt - the content should take the room", &ok)
         split.splitView.setPosition(1000, ofDividerAt: 0)
         settle(shell)
-        check(split.debugSidebarWidth <= HelmPageSidebar.width * 1.6 + 0.5,
-              "the column was dragged past its maximum, to \(split.debugSidebarWidth)pt", &ok)
+        // S04: Schedules' pane is a band now, so its maximum is the band's -
+        // the same 0.6 of the column past the opening width Settings has.
+        let maximum = HelmPageSidebar.bandPaneWidth + HelmPageSidebar.width * 0.6
+        check(maximum > 300 && split.debugSidebarWidth <= maximum + 0.5,
+              "the column was dragged past its maximum \(maximum), to \(split.debugSidebarWidth)pt", &ok)
         if ok { print("  OK   held at 300pt through a resize, and capped at its maximum") }
     }
 

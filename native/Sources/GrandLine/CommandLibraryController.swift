@@ -46,6 +46,8 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
     private lazy var page = CommandLibraryPageView(store: store)
 
     private let scroll = NSScrollView()
+    /// S04: the page-sidebar band behind the command column.
+    private let band = HelmPageSidebar.Band()
 
     /// Forward-don't-own, inherited verbatim from `ShiftController`, which
     /// held these while the library was a tab there: this page knows nothing
@@ -64,6 +66,7 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     /// UXP-14: the page itself, once the view has loaded.
     var debugPage: CommandLibraryPageView? { isViewLoaded ? page : nil }
+    var debugBand: HelmPageSidebar.Band { band }
     #endif
 
     // MARK: Drill header (Daylight §6.4)
@@ -130,8 +133,17 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        // S04: Settings' band behind the column - the page's full height from
+        // its leading edge, a gutter either side of the column, edged by the
+        // band's own hairline. Behind the scroll view, so the column's rows
+        // scroll over it and the band stays put, as a region of the page.
+        root.addSubview(band)
         root.addSubview(scroll)
         NSLayoutConstraint.activate([
+            band.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            band.topAnchor.constraint(equalTo: root.topAnchor),
+            band.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            band.widthAnchor.constraint(equalToConstant: HelmPageSidebar.bandPaneWidth),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor),

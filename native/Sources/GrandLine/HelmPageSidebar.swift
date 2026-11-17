@@ -81,13 +81,77 @@ final class HelmPageSidebar: NSView {
     /// the same "widen the shared component, leave every existing caller
     /// byte-identical" shape `HelmButton.gradientFill` and
     /// `HelmAccentRow.gradientBadge` already use here.
+    ///
+    /// **S04 of the 2026-11-17 UI/UX proposals (1.1.0): `.band`, now the
+    /// default.** Seven pages with a column wore five looks; Settings' toned
+    /// band - the column's region of the page in `HelmTheme.sidePanelFill`,
+    /// closed by a `sidePanelEdge` hairline, running the page's full height -
+    /// is the one the proposals picked for all of them. A `.band` column lays
+    /// its rows out exactly as `.plain` does; the band itself is painted by
+    /// whatever holds the column: a `HelmSplitPage` with the `.sidePanel`
+    /// surface (Settings, Schedules, Reading list, Notebook), or a
+    /// `HelmPageSidebar.Band` where the page has no split (Code, Commands).
+    /// `bandPaneWidth` and `bandInsets` are Settings' own numbers, so every
+    /// band is the same width and keeps the same padding. Tasks, Hosts and
+    /// Poneglyph keep `.plain` explicitly: their columns are not part of the
+    /// proposal and their pages were measured against the plain ground.
     enum Surface {
-        /// No fill, no border - the column is just its rows. Poneglyph and
-        /// Schedules.
+        /// No fill, no border - the column is just its rows. Tasks, Hosts and
+        /// Poneglyph.
         case plain
         /// `HelmCard`'s own fill/border/radius, so the column reads as a panel
-        /// beside the page's cards rather than as loose rows. Hosts.
+        /// beside the page's cards rather than as loose rows.
         case panel
+        /// The column sits in a band painted by its host (see above).
+        case band
+    }
+
+    /// S04: a band's pane - the column plus a page gutter either side.
+    static var bandPaneWidth: CGFloat { width + 2 * HelmMetrics.pageGutter }
+    /// S04: where a band holds its column - Settings' measured padding.
+    static let bandInsets = NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.pageGutter,
+                                         bottom: HelmMetrics.pageGutter, right: HelmMetrics.pageGutter)
+
+    /// S04: the band, for a page that holds its column without a
+    /// `HelmSplitPage`. Paints `HelmTheme.sidePanelFill`, closes its trailing
+    /// edge with a 1pt `sidePanelEdge` rule, and follows the theme itself.
+    /// The page decides what goes in it and where it sits; the band only owns
+    /// the two colours, so they cannot drift from Settings'.
+    final class Band: NSView {
+        private let edge = NSView()
+        private var themeToken: ThemeObservation?
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            translatesAutoresizingMaskIntoConstraints = false
+            wantsLayer = true
+            edge.wantsLayer = true
+            edge.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(edge)
+            NSLayoutConstraint.activate([
+                edge.trailingAnchor.constraint(equalTo: trailingAnchor),
+                edge.topAnchor.constraint(equalTo: topAnchor),
+                edge.bottomAnchor.constraint(equalTo: bottomAnchor),
+                edge.widthAnchor.constraint(equalToConstant: 1),
+            ])
+            themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+        deinit {
+            if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        }
+
+        func applyTheme(_ theme: HelmTheme) {
+            layer?.backgroundColor = HelmTheme.sidePanelFill(theme).cgColor
+            edge.layer?.backgroundColor = HelmTheme.sidePanelEdge(theme).cgColor
+        }
+
+        #if FM_SELFTESTS
+        var debugFill: NSColor? { layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+        var debugEdge: NSColor? { edge.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+        #endif
     }
 
     /// How a row's count is drawn.
@@ -221,7 +285,7 @@ final class HelmPageSidebar: NSView {
 
     // MARK: Build
 
-    init(surface: Surface = .plain, countStyle: CountStyle = .plain) {
+    init(surface: Surface = .band, countStyle: CountStyle = .plain) {
         self.surface = surface
         self.countStyle = countStyle
         super.init(frame: .zero)
@@ -229,7 +293,7 @@ final class HelmPageSidebar: NSView {
     }
 
     override init(frame frameRect: NSRect) {
-        self.surface = .plain
+        self.surface = .band
         self.countStyle = .plain
         super.init(frame: frameRect)
         build()
@@ -327,6 +391,10 @@ final class HelmPageSidebar: NSView {
     /// `width` would otherwise hold the divider where it is (measured: a
     /// drag to 300pt left the column at 232). Dropped to the lowest band, so
     /// it still says what the column would be with nothing else to go on.
+    #if FM_SELFTESTS
+    var debugSurface: Surface { surface }
+    #endif
+
     func yieldWidthToContainer() {
         columnWidth?.priority = NSLayoutConstraint.Priority(150)
     }

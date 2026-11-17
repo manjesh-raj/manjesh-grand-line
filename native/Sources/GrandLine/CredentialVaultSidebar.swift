@@ -75,7 +75,7 @@ final class CredentialVaultSidebar: NSView {
 
     private(set) var selection: Selection
 
-    private let nav = HelmPageSidebar()
+    private let nav = HelmPageSidebar(surface: .plain)
 
     // MARK: Build
 

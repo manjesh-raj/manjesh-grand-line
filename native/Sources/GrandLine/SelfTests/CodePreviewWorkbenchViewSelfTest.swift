@@ -134,14 +134,15 @@ enum CodePreviewWorkbenchViewSelfTest {
     private static func checkCards(_ controller: CodePreviewController, _ workbench: CodePreviewWorkbenchView,
                                    _ ok: inout Bool) {
         let parts = workbench.parts
-        check(controller.debugSidebar.isDescendant(of: workbench.snippetCard),
-              "the snippet list should sit in its own card", &ok)
-        check(controller.debugSyncFooter.isDescendant(of: workbench.snippetCard),
-              "the sync line should be at the foot of the snippet card", &ok)
+        // S04: one band (the page-sidebar surface), not two cards.
+        check(controller.debugSidebar.isDescendant(of: workbench.snippetBand),
+              "the snippet list should sit in the band", &ok)
+        check(controller.debugSyncFooter.isDescendant(of: workbench.snippetBand),
+              "the sync line should be in the band, under the list", &ok)
         check(controller.debugSidebar.debugHeaderText == "Snippets" && controller.debugSidebar.debugCountText == "3 items",
               "the snippet card should read Snippets / 3 items, got \(controller.debugSidebar.debugHeaderText) / \(controller.debugSidebar.debugCountText)", &ok)
-        check(controller.debugQuickActions.allSatisfy { $0.isDescendant(of: workbench.quickActionsCard) },
-              "Quick actions should be their own card", &ok)
+        check(controller.debugQuickActions.allSatisfy { $0.isDescendant(of: workbench.snippetBand) },
+              "the quick actions should be the band's footer", &ok)
         check(controller.debugTabScroll.isDescendant(of: workbench.editorFrame),
               "the tabs should be inside the editor card", &ok)
         check(controller.debugTitleRow.isDescendant(of: workbench.editorFrame)
@@ -151,18 +152,25 @@ enum CodePreviewWorkbenchViewSelfTest {
               "a page tool is still in the old page toolbar row", &ok)
 
         // The concept's order, top to bottom and left to right.
-        let snippets = frame(workbench.snippetCard, in: controller)
-        let quick = frame(workbench.quickActionsCard, in: controller)
+        let band = frame(workbench.snippetBand, in: controller)
+        let snippets = workbench.convert(workbench.debugSnippetColumnFrame, to: controller.view)
+        let listFrame = frame(controller.debugSidebar, in: controller)
+        let quick = controller.debugQuickActions.map { frame($0, in: controller) }
+            .reduce(NSRect.null) { $0.union($1) }
         let toolbar = frame(workbench.toolbarCard, in: controller)
         let editor = frame(workbench.editorFrame, in: controller)
         let status = frame(parts.statusBar, in: controller)
         let gap = CodePreviewWorkbenchMetrics.gap
         check(abs(snippets.width - CodePreviewWorkbenchMetrics.snippetColumnWidth) < 1,
-              "the snippet card should be the concept's \(CodePreviewWorkbenchMetrics.snippetColumnWidth)pt, got \(snippets.width)", &ok)
-        check(quick.maxY <= snippets.minY + 0.5 || quick.minY >= snippets.maxY - 0.5,
-              "Quick actions should sit under the snippet card, got \(quick) and \(snippets)", &ok)
-        check(abs(toolbar.minX - (snippets.maxX + gap)) < 1,
-              "the toolbar card should start one gap after the snippet card, got \(toolbar.minX) vs \(snippets.maxX)", &ok)
+              "the snippet column should be the concept's \(CodePreviewWorkbenchMetrics.snippetColumnWidth)pt, got \(snippets.width)", &ok)
+        check(band.minX < 0.5 && abs(band.width - (snippets.width + 2 * gap)) < 1,
+              "the band should run from the page's edge, a gap either side of its column, got \(band)", &ok)
+        check(abs(band.minY - status.maxY) < 0.5,
+              "the band should run down to the status bar, got \(band) over \(status)", &ok)
+        check(quick.maxY <= listFrame.minY + 0.5 && abs(quick.minY - (band.minY + gap)) < 1,
+              "the quick actions should be the band's footer, under the list, got \(quick) and \(listFrame)", &ok)
+        check(abs(toolbar.minX - (band.maxX + gap)) < 1,
+              "the toolbar card should start one gap after the band, got \(toolbar.minX) vs \(band.maxX)", &ok)
         check(abs(editor.minX - toolbar.minX) < 0.5,
               "the editor card should line up with the toolbar card, got \(editor.minX) vs \(toolbar.minX)", &ok)
         check(abs(toolbar.height - CodePreviewWorkbenchMetrics.toolbarHeight) < 0.5,
@@ -344,8 +352,8 @@ enum CodePreviewWorkbenchViewSelfTest {
               "the right column should hide below the breakpoint", &ok)
         check(abs(frame(workbench.editorFrame, in: controller).maxX - frame(workbench.toolbarCard, in: controller).maxX) < 0.5,
               "with the column hidden the editor card should take its width", &ok)
-        check(abs(workbench.snippetCard.frame.width - CodePreviewWorkbenchMetrics.narrowSnippetColumnWidth) < 1,
-              "the snippet column should narrow with it, got \(workbench.snippetCard.frame.width)", &ok)
+        check(abs(workbench.debugSnippetColumnFrame.width - CodePreviewWorkbenchMetrics.narrowSnippetColumnWidth) < 1,
+              "the snippet column should narrow with it, got \(workbench.debugSnippetColumnFrame.width)", &ok)
         window.setFrame(wide, display: true)
         settle(controller)
         check(workbench.inspectorShown, "the right column should come back at a wide window", &ok)
@@ -434,7 +442,7 @@ enum CodePreviewWorkbenchViewSelfTest {
 
         controller.toggleSidebarFromMenu()
         settle(controller)
-        check(!workbench.snippetColumnShown && workbench.snippetCard.isHidden,
+        check(!workbench.snippetColumnShown && workbench.snippetBand.isHidden,
               "⌘B should hide the snippet card", &ok)
         check(abs(workbench.toolbarCard.frame.minX - CodePreviewWorkbenchMetrics.gap) < 0.5,
               "with the list hidden the toolbar card should start at the page edge", &ok)
