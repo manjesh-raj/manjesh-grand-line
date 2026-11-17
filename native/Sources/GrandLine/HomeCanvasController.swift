@@ -1065,7 +1065,12 @@ final class HomeCanvasController: NSViewController {
         // stating: this title is only ever *shown* when the list is empty, so
         // an invitation cannot appear over rows that need doing even if the
         // guard above were ever weakened.
-        let answerIfAny = overviewAnswer()
+        // R5-UX-01 / R5-UX-07: a profile that hides Crew has no fleet to hear
+        // from, so the header never reports on one - not "Fleet read just
+        // now", and not "No firstmate home was found" to someone who needs
+        // none.
+        let fleetSpeaks = !hiddenModules.contains(.crew)
+        let answerIfAny = fleetSpeaks ? overviewAnswer() : nil
         let nothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
         // `hasItems` is the other half of the guard, and it is the one the
         // merge added. The invitation replaces **both** header strings, so
@@ -1080,6 +1085,9 @@ final class HomeCanvasController: NSViewController {
                                                 tasks: sources.shiftStore.activeTasks.count,
                                                 notes: sources.stickyBoardStore.activeNotes.count) {
             return (firstRun.title, firstRun.detail)
+        }
+        guard fleetSpeaks else {
+            return (FleetGreeting.timeOfDay(), "What is due today, from your tasks and follow-ups.")
         }
         guard let answer = answerIfAny else {
             // GL-14: nothing has been measured yet, so the header says so

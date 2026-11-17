@@ -226,6 +226,9 @@ final class AppShellController: WorkspaceShellController {
         root.addSubview(bodyContainer)
 
         bar.onDrillBack = { [weak self] in self?.workspace.navigator.show(.homeCanvas) }
+        applyProfileToHome()
+        NotificationCenter.default.addObserver(self, selector: #selector(hiddenModulesDidChange(_:)),
+                                               name: AppSettings.hiddenModulesDidChange, object: nil)
         // A3: the bar is the only thing that reacts to the scroll edge, and
         // the observer is the only thing that knows about it.
         scrollEdge.onChange = { [weak self] active in self?.bar.setScrollEdgeActive(active) }
@@ -635,6 +638,24 @@ final class AppShellController: WorkspaceShellController {
         AppLog.ui.error("contentView width had drifted from the window's (\(actual, privacy: .public) vs \(expected, privacy: .public)) - resynced")
         view.setFrameSize(NSSize(width: expected, height: view.bounds.height))
     }
+
+    /// R5-UX-07: a Personal profile's Home is the one a general user can act
+    /// on in this layout too - its own default cards, and an attention card
+    /// that does not ask for a firstmate home. An Operator's floating Home is
+    /// the hand-placed hub it always was, so it is handed nothing.
+    private func applyProfileToHome() {
+        let canvas = workspace.homeCanvas
+        guard AppSettings.shared.effectiveProfile == .personal else {
+            canvas.hiddenModules = []
+            canvas.cardLayout = nil
+            return
+        }
+        canvas.standardCardLayout = .standard(for: .personal)
+        canvas.hiddenModules = AppSettings.shared.hiddenModules
+        canvas.cardLayout = AppSettings.shared.homeCardLayout
+    }
+
+    @objc private func hiddenModulesDidChange(_ note: Notification) { applyProfileToHome() }
 
     deinit {
         if let windowResizeObserver {

@@ -220,6 +220,16 @@ enum ReviewFiveUXSelfTest {
         check(HomeFocusCard.state(session: session, focusedSecondsToday: 0, now: noon) == .paused(task: "Write the report", minutesLeft: 15),
               "R5-UX-07: a paused session does not say what is left", &ok)
 
+        // Both layouts: the floating bar hands a Personal Home its own cards
+        // and hidden set (an Operator's hub stays the hand-placed one), and a
+        // Home with no Crew never speaks for the fleet.
+        if let floating = source("AppShellController.swift"), let home = source("HomeCanvasController.swift") {
+            check(floating.contains("guard AppSettings.shared.effectiveProfile == .personal else {")
+                    && floating.contains("canvas.cardLayout = AppSettings.shared.homeCardLayout"),
+                  "R5-UX-07: the floating bar's Home no longer follows a Personal profile", &ok)
+            check(home.contains("let answerIfAny = fleetSpeaks ? overviewAnswer() : nil"),
+                  "R5-UX-07: a Home without Crew reports on the fleet again", &ok)
+        }
         // The card re-renders when the session changes, not on every tick.
         if let home = source("HomeCanvasController.swift") {
             check(home.contains("guard key != focusCardKey else { return }"),
