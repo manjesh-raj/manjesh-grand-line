@@ -240,7 +240,8 @@ final class SetupSummaryFeed {
 /// re-applied the theme it was mounted with on every count change - five
 /// dark tiles on a Daylight page.
 final class SetupSummaryRow: NSView {
-    private let cards = SetupSummary.captions.map { HelmMetricCard(caption: $0, tint: nil) }
+    /// S14: the row is a `.boxed` `HelmKPIStrip`.
+    private let strip = HelmKPIStrip(density: .boxed)
     private let feed: SetupSummaryFeed
     private var feedToken: UUID?
     private var themeToken: ThemeObservation?
@@ -251,7 +252,7 @@ final class SetupSummaryRow: NSView {
         self.feed = feed
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        let row = HelmMetricRow(cards)
+        let row = strip
         addSubview(row)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -277,20 +278,19 @@ final class SetupSummaryRow: NSView {
     /// Repaint the cards from the feed's figures.
     private func render() {
         shown = feed.cards
-        for (card, figure) in zip(cards, shown) {
-            card.setTint(figure.tint)
-            card.configure(text: figure.text, signals: figure.signals, unknownReason: figure.unknownReason)
-        }
-        applyTheme(theme)
+        strip.configure(zip(SetupSummary.captions, shown).map { caption, figure in
+            .figure(figure.text, caption: caption, tint: figure.tint, signals: figure.signals,
+                    unknownReason: figure.unknownReason)
+        }, theme: theme)
     }
 
     private func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        for card in cards { card.applyTheme(theme) }
+        strip.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
-    var debugValues: [String] { cards.map(\.debugValue) }
-    var debugCards: [HelmMetricCard] { cards }
+    var debugValues: [String] { strip.debugCells.map(\.debugValue) }
+    var debugCards: [HelmKPIStrip.BoxedCell] { strip.debugCells }
     #endif
 }

@@ -7,7 +7,7 @@
 // one specific, countable finding: ~40 `NSClickGestureRecognizer`-driven
 // controls that VoiceOver saw as static text, with no role, no label, and no
 // way to activate them. The fix was made once, in the four shared components
-// (`HoverHighlightView`, `HelmAccentRow`, `HelmSegmentedTabs`, `HelmStatTile`)
+// (`HoverHighlightView`, `HelmAccentRow`, `HelmSegmentedTabs`, the boxed `HelmKPIStrip` cell)
 // plus `HelmButton`/`TabChipView`/`HelmTableView`, precisely so it would cover
 // all ~40 sites without touching them. That is only true as long as those
 // components keep their end of the bargain, which is what this suite pins.
@@ -174,35 +174,41 @@ enum AccessibilitySelfTest {
     // MARK: Stat tiles
 
     private static func checkStatTile(_ ok: inout Bool) {
-        print("\n-- HelmStatTile: always readable, a button only when it does something --")
-        let readOnly = HelmStatTile(symbol: "clock", value: "4", caption: "queued")
+        // S14: the boxed KPI cell replaced `HelmStatTile`; the rules carried over.
+        print("\n-- boxed KPI cell: always readable, a button only when it does something --")
+        let strip = HelmKPIStrip(density: .boxed)
+        var tapped: Int?
+        strip.onActivate = { tapped = $0 }
+        strip.configure([.init(.value("4"), caption: "queued"),
+                         .init(.value("3"), caption: "ready to merge", isAction: true)])
+        guard strip.debugCells.count == 2 else {
+            fail("the strip drew \(strip.debugCells.count) cells, want 2", &ok)
+            return
+        }
+        let readOnly = strip.debugCells[0], clickable = strip.debugCells[1]
         if !readOnly.isAccessibilityElement() {
-            fail("a stat tile is the page's headline number and must be readable", &ok)
+            fail("a KPI cell is the page's headline number and must be readable", &ok)
         }
         if readOnly.accessibilityRole() != .staticText {
-            fail("a tile with no action should be static text, got \(String(describing: readOnly.accessibilityRole()))", &ok)
+            fail("a cell with no action should be static text, got \(String(describing: readOnly.accessibilityRole()))", &ok)
         }
         if readOnly.acceptsFirstResponder {
-            fail("a tile with no action joined the key view loop", &ok)
+            fail("a cell with no action joined the key view loop", &ok)
         }
         // Caption first: "ready to merge, 3" is how a captain would say it.
         if readOnly.accessibilityLabel() != "queued, 4" {
-            fail("tile label is \(String(describing: readOnly.accessibilityLabel())), want \"queued, 4\"", &ok)
+            fail("cell label is \(String(describing: readOnly.accessibilityLabel())), want \"queued, 4\"", &ok)
         }
-
-        var tapped = false
-        let clickable = HelmStatTile(symbol: "checkmark", value: "3", caption: "ready to merge")
-        clickable.onClick = { tapped = true }
         if clickable.accessibilityRole() != .button {
-            fail("a clickable tile should be a button", &ok)
+            fail("an action cell should be a button", &ok)
         }
         if !clickable.acceptsFirstResponder {
-            fail("a clickable tile is not keyboard-reachable", &ok)
+            fail("an action cell is not keyboard-reachable", &ok)
         }
-        if !clickable.accessibilityPerformPress() || !tapped {
-            fail("pressing a clickable tile did not fire onClick", &ok)
+        if !clickable.accessibilityPerformPress() || tapped != 1 {
+            fail("pressing an action cell did not reach onActivate with its index", &ok)
         }
-        print("  OK - staticText vs button, caption-first label, press fires onClick")
+        print("  OK - staticText vs button, caption-first label, press reaches onActivate")
     }
 
     // MARK: Accent rows (hosts, tasks, notifications, PRs)
@@ -333,7 +339,7 @@ enum AccessibilitySelfTest {
             ("HelmButton", HelmButton(title: "Save", variant: .primary)),
             ("HelmPopUpButton", HelmPopUpButton()),
             ("HoverHighlightView", HoverHighlightView()),
-            ("HelmStatTile", HelmStatTile(symbol: "clock", value: "1", caption: "x")),
+            ("HelmKPIStrip.BoxedCell", HelmKPIStrip.BoxedCell(height: HelmKPIStrip.boxedHeight)),
             ("TabChipView", TabChipView(tabID: UUID(), name: "Shell")),
         ]
         for (name, view) in cases {

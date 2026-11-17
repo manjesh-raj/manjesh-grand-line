@@ -32,6 +32,7 @@ enum UIUXProposalsSelfTest {
             ("S12 one glyph per meaning", checkOneGlyphPerMeaning),
             ("S17 one notice recipe", checkOneNoticeRecipe),
             ("S15 one card header recipe", checkOneCardHeaderRecipe),
+            ("S14 one number recipe", checkOneNumberRecipe),
         ]
         for (name, body) in cases {
             var ok = true
@@ -312,6 +313,66 @@ enum UIUXProposalsSelfTest {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         let bad = names.filter { $0.hasSuffix(".swift") && offenders(source($0)) > 0 }
         check(bad.isEmpty, "S15: no card is handed a bare label as its header (\(bad))", &ok)
+    }
+
+    // MARK: - S14
+
+    /// Both densities draw an unknown as a dash, colour a figure only when it
+    /// is not the default, and the boxed one puts each figure on the card
+    /// surface. The two retired stat components are gone from the app.
+    private static func checkOneNumberRecipe(_ ok: inout Bool) {
+        let items: [HelmKPIStrip.Item] = [
+            .figure(nil, caption: "Working", unknownReason: "no firstmate home"),
+            .figure("0", caption: "Failing", tint: .critical, signals: false),
+            .figure("2", caption: "Overdue", tint: .critical, signals: true),
+        ]
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            let inline = HelmKPIStrip(density: .inline)
+            inline.configure(items, theme: theme)
+            let boxed = HelmKPIStrip(density: .boxed)
+            boxed.configure(items, theme: theme)
+            check(inline.debugValues == ["\u{2014}", "0", "2"] && boxed.debugCells.map(\.debugValue) == inline.debugValues,
+                  "S14 \(theme.id): both densities draw the same figures, an unknown as a dash", &ok)
+            check(boxed.debugCells.first?.toolTip == "no firstmate home",
+                  "S14 \(theme.id): an unknown's reason is the cell's tooltip", &ok)
+            let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+            let ink = HelmTheme.nsColor(theme.chromeInkHex)
+            let red = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), overAnyOf: [surface],
+                                                    theme: theme)
+            check(!same(ink, red), "S14 \(theme.id): the tint fixture differs from ink", &ok)
+            if boxed.debugCells.count == 3, let zero = boxed.debugCells[1].debugValueColor,
+               let two = boxed.debugCells[2].debugValueColor {
+                check(same(zero, ink), "S14 \(theme.id): a zero failing count stays ink", &ok)
+                check(same(two, red), "S14 \(theme.id): two overdue is the corrected red", &ok)
+            } else {
+                fail("S14 \(theme.id): the boxed strip drew \(boxed.debugCells.count) cells", &ok)
+            }
+            check(inline.debugCells.isEmpty && inline.debugSeparatorCount == 2,
+                  "S14 \(theme.id): inline keeps its hairlines and draws no boxes", &ok)
+        }
+
+        guard sourcesAvailable, let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP: S14 source half, no app sources")
+            return
+        }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".swift") }
+        check(!names.contains("HelmMetricCard.swift"), "S14: HelmMetricCard.swift is deleted", &ok)
+        // Code, not comments: a comment naming the retired components is history.
+        let pattern = try? NSRegularExpression(pattern: #"\b(HelmStatTile|HelmMetricCard|HelmMetricRow)\s*[(.\]:]"#)
+        func uses(_ text: String) -> Int {
+            let code = text.split(separator: "\n").map { line -> Substring in
+                guard let r = line.range(of: "//") else { return line }
+                return line[..<r.lowerBound]
+            }.joined(separator: "\n")
+            return pattern?.numberOfMatches(in: code, range: NSRange(code.startIndex..., in: code)) ?? 0
+        }
+        check(uses("let tile = HelmStatTile(symbol: \"x\")") == 1, "S14: the retired-component guard can fail", &ok)
+        let offenders = names.filter { uses(source($0)) > 0 }
+        check(offenders.isEmpty, "S14: no app source uses HelmStatTile or HelmMetricCard (\(offenders))", &ok)
+        for page in ["FleetController.swift", "ReviewController.swift", "SetupSummary.swift", "HealthCardView.swift",
+                     "LogAnalyzerController.swift", "ShiftController.swift"] {
+            check(source(page).contains("HelmKPIStrip(density: .boxed)"), "S14: \(page) draws its summary row boxed", &ok)
+        }
     }
 
     // MARK: - S13

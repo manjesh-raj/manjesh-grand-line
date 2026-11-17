@@ -707,7 +707,24 @@ extension HelmReading: Equatable where Value: Equatable {}
 ///
 /// An item carries a `HelmReading`, so an unknown renders as a dash rather
 /// than a zero by construction (GL-14).
+///
+/// **One number recipe (S14 of the 2026-11-17 UI/UX proposals).** "A number
+/// with a caption" was drawn three ways: this strip, `HelmStatTile` (a boxed
+/// tile with an icon) and `HelmMetricCard` (a boxed card with the caption
+/// above a 28pt figure). The two boxed recipes are removed and the strip has
+/// two densities instead:
+///
+///   - `.inline`: inside a card that already gives the surface (Home's Fleet
+///     card, Schedules). The figure over its caption, hairlines between.
+///   - `.boxed`: a page's summary row (Crew, Setup, Health, Logs, Weekly
+///     review). The same items, each on the card surface, caption above the
+///     figure. A page can switch density without changing its data.
+///
+/// Both share the unknown rule (a dash, "not read" for the reason, never 0)
+/// and the tint rule (colour only when the state is not the default).
 final class HelmKPIStrip: NSView {
+
+    enum Density: Equatable { case inline, boxed }
 
     struct Item: Equatable {
         enum Emphasis: Equatable {
@@ -721,14 +738,42 @@ final class HelmKPIStrip: NSView {
             case tinted(HelmTint)
         }
 
+        /// `.boxed` only: one more fact under the figure - a muted line, or
+        /// a tinted pill when the fact is a judgement ("+3 vs last week").
+        struct Detail: Equatable {
+            let text: String
+            var tint: HelmTint? = nil
+        }
+
         let reading: HelmReading<String>
         let caption: String
         let emphasis: Emphasis
+        var detail: Detail? = nil
+        /// `.boxed` only: the cell is a button that calls `onActivate`.
+        var isAction = false
+        /// Shown on hover. A failed reading's reason is the default.
+        var toolTip: String? = nil
 
-        init(_ reading: HelmReading<String>, caption: String, emphasis: Emphasis = .normal) {
+        init(_ reading: HelmReading<String>, caption: String, emphasis: Emphasis = .normal,
+             detail: Detail? = nil, isAction: Bool = false, toolTip: String? = nil) {
             self.reading = reading
             self.caption = caption
             self.emphasis = emphasis
+            self.detail = detail
+            self.isAction = isAction
+            self.toolTip = toolTip
+        }
+
+        /// A figure that may be unknown: `nil` text is a dash (with the reason
+        /// as a tooltip when there is one, GL-14), and `tint` colours it only
+        /// when `signals` says the figure is itself the signal. The shape the
+        /// retired `HelmMetricCard.configure(text:signals:unknownReason:)` had.
+        static func figure(_ text: String?, caption: String, tint: HelmTint? = nil, signals: Bool = false,
+                           unknownReason: String? = nil, detail: Detail? = nil) -> Item {
+            let reading: HelmReading<String> = text.map { .value($0) }
+                ?? unknownReason.map { .failed($0) } ?? .unread
+            let emphasis: Emphasis = (signals && text != nil) ? (tint.map { .tinted($0) } ?? .normal) : .normal
+            return Item(reading, caption: caption, emphasis: emphasis, detail: detail)
         }
 
         /// A known count, quiet when it is zero.
@@ -747,6 +792,18 @@ final class HelmKPIStrip: NSView {
 
     static let metricSize: CGFloat = 19
     static let captionSize: CGFloat = 11
+    /// `.boxed`: the figure, the smallest it shrinks to before truncating,
+    /// the caption and the cell heights (with and without a detail line).
+    static let boxedMetricSize: CGFloat = 28
+    static let boxedMinimumMetricSize: CGFloat = 14
+    static let boxedCaptionSize: CGFloat = 11.5
+    static let boxedHeight: CGFloat = 82
+    static let boxedDetailHeight: CGFloat = 108
+
+    let density: Density
+    /// `.boxed`: called with the index of an `isAction` cell that was pressed.
+    var onActivate: ((Int) -> Void)?
+    private var cells: [BoxedCell] = []
 
     /// R4-UI-02: a column's figure and caption keep their own width ahead of
     /// the equal-column tie, which is `columnHug`. Measured on Home's Fleet
@@ -774,13 +831,14 @@ final class HelmKPIStrip: NSView {
     }
     private var topRuleGap: NSLayoutConstraint?
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(density: Density = .inline) {
+        self.density = density
+        super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .top
-        row.spacing = 0
-        row.distribution = .fill
+        row.spacing = density == .boxed ? HelmMetrics.s4 : 0
+        row.distribution = density == .boxed ? .fillEqually : .fill
         row.translatesAutoresizingMaskIntoConstraints = false
         // gotcha (12)+(13): the stack-level APIs, both yielding, so a strip
         // inside a card is never a window-width floor.
@@ -807,11 +865,15 @@ final class HelmKPIStrip: NSView {
         setAccessibilityRole(.group)
     }
 
-    convenience init() { self.init(frame: .zero) }
+    override convenience init(frame frameRect: NSRect) { self.init(density: .inline) }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(_ newItems: [Item], theme: HelmTheme = ThemeManager.shared.theme) {
+        if density == .boxed {
+            configureBoxed(newItems, theme: theme)
+            return
+        }
         items = newItems
         for view in row.arrangedSubviews {
             row.removeArrangedSubview(view)
@@ -874,8 +936,46 @@ final class HelmKPIStrip: NSView {
         applyTheme(theme)
     }
 
+    /// `.boxed`: one cell per item, updated in place while the count holds,
+    /// so a refresh never rebuilds the row (P2, `KeyedRefreshSelfTest`).
+    private func configureBoxed(_ newItems: [Item], theme: HelmTheme) {
+        items = newItems
+        if cells.count != newItems.count {
+            for view in row.arrangedSubviews {
+                row.removeArrangedSubview(view)
+                view.removeFromSuperview()
+            }
+            let anyDetail = newItems.contains { $0.detail != nil }
+            cells = newItems.indices.map { index in
+                let cell = BoxedCell(height: anyDetail ? Self.boxedDetailHeight : Self.boxedHeight)
+                cell.onPress = { [weak self] in self?.onActivate?(index) }
+                row.addArrangedSubview(cell)
+                return cell
+            }
+        }
+        for (cell, item) in zip(cells, newItems) { cell.configure(item) }
+        setAccessibilityLabel(newItems.map { "\($0.caption) \($0.reading.text { $0 })" }.joined(separator: ", "))
+        applyTheme(theme)
+    }
+
+    /// The figure's colour for an item: muted for an unknown or a quiet
+    /// figure, a contrast-corrected state colour for a tinted one, else ink.
+    static func valueColor(_ item: Item, over surface: NSColor, theme: HelmTheme) -> NSColor {
+        guard item.reading.isKnown else { return HelmTheme.mutedInk(theme) }
+        switch item.emphasis {
+        case .normal: return HelmTheme.nsColor(theme.chromeInkHex)
+        case .quiet: return HelmTheme.mutedInk(theme)
+        case let .tinted(tint):
+            return HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme), overAnyOf: [surface], theme: theme)
+        }
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        if density == .boxed {
+            for cell in cells { cell.applyTheme(theme) }
+            return
+        }
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
@@ -908,7 +1008,156 @@ final class HelmKPIStrip: NSView {
     var debugValueColors: [NSColor?] { valueLabels.map(\.textColor) }
     var debugSeparatorCount: Int { separators.count }
     var debugHasBorder: Bool { (layer?.borderWidth ?? 0) > 0 }
+    var debugCells: [BoxedCell] { cells }
     #endif
+
+    /// One `.boxed` cell: the caption above the figure on the card surface,
+    /// an optional detail line or pill, and a press when the item is an
+    /// action. Nested so it is the strip's implementation, not a third stat
+    /// component.
+    final class BoxedCell: NSView {
+        private let card = HelmCard()
+        private let captionLabel = NSTextField(labelWithString: "")
+        private let valueLabel = NSTextField(labelWithString: "")
+        private let detailLabel = NSTextField(labelWithString: "")
+        private let detailPill = HelmStatusPill(style: .pill)
+        private var item = Item(.unread, caption: "")
+        private var theme: HelmTheme = ThemeManager.shared.theme
+        var onPress: (() -> Void)?
+
+        init(height: CGFloat) {
+            super.init(frame: .zero)
+            translatesAutoresizingMaskIntoConstraints = false
+            captionLabel.font = .systemFont(ofSize: HelmType.scaled(HelmKPIStrip.boxedCaptionSize), weight: .medium)
+            valueLabel.font = HelmType.metric(HelmKPIStrip.boxedMetricSize)
+            detailLabel.font = HelmType.caption()
+            for label in [captionLabel, valueLabel, detailLabel] {
+                label.lineBreakMode = .byTruncatingTail
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            }
+            let stack = NSStackView(views: [captionLabel, valueLabel, detailLabel, detailPill])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = HelmMetrics.s1
+            stack.detachesHiddenViews = true
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            detailLabel.isHidden = true
+            detailPill.isHidden = true
+            card.setBody(stack, insets: HelmCard.contentInsets)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(card)
+            NSLayoutConstraint.activate([
+                card.leadingAnchor.constraint(equalTo: leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: trailingAnchor),
+                card.topAnchor.constraint(equalTo: topAnchor),
+                card.bottomAnchor.constraint(equalTo: bottomAnchor),
+                heightAnchor.constraint(equalToConstant: height),
+            ])
+            setAccessibilityElement(true)
+            // GL-16: an action cell is keyboard-reachable and draws a real ring.
+            focusRingType = .exterior
+            addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(pressed)))
+        }
+
+        override var acceptsFirstResponder: Bool { item.isAction }
+        override var focusRingMaskBounds: NSRect { bounds }
+        override func drawFocusRingMask() {
+            NSBezierPath(roundedRect: bounds, xRadius: card.layer?.cornerRadius ?? HelmMetrics.rRow,
+                         yRadius: card.layer?.cornerRadius ?? HelmMetrics.rRow).fill()
+        }
+
+        override func keyDown(with event: NSEvent) {
+            if item.isAction, event.keyCode == 36 || event.keyCode == 49 || event.keyCode == 76 {
+                onPress?()
+                return
+            }
+            super.keyDown(with: event)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+        func configure(_ item: Item) {
+            self.item = item
+            captionLabel.stringValue = item.caption
+            valueLabel.stringValue = item.reading.text { $0 }
+            let detail = item.detail
+            let pill = detail?.tint != nil
+            detailPill.isHidden = !pill
+            detailLabel.isHidden = detail == nil || pill
+            detailLabel.stringValue = pill ? "" : (detail?.text ?? "")
+            var reason: String?
+            if case let .failed(why) = item.reading { reason = why }
+            toolTip = item.toolTip ?? reason
+            setAccessibilityRole(item.isAction ? .button : .staticText)
+            setAccessibilityLabel([item.caption, item.reading.isKnown ? item.reading.text { $0 } : "not known yet",
+                                   detail?.text].compactMap { $0 }.joined(separator: ", "))
+            fitFigure()
+            applyTheme(theme)
+        }
+
+        @objc private func pressed() {
+            guard item.isAction else { return }
+            onPress?()
+        }
+
+        override func accessibilityPerformPress() -> Bool {
+            guard item.isAction else { return false }
+            onPress?()
+            return true
+        }
+
+        override func layout() {
+            super.layout()
+            fitFigure()
+        }
+
+        /// The figure steps down a point at a time until it fits its cell, so a
+        /// long value ("0 / 13", "Paused") never truncates at a narrow width.
+        private func fitFigure() {
+            let insets = HelmCard.contentInsets
+            let room = floor(bounds.width - insets.left - insets.right)
+            guard room > 0 else { return }
+            var size = HelmKPIStrip.boxedMetricSize
+            var font = HelmType.metric(size)
+            while size > HelmKPIStrip.boxedMinimumMetricSize,
+                  (valueLabel.stringValue as NSString).size(withAttributes: [.font: font]).width > room {
+                size -= 1
+                font = HelmType.metric(size)
+            }
+            if valueLabel.font != font { valueLabel.font = font }
+        }
+
+        func applyTheme(_ theme: HelmTheme) {
+            self.theme = theme
+            card.applyTheme(theme)
+            captionLabel.textColor = HelmTheme.mutedInk(theme)
+            detailLabel.textColor = HelmTheme.mutedInk(theme)
+            valueLabel.textColor = HelmKPIStrip.valueColor(item, over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                                           theme: theme)
+            if let detail = item.detail, let tint = detail.tint {
+                detailPill.configure(text: detail.text, tint: tint, theme: theme)
+            }
+        }
+
+        #if FM_SELFTESTS
+        var debugCaption: String { captionLabel.stringValue }
+        var debugValue: String { valueLabel.stringValue }
+        var debugValuePointSize: CGFloat { valueLabel.font?.pointSize ?? 0 }
+        var debugValueFits: Bool {
+            let width = (valueLabel.stringValue as NSString).size(withAttributes: [.font: valueLabel.font as Any]).width
+            return width <= valueLabel.frame.width + 0.5
+        }
+        var debugValueColor: NSColor? { valueLabel.textColor }
+        var debugCard: HelmCard { card }
+        var debugDetail: String? {
+            item.detail == nil ? nil : (detailPill.isHidden ? detailLabel.stringValue : detailPill.text)
+        }
+        var debugDetailIsPill: Bool { !detailPill.isHidden }
+        var debugIsAction: Bool { item.isAction }
+        func debugPress() { _ = accessibilityPerformPress() }
+        #endif
+    }
 }
 
 // MARK: - HelmRelativeTime

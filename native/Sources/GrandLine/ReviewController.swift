@@ -90,8 +90,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// checks running (warn) - the same three numbers the per-row chips
     /// below already carry, just totalled. Rebuilt on every render like
     /// `FleetController.rebuildStats`.
-    private let statsRow = NSStackView()
-    private var statTiles: [HelmStatTile] = []
+    /// S14: the three figures are a `.boxed` `HelmKPIStrip`. A figure is
+    /// coloured only when it is not the default state (a ready PR, a running
+    /// check); the count of open PRs stays ink.
+    private let statsRow = HelmKPIStrip(density: .boxed)
 
     private let githubHeader = NSTextField(labelWithString: "")
     private let githubSubtitle = NSTextField(wrappingLabelWithString: "")
@@ -376,9 +378,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     }
 
     private func buildStatsRow() {
-        statsRow.orientation = .horizontal
-        statsRow.distribution = .fillEqually
-        statsRow.spacing = 10
         statsRow.translatesAutoresizingMaskIntoConstraints = false
     }
 
@@ -412,15 +411,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor, constant: -HelmMetrics.s4),
         ])
         return loadingContainer
-    }
-
-    /// One `HelmStatTile` - the app's shared stat tile. Mirrors
-    /// `FleetController.statTile` exactly: the tile themes itself, this only
-    /// tracks the live instance so a theme change can reach it.
-    private func statTile(icon: String, value: String, label: String, tint: HelmTint? = nil) -> NSView {
-        let tile = HelmStatTile(symbol: icon, value: value, caption: label, tint: tint)
-        statTiles.append(tile)
-        return tile
     }
 
     /// One `HelmCard` per section - the shared container from
@@ -618,11 +608,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// since every PR in them was genuinely found, and says in the tooltip
     /// that they cover only the repositories that answered.
     private func rebuildStats(_ prs: [MergedPR], failure: ScanFailure? = nil) {
-        for v in statsRow.arrangedSubviews {
-            statsRow.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        statTiles.removeAll()
 
         // One definition of "ready to merge", shared with this page's own
         // drill subtitle a few inches above it and with every Overview
@@ -633,17 +618,17 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         let running = prs.filter { $0.checks == "pending" }.count
 
         let unknown = failure != nil && prs.isEmpty
-        func reading(_ count: Int) -> String {
-            (unknown ? HelmReading<Int>.failed(failure?.detail ?? "") : .value(count)).text { "\($0)" }
+        let tip = failure.map { unknown ? $0.detail : "\($0.detail) These counts cover only the repositories that answered." }
+        func item(_ count: Int, _ caption: String, tint: HelmTint?) -> HelmKPIStrip.Item {
+            let reading: HelmReading<String> = unknown ? .failed(failure?.detail ?? "") : .value("\(count)")
+            let emphasis: HelmKPIStrip.Item.Emphasis = (count > 0 ? tint : nil).map { .tinted($0) } ?? .normal
+            return .init(reading, caption: caption, emphasis: emphasis, toolTip: tip)
         }
-        statsRow.addArrangedSubview(statTile(icon: "arrow.triangle.branch", value: reading(prs.count), label: "open PRs", tint: .accent))
-        statsRow.addArrangedSubview(statTile(icon: "checkmark.circle", value: reading(ready), label: "ready to merge", tint: .good))
-        statsRow.addArrangedSubview(statTile(icon: "clock", value: reading(running), label: "checks running", tint: .warn))
-        if let failure {
-            let tip = unknown ? failure.detail
-                : "\(failure.detail) These counts cover only the repositories that answered."
-            for tile in statTiles { tile.toolTip = tip }
-        }
+        statsRow.configure([
+            item(prs.count, "Open PRs", tint: nil),
+            item(ready, "Ready to merge", tint: .good),
+            item(running, "Checks running", tint: .warn),
+        ], theme: theme)
     }
 
     /// The disclosure on the total-failure block: the projects path, on
@@ -829,7 +814,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         loadingLabel.textColor = muted
         loadingSkeleton.applyTheme(theme)
 
-        for tile in statTiles { tile.applyTheme(theme) }
+        statsRow.applyTheme(theme)
         failureState.applyTheme(theme)
         githubList?.applyTheme(theme)
         bitbucketList?.applyTheme(theme)
@@ -887,8 +872,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// rather than what `rebuildStats` intended. This page's own drill
     /// subtitle and its "ready to merge" tile once disagreed in one
     /// screenshot; only reading both off the rendered views catches that.
-    var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
-    var debugStatTileToolTips: [String?] { statTiles.map { $0.toolTip } }
+    var debugStatTiles: [(value: String, caption: String)] {
+        statsRow.debugCells.map { ($0.debugValue, $0.debugCaption) }
+    }
+    var debugStatTileToolTips: [String?] { statsRow.debugCells.map(\.toolTip) }
     var debugIsFailureStateVisible: Bool { !failureState.isHidden }
     var debugIsBodySubtitleVisible: Bool { !headerRow.isHidden }
     func debugToggleFailureDetail() { failureDetailButton.performClick(nil) }

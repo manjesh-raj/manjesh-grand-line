@@ -561,15 +561,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         table.accessibilityName = "Follow-ups"
         return table
     }()
-    /// Weekly review's five figures, as the prototype's summary cards.
-    private lazy var reviewCards: [HelmMetricCard] = [
-        HelmMetricCard(caption: "Completed this week", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Focus time", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Overdue", tint: .critical, showsDetail: true),
-        HelmMetricCard(caption: "Follow-ups open", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Coming up next week", tint: nil, showsDetail: true),
-    ]
-    private lazy var reviewCardsRow = HelmMetricRow(reviewCards)
+    /// Weekly review's five figures: a `.boxed` `HelmKPIStrip` (S14), each
+    /// with its detail line.
+    private lazy var reviewCardsRow = HelmKPIStrip(density: .boxed)
     /// Time on tasks beside Pushed back repeatedly.
     private let reviewLowerRow = NSStackView()
     /// The strip's "pushed back 2+ times" figure, which the five cards do not
@@ -2727,7 +2721,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// subtitle and the sidebar. Kept as a probe so a suite can assert none
     /// came back.
     var debugStatTileCount: Int {
-        func walk(_ v: NSView) -> Int { (v is HelmStatTile ? 1 : 0) + v.subviews.reduce(0) { $0 + walk($1) } }
+        func walk(_ v: NSView) -> Int {
+            (v is HelmKPIStrip.BoxedCell ? 1 : 0) + v.subviews.reduce(0) { $0 + walk($1) }
+        }
         return walk(dashboardContainer)
     }
 
@@ -2876,7 +2872,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             projectPopup.contentTintColor = ink
             tasksTable.applyTheme(theme)
             followUpsTable.applyTheme(theme)
-            for card in reviewCards { card.applyTheme(theme) }
+            reviewCardsRow.applyTheme(theme)
         }
     }
 }
@@ -3572,44 +3568,44 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     fileprivate func renderWorkspaceReview(_ summary: ShiftWeeklySummary) {
         let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: Date())
             .map { store.weeklySummary(reference: $0).completedCount }
-        reviewCards[0].configure(count: summary.completedCount)
+        typealias Item = HelmKPIStrip.Item
+        var completedDetail: Item.Detail?
         if let lastWeek {
             let delta = summary.completedCount - lastWeek
             let text = delta == 0 ? "Same as last week" : "\(delta > 0 ? "+" : "\u{2212}")\(abs(delta)) vs last week"
-            reviewCards[0].setDetail(text, tint: delta > 0 ? .good : nil)
-        } else {
-            reviewCards[0].setDetail(nil)
+            completedDetail = .init(text: text, tint: delta > 0 ? .good : nil)
         }
         let focusDays = store.focusSecondsByDay(days: 7)
         let focusSeconds = focusDays.reduce(0) { $0 + $1.seconds }
         let focusTasks = store.focusTaskCount(days: 7)
-        reviewCards[1].configure(text: focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet",
-                                 signals: false)
-        reviewCards[1].setDetail(focusSeconds > 0
-            ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
-            : "Start a focus session from any task")
         let c = counts()
-        reviewCards[2].configure(count: c.overdue)
         let today = Calendar.current.startOfDay(for: Date())
         let overdueTasks = store.activeTasks.filter(matchesProjectFilter).filter { task in
             guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
             return due < today
         }.sorted(by: Self.byDueDateThenCreated)
-        reviewCards[2].setDetail(overdueTasks.first?.title ?? "Nothing late")
         let pending = store.followUps.filter { $0.status == .pending }
         let dueToday = pending.filter { fu in
             fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: Date()) }
                 ?? false
         }.count
-        reviewCards[3].configure(text: "\(pending.count)", signals: false)
-        reviewCards[3].setDetail(dueToday > 0 ? "\(dueToday) due today" : "None due today")
-        reviewCards[4].configure(text: "\(summary.upcomingCount)", signals: false)
-        reviewCards[4].setDetail("tasks and follow-ups due")
+        reviewCardsRow.configure([
+            .figure("\(summary.completedCount)", caption: "Completed this week", detail: completedDetail),
+            .figure(focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet", caption: "Focus time",
+                    detail: .init(text: focusSeconds > 0
+                        ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
+                        : "Start a focus session from any task")),
+            .figure("\(c.overdue)", caption: "Overdue", tint: .critical, signals: c.overdue > 0,
+                    detail: .init(text: overdueTasks.first?.title ?? "Nothing late")),
+            .figure("\(pending.count)", caption: "Follow-ups open",
+                    detail: .init(text: dueToday > 0 ? "\(dueToday) due today" : "None due today")),
+            .figure("\(summary.upcomingCount)", caption: "Coming up next week",
+                    detail: .init(text: "tasks and follow-ups due")),
+        ], theme: theme)
         reviewPushedBackHeader.stringValue = "Pushed back repeatedly"
         reviewPushedBackCount.text = "\(summary.pushedBack.count)"
         reviewPushedBackCount.applyTheme(theme)
         renderReviewAgenda()
-        for card in reviewCards { card.applyTheme(theme) }
     }
 }
 
@@ -3662,7 +3658,7 @@ extension ShiftController {
     var debugFollowUpsJump: HelmButton { followUpsJump }
     var debugTasksTable: HelmDataTable { tasksTable }
     var debugFollowUpsTable: HelmDataTable { followUpsTable }
-    var debugReviewCards: [HelmMetricCard] { reviewCards }
+    var debugReviewCards: [HelmKPIStrip.BoxedCell] { reviewCardsRow.debugCells }
     /// The Pushed back panel's count, when it is mounted and showing.
     var debugPushedBackCount: String? {
         reviewPushedBackCount.superview != nil && !reviewPushedBackCount.isHidden ? reviewPushedBackCount.text : nil

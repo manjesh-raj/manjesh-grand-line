@@ -75,10 +75,8 @@ final class HealthCardView: NSObject {
     private lazy var tableRoot = NSStackView()
     // R5-UI-04: the bucket's own word, as everywhere else ("Warnings" here
     // was a fourth name for a service with a recent failure).
-    private lazy var healthyCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.healthy.label, tint: .good)
-    private lazy var warningsCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.degraded.label, tint: .warn)
-    private lazy var failingCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.failing.label, tint: .critical)
-    private lazy var pendingCard = HelmMetricCard(caption: ServiceHealthSummary.Bucket.notRun.label)
+    /// S14: the summary row is a `.boxed` `HelmKPIStrip`.
+    private lazy var metricsStrip = HelmKPIStrip(density: .boxed)
     private lazy var crashHost = NSStackView()
     private lazy var servicesTable: HelmDataTable = {
         let table = HelmDataTable(columns: [
@@ -105,7 +103,7 @@ final class HealthCardView: NSObject {
         tableRoot.translatesAutoresizingMaskIntoConstraints = false
         crashHost.orientation = .vertical
         crashHost.translatesAutoresizingMaskIntoConstraints = false
-        let metrics = HelmMetricRow([healthyCard, warningsCard, failingCard, pendingCard])
+        let metrics = metricsStrip
         for view in [metrics, crashHost, servicesTable.card] as [NSView] {
             tableRoot.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: tableRoot.widthAnchor).isActive = true
@@ -122,12 +120,16 @@ final class HealthCardView: NSObject {
         let known = counts.total > 0
         // Before anything has reported, every figure is unknown, not zero.
         let reason = "No background service has reported yet."
-        healthyCard.configure(text: known ? "\(counts.healthy) / \(counts.total)" : nil, signals: false,
-                              unknownReason: reason)
-        warningsCard.configure(count: known ? counts.degraded : nil, unknownReason: reason)
-        failingCard.configure(count: known ? counts.failing : nil, unknownReason: reason)
-        pendingCard.configure(text: known ? "\(counts.notRun)" : nil, signals: false, unknownReason: reason)
-        for card in [healthyCard, warningsCard, failingCard, pendingCard] { card.applyTheme(theme) }
+        typealias Bucket = ServiceHealthSummary.Bucket
+        metricsStrip.configure([
+            .figure(known ? "\(counts.healthy) / \(counts.total)" : nil, caption: Bucket.healthy.label,
+                    unknownReason: reason),
+            .figure(known ? "\(counts.degraded)" : nil, caption: Bucket.degraded.label, tint: .warn,
+                    signals: counts.degraded > 0, unknownReason: reason),
+            .figure(known ? "\(counts.failing)" : nil, caption: Bucket.failing.label, tint: .critical,
+                    signals: counts.failing > 0, unknownReason: reason),
+            .figure(known ? "\(counts.notRun)" : nil, caption: Bucket.notRun.label, unknownReason: reason),
+        ], theme: theme)
 
         for view in crashHost.arrangedSubviews {
             crashHost.removeArrangedSubview(view)
@@ -817,7 +819,7 @@ final class HealthCardView: NSObject {
     /// UI-56: the KPI line's figures, as rendered - empty while it is not
     /// in the card.
     var debugSummaryValues: [String] { summaryStrip.superview == nil ? [] : summaryStrip.debugValues }
-    var debugMetricCards: [HelmMetricCard] { [healthyCard, warningsCard, failingCard, pendingCard] }
+    var debugMetricCards: [HelmKPIStrip.BoxedCell] { metricsStrip.debugCells }
     var debugServicesTable: HelmDataTable { servicesTable }
     /// Rebuild now, whether or not the card is on screen.
     func debugRebuild() { rebuild() }
