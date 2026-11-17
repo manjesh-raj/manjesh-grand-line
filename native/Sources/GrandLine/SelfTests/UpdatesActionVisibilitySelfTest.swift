@@ -133,7 +133,7 @@ enum UpdatesActionVisibilitySelfTest {
                   + "runInTerminal hidden \(needs.runInTerminal.isHidden), update hidden \(needs.update.isHidden)")
             ok = false
         }
-        if needsPill.text != "Needs Password" || !needs.detail.contains(command) {
+        if needsPill.text != "Needs password" || !needs.detail.contains(command) {
             print("UpdatesActionVisibility: a needs-password row reads \"\(needsPill.text)\" / \"\(needs.detail)\"")
             ok = false
         }
@@ -161,7 +161,7 @@ enum UpdatesActionVisibilitySelfTest {
             ok = false
             return
         }
-        if timedOut.update.isHidden || !timedOut.runInTerminal.isHidden || timedOutPill.text != "Update Failed"
+        if timedOut.update.isHidden || !timedOut.runInTerminal.isHidden || timedOutPill.text != StateWord.updateFailed.label
             || timedOut.detail.contains("SIGTERM") || !timedOut.detail.hasPrefix("Stopped after") {
             print("UpdatesActionVisibility: a timed-out row must offer Update again and say it was stopped - "
                   + "update hidden \(timedOut.update.isHidden), runInTerminal hidden \(timedOut.runInTerminal.isHidden), "

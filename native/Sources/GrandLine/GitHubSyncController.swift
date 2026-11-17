@@ -989,15 +989,16 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// one that is not. Tints, never the terminal's ANSI slots (UI-32).
     private func pillVisuals(_ status: GitHubSyncStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        // R5-UX-02: one word per state, the table cells' sentence case.
+        case .unknown: return (StateWord.notChecked.label, .neutral, .dotWord)
         case .checking, .syncing: return ("", .neutral, .dotWord)
-        case .inSync: return ("In Sync", .good, .dotWord)
+        case .inSync: return ("In sync", .good, .dotWord)
         case .behind(let n): return ("\(n) behind", .warn, .pill)
         case .diverged: return ("Diverged", .critical, .pill)
         case .ahead: return ("Ahead", .good, .dotWord)
-        case .notAFork: return ("Not a Fork", .neutral, .dotWord)
-        case .checkFailed: return ("Check Failed", .critical, .pill)
-        case .syncFailed: return ("Sync Failed", .critical, .pill)
+        case .notAFork: return ("Not a fork", .neutral, .dotWord)
+        case .checkFailed: return (StateWord.checkFailed.label, .critical, .pill)
+        case .syncFailed: return ("Sync failed", .critical, .pill)
         }
     }
 

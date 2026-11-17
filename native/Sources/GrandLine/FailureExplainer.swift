@@ -44,7 +44,7 @@ enum FailureExplainer {
             return .signedOut
         }
         if has("permission denied", "operation not permitted", "read-only file system") { return .permission }
-        if has("timed out", "timeout", "time out") { return .timedOut }
+        if has("timed out", "timeout", "time out", "stopped after") { return .timedOut }
         if has("could not reach", "could not resolve host", "network is unreachable", "connection refused",
                "connection reset", "offline", "not connected to the internet", "unable to access") {
             return .network
@@ -89,9 +89,11 @@ enum FailureExplainer {
             ? "\(name) couldn\u{2019}t be updated."
             : "\(name) couldn\u{2019}t be checked for updates."
         let next: String
+        // The row's own button for trying again.
+        let again = status == .updateFailed ? "Update" : "Check"
         switch cause(of: detail + "\n" + log) {
         case .network:
-            next = "Check your connection, then press Check on this row. Nothing was installed or changed."
+            next = "Check your connection, then press \(again) on this row. Nothing was installed or changed."
         case .signedOut:
             next = "Sign in again with gh auth login in a terminal, then press Check."
         case .missingTool:
@@ -101,11 +103,11 @@ enum FailureExplainer {
         case .permission:
             next = "Run the update in Terminal, where it can ask for your password."
         case .timedOut:
-            next = "It may have been slow rather than broken: press Check to try again."
+            next = "It may have been slow rather than broken: press \(again) to try again."
         case .unknown:
             next = log.isEmpty
-                ? "Press Check to try again. If it keeps failing, run the tool's own version command in Terminal."
-                : "Read the output in this tool's details for the cause, then press Check to try again."
+                ? "Press \(again) to try again. If it keeps failing, run the tool's own version command in Terminal."
+                : "Read the output in this tool's details for the cause, then press \(again) to try again."
         }
         return ScheduleFailureExplanation(whatFailed: whatFailed, why: sentence(detail), whatToDo: next)
     }

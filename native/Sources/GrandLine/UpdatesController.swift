@@ -1021,15 +1021,16 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// password has not failed, so it reads as a warning that asks for them
     /// rather than as a red failure.
     private func pillVisuals(_ row: UpdateRow) -> (String, HelmTint, HelmStatusPill.Style) {
-        if row.status == .updateFailed, row.terminalCommand != nil { return ("Needs Password", .warn, .pill) }
+        if row.status == .updateFailed, row.terminalCommand != nil { return ("Needs password", .warn, .pill) }
+        // R5-UX-02: the pill says what the row's own cell and Setup's
+        // software step say (`StateVocabulary`), not a title-cased copy.
+        let word = row.status.stateWord.label
         switch row.status {
-        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        case .unknown: return (word, .neutral, .dotWord)
         case .checking, .updating: return ("", .neutral, .dotWord)
-        case .upToDate: return ("Up to Date", .good, .dotWord)
-        case .updateAvailable: return ("Update Available", .warn, .pill)
-        case .notInstalled: return ("Not Installed", .warn, .pill)
-        case .checkFailed: return ("Check Failed", .critical, .pill)
-        case .updateFailed: return ("Update Failed", .critical, .pill)
+        case .upToDate: return (word, .good, .dotWord)
+        case .updateAvailable, .notInstalled: return (word, .warn, .pill)
+        case .checkFailed, .updateFailed: return (word, .critical, .pill)
         }
     }
 
