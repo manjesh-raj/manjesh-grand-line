@@ -21,6 +21,13 @@
 // Each puts the shared setting back, because the next case in this process
 // reads it.
 //
+// R5-PERF-03 of full review #5 added the last two: the current tab of a page
+// the captain has navigated away from is out of sight as well, so it goes
+// through the same grace period, and gets its depth back when the page
+// reappears. Both enter through `viewDidDisappear`/`viewDidAppear`, the calls
+// AppKit makes when the shell hides and shows a page, with the page's view
+// hidden first exactly as the shell hides it.
+//
 // Run with:
 //   swift build && FM_RUN_BACKGROUND_SCROLLBACK_TESTS=1 .build/debug/GrandLine; echo $?
 //
@@ -43,6 +50,8 @@ enum BackgroundScrollbackSelfTest {
             ("aNewDepthReachesEveryOpenPane", test_aNewDepthReachesEveryOpenPane),
             ("loweringTheDepthIsCountedBeforeItTrims", test_loweringTheDepthIsCountedBeforeItTrims),
             ("turningTheTrimOffKeepsBackgroundTabsWhole", test_turningTheTrimOffKeepsBackgroundTabsWhole),
+            ("aHiddenPagesCurrentTabShrinksAfterItsGracePeriod", test_aHiddenPagesCurrentTabShrinksAfterItsGracePeriod),
+            ("aPageComingBackRestoresItsCurrentTab", test_aPageComingBackRestoresItsCurrentTab),
         ]
         var failed = 0
         for (name, body) in cases {
@@ -84,6 +93,20 @@ enum BackgroundScrollbackSelfTest {
 
     private static func bufferLines(_ tab: TabModel) -> Int { tab.currentBufferLines().count }
 
+    /// What the shell does when the captain navigates away: the page's view
+    /// is hidden, and AppKit calls `viewDidDisappear`. No window here, so the
+    /// call is made directly - `DestinationMountingSelfTest
+    /// .leavingTheConsoleMarksItOutOfSight` covers the shell delivering it.
+    private static func hidePage(_ console: ConsoleController) {
+        console.view.isHidden = true
+        console.viewDidDisappear()
+    }
+
+    private static func showPage(_ console: ConsoleController) {
+        console.view.isHidden = false
+        console.viewDidAppear()
+    }
+
     // MARK: The per-pane figure (`native/README.md`)
 
     /// What one pane's full scrollback costs, measured in this process rather
@@ -94,7 +117,7 @@ enum BackgroundScrollbackSelfTest {
     private static func reportThePerPaneFigure() {
         let before = physicalFootprint()
         autoreleasepool {
-            let (_, tabs) = makeConsole(tabs: 1)
+            let (console, tabs) = makeConsole(tabs: 1)
             let tab = tabs[0]
             tab.terminal.terminal?.resize(cols: 200, rows: 50)
             let row = String(repeating: "x", count: 199) + "\r\n"
@@ -110,7 +133,29 @@ enum BackgroundScrollbackSelfTest {
                          + "(CharData stride %d bytes, so %.1f MB of cells alone at 10,000 x 200)",
                          lines, megabytes, MemoryLayout<CharData>.stride,
                          Double(MemoryLayout<CharData>.stride * 200 * 10_000) / 1_048_576))
+
+            // R5-PERF-03: the same pane as the current tab of a page the
+            // captain has left, once its grace period is over. Read as heap
+            // in use as well as footprint: macOS malloc keeps freed pages to
+            // reuse, and hands them back only under memory pressure, so the
+            // footprint does not drop at once even when the rows are freed.
+            let heapBefore = heapInUse()
+            hidePage(console)
+            console.debugEndBackgroundScrollbackGrace()
+            let hidden = physicalFootprint()
+            print(String(format: "  NOTE: the same pane on a hidden page after its grace period: %d lines, "
+                         + "%.0f MB of heap freed, physical footprint %.0f MB lower",
+                         tab.currentBufferLines().count, Double(max(0, heapBefore - heapInUse())) / 1_048_576,
+                         Double(max(0, after - hidden)) / 1_048_576))
+            console.shutdown()
         }
+    }
+
+    /// Bytes the default malloc zones hold in live allocations.
+    private static func heapInUse() -> Int64 {
+        var stats = malloc_statistics_t()
+        malloc_zone_statistics(nil, &stats)
+        return Int64(stats.size_in_use)
     }
 
     private static func physicalFootprint() -> Int64 {
@@ -125,6 +170,85 @@ enum BackgroundScrollbackSelfTest {
     }
 
     // MARK: Cases
+
+    /// R5-PERF-03: a page that has disappeared trims its *current* tab too.
+    /// Before it, "background" meant "not the selected tab", so a hidden
+    /// Console or host page kept its selected tab at full depth (about 51 MB
+    /// at 200 columns) for as long as it stayed hidden.
+    ///
+    /// Injection: drop `pageIsOutOfSight` from `isOnScreenForScrollback` and
+    /// the hidden page's current tab keeps all 6,000 lines. Set the flag on
+    /// every `viewDidDisappear`, ignoring whether the page was hidden, and
+    /// the window-going-away guard fails.
+    private static func test_aHiddenPagesCurrentTabShrinksAfterItsGracePeriod() -> String? {
+        let (console, tabs) = makeConsole(tabs: 1)
+        defer { console.shutdown() }
+        let current = tabs[0]
+        fill(current, lines: 6_000, label: "current")
+        let screen = current.currentViewportLines()
+        console.debugEndBackgroundScrollbackGrace()
+        guard bufferLines(current) > 5_000, !current.terminal.isShrunkForBackground else {
+            return "the current tab of a page that never disappeared was trimmed - the check below would prove nothing"
+        }
+
+        // The window going away (minimise, ⌘H) is not the page being left:
+        // the same callback with the page's view still unhidden trims nothing.
+        console.viewDidDisappear()
+        guard !console.debugBackgroundScrollbackIsPending(forTabID: current.id) else {
+            return "the window going away scheduled a trim of the current tab - only a page the shell hid is out of sight"
+        }
+
+        hidePage(console)
+        guard console.debugBackgroundScrollbackIsPending(forTabID: current.id) else {
+            return "hiding the page did not start its current tab's grace period"
+        }
+        guard bufferLines(current) > 5_000 else {
+            return "hiding the page trimmed at once instead of after the grace period"
+        }
+        console.debugEndBackgroundScrollbackGrace()
+        let after = bufferLines(current)
+        let ceiling = ConsoleController.backgroundScrollbackLines + (current.terminal.terminal?.rows ?? 0) + 1
+        guard after <= ceiling else {
+            return "a hidden page's current tab past its grace period still holds \(after) lines, expected at most \(ceiling)"
+        }
+        guard current.currentViewportLines() == screen else {
+            return "shrinking the hidden page's history changed what its screen shows"
+        }
+        return nil
+    }
+
+    /// The other half: the page coming back gives its current tab the full
+    /// depth again, and cancels a grace period that has not run out.
+    ///
+    /// Injection: drop the `syncBackgroundScrollback()` from `viewDidAppear`
+    /// and the tab stays at the background size.
+    private static func test_aPageComingBackRestoresItsCurrentTab() -> String? {
+        let (console, tabs) = makeConsole(tabs: 1)
+        defer { console.shutdown() }
+        let tab = tabs[0]
+        fill(tab, lines: 3_000, label: "early")
+        hidePage(console)
+        console.debugEndBackgroundScrollbackGrace()
+        guard tab.terminal.isShrunkForBackground else {
+            return "the fixture's hidden page was never trimmed - the restore below would prove nothing"
+        }
+
+        showPage(console)
+        guard !tab.terminal.isShrunkForBackground else {
+            return "the page coming back did not restore its current tab's scrollback"
+        }
+        fill(tab, lines: 6_000, label: "late")
+        guard bufferLines(tab) > 5_000 else {
+            return "after the page came back its current tab kept only \(bufferLines(tab)) of 6,000 new lines"
+        }
+
+        hidePage(console)
+        showPage(console)
+        guard !console.debugBackgroundScrollbackIsPending(forTabID: tab.id) else {
+            return "a page shown again inside its grace period still has a pending trim"
+        }
+        return nil
+    }
 
     /// The point of it: a tab out of sight past its grace period gives back
     /// all but `backgroundScrollbackLines` of its history - and its screen

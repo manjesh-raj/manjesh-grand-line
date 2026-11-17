@@ -674,3 +674,82 @@ The largest files are `DaylightModuleSelfTest.swift` (33), `Workspace.swift` (26
    The review's natural candidates are `DependencyCheckCache`, `FleetTaskCache` and the git-sync queue.
 3. The `targeted` gate then checks that area's annotations on every build.
 4. When the count reaches zero, change the flag to `complete`, and later move the package to Swift 6 language mode.
+
+## The idle footprint pass (R5-PERF-03, review #5)
+
+Review #5 measured 281 MB resident at idle, with `MALLOC_SMALL` at 167 MB and 82 MB of it dirty.
+It named four suspects: the Console's terminal scrollback, the `StrawHatPortraits` and `DocsAppIcon` base64 blobs, and the `GitHubSync` logs.
+It asked for a `heap`/`leaks` pass before any fix.
+
+### How it was measured
+
+Nothing was measured against the installed app.
+A release build of `main` (`v0.2.0-67-g30e26ac3`) and a release build of this branch were each assembled into a separately-identified probe bundle.
+Each was launched in the background with a scratch data root, a stub firstmate home, an ephemeral clipboard key, a scratch `HERDR_CONFIG_PATH`, and a measurement-only patch that refused `gh`, `av`, `herdr`, `npm`, `brew` and the rest.
+A session file restored the Console with three shell tabs at 152 columns.
+Each shell printed 12,000 lines at startup, so every tab filled its 10,000-row history.
+`vmmap --summary`, `footprint`, `heap -s` and `leaks --outputGraph` were taken at 60 s and 400 s of idle.
+
+### What the heap says
+
+Live heap at 400 s on this branch was 109 MB, in a 287 MB zone (MB here are `vmmap`'s binary megabytes).
+By type, from `heap -s`:
+
+| Live bytes | What |
+| --- | --- |
+| 58.7 MB | SwiftTerm rows and buffers, 14,422 rows at 4 KB (one tab at 10,000 rows, two trimmed to about 2,100) |
+| 21.0 MB | untyped allocations; `heap --guessNonObjects` names a third of them and leaves 12.1 MB in 85,678 blocks averaging 148 B |
+| 4.8 MB | CoreSVG and CoreUI, behind SF Symbols |
+| 4.1 MB | Auto Layout |
+| 2.9 MB | CoreText |
+| 0.5 MB | every decoded image in the process |
+| 18.6 MB | everything else, no single type over 2.1 MB |
+
+At 60 s, before PERF-07's trim had run, the three full tabs held 117.8 MB of rows out of 172 MB live.
+`leaks` found 286 leaks totalling 14 KB at every snapshot, so this is not a leak.
+
+The other three suspects were measured separately:
+
+- **Portraits and the Docs icon.** Both are already decoded lazily and cached (`StrawHatPortraits.image(for:)`, `DocsAppIcon.image`).
+  The payloads are 144 KB and 23 KB of PNG, about 0.3 MB decoded at their sizes, and only once something draws them.
+- **GitHub Sync logs.** `ForkReading.log` and the page's rows keep the raw `gh api` output.
+  For the seven API-checked forks that is 119 KB of repo JSON and 100 KB of compare JSON, about 0.22 MB per copy (read-only GETs on 2026-11-17).
+  `automic-vault` takes the git-clone path and keeps git's own output.
+  GitHub caps a compare response at 250 commits and 300 files, so this cannot grow without bound.
+- **Fragmentation.** At 60 s the zone was 62% fragmented after the startup flood.
+  `malloc_zone_pressure_relief` released 0 bytes in-process after a trim, so an explicit release would not help.
+
+So the 82 MB is, by a wide margin, terminal history: about 4.8 KB a row at 200 columns, so a full pane is about 52 MB and a trimmed one about 10 MB.
+
+### The fix the evidence supported
+
+PERF-07 trims a tab that has been out of sight for five minutes, but "out of sight" meant "not this console's selected tab".
+The selected tab of a Console or host page the captain had navigated away from kept its full depth for as long as the page stayed hidden.
+`ConsoleController.pageIsOutOfSight` is now set by `viewDidDisappear` when the shell hides the page, and that tab goes through the same grace period and the same rules.
+`viewDidAppear` gives it its depth back.
+
+`viewDidDisappear` also fires when the window is ordered out (a minimised window, ⌘H).
+That case is left alone on purpose, because the captain coming back to a minimised window expects the history they left.
+AppKit delivers the callback from inside the shell's `isHidden = true`, before the view reads as hidden, so the test is "the view is hidden, or the window is still visible".
+
+Before and after, from `FM_RUN_BACKGROUND_SCROLLBACK_TESTS` (a 200-column pane, 10,051 rows, on a hidden page past its grace period, three runs each):
+
+| | Rows kept | Heap freed |
+| --- | --- | --- |
+| `main` | 10,051 | 0 MB |
+| this branch | 2,051 | 40 MB |
+
+The physical footprint did not drop in that measurement.
+macOS malloc keeps freed pages to reuse, and hands them back under memory pressure (the `footprint` tool lists them as reclaimable).
+With two panes trimmed at once it did drop, by 57.5 MB.
+The probe cannot show the hidden-page path, because it has no way to navigate without input.
+
+### Verified
+
+- `FM_RUN_BACKGROUND_SCROLLBACK_TESTS`: `aHiddenPagesCurrentTabShrinksAfterItsGracePeriod` and `aPageComingBackRestoresItsCurrentTab`.
+- `FM_RUN_DESTINATION_MOUNTING_TESTS`: `leavingTheConsoleMarksItOutOfSight`, which drives the real shell in a real window and checks that ordering the window out does not count.
+- Injections, each failing its case by name:
+  - dropping `pageIsOutOfSight` from `isOnScreenForScrollback`,
+  - dropping the `syncBackgroundScrollback()` from `viewDidAppear`,
+  - dropping the flag from `viewDidDisappear`,
+  - setting it on every `viewDidDisappear`, which failed both window-ordered-out checks.

@@ -41,6 +41,15 @@
 // the moment it changes, and the background trim is a toggle. A trim target
 // is never deeper than the interactive depth: a captain who chose 1,000 rows
 // is not handed 2,000 by a tab going to the background.
+//
+// **R5-PERF-03 of full review #5: a hidden page's current tab is out of
+// sight too.** "Background" used to mean "not this console's selected tab",
+// so the selected tab of a Console or host page the captain had navigated
+// away from kept its full depth for as long as the page stayed hidden. A
+// release probe and this file's own suite put a full 200-column pane at about
+// 51 MB, the largest single item in the app's idle heap. `pageIsOutOfSight`
+// (set by `viewDidDisappear`) now makes that tab go through the same grace
+// period and the same rules, and `viewDidAppear` gives it its depth back.
 
 import AppKit
 
@@ -78,6 +87,12 @@ extension ConsoleController {
     /// captain's own depth when that is already smaller.
     var backgroundScrollbackTarget: Int { min(Self.backgroundScrollbackLines, scrollbackLines) }
 
+    /// Whether `tab` is on screen as far as the trim is concerned: this
+    /// console's current tab, on a page that has not disappeared.
+    func isOnScreenForScrollback(_ tab: TabModel) -> Bool {
+        tab === currentTab && !pageIsOutOfSight
+    }
+
     /// Every terminal a tab holds - its split panes and its primary.
     func scrollbackTerminals(of tab: TabModel) -> [CockpitTerminalView] {
         var terminals = tab.splits.panes.map(\.terminal)
@@ -103,7 +118,8 @@ extension ConsoleController {
     /// Bring every tab's scrollback in line with whether it is the one on
     /// screen: the current tab gets its full history back at once, and every
     /// other tab is scheduled to shrink once its grace period passes. Called
-    /// on every tab selection and whenever a tab is added.
+    /// on every tab selection, whenever a tab is added, and when the page
+    /// appears or disappears.
     ///
     /// With the background trim turned off (T4) every tab is treated as the
     /// current one: nothing is scheduled, and anything already trimmed gets
@@ -111,7 +127,7 @@ extension ConsoleController {
     func syncBackgroundScrollback() {
         let trims = TerminalScrollback.shared.trimsBackgroundTabs
         for tab in tabs {
-            if tab === currentTab || !trims {
+            if isOnScreenForScrollback(tab) || !trims {
                 tab.backgroundScrollbackWork?.cancel()
                 tab.backgroundScrollbackWork = nil
                 for pane in tab.splits.panes { pane.terminal.restoreInteractiveScrollback(scrollbackLines) }
@@ -131,7 +147,7 @@ extension ConsoleController {
     /// The grace period's end for one tab.
     func shrinkScrollbackIfStillInBackground(_ tab: TabModel) {
         guard TerminalScrollback.shared.trimsBackgroundTabs,
-              tab !== currentTab, !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
+              !isOnScreenForScrollback(tab), !tab.isClosing, tabs.contains(where: { $0 === tab }) else { return }
         for terminal in scrollbackTerminals(of: tab) {
             terminal.shrinkScrollbackForBackground(to: backgroundScrollbackTarget)
         }
