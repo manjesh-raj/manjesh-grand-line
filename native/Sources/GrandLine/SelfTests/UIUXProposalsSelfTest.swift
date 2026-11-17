@@ -37,6 +37,7 @@ enum UIUXProposalsSelfTest {
             ("S25 welcome choice cards and tiles", checkWelcomeChoiceCards),
             ("S26 theme tiles show the pair", checkThemeTilesShowThePair),
             ("S18 loading states for the web islands", checkIslandLoaders),
+            ("S23 Kubernetes shows its shape", checkKubernetesShowsItsShape),
         ]
         for (name, body) in cases {
             var ok = true
@@ -517,6 +518,23 @@ enum UIUXProposalsSelfTest {
               "S18: the Whiteboard loads behind the canvas skeleton", &ok)
         check(source("ShiftCalendarViews.swift").contains("HelmSkeletonList(island: .monthGrid"),
               "S18: the Calendar loads behind the month skeleton", &ok)
+    }
+
+    // MARK: - S23
+
+    /// Before a feed tab exists the page shows the Pods table's header and
+    /// skeleton rows, naming the namespace; the session card's explanation
+    /// is one line.
+    private static func checkKubernetesShowsItsShape(_ ok: inout Bool) {
+        guard sourcesAvailable else { print("  SKIP: S23, no app sources"); return }
+        let page = source("KubernetesController.swift"), render = source("KubernetesController+Render.swift")
+        check(page.contains("HelmSkeletonList(rows: 5)") && page.contains("titleLabel: NSTextField(labelWithString: \"Pods\")"),
+              "S23: the pending table is the Pods header over skeleton rows", &ok)
+        check(render.contains("pendingTablePreview.isHidden = !(hasScope && !ready)"),
+              "S23: the skeleton shows exactly while a scope has no feed tab", &ok)
+        check(render.contains("appears once a feed tab is logged in"), "S23: its header names the namespace", &ok)
+        check(!page.contains("Typing into the feed tab yourself pauses automated commands until it goes quiet again.\")"),
+              "S23: the session card's explanation is shorter, keeping the pause warning", &ok)
     }
 
     // MARK: - S13

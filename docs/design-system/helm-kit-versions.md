@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 3.4.1 - S23: the Kubernetes page shows its shape
+
+- `Kubernetes (page)` 1.0.0 → 1.0.1 (patch): until a feed tab exists, the Pods table's header (naming the namespace, "appears once a feed tab is logged in") over skeleton rows fills the page under the Session card, and the card's two-sentence explanation is one shorter line that keeps the pause warning. It enters the table at this release.
+
 ## 3.4.0 - S18: loading states for the web islands
 
 - `HelmSkeletonList` 1.0.0 → 1.1.0 (minor): `init(island:caption:)`: a web island's loader - its shape, the shimmer (Reduce Motion aware), the loading phrase under it, and after five seconds "Still loading. If this keeps happening, Copy diagnostics has the details."

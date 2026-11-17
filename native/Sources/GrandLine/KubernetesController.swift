@@ -250,6 +250,11 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var feedStatusLabel: NSTextField!
     var retryFeedButton: HelmButton!
     var workArea: NSView!
+    /// S23: until a feed tab exists, the table the page will fill, in its
+    /// skeleton state, so the page has its shape and a bottom rather than one
+    /// card over an empty window.
+    var pendingTablePreview: HelmCard!
+    var pendingTableSubtitle: NSTextField!
     var pageTabs: HelmSegmentedTabs!
     var clusterContainer: NSView!
     var tailContainer: NSView!
@@ -357,7 +362,8 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         // Pinning the work area's own bottom to the container is what makes
         // the table genuinely fill the page: the card above it sizes to its
         // content, and everything left over is the table's.
-        for child in [sessionCard!, workArea!] { container.addSubview(child) }
+        buildPendingTablePreview()
+        for child in [sessionCard!, workArea!, pendingTablePreview!] { container.addSubview(child) }
         NSLayoutConstraint.activate([
             sessionCard.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
             sessionCard.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
@@ -367,6 +373,12 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             workArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
             workArea.topAnchor.constraint(equalTo: sessionCard.bottomAnchor, constant: HelmMetrics.s4),
             workArea.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s4),
+
+            pendingTablePreview.leadingAnchor.constraint(equalTo: workArea.leadingAnchor),
+            pendingTablePreview.trailingAnchor.constraint(equalTo: workArea.trailingAnchor),
+            pendingTablePreview.topAnchor.constraint(equalTo: workArea.topAnchor),
+            pendingTablePreview.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor,
+                                                        constant: -HelmMetrics.s4),
         ])
 
         refreshButton.target = self
@@ -414,6 +426,20 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             + "3. Come back here and pick that session. Nothing else holds a cluster credential."
     }
 
+    /// S23: the Pods table's header, naming the namespace, over skeleton rows.
+    func buildPendingTablePreview() {
+        pendingTablePreview = HelmCard()
+        pendingTablePreview.translatesAutoresizingMaskIntoConstraints = false
+        pendingTableSubtitle = NSTextField(labelWithString: "")
+        _ = pendingTablePreview.setHeader(symbol: "shippingbox", tint: .info,
+                                          titleLabel: NSTextField(labelWithString: "Pods"),
+                                          subtitleLabel: pendingTableSubtitle)
+        let rows = HelmSkeletonList(rows: 5)
+        pendingTablePreview.setBody(rows, insets: HelmCard.contentInsets)
+        pendingTablePreview.setAccessibilityLabel("Pods, appears once a feed tab is logged in")
+        pendingTablePreview.isHidden = true
+    }
+
     func buildSessionCard() {
         sessionCard = HelmCard()
         scopeTabsHost = NSView()
@@ -449,8 +475,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         _ = sessionCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
                                   tint: .info,
                                   title: "Session",
-                                  subtitle: "Which authenticated bastion session these commands run in, and which of its tabs this page types into. "
-                                      + "Typing into the feed tab yourself pauses automated commands until it goes quiet again.")
+                                  // S23: one line; the feed row below says the rest
+                                  // where it applies.
+                                  subtitle: "The bastion session these commands run in, and the tab this page types into. "
+                                      + "Typing into that tab yourself pauses automated commands.")
         sessionCard.setBody(body, insets: HelmCard.contentInsets)
         NSLayoutConstraint.activate([
             scopeTabsHost.leadingAnchor.constraint(equalTo: body.leadingAnchor),
