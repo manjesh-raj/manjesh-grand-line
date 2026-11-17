@@ -675,8 +675,24 @@ final class HelmCard: NSView {
         return titleLabel
     }
 
-    /// An arbitrary header view - for headers carrying their own badges,
-    /// filter rows or buttons.
+    /// S15 of the 2026-11-17 UI/UX proposals: the one card header recipe.
+    /// A `HelmSectionHeader(size: .card)` - a 26pt tile, a title, a subtitle,
+    /// a count badge and the card's one action in the trailing slot.
+    func setHeader(_ header: HelmSectionHeader) {
+        setHeader(header as NSView, insets: HelmCard.headerInsets)
+    }
+
+    /// An arbitrary header view - for headers carrying their own filter rows
+    /// or controls.
+    ///
+    /// **Deprecated for a card's title (S15).** A card whose header is a
+    /// title, a subtitle, a count or one action takes
+    /// `setHeader(_: HelmSectionHeader)` instead. Handing this a bare label is
+    /// what gave Dictation's six cards a header no other page had, and
+    /// `UIUXProposalsSelfTest` fails the run on a `setHeader(` call passed a
+    /// label. Not marked `@available(deprecated)`, because the warning would
+    /// fail the build (GL-07) at the filter-row callers that legitimately
+    /// remain.
     func setHeader(_ view: NSView, insets: NSEdgeInsets = HelmCard.headerInsets) {
         // Every `setHeader` overload funnels here, so this is the one place
         // the header area is lifted out of its collapsed state.

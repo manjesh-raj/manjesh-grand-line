@@ -204,7 +204,11 @@ final class HelmStatusPill: NSView {
 /// the way OmniFocus and Tower set theirs (the revamp's section 7).
 final class HelmSectionHeader: NSView {
 
-    enum Size: Equatable { case section, lane, hero }
+    /// `.card` (S15 of the 2026-11-17 UI/UX proposals) is a card's own
+    /// header: a 26pt tile, a title, a subtitle under it, the count in a
+    /// `HelmCountBadge` and the card's one action in the trailing slot.
+    /// `HelmCard.setHeader(_:)` takes it.
+    enum Size: Equatable { case section, lane, hero, card }
 
     enum Leading: Equatable {
         case none
@@ -220,12 +224,24 @@ final class HelmSectionHeader: NSView {
     private let tile: IconTileView
     private let dot = NSView()
     private let actionStack = NSStackView()
+    /// `.card` only: the count, as the kit's count pill rather than the
+    /// muted figure the other sizes draw beside the title.
+    private let countBadge = HelmCountBadge()
+    private var actionViews: [NSView] = []
     private var leading: Leading = .none
 
     static let dotSize: CGFloat = 8
     /// Above every stack default and the spacer, under the window's own 500.
     static let textResistance = NSLayoutConstraint.Priority(490)
-    static func tileSide(for size: Size) -> CGFloat { size == .hero ? HelmMetrics.tileBase : 30 }
+    /// `.card`: the row clips only after its text has truncated.
+    static let cardClippingResistance = NSLayoutConstraint.Priority(495)
+    static func tileSide(for size: Size) -> CGFloat {
+        switch size {
+        case .hero: return HelmMetrics.tileBase
+        case .card: return HelmMetrics.tileSmall
+        case .section, .lane: return 30
+        }
+    }
 
     /// - Parameters:
     ///   - titleLabel, countLabel: caller-owned labels, for a page that
@@ -297,7 +313,24 @@ final class HelmSectionHeader: NSView {
         titleRow.setClippingResistancePriority(Self.textResistance, for: .horizontal)
 
         let textColumn: NSView
-        if size == .hero {
+        if size == .card {
+            // One line that truncates: the card's trailing action must never
+            // be the thing that gives way (it is required; the text is 490).
+            let column = NSStackView(views: [titleRow, sublineLabel])
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = HelmMetrics.s0
+            column.translatesAutoresizingMaskIntoConstraints = false
+            column.setHuggingPriority(.defaultLow, for: .horizontal)
+            column.setClippingResistancePriority(Self.textResistance, for: .horizontal)
+            eyebrowLabel.isHidden = true
+            countLabel.isHidden = true
+            countBadge.isHidden = true
+            countBadge.setContentHuggingPriority(.required, for: .horizontal)
+            countBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
+            actionStack.addArrangedSubview(countBadge)
+            textColumn = column
+        } else if size == .hero {
             let column = NSStackView(views: [eyebrowLabel, titleRow, sublineLabel])
             column.orientation = .vertical
             column.alignment = .leading
@@ -327,7 +360,10 @@ final class HelmSectionHeader: NSView {
         row.spacing = size == .lane ? HelmMetrics.s2 : HelmMetrics.s3
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // A `.card` header compresses its text before it clips its trailing
+        // action, so its clipping resistance sits just above the text's 490 -
+        // still under the window's 500 (gotcha (13)).
+        row.setClippingResistancePriority(size == .card ? Self.cardClippingResistance : .defaultLow, for: .horizontal)
         row.setHuggingPriority(.defaultLow, for: .horizontal)
         addSubview(row)
         NSLayoutConstraint.activate([
@@ -350,7 +386,14 @@ final class HelmSectionHeader: NSView {
         self.leading = leading
         titleLabel.stringValue = title
         countLabel.stringValue = count ?? ""
-        countLabel.isHidden = (count ?? "").isEmpty
+        countLabel.isHidden = (count ?? "").isEmpty || size == .card
+        if size == .card {
+            countBadge.text = count ?? ""
+            countBadge.isHidden = (count ?? "").isEmpty
+            sublineLabel.stringValue = subline ?? ""
+            sublineLabel.isHidden = (subline ?? "").isEmpty
+            refreshActionStackVisibility()
+        }
         if size == .hero {
             eyebrowLabel.stringValue = (eyebrow ?? "").uppercased()
             eyebrowLabel.isHidden = (eyebrow ?? "").isEmpty
@@ -367,14 +410,14 @@ final class HelmSectionHeader: NSView {
         case let .tile(symbol, tint):
             dot.isHidden = true
             tile.isHidden = false
-            tile.configure(symbol: symbol, tint: tint, pointSize: size == .hero ? 15 : 13)
+            tile.configure(symbol: symbol, tint: tint, pointSize: size == .hero ? 15 : size == .card ? 12 : 13)
         }
         applyTheme(ThemeManager.shared.theme)
     }
 
     /// The trailing slot. Replaces whatever was there.
     func setActions(_ views: [NSView]) {
-        for view in actionStack.arrangedSubviews {
+        for view in actionStack.arrangedSubviews where view !== countBadge {
             actionStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
@@ -383,7 +426,12 @@ final class HelmSectionHeader: NSView {
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
             actionStack.addArrangedSubview(view)
         }
-        actionStack.isHidden = views.isEmpty
+        actionViews = views
+        refreshActionStackVisibility()
+    }
+
+    private func refreshActionStackVisibility() {
+        actionStack.isHidden = actionViews.isEmpty && (size != .card || countBadge.isHidden)
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -394,6 +442,11 @@ final class HelmSectionHeader: NSView {
             titleLabel.font = HelmType.moduleTitle()
         case .lane:
             titleLabel.font = HelmType.rowTitle()
+        case .card:
+            titleLabel.font = HelmType.cardTitle()
+            sublineLabel.font = HelmType.caption()
+            sublineLabel.textColor = muted
+            countBadge.applyTheme(theme)
         case .hero:
             titleLabel.font = HelmType.rounded(HelmType.scaled(19), .heavy)
             eyebrowLabel.attributedStringValue = NSAttributedString(
@@ -417,6 +470,9 @@ final class HelmSectionHeader: NSView {
     var debugActions: [NSView] { actionStack.arrangedSubviews }
     var debugTileVisible: Bool { !tile.isHidden }
     var debugDotVisible: Bool { !dot.isHidden }
+    var debugSubline: String { sublineLabel.isHidden ? "" : sublineLabel.stringValue }
+    var debugCountBadgeText: String? { countBadge.isHidden || size != .card ? nil : countBadge.text }
+    var debugTileSide: CGFloat { tile.fittingSize.width }
     #endif
 }
 

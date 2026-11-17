@@ -31,6 +31,7 @@ enum UIUXProposalsSelfTest {
             ("S13 project colours are a stored identity", checkProjectHuesAreIdentity),
             ("S12 one glyph per meaning", checkOneGlyphPerMeaning),
             ("S17 one notice recipe", checkOneNoticeRecipe),
+            ("S15 one card header recipe", checkOneCardHeaderRecipe),
         ]
         for (name, body) in cases {
             var ok = true
@@ -269,6 +270,48 @@ enum UIUXProposalsSelfTest {
               "S17: Secrets' filled amber band is gone", &ok)
         check(!source("HomeCanvasController.swift").contains("tipRow = HelmAccentRow"),
               "S17: Home's tip is no longer an edged accent row", &ok)
+    }
+
+    // MARK: - S15
+
+    /// A `.card` header is a 26pt tile, a title, a subtitle, a count badge
+    /// and the trailing action; Dictation's six cards use it; and no card is
+    /// handed a bare label for a header any more.
+    private static func checkOneCardHeaderRecipe(_ ok: inout Bool) {
+        let header = HelmSectionHeader(size: .card)
+        let action = HelmButton(title: "Request access", variant: .primary, size: .small)
+        header.configure(leading: .tile(symbol: "mic.fill", tint: .accent), title: "Status", count: "3",
+                         subline: "Whether dictation can hear you")
+        header.setActions([action])
+        check(HelmSectionHeader.tileSide(for: .card) == HelmMetrics.tileSmall && HelmMetrics.tileSmall == 26,
+              "S15: a card header's tile is the kit's 26pt small tile", &ok)
+        check(header.debugTileVisible && header.debugSubline == "Whether dictation can hear you",
+              "S15: the card header draws its tile and its subtitle", &ok)
+        check(header.debugCountBadgeText == "3", "S15: the count is a HelmCountBadge", &ok)
+        check(header.debugActions.contains { $0 === action }, "S15: the card's action sits in the trailing slot", &ok)
+        header.configure(leading: .tile(symbol: "mic.fill", tint: .accent), title: "Status")
+        check(header.debugCountBadgeText == nil && header.debugSubline.isEmpty,
+              "S15: no count and no subtitle draw nothing (GL-14: no zero standing in)", &ok)
+        let card = HelmCard()
+        card.setHeader(header)
+        check(header.superview != nil, "S15: HelmCard takes a section header as its header", &ok)
+
+        guard sourcesAvailable, let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP: S15 source half, no app sources")
+            return
+        }
+        let dictation = source("DictationController.swift")
+        check(dictation.components(separatedBy: "= HelmSectionHeader(size: .card)").count - 1 == 6,
+              "S15: Dictation's six cards each build a .card header", &ok)
+        // The guard: `setHeader(` handed a label, anywhere in the app.
+        let pattern = try? NSRegularExpression(pattern: #"\.setHeader\(\w*[Ll]abel\)"#)
+        func offenders(_ text: String) -> Int {
+            pattern?.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text)) ?? 0
+        }
+        check(offenders("panel.setHeader(sectionLabel)") == 1, "S15: the bare-label guard can fail", &ok)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        let bad = names.filter { $0.hasSuffix(".swift") && offenders(source($0)) > 0 }
+        check(bad.isEmpty, "S15: no card is handed a bare label as its header (\(bad))", &ok)
     }
 
     // MARK: - S13
