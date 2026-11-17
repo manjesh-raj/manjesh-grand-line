@@ -36,6 +36,7 @@ enum UIUXProposalsSelfTest {
             ("S16 one filter row", checkOneFilterRow),
             ("S25 welcome choice cards and tiles", checkWelcomeChoiceCards),
             ("S26 theme tiles show the pair", checkThemeTilesShowThePair),
+            ("S18 loading states for the web islands", checkIslandLoaders),
         ]
         for (name, body) in cases {
             var ok = true
@@ -482,6 +483,40 @@ enum UIUXProposalsSelfTest {
               "S26: the caption names the pair once without repeating the family word", &ok)
         let scheme = SettingsThemeCard(theme: .dusk, isActive: false, kind: .terminal)
         check(scheme.pair == nil, "S26: a terminal scheme card is still one theme", &ok)
+    }
+
+    // MARK: - S18
+
+    /// Each island shape draws bars that fill its bounds, the list shows the
+    /// loading phrase and says where to look after five seconds, and the
+    /// three islands use it instead of an empty state.
+    private static func checkIslandLoaders(_ ok: inout Bool) {
+        let bounds = CGRect(x: 0, y: 0, width: 600, height: 400)
+        for shape in [HelmSkeletonRow.Shape.editor, .canvas, .monthGrid] {
+            let path = HelmSkeletonRow.islandPath(shape, in: bounds, flipped: false)
+            check(path != nil && !(path?.isEmpty ?? true), "S18: the \(shape) shape draws bars", &ok)
+            if let box = path?.boundingBoxOfPath {
+                check(box.width > bounds.width * 0.6 && box.height > bounds.height * 0.6,
+                      "S18: the \(shape) shape fills its island (\(box.size))", &ok)
+            }
+        }
+        check(HelmSkeletonRow.islandPath(.row, in: bounds, flipped: false) == nil, "S18: a row draws no island path", &ok)
+        let list = HelmSkeletonList(island: .editor, caption: "Loading Monaco from this machine")
+        check(list.debugIslandShape == .editor && list.debugCaption == "Loading Monaco from this machine",
+              "S18: the loader carries its shape and its phrase", &ok)
+        check(!list.debugStillLoadingShown, "S18: the still-loading line waits", &ok)
+        list.debugFireStillLoading()
+        check(list.debugStillLoadingShown, "S18: after the wait the still-loading line shows", &ok)
+
+        guard sourcesAvailable else { print("  SKIP: S18 source half, no app sources"); return }
+        check(!source("CodePreviewController.swift").contains("Starting the editor")
+                && source("CodePreviewController.swift").contains("showLoading(island: .editor"),
+              "S18: Code loads behind the editor skeleton, not an empty state", &ok)
+        check(!source("WhiteboardController.swift").contains("Starting the canvas")
+                && source("WhiteboardController.swift").contains("showLoading(island: .canvas"),
+              "S18: the Whiteboard loads behind the canvas skeleton", &ok)
+        check(source("ShiftCalendarViews.swift").contains("HelmSkeletonList(island: .monthGrid"),
+              "S18: the Calendar loads behind the month skeleton", &ok)
     }
 
     // MARK: - S13

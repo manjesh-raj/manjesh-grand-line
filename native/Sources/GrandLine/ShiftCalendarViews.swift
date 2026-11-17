@@ -1327,8 +1327,37 @@ final class ShiftCalendarView: NSView {
     /// puts up the "no bundle" state when this machine has none.
     private func activateIfShowing() {
         guard window != nil, !isHiddenOrHasHiddenAncestor, !webView.hasLoaded else { return }
-        if !webView.activate() { showMissingBundle() }
+        if webView.activate() { showLoading() } else { showMissingBundle() }
     }
+
+    /// S18: a month of skeleton cells while the calendar's bundle loads,
+    /// cross-faded out when the page says it is ready.
+    private var loadingState: HelmSkeletonList?
+
+    private func showLoading() {
+        guard loadingState == nil else { return }
+        let state = HelmSkeletonList(island: .monthGrid,
+                                     caption: "Loading the calendar from this machine \u{00B7} nothing is fetched from the network")
+        host.addSubview(state)
+        NSLayoutConstraint.activate([
+            state.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: HelmMetrics.s4),
+            state.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -HelmMetrics.s4),
+            state.topAnchor.constraint(equalTo: host.topAnchor, constant: HelmMetrics.s4),
+            state.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -HelmMetrics.s4),
+        ])
+        loadingState = state
+    }
+
+    private func hideLoading() {
+        guard let state = loadingState else { return }
+        loadingState = nil
+        HelmMotion.fade(state, to: 0, duration: HelmMotion.stateDuration, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + HelmMotion.stateDuration) { state.removeFromSuperview() }
+    }
+
+    #if FM_SELFTESTS
+    var debugLoadingState: HelmSkeletonList? { loadingState }
+    #endif
 
     private func showMissingBundle() {
         webView.isHidden = true
@@ -1368,6 +1397,7 @@ final class ShiftCalendarView: NSView {
                 return
             }
             self.isConfigured = true
+            self.hideLoading()
             // A reloaded page starts with its own controls again.
             if self.periodControlsInToolbar { self.webView.setPeriodControlsHidden(true) }
             self.pushEvents()

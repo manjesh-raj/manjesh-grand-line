@@ -376,7 +376,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
         if !CodePreviewAssets.isAvailable { return "The Monaco bundle is missing" }
-        guard webView.isReady else { return "Starting the editor…" }
+        // S18: the line keeps the page's summary while the editor loads; the
+        // loading phrase lives under the skeleton.
+        guard webView.isReady else { return syncSummary.prefix(1).uppercased() + syncSummary.dropFirst() }
         let count = open.count
         let noun = count == 1 ? "1 snippet" : "\(count) snippets"
         return "\(noun) \u{00B7} \(syncSummary)"
@@ -456,9 +458,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // never restarted afterwards - so a session that never opens Code
         // Preview never starts a web content process at all.
         if webView.activate() {
-            showOverlay(symbol: "chevron.left.forwardslash.chevron.right",
-                        title: "Starting the editor\u{2026}",
-                        body: "Monaco is loading from this machine. Nothing is fetched from the network.")
+            showLoading(island: .editor,
+                        caption: "Loading Monaco from this machine \u{00B7} nothing is fetched from the network")
         } else {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No editor bundle",
@@ -1876,8 +1877,50 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
     }
 
+    /// S18: the island's own shape while its bundle loads, rather than the
+    /// empty-state component, which means "nothing here".
+    private var loadingState: HelmSkeletonList?
+    /// The loader is fading out: the page is ready, the overlay is going.
+    private var overlayLeaving = false
+
+    private func showLoading(island: HelmSkeletonRow.Shape, caption: String) {
+        overlayState?.removeFromSuperview()
+        overlayState = nil
+        loadingState?.removeFromSuperview()
+        let state = HelmSkeletonList(island: island, caption: caption)
+        overlay.addSubview(state)
+        NSLayoutConstraint.activate([
+            state.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: HelmMetrics.s4),
+            state.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -HelmMetrics.s4),
+            state.topAnchor.constraint(equalTo: overlay.topAnchor, constant: HelmMetrics.s4),
+            state.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -HelmMetrics.s4),
+        ])
+        loadingState = state
+        overlay.isHidden = false
+        state.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugLoadingState: HelmSkeletonList? { overlay.isHidden ? nil : loadingState }
+    #endif
+
     private func hideOverlay() {
-        overlay.isHidden = true
+        // S18: the loader cross-fades out when the bridge says ready.
+        guard loadingState != nil, !overlay.isHidden else {
+            overlay.isHidden = true
+            onDrillSubtitleChanged?()
+            return
+        }
+        overlayLeaving = true
+        HelmMotion.fade(overlay, to: 0, duration: HelmMotion.stateDuration, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + HelmMotion.stateDuration) { [weak self] in
+            guard let self else { return }
+            self.overlayLeaving = false
+            self.overlay.isHidden = true
+            self.overlay.alphaValue = 1
+            self.loadingState?.removeFromSuperview()
+            self.loadingState = nil
+        }
         onDrillSubtitleChanged?()
     }
 
@@ -1922,6 +1965,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         startState.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         startState.applyTheme(theme)
         overlayState?.applyTheme(theme)
+        loadingState?.applyTheme(theme)
         outputPane.applyTheme(theme)
         sidebar.applyTheme(theme)
         resizeHandle.lineColor = HelmTheme.nsColor(theme.chromeLineHex)
@@ -2251,7 +2295,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     func debugImport(_ urls: [URL]) { openDroppedFiles(urls) }
     func debugHasPendingEdit(name: String) -> Bool { open.first(where: { $0.name == name })?.hasPendingEdit ?? false }
     var debugWebView: CodePreviewWebView { webView }
-    var debugOverlayVisible: Bool { !overlay.isHidden }
+    var debugOverlayVisible: Bool { !overlay.isHidden && !overlayLeaving }
     /// R4-UI-09: the no-snippet invitation, and its New snippet button.
     var debugStartStateVisible: Bool { !startState.isHidden }
     var debugNewSnippetInvitation: HelmButton { newSnippetInvitation }

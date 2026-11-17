@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "3.3.0"
+    static let version = "3.4.0"
 
     struct Component {
         let name: String
@@ -175,8 +175,8 @@ enum HelmKit {
         // HelmScrollMemory.swift
         Component("HelmScrollMemory", "1.0.0", file: "HelmScrollMemory.swift"),
         // HelmSkeleton.swift
-        Component("HelmSkeletonList", "1.0.0", file: "HelmSkeleton.swift"),
-        Component("HelmSkeletonRow", "1.0.0", file: "HelmSkeleton.swift"),
+        Component("HelmSkeletonList", "1.1.0", file: "HelmSkeleton.swift"),
+        Component("HelmSkeletonRow", "1.1.0", file: "HelmSkeleton.swift"),
         // HelmSplitButton.swift
         Component("HelmSplitButton", "1.0.0", file: "HelmSplitButton.swift"),
         // HelmSplitPage.swift
@@ -260,7 +260,7 @@ enum HelmKit {
         SourceDigest(file: "HelmPlateCard.swift", stamp: "HelmPlateCard@1.1.1", sha256: "1865ad7c7c199b05745191c02d520312deae694e72149d67184841bea0c0d4d8"),
         SourceDigest(file: "HelmRevealableSecretField.swift", stamp: "HelmRevealableSecretField@1.0.0", sha256: "0c7ef5b228b5bb38c51c646e74d1985cb220e26998251f86f7b1fe3845d65398"),
         SourceDigest(file: "HelmScrollMemory.swift", stamp: "HelmScrollMemory@1.0.0", sha256: "462b598c2a7fe6105bb84271f16a5829fd8ae1fd5c5f221b2a02801c066f18a2"),
-        SourceDigest(file: "HelmSkeleton.swift", stamp: "HelmSkeletonList@1.0.0,HelmSkeletonRow@1.0.0", sha256: "5029ae0b4e7848a80497823bb348affbabd0f9883aabbf2ddcc6a1d556f61a48"),
+        SourceDigest(file: "HelmSkeleton.swift", stamp: "HelmSkeletonList@1.1.0,HelmSkeletonRow@1.1.0", sha256: "ee0651854366bf1dbc7108ac12dc731956e7ef163b60dc6b711a8c0e33f85bbf"),
         SourceDigest(file: "HelmSplitButton.swift", stamp: "HelmSplitButton@1.0.0", sha256: "f9ba58abda9751dfeabe1ba021f9da70077f2a4ffc845900b79f9d1ef36b769b"),
         SourceDigest(file: "HelmSplitPage.swift", stamp: "HelmHitTransparentView@1.0.0,HelmSplitPage@1.1.0,HelmSplitPageHosting@1.0.0", sha256: "141a0bb821bf4a19ed6bafebdab0500f3e591079366d4293d8d508668581c6b6"),
         SourceDigest(file: "HelmSymbol.swift", stamp: "HelmSymbol@1.1.0", sha256: "39157b17c23749b045d2e2e5886e631d2a4c39acd8a5b75b124d22d521bdf371"),

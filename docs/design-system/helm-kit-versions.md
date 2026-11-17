@@ -36,6 +36,13 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 3.4.0 - S18: loading states for the web islands
+
+- `HelmSkeletonList` 1.0.0 → 1.1.0 (minor): `init(island:caption:)`: a web island's loader - its shape, the shimmer (Reduce Motion aware), the loading phrase under it, and after five seconds "Still loading. If this keeps happening, Copy diagnostics has the details."
+- `HelmSkeletonRow` 1.0.0 → 1.1.0 (minor): `Shape.editor` (a gutter and code lines), `.canvas` (a faint 32pt grid) and `.monthGrid` (a header over five weeks), drawn as one path sized to the island.
+
+Code (Monaco), the Whiteboard (Excalidraw) and the Calendar (Schedule-X) show their skeleton until the bridge's ready message, then cross-fade it out (`HelmMotion.stateDuration`). Code and the Whiteboard used the empty-state component for "Starting the editor…"; the Calendar showed nothing. The header line keeps the page's summary while loading instead of the loading phrase.
+
 ## 3.3.0 - S26: theme tiles show the pair
 
 - `SettingsThemeCard` 1.1.0 → 1.2.0 (minor): a family tile draws both registers side by side (light left, dark right, each in its own tokens) with the check on the half that is showing, and its caption names the pair once ("Daylight · Dusk"). The "Light:" / "Dark:" line is gone. `setActiveMode(_:)` moves the check. A terminal scheme card is unchanged.
