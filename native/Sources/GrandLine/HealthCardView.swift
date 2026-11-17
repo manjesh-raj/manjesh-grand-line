@@ -173,13 +173,13 @@ final class HealthCardView: NSObject {
         } else {
             lastRun = .muted(ServiceHealthSummary.Bucket.notRun.label)
         }
-        let ticks = Self.runTicks(state)
+        let runs = Self.runDots(state)
         row.cells = [
             "service": .title(service.title, subtitle: detail, subtitleIsCode: false, symbol: service.symbol,
                               tint: tint, tintHex: nil),
             "status": .status(chip, tint: tint),
             "lastRun": lastRun,
-            "runs": .marks(ticks, spoken: Self.runTicksSpoken(state)),
+            "runs": .runDots(runs, spoken: Self.runTicksSpoken(state)),
         ]
         let needsAttention = state.verdict == .degraded || state.verdict == .failing
         if needsAttention, let retry = retryActions[service] {
@@ -359,21 +359,26 @@ final class HealthCardView: NSObject {
     /// **There is no run history to draw**, and this deliberately does not
     /// invent one: `ServiceHealthState` carries `lastSuccess`, `lastFailure`
     /// and `consecutiveFailures` - not a series - and collecting a series
-    /// would be new data collection, which this slice forbids. So the ticks
+    /// would be new data collection, which this slice forbids. So the marks
     /// are an exact rendering of the run *streak* the registry does know: one
-    /// cross per consecutive failure (newest first, capped) followed by a
-    /// check when a successful run is on record. A service that has never
-    /// reported gets no ticks at all rather than a fabricated one.
-    static func runTicks(_ state: ServiceHealthState) -> String {
-        guard state.hasReported else { return "" }
+    /// failure per consecutive failure (capped), and one success when a
+    /// successful run is on record. A service that has never reported gets
+    /// none at all rather than a fabricated one.
+    ///
+    /// R5-UI-07: drawn as dots (`HelmDataTable.Cell.runDots`), oldest at the
+    /// left the way the Schedules page's run bar reads, so the success on
+    /// record comes first and the failures after it. `true` is a success.
+    static func runDots(_ state: ServiceHealthState) -> [Bool] {
+        guard state.hasReported else { return [] }
         let failures = min(state.consecutiveFailures, maxRunTicks)
-        var ticks = String(repeating: "\u{2715}", count: failures)
-        if state.lastSuccess != nil, failures < maxRunTicks { ticks += "\u{2713}" }
-        return ticks
+        var runs: [Bool] = []
+        if state.lastSuccess != nil, failures < maxRunTicks { runs.append(true) }
+        runs += Array(repeating: false, count: failures)
+        return runs
     }
 
-    /// R2-A11Y-04: the marks `runTicks` draws, in words - "3 failures,
-    /// 1 success" - in the order they are drawn. A cross and a tick were the
+    /// R2-A11Y-04: the runs `runDots` draws, in words - "3 failures,
+    /// 1 success" - newest first, the order the row's "Last error" reads. A cross and a tick were the
     /// only carriers, and VoiceOver read them as "multiplication x, check
     /// mark".
     static func runTicksSpoken(_ state: ServiceHealthState) -> String {
@@ -527,19 +532,17 @@ final class HealthCardView: NSObject {
         gradientTile.configure(symbol: service.symbol, hue: HelmDomainHue(tint: tint))
         gradientTile.isHidden = !daylight
 
-        // §6.8's run ticks, in the trailing column beside the verdict chip.
-        let ticks = Self.runTicks(state)
+        // §6.8's run marks, in the trailing column beside the verdict chip -
+        // the same dots as the table's Recent runs column (R5-UI-07).
+        let runs = Self.runDots(state)
         var trailingViews: [NSView] = []
-        if !ticks.isEmpty {
-            let ticksLabel = NSTextField(labelWithString: ticks)
-            ticksLabel.font = HelmType.code()
-            ticksLabel.textColor = HelmTheme.nsColor(
-                (state.consecutiveFailures > 0 ? HelmTint.critical : .good).hex(in: theme))
-            ticksLabel.toolTip = state.consecutiveFailures > 0
-                ? "\(state.consecutiveFailures) consecutive failure(s) since the last recorded success"
-                : "The last recorded run succeeded"
-            ticksLabel.setContentHuggingPriority(.required, for: .horizontal)
-            trailingViews.append(ticksLabel)
+        if !runs.isEmpty {
+            let dots = HelmDataTableRunDotsCell()
+            dots.translatesAutoresizingMaskIntoConstraints = false
+            dots.configure(runs: runs, spoken: Self.runTicksSpoken(state), leading: 0, theme: theme)
+            dots.setContentHuggingPriority(.required, for: .horizontal)
+            dots.setContentCompressionResistancePriority(.required, for: .horizontal)
+            trailingViews.append(dots)
         }
         trailingViews.append(pillView(text: chip, tint: tint))
         let trailing = NSStackView(views: trailingViews)

@@ -916,3 +916,31 @@ Confirmed by injection: painting panes from the app theme, a move that never ove
 Not verified: terminal glyph colours in a render (an off-screen `TerminalView` paints no glyphs; the console suite reads the colours from the live view instead), and the real system appearance switch.
 
 Follow-ups noted rather than done: the sidebar shell's main column is the system sidebar material, so it does not take the `side` value; Block view still paints its ground from the app theme; Code Preview and the Notebook stay on the app theme by design.
+
+## Full review #5's UI polish (R5-UI-05 to R5-UI-08, `fm/grand-line-security-ui-fixes`)
+
+**R5-UI-05: the empty Sticky Board's stray keyline.**
+The board card is the wood frame the cork sits in, and the empty state's container is the chrome-coloured surface over the whole card.
+A layer's border draws above its sublayers, so the frame's darker 1pt border stayed on top of the empty state, and on Daylight it read as a brown keyline round a white card.
+`StickyBoardController.applyBoardFrame` now draws the frame only while there is cork to frame, so the empty board is the app's plain card like every other page's empty state.
+`StickyBoardViewSelfTest.checkTheEmptyBoardIsAPlainCard` covers Daylight and Dusk, and the existing theme sweep proves the frame is back once a note exists.
+
+**R5-UI-06: a host card's port was the part that got cut.**
+`HelmCardGrid.Card.subtitleTruncation` is new and defaults to the tail, as before.
+Host cards ask for the middle, so `ops@bastion.stg.example.test:2222` reads `ops@bastion.stg…ample.test:2222` at 1512 in the four-column grid.
+`ConnectionsCardsSelfTest` asserts the fixture really truncates there before asserting the mode.
+
+**R5-UI-07: Health's Recent runs was a glyph string.**
+`HelmDataTable.Cell.marks` (one user, Health) is now `.runDots`, a row of 8pt dots in the good and critical tints.
+The row reads oldest to newest, left to right, the way the Schedules page's run bar does.
+The words `runTicksSpoken` already produced (R2-A11Y-04) are now the tooltip as well as the VoiceOver label.
+Health's own row layout draws the same dots instead of its own tinted glyph label.
+The data is unchanged: there is still no run series, only the streak the registry records.
+
+**R5-UI-08: Home's Morning briefing card said only that it was off.**
+While the briefing is off and nothing is on record, Home leaves the card off, in both layouts.
+In the floating bar's dashboard the third column is the Merge queue alone.
+In the sidebar layout `HomeCanvasController.shownLayout` is the captain's layout less the briefing, and Customize still draws every card the captain placed, so it can be moved or hidden.
+A hidden card used to leave a hole: the default arrangement's Merge queue sat alone at half width.
+`HomeCardGrid.rows(fillingShortRows:)` now fills the rows without it, but only when the captain's full arrangement had no short row of its own.
+Three suites that measure the five-card Home now switch the briefing on in their own suite domain, and two new checks cover it switched off.

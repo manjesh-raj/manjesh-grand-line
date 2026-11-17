@@ -45,6 +45,13 @@ enum DaylightModuleSelfTest {
         // failure never silences the seven checks after it - a suite that
         // stops printing OK lines after the first FAIL hides how much else is
         // broken, which is the opposite of what a regression run is for.
+        // R5-UI-08: Home leaves the Morning briefing card off while the
+        // briefing is off and has nothing on record. The checks here measure
+        // the five-card Home, so the briefing is on, in this process's own
+        // suite domain, and put back after.
+        let briefingWasOn = AppSettings.shared.morningBriefingEnabled
+        AppSettings.shared.morningBriefingEnabled = true
+        defer { AppSettings.shared.morningBriefingEnabled = briefingWasOn }
         var allOK = true
         for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing,
                       checkUniformCardHeight, checkRowsEqualiseCardHeights,

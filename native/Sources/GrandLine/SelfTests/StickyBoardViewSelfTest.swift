@@ -52,6 +52,7 @@ enum StickyBoardViewSelfTest {
         window.orderFront(nil)
         window.displayIfNeeded()
 
+        checkTheEmptyBoardIsAPlainCard(controller, check)
         checkThemeSweep(controller, check)
         checkNoteRedesign(controller, check)
         checkCorkRenders(controller, check)
@@ -195,6 +196,29 @@ enum StickyBoardViewSelfTest {
     }
 
     // MARK: 1. Theme sweep - chrome tracks the theme, notes never do
+
+    /// R5-UI-05 (full review #5): the empty board wore the wood frame, and
+    /// with the empty state's chrome-coloured surface over the cork only the
+    /// frame's darker 1pt border showed - a stray brown keyline round a white
+    /// card on Daylight. Empty, it is the app's plain card; the frame comes
+    /// with the first note. Runs first, while the scratch board is empty, and
+    /// `checkThemeSweep` straight after proves the frame is back once a note
+    /// exists.
+    private static func checkTheEmptyBoardIsAPlainCard(_ controller: StickyBoardController,
+                                                       _ check: (Bool, String) -> Void) {
+        let saved = ThemeManager.shared.theme
+        defer { controller.debugApplyTheme(saved) }
+        check(controller.debugOverlayVisible, "fixture: the scratch board should start empty, showing its empty state")
+        for id in ["daylight", "dusk"] {
+            guard let theme = HelmTheme.theme(id: id) else {
+                check(false, "no HelmTheme registered for id \(id)")
+                continue
+            }
+            controller.debugApplyTheme(theme)
+            check(!controller.debugBoardShowsFrame,
+                  "R5-UI-05: on \(id) the empty board still wears the wood frame round its empty state")
+        }
+    }
 
     private static func checkThemeSweep(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
         // Seed one note BEFORE the sweep, so we can prove its own paper color

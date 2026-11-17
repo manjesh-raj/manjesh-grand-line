@@ -321,7 +321,13 @@ enum HomeCardGrid {
     /// - A row with more cards than fit at the minimum is split into as few
     ///   rows as hold them, cut where the parts are most even, and each part
     ///   fills the grid in proportion to the widths its cards were given.
-    static func rows(spans: [Int], minimum: Int) -> [[HelmResponsiveGrid.SpanPlacement]] {
+    ///
+    /// `fillingShortRows` grows a row that ends short to the grid's edge, in
+    /// proportion to its cards' widths. Off for the captain's own
+    /// arrangement, where a short row is theirs to leave; on when a card the
+    /// captain placed is left off for now (R5-UI-08's Morning briefing), so
+    /// the gap it leaves is not one they made.
+    static func rows(spans: [Int], minimum: Int, fillingShortRows: Bool = false) -> [[HelmResponsiveGrid.SpanPlacement]] {
         let minimum = min(max(1, minimum), columns)
         let perRow = max(1, columns / minimum)
         var rows: [[HelmResponsiveGrid.SpanPlacement]] = []
@@ -329,7 +335,8 @@ enum HomeCardGrid {
             guard row.count > perRow else {
                 let total = row.reduce(0) { $0 + $1.span }
                 let raised = row.reduce(0) { $0 + max($1.span, minimum) }
-                rows.append(fit(row, to: min(columns, max(total, raised)), minimum: minimum))
+                let target = fillingShortRows ? columns : min(columns, max(total, raised))
+                rows.append(fit(row, to: target, minimum: minimum))
                 continue
             }
             var start = 0

@@ -465,37 +465,31 @@ enum DaylightDrillPageSlice2SelfTest {
 
     private static func checkHealthTicksAndChips(_ ok: inout Bool) {
         print("\n-- §6.8/§7: Health's run ticks report only what the registry records --")
-        let check = "\u{2713}"
-        let cross = "\u{2715}"
-
+        // R5-UI-07: drawn as dots now, oldest at the left - `true` a
+        // success, `false` a failure.
         var never = ServiceHealthState()
-        if !HealthCardView.runTicks(never).isEmpty {
-            print("  FAIL a service that has never reported got ticks: \"\(HealthCardView.runTicks(never))\"")
+        if !HealthCardView.runDots(never).isEmpty {
+            print("  FAIL a service that has never reported got runs: \(HealthCardView.runDots(never))")
             ok = false
         }
         never.isRunning = true
-        if !HealthCardView.runTicks(never).isEmpty {
-            print("  FAIL a service still on its first run got ticks")
+        if !HealthCardView.runDots(never).isEmpty {
+            print("  FAIL a service still on its first run got runs")
             ok = false
         }
 
         var healthy = ServiceHealthState()
         healthy.lastSuccess = Date()
-        if HealthCardView.runTicks(healthy) != check {
-            print("  FAIL a healthy service's ticks are \"\(HealthCardView.runTicks(healthy))\", want \"\(check)\"")
+        if HealthCardView.runDots(healthy) != [true] {
+            print("  FAIL a healthy service's runs are \(HealthCardView.runDots(healthy)), want [true]")
             ok = false
         }
 
-        // Never succeeded, currently failing: one cross and **no** check. This
-        // is the case that pins "a tick is only ever drawn for something the
-        // registry actually recorded" - the other states below all happen to
-        // have a real success on record, so they would still read correctly
-        // even if the check mark were unconditional.
         var neverSucceeded = ServiceHealthState()
         neverSucceeded.lastFailure = Date()
         neverSucceeded.consecutiveFailures = 1
-        if HealthCardView.runTicks(neverSucceeded) != cross {
-            print("  FAIL a never-succeeded service reads \"\(HealthCardView.runTicks(neverSucceeded))\", want \"\(cross)\"")
+        if HealthCardView.runDots(neverSucceeded) != [false] {
+            print("  FAIL a never-succeeded service reads \(HealthCardView.runDots(neverSucceeded)), want [false]")
             ok = false
         }
 
@@ -503,8 +497,8 @@ enum DaylightDrillPageSlice2SelfTest {
         degraded.lastSuccess = Date()
         degraded.lastFailure = Date()
         degraded.consecutiveFailures = 2
-        if HealthCardView.runTicks(degraded) != cross + cross + check {
-            print("  FAIL a two-failure streak reads \"\(HealthCardView.runTicks(degraded))\"")
+        if HealthCardView.runDots(degraded) != [true, false, false] {
+            print("  FAIL a two-failure streak reads \(HealthCardView.runDots(degraded)), want the success first")
             ok = false
         }
 
@@ -512,9 +506,9 @@ enum DaylightDrillPageSlice2SelfTest {
         var long = ServiceHealthState()
         long.lastFailure = Date()
         long.consecutiveFailures = 40
-        let capped = HealthCardView.runTicks(long)
-        if capped.count > 6 || capped.contains(check) {
-            print("  FAIL a 40-failure streak rendered \(capped.count) glyphs: \"\(capped)\"")
+        let capped = HealthCardView.runDots(long)
+        if capped.count > 5 || capped.contains(true) {
+            print("  FAIL a 40-failure streak rendered \(capped.count) dots: \(capped)")
             ok = false
         }
 
@@ -537,7 +531,7 @@ enum DaylightDrillPageSlice2SelfTest {
             print("  FAIL the registry reported nothing after two real reports")
             ok = false
         }
-        print("  OK - ticks: none/none/\(check)/\(cross)\(cross)\(check)/capped; "
+        print("  OK - runs: none/none/[ok]/[ok, x, x]/capped; "
               + "\(expectedFigures) KPI figures for \(counts.total) service(s)")
     }
 

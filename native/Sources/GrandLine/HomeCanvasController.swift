@@ -1439,8 +1439,33 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func visibleModules() -> [DaylightModule] {
-        if showsArrangedCards, let cardLayout { return cardLayout.shown }
-        return DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
+        if showsArrangedCards, let shownLayout { return shownLayout.shown }
+        return DaylightModule.canvasOrder.filter {
+            $0.isVisible(in: space) && ($0 != .briefing || Self.briefingHasSomethingToSay)
+        }
+    }
+
+    /// R5-UI-08 (full review #5): whether the Morning briefing card has
+    /// anything of its own to show. Off, with no briefing on record, it took
+    /// the largest slot on Home in both layouts to say "Turn on Morning
+    /// briefing in Settings". It is left off Home until the briefing is on
+    /// (Settings > General, which is also where that card pointed), and it
+    /// is still in Customize, so the captain can place it.
+    static var briefingHasSomethingToSay: Bool {
+        AppSettings.shared.morningBriefingEnabled
+            || !(AppSettings.shared.morningBriefingRecord?.clauses.isEmpty ?? true)
+    }
+
+    /// The arranged cards as drawn: the captain's layout, less a briefing
+    /// card with nothing to say (R5-UI-08) - except while customizing, where
+    /// every card the captain placed is drawn so it can be moved, sized or
+    /// hidden, and where the drag and resize maths index `cardLayout` itself.
+    private var shownLayout: HomeCardLayout? {
+        guard var layout = cardLayout else { return nil }
+        if !isCustomizing, !Self.briefingHasSomethingToSay, layout.shown.contains(.briefing) {
+            layout.hide(.briefing)
+        }
+        return layout
     }
 
     /// Whether Home's own space is showing the captain's arranged cards.
@@ -1450,17 +1475,29 @@ final class HomeCanvasController: NSViewController {
     /// are laid out in `HomeCardGrid.columns` - the width the captain gave
     /// it, as its row draws it at this width (`HomeCardGrid.rows`).
     private func cardSpan(_ module: DaylightModule) -> Int {
-        guard showsArrangedCards, let cardLayout else { return module.gridSpan }
-        return arrangedSpans(of: cardLayout, available: gridContainerWidth())[module]
-            ?? cardLayout.size(of: module).columns
+        guard showsArrangedCards, let shownLayout else { return module.gridSpan }
+        return arrangedSpans(of: shownLayout, available: gridContainerWidth())[module]
+            ?? shownLayout.size(of: module).columns
     }
 
     /// Home's arranged cards in rows at this width, each placement's `index`
     /// into `layout.shown` - the captain's rows, with room made in a row for
     /// a card the window has made too narrow to read.
+    ///
+    /// R5-UI-08: when `shownLayout` has left the briefing off, its slot is
+    /// not left as a hole. If the captain's whole arrangement filled every
+    /// row, the rows without it fill the width too; an arrangement that
+    /// already had a short row keeps its shape.
     private func arrangedRows(of layout: HomeCardLayout, available: CGFloat) -> [[HelmResponsiveGrid.SpanPlacement]] {
-        HomeCardGrid.rows(spans: layout.shown.map { layout.size(of: $0).columns },
-                          minimum: arrangedMinimumColumns(available: available))
+        let minimum = arrangedMinimumColumns(available: available)
+        func spans(_ layout: HomeCardLayout) -> [Int] { layout.shown.map { layout.size(of: $0).columns } }
+        var filling = false
+        if let full = cardLayout, full.shown.count > layout.shown.count {
+            filling = !HomeCardGrid.rows(spans: spans(full), minimum: minimum).contains { row in
+                row.reduce(0) { $0 + $1.span } < HomeCardGrid.columns
+            }
+        }
+        return HomeCardGrid.rows(spans: spans(layout), minimum: minimum, fillingShortRows: filling)
     }
 
     /// Each arranged card's columns at this width, as its row draws it.
@@ -1476,8 +1513,8 @@ final class HomeCanvasController: NSViewController {
     /// How many cards each row of Home's arranged grid holds at this width -
     /// nothing off Home's arranged cards, whose rows only the spans decide.
     private func arrangedRowLengths(available: CGFloat) -> [Int] {
-        guard showsArrangedCards, let cardLayout else { return [] }
-        return arrangedRows(of: cardLayout, available: available).map(\.count)
+        guard showsArrangedCards, let shownLayout else { return [] }
+        return arrangedRows(of: shownLayout, available: available).map(\.count)
     }
 
     /// `module`'s row stored at the widths it is drawn at
@@ -1881,7 +1918,7 @@ final class HomeCanvasController: NSViewController {
                                    keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
         contentWidthConstraint?.constant = available
         attentionCard.setLayoutWidth(available)
-        let placed = cardLayout.map { arrangedRows(of: $0, available: available) } ?? []
+        let placed = shownLayout.map { arrangedRows(of: $0, available: available) } ?? []
         var spans: [DaylightModule: Int] = [:]
         for placement in placed.joined() where modules.indices.contains(placement.index) {
             spans[modules[placement.index]] = placement.span
@@ -2020,10 +2057,10 @@ final class HomeCanvasController: NSViewController {
     /// The heights a built arranged grid is keyed on: -1 for a card that
     /// takes its row's height, and nothing at all off Home's arranged cards.
     private func arrangedHeightKey(_ modules: [DaylightModule]) -> [CGFloat] {
-        guard showsArrangedCards, let cardLayout else { return [] }
+        guard showsArrangedCards, let shownLayout else { return [] }
         let available = gridContainerWidth()
         return modules.map { module in
-            guard cardLayout.size(of: module).height != nil else { return -1 }
+            guard shownLayout.size(of: module).height != nil else { return -1 }
             let width = HomeCardGrid.width(columns: cardSpan(module), containerWidth: available, spacing: Self.gridSpacing)
             return arrangedHeight(of: module, width: width) ?? -1
         }
@@ -2135,7 +2172,9 @@ final class HomeCanvasController: NSViewController {
     /// vanish.
     func dashboardRowViewsWouldApply(available: CGFloat, modules: [DaylightModule]) -> Bool {
         let expected = Set(Self.dashboardColumns.flatMap { $0 })
-        guard Set(modules) == expected else { return false }
+        // R5-UI-08: the briefing may be left off, and its column is then the
+        // Merge queue alone.
+        guard Set(modules) == expected || Set(modules) == expected.subtracting([.briefing]) else { return false }
         // Under this width a 4-track column is narrower than one wrapping
         // column, so hand back to the wrapping grid, which stacks every
         // widget full width. The app's 960pt minimum window keeps it on.
@@ -2203,10 +2242,11 @@ final class HomeCanvasController: NSViewController {
         // R5-UI-03 (R4-UI-10): uncapped, this listed 20 of 22 pull requests
         // in an 850pt card, where the sidebar layout's same card shows three
         // and a "Showing 3 of 22" footer. The cap is the sidebar's.
+        let showsBriefing = Self.briefingHasSomethingToSay
         let briefingContent = content(for: .briefing, placement: placement)
-        let briefingHeight = probeHeight(briefingContent, width: width)
+        let briefingHeight = showsBriefing ? probeHeight(briefingContent, width: width) : 0
         mergeQueueRowLimit = min(HelmModuleCard.maxPeekRows,
-                                 mergeQueueRows(budget: height - briefingHeight - Self.gridSpacing,
+                                 mergeQueueRows(budget: height - (showsBriefing ? briefingHeight + Self.gridSpacing : 0),
                                                 placement: placement, width: width))
         let mergeContent = content(for: .mergeQueue, placement: placement)
         mergeQueueRowLimit = HelmModuleCard.maxPeekRows
@@ -2235,15 +2275,17 @@ final class HomeCanvasController: NSViewController {
         let claude = card(.claudeStatus)
         let fleet = card(.fleet)
         let health = card(.health)
-        let briefing = card(.briefing)
         let merge = card(.mergeQueue)
+        let thirdColumn: [(DaylightModule, HelmModuleCard)] = modules.contains(.briefing)
+            ? [(.briefing, card(.briefing)), (.mergeQueue, merge)]
+            : [(.mergeQueue, merge)]
 
         attentionCard.setLayoutWidth(plan.width)
         let row = HelmResponsiveGrid.proportionalRow(
             views: [dashboardAttentionColumn(),
                     dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
                                     absorbing: nil, ownHeights: plan.ownHeights, width: plan.width),
-                    dashboardColumn([(.briefing, briefing), (.mergeQueue, merge)],
+                    dashboardColumn(thirdColumn,
                                     absorbing: nil, ownHeights: plan.ownHeights, width: plan.width)],
             spans: Self.dashboardSpans,
             containerWidth: available,

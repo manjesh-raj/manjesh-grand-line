@@ -55,7 +55,15 @@ enum HomeDashboardViewSelfTest {
 
     @discardableResult
     static func run() -> Bool {
+        // R5-UI-08: Home leaves the Morning briefing card off while the
+        // briefing is off and has nothing on record. The checks here measure
+        // the five-card Home, so the briefing is on, in this process's own
+        // suite domain, and put back after.
+        let briefingWasOn = AppSettings.shared.morningBriefingEnabled
+        AppSettings.shared.morningBriefingEnabled = true
+        defer { AppSettings.shared.morningBriefingEnabled = briefingWasOn }
         var ok = true
+        checkTheBriefingIsLeftOffWhileOff(&ok)
         checkTheHubHasOneHeaderCard(&ok)
         checkTheFiveWidgetsArePlaced(&ok)
         checkTheColumnsAreEqualThirds(&ok)
@@ -191,6 +199,32 @@ enum HomeDashboardViewSelfTest {
     }
 
     // MARK: 2 - placement
+
+    /// R5-UI-08: with the briefing off and nothing on record, the hub's
+    /// third column is the Merge queue alone, rather than a card that only
+    /// says the briefing is off - and the hand-placed dashboard still applies.
+    private static func checkTheBriefingIsLeftOffWhileOff(_ ok: inout Bool) {
+        let record = AppSettings.shared.morningBriefingRecord
+        AppSettings.shared.morningBriefingEnabled = false
+        AppSettings.shared.morningBriefingRecord = nil
+        defer {
+            AppSettings.shared.morningBriefingEnabled = true
+            AppSettings.shared.morningBriefingRecord = record
+        }
+        withScratchShift { store in
+            let canvas = makeCanvas(store)
+            let window = mount(canvas)
+            defer { window.orderOut(nil) }
+            seedFleet(canvas)
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            check(canvas.usesDashboardLayoutForTests,
+                  "R5-UI-08: with the briefing off the hub fell back from its hand-placed dashboard", &ok)
+            let titles = canvas.moduleCardsForTests.compactMap { $0.anatomyForTests.title }
+            check(!titles.contains("Morning briefing") && titles.count == 4,
+                  "R5-UI-08: with the briefing off the hub draws \(titles), want the four others and no briefing", &ok)
+        }
+    }
 
     private static func checkTheFiveWidgetsArePlaced(_ ok: inout Bool) {
         withScratchShift { store in

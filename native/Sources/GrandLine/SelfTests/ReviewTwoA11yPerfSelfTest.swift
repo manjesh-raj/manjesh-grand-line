@@ -167,16 +167,31 @@ enum ReviewTwoA11yPerfSelfTest {
         for (row, item) in table.debugRows.enumerated() where column >= 0 {
             guard case .record(let key) = item.kind, let service = HealthService(rawValue: key) else { continue }
             let want = HealthCardView.runTicksSpoken(registry.state(service))
-            guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true),
-                  let label = textFields(in: cell).first else {
+            guard let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: true) else {
                 fail("\(service.title): no Recent runs cell", &ok)
                 continue
             }
             read += 1
             if want.contains("failure"), want.contains("success") { mixedSeen = true }
-            check(label.accessibilityLabel() == want,
-                  "\(service.title)'s runs (\"\(label.stringValue)\") read \"\(label.accessibilityLabel() ?? "")\", want \"\(want)\"",
-                  &ok)
+            // R5-UI-07: a service with runs draws dots, whose own label and
+            // tooltip are the words; one with none draws the em dash.
+            if let dots = cell as? HelmDataTableRunDotsCell {
+                let wantRuns = HealthCardView.runDots(registry.state(service))
+                check(dots.runs == wantRuns && !wantRuns.isEmpty,
+                      "\(service.title)'s run dots are \(dots.runs), want \(wantRuns)", &ok)
+                check(dots.accessibilityLabel() == want && dots.toolTip == want,
+                      "\(service.title)'s run dots read \"\(dots.accessibilityLabel() ?? "")\" with tooltip "
+                      + "\"\(dots.toolTip ?? "")\", want \"\(want)\"", &ok)
+                check(dots.runs.first == true || !dots.runs.contains(true),
+                      "\(service.title)'s success is not the oldest (leftmost) dot: \(dots.runs)", &ok)
+            } else if let label = textFields(in: cell).first {
+                check(HealthCardView.runDots(registry.state(service)).isEmpty && label.stringValue == "\u{2014}",
+                      "\(service.title)'s runs drew \"\(label.stringValue)\" as text, not as dots (R5-UI-07)", &ok)
+                check(label.accessibilityLabel() == want,
+                      "\(service.title)'s runs read \"\(label.accessibilityLabel() ?? "")\", want \"\(want)\"", &ok)
+            } else {
+                fail("\(service.title): the Recent runs cell has neither dots nor text", &ok)
+            }
         }
         check(read >= 5, "only \(read) Recent runs cells were read", &ok)
         check(mixedSeen, "the fixture has no service with both a failure and a success", &ok)

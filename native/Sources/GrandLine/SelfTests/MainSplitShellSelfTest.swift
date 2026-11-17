@@ -61,6 +61,13 @@ enum MainSplitShellSelfTest {
         let savedHome = AppSettings.shared.homeCardLayout
         defer { AppSettings.shared.homeCardLayout = savedHome }
         AppSettings.shared.homeCardLayout = .standard
+        // R5-UI-08: Home leaves the Morning briefing card off while the
+        // briefing is off and has nothing on record. The checks here measure
+        // the five-card Home, so the briefing is on, in this process's own
+        // suite domain, and put back after.
+        let briefingWasOn = AppSettings.shared.morningBriefingEnabled
+        AppSettings.shared.morningBriefingEnabled = true
+        defer { AppSettings.shared.morningBriefingEnabled = briefingWasOn }
 
         var allOK = true
         let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
@@ -71,7 +78,8 @@ enum MainSplitShellSelfTest {
                       checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
-                      checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkBackAndForward, checkTheCalendarButton, checkTheInspector,
+                      checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
+                      checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
@@ -1037,6 +1045,56 @@ enum MainSplitShellSelfTest {
     /// no card is narrower than the canvas's minimum, and nothing overlaps.
     /// Home's own cards and the captain's own arrangement (from their
     /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    /// R5-UI-08: with the briefing off and nothing on record, Home's own
+    /// cards are the other four, and the slot the briefing had is not left as
+    /// a hole: every row still reaches the grid's edge. Customize still draws
+    /// it, so the captain can place or hide it.
+    private static func checkHomeLeavesAnOffBriefingOff(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                       _ ok: inout Bool) {
+        let record = AppSettings.shared.morningBriefingRecord
+        let saved = AppSettings.shared.homeCardLayout
+        AppSettings.shared.morningBriefingEnabled = false
+        AppSettings.shared.morningBriefingRecord = nil
+        defer {
+            AppSettings.shared.morningBriefingEnabled = true
+            AppSettings.shared.morningBriefingRecord = record
+            AppSettings.shared.homeCardLayout = saved
+            shell.debugHomeCanvas.cardLayout = saved
+            shell.debugHomeCanvas.setCustomizing(false)
+            resize(window, width: 1512, shell)
+        }
+        shell.workspace.navigator.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        AppSettings.shared.homeCardLayout = .standard
+        canvas.cardLayout = .standard
+        check(HomeCardLayout.standard.shown.contains(.briefing),
+              "fixture: Home's own cards no longer include the briefing - this check measures nothing", &ok)
+        for width: CGFloat in [1512, 1100] {
+            resize(window, width: width, shell)
+            settle(shell)
+            guard settleHomeGrid(shell, canvas) else {
+                fail("R5-UI-08 at \(Int(width))pt: Home never reflowed", &ok)
+                continue
+            }
+            let rows = canvas.gridRowsForTests
+            let cards = rows.map { $0.arrangedSubviews.compactMap { $0 as? HelmModuleCard } }
+            check(canvas.cardForTests(.briefing) == nil && cards.joined().count == 4,
+                  "R5-UI-08 at \(Int(width))pt: with the briefing off Home draws \(cards.joined().count) cards"
+                  + (canvas.cardForTests(.briefing) != nil ? ", the briefing among them" : ""), &ok)
+            for (index, row) in cards.enumerated() {
+                guard let last = row.last else { continue }
+                check(abs(last.frame.maxX - rows[index].bounds.width) < 1,
+                      "R5-UI-08 at \(Int(width))pt: row \(index + 1) ends at \(last.frame.maxX)pt of "
+                      + "\(rows[index].bounds.width)pt - the briefing's slot is a hole", &ok)
+            }
+        }
+        canvas.setCustomizing(true)
+        settle(shell)
+        _ = settleHomeGrid(shell, canvas)
+        check(canvas.cardForTests(.briefing) != nil,
+              "R5-UI-08: Customize does not draw the briefing, so the captain cannot place it", &ok)
+    }
+
     private static func checkHomeRowsFillBesideTheSidebar(_ shell: MainSplitShellController, _ window: NSWindow,
                                                          _ ok: inout Bool) {
         let saved = AppSettings.shared.homeCardLayout

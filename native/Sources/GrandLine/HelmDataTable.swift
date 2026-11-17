@@ -71,11 +71,14 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         case muted(String)
         /// Monospaced muted text, for an address, a fingerprint or a command.
         case code(String)
-        /// A run of marks (Health's ✕✕✓) and the words VoiceOver reads for
-        /// them, because a glyph run read aloud is "multiplication x,
-        /// multiplication x, check mark" (R2-A11Y-04). Empty marks draw the
-        /// em dash `.none` draws, still with their words.
-        case marks(String, spoken: String)
+        /// A short run of outcomes as dots, oldest at the left: `true` a
+        /// success in the good tint, `false` a failure in the critical one -
+        /// the Schedules page's run bar, at a size that sits in a table row.
+        /// `spoken` is the tooltip and what VoiceOver reads (R2-A11Y-04), so
+        /// colour is never the only carrier. No runs draw the em dash `.none`
+        /// draws, still with their words. R5-UI-07: this replaced Health's
+        /// `✕✕✓` glyph string, which was 11pt code text with no tooltip.
+        case runDots([Bool], spoken: String)
         /// The leading cell: a tile, a bold title and an optional second line.
         /// `tintHex` is for a colour the captain chose (a saved host's own
         /// accent), the same carve-out `HelmAccentRow.Content.tintHex` makes.
@@ -681,10 +684,14 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                 let cell = reuse(HelmDataTableTextCell.self, tableView)
                 cell.configure(text: text, style: .code, leading: leading, theme: theme)
                 return cell
-            case .marks(let marks, let spoken):
-                let cell = reuse(HelmDataTableTextCell.self, tableView)
-                cell.configure(text: marks.isEmpty ? "\u{2014}" : marks, style: marks.isEmpty ? .muted : .code,
-                               leading: leading, theme: theme, spoken: spoken)
+            case .runDots(let runs, let spoken):
+                guard !runs.isEmpty else {
+                    let cell = reuse(HelmDataTableTextCell.self, tableView)
+                    cell.configure(text: "\u{2014}", style: .muted, leading: leading, theme: theme, spoken: spoken)
+                    return cell
+                }
+                let cell = reuse(HelmDataTableRunDotsCell.self, tableView)
+                cell.configure(runs: runs, spoken: spoken, leading: leading, theme: theme)
                 return cell
             case .none:
                 let cell = reuse(HelmDataTableTextCell.self, tableView)
@@ -1026,6 +1033,53 @@ private final class HelmDataTableTextCell: NSView {
         case .code:
             label.font = HelmType.code()
             label.textColor = HelmTheme.mutedInk(theme)
+        }
+    }
+}
+
+/// `Cell.runDots`: one filled dot per run, oldest at the left. Also used on
+/// its own (Health's row layout), where its intrinsic size is the dots'.
+final class HelmDataTableRunDotsCell: NSView {
+    static let diameter: CGFloat = 8
+    static let gap: CGFloat = 4
+
+    private(set) var runs: [Bool] = []
+    private var leading: CGFloat = 0
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(runs: [Bool], spoken: String, leading: CGFloat, theme: HelmTheme) {
+        self.runs = runs
+        self.leading = leading
+        self.theme = theme
+        toolTip = spoken
+        setAccessibilityLabel(spoken)
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let count = CGFloat(runs.count)
+        let width = count > 0 ? leading + count * Self.diameter + (count - 1) * Self.gap : 0
+        return NSSize(width: width, height: Self.diameter)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let size = Self.diameter
+        var x = leading
+        let y = ((bounds.height - size) / 2).rounded()
+        for succeeded in runs {
+            HelmTheme.nsColor((succeeded ? HelmTint.good : HelmTint.critical).hex(in: theme)).setFill()
+            NSBezierPath(ovalIn: NSRect(x: x, y: y, width: size, height: size)).fill()
+            x += size + Self.gap
         }
     }
 }
