@@ -962,3 +962,53 @@ Surfaces carry a version and a release-notes line but are not hashed, because pa
 Confirmed by injection: one added line in `HelmPlateCard.swift` failed the digest check by name, and restoring the file passed.
 The pull request template gained a "Design system" section for the one-line-per-component summary.
 
+**S11: the Health card says one verdict.**
+Home's Health card showed a red "1 failing" pill, a green ring and the title "Healthy" for one fact.
+`ServiceHealthSummary.headline` is the worst verdict on record (failing, then a recent failure, then healthy; not run yet only when nothing has a verdict).
+The title is that verdict in its colour, the ring takes the same tint through `HelmRingGauge.configure(value:total:tint:)`, and the pill is gone.
+`StateWord.tint` writes down the colour each state already wore on Updates, Setup and Health.
+`UIUXProposalsSelfTest` (`FM_RUN_UIUX_PROPOSALS_TESTS`, pure logic) is new with this item and reads the painted title and arc in Daylight and Dusk.
+
+**S10: the Morning briefing reads as prose.**
+Every clause was a link painted in its target's hue, so the demo paragraph was brown on Daylight and amber on Dusk.
+`HelmContrast.quietLink` is the recipe now: ink text, a 6pt dot in the hue as a text attachment, and a dotted hover underline in the faint register.
+Only a bad state word ("overdue") keeps its colour.
+`ReviewFourUISelfTest`'s hover check caught one real defect on the way: a clause with a coloured word is two attribute runs under one link, and the effective range stopped the underline at the word, so the hover reads the longest range.
+
+**S09 and S08: the Tasks board's lanes.**
+"Done · last 7 days" left the filter row (a plain label at control size read as a disabled control) and became the Done lane's count and the List's Done group header.
+The Follow-ups lane in the sidebar layout was in the floating bar's classic shape because the page's first render runs from `loadView`, before `adoptSidebarLayout`, and that render made a one-way `adoptClassicStyle()` call.
+`ShiftFollowUpLaneView.setClassicStyle(_:)` works both ways and is set on every render.
+The lane keeps its amber dot, gains a dashed "Add follow-up" row, and its first card sits 13pt under the header like the status lanes'.
+
+**S07: Runbook and Postmortem cards are the control.**
+`HelmPlateCard.Content.actionReveal = .onAim` drops the Open button and the resting trash: the whole card opens, the subtitle is the meta line, and duplicate and delete are 28pt corner glyphs on hover or focus, with ⌫ and ⌘D on a focused card.
+A sub-second timestamp read "in 0 sec" from `RelativeDateTimeFormatter`, so the grid says "just now" under a second.
+Not fixed: on Daylight a faint grey band sits behind the runbook grid past its last card in the off-screen render, as it did before this branch; a layer dump found no view that paints it, so it may be a `cacheDisplay` artefact.
+
+**S04: one page-sidebar surface.**
+`HelmPageSidebar.Surface.band` is the default, with `HelmPageSidebar.Band` and Settings' own band numbers.
+Schedules, Reading list and Notebook hold their columns in a `.sidePanel` split pane, Commands' column sits on a band behind its scroll view, and Code's two cards are one band with the quick actions as its footer.
+One measured trap: Commands' row width is a required chain up to the window, and widening the column's gap grew a 1218pt window to 1262pt in `MainSplitShellSelfTest`; the column took the band's 208pt and the gap the difference, so the sum is unchanged.
+Not done: moving Commands' command list out of the band into the content column, which the proposal also described.
+
+**S02: the toolbar's two groups.**
+`WorkspaceToolbar.Group` orders the trailing cluster as Open (Quick Connect, the calendar), a managed space, then Window (the light/dark toggle, the bell, the inspector).
+It is not `NSToolbarItemGroup`: the captain's arrangement is saved by item identifier, and the bell's popover hangs off the bell's own item.
+A page's own action now goes before the Open group; the first version put Home's Customize between the two groups, caught in a render and then pinned in `ReviewTwoUXSelfTest`.
+
+**S06: cards hug their content.**
+`HelmModuleCard.hugsContent` drops the hub's 124pt floor for Tools' plates, and each row still matches its tallest plate.
+`HelmResponsiveGrid` already tied heights per row, so the proposal's grid-wide enum was not needed; the padding was the card's own floor.
+Home's Tasks card lists the urgent tasks as rows.
+
+**S05: Settings sits beside its nav.**
+The captain chose leading alignment over gotcha (13)'s centred column.
+`HelmSplitPage.ContentAlignment` (`.centered`, `.leading`) and `alignCappedColumn` own the anchor; the cap and the grow tie at 480 are unchanged.
+Settings' column and header sit 32pt past the band's visible edge with the slack on the right, in both layouts.
+`SettingsSidebarNavigationSelfTest`'s case 12 asserts that gutter now, and still counts the combinations where the cap binds, so a centred column cannot pass it.
+
+**Not verified on this branch.**
+The real macOS 26 toolbar capsules (the off-screen render draws no glass), hover and press states, and motion.
+`AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` fails on this machine for nord-snow (0.906 against 0.928), and fails the same way on the baseline binary built before any UI change here.
+

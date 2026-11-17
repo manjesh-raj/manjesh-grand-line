@@ -452,6 +452,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// nav column; its divider sits under `sidebarEdge`.
     private(set) var splitPage: HelmSplitPage?
 
+    /// S05: the content column and its header sit beside the nav.
+    static let contentAlignment: HelmSplitPage.ContentAlignment = .leading
+
     // There used to be a `visibleCentreNudge` here: the scroll area began at
     // the nav column's trailing edge, so its first `pageGutter + 1` points
     // sat under the band and its edge, and a centred column had to be pushed
@@ -654,34 +657,31 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(pageContainer)
-        // **Capped and centered**, which is gotcha (3)'s own prescription for
-        // this exact shape: "position with `leadingAnchor >=` / `trailingAnchor
-        // <=` / `centerXAnchor ==` instead of a width tie". The cap is what
-        // stops a 1500pt window rendering a 1400pt-wide settings row; the
-        // `centerX ==` is what puts the leftover slack on *both* sides of the
-        // column rather than all of it on the right; and the two inequalities
-        // are what still guarantee a `pageGutter` margin once the window is
-        // narrow enough that the cap no longer binds.
+        // **Capped, and beside the nav** (S05 of the 2026-11-17 UI/UX
+        // proposals, the captain's call). The cap is what stops a 1500pt
+        // window rendering a 1400pt-wide settings row. Where the column sits
+        // is `HelmSplitPage.alignCappedColumn`'s: `.leading` puts it a
+        // `leadingContentGutter` past the band's edge with the slack on the
+        // right, the way System Settings and Mail sit a detail against its
+        // list. It was centred (`.centered`), which at 1512 left 155pt of
+        // ground between the nav and the page it selects.
         //
-        // This replaced a required `leading == content.leading + pageGutter`,
-        // which is deliberate left-alignment with a width ceiling: past the
-        // cap the column had nowhere to go, so every extra point of window
-        // became empty space on the right only. The captain reported that
-        // three times ("left-aligned", "touching the sidebar") before it was
-        // read as positioning rather than as sizing.
+        // History worth keeping: an earlier left pin was read by the captain
+        // as "touching the sidebar" - that was a required `leading ==
+        // content.leading + pageGutter` measured from the *scroll area*, which
+        // then began under the band, so the column sat one point inside the
+        // band's visible edge. Since P9 the scroll area starts at the split's
+        // content pane, so the gutter is measured from the edge the captain
+        // sees.
         //
-        // Gotcha (13) still holds: the only required constraints here are
-        // maxima and a centering tie, none of which can be a window-width
-        // *floor*, and the one equality that could grow the column sits below
+        // Gotcha (13) still holds: the only required constraints here are a
+        // position and maxima, none of which can be a window-width *floor*,
+        // and the one equality that could grow the column sits below
         // `NSLayoutPriorityWindowSizeStayPut` (500).
         pageWidthCap = pageContainer.widthAnchor
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
-        NSLayoutConstraint.activate([
-            pageContainer.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            pageContainer.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor,
-                                                   constant: HelmMetrics.pageGutter),
-            pageContainer.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor,
-                                                    constant: -HelmMetrics.pageGutter),
+        NSLayoutConstraint.activate(HelmSplitPage.alignCappedColumn(pageContainer, in: content,
+                                                                    alignment: Self.contentAlignment) + [
             pageContainer.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s2),
             pageContainer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s6),
             pageWidthCap,
@@ -695,7 +695,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // widest group.
         let widthGrow = pageContainer.widthAnchor
             .constraint(equalTo: content.widthAnchor,
-                        constant: -2 * HelmMetrics.pageGutter)
+                        constant: -HelmSplitPage.horizontalMargins(for: Self.contentAlignment))
         // Under the split's sidebar holding priority, or a capped column's
         // unmet grow tie moves the divider instead (P9, `HelmSplitPage`).
         widthGrow.priority = HelmSplitPage.contentGrowPriority
@@ -766,15 +766,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             sidebarEdge.topAnchor.constraint(equalTo: root.topAnchor),
             sidebarEdge.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            // The same capped-and-centered shape the content column uses a
-            // few lines up (see `pageWidthCap`), expressed against the clip
-            // view so the header and the column it heads share *both* edges
-            // rather than only their right one. A required `leading ==` here
-            // would left-pin the header while the column below it centres,
-            // which is the drift these two blocks exist to prevent.
-            toolbar.centerXAnchor.constraint(equalTo: scroll.contentView.centerXAnchor),
-            toolbar.leadingAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.leadingAnchor,
-                                             constant: HelmMetrics.pageGutter),
+            // The header takes the same alignment as the content column (see
+            // `pageWidthCap` and `alignCappedColumn` just below), expressed
+            // against the clip view, so the header and the column it heads
+            // share *both* edges rather than only their right one.
             // **The toolbar ends where the content column ends, not where
             // the page does.** The toolbar is this page's header - the
             // breadcrumb on its left, "Saved on this Mac" on its right - and
@@ -803,8 +798,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             // narrower width. At a window narrow enough that the cap does not
             // bind, pinning the toolbar to `root` instead would leave it
             // exactly that track's width past the column.
-            toolbar.trailingAnchor.constraint(lessThanOrEqualTo: scroll.contentView.trailingAnchor,
-                                              constant: -HelmMetrics.pageGutter),
             toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
             toolbar.heightAnchor.constraint(equalToConstant: 30),
 
@@ -826,12 +819,15 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         toolbarWidthCap = toolbar.widthAnchor
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
         toolbarWidthCap.isActive = true
+        // S05: the header's anchor and margins, the column's own.
+        NSLayoutConstraint.activate(HelmSplitPage.alignCappedColumn(toolbar, in: scroll.contentView,
+                                                                    alignment: Self.contentAlignment))
         // Stated as a width, for the same reason the column's own grow tie is:
         // with the centering tie above, a trailing pin would be a statement
         // about position as well as size.
         let toolbarWidthGrow = toolbar.widthAnchor
             .constraint(equalTo: scroll.contentView.widthAnchor,
-                        constant: -2 * HelmMetrics.pageGutter)
+                        constant: -HelmSplitPage.horizontalMargins(for: Self.contentAlignment))
         toolbarWidthGrow.priority = HelmSplitPage.contentGrowPriority
         toolbarWidthGrow.isActive = true
         scrollTopUnderToolbar = scroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: HelmMetrics.s2)
