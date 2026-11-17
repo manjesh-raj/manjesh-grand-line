@@ -2032,6 +2032,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // against a blank left half in board mode (caught in a real render,
         // not by reading the constraints).
         tasksLeftColumn?.isHidden = hideTasks
+        // S08: in the sidebar layout the lane wears the status lanes' wash;
+        // in the floating bar their classic shape. Set on every render, so
+        // the first render (which runs before `adoptSidebarLayout`) cannot
+        // fix the wrong one.
+        followUpLane.setClassicStyle(!drawsSidebarLayout)
         if !drawsSidebarLayout {
             // The calendar fills the page under the tab row.
             //
@@ -2042,7 +2047,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             // The Projects section is also what a project's detail hides
             // (`applyProjectDetailFullPage`), so it stays hidden for that too.
             // The lane takes the classic board's untinted shape here.
-            followUpLane.adoptClassicStyle()
             let board = tasksView == .board && !isProjectDetailFullPage && !failed
             let laneOnBoard = board && boardFitsFollowUpLane
             boardView.trailingLaneShown = laneOnBoard

@@ -826,10 +826,22 @@ final class ShiftFollowUpLaneView: NSView {
     private var theme: HelmTheme = ThemeManager.shared.theme
     /// The rule under the header, drawn only in the classic style.
     private let headerRule = NSView()
-    private var headerMark: HelmSectionHeader.Leading = .none
+    /// S08: the lane's identity dot, kept in both styles, the way
+    /// `HelmSectionHeader(.lane)` draws a lane's mark.
+    private let headerMark: HelmSectionHeader.Leading = .dot(.warn)
     private var usesClassicStyle = false
-    /// The lane's own geometry, which `adoptClassicStyle` swaps out.
+    /// The constraints of whichever style is showing.
     private var laneConstraints: [NSLayoutConstraint] = []
+    /// S08: the lane's foot, the same "Add" every status lane has. A dashed
+    /// box in the sidebar layout's lane, a quiet text button in the classic
+    /// one - each the shape `ShiftBoardColumnView` draws in that style.
+    private let addHost = NSView()
+    private let addOutline = CAShapeLayer()
+    private let addButton = HelmButton(title: "Add follow-up", variant: .quiet, size: .small, symbol: "plus")
+    /// Centred in the dashed box; at the leading edge in the classic lane,
+    /// where the status lanes' "Add task" sits.
+    private var addButtonCentred: NSLayoutConstraint!
+    private var addButtonLeading: NSLayoutConstraint!
 
     var onOpen: ((String) -> Void)?
     var onAdd: (() -> Void)?
@@ -844,7 +856,7 @@ final class ShiftFollowUpLaneView: NSView {
         laneBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(laneBackground)
 
-        header.configure(leading: .none, title: "Follow-ups", count: "0")
+        header.configure(leading: headerMark, title: "Follow-ups", count: "0")
         header.translatesAutoresizingMaskIntoConstraints = false
         headerAdd.target = self
         headerAdd.action = #selector(addTapped)
@@ -863,46 +875,71 @@ final class ShiftFollowUpLaneView: NSView {
         moreLabel.font = HelmType.caption()
         moreLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        addHost.wantsLayer = true
+        addHost.translatesAutoresizingMaskIntoConstraints = false
+        addHost.layer?.addSublayer(addOutline)
+        addOutline.fillColor = NSColor.clear.cgColor
+        addOutline.lineWidth = 1
+        addOutline.lineDashPattern = [4, 3]
+        addButton.target = self
+        addButton.action = #selector(addTapped)
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addHost.addSubview(addButton)
+        addButtonCentred = addButton.centerXAnchor.constraint(equalTo: addHost.centerXAnchor)
+        addButtonLeading = addButton.leadingAnchor.constraint(equalTo: addHost.leadingAnchor)
+        NSLayoutConstraint.activate([
+            addButtonCentred,
+            addButton.centerYAnchor.constraint(equalTo: addHost.centerYAnchor),
+            addHost.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        // The whole dashed box is the button, as the status lanes draw it.
+        addHost.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(addTapped)))
+
         headerRule.wantsLayer = true
         headerRule.isHidden = true
         headerRule.translatesAutoresizingMaskIntoConstraints = false
         addSubview(headerRule)
 
-        let inset = HelmMetrics.s2
         NSLayoutConstraint.activate([
-            laneBackground.topAnchor.constraint(equalTo: topAnchor),
-            laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
-            laneBackground.bottomAnchor.constraint(equalTo: bottomAnchor),
             header.trailingAnchor.constraint(lessThanOrEqualTo: headerAdd.leadingAnchor, constant: -HelmMetrics.s2),
             headerAdd.centerYAnchor.constraint(equalTo: header.centerYAnchor),
         ])
-        laneConstraints = [
-            header.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            header.heightAnchor.constraint(equalToConstant: 30),
-            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-            cardsStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s1),
-            cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-            cardsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
-        ]
+        laneConstraints = laneStyleConstraints()
         NSLayoutConstraint.activate(laneConstraints)
         applyTheme(theme)
     }
 
-    /// R4-UX-09: the floating bar's board draws its status lanes untinted,
-    /// each a dot, a title and a count on a rule
-    /// (`ShiftBoardColumnView`'s classic style), so the lane takes the same
-    /// shape there rather than the sidebar layout's tinted one.
-    func adoptClassicStyle() {
-        guard !usesClassicStyle else { return }
-        usesClassicStyle = true
-        headerMark = .dot(.warn)
-        laneBackground.isHidden = true
-        headerRule.isHidden = false
-        NSLayoutConstraint.deactivate(laneConstraints)
-        laneConstraints = [
+    /// The sidebar layout's lane, which is `ShiftBoardColumnView`'s workspace
+    /// lane: a rounded wash ending under the lane's last control, the header
+    /// inside it, the cards and the dashed add row 8pt in from its edges.
+    private func laneStyleConstraints() -> [NSLayoutConstraint] {
+        let inset = HelmMetrics.s2
+        return [
+            laneBackground.topAnchor.constraint(equalTo: topAnchor),
+            laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            // The board's row may stretch this view to its tallest lane; the
+            // wash follows what the lane holds, as the status lanes' does.
+            laneBackground.bottomAnchor.constraint(equalTo: cardsStack.bottomAnchor, constant: inset),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
+            header.heightAnchor.constraint(equalToConstant: 30),
+            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            // The status lane's first card sits under its hidden 1pt rule
+            // (8pt below the header) plus 4pt; the same 13pt here, so the
+            // four lanes' first cards line up (measured in the S08 render).
+            cardsStack.topAnchor.constraint(equalTo: header.bottomAnchor,
+                                            constant: HelmMetrics.s2 + 1 + HelmMetrics.s1),
+            cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            cardsStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -inset),
+        ]
+    }
+
+    /// The floating bar's lane, which is `ShiftBoardColumnView`'s classic
+    /// one: no wash, the header on a rule, the cards at the lane's edges.
+    private func classicStyleConstraints() -> [NSLayoutConstraint] {
+        [
             header.topAnchor.constraint(equalTo: topAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             header.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
@@ -914,11 +951,41 @@ final class ShiftFollowUpLaneView: NSView {
             cardsStack.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: HelmMetrics.s3),
             cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
             cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            cardsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            cardsStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
         ]
+    }
+
+    /// R4-UX-09: the floating bar's board draws its status lanes untinted,
+    /// each a dot, a title and a count on a rule
+    /// (`ShiftBoardColumnView`'s classic style), so the lane takes the same
+    /// shape there rather than the sidebar layout's tinted one.
+    ///
+    /// S08 of the 2026-11-17 UI/UX proposals: this is a setter both ways now,
+    /// not a one-way adoption. The page's first render runs from `loadView`,
+    /// before the sidebar shell's `adoptSidebarLayout` has said which layout
+    /// it is in, and a one-way adoption made there left the sidebar layout's
+    /// Follow-ups in the classic shape beside three washed lanes for good.
+    func setClassicStyle(_ classic: Bool) {
+        guard classic != usesClassicStyle else { return }
+        usesClassicStyle = classic
+        laneBackground.isHidden = classic
+        headerRule.isHidden = !classic
+        NSLayoutConstraint.deactivate(laneConstraints)
+        laneConstraints = classic ? classicStyleConstraints() : laneStyleConstraints()
         NSLayoutConstraint.activate(laneConstraints)
-        header.configure(leading: headerMark, title: "Follow-ups", count: header.countLabel.stringValue)
+        addButtonCentred.isActive = !classic
+        addButtonLeading.isActive = classic
         applyTheme(theme)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        HelmMotion.withoutImplicitAnimation {
+            addOutline.frame = addHost.bounds
+            addOutline.path = CGPath(roundedRect: addHost.bounds.insetBy(dx: 0.5, dy: 0.5),
+                                     cornerWidth: 10, cornerHeight: 10, transform: nil)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -935,6 +1002,7 @@ final class ShiftFollowUpLaneView: NSView {
         guard !followUps.isEmpty else {
             cardsStack.addArrangedSubview(emptyState)
             emptyState.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
+            appendAddRow()
             applyTheme(theme)
             return
         }
@@ -965,7 +1033,14 @@ final class ShiftFollowUpLaneView: NSView {
             moreLabel.stringValue = "+\(hidden) more in List"
             cardsStack.addArrangedSubview(moreLabel)
         }
+        appendAddRow()
         applyTheme(theme)
+    }
+
+    /// The lane's foot, after its cards (S08).
+    private func appendAddRow() {
+        cardsStack.addArrangedSubview(addHost)
+        addHost.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
     }
 
     @objc private func cardClicked(_ sender: NSClickGestureRecognizer) {
@@ -985,6 +1060,10 @@ final class ShiftFollowUpLaneView: NSView {
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
         emptyState.applyTheme(theme)
         moreLabel.textColor = HelmTheme.mutedInk(theme)
+        // The status lanes' dashed outline, drawn only inside the wash.
+        addOutline.isHidden = usesClassicStyle
+        addOutline.strokeColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(theme.isDaylight ? 1 : 0.8).cgColor
         for entry in cards { entry.card.applyTheme(theme) }
     }
 
@@ -999,6 +1078,12 @@ final class ShiftFollowUpLaneView: NSView {
         return cards[index].host.performPrimaryAction()
     }
     var debugAddButton: HelmButton { headerAdd }
+    /// S08: the lane's foot and whether its dashed outline shows.
+    var debugAddRow: (button: HelmButton, outlined: Bool, inLane: Bool) {
+        (addButton, !addOutline.isHidden, addHost.superview === cardsStack)
+    }
+    var debugHeaderMark: HelmSectionHeader.Leading { headerMark }
+    var debugLaneWashShown: Bool { !laneBackground.isHidden }
     func debugMenuTitles(at index: Int) -> [String] {
         guard cards.indices.contains(index) else { return [] }
         return cards[index].host.menu?.items.map(\.title) ?? []

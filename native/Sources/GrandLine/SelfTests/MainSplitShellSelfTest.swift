@@ -217,6 +217,18 @@ enum MainSplitShellSelfTest {
         check(!tasks.debugFilterRowCollapsed, "R4-UI-08: at 1512 the filter row collapsed", &ok)
         check(tasks.followUpLane.debugMenuTitles(at: 0).contains("Mark Done"),
               "R4-UI-09: a lane card's menu reads \(tasks.followUpLane.debugMenuTitles(at: 0))", &ok)
+        // S08: four lanes, one chrome. The page's first render runs before
+        // the shell adopts the sidebar layout, which used to leave this lane
+        // in the floating bar's classic shape beside three washed lanes.
+        let lane = tasks.followUpLane
+        check(!lane.debugUsesClassicStyle && lane.debugLaneWashShown,
+              "S08: the sidebar layout's Follow-ups lane is not washed like the status lanes", &ok)
+        check(lane.debugHeaderMark == .dot(.warn), "S08: the lane lost its amber identity dot", &ok)
+        let foot = lane.debugAddRow
+        check(foot.inLane && foot.outlined && foot.button.title == "Add follow-up",
+              "S08: the lane has no dashed \"Add follow-up\" row (in lane \(foot.inLane), outlined \(foot.outlined))", &ok)
+        check(foot.button.target === lane && foot.button.action != nil,
+              "S08: \"Add follow-up\" is not wired to the lane's add", &ok)
         checkFilterRowFits(tasks, "1512", &ok)
 
         // 960: the lanes are too narrow for four, so Follow-ups goes back

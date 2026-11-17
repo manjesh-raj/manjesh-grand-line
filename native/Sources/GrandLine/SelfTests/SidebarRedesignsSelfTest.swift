@@ -922,6 +922,10 @@ enum SidebarRedesignsSelfTest {
               + "Follow-ups card hidden \(tasks.debugFollowUpsRowHidden), Projects hidden \(tasks.debugProjectsSectionHidden))", &ok)
         check(tasks.followUpLane.debugUsesClassicStyle && tasks.followUpLane.debugCount == "\(pending)",
               "the floating bar's Follow-ups lane is not the classic lane of \(pending) (\(tasks.followUpLane.debugCount))", &ok)
+        // S08: the classic lane's foot is the quiet text button the classic
+        // status lanes have, with no dashed box.
+        check(!tasks.followUpLane.debugAddRow.outlined && tasks.followUpLane.debugAddRow.inLane,
+              "S08: the floating bar's Follow-ups lane foot is not the classic quiet add", &ok)
         tasks.selectModuleTab(named: "List")
         settle(shell)
         check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden && !tasks.debugProjectsSectionHidden,
