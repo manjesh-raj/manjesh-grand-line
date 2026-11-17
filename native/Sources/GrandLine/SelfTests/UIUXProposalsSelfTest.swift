@@ -30,6 +30,7 @@ enum UIUXProposalsSelfTest {
             ("S04 one page-sidebar surface", checkOneSidebarSurface),
             ("S13 project colours are a stored identity", checkProjectHuesAreIdentity),
             ("S12 one glyph per meaning", checkOneGlyphPerMeaning),
+            ("S17 one notice recipe", checkOneNoticeRecipe),
         ]
         for (name, body) in cases {
             var ok = true
@@ -220,6 +221,54 @@ enum UIUXProposalsSelfTest {
         let notebook = source("NotebookController.swift")
         check(!notebook.contains("\"sun.max\""), "S12: the Notebook draws no literal sun", &ok)
         check(notebook.contains("HelmSymbol.Role.dailyNote.name"), "S12: the Notebook's daily note reads the role", &ok)
+    }
+
+    // MARK: - S17
+
+    /// An informational notice has no edge and a warning or a failure has
+    /// one in its own hue; the kicker, title, body and actions are what was
+    /// asked; a dismiss hides the notice and tells the caller; and the four
+    /// pages that drew their own banner now use this one.
+    private static func checkOneNoticeRecipe(_ ok: inout Bool) {
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            for tint in [HelmTint.info, .accent, .good, .warn, .critical] {
+                let notice = HelmNotice(actions: [HelmButton(title: "Do it", variant: .secondary, size: .small)])
+                notice.frame = NSRect(x: 0, y: 0, width: 720, height: 90)
+                notice.configure(.init(tint: tint, symbol: "lightbulb", kicker: "Things you can do",
+                                       title: "A title", body: "A body sentence."), theme: theme)
+                notice.layoutSubtreeIfNeeded()
+                check(notice.debugHasEdge == HelmNotice.hasEdge(tint),
+                      "S17 \(theme.id): a \(tint) notice \(HelmNotice.hasEdge(tint) ? "carries" : "has no") edge", &ok)
+                if HelmNotice.hasEdge(tint), let edge = notice.card.debugAttentionEdgeColor {
+                    check(same(edge, HelmTheme.nsColor(tint.hex(in: theme))),
+                          "S17 \(theme.id): the \(tint) edge is painted in its own hue", &ok)
+                }
+            }
+        }
+        check(!HelmNotice.hasEdge(.info) && HelmNotice.hasEdge(.warn) && HelmNotice.hasEdge(.critical),
+              "S17: the edge rule's fixture differs between info and warn", &ok)
+        let notice = HelmNotice(dismissTitle: "Hide tips")
+        var dismissed = false
+        notice.onDismiss = { dismissed = true }
+        notice.configure(.init(tint: .info, symbol: "lightbulb", kicker: "Day 1 of 7", title: "T", body: nil),
+                         theme: .daylight)
+        check(notice.debugKicker == "DAY 1 OF 7" && notice.debugTitle == "T" && notice.debugBody.isEmpty,
+              "S17: the kicker is uppercased and an absent body draws nothing", &ok)
+        check(notice.debugActionTitles == ["Hide tips"], "S17: a dismissible notice shows its dismiss", &ok)
+        notice.debugDismiss()
+        check(notice.isHidden && dismissed, "S17: the dismiss hides the notice and tells the caller", &ok)
+
+        guard sourcesAvailable else { print("  SKIP: S17 source half, no app sources"); return }
+        for page in ["HomeCanvasController.swift", "VaultController.swift", "GitHubSyncController.swift",
+                     "FleetController.swift"] {
+            check(source(page).contains("HelmNotice("), "S17: \(page) draws its notice with HelmNotice", &ok)
+        }
+        check(!source("SetupSummary.swift").contains("class SetupPausedPushNotice"),
+              "S17: GitHub sync's private notice card is gone", &ok)
+        check(!source("VaultController.swift").contains("attentionBanner.layer?.backgroundColor"),
+              "S17: Secrets' filled amber band is gone", &ok)
+        check(!source("HomeCanvasController.swift").contains("tipRow = HelmAccentRow"),
+              "S17: Home's tip is no longer an edged accent row", &ok)
     }
 
     // MARK: - S13

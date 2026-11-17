@@ -137,7 +137,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         return button
     }()
     /// "Pushing is paused": shown while the config repo is confirmed public.
-    private lazy var pausedCard = SetupPausedPushNotice(actionButtons: [openOnGitHubButton, checkAgainButton])
+    /// S17: a `HelmNotice` in `.critical`, which carries the attention edge.
+    private lazy var pausedCard = HelmNotice(actions: [openOnGitHubButton, checkAgainButton])
     private lazy var openOnGitHubButton = HelmButton(title: "Open on GitHub", variant: .primary, size: .small,
                                                      target: self, action: #selector(openConfigRepoSettings))
     private lazy var checkAgainButton = HelmButton(title: "Check again", variant: .secondary, size: .small,
@@ -1160,7 +1161,8 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         var subline = "\(repo) is public on GitHub. Grand Line will not push dotfiles, tasks, notes, runbooks "
             + "or backups to a public repository. Make it private to resume."
         if let at = configRepo?.at { subline += " Checked \(Self.relative(at))." }
-        pausedCard.setBody(subline)
+        pausedCard.configure(.init(tint: .critical, symbol: "exclamationmark.triangle.fill",
+                                   title: "Pushing is paused", body: subline), theme: theme)
         openOnGitHubButton.isHidden = ConfigRepoPrivacy.settingsURL == nil
         checkAgainButton.title = isCheckingConfigRepo ? "Checking\u{2026}" : "Check again"
         checkAgainButton.isEnabled = !isCheckingConfigRepo
@@ -1331,9 +1333,9 @@ extension GitHubSyncController {
     var debugSetupSummary: SetupSummaryRow { setupSummary }
     /// Mounted and not hidden: the floating bar never mounts the card at all.
     var debugPausedCardIsShown: Bool { pausedCard.superview != nil && !pausedCard.isHidden }
-    var debugPausedTitle: String { pausedCard.titleLabel.stringValue }
-    var debugPausedBody: String { pausedCard.bodyLabel.stringValue }
-    var debugPausedNotice: SetupPausedPushNotice { pausedCard }
+    var debugPausedTitle: String { pausedCard.debugTitle }
+    var debugPausedBody: String { pausedCard.debugBody }
+    var debugPausedNotice: HelmNotice { pausedCard }
     var debugPausedActions: [HelmButton] { [openOnGitHubButton, checkAgainButton] }
     var debugRefreshButton: HelmButton { refreshButton }
     var debugSyncAllButton: HelmButton { syncAllButton }

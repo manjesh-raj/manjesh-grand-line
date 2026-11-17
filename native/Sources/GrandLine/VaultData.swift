@@ -95,6 +95,22 @@ extension VaultSource {
     /// The banner above the cards. It names the launcher and the problem, so
     /// the captain does not have to find a row to learn what is wrong. `nil`
     /// when nothing needs attention.
+    /// S17: the same reading as a notice's title and body, plus the one tool
+    /// whose fix the notice can open (nil when several need attention).
+    static func attentionNotice(for tools: [VaultTool]) -> (title: String, body: String, tool: VaultTool?)? {
+        let needing = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }
+        guard let first = needing.first else { return nil }
+        if needing.count == 1 {
+            guard let summary = first.issueSummary, !summary.isEmpty else {
+                return ("\(first.name) needs attention", "See Verified Launchers below.", first)
+            }
+            let sentence = summary.prefix(1).uppercased() + summary.dropFirst()
+            return ("\(first.name) needs attention", sentence.hasSuffix(".") ? String(sentence) : sentence + ".", first)
+        }
+        return ("\(needing.count) tools need attention",
+                needing.map(\.name).joined(separator: ", ") + ". See Verified Launchers below.", nil)
+    }
+
     static func attentionBannerText(for tools: [VaultTool]) -> String? {
         let needing = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }
         guard let first = needing.first else { return nil }

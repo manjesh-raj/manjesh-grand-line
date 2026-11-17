@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "2.1.0"
+    static let version = "2.2.0"
 
     struct Component {
         let name: String
@@ -204,6 +204,8 @@ enum HelmKit {
         Component("HelmTint", "1.0.0", file: "HelmUIComponents.swift"),
         // HelmZoomStepper.swift
         Component("HelmZoomStepper", "1.0.0", file: "HelmZoomStepper.swift"),
+        // HelmNotice.swift
+        Component("HelmNotice", "1.0.0", file: "HelmNotice.swift"),
     ]
 
     /// App-level views the proposals version alongside the kit. Not hashed;
@@ -229,6 +231,7 @@ enum HelmKit {
 
     /// One recorded digest per kit file.
     static let sourceDigests: [SourceDigest] = [
+        SourceDigest(file: "HelmNotice.swift", stamp: "HelmNotice@1.0.0", sha256: "a59b3764652021b83e43237d6f3f48c4c11abed019e03e1a3bd2155e8370f8c2"),
         SourceDigest(file: "HelmBackgroundReload.swift", stamp: "HelmBackgroundReload@1.0.0,HelmParseThread@1.0.0", sha256: "9fdf57f19f0187aaaf3f29774bde5659a79547ea20b5b21eb2c71552e1621d4b"),
         SourceDigest(file: "HelmBarPanel.swift", stamp: "HelmBarPanel@1.0.0,HelmBarPanelWindow@1.0.0", sha256: "6811b25ea2dc491014342b855ce2b8eefcbd29118920f1007fafcbaf74d7c5e9"),
         SourceDigest(file: "HelmCardGrid.swift", stamp: "HelmCardGrid@1.0.0,HelmGridCardView@1.0.0", sha256: "c671a7649823f2e01e4c16e749c03461b1de084728104d8c64e27f5e90cf63e6"),

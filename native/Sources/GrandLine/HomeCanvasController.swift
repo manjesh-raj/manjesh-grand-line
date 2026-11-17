@@ -938,13 +938,15 @@ final class HomeCanvasController: NSViewController {
 
     /// Home's "Things you can do" strip: one tip a day for the first week,
     /// under the attention card, until the captain hides it.
-    private lazy var tipDismissButton: HelmButton = {
-        let button = HelmButton(title: "Hide tips", variant: .quiet, size: .small,
-                                target: self, action: #selector(dismissTipsTapped))
-        button.toolTip = "Hide these tips for good. \u{2318}/ still lists the shortcuts for any page."
-        return button
+    /// S17: the tip is a `HelmNotice` - an informational notice, so a tinted
+    /// tile and no edge, which keeps UI-4's rule that only the attention card
+    /// carries one on Home. "Hide tips" is its dismiss, remembered in
+    /// `AppSettings.homeTipsDismissed`.
+    private lazy var tipRow: HelmNotice = {
+        let notice = HelmNotice(dismissTitle: "Hide tips")
+        notice.onDismiss = { [weak self] in self?.dismissTips() }
+        return notice
     }()
-    private lazy var tipRow = HelmAccentRow(trailingAccessory: tipDismissButton, hover: false, gradientBadge: true)
     private var shownTip: HomeTips.Tip?
     private var shownTipDay = 0
 
@@ -966,21 +968,21 @@ final class HomeCanvasController: NSViewController {
 
     private func paintTip(_ theme: HelmTheme) {
         guard let tip = shownTip else { return }
-        tipRow.configure(HelmAccentRow.Content(
+        tipRow.configure(HelmNotice.Content(
             tint: .info,
-            kicker: "THINGS YOU CAN DO \u{00B7} DAY \(shownTipDay) OF \(HomeTips.days)",
+            symbol: tip.symbol,
+            kicker: "Things you can do \u{00B7} day \(shownTipDay) of \(HomeTips.days)",
             title: tip.title,
-            meta: tip.body,
-            badgeSymbol: tip.symbol,
-            metaWraps: true), theme: theme)
+            body: tip.body), theme: theme)
     }
 
     #if FM_SELFTESTS
     var debugTipTitle: String? { tipRow.isHidden ? nil : shownTip?.title }
-    func debugDismissTips() { tipDismissButton.performClick(nil) }
+    func debugDismissTips() { tipRow.debugDismiss() }
+    var debugTipNotice: HelmNotice { tipRow }
     #endif
 
-    @objc private func dismissTipsTapped() {
+    private func dismissTips() {
         AppSettings.shared.homeTipsDismissed = true
         renderTip()
         Toast.show(in: view, message: "Tips hidden. \u{2318}/ lists the shortcuts for any page.")

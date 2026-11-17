@@ -95,7 +95,11 @@ final class FleetController: NSViewController {
     /// headline and a meta line - and the audit's whole point was that this
     /// page had its own private version of an idea the design system already
     /// owns.
-    private let bannerRow = HelmAccentRow(hover: false)
+    /// S17: the answer is a `HelmNotice`. Setup's prompt carries one action
+    /// that opens Setup, where the whole row used to be the link.
+    private lazy var bannerRow = HelmNotice()
+    private lazy var openSetupButton = HelmButton(title: "Open \(PlaceName.of(.bootstrap))", variant: .secondary,
+                                                  size: .small, target: self, action: #selector(openSetupTapped))
 
     private let statsRow = NSStackView()
 
@@ -1053,18 +1057,18 @@ final class FleetController: NSViewController {
     private func renderBanner(needs: [FleetTask], working: [FleetTask],
                               ready: FleetDataSource.PRReadyReading, homeOk: Bool = true) {
         let answer = FleetGreeting.answer(tasks: needs + working, prs: ready, homeOk: homeOk)
-        let content = HelmAccentRow.Content(
+        bannerRow.configure(HelmNotice.Content(
             tint: answer.tint,
+            symbol: answer.badgeSymbol,
             kicker: answer.kicker,
             title: answer.title,
-            meta: answer.meta,
-            badgeSymbol: answer.badgeSymbol,
-            chipText: answer.isSetupPrompt ? "Open \(PlaceName.of(.bootstrap))" : nil)
-        bannerRow.configure(content, theme: theme)
-        // GL-31: only the not-configured banner is clickable, and it leads
+            body: answer.meta), theme: theme)
+        // GL-31: only the not-configured answer has an action, and it leads
         // straight into the Bootstrap stepper where firstmate home is set.
-        bannerRow.onClick = answer.isSetupPrompt ? { [weak self] in self?.onNavigateToSetup?() } : nil
+        bannerRow.setActions(answer.isSetupPrompt ? [openSetupButton] : [])
     }
+
+    @objc private func openSetupTapped() { onNavigateToSetup?() }
 
     /// The "ready to merge" tile for each state of the reading. GL-14: an em
     /// dash, never "0", whenever the number is not known - while the scan is
@@ -1476,7 +1480,8 @@ final class FleetController: NSViewController {
 
     /// The answer banner's own body line, as rendered - this is where
     /// "N PRs ready to merge" is actually spoken to the captain.
-    var debugBannerMeta: String { bannerRow.debugMetaText }
+    var debugBannerMeta: String { bannerRow.debugBody }
+    var debugBannerNotice: HelmNotice { bannerRow }
 
     /// Every stat tile as rendered. See `ReviewController.debugStatTiles`.
     var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }

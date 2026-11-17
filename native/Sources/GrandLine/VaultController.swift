@@ -74,9 +74,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     // Quiet-until-it-matters attention banner - hidden unless a real tool has
     // real issues (`av doctor --json`), never a manufactured warning.
-    private let attentionBanner = NSView()
-    private let attentionLabel = NSTextField(wrappingLabelWithString: "")
-    private let attentionIcon = NSImageView()
+    /// S17: a `HelmNotice` in `.warn`, so it carries the attention edge, with
+    /// "View Fix…" when one launcher is the problem.
+    private lazy var attentionBanner = HelmNotice(actions: [attentionFixButton])
+    private lazy var attentionFixButton = HelmButton(title: "View Fix\u{2026}", variant: .secondary, size: .small,
+                                                     target: self, action: #selector(attentionFixTapped))
+    private var attentionTool: VaultTool?
+    private var attentionText = ""
 
     private let secretsPanel = HelmCard()
     let secretsStack = NSStackView()
@@ -312,35 +316,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    private func attentionBannerView() -> NSView {
-        attentionLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
-        attentionLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        attentionIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        attentionIcon.translatesAutoresizingMaskIntoConstraints = false
-        attentionIcon.setContentHuggingPriority(.required, for: .horizontal)
-
-        let row = NSStackView(views: [attentionIcon, attentionLabel])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        attentionBanner.wantsLayer = true
-        attentionBanner.translatesAutoresizingMaskIntoConstraints = false
-        attentionBanner.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: attentionBanner.leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: attentionBanner.trailingAnchor, constant: -12),
-            row.topAnchor.constraint(equalTo: attentionBanner.topAnchor, constant: 10),
-            row.bottomAnchor.constraint(equalTo: attentionBanner.bottomAnchor, constant: -10),
-        ])
-        return attentionBanner
+    @objc private func attentionFixTapped() {
+        guard let attentionTool else { return }
+        presentIssueSheet(for: attentionTool)
     }
 
     private func buildSecretsSection() -> NSView {
-        _ = attentionBannerView() // configures attentionBanner's fixed chrome once.
 
         addSecretButton.title = "+ Add Secret"
         addSecretButton.controlSize = .small
@@ -504,9 +485,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         // B1: a read that failed says nothing about whether anything needs
         // attention, so the banner stays down rather than claiming all-clear.
-        let bannerText = notInstalled ? nil : tools.flatMap(VaultSource.attentionBannerText(for:))
-        attentionBanner.isHidden = bannerText == nil
-        if let bannerText { attentionLabel.stringValue = bannerText }
+        let notice = notInstalled ? nil : tools.flatMap(VaultSource.attentionNotice(for:))
+        attentionBanner.isHidden = notice == nil
+        attentionText = notInstalled ? "" : tools.flatMap(VaultSource.attentionBannerText(for:)) ?? ""
+        attentionTool = notice?.tool
+        attentionFixButton.isHidden = notice?.tool == nil
+        if let notice {
+            attentionBanner.configure(.init(tint: .warn, symbol: "exclamationmark.triangle.fill",
+                                            title: notice.title, body: notice.body), theme: theme)
+        }
 
         // B1: "?" rather than "0" for a count this page does not have.
         secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
@@ -843,21 +830,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     private func applyTheme() {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let warn = HelmTheme.nsColor(theme.ansiHex[3])
-
-        // §2.6 allows no radius outside its own scale, so this banner takes
-        // `dWell` under Daylight rather than the pre-Daylight literal 9.
-        attentionBanner.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : 9
-        attentionBanner.layer?.backgroundColor = warn.withAlphaComponent(0.14).cgColor
-        // §2.4 measures the raw warn tone at 2.82:1 as a label on its own 14%
-        // wash - exactly this banner's pairing - and gives `warnText` as the
-        // corrected value for it. The pre-Daylight themes keep the plain ink
-        // they have always used, which is already a full-contrast tone here.
-        attentionLabel.textColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.warnText)
-            : ink
-        attentionIcon.contentTintColor = warn
+        attentionBanner.applyTheme(theme)
 
         // Theme-derived, never the system `labelColor` default these two
         // fell back to before this pass - the same rule `HelmCard`'s own
@@ -954,7 +927,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
     var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
     var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
-    var debugAttentionBannerText: String { attentionLabel.stringValue }
+    var debugAttentionBannerText: String { attentionText }
+    var debugAttentionNotice: HelmNotice { attentionBanner }
     /// The sidebar layout's Verified Launchers rows, as the table will be given them.
     var debugToolTableRows: [HelmDataTable.Row] { toolTableRows() }
     /// The path a real finished re-check takes into the page, minus the subprocess.
