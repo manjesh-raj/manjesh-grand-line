@@ -140,8 +140,9 @@ enum MainSplitShellSelfTest {
         // module, so the crumb is the item that yields - and it still runs
         // from the overflow menu (it shows the place in the sidebar).
         check(!shell.debugSidebarIsCollapsed, "R2-UX-10: at 1100 the sidebar is not beside Notebook", &ok)
-        check(notebook.debugToolbarActionTitles == ["", ""],
-              "R2-BUG-07: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
+        // S12: Today's note keeps the short word "Today" beside its glyph.
+        check(notebook.debugToolbarActionTitles == ["Today", ""],
+              "R2-BUG-07/S12: at 1100 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
         overflowRuns(1100)
         // R2-BUG-07's own state, a full-width toolbar at 1100 with the
         // sidebar put away: the crumb stays on the toolbar.
@@ -162,8 +163,8 @@ enum MainSplitShellSelfTest {
         // At 1512 too, since U-02 and U-03 (`compactToolbarActionsBelow`).
         resize(window, width: 1512, shell)
         settle(shell)
-        check(notebook.debugToolbarActionTitles == ["", ""],
-              "R2-BUG-07: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles), want icons", &ok)
+        check(notebook.debugToolbarActionTitles == ["Today", ""],
+              "R2-BUG-07/S12: at 1512 Notebook's toolbar actions read \(notebook.debugToolbarActionTitles)", &ok)
         check(shown(crumb) == crumb, "at 1512 on Notebook the crumb is not on the toolbar", &ok)
         overflowRuns(1512)
         let all = [WorkspaceToolbar.ItemID.crumb, WorkspaceToolbar.ItemID.recents, WorkspaceToolbar.ItemID.inspector]

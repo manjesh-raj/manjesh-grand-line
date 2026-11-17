@@ -59,7 +59,7 @@ final class WorkspaceInspectorController: NSViewController {
     private let closeButton = NSButton()
     private let divider = NSView()
     private let empty = HelmEmptyState(
-        symbol: "sidebar.right",
+        symbol: HelmSymbol.Role.inspector.name,
         title: WorkspaceInspectorController.noDetailsTitle,
         body: WorkspaceInspectorController.noDetailsBody,
         size: .standard)

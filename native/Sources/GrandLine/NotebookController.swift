@@ -122,7 +122,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// The drill header's own cluster (Daylight §6.4) - the mockup's two top
     /// bar buttons, hoisted to where every other destination's page-level
     /// actions live.
-    private let todayButton = HelmButton(title: "Today's note", variant: .secondary, symbol: "sun.max")
+    /// S12: the daily-note glyph from `HelmSymbol.Role`, never the light
+    /// theme's sun, and a short label even where the toolbar is compact.
+    private let todayButton = HelmButton(title: "Today's note", variant: .secondary,
+                                         symbol: HelmSymbol.Role.dailyNote.name)
     private let newPageButton = HelmButton(title: "New page", variant: .primary, symbol: "plus")
 
     private let editorCard = HelmCard()
@@ -265,8 +268,11 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         let inToolbar = todayButton.superview != nil
             && !(window.contentView.map { todayButton.isDescendant(of: $0) } ?? true)
         let compact = inToolbar && window.frame.width < Self.compactToolbarActionsBelow
-        for (button, label) in [(todayButton, "Today's note"), (newPageButton, "New page")] {
-            let title = compact ? "" : label
+        // S12: Today's note keeps a short word when compact, so its glyph is
+        // never the only thing saying what it does (the "Customize" shape on
+        // Home). "New page" keeps its plus alone, which means one thing.
+        for (button, label, short) in [(todayButton, "Today's note", "Today"), (newPageButton, "New page", "")] {
+            let title = compact ? short : label
             if button.title != title { button.title = title }
             button.setAccessibilityLabel(label)
             button.menuFormTitle = label
@@ -944,7 +950,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     private static func row(for page: NotebookPage) -> HelmPageSidebar.Row {
         .init(id: page.id,
-              indicator: .symbol(page.isDailyNote ? "sun.max" : "doc.text"),
+              indicator: .symbol(page.isDailyNote ? HelmSymbol.Role.dailyNote.name : "doc.text"),
               title: page.title,
               showsCount: false)
     }

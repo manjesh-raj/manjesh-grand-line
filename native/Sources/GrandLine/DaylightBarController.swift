@@ -2458,8 +2458,8 @@ class DaylightBarIconButton: NSButton {
 /// that is *on* rather than the one a click would switch to, the convention
 /// macOS's own Control Center uses; the tooltip names the other half.
 final class DaylightThemeToggleButton: DaylightBarIconButton {
-    static let lightSymbol = "sun.max"
-    static let darkSymbol = "moon"
+    static let lightSymbol = HelmSymbol.Role.themeLight.name
+    static let darkSymbol = HelmSymbol.Role.themeDark.name
 
     init() {
         let isDark = ThemeManager.shared.theme.mode == .dark

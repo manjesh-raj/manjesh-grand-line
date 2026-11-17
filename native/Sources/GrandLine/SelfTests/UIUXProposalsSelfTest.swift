@@ -29,6 +29,7 @@ enum UIUXProposalsSelfTest {
             ("S10 the briefing reads as prose", checkTheBriefingIsInk),
             ("S04 one page-sidebar surface", checkOneSidebarSurface),
             ("S13 project colours are a stored identity", checkProjectHuesAreIdentity),
+            ("S12 one glyph per meaning", checkOneGlyphPerMeaning),
         ]
         for (name, body) in cases {
             var ok = true
@@ -192,6 +193,35 @@ enum UIUXProposalsSelfTest {
         }
     }
 
+    // MARK: - S12
+
+    /// No symbol is bound to two roles, the two suns are apart, and the
+    /// Notebook's daily note and the theme toggle read the table.
+    private static func checkOneGlyphPerMeaning(_ ok: inout Bool) {
+        let names = HelmSymbol.Role.table.map(\.name)
+        let doubled = Dictionary(grouping: names, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()
+        check(doubled.isEmpty, "S12: no symbol name is bound to two roles (\(doubled))", &ok)
+        check(Set(HelmSymbol.Role.table.map(\.role)) == Set(HelmSymbol.Role.allCases),
+              "S12: every role has exactly one row in the table", &ok)
+        // The guard's own power: a table with a doubled name is caught.
+        let fixture = [("a", "sun.max"), ("b", "sun.max")]
+        check(Dictionary(grouping: fixture.map(\.1), by: { $0 }).contains { $0.value.count > 1 },
+              "S12: the doubled-name check can fail", &ok)
+        check(HelmSymbol.Role.dailyNote.name != HelmSymbol.Role.themeLight.name,
+              "S12: Today's note and the light theme toggle draw different glyphs", &ok)
+        for role in HelmSymbol.Role.allCases {
+            check(NSImage(systemSymbolName: role.name, accessibilityDescription: nil) != nil,
+                  "S12: \(role) resolves to a real symbol (\(role.name))", &ok)
+        }
+        check(DaylightThemeToggleButton.lightSymbol == HelmSymbol.Role.themeLight.name
+                && DaylightThemeToggleButton.darkSymbol == HelmSymbol.Role.themeDark.name,
+              "S12: the theme toggle reads its glyphs from the role table", &ok)
+        guard sourcesAvailable else { print("  SKIP: S12 source half, no app sources"); return }
+        let notebook = source("NotebookController.swift")
+        check(!notebook.contains("\"sun.max\""), "S12: the Notebook draws no literal sun", &ok)
+        check(notebook.contains("HelmSymbol.Role.dailyNote.name"), "S12: the Notebook's daily note reads the role", &ok)
+    }
+
     // MARK: - S13
 
     /// Project colours come from the categorical ramp, never a theme's status
@@ -258,6 +288,15 @@ enum UIUXProposalsSelfTest {
     }
 
     // MARK: - Helpers
+
+    /// An app source file's text, or "" when the sources are not beside the
+    /// binary. Callers that depend on it check `sourcesAvailable` first.
+    static func source(_ name: String) -> String {
+        guard let dir = SelfTestSources.appSourceDirectory() else { return "" }
+        return (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
+    }
+
+    static var sourcesAvailable: Bool { SelfTestSources.appSourceDirectory() != nil }
 
     /// Element-wise colour equality (AGENTS.md: a contrast ratio is not a
     /// colour-equality check).

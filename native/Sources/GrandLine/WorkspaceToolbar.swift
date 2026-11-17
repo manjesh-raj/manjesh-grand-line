@@ -1274,7 +1274,10 @@ extension WorkspaceToolbar: NSMenuDelegate {
                 continue
             }
             if let button = view as? NSButton {
-                let title = [button.title, (button as? HelmButton)?.menuFormTitle ?? "", button.accessibilityLabel() ?? "",
+                // An explicit menu title wins over the visible one: a button
+                // may show a short word on the toolbar ("Today", S12) and
+                // still name itself in full in a menu.
+                let title = [(button as? HelmButton)?.menuFormTitle ?? "", button.title, button.accessibilityLabel() ?? "",
                              button.toolTip ?? ""].first { !$0.isEmpty } ?? "Action"
                 let entry = closureItem(title) { [weak button] in button?.performClick(nil) }
                 entry.isEnabled = button.isEnabled
