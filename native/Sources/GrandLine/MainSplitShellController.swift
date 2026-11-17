@@ -281,6 +281,9 @@ final class MainSplitShellController: WorkspaceShellController {
         ) { [weak self] _ in
             self?.applyProfileToHome()
             self?.refreshModuleChrome()
+            // R5-UX-06: a host page's Console shows the profile's actions,
+            // and works them out when asked, so this order is safe.
+            self?.workspaceActionsMayHaveChanged()
         }
         workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
         workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }

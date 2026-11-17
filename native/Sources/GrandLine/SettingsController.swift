@@ -1515,7 +1515,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         refreshModuleSwitches()
         return SettingsSection(heading: "Sidebar", group: SettingsGroup(rows: rows),
-                               foot: "Home and Settings are always in the sidebar. A hidden module's pages still open from a link or a notification, and nothing in them is deleted. Applies to the sidebar layout.")
+                               foot: "Home and Settings are always in the sidebar. A hidden module's pages still open from a link or a notification, and nothing in them is deleted. The switches apply to the sidebar layout; the profile also sets Home's cards and the Console's toolbar in both layouts.")
     }
 
     private static let customProfileID = "custom"

@@ -175,8 +175,40 @@ extension ConsoleController {
         // `setTrailing` also installs the clearance inequality that keeps a
         // long tab strip truncating rather than running under the actions -
         // the constraint this method used to activate by hand.
-        pageToolViews = toolViews
-        tabBar.setTrailing(HelmPageToolbar.group(toolViews))
+        allPageToolViews = toolViews
+        applyToolbarProfile()
+        // A profile chosen later (the welcome sheet, Settings) reshapes the
+        // cluster too. A selector observer, so a closed host page's console
+        // leaves nothing registered behind it.
+        NotificationCenter.default.addObserver(self, selector: #selector(hiddenModulesDidChange(_:)),
+                                               name: AppSettings.hiddenModulesDidChange, object: nil)
+    }
+
+    /// R5-UX-06: the investigation tools an SRE reaches for on a host page -
+    /// the cluster's context badge, SRE Lead, Analyze Logs, Tail Logs and
+    /// Start Incident. The shared console has none of them.
+    var operatorToolViews: [NSView] {
+        [kubeContextButton, sreLeadButton, analyzeLogsButton, tailLogsButton, incidentButton].compactMap { $0 }
+    }
+
+    /// R5-UX-06: the review's "an SRE toolbar for everyone". In a Personal
+    /// profile the Console is a terminal - Find, text size, Compose and new
+    /// tabs - and the investigation tools leave its toolbar, in both layouts.
+    /// An Operator, and a Custom set built from one, keeps them.
+    static var showsOperatorTools: Bool { AppSettings.shared.effectiveProfile != .personal }
+
+    /// The tab bar's own copy of the cluster (the floating bar's toolbar).
+    /// In the sidebar layout the window toolbar holds the cluster's views,
+    /// and regrouping them here would take them back into the page's row;
+    /// the shell re-reads `pageToolViews` instead.
+    func applyToolbarProfile() {
+        guard !drawsSidebarLayout else { return }
+        tabBar.setTrailing(HelmPageToolbar.group(pageToolViews))
+    }
+
+    @objc private func hiddenModulesDidChange(_ note: Notification) {
+        guard isViewLoaded else { return }
+        applyToolbarProfile()
     }
 
     func makeIconButton(symbol: String, tooltip: String, action: Selector) -> HelmButton {

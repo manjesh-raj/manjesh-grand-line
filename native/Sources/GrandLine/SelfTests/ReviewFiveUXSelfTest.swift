@@ -18,6 +18,7 @@ enum ReviewFiveUXSelfTest {
         checkTheLaunchLandingFollowsTheProfileInBothLayouts(&ok)
         checkKnowledgeIsSplitPerProfile(&ok)
         checkTheCalendarIsAPlace(&ok)
+        checkTheConsoleToolbarFollowsTheProfile(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -120,6 +121,42 @@ enum ReviewFiveUXSelfTest {
                   "R5-UX-04: the Calendar's toolbar lost Today", &ok)
             check(shell.contains("} else if let calendar = shownCalendar {"),
                   "R5-UX-04: the shell no longer draws the Calendar's own tabs", &ok)
+        }
+    }
+
+    // MARK: R5-UX-06 - the Console toolbar per profile
+
+    /// A host page's Console: SRE Lead, Analyze Logs, Tail Logs, the
+    /// cluster badge and Start Incident are an Operator's. A Personal Console
+    /// is a terminal - Find, text size, Compose and new tabs - and a change
+    /// of profile reshapes a page already open.
+    private static func checkTheConsoleToolbarFollowsTheProfile(_ ok: inout Bool) {
+        autoreleasepool {
+            let console = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
+            _ = console.view
+            func titles() -> [String] { console.pageToolViews.compactMap { ($0 as? HelmButton)?.title } }
+            let operatorTools = ["SRE Lead", "Analyze Logs", "Tail Logs", "Start Incident"]
+            withProfile(.operator) {
+                let shown = titles()
+                check(console.operatorToolViews.count == 5 && operatorTools.allSatisfy { title in shown.contains { $0.hasPrefix(title) } },
+                      "R5-UX-06: an Operator's host Console shows \(shown)", &ok)
+                withProfile(.personal) {
+                    let personal = titles()
+                    check(!personal.contains { title in operatorTools.contains { title.hasPrefix($0) } },
+                          "R5-UX-06: a Personal host Console still shows \(personal)", &ok)
+                    check(console.pageToolViews.contains { $0 === console.findButton }
+                            && console.pageToolViews.contains { $0 === console.zoomStepper }
+                            && console.pageToolViews.contains { $0 === console.composeButton },
+                          "R5-UX-06: a Personal Console lost Find, text size or Compose", &ok)
+                    // The page's own row follows the profile too (the
+                    // floating bar's toolbar).
+                    check(console.operatorToolViews.allSatisfy { $0.window == nil && !$0.isDescendant(of: console.view) },
+                          "R5-UX-06: a Personal Console's tab row still holds an operator tool", &ok)
+                }
+                AppSettings.shared.setProfile(.operator)
+                check(console.operatorToolViews.allSatisfy { $0.isDescendant(of: console.view) },
+                      "R5-UX-06: choosing Operator again did not bring the tools back", &ok)
+            }
         }
     }
 
