@@ -339,7 +339,7 @@ enum DaylightDrillPageSlice5SelfTest {
     // MARK: 3. A plate is a plate, not a navigating module (§7)
 
     private static func checkRunbookPlates(_ ok: inout Bool) {
-        print("\n-- §7: runbook grid renders module-style plates with Open buttons --")
+        print("\n-- §7 / S07: runbook grid renders module-style plates that are the control --")
         let store = scratchDocsStore()
         store.createRunbook(title: "Identifying Unhealthy / NotReady Nodes",
                             content: "# Identifying Unhealthy / NotReady Nodes\n\n```\nkubectl get nodes\n```\n")
@@ -362,37 +362,96 @@ enum DaylightDrillPageSlice5SelfTest {
             print("  FAIL a plate still carries a gradient ribbon")
             ok = false
         }
-        if anatomy.openButtonTitle != "Open" {
-            print("  FAIL plate's action reads \"\(anatomy.openButtonTitle)\", want \"Open\"")
+        // S07 of the 2026-11-17 UI/UX proposals: a runbook plate is the
+        // control. No Open button and no resting trash; duplicate and delete
+        // sit in the top-trailing corner and show only on aim.
+        let aim = plate.debugAim
+        if !aim.openRowHidden {
+            print("  FAIL a runbook plate still draws its Open/trash action row")
             ok = false
         }
-        if !anatomy.deleteVisible {
-            print("  FAIL a runbook plate hides its delete action")
+        if !aim.delete || !aim.duplicate {
+            print("  FAIL a runbook plate's corner pair lacks delete (\(aim.delete)) or duplicate (\(aim.duplicate))")
             ok = false
         }
-        if abs(anatomy.resolvedHeight - HelmPlateCard.height) > 0.5 {
-            print("  FAIL plate resolved to \(fmt(anatomy.resolvedHeight)), want \(fmt(HelmPlateCard.height))")
+        if aim.alpha > 0.01 {
+            print("  FAIL the corner pair shows at rest (alpha \(fmt(aim.alpha)))")
             ok = false
         }
-
-        // The delete glyph is pinned to the card's own trailing corner. A
-        // stack-laid-out trailing control drifts with the leading content's
-        // width, which is the bug this plate's constraints exist to avoid - so
-        // compare against the *card*, not against the Open button.
-        let cardWidth = plate.frame.width
-        let trailingGap = cardWidth - anatomy.deleteButtonFrame.maxX
-        let expectedGap = HelmPlateCard.horizontalInset
-        if abs(trailingGap - expectedGap) > 1.5 {
-            print("  FAIL plate's delete glyph sits \(fmt(trailingGap))pt from the trailing edge, "
-                  + "want \(fmt(expectedGap)) - it is drifting with the title rather than pinned")
+        if let entered = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+                                                windowNumber: 0, context: nil, eventNumber: 0,
+                                                trackingNumber: 0, userData: nil) {
+            // The reveal fades; with Reduce Motion pinned it lands at once,
+            // so the alpha read is the end state, not the first frame.
+            let motion = HelmMotion.reducedOverrideForTests
+            HelmMotion.reducedOverrideForTests = true
+            defer { HelmMotion.reducedOverrideForTests = motion }
+            plate.debugCardHit.mouseEntered(with: entered)
+            if plate.debugAim.alpha < 0.99 {
+                print("  FAIL hovering the plate does not reveal its corner pair (alpha \(fmt(plate.debugAim.alpha)))")
+                ok = false
+            }
+            if let exited = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0,
+                                                   windowNumber: 0, context: nil, eventNumber: 0,
+                                                   trackingNumber: 0, userData: nil) {
+                plate.debugCardHit.mouseExited(with: exited)
+            }
+        }
+        // As tall as its header, not the action-row plate's fixed height.
+        if anatomy.resolvedHeight >= HelmPlateCard.height - 0.5 || anatomy.resolvedHeight < 40 {
+            print("  FAIL an on-aim plate resolved to \(fmt(anatomy.resolvedHeight)), want its header's height "
+                  + "(under \(fmt(HelmPlateCard.height)))")
             ok = false
         }
-        if anatomy.openButtonFrame.minX > anatomy.deleteButtonFrame.minX {
-            print("  FAIL plate's Open button is not leading its delete glyph")
+        // The pair is pinned to the card's own corner (8pt in), so it cannot
+        // drift with the title.
+        let pairTrailing = plate.debugAimButtons.delete.convert(plate.debugAimButtons.delete.bounds, to: plate).maxX
+        if abs(plate.frame.width - pairTrailing - HelmMetrics.s2) > 1.5 {
+            print("  FAIL the corner pair ends \(fmt(plate.frame.width - pairTrailing))pt from the trailing edge, want 8")
             ok = false
         }
         if anatomy.titleMaxLines != HelmPlateCard.maximumTitleLines {
             print("  FAIL plate title allows \(anatomy.titleMaxLines) lines, want \(HelmPlateCard.maximumTitleLines)")
+            ok = false
+        }
+
+        // The keyboard: Return opens (the card's press), ⌫ deletes and ⌘D
+        // duplicates while it has focus.
+        var aimOpened = 0, aimDeleted = 0, aimDuplicated = 0
+        let aimProbe = HelmPlateCard()
+        aimProbe.configure(.init(title: "Probe", subtitle: "sub", symbol: "doc.text", hue: .blue,
+                                 onOpen: { aimOpened += 1 }, onDelete: { aimDeleted += 1 },
+                                 actionReveal: .onAim, onDuplicate: { aimDuplicated += 1 }))
+        func key(_ chars: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags = []) -> NSEvent? {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                             context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                             isARepeat: false, keyCode: code)
+        }
+        if let ret = key("\r", 36) { aimProbe.debugCardHit.keyDown(with: ret) }
+        if let del = key("\u{7F}", 51) { aimProbe.debugCardHit.keyDown(with: del) }
+        if let dup = key("d", 2, .command) { aimProbe.debugCardHit.keyDown(with: dup) }
+        if aimOpened != 1 || aimDeleted != 1 || aimDuplicated != 1 {
+            print("  FAIL an on-aim plate's keys opened \(aimOpened), deleted \(aimDeleted), duplicated "
+                  + "\(aimDuplicated) times, want 1 each")
+            ok = false
+        }
+
+        // `.always`, the default, is the plate as it was: an Open button and a
+        // corner-pinned delete on the action row, at the fixed height.
+        let classic = HelmPlateCard()
+        classic.configure(.init(title: "Probe", subtitle: "sub", symbol: "doc.text", hue: .blue,
+                                onOpen: {}, onDelete: {}))
+        classic.frame = NSRect(x: 0, y: 0, width: 300, height: HelmPlateCard.height)
+        classic.layoutSubtreeIfNeeded()
+        let classicAnatomy = classic.anatomyForTests
+        if classicAnatomy.openButtonTitle != "Open" || !classicAnatomy.deleteVisible || classic.debugAim.alpha > 0 {
+            print("  FAIL a default plate lost its Open button or delete, or shows the on-aim pair")
+            ok = false
+        }
+        let trailingGap = classic.frame.width - classicAnatomy.deleteButtonFrame.maxX
+        if abs(trailingGap - HelmPlateCard.horizontalInset) > 1.5 {
+            print("  FAIL a default plate's delete glyph sits \(fmt(trailingGap))pt from the trailing edge, "
+                  + "want \(fmt(HelmPlateCard.horizontalInset))")
             ok = false
         }
 
@@ -425,7 +484,7 @@ enum DaylightDrillPageSlice5SelfTest {
             print("  FAIL a plate with no onDelete still shows a delete glyph")
             ok = false
         }
-        if ok { print("  OK - plates carry a ribbon, an Open button and a corner-pinned delete") }
+        if ok { print("  OK - runbook plates are the control, with duplicate and delete on aim; default plates keep Open") }
     }
 
     // MARK: 4. The plate's chrome per theme (no shadow leak)

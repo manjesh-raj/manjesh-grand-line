@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "1.2.2"
+    static let version = "1.3.0"
 
     struct Component {
         let name: String
@@ -173,7 +173,7 @@ enum HelmKit {
         // HelmPageSidebar.swift
         Component("HelmPageSidebar", "1.0.0", file: "HelmPageSidebar.swift"),
         // HelmPlateCard.swift
-        Component("HelmPlateCard", "1.0.0", file: "HelmPlateCard.swift"),
+        Component("HelmPlateCard", "1.1.0", file: "HelmPlateCard.swift"),
         // HelmRevealableSecretField.swift
         Component("HelmRevealableSecretField", "1.0.0", file: "HelmRevealableSecretField.swift"),
         // HelmScrollMemory.swift
@@ -250,7 +250,7 @@ enum HelmKit {
         SourceDigest(file: "HelmNestedScrollView.swift", stamp: "HelmNestedScrollView@1.0.0", sha256: "f7f7f1af0345d92201f8d86b3a02625e31e887258cb7ca078a2c978c8fbf2ede"),
         SourceDigest(file: "HelmOverflowHint.swift", stamp: "HelmOverflowHint@1.0.0", sha256: "5ad0c7b7fcd180a18f38e1f0de119b44a752bc3dd93990b7ce3b1d68759233f6"),
         SourceDigest(file: "HelmPageSidebar.swift", stamp: "HelmPageSidebar@1.0.0", sha256: "04672c8da6d392b2aef7a9b37d3de5a2623462befa58d0c0f6db9c2f9f684471"),
-        SourceDigest(file: "HelmPlateCard.swift", stamp: "HelmPlateCard@1.0.0", sha256: "77e307fead14f0fafc6c13611c4e17945a3d1a8ecbc82b8aabcb6ab6789db0d3"),
+        SourceDigest(file: "HelmPlateCard.swift", stamp: "HelmPlateCard@1.1.0", sha256: "fdc5b103fbfb33f8c5ec9421935f68337c41f4e8cb7955cac315a55a7916fbfb"),
         SourceDigest(file: "HelmRevealableSecretField.swift", stamp: "HelmRevealableSecretField@1.0.0", sha256: "0c7ef5b228b5bb38c51c646e74d1985cb220e26998251f86f7b1fe3845d65398"),
         SourceDigest(file: "HelmScrollMemory.swift", stamp: "HelmScrollMemory@1.0.0", sha256: "462b598c2a7fe6105bb84271f16a5829fd8ae1fd5c5f221b2a02801c066f18a2"),
         SourceDigest(file: "HelmSkeleton.swift", stamp: "HelmSkeletonList@1.0.0,HelmSkeletonRow@1.0.0", sha256: "5029ae0b4e7848a80497823bb348affbabd0f9883aabbf2ddcc6a1d556f61a48"),
