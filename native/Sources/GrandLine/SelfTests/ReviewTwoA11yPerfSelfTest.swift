@@ -274,6 +274,16 @@ enum ReviewTwoA11yPerfSelfTest {
             check(apart, "\(when): \(module.title)'s label and badge overlap or overflow a \(row.bounds.width)pt row", &ok)
             return whole && apart
         }
+        // Every row the sidebar can draw, including the door rows a profile
+        // hides (R5-UX-05's Notebook and Reading list), so each title is
+        // measured beside its badge.
+        let savedHidden = AppSettings.shared.hiddenModules
+        AppSettings.shared.hiddenModules = []
+        settle(shell)
+        defer {
+            AppSettings.shared.hiddenModules = savedHidden
+            settle(shell)
+        }
         var measured = 0
         var rowWidths: [NSScroller.Style: CGFloat] = [:]
         for (style, name) in [(NSScroller.Style.overlay, "overlay scrollers"), (.legacy, "always-visible scrollers")] {
