@@ -2,14 +2,14 @@
 //
 // The window's root content view controller.
 //
-// **The floating bar is the classic layout, frozen (R2-ARCH-01).** The
-// captain keeps both window layouts, and the sidebar is the default. This one
-// is kept working and kept protected - its regression checks stay - but it
-// receives no new features and no page redesigns: new chrome is built for the
-// sidebar layout only, and Settings says so where the layout is chosen
-// ("Floating bar (classic)", maintenance only). The freeze is recorded in
-// `docs/modular-shell/feature-inventory.md`. A fix to something this layout
-// already does still belongs here.
+// **The floating bar is the classic layout, and it stays (R5-UX-11).** The
+// captain keeps both window layouts permanently, and the sidebar is the
+// default. R2-ARCH-01 froze this one as maintenance only and review #5
+// recommended a sunset date; the captain declined both. Its regression checks
+// stay, a change to shared behaviour has to work here as well as in the
+// sidebar layout, and Settings says so where the layout is chosen
+// (`WorkspaceLayout.choiceNote`). The decision is recorded in
+// `docs/modular-shell/feature-inventory.md`.
 //
 // **Read the Daylight Phase 2 note below first** - it describes the shell as
 // it is now (a floating bar plus a body container). The paragraphs

@@ -2,8 +2,8 @@
 //
 // `VaultController`'s floating-bar presentation (R2-ARCH-04): the keyed secret and launcher rows inside the two cards the floating bar draws, where the sidebar layout draws two tables.
 //
-// The floating bar is the classic layout, frozen by R2-ARCH-01: it gets
-// fixes but no new features and no page redesigns. So the members only its
+// The floating bar is the classic layout, kept beside the sidebar by R5-UX-11:
+// both layouts stay, and each draws its own presentation. So the members only its
 // presentation uses live here, moved verbatim out of `VaultController.swift`, and
 // that file carries the presentation the sidebar layout draws. A member both
 // layouts use stays there. Swift's `private` is file-scoped, so the few

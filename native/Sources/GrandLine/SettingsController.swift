@@ -1453,7 +1453,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
-            description: WorkspaceLayout.maintenanceNote,
+            description: WorkspaceLayout.choiceNote,
             control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
 
         let familyAside = muted(NSTextField(labelWithString: "Each family has a light and a dark register"))

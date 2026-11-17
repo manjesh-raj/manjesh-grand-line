@@ -28,14 +28,13 @@ The sidebar is the default window layout now, for a fresh install and for anyone
 The floating bar stays selectable in the same setting, and a stored choice of it is kept.
 Where it already carries a piece of chrome, that row's Evidence names the sidebar shell's code as well as the floating bar's, so the feature stays checked in both layouts while both exist.
 
-**The floating bar is frozen (R2-ARCH-01 of the second full review).**
-The captain keeps both window layouts, and the sidebar is the default.
-The floating bar is the classic layout: it keeps working, but it is maintenance only.
-It receives no new features and no page redesigns, and Settings › Appearance › Window layout says so where the layout is chosen.
-New chrome and redesigned pages are built for the sidebar layout only, so a new row's New shell cell names the sidebar layout and nothing has to be added to the floating bar.
-What stops is the requirement that a new feature exist in both layouts.
-The checks that the floating bar is unchanged stay, and so does a fix to something it already does, because a frozen layout still has to work.
-No date has been set for retiring it; that is the captain's decision.
+**Both layouts stay (R5-UX-11 of review #5, the captain's decision).**
+The captain keeps both window layouts permanently, and the sidebar is the default.
+The floating bar stays a choice under Settings › Appearance › Window layout, and nothing about it is deleted or scheduled for retirement.
+R2-ARCH-01 of the second review had frozen it as maintenance only, and review #5 recommended a sunset date; the captain declined both.
+Settings › Appearance › Window layout says this where the layout is chosen.
+A change to behaviour both layouts share has to work in both, and the checks that the floating bar works stay.
+Chrome that only exists in the sidebar layout (the sidebar's rows, the window toolbar's tabs, the inspector) is still built there only, so a new row's New shell cell can name the sidebar layout alone.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.

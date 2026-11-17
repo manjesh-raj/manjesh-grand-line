@@ -20,7 +20,7 @@ enum ReviewTwoUXModelSelfTest {
         checkTheGoMenuIsTheSidebarsMap(&ok)
         checkTheGoMenuPerLayout(&ok)
         checkHomeDrawsNoSpaces(&ok)
-        checkTheFloatingBarIsFrozenAndHomeHasNoSpaces(&ok)
+        checkTheFloatingBarIsKeptAndHomeHasNoSpaces(&ok)
         checkTheProfiles(&ok)
         checkTheFirstLaunchProfile(&ok)
         checkTheHiddenModulesReachEveryReader(&ok)
@@ -129,20 +129,23 @@ enum ReviewTwoUXModelSelfTest {
               "the floating bar's Go menu lists the sidebar's modules", &ok)
     }
 
-    /// R2-ARCH-01, option (a): the floating bar is the classic layout,
-    /// frozen. Settings says so where the layout is chosen, and the sidebar
+    /// R2-ARCH-01, option (a): the floating bar is the classic layout, and
+    /// R5-UX-11 keeps it beside the sidebar for good. Settings says so where the layout is chosen, and the sidebar
     /// layout's Home no longer reads the floating bar's spaces - its
     /// Customize menu files each card under the sidebar group of the module
     /// it opens. The floating bar itself is not touched: its own Go menu and
     /// spaces are `checkTheGoMenuPerLayout`'s, and stay.
-    private static func checkTheFloatingBarIsFrozenAndHomeHasNoSpaces(_ ok: inout Bool) {
+    private static func checkTheFloatingBarIsKeptAndHomeHasNoSpaces(_ ok: inout Bool) {
         check(WorkspaceLayout.floatingBar.title.localizedCaseInsensitiveContains("classic"),
               "R2-ARCH-01: Settings does not label the floating bar as the classic layout (\(WorkspaceLayout.floatingBar.title))", &ok)
-        check(WorkspaceLayout.maintenanceNote.contains("maintenance only")
-                && WorkspaceLayout.maintenanceNote.contains("not new features"),
-              "R2-ARCH-01: the layout note no longer says the floating bar is maintenance only", &ok)
-        check(source("SettingsController.swift")?.contains("description: WorkspaceLayout.maintenanceNote") == true,
-              "R2-ARCH-01: Settings' Window layout row does not show the maintenance note", &ok)
+        // R5-UX-11: the captain keeps both layouts, so the note says that
+        // and no longer calls the floating bar maintenance only.
+        check(WorkspaceLayout.choiceNote.contains("keeps both layouts")
+                && WorkspaceLayout.choiceNote.contains("default")
+                && !WorkspaceLayout.choiceNote.contains("maintenance only"),
+              "R5-UX-11: the layout note no longer says both layouts are kept (\(WorkspaceLayout.choiceNote))", &ok)
+        check(source("SettingsController.swift")?.contains("description: WorkspaceLayout.choiceNote") == true,
+              "R5-UX-11: Settings' Window layout row does not show the layout note", &ok)
         check(WorkspaceLayout.allCases.contains(.floatingBar) && WorkspaceLayout.floatingBar.shellType == AppShellController.self,
               "R2-ARCH-01: the floating bar is no longer a layout the captain can choose", &ok)
 
