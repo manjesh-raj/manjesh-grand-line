@@ -315,15 +315,18 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         case peekRows([HelmModulePeekRow])
         /// A 66pt ring beside a short title and note. `spoken` is what
         /// VoiceOver reads for the ring. Without one it reads the title and
-        /// the count (R2-A11Y-04).
-        case ring(value: Int, total: Int, title: String, note: String, spoken: String? = nil)
+        /// the count (R2-A11Y-04). `tint` is the verdict's colour: the arc
+        /// and the title take it, so a ring can say "1 failing" in red
+        /// rather than in the card's own hue (S11). `nil` keeps the hue.
+        case ring(value: Int, total: Int, title: String, note: String, spoken: String? = nil,
+                  tint: HelmTint? = nil)
         /// `.ring`, then one quiet line per item under it - a dot in the
         /// item's state colour, its name, and its state word. The hub's
         /// Health card when its page column has room
         /// (`fm/grandline-home-fit-implement`). The lines are readouts, not
         /// links: the card itself opens the Health page.
         case ringWithLines(value: Int, total: Int, title: String, note: String, lines: [HelmModulePeekRow],
-                           spoken: String? = nil)
+                           spoken: String? = nil, tint: HelmTint? = nil)
         /// A big numeral over a capsule progress bar.
         case progress(value: Int, total: Int, note: String)
         /// One wrapping line of copy.
@@ -789,6 +792,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// the way every other body kind's views are re-tinted.
     private var skeletonList: HelmSkeletonList?
     private var metricLabels: [NSTextField] = []
+    /// A `.ring` body's title when it carries a verdict tint (S11).
+    private var ringTitle: (label: NSTextField, tint: HelmTint)?
     private var unitLabels: [NSTextField] = []
 
     #if FM_SELFTESTS
@@ -1318,6 +1323,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         peekChevrons.removeAll()
         noteLabels.removeAll()
         metricLabels.removeAll()
+        ringTitle = nil
         unitLabels.removeAll()
 
         let content: NSView
@@ -1326,10 +1332,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildMetric(value: value, unit: unit, note: note)
         case let .peekRows(rows):
             content = buildPeekRows(Array(rows.prefix(peekRowLimit ?? Self.maxPeekRows)))
-        case let .ring(value, total, title, note, spoken):
-            content = buildRing(value: value, total: total, title: title, note: note, spoken: spoken)
-        case let .ringWithLines(value, total, title, note, lines, spoken):
-            let ring = buildRing(value: value, total: total, title: title, note: note, spoken: spoken)
+        case let .ring(value, total, title, note, spoken, tint):
+            content = buildRing(value: value, total: total, title: title, note: note, spoken: spoken, tint: tint)
+        case let .ringWithLines(value, total, title, note, lines, spoken, tint):
+            let ring = buildRing(value: value, total: total, title: title, note: note, spoken: spoken, tint: tint)
             content = verticalStack([ring, buildStatusLines(lines)], spacing: HelmMetrics.s3)
         case let .progress(value, total, note):
             content = buildProgress(value: value, total: total, note: note)
@@ -2003,9 +2009,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return column
     }
 
-    private func buildRing(value: Int, total: Int, title: String, note: String, spoken: String?) -> NSView {
+    private func buildRing(value: Int, total: Int, title: String, note: String, spoken: String?,
+                           tint: HelmTint?) -> NSView {
         let ring = HelmRingGauge()
-        ring.configure(value: value, total: total)
+        ring.configure(value: value, total: total, tint: tint)
         ring.setSpokenLabel(spoken ?? (total > 0 ? "\(title), \(value) of \(total)" : title))
         ringGauge = ring
 
@@ -2014,7 +2021,13 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         titleField.lineBreakMode = .byTruncatingTail
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        metricLabels.append(titleField)
+        // S11: a verdict title is painted in its state's colour by
+        // `applyTheme`; a plain one stays with the other metric labels in ink.
+        if let tint {
+            ringTitle = (titleField, tint)
+        } else {
+            metricLabels.append(titleField)
+        }
 
         // B9 (`data/grand-line-e2e-audit/report.md`): three lines, not the
         // default two. A `.ring` body spends `HelmRingGauge.side` (66pt) of
@@ -2222,6 +2235,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     /// The `.ring` body's gauge, or nil for any other body.
     var debugRingGauge: HelmRingGauge? { ringGauge }
+    /// S11: the ring title's painted colour and text, `nil` when untinted.
+    var debugRingTitle: (text: String, color: NSColor?)? { ringTitle.map { ($0.label.stringValue, $0.label.textColor) } }
     #endif
 
     // MARK: Layout and theme
@@ -2342,6 +2357,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         }
 
         for label in metricLabels { label.textColor = ink }
+        if let ringTitle {
+            ringTitle.label.textColor = HelmContrast.legibleTintedText(tintHex: ringTitle.tint.hex(in: theme),
+                                                                       over: surface, theme: theme)
+        }
         for label in unitLabels { label.textColor = muted }
         for label in noteLabels { label.textColor = muted }
         skeletonList?.applyTheme(theme)
@@ -2770,7 +2789,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                 noteTexts: noteLabels.map(\.stringValue),
                 noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
                 noteEllipsizes: noteLabels.map { $0.cell?.truncatesLastVisibleLine == true },
-                metricTexts: metricLabels.map(\.stringValue),
+                metricTexts: metricLabels.map(\.stringValue) + [ringTitle?.label.stringValue].compactMap { $0 },
                 cardHeight: frame.height,
                 bodyAreaHeight: bodyContainer.frame.height,
                 bodyContentHeight: bodyViews.first?.fittingSize.height ?? 0,
@@ -2967,11 +2986,19 @@ final class HelmRingGauge: NSView {
         label.setAccessibilityElement(false)
     }
 
-    func configure(value current: Int, total: Int) {
+    /// A count ring. `tint` (S11, 1.1.0) lets the arc carry a verdict - the
+    /// worst state of what it counts - instead of the hue `applyTheme` is
+    /// handed. `nil` keeps every existing call site's colour.
+    func configure(value current: Int, total: Int, tint: HelmTint? = nil) {
         fraction = total > 0 ? min(1, max(0, Double(current) / Double(total))) : 0
         label.stringValue = total > 0 ? "\(current)/\(total)" : "\u{2014}"
+        verdictTint = tint
         needsLayout = true
     }
+
+    /// Set by `configure(value:total:tint:)`; resolved per theme in
+    /// `applyTheme`, below `valueColorOverride`.
+    private(set) var verdictTint: HelmTint?
 
     /// F7's variant: the caller already knows both the arc and the words.
     ///
@@ -3040,7 +3067,8 @@ final class HelmRingGauge: NSView {
             ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)
         track.strokeColor = trackColor.cgColor
-        value.strokeColor = (valueColorOverride ?? hue.baseColor(in: theme)).cgColor
+        let verdict = verdictTint.map { HelmTheme.nsColor($0.hex(in: theme)) }
+        value.strokeColor = (valueColorOverride ?? verdict ?? hue.baseColor(in: theme)).cgColor
         applyLabelFont()
         label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
     }
@@ -3049,6 +3077,10 @@ final class HelmRingGauge: NSView {
 
     var fractionForTests: Double { fraction }
     var centreLabelForTests: String { label.stringValue }
+    #if FM_SELFTESTS
+    /// S11: the arc's painted colour, after `applyTheme`.
+    var debugArcColor: CGColor? { value.strokeColor }
+    #endif
 }
 
 /// §6.8's capsule progress bar: an `inset` track with a hue-gradient fill.
