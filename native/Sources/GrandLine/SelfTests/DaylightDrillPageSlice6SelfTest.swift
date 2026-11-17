@@ -364,7 +364,10 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
-        var heights = Set<CGFloat>()
+        // S06 of the 2026-11-17 UI/UX proposals: one height per *row*, not
+        // across the grid, and every plate hugging its description rather
+        // than standing at the hub's 124pt floor.
+        var rowHeights: [ObjectIdentifier: Set<CGFloat>] = [:]
         for plate in plates {
             let anatomy = plate.anatomyForTests
             // UI-6/UI-58: a plate's identity is its tile, not a ribbon.
@@ -380,10 +383,20 @@ enum DaylightDrillPageSlice6SelfTest {
                 print("  FAIL a plate is not an activatable, labelled button")
                 ok = false
             }
-            heights.insert((anatomy.cardHeight * 10).rounded() / 10)
+            if let row = plate.superview {
+                rowHeights[ObjectIdentifier(row), default: []].insert((anatomy.cardHeight * 10).rounded() / 10)
+            }
+            if anatomy.cardHeight >= HelmModuleCard.minimumHeight - 0.5 {
+                print("  FAIL a plate is \(anatomy.cardHeight)pt, the hub's floor - it does not hug its description")
+                ok = false
+            }
         }
-        if heights.count != 1 {
-            print("  FAIL plates resolved to \(heights.count) different heights: \(heights.sorted())")
+        for heights in rowHeights.values where heights.count != 1 {
+            print("  FAIL a row's plates resolved to \(heights.count) different heights: \(heights.sorted())")
+            ok = false
+        }
+        if rowHeights.count < 2 {
+            print("  FAIL the grid laid out \(rowHeights.count) row(s) - the per-row check would be vacuous")
             ok = false
         }
 
@@ -415,7 +428,7 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
         }
         if ok {
-            print("  ok   \(plates.count) plates, one height (\(fmt(heights.first ?? 0))), \(hues.count) hues, 0 on \(otherTheme.id)")
+            print("  ok   \(plates.count) plates in \(rowHeights.count) even rows, \(hues.count) hues, 0 on \(otherTheme.id)")
         }
     }
 
@@ -448,6 +461,8 @@ enum DaylightDrillPageSlice6SelfTest {
                 title: longest.title, subtitle: longest.shortName, symbol: longest.symbol,
                 hue: HelmDomainHue(tint: longest.tint), chip: nil,
                 body: .note(longest.description, maxLines: maxLines)))
+            // S06: as `ToolsController.toolPlate` builds it.
+            plate.hugsContent = true
             plate.applyTheme(daylight)
             host.addSubview(plate)
             let widthConstraint = plate.widthAnchor.constraint(equalToConstant: narrowest)
@@ -470,12 +485,14 @@ enum DaylightDrillPageSlice6SelfTest {
 
             let anatomy = plate.anatomyForTests
             // PF2 replaced the fixed height with a floor plus per-row
-            // equalisation, so "every plate is exactly `standardHeight`" is
-            // deliberately no longer true. The floor is what is left of that
-            // contract.
-            if anatomy.cardHeight < HelmModuleCard.minimumHeight - 0.5 {
-                print("  FAIL \(step.title): plate resolved to \(fmt(anatomy.cardHeight)), below the floor "
-                    + "minimumHeight (\(fmt(HelmModuleCard.minimumHeight)))")
+            // equalisation; S06 of the 2026-11-17 UI/UX proposals took the
+            // floor off Tools' plates, which left the bottom 40% of each one
+            // empty. At the default text size the longest description's plate
+            // is now under the hub's floor - the proof the floor is gone - and
+            // the clip check below is what keeps it from being too short.
+            if step.scale == 1, anatomy.cardHeight >= HelmModuleCard.minimumHeight - 0.5 {
+                print("  FAIL \(step.title): a Tools plate resolved to \(fmt(anatomy.cardHeight)), still the hub's "
+                    + "floor (\(fmt(HelmModuleCard.minimumHeight))) - it does not hug its description")
                 ok = false
             }
             // **What replaced the worst-case check, and why it is stronger.**

@@ -3431,13 +3431,22 @@ final class HomeCanvasController: NSViewController {
         content.chip = overdue.isEmpty
             ? .mute("\(due.count) due")
             : .bad("\(overdue.count) overdue")
-        let note: String
-        if let urgent = (overdue.first ?? due.first) {
-            note = overdue.isEmpty ? "Next up: \(urgent.title)" : "Overdue: \(urgent.title)"
-        } else {
-            note = tasks.isEmpty ? "No active tasks." : "\(tasks.count) active, none due today."
+        // S06 of the 2026-11-17 UI/UX proposals: the urgent tasks as rows -
+        // overdue first, then due today - the shape the Calendar and Notebook
+        // cards beside it already use, where a lone "1 task" numeral left
+        // most of a row-height card empty. The chip keeps the count.
+        let urgent = overdue + due
+        guard !urgent.isEmpty else {
+            content.body = .note(tasks.isEmpty ? "No active tasks." : "\(tasks.count) active, none due today.",
+                                 maxLines: 2)
+            return
         }
-        content.body = .metric(value: "\(due.count)", unit: due.count == 1 ? "task" : "tasks", note: note)
+        let rows = urgent.prefix(HelmModuleCard.maxPeekRows).map { task in
+            let late = overdue.contains { $0.id == task.id }
+            return HelmModulePeekRow(state: late ? .bad : .warn, text: task.title,
+                                     value: late ? StateWord.overdue.label : StateWord.dueToday.label)
+        }
+        content.setBoundedPeekRows(Array(rows), total: urgent.count)
     }
 
     private func fillMergeQueue(_ content: inout HelmModuleCard.Content) {

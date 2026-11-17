@@ -51,7 +51,11 @@ enum DocsGridSupport {
         let rows = HelmResponsiveGrid.rows(items,
                                            containerWidth: containerWidth,
                                            minItemWidth: minCardWidth,
-                                           spacing: cardSpacing) { item, _ in
+                                           spacing: cardSpacing,
+                                           // S06: each row as tall as its tallest
+                                           // plate - a two-line title beside a
+                                           // one-line one - and no taller.
+                                           equalHeights: true) { item, _ in
             // The width the grid computed is unused: a plate takes its width
             // from the row's `.fillEqually` distribution and its height from
             // its own constant, and it reads the real text-column width back

@@ -509,6 +509,10 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
     /// differentiated as the nine icon tiles they replace - the colour is not
     /// re-invented here, only re-expressed as a gradient.
     ///
+    /// S06 of the 2026-11-17 UI/UX proposals: the plates no longer share one
+    /// height across the grid. Each hugs its description (`hugsContent`), and
+    /// a row matches its tallest member.
+    ///
     /// No `width` parameter, unlike `toolCard`: `HelmModuleCard`'s note label
     /// wraps against whatever width the row's `.fillEqually` distribution
     /// gives it rather than needing a `preferredMaxLayoutWidth` guessed up
@@ -536,6 +540,9 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
             chip: nil,
             body: .note(kind.description, maxLines: Self.plateNoteLines)))
         plate.onOpen = { [weak self] in self?.openNewTab(kind: kind) }
+        // S06: as tall as its two lines of description, not the hub's 124pt
+        // floor; the grid's per-row `equalHeights` keeps each row even.
+        plate.hugsContent = true
         return plate
     }
 

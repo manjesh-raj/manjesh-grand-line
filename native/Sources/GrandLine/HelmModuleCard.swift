@@ -682,6 +682,18 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// `minimumHeight` before the chrome text scale - see `baseStandardHeight`.
     static let baseMinimumHeight: CGFloat = 124
 
+    /// S06 of the 2026-11-17 UI/UX proposals (1.2.0): drop the
+    /// `minimumHeight` floor, so the card is exactly as tall as its content
+    /// and only `HelmResponsiveGrid`'s per-row `equalHeights` decides how a
+    /// row lines up. The floor is a hub rule - a one-line module on Home must
+    /// still read as a card - and a grid of same-kind plates (Tools) does not
+    /// need it: there it left the bottom 40% of every plate empty under two
+    /// lines of description. Off by default, so every Home card keeps it.
+    var hugsContent = false {
+        didSet { minimumHeightFloor?.isActive = !hugsContent }
+    }
+    private var minimumHeightFloor: NSLayoutConstraint?
+
     /// Fired on click (and on a VoiceOver/keyboard press, via
     /// `HoverHighlightView`'s own press replay).
     var onOpen: (() -> Void)?
@@ -1029,6 +1041,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         card.addSubview(bodyContainer)
         card.addSubview(footerContainer)
 
+        // PF2's floor (see `minimumHeight`), kept so `hugsContent` can drop it.
+        let floor = heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight)
+        floor.isActive = !hugsContent
+        minimumHeightFloor = floor
         NSLayoutConstraint.activate([
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1042,7 +1058,6 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             // than its neighbour. A required *height* is safe here where a
             // required width would not be (AGENTS.md gotcha (13)): this card
             // lives inside a scroll view whose document height is free.
-            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight),
 
             chipLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
             chipLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),

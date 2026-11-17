@@ -281,7 +281,15 @@ final class HelmPlateCard: NSView {
             aimActions.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -HelmMetrics.s2),
             aimActions.topAnchor.constraint(equalTo: card.topAnchor, constant: HelmMetrics.s2),
             headerRow.trailingAnchor.constraint(equalTo: aimActions.leadingAnchor, constant: -HelmMetrics.s1),
-            card.bottomAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: Self.verticalInset),
+            // S06 (1.1.1): at least the header's height, and exactly that
+            // unless a row asks for more - `HelmResponsiveGrid`'s per-row
+            // `equalHeights` ties at 499, above this preference.
+            card.bottomAnchor.constraint(greaterThanOrEqualTo: headerRow.bottomAnchor, constant: Self.verticalInset),
+            {
+                let hug = card.bottomAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: Self.verticalInset)
+                hug.priority = .defaultLow
+                return hug
+            }(),
         ]
         alwaysConstraints = [
             heightAnchor.constraint(equalToConstant: Self.height),
