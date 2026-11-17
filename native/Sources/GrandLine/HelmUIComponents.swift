@@ -392,6 +392,54 @@ enum HelmContrast {
         legibleTintedText(tintHex: tintHex, overAnyOf: [surface], theme: theme)
     }
 
+    /// S10 of the 2026-11-17 UI/UX proposals (HelmContrast 1.1.0): the one
+    /// recipe for a link inside prose, where most of the paragraph is links.
+    ///
+    /// Tinting every clause in its target's hue made the Morning briefing a
+    /// brown paragraph on Daylight and an amber one on Dusk, so a card that
+    /// said twenty tasks finished today read as a warning. Text colour is for
+    /// state. So the clause is ink, a small dot in the target's hue says where
+    /// it goes (a hue is safe as a fill), and the pointer's clause takes an
+    /// underline in the faint register. A state word inside the clause that
+    /// is itself bad ("overdue") keeps `legibleTintedText`; that is the
+    /// caller's to decide, because only the caller knows the words.
+    struct QuietLink {
+        /// The clause's text colour.
+        let text: NSColor
+        /// The leading dot's fill.
+        let dot: NSColor
+        /// The hover underline's colour.
+        let hoverUnderline: NSColor
+    }
+
+    static func quietLink(tintHex: String, theme: HelmTheme) -> QuietLink {
+        QuietLink(text: HelmTheme.nsColor(theme.chromeInkHex),
+                  dot: HelmTheme.nsColor(tintHex),
+                  hoverUnderline: theme.isDaylight
+                      ? HelmTheme.nsColor(theme.daylightTokens.faint)
+                      : HelmTheme.mutedInk(theme))
+    }
+
+    /// The quiet link's dot, as one text attachment: a `quietLinkDotSize`
+    /// circle centred on the font's cap height, with `quietLinkDotGap` of
+    /// clear space after it so the clause needs no extra character.
+    static let quietLinkDotSize: CGFloat = 6
+    static let quietLinkDotGap: CGFloat = 5
+
+    static func quietLinkDot(_ color: NSColor, font: NSFont) -> NSAttributedString {
+        let size = quietLinkDotSize, gap = quietLinkDotGap
+        let image = NSImage(size: NSSize(width: size + gap, height: size), flipped: false) { _ in
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: size, height: size)).fill()
+            return true
+        }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = NSRect(x: 0, y: ((font.capHeight - size) / 2).rounded(),
+                                   width: size + gap, height: size)
+        return NSAttributedString(attachment: attachment)
+    }
+
     /// The same, for a component that does not know which of several fills its
     /// label will land on and has to clear the floor on all of them - the way
     /// `tintedSurface` already satisfies both `chromeBackgroundHex` and

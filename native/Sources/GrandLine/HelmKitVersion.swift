@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "1.1.0"
+    static let version = "1.2.0"
 
     struct Component {
         let name: String
@@ -196,7 +196,7 @@ enum HelmKit {
         Component("HelmTheme", "1.0.0", file: "HelmTheme.swift"),
         // HelmUIComponents.swift
         Component("HelmComposerCard", "1.0.0", file: "HelmUIComponents.swift"),
-        Component("HelmContrast", "1.0.0", file: "HelmUIComponents.swift"),
+        Component("HelmContrast", "1.1.0", file: "HelmUIComponents.swift"),
         Component("HelmGestureArbitration", "1.0.0", file: "HelmUIComponents.swift"),
         Component("HelmRefreshPill", "1.0.0", file: "HelmUIComponents.swift"),
         Component("HelmSignalDot", "1.0.0", file: "HelmUIComponents.swift"),
@@ -210,7 +210,7 @@ enum HelmKit {
     /// see the file header.
     static let surfaces: [Component] = [
         Component("Home Health card", "1.0.1", file: "HomeCanvasController.swift"),
-        Component("MorningBriefingCard", "1.0.0", file: "MorningBriefingCard.swift"),
+        Component("MorningBriefingCard", "1.0.1", file: "MorningBriefingCard.swift"),
         Component("StateVocabulary", "1.1.0", file: "StateVocabulary.swift"),
         Component("Tasks board (page)", "1.0.0", file: "ShiftBoardViews.swift"),
         Component("WorkspaceToolbar", "1.0.0", file: "WorkspaceToolbar.swift"),
@@ -259,7 +259,7 @@ enum HelmKit {
         SourceDigest(file: "HelmSymbol.swift", stamp: "HelmSymbol@1.0.0", sha256: "91d848c2e8fe1ad21104944c2e0714a3ebfb0880f5850324c4cc5d9c18cc3f54"),
         SourceDigest(file: "HelmTextScale.swift", stamp: "HelmTextScale@1.0.0", sha256: "beffe9873d7dd7464ddbfecf30779b3b3c5bd5055bc5becfa385d9a2ca44f4f4"),
         SourceDigest(file: "HelmTheme.swift", stamp: "HelmTerminalCard@1.0.0,HelmTheme@1.0.0", sha256: "aeb5c35527f4ef0d337751ac64656b6277d8dae167eea1b074d71caf0bc1158e"),
-        SourceDigest(file: "HelmUIComponents.swift", stamp: "HelmComposerCard@1.0.0,HelmContrast@1.0.0,HelmGestureArbitration@1.0.0,HelmRefreshPill@1.0.0,HelmSignalDot@1.0.0,HelmTableView@1.0.0,HelmTint@1.0.0", sha256: "c581500c1071e78f7151417e142386894daec4926a146c406fd7b6b2f565f1bf"),
+        SourceDigest(file: "HelmUIComponents.swift", stamp: "HelmComposerCard@1.0.0,HelmContrast@1.1.0,HelmGestureArbitration@1.0.0,HelmRefreshPill@1.0.0,HelmSignalDot@1.0.0,HelmTableView@1.0.0,HelmTint@1.0.0", sha256: "561d0b12cf27472f75561ac8a32be00ac179c77b9c65db0a755c902bf5f1d0f4"),
         SourceDigest(file: "HelmZoomStepper.swift", stamp: "HelmZoomStepper@1.0.0", sha256: "c5700730b36166ba03d1ebd484c91c7d87b8b141dfdc973f4244c4481cb8bd80"),
     ]
 }

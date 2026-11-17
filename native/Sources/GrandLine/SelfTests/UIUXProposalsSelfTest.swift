@@ -25,6 +25,7 @@ enum UIUXProposalsSelfTest {
         var allOK = true
         let cases: [(String, (inout Bool) -> Void)] = [
             ("S11 one verdict per card", checkTheHealthCardHasOneVerdict),
+            ("S10 the briefing reads as prose", checkTheBriefingIsInk),
         ]
         for (name, body) in cases {
             var ok = true
@@ -107,6 +108,43 @@ enum UIUXProposalsSelfTest {
             check(calm.debugRingGauge?.debugArcColor.flatMap { NSColor(cgColor: $0) }.map { same($0, green) } == true,
                   "S11 \(theme.id): a healthy card keeps the card's green arc", &ok)
             check(!same(green, critical), "S11 \(theme.id): the fixture's two colours really differ", &ok)
+        }
+    }
+
+    // MARK: - S10
+
+    /// The briefing's linked clauses are ink with a leading dot each; only a
+    /// bad state word ("overdue") keeps a colour. Before S10 every linked
+    /// clause was painted in its target's hue, which is what this fails on.
+    private static func checkTheBriefingIsInk(_ ok: inout Bool) {
+        let clauses = [
+            BriefingClause(text: "One fleet task needs a decision.", target: .fleet),
+            BriefingClause(text: "Two personal follow-ups are due or overdue.", target: .tasks),
+            BriefingClause(text: "3 PRs ready to merge.", target: .review),
+            BriefingClause(text: "Plain words.", target: .none),
+        ]
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            let paragraph = BriefingParagraphView()
+            paragraph.render(clauses, separator: " ", theme: theme)
+            let ink = HelmTheme.nsColor(theme.chromeInkHex)
+            let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
+            let overdue = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme),
+                                                         over: surface, theme: theme)
+            let warn = HelmContrast.legibleTintedText(tintHex: HelmTint.warn.hex(in: theme), over: surface, theme: theme)
+            check(!same(ink, warn) && !same(ink, overdue), "S10 \(theme.id): the fixture's colours really differ", &ok)
+            let runs = paragraph.debugRuns
+            check(runs.filter(\.isDot).count == 3, "S10 \(theme.id): one dot per linked clause, got \(runs.filter(\.isDot).count)", &ok)
+            for run in runs where !run.isDot && !run.text.trimmingCharacters(in: .whitespaces).isEmpty {
+                if run.text.lowercased() == "overdue" {
+                    check(run.color.map { same($0, overdue) } == true,
+                          "S10 \(theme.id): \"overdue\" keeps its state colour", &ok)
+                } else if clauses.contains(where: { $0.text.contains(run.text) }) {
+                    check(run.color.map { same($0, ink) } == true,
+                          "S10 \(theme.id): \"\(run.text)\" is ink, not its target's hue", &ok)
+                }
+            }
+            check(paragraph.debugPlainText == clauses.map(\.text).joined(separator: " "),
+                  "S10 \(theme.id): the paragraph still reads as its clauses: \(paragraph.debugPlainText)", &ok)
         }
     }
 
