@@ -29,6 +29,7 @@ enum StartupSnippetGateSelfTest {
         checkAnOrdinaryPromptStages(check)
         checkASecretPromptIsRefused(check)
         checkTheSendSiteAppendsNoNewline(check)
+        checkAMultiLineSnippetIsNeverTyped(check)
 
         if failures.isEmpty {
             print("[StartupSnippetGateSelfTest] PASS")
@@ -49,7 +50,7 @@ enum StartupSnippetGateSelfTest {
             [],
         ]
         for lines in ordinary {
-            check(StartupSnippetGate.decide(command: "tmux attach -t work", viewportLines: lines) == .stage,
+            check(StartupSnippetGate.decide(command: "tmux attach -t work", viewportLines: lines) == .stage(text: "tmux attach -t work"),
                   "S11: an ordinary prompt should stage the snippet, got a refusal for \(lines.last ?? "<empty>")")
         }
     }
@@ -69,17 +70,50 @@ enum StartupSnippetGateSelfTest {
         for prompt in secretPrompts {
             let decision = StartupSnippetGate.decide(command: "tmux attach -t work",
                                                      viewportLines: ["some output", prompt])
-            check(decision != .stage,
+            check(isRefused(decision),
                   "S11: '\(prompt)' must not have a startup command typed into it")
         }
         // A trailing blank line is what a terminal usually has after a prompt
         // row, so the scan has to look past it or every real prompt reads as
         // ordinary - which is how this check would pass vacuously.
         let padded = ["output", "[sudo] password for ops:", "", "   "]
-        check(StartupSnippetGate.decide(command: "x", viewportLines: padded) != .stage,
+        check(isRefused(StartupSnippetGate.decide(command: "x", viewportLines: padded)),
               "S11: blank rows after the prompt must not hide it")
         check(StartupSnippetGate.lastNonEmptyLine(padded) == "[sudo] password for ops:",
               "S11: lastNonEmptyLine skips blank and whitespace-only rows")
+    }
+
+    /// R5-SEC-02: staging only withholds the *last* newline. Every newline
+    /// inside the text is still a Return to the remote shell, so a snippet
+    /// `cd /srv⏎rm -rf cache⏎echo done` ran its first two lines on connect.
+    private static func checkAMultiLineSnippetIsNeverTyped(_ check: (Bool, String) -> Void) {
+        let prompt = ["ops@bastion:~$ "]
+        for command in ["cd /srv\nrm -rf cache\necho done", "cd /srv\rrm -rf cache", "uptime\r\nuptime",
+                        "uptime\u{2028}reboot"] {
+            check(isRefused(StartupSnippetGate.decide(command: command, viewportLines: prompt)),
+                  "R5-SEC-02: a multi-line startup snippet must not be typed, got stage for \(command.debugDescription)")
+        }
+        // A control character is a keystroke to the remote shell, not text.
+        for command in ["tmux attach\u{3}", "uptime\u{4}", "vi\u{1B}:q!", "ls\tla"] {
+            check(isRefused(StartupSnippetGate.decide(command: command, viewportLines: prompt)),
+                  "R5-SEC-02: a control character must refuse the snippet, got stage for \(command.debugDescription)")
+        }
+        // The discriminating half: a snippet saved with a trailing (or
+        // leading) Return is one line, and stages with the newline trimmed
+        // rather than being refused or, worse, typed with it.
+        for command in ["tmux attach -t work\n", "tmux attach -t work\r\n", "\ntmux attach -t work\n\n"] {
+            check(StartupSnippetGate.decide(command: command, viewportLines: prompt) == .stage(text: "tmux attach -t work"),
+                  "R5-SEC-02: a one-line snippet with an outer newline must stage trimmed, got \(StartupSnippetGate.decide(command: command, viewportLines: prompt))")
+        }
+        // Leading spaces are meaningful (`HISTCONTROL=ignorespace`), so only
+        // newlines are trimmed.
+        check(StartupSnippetGate.decide(command: " export TOKEN_FILE=~/.t", viewportLines: prompt) == .stage(text: " export TOKEN_FILE=~/.t"),
+              "R5-SEC-02: a leading space must survive staging")
+    }
+
+    private static func isRefused(_ decision: StartupSnippetGate.Decision) -> Bool {
+        if case .refuse = decision { return true }
+        return false
     }
 
     /// The other half of S11, and the one the gate cannot see: the newline.
@@ -105,8 +139,12 @@ enum StartupSnippetGateSelfTest {
               "S11: runStartupSnippet must ask StartupSnippetGate before typing anything")
         check(!body.contains("snippet.command + \"\\n\""),
               "S11: runStartupSnippet is executing the snippet again - the trailing newline is back")
-        check(body.contains("send(txt: snippet.command)"),
-              "S11: runStartupSnippet should stage the command with no terminator")
+        check(body.contains("case .stage(let text):") && body.contains("send(txt: text)"),
+              "S11: runStartupSnippet should stage the gate's text with no terminator")
+        // R5-SEC-02: the gate's trimmed, single-line text is what gets typed,
+        // never the raw snippet, or the multi-line refusal means nothing.
+        check(!body.contains("send(txt: snippet.command"),
+              "R5-SEC-02: runStartupSnippet must type the gate's text, not snippet.command")
     }
 }
 

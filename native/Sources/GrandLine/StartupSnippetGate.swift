@@ -25,15 +25,28 @@
 // feature whose whole point is convenience, and it makes the timing guess
 // harmless rather than load-bearing. And where the visible prompt is
 // recognisably asking for a secret, nothing is typed at all.
+//
+// R5-SEC-02 (full review #5): staging withholds only the *last* newline.
+// Snippets are multi-line by design (the editor is a text view and the
+// Snippets list renders an embedded newline as `⏎`), and every newline inside
+// the text is still a Return to the remote shell. So `cd /srv⏎rm -rf
+// cache⏎echo done` ran its first two lines on connect, with the same git-synced
+// delivery vector S11 was about. A startup command with a line break (or any
+// other control character) inside it is now refused outright. Staging only
+// the first line was the other option, and it was rejected: it types
+// something the captain did not write as a unit, and the toast could not say
+// what was dropped without repeating the whole snippet.
 
 import Foundation
 
 enum StartupSnippetGate {
 
     enum Decision: Equatable {
-        /// Type `command` with no trailing newline and tell the captain it is
-        /// waiting on Return.
-        case stage
+        /// Type `text` with no trailing newline and tell the captain it is
+        /// waiting on Return. `text` is the snippet with any newlines at its
+        /// two ends trimmed, so a snippet saved with a trailing Return still
+        /// stages rather than running or being refused.
+        case stage(text: String)
         /// Type nothing. The screen is asking for a secret.
         case refuse(reason: String)
     }
@@ -44,7 +57,17 @@ enum StartupSnippetGate {
         if let prompt = lastNonEmptyLine(viewportLines), looksLikeASecretPrompt(prompt) {
             return .refuse(reason: "the terminal is asking for a password or passphrase")
         }
-        return .stage
+        let text = command.trimmingCharacters(in: .newlines)
+        if text.unicodeScalars.contains(where: { CharacterSet.newlines.contains($0) }) {
+            return .refuse(reason: "it has more than one line, and every line but the last would run on connect")
+        }
+        // The same rule `SRELeadBridgeCommandPolicy.validate` applies: a
+        // control character is a keystroke to the remote shell (Ctrl-C,
+        // Ctrl-D, Escape), not text.
+        if text.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) {
+            return .refuse(reason: "it contains a control character")
+        }
+        return .stage(text: text)
     }
 
     /// The last line with anything on it, which is where a prompt sits.

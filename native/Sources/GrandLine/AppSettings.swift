@@ -434,21 +434,27 @@ final class AppSettings {
     /// commits and pushes changes under the dotfiles repo's `home/` tree by
     /// itself - see `DotfilesAutoSync.swift`.
     ///
-    /// **On by default**, unlike the three opt-ins above, and the reason is
-    /// that the alternative default is the bug. `home.nix` symlinks those
-    /// files live into the home directory, so editing a herdr theme edits a
-    /// tracked file in place; leaving this off by default means the captain
-    /// keeps discovering uncommitted dotfiles by hand, which is exactly what
-    /// this feature exists to stop. It also cannot surprise anyone with a
-    /// permission prompt or a keyboard monitor: it touches one repository the
-    /// captain already owns, it is scoped to `home/` alone, and it refuses
-    /// rather than forces whenever the remote has genuinely diverged.
+    /// **Off by default**, like the three opt-ins above. It used to be on by
+    /// default, on the argument that leaving it off means uncommitted dotfiles
+    /// pile up by hand. Full review #5's R5-SEC-03 (the second half of S15)
+    /// reversed that: on a new or restored machine it pushed everything under
+    /// `home/` to GitHub seconds after it appeared, with only the
+    /// `DotfilesSecretScan` pattern match between a dropped credential and the
+    /// remote. Pushing to a remote is a decision the captain makes once, on
+    /// purpose. The Setup page's Dotfiles step says it is off and carries the
+    /// switch (`BootstrapController.autoSyncBannerText`), and so does the
+    /// Automation page.
+    ///
+    /// A machine that already had it on by default has no stored value, so it
+    /// reads as off after this change and the Setup banner says so. That is
+    /// deliberate: a migration that wrote `true` for every existing install
+    /// would keep the old default exactly where it was measured to matter.
     ///
     /// Turning it off tears the file-system watcher and the periodic pass
     /// down rather than leaving them installed and ignored
     /// (`DotfilesAutoSync.settingChanged()`).
     var dotfilesAutoCommitEnabled: Bool {
-        get { defaults.object(forKey: Keys.dotfilesAutoCommitEnabled) == nil ? true : defaults.bool(forKey: Keys.dotfilesAutoCommitEnabled) }
+        get { defaults.bool(forKey: Keys.dotfilesAutoCommitEnabled) }
         set { defaults.set(newValue, forKey: Keys.dotfilesAutoCommitEnabled) }
     }
 

@@ -124,6 +124,15 @@ enum DotfilesDriftRowSelfTest {
 
     private static func checkTheActionMatchesTheCause(_ ok: inout Bool) {
         print("\n-- the row's action is the page's own action for the cause --")
+        // The remedy reads the live switch as well as the status, and the
+        // switch is off by default since R5-SEC-03. Every status below except
+        // `.off` is one only a running sync reports, so the switch is on here
+        // on purpose rather than inherited from whatever the default is.
+        // `AppSettings.shared` is this process's own suite domain (AGENTS.md's
+        // hermeticity note), and it is put back regardless.
+        let wasEnabled = AppSettings.shared.dotfilesAutoCommitEnabled
+        AppSettings.shared.dotfilesAutoCommitEnabled = true
+        defer { AppSettings.shared.dotfilesAutoCommitEnabled = wasEnabled }
         typealias Case = (name: String, repoPath: String?, state: DotfilesRepoState?,
                           autoSync: DotfilesAutoSync.Status, title: String, action: String)
         let cases: [Case] = [
