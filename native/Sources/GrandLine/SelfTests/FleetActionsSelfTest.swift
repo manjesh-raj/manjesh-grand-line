@@ -59,6 +59,7 @@ enum FleetActionsSelfTest {
         checkRealSubprocessRoundTrip(&ok)
         checkLockGate(&ok)
         checkFmSendCalledFromExactlyOnePlace(&ok)
+        checkTheLogLineCarriesNoScriptOutput(&ok)
         print(ok ? "FleetActionsSelfTest: all checks passed" : "FleetActionsSelfTest: FAILED")
         return ok
     }
@@ -350,6 +351,39 @@ enum FleetActionsSelfTest {
     /// (the general "message first mate" channel) that used to sit right
     /// next to this invariant without itself calling `fm-send.sh` - this
     /// guard is what remains, standing on its own.
+    /// R5-SEC-04: `.sentUnconfirmed` carries the whole stdout and stderr of
+    /// `fm-send.sh`, which `Subprocess` had just redacted from its own log
+    /// (R2-SEC-10). `reply` used to log `String(describing: outcome)` at
+    /// `.public`, which put it straight back. Two halves: the case name has
+    /// no payload in it, and the log line uses the name rather than the value.
+    private static func checkTheLogLineCarriesNoScriptOutput(_ ok: inout Bool) {
+        let payload = "typed into ops-pane: the captain reply text"
+        let cases: [(FleetReplyOutcome, String)] = [
+            (.confirmed, "confirmed"),
+            (.sentUnconfirmed(payload), "sentUnconfirmed"),
+            (.failed(payload), "failed"),
+        ]
+        for (outcome, name) in cases {
+            check(outcome.logName == name, "logName of \(name) is \"\(outcome.logName)\"", &ok)
+            check(!outcome.logName.contains("captain"), "logName of \(name) carries no payload", &ok)
+        }
+        // Discriminating power: the value's own description does carry it,
+        // which is exactly why it must not be what is logged.
+        check(String(describing: FleetReplyOutcome.sentUnconfirmed(payload)).contains(payload),
+              "fixture: the outcome's description really does carry the script output", &ok)
+
+        guard let sources = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: sources.appendingPathComponent("FleetActions.swift"), encoding: .utf8),
+              let start = text.range(of: "static func reply(taskID: String, text: String)") else {
+            fail("could not read FleetActions.reply - this guard would be vacuous", &ok)
+            return
+        }
+        let body = String(text[start.lowerBound...].prefix(2000))
+        check(body.contains("outcome.logName"), "reply logs the outcome's case name", &ok)
+        check(!body.contains("String(describing: outcome)"),
+              "reply must not log the outcome's value, which carries fm-send's output", &ok)
+    }
+
     private static func checkFmSendCalledFromExactlyOnePlace(_ ok: inout Bool) {
         guard let files = SelfTestSources.appSourceFiles() else {
             fail("could not enumerate the app's sources", &ok)

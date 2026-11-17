@@ -28,12 +28,16 @@
 //   5. Source guards: no `URLSession.shared` or `URLSession(` in production
 //      outside `NetworkGate.swift`, every out-of-process load asks the gate,
 //      and the release path of `NetworkGate` has no branch at all.
+//   6. R5-SEC-05: the captain's GitHub token stays on GitHub. Which URLs may
+//      carry it, and, against a real loopback server, that Foundation drops
+//      `Authorization` when it follows a redirect (the reason there is no
+//      redirect guard of this app's own - see `GitHubTokenScope.swift`).
 //
 // Run with:
 //   swift build && FM_RUN_NETWORK_GATE_TESTS=1 .build/debug/GrandLine; echo $?
 //
-// Pure logic: URL loading against an in-process protocol, a local git repo,
-// and source text. No window.
+// Pure logic: URL loading against an in-process protocol, a loopback socket,
+// a local git repo, and source text. No window.
 //
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file in this directory carries it.
@@ -61,6 +65,7 @@ enum NetworkGateSelfTest {
         checkWhatIsAndIsNotRefused(&ok)
         checkFleetsBitbucketFetchStopsAtTheGate(home: home, &ok)
         checkSources(&ok)
+        checkTheGitHubTokenStaysOnGitHub(&ok)
         print(ok ? "NetworkGateSelfTest: all checks passed" : "NetworkGateSelfTest: FAILED")
         return ok
     }
@@ -215,6 +220,82 @@ enum NetworkGateSelfTest {
         return kept
     }
 
+    // MARK: 6. R5-SEC-05 - the GitHub token stays on GitHub
+
+    private static func checkTheGitHubTokenStaysOnGitHub(_ ok: inout Bool) {
+        print("\n-- R5-SEC-05: the GitHub token goes only to GitHub, and Foundation drops it on a redirect --")
+        let allowed = [
+            "https://api.github.com/repos/o/r/contents/",
+            "https://raw.githubusercontent.com/o/r/main/index.html",
+            "https://API.GitHub.com:443/repos/o/r",
+        ]
+        let refused = [
+            "http://api.github.com/repos/o/r",                  // not https
+            "https://attacker.example/index.html",               // another host
+            "https://api.github.com.attacker.example/x",         // a suffix trick
+            "https://raw.githubusercontent.com:8443/o/r/x",      // another port
+            "https://user@api.github.com/repos/o/r",             // userinfo
+            "https://objects.githubusercontent.com/x",           // GitHub, but not one of the two
+        ]
+        for string in allowed {
+            check(GitHubTokenScope.mayCarryToken(URL(string: string)), "may carry the token: \(string)", &ok)
+        }
+        for string in refused {
+            check(!GitHubTokenScope.mayCarryToken(URL(string: string)), "must not carry the token: \(string)", &ok)
+        }
+
+        // The wiring, which the cases above cannot see: `applyAuth` must ask
+        // the scope before it attaches anything.
+        if let sources = ProductionSources.load(), let docs = sources.file("DocsData.swift"),
+           let start = docs.codeLines.firstIndex(where: { $0.contains("static func applyAuth(to request:") }) {
+            let body = docs.codeLines[start...].prefix(8).joined(separator: "\n")
+            check(body.contains("GitHubTokenScope.mayCarryToken(request.url)"),
+                  "R5-SEC-05: DocsSyncSource.applyAuth asks GitHubTokenScope before attaching the token", &ok)
+        } else {
+            fail("could not find DocsSyncSource.applyAuth - the wiring guard would be vacuous", &ok)
+        }
+
+        // The redirect half, against a real HTTP exchange on loopback. The
+        // first hop is to 127.0.0.1, and the redirect goes to the same host
+        // or to `localhost`, a different one (the shape of a redirect off
+        // GitHub). The server records the `Authorization` header each hop
+        // arrived with.
+        guard let server = LoopbackRedirectServer() else {
+            fail("could not start the loopback server - the redirect half would be vacuous", &ok)
+            return
+        }
+        defer { server.stop() }
+        let token = "fm-selftest-not-a-real-token"
+        func landedHeader(redirectHost: String) -> String?? {
+            server.reset(redirectHost: redirectHost)
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/start")!)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            let done = DispatchSemaphore(value: 0)
+            let handler: (Data?, URLResponse?, Error?) -> Void = { _, _, _ in done.signal() }
+            let task = NetworkGate.shared.dataTask(with: request, completionHandler: handler)
+            task.resume()
+            guard done.wait(timeout: .now() + 15) == .success else { task.cancel(); return nil }
+            return server.landedAuthorization
+        }
+
+        for host in ["127.0.0.1", "localhost"] {
+            let landed = landedHeader(redirectHost: host)
+            // Discriminating power: the first hop really carried the header,
+            // and the redirect was really followed. Without both, "no header
+            // on the second hop" would be true of a request that never left.
+            check(server.startAuthorization == "Bearer \(token)",
+                  "fixture: the first hop to 127.0.0.1 carried the token (redirect to \(host))", &ok)
+            guard let landed else {
+                fail("fixture: the request never reached the redirect target on \(host)", &ok)
+                continue
+            }
+            check(landed == nil,
+                  "R5-SEC-05: Foundation must drop Authorization on a redirect to \(host) "
+                  + "(got \(landed ?? "nil")) - if this fails, the token needs a redirect guard of its own", &ok)
+        }
+    }
+
     // MARK: Helpers
 
     /// The request's error, or `nil` if it did not fail.
@@ -235,6 +316,95 @@ enum NetworkGateSelfTest {
         return failure
     }
 
+}
+
+/// A one-thread HTTP/1.1 server on an ephemeral loopback port. `/start`
+/// answers 302 to `http://<redirectHost>:<port>/landed`, and `/landed` answers
+/// 200. It records the `Authorization` header each path arrived with.
+private final class LoopbackRedirectServer {
+    let port: UInt16
+    private let fd: Int32
+    private let lock = NSLock()
+    private var _start: String?
+    private var _landed: String??
+    private var running = true
+
+    var startAuthorization: String? { lock.lock(); defer { lock.unlock() }; return _start }
+    /// `nil` until `/landed` was hit; then the header, or `.some(nil)` for none.
+    var landedAuthorization: String?? { lock.lock(); defer { lock.unlock() }; return _landed }
+
+    init?() {
+        let socketFD = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketFD >= 0 else { return nil }
+        var yes: Int32 = 1
+        setsockopt(socketFD, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        address.sin_port = 0
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(socketFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(socketFD, 8) == 0 else { close(socketFD); return nil }
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(socketFD, $0, &length) }
+        }
+        fd = socketFD
+        port = UInt16(bigEndian: address.sin_port)
+        let thread = Thread { [weak self] in self?.serve() }
+        thread.start()
+    }
+
+    private var redirectHost = "localhost"
+
+    func reset(redirectHost: String) {
+        lock.lock(); _start = nil; _landed = nil; self.redirectHost = redirectHost; lock.unlock()
+    }
+
+    func stop() {
+        lock.lock(); running = false; lock.unlock()
+        shutdown(fd, SHUT_RDWR)
+        close(fd)
+    }
+
+    private func serve() {
+        while true {
+            let client = accept(fd, nil, nil)
+            guard client >= 0 else { return }
+            lock.lock(); let live = running; lock.unlock()
+            guard live else { close(client); return }
+            handle(client)
+            close(client)
+        }
+    }
+
+    private func handle(_ client: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        var text = ""
+        while !text.contains("\r\n\r\n") {
+            let count = read(client, &buffer, buffer.count)
+            guard count > 0 else { break }
+            text += String(decoding: buffer[0..<count], as: UTF8.self)
+        }
+        let lines = text.components(separatedBy: "\r\n")
+        let path = lines.first?.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+        let authorization = lines.first { $0.lowercased().hasPrefix("authorization:") }
+            .map { String($0.dropFirst("authorization:".count)).trimmingCharacters(in: .whitespaces) }
+        let response: String
+        lock.lock()
+        if path == "/start" {
+            _start = authorization
+            response = "HTTP/1.1 302 Found\r\nLocation: http://\(redirectHost):\(port)/landed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        } else {
+            _landed = .some(authorization)
+            response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+        }
+        lock.unlock()
+        _ = response.withCString { write(client, $0, strlen($0)) }
+    }
 }
 
 #endif

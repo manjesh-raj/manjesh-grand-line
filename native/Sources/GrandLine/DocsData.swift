@@ -209,7 +209,11 @@ enum DocsSyncSource {
         return result.stdout
     }
 
+    /// The token goes only where `GitHubTokenScope` says it may (R5-SEC-05):
+    /// `download_url` is a value from an API response, not a literal this
+    /// file wrote. Asked first, so a refused URL never runs `gh auth token`.
     private static func applyAuth(to request: inout URLRequest) {
+        guard GitHubTokenScope.mayCarryToken(request.url) else { return }
         if let token = ghAuthToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }

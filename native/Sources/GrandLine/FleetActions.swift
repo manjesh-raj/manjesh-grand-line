@@ -182,6 +182,18 @@ enum FleetReplyOutcome: Equatable {
     /// may be assumed delivered.
     case failed(String)
 
+    /// The case name and nothing else, for `AppLog`. `.sentUnconfirmed`
+    /// carries `fm-send.sh`'s whole stdout and stderr, which can include the
+    /// reply text and the crewmate's pane, so the value itself is never
+    /// logged (R5-SEC-04).
+    var logName: String {
+        switch self {
+        case .confirmed: return "confirmed"
+        case .sentUnconfirmed: return "sentUnconfirmed"
+        case .failed: return "failed"
+        }
+    }
+
     /// What the captain is told. Distinct per case on purpose - the acceptance
     /// bar for this feature is that a send is never reported as a blanket
     /// "sent!" regardless of what `fm-send` actually said.
@@ -321,7 +333,10 @@ enum FleetActions {
             label: "fm-send"
         )
         let outcome = outcome(for: result)
-        AppLog.subprocess.info("fm-send \(taskID, privacy: .public): \(String(describing: outcome), privacy: .public)")
+        // The case name only. `Subprocess` has already logged this run with
+        // its output redacted (R2-SEC-10), and the outcome's payload is that
+        // same output (R5-SEC-04).
+        AppLog.subprocess.info("fm-send \(taskID, privacy: .public): \(outcome.logName, privacy: .public)")
         return outcome
     }
 }
