@@ -137,15 +137,17 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// Nineteen sidebar items: Home on its own, then seven Work, four Observe,
-    /// five Workbench and two Machine - the prototype's Version 2 sidebar plus
-    /// the Calendar row the captain's later mockup puts after Tasks, typed
-    /// out so a change to the plan is a deliberate edit here too.
+    /// Twenty-two sidebar items: Home on its own, then nine Work, five
+    /// Observe, five Workbench and two Machine - the prototype's Version 2
+    /// sidebar, the Calendar row the captain's later mockup puts after Tasks,
+    /// and R5-UX-05's split of Knowledge (the Notebook and Reading list door
+    /// rows, and Runbooks in Observe). Typed out so a change to the plan is a
+    /// deliberate edit here too. A profile lists a subset of them.
     private static func checkWorkspaceShape(_ ok: inout Bool) {
         let expected: [WorkspaceGroup?: [WorkspaceModule]] = [
             nil: [.home],
-            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .secrets],
-            .observe: [.kubernetes, .logs, .health, .schedules],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets],
+            .observe: [.kubernetes, .logs, .runbooks, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
         ]
@@ -153,15 +155,15 @@ enum ModuleTableSelfTest {
             let actual = WorkspaceModule.allCases.filter { $0.group == group }
             check(actual == modules, "group \(group?.title ?? "none") holds \(actual) but the plan is \(modules)", &ok)
         }
-        check(WorkspaceModule.allCases.count == 19, "the sidebar has \(WorkspaceModule.allCases.count) items, not 19", &ok)
+        check(WorkspaceModule.allCases.count == 22, "the sidebar has \(WorkspaceModule.allCases.count) items, not 22", &ok)
         // A door row has no page of its own: it is reached by the route it
         // is a door to (the Calendar row, Tasks › Calendar).
         for module in WorkspaceModule.allCases {
             check(!ModuleTable.routes(in: module).isEmpty || module.doorRoute != nil,
                   "\(module.title) has no destination moving into it", &ok)
         }
-        check(WorkspaceModule.allCases.filter { $0.doorRoute != nil } == [.calendar],
-              "the door rows are \(WorkspaceModule.allCases.filter { $0.doorRoute != nil }), want the Calendar alone", &ok)
+        check(WorkspaceModule.allCases.filter { $0.doorRoute != nil } == [.calendar, .notebook, .readingList],
+              "the door rows are \(WorkspaceModule.allCases.filter { $0.doorRoute != nil }), want the Calendar, Notebook and Reading list", &ok)
         let titles = WorkspaceModule.allCases.map(\.title)
         check(Set(titles).count == titles.count, "two modules share a title", &ok)
     }
@@ -200,8 +202,8 @@ enum ModuleTableSelfTest {
         (.docs, "Docs", "book.closed", .blue, "The DevOps Playbook, browsable offline", .stores, .knowledge, "Docs"),
         (.notebook, "Notebook", "book.and.wrench", .blue, "Linked markdown pages, in your own config repo", .stores, .knowledge, "Notebook"),
         (.readingList, "Reading List", "bookmark.fill", .green, "Links you saved to read, with titles read on this machine", .stores, .knowledge, "Reading list"),
-        (.runbooks, "Runbooks", "list.bullet.rectangle", .blue, "Step-by-step operational procedures", .stores, .knowledge, "Runbooks"),
-        (.postmortems, "Postmortems", "doc.text.magnifyingglass", .amber, "Incident write-ups and root causes", .stores, .knowledge, "Postmortems"),
+        (.runbooks, "Runbooks", "list.bullet.rectangle", .blue, "Step-by-step operational procedures", .stores, .runbooks, "Runbooks"),
+        (.postmortems, "Postmortems", "doc.text.magnifyingglass", .amber, "Incident write-ups and root causes", .stores, .runbooks, "Postmortems"),
         (.updates, "Updates", "steeringwheel", .amber, "Every tool in the catalog, and what needs updating", .engineering, .setup, "Updates"),
         (.bootstrap, "Bootstrap", "hammer", .amber, "Set this machine up, and see what has drifted", .engineering, .setup, "Setup steps"),
         (.automation, "Automation", "bolt.fill", .amber, "Run every setup step in order, unattended", .engineering, .setup, "Automation"),
@@ -228,7 +230,7 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// The same for the nineteen sidebar items: each one's title, group,
+    /// The same for the twenty-two sidebar items: each one's title, group,
     /// children, symbol, the page that draws its own tabs, and whether the
     /// content column opens with its header.
     static let pinnedModules: [(WorkspaceModule, String, WorkspaceGroup?, [String], String, RailDestination?, Bool)] = [
@@ -238,10 +240,13 @@ enum ModuleTableSelfTest {
         (.crew, "Crew", .work, ["Needs you", "In flight", "Review", "Ask the crew", "Log"], "person.3.fill", .overview, true),
         (.connections, "Connections", .work, ["Hosts", "Keys", "Snippets", "Commands"], "server.rack", .hosts, false),
         (.console, "Console", .work, [], "terminal", nil, false),
-        (.knowledge, "Knowledge", .work, ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"], "books.vertical", nil, true),
+        (.knowledge, "Knowledge", .work, ["Notebook", "Docs", "Reading list"], "books.vertical", nil, true),
+        (.notebook, "Notebook", .work, [], "book.and.wrench", nil, true),
+        (.readingList, "Reading list", .work, [], "bookmark.fill", nil, true),
         (.secrets, "Secrets", .work, ["Secrets", "Automic Vault"], "key.fill", nil, true),
         (.kubernetes, "Kubernetes", .observe, ["Cluster", "Log Tail"], "cube.transparent", .kubernetes, true),
         (.logs, "Logs", .observe, [], "text.magnifyingglass", nil, true),
+        (.runbooks, "Runbooks", .observe, ["Runbooks", "Postmortems"], "list.bullet.rectangle", nil, true),
         (.health, "Health", .observe, [], "waveform.path.ecg", nil, true),
         (.schedules, "Schedules", .observe, [], "calendar", nil, true),
         (.tools, "Tools", .workbench, [], "wrench.and.screwdriver", nil, true),
@@ -286,10 +291,13 @@ enum ModuleTableSelfTest {
             claimed[key] = row.route
         }
         // The captain's call during stage 3: the prototype's Playbook tab is
-        // named Docs, because it is the Docs page.
+        // named Docs, because it is the Docs page. R5-UX-05 moved Runbooks
+        // and Postmortems to a module of their own in Observe.
         let knowledge = WorkspaceModule.knowledge.children
-        check(knowledge == ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"],
-              "Knowledge's tabs are \(knowledge), want Notebook, Runbooks, Postmortems, Docs, Reading list", &ok)
+        check(knowledge == ["Notebook", "Docs", "Reading list"],
+              "Knowledge's tabs are \(knowledge), want Notebook, Docs, Reading list", &ok)
+        check(WorkspaceModule.runbooks.children == ["Runbooks", "Postmortems"] && WorkspaceModule.runbooks.group == .observe,
+              "Runbooks and Postmortems are no longer one Observe module (\(WorkspaceModule.runbooks.children))", &ok)
         check(ModuleTable.descriptor(for: .docs)?.child == "Docs",
               "the Docs page moves to Knowledge › \(ModuleTable.descriptor(for: .docs)?.child ?? "-"), not Knowledge › Docs", &ok)
     }

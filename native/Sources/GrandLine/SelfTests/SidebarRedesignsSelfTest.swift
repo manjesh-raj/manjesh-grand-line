@@ -161,7 +161,7 @@ enum SidebarRedesignsSelfTest {
                 ThemeManager.shared.setTheme(theme)
                 settle(shell)
                 let tag = "[\(themeID), \(Int(column))pt]"
-                for module in WorkspaceSidebarModel.listedModules() {
+                for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
                     guard let cell = shell.sidebar.debugCell(for: .module(module)) as? WorkspaceSidebarPageCell else {
                         fail("\(tag) the sidebar draws no row for \(module.title)", &ok)
                         continue
@@ -254,7 +254,8 @@ enum SidebarRedesignsSelfTest {
 
     // MARK: 1b - Home stays in sight (R4-BUG-03)
 
-    /// With Console holding one session the default sidebar is 24 rows, a few
+    /// With Console holding one session the default sidebar is 25 rows (24
+    /// until R5-UX-05 put Runbooks in Observe), a few
     /// points taller than its clip view in a 950pt window. Selecting a bottom
     /// row then scrolled the whole column up by the overflow and left Home
     /// half under the header, on every page whose module sits low in the
@@ -275,10 +276,10 @@ enum SidebarRedesignsSelfTest {
             fail("the sidebar's outline is not in a scroll view", &ok)
             return
         }
-        check(outline.numberOfRows == 24, "the default sidebar with one session should be 24 rows, got \(outline.numberOfRows)", &ok)
+        check(outline.numberOfRows == 25, "the default sidebar with one session should be 25 rows, got \(outline.numberOfRows)", &ok)
         func homeInSight() -> Bool { clip.bounds.minY <= outline.rect(ofRow: 0).minY + 0.5 }
         let overflow = outline.frame.height - clip.bounds.height
-        for module in WorkspaceSidebarModel.listedModules() {
+        for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
             shell.workspace.navigator.show(module.primaryRoute)
             settle(shell)
             check(homeInSight(), "at 950pt on \(module.title) Home is clipped: the list is scrolled to "

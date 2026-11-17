@@ -1496,7 +1496,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let profileRow = SettingsRow(
             title: "Profile",
-            description: "Personal shows the modules anyone can use. Operator adds the crew, hosts, the console and the operations modules.",
+            description: "Personal shows the modules anyone can use, with Notebook and Reading list as their own rows. "
+                + "Operator adds the crew, hosts, the console and the operations modules, with Knowledge's tabs and Runbooks in Observe.",
             control: profileTabs)
         var rows = [profileRow]
         moduleSwitches = WorkspaceSidebarModel.listedModules().filter(\.canBeHidden).map { module in

@@ -62,8 +62,8 @@ enum SplitShellModelSelfTest {
 
     private static func checkEveryModuleIsListedOnce(_ ok: inout Bool) {
         let listed = WorkspaceSidebarModel.listedModules()
-        check(listed.count == 19 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
-              "the sidebar lists \(listed.map(\.rawValue)), want Home and the eighteen modules once each", &ok)
+        check(listed.count == 22 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
+              "the sidebar lists \(listed.map(\.rawValue)), want Home and the twenty-one modules once each", &ok)
 
         // The same set as the rows the outline view gets, read off the tree.
         let roots = WorkspaceSidebarModel.roots(sessions: [])
@@ -123,8 +123,8 @@ enum SplitShellModelSelfTest {
         check(sections == WorkspaceGroup.allCases.map(\.title),
               "the sections are \(sections), want the four groups in order", &ok)
         let expected: [WorkspaceGroup: [WorkspaceModule]] = [
-            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .secrets],
-            .observe: [.kubernetes, .logs, .health, .schedules],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets],
+            .observe: [.kubernetes, .logs, .runbooks, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
         ]
@@ -151,9 +151,11 @@ enum SplitShellModelSelfTest {
                     ("Ask the crew", .strawHat, false), ("Log", .overview, true)],
             .connections: [("Hosts", .hosts, true), ("Keys", .hosts, true), ("Snippets", .hosts, true),
                            ("Commands", .commandLibrary, false)],
-            .knowledge: [("Notebook", .notebook, false), ("Runbooks", .runbooks, false),
-                         ("Postmortems", .postmortems, false), ("Docs", .docs, false),
+            // R5-UX-05: Notebook and Reading list are also door rows of their
+            // own, and Runbooks and Postmortems are an Observe module.
+            .knowledge: [("Notebook", .notebook, false), ("Docs", .docs, false),
                          ("Reading list", .readingList, false)],
+            .runbooks: [("Runbooks", .runbooks, false), ("Postmortems", .postmortems, false)],
             .secrets: [("Secrets", .poneglyph, false), ("Automic Vault", .vault, false)],
             .kubernetes: [("Cluster", .kubernetes, true), ("Log Tail", .kubernetes, true)],
             .setup: [("Updates", .updates, false), ("Setup steps", .bootstrap, false),
@@ -265,11 +267,13 @@ enum SplitShellModelSelfTest {
         }
         // The Calendar takes ⌘0 (R4-UX-01) rather than a place in the count,
         // so the chords the captain already knows stay put: Crew keeps ⌘3 and
-        // Logs keeps ⌘9.
-        check(WorkspaceGoMenu.chord(for: .calendar) == 0 && WorkspaceGoMenu.chord(for: .crew) == 3
-                && WorkspaceGoMenu.chord(for: .logs) == 9,
-              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar).map(String.init) ?? "nothing"), Crew ⌘\(WorkspaceGoMenu.chord(for: .crew) ?? 0) "
-              + "and Logs ⌘\(WorkspaceGoMenu.chord(for: .logs) ?? 0)", &ok)
+        // Logs keeps ⌘9 in the Operator's sidebar, and R5-UX-05's Runbooks
+        // sits after Logs so it takes no digit from anything before it.
+        let op = WorkspaceProfile.operator.hiddenModules
+        check(WorkspaceGoMenu.chord(for: .calendar, hidden: op) == 0 && WorkspaceGoMenu.chord(for: .crew, hidden: op) == 3
+                && WorkspaceGoMenu.chord(for: .logs, hidden: op) == 9,
+              "Calendar takes ⌘\(WorkspaceGoMenu.chord(for: .calendar, hidden: op).map(String.init) ?? "nothing"), Crew ⌘\(WorkspaceGoMenu.chord(for: .crew, hidden: op) ?? 0) "
+              + "and Logs ⌘\(WorkspaceGoMenu.chord(for: .logs, hidden: op) ?? 0)", &ok)
     }
 
     /// A captain who has customised the sidebar - hidden modules of their own,

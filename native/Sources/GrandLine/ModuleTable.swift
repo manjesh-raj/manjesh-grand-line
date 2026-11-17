@@ -36,6 +36,10 @@
 // Console as its own module - and a nineteenth since, the Calendar row the
 // captain's later mockup puts in Work after Tasks. That row is a door rather
 // than a page: it opens Tasks on its Calendar view (`ModuleDescriptor.door`).
+// R5-UX-05 of review #5 split Knowledge: Runbooks and Postmortems are their
+// own module in Observe, and Notebook and Reading list are door rows in Work
+// that a Personal sidebar lists instead of Knowledge's tab bar (an Operator's
+// lists Knowledge with them as tabs). Twenty-two sidebar items in all.
 // `docs/modular-shell/feature-inventory.md` is the feature-level half of the
 // same plan, and its suite checks that every destination row there names the
 // module this table does.
@@ -69,9 +73,16 @@ enum WorkspaceModule: String, CaseIterable {
     case connections
     case console
     case knowledge
+    /// R5-UX-05: Knowledge's Notebook and Reading list tabs as rows of their
+    /// own, for a sidebar that does not list Knowledge (a Personal one).
+    case notebook
+    case readingList
     case secrets
     case kubernetes
     case logs
+    /// R5-UX-05: Runbooks and Postmortems, moved out of Knowledge to sit with
+    /// Logs and Health - the operational modules they are read beside.
+    case runbooks
     case health
     case schedules
     case tools
@@ -144,11 +155,15 @@ extension WorkspaceModule {
     /// one of `pageTabHost`'s own tabs. Its `route` is the page either way, so
     /// every one of the 29 routes still lands on its page. A door's row
     /// (`ModuleDescriptor.door`) names a tab without being its page, so it is
-    /// passed over here and the tab stays the host page's own.
+    /// passed over here and the tab stays the host page's own - unless this
+    /// module has no page that draws its tabs (Knowledge), where the door's
+    /// route is the tab's page, as it is for any other destination here.
     var tabs: [ModuleTab] {
         guard drawsToolbarTabs else { return [] }
         return children.compactMap { name in
-            if let row = ModuleTable.rows.first(where: { $0.module == self && $0.child == name && $0.door == nil }) {
+            if let row = ModuleTable.rows.first(where: {
+                $0.module == self && $0.child == name && ($0.door == nil || pageTabHost == nil)
+            }) {
                 return ModuleTab(module: self, name: name, route: row.route, isPageTab: row.route == pageTabHost)
             }
             guard let host = pageTabHost else { return nil }
@@ -163,10 +178,12 @@ extension WorkspaceModule {
 
     /// The route this sidebar row is a door to, when it is one: the
     /// Calendar row opens Tasks on its Calendar view rather than a page of
-    /// its own (tasks-calendar plan PR 4). `nil` for every other row.
+    /// its own (tasks-calendar plan PR 4), and the Notebook and Reading list
+    /// rows open Knowledge's pages of those names (R5-UX-05). `nil` for every
+    /// other row.
     var doorRoute: RailDestination? { ModuleTable.rows.first { $0.door == self }?.route }
 
-    /// The tab a door row opens: one of its host module's page tabs.
+    /// The tab a door row opens: one of its host module's tabs.
     var doorTab: ModuleTab? {
         guard let route = doorRoute, let descriptor = ModuleTable.descriptor(for: route),
               let name = descriptor.child else { return nil }
@@ -522,7 +539,7 @@ enum ModuleTable {
         ModuleDescriptor(route: .notebook, title: "Notebook", symbol: "book.and.wrench", hue: .blue,
                          slot: .notebook, subtitle: "Linked markdown pages, in your own config repo",
                          mountsEagerly: false, space: .stores, homeCards: [.notebook],
-                         newAction: .notebookPage, module: .knowledge, child: "Notebook"),
+                         newAction: .notebookPage, module: .knowledge, child: "Notebook", door: .notebook),
         // Its symbol:
         //   `fm/grandline-feature-f4-reading-list`: a bookmark, which is what a
         //   link inbox is - distinct from `.docs`' closed book (reference you
@@ -543,7 +560,7 @@ enum ModuleTable {
         ModuleDescriptor(route: .readingList, title: "Reading List", symbol: "bookmark.fill", hue: .green,
                          slot: .readingList, subtitle: "Links you saved to read, with titles read on this machine",
                          mountsEagerly: false, space: .stores, homeCards: [.readingList],
-                         newAction: .savedLink, module: .knowledge, child: "Reading list"),
+                         newAction: .savedLink, module: .knowledge, child: "Reading list", door: .readingList),
         // Its symbol:
         //   `fm/grandline-docs-split-runbooks-postmortems`: reused verbatim
         //   from the icons this exact file's own Runbooks/Postmortems empty
@@ -558,11 +575,11 @@ enum ModuleTable {
         ModuleDescriptor(route: .runbooks, title: "Runbooks", symbol: "list.bullet.rectangle", hue: .blue,
                          slot: .runbooks, subtitle: "Step-by-step operational procedures",
                          mountsEagerly: false, space: .stores, homeCards: [.runbooks],
-                         newAction: .runbook, module: .knowledge, child: "Runbooks"),
+                         newAction: .runbook, module: .runbooks, child: "Runbooks"),
         ModuleDescriptor(route: .postmortems, title: "Postmortems", symbol: "doc.text.magnifyingglass", hue: .amber,
                          slot: .postmortems, subtitle: "Incident write-ups and root causes",
                          mountsEagerly: false, space: .stores, homeCards: [.postmortems],
-                         newAction: .task, module: .knowledge, child: "Postmortems"),
+                         newAction: .task, module: .runbooks, child: "Postmortems"),
         // Its hue:
         //   (shared by .updates, .bootstrap, .automation, .githubSync, .poneglyph)
         //   Setup
@@ -686,7 +703,8 @@ enum ModuleTable {
     /// and Log are Crew's Needs you, In flight and Log, the Hosts page's
     /// Hosts, SSH Keys and Snippets are Connections' first three, and
     /// Kubernetes' Cluster and Log Tail are its own. The Calendar row is a
-    /// door to Tasks' Calendar view and has no tabs of its own. The captain
+    /// door to Tasks' Calendar view, and the Notebook and Reading list rows
+    /// are doors to Knowledge's pages of those names (R5-UX-05). The captain
     /// dropped the content column's header on Connections and Console;
     /// every other module keeps it.
     static let modules: [WorkspaceModuleDescriptor] = [
@@ -703,14 +721,22 @@ enum ModuleTable {
                                   children: ["Hosts", "Keys", "Snippets", "Commands"], symbol: "server.rack",
                                   pageTabHost: .hosts, showsHeader: false),
         WorkspaceModuleDescriptor(module: .console, title: "Console", group: .work, children: [], showsHeader: false),
+        // R5-UX-05: an Operator's Knowledge is Notebook, Docs and Reading
+        // list; Runbooks and Postmortems moved to Observe below.
         WorkspaceModuleDescriptor(module: .knowledge, title: "Knowledge", group: .work,
-                                  children: ["Notebook", "Runbooks", "Postmortems", "Docs", "Reading list"],
+                                  children: ["Notebook", "Docs", "Reading list"],
                                   symbol: "books.vertical"),
+        // Doors, not pages: Knowledge's Notebook and Reading list, listed on
+        // their own where Knowledge is not (a Personal sidebar).
+        WorkspaceModuleDescriptor(module: .notebook, title: "Notebook", group: .work, children: []),
+        WorkspaceModuleDescriptor(module: .readingList, title: "Reading list", group: .work, children: []),
         WorkspaceModuleDescriptor(module: .secrets, title: "Secrets", group: .work,
                                   children: ["Secrets", "Automic Vault"], symbol: "key.fill"),
         WorkspaceModuleDescriptor(module: .kubernetes, title: "Kubernetes", group: .observe,
                                   children: ["Cluster", "Log Tail"], pageTabHost: .kubernetes),
         WorkspaceModuleDescriptor(module: .logs, title: "Logs", group: .observe, children: []),
+        WorkspaceModuleDescriptor(module: .runbooks, title: "Runbooks", group: .observe,
+                                  children: ["Runbooks", "Postmortems"]),
         WorkspaceModuleDescriptor(module: .health, title: "Health", group: .observe, children: []),
         WorkspaceModuleDescriptor(module: .schedules, title: "Schedules", group: .observe, children: []),
         WorkspaceModuleDescriptor(module: .tools, title: "Tools", group: .workbench, children: []),
@@ -767,6 +793,26 @@ enum ModuleTable {
     /// Tasks' Calendar view and the Tasks row on its other views, and
     /// otherwise the module the page lives in. The one place a row is lit
     /// for a view rather than for a page (the plan's risk table).
+    /// Whether a sidebar that hides `hidden` leaves `route` out of ⌘K. A
+    /// door's route follows its own row: hiding the Calendar row takes the
+    /// Calendar out, and hiding Tasks does not. A door to a page of its own
+    /// (Notebook, Reading list) is hidden only when the module that holds the
+    /// page is too, because that module's tab still reaches it: an Operator
+    /// hides the Notebook row and keeps Knowledge › Notebook (R5-UX-05).
+    static func hidesPage(_ route: RailDestination, hidden: Set<WorkspaceModule>) -> Bool {
+        guard hidden.contains(sidebarModule(for: route)) else { return false }
+        return landing(for: route).pageTab != nil || hidden.contains(module(for: route))
+    }
+
+    /// The row a sidebar that hides `hidden` lights for `route`: its door
+    /// row, unless that row is hidden, and then the module the page lives in
+    /// - the Notebook in an Operator's sidebar lights Knowledge (R5-UX-05).
+    static func litModule(for route: RailDestination, pageTab: String? = nil,
+                          hidden: Set<WorkspaceModule>) -> WorkspaceModule {
+        let row = sidebarModule(for: route, pageTab: pageTab)
+        return hidden.contains(row) ? module(for: route) : row
+    }
+
     static func sidebarModule(for route: RailDestination, pageTab: String? = nil) -> WorkspaceModule {
         if let door = descriptor(for: route)?.door { return door }
         let module = module(for: route)

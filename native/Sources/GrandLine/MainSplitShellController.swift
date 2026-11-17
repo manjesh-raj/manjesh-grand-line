@@ -1012,9 +1012,16 @@ final class MainSplitShellController: WorkspaceShellController {
     // MARK: Modules and their tabs
 
     /// A module's sidebar row: the tab it showed last, or its first. A door
-    /// row (the Calendar) opens the tab it is a door to.
+    /// row (the Calendar, Notebook, Reading list) opens the tab it is a door
+    /// to. A tab whose own door row is listed is that row's to open, so
+    /// Knowledge beside a listed Notebook row opens on Docs (R5-UX-05).
     override func openModule(_ module: WorkspaceModule) {
-        if let tab = module.doorTab ?? lastTab[module] ?? module.tabs.first {
+        let hidden = AppSettings.shared.hiddenModules
+        let owned = module.tabs.first { tab in
+            let row = ModuleTable.sidebarModule(for: tab.route, pageTab: tab.name)
+            return row == module || hidden.contains(row)
+        }
+        if let tab = module.doorTab ?? lastTab[module] ?? owned ?? module.tabs.first {
             open(tab)
         } else {
             workspace.navigator.show(module.primaryRoute)
@@ -1026,6 +1033,9 @@ final class MainSplitShellController: WorkspaceShellController {
     /// R2-UX-03: the module's tabs, wrapping at either end like a browser's.
     /// A module of one page has nowhere to go.
     override func stepModuleTab(by offset: Int) {
+        // R5-UX-05: a door row that is a place of its own (Notebook) has no
+        // tabs to step through, even though its page is one of Knowledge's.
+        guard !showsDoorAsOwnPlace else { return }
         let tabs = currentModule.tabs
         guard tabs.count > 1, let current = currentTab, let index = tabs.firstIndex(of: current) else { return }
         open(tabs[(index + offset + tabs.count) % tabs.count])
@@ -1044,10 +1054,9 @@ final class MainSplitShellController: WorkspaceShellController {
         }
     }
 
-    /// A door's route follows its own row: hiding the Calendar row takes
-    /// the Calendar out of ⌘K, and hiding Tasks does not.
+    /// Which pages ⌘K leaves out (`ModuleTable.hidesPage`).
     override func hidesPage(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.hiddenModules.contains(ModuleTable.sidebarModule(for: destination))
+        ModuleTable.hidesPage(destination, hidden: AppSettings.shared.hiddenModules)
     }
 
     /// Show a tab: its page through the navigator, like every other route,
@@ -1113,8 +1122,16 @@ final class MainSplitShellController: WorkspaceShellController {
     /// beside a crumb and a header that read "Work › Tasks".
     private var litModule: WorkspaceModule {
         guard !showingHostPage else { return currentModule }
-        let lit = ModuleTable.sidebarModule(for: currentRoute, pageTab: currentTab?.name)
-        return AppSettings.shared.hiddenModules.contains(lit) ? currentModule : lit
+        return ModuleTable.litModule(for: currentRoute, pageTab: currentTab?.name,
+                                     hidden: AppSettings.shared.hiddenModules)
+    }
+
+    /// R5-UX-05: whether what shows is a door row's page of its own - the
+    /// Notebook or Reading list row, lit - which is its own place: its crumb,
+    /// header and toolbar are the row's, not the tab bar of the module the
+    /// page lives in.
+    private var showsDoorAsOwnPlace: Bool {
+        !showingHostPage && litModule != currentModule && currentTab?.isPageTab == false
     }
 
     /// The first time a page that draws its module's tabs shows here, the
@@ -1169,12 +1186,18 @@ final class MainSplitShellController: WorkspaceShellController {
         // cards now, and Customize adds any other space's card to them.
         if module == .home {
             toolbar.setTabs([], selected: nil)
+        } else if showsDoorAsOwnPlace {
+            // R5-UX-05: a door row to a page of its own (Notebook, Reading
+            // list) is its own place: the crumb, the header and the toolbar
+            // are its row's, not the tab bar of the module it lives in.
+            toolbar.setTabs(lit.tabs.map(\.name), selected: nil)
         } else {
             let tabs = module.tabs
             let current = currentTab
             // A door's tab is its row's to reopen, not the module's: the Tasks
             // row after a visit to the Calendar goes back to Board or List.
-            if let current, ModuleTable.sidebarModule(for: current.route, pageTab: current.name) == module {
+            if let current, ModuleTable.litModule(for: current.route, pageTab: current.name,
+                                                  hidden: AppSettings.shared.hiddenModules) == module {
                 lastTab[module] = current
             }
             // The page that draws the module's tabs may count what each

@@ -78,10 +78,13 @@ enum WorkspaceSidebarModel {
 }
 
 extension WorkspaceModule {
-    /// The page a module opens on the first time: its first tab, its one
-    /// page, or for a door row the route it is a door to.
+    /// The page a module opens on the first time: its first tab that is its
+    /// own (Knowledge's Docs - its Notebook tab belongs to the Notebook door
+    /// row, R5-UX-05), its one page, or for a door row the route it is a door
+    /// to.
     var primaryRoute: RailDestination {
-        tabs.first?.route ?? ModuleTable.routes(in: self).first ?? doorRoute ?? .homeCanvas
+        let own = tabs.first { ModuleTable.sidebarModule(for: $0.route, pageTab: $0.name) == self }
+        return (own ?? tabs.first)?.route ?? ModuleTable.routes(in: self).first ?? doorRoute ?? .homeCanvas
     }
 
     /// The module's pages, each once, in tab order.
@@ -104,7 +107,7 @@ extension WorkspaceModule {
 /// did. Each size goes through `HelmType.scaled`, so the chrome text scale
 /// still moves all of them together.
 enum WorkspaceSidebarMetrics {
-    /// Home and the eighteen modules.
+    /// Home and the modules.
     static let moduleRowHeight: CGFloat = 32
     /// A live session under Console: one step down from a module.
     static let sessionRowHeight: CGFloat = 30
@@ -113,7 +116,11 @@ enum WorkspaceSidebarMetrics {
     /// (24 rows) came out 836pt against an 823pt clip view in a 950pt window,
     /// so the lit row's scroll left Home half under the header (R4-BUG-03).
     /// 30 brings the list to 820pt, and only the gap above each heading gives.
-    static let sectionRowHeight: CGFloat = 30
+    /// R5-UX-05 added Runbooks to an Operator's Observe group, one 32pt row,
+    /// and the gap gave again: 24 keeps the default list (25 rows with one
+    /// session) inside the same clip view, and every row keeps the Large
+    /// size.
+    static let sectionRowHeight: CGFloat = 24
     static let moduleTextSize: CGFloat = 15
     static let sessionTextSize: CGFloat = 14
     static let sectionTextSize: CGFloat = 13

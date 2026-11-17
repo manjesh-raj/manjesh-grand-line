@@ -357,7 +357,10 @@ enum MainSplitShellSelfTest {
                   "\(destination.rawValue) is not showing its own mounter slot", &ok)
             check(slotView?.isDescendant(of: shell.debugContentPane) == true,
                   "\(destination.rawValue)'s page is not in the content column", &ok)
-            let row = ModuleTable.sidebarModule(for: destination, pageTab: shell.debugCurrentTab?.name)
+            // A hidden door row leaves its page to the module it lives in
+            // (R5-UX-05: an Operator's Notebook lights Knowledge).
+            let row = ModuleTable.litModule(for: destination, pageTab: shell.debugCurrentTab?.name,
+                                            hidden: AppSettings.shared.hiddenModules)
             check(shell.sidebar.debugSelectedEntry == .module(row),
                   "\(destination.rawValue) did not light \(row.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
             check(shell.currentModule == module && window.title == module.title,
@@ -601,14 +604,14 @@ enum MainSplitShellSelfTest {
         // suite checks; every module has been shown by now.)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
-        clickTab("Runbooks", shell)
+        clickTab("Reading list", shell)
         check(shell.sidebar.debugClick(.module(.crew)), "the Crew row is not in the sidebar", &ok)
         settle(shell)
         check(shell.currentModule == .crew, "the Crew row opened \(shell.currentModule.title)", &ok)
         check(shell.sidebar.debugClick(.module(.knowledge)), "the Knowledge row is not in the sidebar", &ok)
         settle(shell)
-        check(shell.debugCurrentDestination == .runbooks,
-              "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Runbooks tab it showed last", &ok)
+        check(shell.debugCurrentDestination == .readingList,
+              "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Reading list tab it showed last", &ok)
 
         // A page inside a module of several lights its module's row.
         shell.workspace.navigator.show(.review)
@@ -617,11 +620,16 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugSelectedEntry == .module(.crew),
               "a page reached from outside the sidebar lit \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
 
-        // Home and every module have a visible row, under their own names.
+        // Home and every module the sidebar lists have a visible row, under
+        // their own names, and a hidden one has none (R5-UX-05: an
+        // Operator's sidebar hides the Notebook and Reading list door rows).
         let entries = shell.sidebar.debugVisibleEntries
+        let hidden = AppSettings.shared.hiddenModules
         for module in WorkspaceModule.allCases {
-            check(entries.contains(.module(module)), "no visible row for \(module.title)", &ok)
+            check(entries.contains(.module(module)) == !hidden.contains(module),
+                  "\(module.title)'s row is \(entries.contains(.module(module)) ? "shown" : "missing") with \(hidden.map(\.rawValue).sorted()) hidden", &ok)
         }
+        check(!hidden.isEmpty, "the sidebar check hides nothing, so it cannot see a hidden row drawn", &ok)
     }
 
     /// Stage 6, the captain's call: the pins are the floating bar's. With
@@ -644,7 +652,7 @@ enum MainSplitShellSelfTest {
         check(Set(sections) == groups && sections.count == groups.count,
               "with pins set the sidebar draws the sections \(sections), want the four groups only", &ok)
         check(entries.first == .module(.home), "Home is not the first row under the header", &ok)
-        for module in WorkspaceModule.allCases {
+        for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
             let titles = shell.sidebar.debugContextMenuTitles(for: .module(module))
             check(!titles.contains { $0.hasPrefix("Pin ") || $0.hasPrefix("Unpin ") },
                   "\(module.title)'s menu still offers to pin: \(titles)", &ok)

@@ -118,7 +118,7 @@ enum ReviewTwoUXModelSelfTest {
         }
         let sidebarRows = sidebar.items.filter { !$0.isSeparatorItem }
         let moduleRows = sidebarRows.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
-        check(moduleRows.map(\.title) == WorkspaceSidebarModel.listedModules().map(\.title),
+        check(moduleRows.map(\.title) == WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules).map(\.title),
               "the sidebar layout's Go menu module rows are \(moduleRows.map(\.title))", &ok)
         let leftovers = sidebarRows.filter { spaces.contains($0.title) || $0.action == #selector(WorkspaceShellController.selectSpaceByShortcut(_:)) }
         check(leftovers.isEmpty, "the sidebar layout's Go menu still lists the spaces: \(leftovers.map(\.title))", &ok)
@@ -188,7 +188,9 @@ enum ReviewTwoUXModelSelfTest {
 
     /// The review's ten, plus the Calendar row the captain added after Tasks:
     /// it is Shift's own data, so it is a Personal module like Tasks.
-    static let personalModules: [WorkspaceModule] = [.home, .tasks, .calendar, .knowledge, .secrets, .tools,
+    /// R5-UX-05: Notebook and Reading list are Personal's own rows where
+    /// Knowledge's tab bar was.
+    static let personalModules: [WorkspaceModule] = [.home, .tasks, .calendar, .notebook, .readingList, .secrets, .tools,
                                                      .whiteboard, .stickyBoard, .code, .dictation, .settings]
 
     /// A scratch settings store, removed after `body`.
@@ -202,11 +204,15 @@ enum ReviewTwoUXModelSelfTest {
 
     private static func checkTheProfiles(_ ok: inout Bool) {
         check(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules) == personalModules,
-              "the Personal sidebar is \(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules).map(\.rawValue)), want the review's ten and the Calendar", &ok)
-        check(WorkspaceProfile.operator.hiddenModules.isEmpty, "the Operator profile hides something", &ok)
+              "the Personal sidebar is \(WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.personal.hiddenModules).map(\.rawValue)), want the review's ten, the Calendar and Knowledge as two rows", &ok)
+        // R5-UX-05: the Operator hides only the two door rows, which would
+        // repeat Knowledge's tabs - every module is in its sidebar.
+        check(WorkspaceProfile.operator.hiddenModules == [.notebook, .readingList],
+              "the Operator profile hides \(WorkspaceProfile.operator.hiddenModules.map(\.rawValue))", &ok)
         check(!WorkspaceModule.home.canBeHidden && !WorkspaceModule.settings.canBeHidden,
               "Home or Settings can be hidden - then nothing could bring a module back", &ok)
-        check(WorkspaceProfile.matching([]) == .operator && WorkspaceProfile.matching([.logs]) == nil,
+        check(WorkspaceProfile.matching([.notebook, .readingList]) == .operator && WorkspaceProfile.matching([.logs]) == nil
+                && WorkspaceProfile.matching([]) == nil,
               "a hidden set is not matched to its profile, or an edited one is", &ok)
         // A group whose modules are all hidden draws no empty heading.
         let roots = WorkspaceSidebarModel.roots(sessions: [], hidden: WorkspaceProfile.personal.hiddenModules)
@@ -232,16 +238,17 @@ enum ReviewTwoUXModelSelfTest {
         }
         withScratchSettings("existing") { settings in
             settings.settleFirstLaunch(isExistingInstall: true)
-            check(settings.workspaceProfile == .operator && settings.hiddenModules.isEmpty,
+            check(settings.workspaceProfile == .operator && settings.hiddenModules == WorkspaceProfile.operator.hiddenModules,
                   "an existing install lost modules at launch: \(settings.hiddenModules.map(\.rawValue))", &ok)
             check(settings.homeCardLayout == .standard, "an existing install's Home changed its default cards", &ok)
         }
         withScratchSettings("kept") { settings in
             settings.hiddenModules = [.kubernetes]
             settings.setProfile(.operator)
-            settings.hiddenModules = [.kubernetes]
+            settings.hiddenModules = [.kubernetes, .notebook, .readingList]
             settings.settleFirstLaunch(isExistingInstall: false)
-            check(settings.hiddenModules == [.kubernetes], "a later launch replaced the captain's own hidden set", &ok)
+            check(settings.hiddenModules == [.kubernetes, .notebook, .readingList],
+                  "a later launch replaced the captain's own hidden set", &ok)
         }
         let personal = HomeCardLayout.standard(for: .personal).shown
         let operatorCards: Set<DaylightModule> = [.fleet, .briefing, .mergeQueue, .claudeStatus, .health]
@@ -269,9 +276,16 @@ enum ReviewTwoUXModelSelfTest {
             .init(title: "Switch to Notebook", meta: "Destination", keywords: [], destination: .notebook, run: {}),
             .init(title: "New Task…", meta: "Tasks", keywords: [], run: {}),
         ])
-        provider.isHidden = { hidden.contains(ModuleTable.module(for: $0)) }
+        provider.isHidden = { ModuleTable.hidesPage($0, hidden: hidden) }
         let titles = provider.items(query: "").map(\.title)
         check(titles == ["Switch to Notebook", "New Task…"], "the palette with Kubernetes hidden lists \(titles)", &ok)
+        // R5-UX-05: an Operator hides the Notebook row and keeps Knowledge ›
+        // Notebook, so the palette keeps the page; hiding both drops it.
+        check(!ModuleTable.hidesPage(.notebook, hidden: WorkspaceProfile.operator.hiddenModules)
+                && ModuleTable.hidesPage(.notebook, hidden: [.notebook, .knowledge])
+                && ModuleTable.hidesPage(.calendar, hidden: [.calendar])
+                && !ModuleTable.hidesPage(.calendar, hidden: [.tasks]),
+              "the palette's hidden pages no longer follow their door rows and modules", &ok)
         // The launch landing, and the shell's answer (source guards: both
         // need a whole workspace to drive).
         if let workspace = source("Workspace.swift") {
@@ -279,7 +293,7 @@ enum ReviewTwoUXModelSelfTest {
                   "the launch landing no longer skips a hidden Setup (GL-31 would open a Personal install on Setup)", &ok)
         }
         if let shell = source("MainSplitShellController.swift") {
-            check(shell.contains("AppSettings.shared.hiddenModules.contains(ModuleTable.sidebarModule(for: destination))"),
+            check(shell.contains("ModuleTable.hidesPage(destination, hidden: AppSettings.shared.hiddenModules)"),
                   "the sidebar shell no longer tells the palette which pages are hidden", &ok)
         }
         if let palette = source("UnifiedSearchProviders.swift") {
@@ -304,7 +318,8 @@ enum ReviewTwoUXModelSelfTest {
         check(AppSettings.shared.hiddenModules == WorkspaceProfile.personal.hiddenModules,
               "picking Personal on the welcome sheet did not hide its modules", &ok)
         sheet.debugPickProfile(.operator)
-        check(AppSettings.shared.hiddenModules.isEmpty, "picking Operator on the welcome sheet left modules hidden", &ok)
+        check(AppSettings.shared.hiddenModules == WorkspaceProfile.operator.hiddenModules,
+              "picking Operator on the welcome sheet hid \(AppSettings.shared.hiddenModules.map(\.rawValue))", &ok)
         // R5-UX-01: the floating bar asks too - the profile decides Home's
         // cards and the Console's toolbar there - and says so without
         // promising a sidebar it does not have.
@@ -359,9 +374,12 @@ enum ReviewTwoUXModelSelfTest {
         check(operatorChords.filter { $0.1 == 0 }.map(\.0) == [.calendar],
               "\u{2318}0 belongs to \(operatorChords.filter { $0.1 == 0 }.map(\.0.rawValue)), want the Calendar alone", &ok)
         let hidden = WorkspaceProfile.personal.hiddenModules
-        // The Calendar row takes ⌘0 rather than a place in the count, so
-        // Personal's chords are the ones they were before it existed.
-        check(WorkspaceGoMenu.chord(for: .tools, hidden: hidden) == 5 && WorkspaceGoMenu.chord(for: .dictation, hidden: hidden) == 9
+        // The Calendar row takes ⌘0 rather than a place in the count. R5-UX-05
+        // gave Personal two rows where Knowledge was one, so Tools is ⌘6 and
+        // Code takes the last digit.
+        check(WorkspaceGoMenu.chord(for: .notebook, hidden: hidden) == 3 && WorkspaceGoMenu.chord(for: .readingList, hidden: hidden) == 4
+                && WorkspaceGoMenu.chord(for: .tools, hidden: hidden) == 6 && WorkspaceGoMenu.chord(for: .code, hidden: hidden) == 9
+                && WorkspaceGoMenu.chord(for: .dictation, hidden: hidden) == nil
                 && WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == 0
                 && WorkspaceGoMenu.chord(for: .settings, hidden: hidden) == nil && WorkspaceGoMenu.chord(for: .crew, hidden: hidden) == nil,
               "a hidden module does not hand its number to the next one down", &ok)
