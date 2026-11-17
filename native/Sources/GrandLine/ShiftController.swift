@@ -1028,7 +1028,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             "\(c.followUps) follow-up\(c.followUps == 1 ? "" : "s")",
             StateWord.overdue.counted(c.overdue),
         ]
-        let line = parts.joined(separator: " \u{00B7} ")
+        // R5-UX-10: for the first few tasks, the one way to add one that the
+        // page itself does not show - capture from any app.
+        let line = QuietHint.line(parts.joined(separator: " \u{00B7} "), count: store.activeTasks.count,
+                                  hint: "\(AppSettings.shared.quickCaptureShortcut.displayString) adds one from any app")
         guard let filter = projectFilter,
               let name = store.projects.first(where: { $0.id == filter })?.name, !name.isEmpty else { return line }
         return "\(name) \u{00B7} " + line

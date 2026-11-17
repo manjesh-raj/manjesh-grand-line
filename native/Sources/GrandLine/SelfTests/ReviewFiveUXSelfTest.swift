@@ -24,6 +24,7 @@ enum ReviewFiveUXSelfTest {
         checkFailuresSayWhatToDo(&ok)
         checkTheHiddenPowerIsVisible(&ok)
         checkTheKeyboardReachesEveryPage(&ok)
+        checkListsKeepAQuietHint(&ok)
         checkAStoredSidebarSettlesTheSplitOnce(&ok)
         print(ok ? "ReviewFiveUXSelfTest: PASS" : "ReviewFiveUXSelfTest: FAIL")
         return ok
@@ -419,6 +420,29 @@ enum ReviewFiveUXSelfTest {
         if let health = source("HealthCardView.swift") {
             check(health.contains(".runDots(runs, spoken: Self.runTicksSpoken(state))"),
                   "R5-UX-09: Health's recent runs are no longer spoken", &ok)
+        }
+    }
+
+    // MARK: R5-UX-10 - a quiet hint after the first item
+
+    private static func checkListsKeepAQuietHint(_ ok: inout Bool) {
+        check(QuietHint.line("1 link", count: 1, hint: "\u{2318}V pastes a link") == "1 link \u{00B7} \u{2318}V pastes a link"
+                && QuietHint.line("5 links", count: 5, hint: "h") == "5 links \u{00B7} h"
+                && QuietHint.line("6 links", count: 6, hint: "h") == "6 links"
+                && QuietHint.line("Nothing saved yet", count: 0, hint: "h") == "Nothing saved yet",
+              "R5-UX-10: the quiet hint shows for the wrong number of items", &ok)
+        // Each list page keeps one, from its own empty state's advice.
+        let pages: [(file: String, hint: String)] = [
+            ("ReadingListController.swift", "pastes a link, or drop one here"),
+            ("StickyBoardController.swift", "adds a note, drag one to move it"),
+            ("NotebookController.swift", "type [[ to link another page"),
+            ("ShiftController.swift", "adds one from any app"),
+            ("RunbooksController.swift", "adds another"),
+        ]
+        for page in pages {
+            guard let text = source(page.file) else { fail("R5-UX-10: \(page.file) is not readable", &ok); continue }
+            check(text.contains("QuietHint.line(") && text.contains(page.hint),
+                  "R5-UX-10: \(page.file) no longer keeps its quiet hint", &ok)
         }
     }
 

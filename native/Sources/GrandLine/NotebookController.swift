@@ -286,7 +286,9 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         guard hasRestored else { return "Opening the notebook\u{2026}" }
         let noun = count == 1 ? "1 page" : "\(count) pages"
         let more = overflowPages > 0 ? " (+\(overflowPages) not shown)" : ""
-        return "\(noun)\(more) \u{00B7} \(syncSummary)"
+        // R5-UX-10: one hint for the first few pages - how pages link up.
+        return QuietHint.line("\(noun)\(more) \u{00B7} \(syncSummary)", count: count,
+                              hint: "type [[ to link another page")
     }
 
     /// One wording for the sync state, read by both the drill subtitle and

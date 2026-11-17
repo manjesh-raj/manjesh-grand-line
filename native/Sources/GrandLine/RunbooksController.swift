@@ -98,7 +98,10 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     /// read, so it is never stale.
     var drillHeaderSubtitle: String? {
         let count = runbookGridItems.count
-        return count == 0 ? "No runbooks yet" : "\(count) \(count == 1 ? "runbook" : "runbooks")"
+        // R5-UX-10: the empty state's New Runbook, kept for the first few.
+        return count == 0 ? "No runbooks yet"
+            : QuietHint.line("\(count) \(count == 1 ? "runbook" : "runbooks")", count: count,
+                             hint: "\u{2318}N adds another")
     }
 
     override func loadView() {

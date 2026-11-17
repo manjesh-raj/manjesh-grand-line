@@ -123,3 +123,19 @@ enum PageShortcuts {
         ]
     }
 }
+
+/// R5-UX-10 of review #5: empty states that teach were there; "second-run"
+/// states were not. After the first task, note or link a page was a list,
+/// and the hint its empty state gave (⌘V pastes a link, drag a note) was
+/// gone. A list page keeps one quiet hint in its header line while it holds
+/// only a few items, and drops it once the captain plainly knows the page.
+enum QuietHint {
+    /// How many items still count as "the first few".
+    static let firstFew = 5
+
+    /// `line` with `hint` after it while `count` is one of the first few.
+    /// An empty page has its empty state, so it gets no hint here.
+    static func line(_ line: String, count: Int, hint: String) -> String {
+        (1...firstFew).contains(count) ? "\(line) \u{00B7} \(hint)" : line
+    }
+}
