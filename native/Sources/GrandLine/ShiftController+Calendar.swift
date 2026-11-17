@@ -84,19 +84,22 @@ extension ShiftController {
         calendarHeightTie = tie
     }
 
+    /// S16: "Colour by" is a pop-up in the filter bar's trailing slot, where
+    /// Board and List have their sort, rather than a second set of tabs.
     func makeColourControl() -> NSStackView {
         let label = NSTextField(labelWithString: "Colour by")
         label.font = HelmType.chip()
         label.setContentHuggingPriority(.required, for: .horizontal)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let tabs = HelmSegmentedTabs(items: ShiftCalendarColouring.allCases.map { .init(id: $0.rawValue, title: $0.title) },
-                                     selected: ShiftCalendarColouring.saved.rawValue, size: .compact)
-        tabs.setAccessibilityLabel("Colour calendar chips by")
-        tabs.onSelect = { [weak self] id in
-            guard let colouring = ShiftCalendarColouring(rawValue: id) else { return }
-            self?.setCalendarColouring(colouring)
-        }
-        let stack = NSStackView(views: [label, tabs])
+        let popUp = HelmPopUpButton()
+        popUp.controlSize = .small
+        popUp.addItems(withTitles: ShiftCalendarColouring.allCases.map(\.title))
+        popUp.selectItem(at: ShiftCalendarColouring.allCases.firstIndex(of: .saved) ?? 0)
+        popUp.setAccessibilityLabel("Colour calendar chips by")
+        popUp.target = self
+        popUp.action = #selector(colourPicked(_:))
+        popUp.setContentHuggingPriority(.required, for: .horizontal)
+        let stack = NSStackView(views: [label, popUp])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = HelmMetrics.s2
@@ -106,11 +109,16 @@ extension ShiftController {
         return stack
     }
 
-    private var colourTabs: HelmSegmentedTabs? { colourControl.arrangedSubviews.last as? HelmSegmentedTabs }
+    @objc private func colourPicked(_ sender: NSPopUpButton) {
+        let all = ShiftCalendarColouring.allCases
+        guard all.indices.contains(sender.indexOfSelectedItem) else { return }
+        setCalendarColouring(all[sender.indexOfSelectedItem])
+    }
+
+    private var colourPopUp: HelmPopUpButton? { colourControl.arrangedSubviews.last as? HelmPopUpButton }
 
     func paintColourControl(_ theme: HelmTheme) {
         (colourControl.arrangedSubviews.first as? NSTextField)?.textColor = HelmTheme.mutedInk(theme)
-        colourTabs?.applyTheme(theme)
     }
 
     // MARK: State
@@ -138,7 +146,7 @@ extension ShiftController {
     func setCalendarColouring(_ colouring: ShiftCalendarColouring) {
         embedCalendarIfNeeded()
         calendar.setColouring(colouring)
-        colourTabs?.select(colouring.rawValue)
+        if let index = ShiftCalendarColouring.allCases.firstIndex(of: colouring) { colourPopUp?.selectItem(at: index) }
     }
 
     /// New task and ⌘N on the Calendar view: dated to the day on screen.

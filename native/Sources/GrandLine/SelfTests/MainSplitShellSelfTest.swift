@@ -238,9 +238,19 @@ enum MainSplitShellSelfTest {
         check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden,
               "R4-UI-09: at 960 Follow-ups is neither off the board nor under it", &ok)
         check(tasks.debugFilterRowCollapsed, "R4-UI-08: at 960 the filter row did not collapse", &ok)
-        let menu = tasks.debugFilterMenuTitles
-        check(menu.contains("Project") && menu.contains("Sort by") && menu.contains { $0.hasPrefix("Follow-ups") },
-              "R4-UI-08: the Filter menu reads \(menu)", &ok)
+        // S16: the folded controls open in the bar's popover - the same
+        // project pop-up, Follow-ups jump and sort, with their own handlers.
+        let bar = tasks.debugFilterRow
+        check(bar.debugFilterButtonShown, "S16: at 960 the Filter button is not on the row", &ok)
+        bar.debugOpenFilters()
+        let folded = bar.debugPopoverViews
+        check(folded.contains { $0 === tasks.debugProjectPopup } && folded.contains { $0 === tasks.debugSortPopup }
+                && folded.contains { $0 === tasks.debugFollowUpsJump },
+              "S16: the Filter popover holds \(folded.map { type(of: $0) })", &ok)
+        bar.debugCloseFilters()
+        check(bar.arrangedSubviews.contains { $0 === tasks.debugProjectPopup }
+                && bar.arrangedSubviews.contains { $0 === tasks.debugSortPopup },
+              "S16: closing the popover did not put the folded controls back on the row", &ok)
         checkFilterRowFits(tasks, "960", &ok)
 
         // List keeps Projects under its table; Weekly review lists next week.

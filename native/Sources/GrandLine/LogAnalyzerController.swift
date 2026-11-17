@@ -284,6 +284,10 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private let redactionListStack = NSStackView()
 
     private var tabs: HelmSegmentedTabs!
+    /// S16: the tabs sit in a `HelmFilterBar` scope slot, the row every list
+    /// page now shares. Logs has no pop-up, chip or search to fold, so the
+    /// bar never folds here; the tabs keep their own width.
+    private lazy var tabsBar = HelmFilterBar(scope: tabs)
     private let tabContainer = NSStackView()
     private var tabViews: [String: NSView] = [:]
 
@@ -483,7 +487,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         let actions = buildActionBar()
 
         for view in [importBadge, input, analyzingRow, detectionStrip, redaction,
-                     tabs as NSView, tabContainer, needed, storage, actions] {
+                     tabsBar as NSView, tabContainer, needed, storage, actions] {
             contentStack.addArrangedSubview(view)
         }
 
@@ -2264,7 +2268,7 @@ extension LogAnalyzerController {
         let hasAnalysis = investigation.analysis != nil
         let showInput = !hasAnalysis || inputForcedVisible
         inputCard.isHidden = !showInput
-        tabs.isHidden = !hasAnalysis
+        tabsBar.isHidden = !hasAnalysis
         tabContainer.isHidden = !hasAnalysis
         storageCard.isHidden = !hasAnalysis
         actionBar.isHidden = !hasAnalysis

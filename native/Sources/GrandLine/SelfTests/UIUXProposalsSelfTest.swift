@@ -33,6 +33,7 @@ enum UIUXProposalsSelfTest {
             ("S17 one notice recipe", checkOneNoticeRecipe),
             ("S15 one card header recipe", checkOneCardHeaderRecipe),
             ("S14 one number recipe", checkOneNumberRecipe),
+            ("S16 one filter row", checkOneFilterRow),
         ]
         for (name, body) in cases {
             var ok = true
@@ -373,6 +374,59 @@ enum UIUXProposalsSelfTest {
                      "LogAnalyzerController.swift", "ShiftController.swift"] {
             check(source(page).contains("HelmKPIStrip(density: .boxed)"), "S14: \(page) draws its summary row boxed", &ok)
         }
+    }
+
+    // MARK: - S16
+
+    /// The bar lays its slots out in the declared order, folds everything but
+    /// the scope into "Filter · n" when the slots do not fit, keeps a view the
+    /// page hid hidden either way, and the list pages build their row with it.
+    private static func checkOneFilterRow(_ ok: inout Bool) {
+        let scope = HelmSegmentedTabs(items: [.init(id: "all", title: "All tasks"), .init(id: "due", title: "Due today")],
+                                      selected: "all", size: .compact)
+        let popup = HelmPopUpButton()
+        popup.addItems(withTitles: ["All projects", "Infra hardening"])
+        let chip = HelmButton(title: "Follow-ups", variant: .quiet, size: .small)
+        let search = HelmSearchField(placeholder: "Find")
+        search.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        let sort = HelmPopUpButton()
+        sort.addItems(withTitles: ["Due date"])
+        let bar = HelmFilterBar(scope: scope, popups: [popup], chips: [chip], search: search, trailing: [sort])
+        var active = 2
+        bar.activeFilterCount = { active }
+        let order = bar.debugRowOrder.filter { $0 !== bar.filterButton }
+        check(order.count == 5 && order[0] === scope && order[1] === popup && order[2] === chip && order[3] === search
+                && order[4] === sort, "S16: the slots are in the declared order", &ok)
+
+        bar.fit(width: 2000)
+        check(!bar.debugIsCollapsed && !bar.debugFilterButtonShown && !popup.isHidden && !sort.isHidden,
+              "S16: a wide bar shows every slot and no Filter button", &ok)
+        check(bar.expandedWidth > 300 && bar.expandedWidth < 2000, "S16: the fixture's needed width is between the two widths", &ok)
+        bar.fit(width: 300)
+        check(bar.debugIsCollapsed && bar.debugFilterButtonShown && popup.isHidden && chip.isHidden && search.isHidden
+                && sort.isHidden && !scope.isHidden,
+              "S16: a narrow bar folds everything but the scope into the Filter button", &ok)
+        check(bar.debugFilterButtonTitle == "Filter \u{00B7} 2", "S16: the button counts the active filters", &ok)
+        active = 0
+        bar.refreshFilterButtonTitle()
+        check(bar.debugFilterButtonTitle == "Filter", "S16: no active filter reads plain Filter", &ok)
+
+        bar.setPageHidden(chip, true)
+        bar.fit(width: 2000)
+        check(!bar.debugIsCollapsed && chip.isHidden && !popup.isHidden,
+              "S16: a view the page hid stays hidden when the bar unfolds", &ok)
+        let fixedWidth = HelmFilterBar(scope: scope)
+        fixedWidth.collapseWidth = 900
+        fixedWidth.fit(width: 899)
+        check(!fixedWidth.debugFilterButtonShown, "S16: a bar with nothing to fold never shows the Filter button", &ok)
+
+        guard sourcesAvailable else { print("  SKIP: S16 source half, no app sources"); return }
+        for page in ["ShiftController.swift", "UpdatesController.swift", "LogAnalyzerController.swift",
+                     "CredentialVaultController.swift"] {
+            check(source(page).contains("HelmFilterBar("), "S16: \(page) builds its filter row with HelmFilterBar", &ok)
+        }
+        check(source("ShiftController+Calendar.swift").contains("HelmPopUpButton()"),
+              "S16: Calendar's Colour by is a pop-up in the trailing slot", &ok)
     }
 
     // MARK: - S13
