@@ -94,6 +94,10 @@ final class HomeCanvasController: NSViewController {
         /// copy would diverge from the board's within a session and race its
         /// writes.
         let stickyBoardStore: StickyBoardStore
+        /// R5-UX-07: the Focus timer card's session. The shell's one timer,
+        /// which the Tasks page and the toolbar's chip also read; `nil` where
+        /// no shell built one, and the card then says what a session is.
+        var focusTimer: FocusTimerController? = nil
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
@@ -486,11 +490,31 @@ final class HomeCanvasController: NSViewController {
     init(sources: Sources) {
         self.sources = sources
         super.init(nibName: nil, bundle: nil)
+        // R5-UX-07: the Focus timer card follows a session starting, pausing
+        // and stopping. The timer's observers fire every second while one
+        // runs; the card says when it ends rather than counting down, so it
+        // re-renders only when that answer changes.
+        focusTimerToken = sources.focusTimer?.observe { [weak self] in self?.focusTimerDidChange() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// What the Focus timer card last said about the session, so a tick
+    /// that changes nothing it shows asks for no render.
+    private var focusCardKey: String?
+    private var focusTimerToken: UUID?
+
+    private func focusTimerDidChange() {
+        let session = sources.focusTimer?.session
+        let key = session.map { "\($0.taskID)|\($0.isPaused)|\($0.plannedSeconds)" }
+        guard key != focusCardKey else { return }
+        focusCardKey = key
+        guard isViewLoaded else { return }
+        setNeedsRender()
+    }
+
     deinit {
+        if let focusTimerToken { sources.focusTimer?.unobserve(focusTimerToken) }
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
@@ -575,7 +599,9 @@ final class HomeCanvasController: NSViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(heroCard)
         stack.addArrangedSubview(attentionCard)
+        stack.addArrangedSubview(tipRow)
         stack.addArrangedSubview(gridStack)
+        tipRow.isHidden = true
 
         attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
         attentionCard.onOpenItem = { [weak self] item in self?.openAttentionItem(item) }
@@ -650,6 +676,7 @@ final class HomeCanvasController: NSViewController {
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        tipRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
         attentionTie.isActive = true
         attentionWidthTie = attentionTie
@@ -902,8 +929,61 @@ final class HomeCanvasController: NSViewController {
         healthSummary = ServiceHealthRegistry.shared.summary()
         renderGreeting()
         renderAttention()
+        renderTip()
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
+    }
+
+    // MARK: R5-UX-03 - Things you can do
+
+    /// Home's "Things you can do" strip: one tip a day for the first week,
+    /// under the attention card, until the captain hides it.
+    private lazy var tipDismissButton: HelmButton = {
+        let button = HelmButton(title: "Hide tips", variant: .quiet, size: .small,
+                                target: self, action: #selector(dismissTipsTapped))
+        button.toolTip = "Hide these tips for good. \u{2318}/ still lists the shortcuts for any page."
+        return button
+    }()
+    private lazy var tipRow = HelmAccentRow(trailingAccessory: tipDismissButton, hover: false, gradientBadge: true)
+    private var shownTip: HomeTips.Tip?
+    private var shownTipDay = 0
+
+    private func renderTip(now: Date = Date()) {
+        let settings = AppSettings.shared
+        guard space == .overview, let first = settings.homeTipsFirstShown,
+              let tip = HomeTips.tip(firstShown: first, now: now, dismissed: settings.homeTipsDismissed,
+                                     tips: HomeTips.all()) else {
+            shownTip = nil
+            tipRow.isHidden = true
+            return
+        }
+        shownTip = tip
+        shownTipDay = (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: first),
+                                                       to: Calendar.current.startOfDay(for: now)).day ?? 0) + 1
+        tipRow.isHidden = false
+        paintTip(ThemeManager.shared.theme)
+    }
+
+    private func paintTip(_ theme: HelmTheme) {
+        guard let tip = shownTip else { return }
+        tipRow.configure(HelmAccentRow.Content(
+            tint: .info,
+            kicker: "THINGS YOU CAN DO \u{00B7} DAY \(shownTipDay) OF \(HomeTips.days)",
+            title: tip.title,
+            meta: tip.body,
+            badgeSymbol: tip.symbol,
+            metaWraps: true), theme: theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugTipTitle: String? { tipRow.isHidden ? nil : shownTip?.title }
+    func debugDismissTips() { tipDismissButton.performClick(nil) }
+    #endif
+
+    @objc private func dismissTipsTapped() {
+        AppSettings.shared.homeTipsDismissed = true
+        renderTip()
+        Toast.show(in: view, message: "Tips hidden. \u{2318}/ lists the shortcuts for any page.")
     }
 
     /// §5.4's copy. Overview reuses `FleetGreeting`'s time-of-day logic and
@@ -985,7 +1065,12 @@ final class HomeCanvasController: NSViewController {
         // stating: this title is only ever *shown* when the list is empty, so
         // an invitation cannot appear over rows that need doing even if the
         // guard above were ever weakened.
-        let answerIfAny = overviewAnswer()
+        // R5-UX-01 / R5-UX-07: a profile that hides Crew has no fleet to hear
+        // from, so the header never reports on one - not "Fleet read just
+        // now", and not "No firstmate home was found" to someone who needs
+        // none.
+        let fleetSpeaks = !hiddenModules.contains(.crew)
+        let answerIfAny = fleetSpeaks ? overviewAnswer() : nil
         let nothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
         // `hasItems` is the other half of the guard, and it is the one the
         // merge added. The invitation replaces **both** header strings, so
@@ -1000,6 +1085,9 @@ final class HomeCanvasController: NSViewController {
                                                 tasks: sources.shiftStore.activeTasks.count,
                                                 notes: sources.stickyBoardStore.activeNotes.count) {
             return (firstRun.title, firstRun.detail)
+        }
+        guard fleetSpeaks else {
+            return (FleetGreeting.timeOfDay(), "What is due today, from your tasks and follow-ups.")
         }
         guard let answer = answerIfAny else {
             // GL-14: nothing has been measured yet, so the header says so
@@ -2662,6 +2750,7 @@ final class HomeCanvasController: NSViewController {
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         paintHeroBand(theme)
+        paintTip(theme)
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         // Plain `body()` on every space now. The step up to `sectionTitle()`
@@ -2765,6 +2854,8 @@ final class HomeCanvasController: NSViewController {
         case .stickyBoard: fillStickyBoard(&content)
         case .codePreview: fillCodePreview(&content)
         case .commandLibrary: fillCommandLibrary(&content)
+        case .calendar: fillCalendar(&content)
+        case .focusTimer: fillFocusCard(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -3712,7 +3803,7 @@ final class HomeCanvasController: NSViewController {
                                    stale: "Setup status hasn't been checked yet this session.")
             return
         }
-        let total = SetupStepKind.allCases.count
+        let total = SetupStepKind.shown.count
         let done = max(0, total - drift)
         content.chip = drift == 0 ? .ok("Current") : .warn("\(drift) drifted")
         content.body = .progress(value: done, total: total,
@@ -3740,7 +3831,7 @@ final class HomeCanvasController: NSViewController {
                                    stale: "Setup status hasn't been checked yet this session.")
             return
         }
-        let total = SetupStepKind.allCases.count
+        let total = SetupStepKind.shown.count
         guard drift > 0 else {
             content.chip = .ok("Nothing to run")
             content.body = .note("All \(total) steps are already satisfied - a full run would skip every one.")
@@ -4113,6 +4204,50 @@ final class HomeCanvasController: NSViewController {
     /// from the canvas, which `checkCanvasConstructsNoStores` exists to
     /// forbid - the canvas never fires a fetch, and a store construction here
     /// is one, not just a read.
+    /// R5-UX-07: what the calendar has next - the open tasks and follow-ups
+    /// dated from now to two weeks out, from the entries the calendar itself
+    /// draws (`HomeNextUpCard`). Overdue work is the Tasks card's.
+    private func fillCalendar(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "next up"
+        // GL-14: a task list that would not read is not an empty calendar.
+        guard !sources.shiftStore.isInFailedLoadState else {
+            content.chip = .warn("Can't read")
+            content.body = .note("The task list could not be read, so nothing upcoming can be shown.")
+            return
+        }
+        let rows = HomeNextUpCard.rows(tasks: sources.shiftStore.activeTasks, followUps: sources.shiftStore.followUps)
+        guard !rows.isEmpty else {
+            content.chip = .mute("clear")
+            content.body = .note("Nothing dated in the next two weeks. Give a task a due date, or "
+                                 + "double-click a day on \(PlaceName.of(.calendar)) to add one.")
+            return
+        }
+        content.chip = .mute(rows.count == 1 ? "1 coming up" : "\(rows.count) coming up")
+        content.setBoundedPeekRows(rows.prefix(HelmModuleCard.maxPeekRows).map { row in
+            HelmModulePeekRow(state: .idle, text: row.isFollowUp ? "Follow up: \(row.title)" : row.title,
+                              value: row.when)
+        }, total: rows.count)
+    }
+
+    /// R5-UX-07: the focus timer - the session running now, or today's
+    /// focused minutes (`HomeFocusCard`).
+    private func fillFocusCard(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "deep work"
+        let state = HomeFocusCard.state(session: sources.focusTimer?.session,
+                                        focusedSecondsToday: sources.shiftStore.focusSecondsToday())
+        switch state {
+        case .running:
+            content.chip = .ok("Focusing")
+            content.body = .note(HomeFocusCard.note(for: state))
+        case .paused:
+            content.chip = .warn("Paused")
+            content.body = .note(HomeFocusCard.note(for: state))
+        case .idle(let minutes):
+            content.chip = .mute(minutes == 0 ? "not started" : "today")
+            content.body = .metric(value: "\(minutes)", unit: "min", note: HomeFocusCard.note(for: state))
+        }
+    }
+
     private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-card-shortcut-icons`: the captain's own sticky-note
         // artwork, replacing the plain `note.text` glyph - matches

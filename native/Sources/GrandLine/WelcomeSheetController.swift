@@ -6,8 +6,11 @@
 // when unconfigured'. A second user (or the captain on a new Mac) sees a lock
 // screen demanding an Automic Vault secret with a shell command to run."
 //
-// Three steps, which is the finding's own shape: theme -> what this app is ->
-// the lock.
+// Four steps: who the app is for -> theme -> what this app is -> the lock.
+// R5-UX-01 of review #5 put the profile first. A person who wants tasks,
+// notes and a vault used to meet "point Grand Line at your firstmate home"
+// before anything else, so the first question is now who they are, and the
+// answer decides what the rest of the app starts with.
 //
 // # One honest departure from the finding's wording
 //
@@ -43,10 +46,12 @@ final class WelcomeSheetController: NSViewController {
     var onFinish: (() -> Void)?
 
     private enum Step: Int, CaseIterable {
-        case theme
-        /// R2-UX-01 (b): the first-run choice of profile. The sidebar
-        /// layout's only - the floating bar has no modules to hide.
+        /// R2-UX-01 (b) added the choice of profile, and R5-UX-01 made it the
+        /// first step in both layouts: the profile decides Home's cards and
+        /// the Console's toolbar in the floating bar too, not only the
+        /// sidebar's modules.
         case profile
+        case theme
         case tour
         case lock
 
@@ -59,10 +64,8 @@ final class WelcomeSheetController: NSViewController {
             }
         }
 
-        /// The steps a layout shows, in order.
-        static func steps(for layout: WorkspaceLayout) -> [Step] {
-            layout == .sidebar ? allCases : allCases.filter { $0 != .profile }
-        }
+        /// The steps a layout shows, in order. Both layouts ask every one.
+        static func steps(for layout: WorkspaceLayout) -> [Step] { allCases }
 
         var blurb: String {
             switch self {
@@ -71,8 +74,14 @@ final class WelcomeSheetController: NSViewController {
                     + "applies as you click, and you can change it any time from \(PlaceName.of(.settings)) "
                     + "\u{203A} Appearance. The terminal's own colours are on the Terminal page."
             case .profile:
-                return "Pick the modules your sidebar starts with. You can show or hide any of them later in "
-                    + "\(PlaceName.of(.settings)) \u{203A} Appearance, and nothing you hide is deleted."
+                // What the choice changes differs by layout: the floating
+                // bar has no sidebar, so it is Home and the Console there.
+                let shapes = PlaceName.layout == .sidebar
+                    ? "your sidebar, Home's cards and the Console's toolbar"
+                    : "Home's cards and the Console's toolbar"
+                return "This sets what \(shapes) start with. Change it any time in "
+                    + "\(PlaceName.of(.settings)) \u{203A} Appearance, where Custom picks module by module. "
+                    + "Nothing you hide is deleted."
             case .tour:
                 // R2-UX-02: the sidebar layout has one map, the sidebar, so
                 // its tour describes that and not the floating bar's spaces.
@@ -119,10 +128,14 @@ final class WelcomeSheetController: NSViewController {
     private let profileStack = NSStackView()
     private var profileButtons: [(profile: WorkspaceProfile, button: HelmButton)] = []
     private let commandWell = NSTextField(labelWithString: "")
+    /// The sunken well the command sits in, with room around it. The label
+    /// used to be the well itself, so its first letter sat against the
+    /// well's rounded edge and was cut ("av save" read "v save").
+    private let commandBox = NSView()
     private let commandCopyButton = HelmButton(title: "Copy", variant: .secondary, symbol: "doc.on.doc")
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 430))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 470))
         view = root
 
         titleLabel.font = HelmType.pageTitle()
@@ -143,7 +156,7 @@ final class WelcomeSheetController: NSViewController {
         buildCommandWell()
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
-        for child in [themeGrid, profileStack, commandWell, commandCopyButton] as [NSView] {
+        for child in [themeGrid, profileStack, commandBox, commandCopyButton] as [NSView] {
             bodyContainer.addSubview(child)
         }
         NSLayoutConstraint.activate([
@@ -155,12 +168,19 @@ final class WelcomeSheetController: NSViewController {
             themeGrid.trailingAnchor.constraint(lessThanOrEqualTo: bodyContainer.trailingAnchor),
             themeGrid.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
 
-            commandWell.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            commandWell.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            commandWell.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
+            commandBox.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            commandBox.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            commandBox.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
             commandCopyButton.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            commandCopyButton.topAnchor.constraint(equalTo: commandWell.bottomAnchor, constant: HelmMetrics.s2),
+            commandCopyButton.topAnchor.constraint(equalTo: commandBox.bottomAnchor, constant: HelmMetrics.s2),
         ])
+        // The container is as tall as its tallest step body. Pinned at the
+        // top only, it had no height at all, so the column never knew the
+        // body was there: the footer could not keep its distance, and a
+        // render clipped the theme grid and the profile choice away.
+        for child in [themeGrid, profileStack, commandCopyButton] as [NSView] {
+            bodyContainer.bottomAnchor.constraint(greaterThanOrEqualTo: child.bottomAnchor).isActive = true
+        }
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -202,7 +222,7 @@ final class WelcomeSheetController: NSViewController {
         blurbLabel.stringValue = step.blurb
         themeGrid.isHidden = step != .theme
         profileStack.isHidden = step != .profile
-        commandWell.isHidden = step != .lock
+        commandBox.isHidden = step != .lock
         commandCopyButton.isHidden = step != .lock
         backButton.isHidden = stepIndex == 0
         nextButton.title = stepIndex == steps.count - 1 ? "Get started" : "Next"
@@ -312,7 +332,15 @@ final class WelcomeSheetController: NSViewController {
         commandWell.isSelectable = true
         commandWell.lineBreakMode = .byTruncatingMiddle
         commandWell.translatesAutoresizingMaskIntoConstraints = false
-        HelmField.makeSunken(commandWell)
+        commandBox.translatesAutoresizingMaskIntoConstraints = false
+        HelmField.makeSunken(commandBox)
+        commandBox.addSubview(commandWell)
+        NSLayoutConstraint.activate([
+            commandWell.leadingAnchor.constraint(equalTo: commandBox.leadingAnchor, constant: HelmMetrics.s3),
+            commandWell.trailingAnchor.constraint(equalTo: commandBox.trailingAnchor, constant: -HelmMetrics.s3),
+            commandWell.topAnchor.constraint(equalTo: commandBox.topAnchor, constant: HelmMetrics.s2),
+            commandWell.bottomAnchor.constraint(equalTo: commandBox.bottomAnchor, constant: -HelmMetrics.s2),
+        ])
         commandCopyButton.target = self
         commandCopyButton.action = #selector(copyCommandTapped)
         commandCopyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -336,7 +364,7 @@ final class WelcomeSheetController: NSViewController {
         blurbLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         stepLabel.textColor = HelmField.mutedInk(theme)
         commandWell.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        HelmField.applySunken(to: commandWell, theme: theme)
+        HelmField.applySunken(to: commandBox, theme: theme)
         // The chosen palette reads as chosen.
         for button in themeButtons {
             button.variant = button.identifier?.rawValue == theme.app?.family.rawValue ? .primary : .secondary
@@ -356,6 +384,7 @@ final class WelcomeSheetController: NSViewController {
     var debugStepIndex: Int { stepIndex }
     static var debugStepCount: Int { Step.steps(for: PlaceName.layout).count }
     var debugStepTitle: String { step.title }
+    var debugBlurb: String { blurbLabel.stringValue }
     var debugProfileChoiceIsHidden: Bool { profileStack.isHidden }
     /// Pick a profile through its button's own target and action.
     func debugPickProfile(_ profile: WorkspaceProfile) {
@@ -366,7 +395,7 @@ final class WelcomeSheetController: NSViewController {
     func debugSkip() { skipTapped() }
     var debugNextButtonTitle: String { nextButton.title }
     var debugBackIsHidden: Bool { backButton.isHidden }
-    var debugCommandWellIsHidden: Bool { commandWell.isHidden }
+    var debugCommandWellIsHidden: Bool { commandBox.isHidden }
     var debugThemeGridIsHidden: Bool { themeGrid.isHidden }
     #endif
 }

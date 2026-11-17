@@ -582,7 +582,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let known = summary.isKnown
         summaryStrip.configure([
             .init(.value("\(summary.total)"), caption: "Tools tracked"),
-            known ? .count(summary.upToDate, caption: "Up to date") : .init(.unread, caption: "Up to date"),
+            known ? .count(summary.upToDate, caption: StateWord.upToDate.label) : .init(.unread, caption: StateWord.upToDate.label),
             known ? .count(summary.needsAttention, caption: "Need attention", tintWhenNonZero: .warn)
                   : .init(.unread, caption: "Need attention"),
             .init(.value(relativeLastChecked()), caption: "Last checked"),
@@ -976,7 +976,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     }
 
     private func render(_ row: UpdateRow) {
-        row.detailLabel.stringValue = row.detail
+        // R5-UX-08: the floating bar's row too says why and what to do.
+        let failed = row.status == .checkFailed || row.status == .updateFailed
+        row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
         // The pill itself is painted by `applyThemeToRow` (called further
@@ -1019,15 +1021,16 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// password has not failed, so it reads as a warning that asks for them
     /// rather than as a red failure.
     private func pillVisuals(_ row: UpdateRow) -> (String, HelmTint, HelmStatusPill.Style) {
-        if row.status == .updateFailed, row.terminalCommand != nil { return ("Needs Password", .warn, .pill) }
+        if row.status == .updateFailed, row.terminalCommand != nil { return ("Needs password", .warn, .pill) }
+        // R5-UX-02: the pill says what the row's own cell and Setup's
+        // software step say (`StateVocabulary`), not a title-cased copy.
+        let word = row.status.stateWord.label
         switch row.status {
-        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        case .unknown: return (word, .neutral, .dotWord)
         case .checking, .updating: return ("", .neutral, .dotWord)
-        case .upToDate: return ("Up to Date", .good, .dotWord)
-        case .updateAvailable: return ("Update Available", .warn, .pill)
-        case .notInstalled: return ("Not Installed", .warn, .pill)
-        case .checkFailed: return ("Check Failed", .critical, .pill)
-        case .updateFailed: return ("Update Failed", .critical, .pill)
+        case .upToDate: return (word, .good, .dotWord)
+        case .updateAvailable, .notInstalled: return (word, .warn, .pill)
+        case .checkFailed, .updateFailed: return (word, .critical, .pill)
         }
     }
 
@@ -1275,7 +1278,10 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
     private func toolRow(_ row: UpdateRow) -> HelmDataTable.Row {
         var tableRow = HelmDataTable.Row.record(row.item.id)
         let failed = row.status == .checkFailed || row.status == .updateFailed
-        tableRow.cells["tool"] = .title(row.item.name, subtitle: failed ? row.detail : nil, subtitleIsCode: false,
+        // R5-UX-08: a failed row says why and what to do, not "Check failed"
+        // alone.
+        let subtitle = failed ? Self.failureExplanation(row).rowLine : nil
+        tableRow.cells["tool"] = .title(row.item.name, subtitle: subtitle, subtitleIsCode: false,
                                         symbol: row.item.kind.symbol,
                                         tint: DependencyCatalog.tint(for: row.item.category), tintHex: nil)
         if let installed = row.installedLabel, row.status != .notInstalled {
@@ -1330,18 +1336,19 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
     /// the row's state while it has no version to offer.
     private func availableCell(_ row: UpdateRow) -> HelmDataTable.Cell {
         switch row.status {
-        case .upToDate: return .muted("Up to date")
+        case .upToDate: return .muted(StateWord.upToDate.label)
         case .updateAvailable:
             return .status("\u{2191} \(row.latestLabel ?? "newer version")", tint: .warn)
         case .notInstalled:
-            return .status(row.latestLabel.map { "Not installed \u{00B7} \($0)" } ?? "Not installed", tint: .warn)
-        case .checking: return .muted("Checking\u{2026}")
-        case .updating: return .muted("Updating\u{2026}")
-        case .checkFailed: return .status("Check failed", tint: .critical)
+            let word = StateWord.notInstalled.label
+            return .status(row.latestLabel.map { "\(word) \u{00B7} \($0)" } ?? word, tint: .warn)
+        case .checking: return .muted(StateWord.checking.label)
+        case .updating: return .muted(StateWord.updating.label)
+        case .checkFailed: return .status(StateWord.checkFailed.label, tint: .critical)
         case .updateFailed:
             return row.terminalCommand != nil ? .status("Needs password", tint: .warn)
-                                              : .status("Update failed", tint: .critical)
-        case .unknown: return .muted("Not checked")
+                                              : .status(StateWord.updateFailed.label, tint: .critical)
+        case .unknown: return .muted(StateWord.notChecked.label)
         }
     }
 
@@ -1350,6 +1357,12 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         selectedToolID = row.item.id
         onInspectorContentChanged?()
         onShowInspector?()
+    }
+
+    /// R5-UX-08: a failed row's what, why and what to do
+    /// (`FailureExplainer`), from the reason and output the row already has.
+    static func failureExplanation(_ row: UpdateRow) -> ScheduleFailureExplanation {
+        FailureExplainer.explain(tool: row.item.name, status: row.status, detail: row.detail, log: row.log)
     }
 
     private func toolDetail(for row: UpdateRow) -> WorkspaceDetail {
@@ -1363,6 +1376,13 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         detail.fields.append(.init("Source", row.item.kind.sourceName))
         let (word, _, _) = pillVisuals(row)
         if !word.isEmpty { detail.fields.append(.init("Status", word)) }
+        // R5-UX-08: the three parts the Schedules run log shows for a failure.
+        if row.status == .checkFailed || row.status == .updateFailed {
+            let failure = Self.failureExplanation(row)
+            detail.fields.append(.init("What failed", failure.whatFailed))
+            detail.fields.append(.init("Why", failure.why))
+            detail.fields.append(.init("What to do", failure.whatToDo))
+        }
         if let command = row.terminalCommand { detail.sections.append(.init("Command", [command], isCode: true)) }
         let lines = row.log.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         detail.sections.append(.init("Output", row.log.isEmpty ? ["No output yet."] : lines, isCode: !row.log.isEmpty))

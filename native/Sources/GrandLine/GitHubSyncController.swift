@@ -781,7 +781,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         var parts: [String] = ["\(total) forks"]
         if behind > 0 { parts.append("\(behind) behind upstream") }
         if diverged > 0 { parts.append("\(diverged) diverged") }
-        if failed > 0 { parts.append(failed == total ? "could not be checked" : "\(failed) could not be checked") }
+        // R5-UX-02: the rows' own word for it (`StateVocabulary`).
+        if failed > 0 { parts.append(failed == total ? "every check failed" : StateWord.checkFailed.counted(failed)) }
         if notForks > 0 { parts.append("\(notForks) not a fork") }
         // A fork that is ahead has nothing to pull, so it is in sync with
         // upstream for every purpose this line serves.
@@ -988,15 +989,16 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// one that is not. Tints, never the terminal's ANSI slots (UI-32).
     private func pillVisuals(_ status: GitHubSyncStatus) -> (String, HelmTint, HelmStatusPill.Style) {
         switch status {
-        case .unknown: return ("Not Checked", .neutral, .dotWord)
+        // R5-UX-02: one word per state, the table cells' sentence case.
+        case .unknown: return (StateWord.notChecked.label, .neutral, .dotWord)
         case .checking, .syncing: return ("", .neutral, .dotWord)
-        case .inSync: return ("In Sync", .good, .dotWord)
+        case .inSync: return ("In sync", .good, .dotWord)
         case .behind(let n): return ("\(n) behind", .warn, .pill)
         case .diverged: return ("Diverged", .critical, .pill)
         case .ahead: return ("Ahead", .good, .dotWord)
-        case .notAFork: return ("Not a Fork", .neutral, .dotWord)
-        case .checkFailed: return ("Check Failed", .critical, .pill)
-        case .syncFailed: return ("Sync Failed", .critical, .pill)
+        case .notAFork: return ("Not a fork", .neutral, .dotWord)
+        case .checkFailed: return (StateWord.checkFailed.label, .critical, .pill)
+        case .syncFailed: return ("Sync failed", .critical, .pill)
         }
     }
 
@@ -1244,12 +1246,12 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
     private func behindCell(_ status: GitHubSyncStatus) -> HelmDataTable.Cell {
         switch status {
         case .behind(let n): return .status("\(n) commit\(n == 1 ? "" : "s")", tint: .warn)
-        case .inSync, .ahead: return .muted("Up to date")
+        case .inSync, .ahead: return .muted(StateWord.upToDate.label)
         case .diverged: return .status("Diverged", tint: .critical)
         case .notAFork: return .muted("Not a fork")
-        case .checkFailed: return .status("Check failed", tint: .critical)
+        case .checkFailed: return .status(StateWord.checkFailed.label, tint: .critical)
         case .syncFailed: return .status("Sync failed", tint: .critical)
-        case .checking: return .muted("Checking\u{2026}")
+        case .checking: return .muted(StateWord.checking.label)
         case .syncing: return .muted("Syncing\u{2026}")
         case .unknown: return .muted("Not checked")
         }

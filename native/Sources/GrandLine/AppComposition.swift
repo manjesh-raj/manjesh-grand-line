@@ -236,6 +236,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 AppLog.lifecycle.info("dictation hotkey refused - app is locked (GL-09)")
                 return
             }
+            // R5-UX-09: the first press without Accessibility asks for it -
+            // the same grant the Dictation page's button asks for - instead
+            // of recording, once. After that the key records as it always
+            // has, and the page's button stays for a later change of mind.
+            let settings = AppSettings.shared
+            if DictationPermissions.shouldAskForAccessibility(trusted: DictationPermissions.isAccessibilityTrusted,
+                                                             alreadyAsked: settings.dictationAccessibilityAsked) {
+                settings.dictationAccessibilityAsked = true
+                let request = DictationPermissions.accessibilityRequest(key: settings.dictationShortcut.displayString)
+                // After this key event, so the question is not a modal
+                // session inside the monitor's own callback.
+                DispatchQueue.main.async {
+                    if HelmConfirm.confirm(request) == .confirm { _ = DictationPermissions.requestAccessibility() }
+                }
+                return
+            }
             self?.dictationEngine.startRecording()
         },
         onUp: { [weak self] in self?.dictationEngine.stopRecording() }
@@ -1571,6 +1587,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func showShortcutsSettings() {
         appShell.workspace.navigator.show(.settings)
         appShell.workspace.settings.select(.shortcuts)
+    }
+
+    /// Help → "Shortcuts for This Page" (⌘/) - R5-UX-03. The chords for the
+    /// page on screen and the few that work everywhere; its button opens the
+    /// full list above.
+    @objc func showPageShortcuts() {
+        let place = appShell.shortcutsPlace
+        let sections = PageShortcuts.sections(module: place.module, route: place.route,
+                                              layout: PlaceName.layout, settings: .shared)
+        appShell.presentAsSheet(KeyboardShortcutsSheetController(
+            sections: sections, heading: "Shortcuts for \(place.module.title)",
+            subheading: "What works on this page, and anywhere in Grand Line.",
+            actionTitle: "All Shortcuts\u{2026}") { [weak self] in
+                // After this sheet has gone, so the full one is not stacked.
+                DispatchQueue.main.async { self?.showKeyboardShortcuts() }
+            })
     }
 
     /// Help → "Manual Checks" - UX3's second Help item.

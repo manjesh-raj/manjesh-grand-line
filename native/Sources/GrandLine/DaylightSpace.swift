@@ -167,6 +167,12 @@ enum DaylightModule: String, CaseIterable {
     // order the captain asked for each entry, and appending is what stops a
     // move shuffling a card he already knows the position of.
     case commandLibrary
+    // R5-UX-07: the two cards a Personal Home leads with that had no card -
+    // what the calendar has next, and the focus timer. Appended to the
+    // Command group, after every card the captain already knows the place
+    // of, for the same reason as `.commandLibrary` above.
+    case calendar
+    case focusTimer
     // `fm/grandline-home-card-reorg`: the captain's third placement ask for
     // this card, and the first one that gives it a space of its own. Its two
     // earlier positions were both Overview-only orderings -
@@ -273,7 +279,7 @@ enum DaylightModule: String, CaseIterable {
         // shipped Home page. See `DaylightModuleSelfTest`'s `lockedMembership`
         // and `overviewOnly`, both updated alongside this per this file's own
         // "change it here and in that test together" rule.
-        case .console, .tasks, .mergeQueue, .commandLibrary, .strawHat: return .command
+        case .console, .tasks, .mergeQueue, .commandLibrary, .strawHat, .calendar, .focusTimer: return .command
         case .hosts, .logAnalyzer, .kubernetes, .health, .schedules: return .operations
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s own tabs into
@@ -346,6 +352,9 @@ enum DaylightModule: String, CaseIterable {
              // module has to opt out explicitly, because `default` returns
              // `true` and Overview's card count is a locked captain decision.
              .commandLibrary,
+             // R5-UX-07: a Personal Home places these two itself; the
+             // floating bar's hub keeps its own set.
+             .calendar, .focusTimer,
              // `fm/grandline-home-card-reorg`: the captain reviewed the live
              // Home page and asked for these three off it. `.console` and
              // `.schedules` were two of the four "operational pulse" cards the
@@ -475,6 +484,8 @@ enum DaylightModule: String, CaseIterable {
         case .stickyBoard: return .stickyBoard
         case .codePreview: return .codePreview
         case .commandLibrary: return .commandLibrary
+        case .calendar: return .calendar
+        case .focusTimer: return .shift
         case .settings: return .settings
         }
     }
@@ -543,6 +554,8 @@ enum DaylightModule: String, CaseIterable {
         // like `.strawHat` above - a card and the page it opens should not
         // disagree even in their fallback.
         case .commandLibrary: return "books.vertical"
+        case .calendar: return "calendar.badge.checkmark"
+        case .focusTimer: return "timer"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -600,6 +613,8 @@ enum DaylightModule: String, CaseIterable {
         case .stickyBoard: return "Sticky Board"
         case .codePreview: return "Code Preview"
         case .commandLibrary: return "DevOps Commands"
+        case .calendar: return "Calendar"
+        case .focusTimer: return "Focus timer"
         case .settings: return "Settings"
         }
     }

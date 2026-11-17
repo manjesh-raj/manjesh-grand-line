@@ -159,7 +159,10 @@ final class HealthCardView: NSObject {
         var row = HelmDataTable.Row.record(service.rawValue)
         let detail: String
         if let failure = state.lastFailureDetail, let when = state.lastFailure {
-            detail = "Last error (\(Self.relative(when))): \(failure)"
+            // R5-UX-08: the reason and the next step, not the reason alone.
+            let explanation = FailureExplainer.explain(service: service, detail: failure,
+                                                       canRetry: retryActions[service] != nil)
+            detail = explanation.rowLine(failedAt: Self.relative(when))
         } else {
             detail = service.detail
         }
@@ -515,7 +518,10 @@ final class HealthCardView: NSObject {
             lines.append("\(ServiceHealthSummary.Bucket.notRun.label).")
         }
         if let failure = state.lastFailureDetail, let when = state.lastFailure {
-            lines.append("Last error (\(Self.relative(when))): \(failure)")
+            // R5-UX-08: the reason and the next step, not the reason alone.
+            let explanation = FailureExplainer.explain(service: service, detail: failure,
+                                                       canRetry: retryActions[service] != nil)
+            lines.append(explanation.rowLine(failedAt: Self.relative(when)))
         }
 
         // §6.5's "34pt gradient tile (solid semantic fill ... when the row's

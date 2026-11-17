@@ -539,6 +539,15 @@ extension AppDelegate {
             pageColumnItem.keyEquivalentModifierMask = [.command, .option, .shift]
             pageColumnItem.target = menuTarget
             goMenu.addItem(pageColumnItem)
+            // R5-UX-09: ⌥⌘I, the platform's own inspector chord, for what
+            // was a toolbar button only. Checked free: ⇧⌘I is Log Analyzer's
+            // Investigate Further, a different mask.
+            let inspectorItem = NSMenuItem(title: "Toggle Inspector",
+                                           action: #selector(WorkspaceShellController.toggleInspectorFromMenu),
+                                           keyEquivalent: "i").withSymbol("sidebar.right")
+            inspectorItem.keyEquivalentModifierMask = [.command, .option]
+            inspectorItem.target = menuTarget
+            goMenu.addItem(inspectorItem)
         }
         goMenu.addItem(NSMenuItem.separator())
         let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
@@ -563,22 +572,24 @@ extension AppDelegate {
         // map and must stay complete; a menu that already listed something
         // ten rows up must not list it again.
         let alreadyListed: Set<RailDestination> = [.homeCanvas]
+        // R2-UX-03: a module's tabs, before and after the one showing - the
+        // system's own "show previous/next tab" chords. On Console, a host
+        // page and Tools `TabKeyboardShortcuts` sees ⌘⇧[ / ⌘⇧] first and
+        // moves between that page's own tabs, as it always has. R5-UX-09:
+        // the floating bar has them too, stepping through a module's pages
+        // (Knowledge's and Setup's were reachable by no chord there).
+        goMenu.addItem(NSMenuItem.separator())
+        let previousTab = NSMenuItem(title: "Previous Tab",
+                                     action: #selector(WorkspaceShellController.selectPreviousModuleTab(_:)),
+                                     keyEquivalent: "{").withSymbol("chevron.backward")
+        previousTab.target = menuTarget
+        goMenu.addItem(previousTab)
+        let nextTab = NSMenuItem(title: "Next Tab",
+                                 action: #selector(WorkspaceShellController.selectNextModuleTab(_:)),
+                                 keyEquivalent: "}").withSymbol("chevron.forward")
+        nextTab.target = menuTarget
+        goMenu.addItem(nextTab)
         if workspaceLayout == .sidebar {
-            // R2-UX-03: a module's tabs, before and after the one showing -
-            // the system's own "show previous/next tab" chords. On Console,
-            // a host page and Tools `TabKeyboardShortcuts` sees ⌘⇧[ / ⌘⇧]
-            // first and moves between that page's own tabs, as it always has.
-            goMenu.addItem(NSMenuItem.separator())
-            let previousTab = NSMenuItem(title: "Previous Tab",
-                                         action: #selector(WorkspaceShellController.selectPreviousModuleTab(_:)),
-                                         keyEquivalent: "{").withSymbol("chevron.backward")
-            previousTab.target = menuTarget
-            goMenu.addItem(previousTab)
-            let nextTab = NSMenuItem(title: "Next Tab",
-                                     action: #selector(WorkspaceShellController.selectNextModuleTab(_:)),
-                                     keyEquivalent: "}").withSymbol("chevron.forward")
-            nextTab.target = menuTarget
-            goMenu.addItem(nextTab)
             WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
             // R2-UX-01 (b): a module shown or hidden in Settings comes and
             // goes here too, as it does in the sidebar.
@@ -658,6 +669,14 @@ extension AppDelegate {
         shortcutsItem.keyEquivalentModifierMask = [.command, .shift]
         shortcutsItem.target = self
         helpMenu.addItem(shortcutsItem)
+        // R5-UX-03: ⌘/, the short sheet for the page on screen. Checked
+        // free: "/" is taken only with ⇧ (the full list above).
+        let pageShortcutsItem = NSMenuItem(title: "Shortcuts for This Page",
+                                           action: #selector(AppDelegate.showPageShortcuts),
+                                           keyEquivalent: "/").withSymbol("keyboard.badge.ellipsis")
+        pageShortcutsItem.keyEquivalentModifierMask = [.command]
+        pageShortcutsItem.target = self
+        helpMenu.addItem(pageShortcutsItem)
         let manualChecksItem = NSMenuItem(title: "Manual Checks",
                                           action: #selector(AppDelegate.showManualChecks),
                                           keyEquivalent: "").withSymbol("checklist")

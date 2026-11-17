@@ -1453,7 +1453,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
-            description: WorkspaceLayout.maintenanceNote,
+            description: WorkspaceLayout.choiceNote,
             control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
 
         let familyAside = muted(NSTextField(labelWithString: "Each family has a light and a dark register"))
@@ -1496,7 +1496,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let profileRow = SettingsRow(
             title: "Profile",
-            description: "Personal shows the modules anyone can use. Operator adds the crew, hosts, the console and the operations modules.",
+            description: "Personal shows the modules anyone can use, with Notebook and Reading list as their own rows. "
+                + "Operator adds the crew, hosts, the console and the operations modules, with Knowledge's tabs and Runbooks in Observe.",
             control: profileTabs)
         var rows = [profileRow]
         moduleSwitches = WorkspaceSidebarModel.listedModules().filter(\.canBeHidden).map { module in
@@ -1514,7 +1515,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         refreshModuleSwitches()
         return SettingsSection(heading: "Sidebar", group: SettingsGroup(rows: rows),
-                               foot: "Home and Settings are always in the sidebar. A hidden module's pages still open from a link or a notification, and nothing in them is deleted. Applies to the sidebar layout.")
+                               foot: "Home and Settings are always in the sidebar. A hidden module's pages still open from a link or a notification, and nothing in them is deleted. The switches apply to the sidebar layout; the profile also sets Home's cards and the Console's toolbar in both layouts.")
     }
 
     private static let customProfileID = "custom"

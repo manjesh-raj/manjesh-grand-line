@@ -3,14 +3,15 @@
 // R2-ARCH-04 of the second full review: the pages that draw two presentations
 // keep the floating bar's in an extension file of its own.
 //
-// R2-ARCH-01 froze the floating bar as the classic layout, so the members only
+// R2-ARCH-01 made the floating bar the classic layout, and R5-UX-11 keeps it
+// beside the sidebar for good, so the members only
 // its presentation uses were moved, verbatim, out of each page's main file into
 // `<Page>+Classic.swift`. The main file carries what the sidebar layout draws.
 // A move like that undoes itself one convenient edit at a time, so this suite
 // pins the new structure:
 //
 //   1. each `+Classic.swift` file exists, extends its page, says it is the
-//      frozen floating bar's, and declares every member that was moved there,
+//      classic floating bar's, and declares every member that was moved there,
 //   2. none of those members is declared in the page's main file again,
 //   3. the five pages where nothing moved still adopt the sidebar layout - their
 //      classic presentation is built inside methods both layouts run (Fleet,
@@ -82,8 +83,8 @@ enum ClassicPresentationSelfTest {
             }
             check(classic.contains("extension \(entry.page) {"),
                   "\(entry.page)+Classic.swift does not extend \(entry.page)", &ok)
-            check(classic.contains("frozen by R2-ARCH-01"),
-                  "\(entry.page)+Classic.swift no longer says it is the frozen floating bar's", &ok)
+            check(classic.contains("kept beside the sidebar by R5-UX-11"),
+                  "\(entry.page)+Classic.swift no longer says it is the classic floating bar's", &ok)
             for member in entry.members {
                 movedCount += 1
                 check(declares(classic, member), "R2-ARCH-04: \(entry.page)+Classic.swift no longer declares `\(member)`", &ok)

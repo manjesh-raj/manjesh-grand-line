@@ -199,7 +199,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         if showingArchive { return "\(noun) archived \u{00B7} \(syncSummary)" }
         let archived = store.archivedNotes.count
         let archiveNote = archived == 0 ? "" : " \u{00B7} \(archived) archived"
-        return "\(noun)\(archiveNote) \u{00B7} \(syncSummary)"
+        // R5-UX-10: the board's own hint, kept for the first few notes.
+        return QuietHint.line("\(noun)\(archiveNote) \u{00B7} \(syncSummary)", count: count,
+                              hint: "\u{2318}N adds a note, drag one to move it")
     }
 
     /// One wording for the sync state, derived rather than asserted.

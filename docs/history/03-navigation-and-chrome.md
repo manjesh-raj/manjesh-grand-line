@@ -1609,3 +1609,52 @@ After a visit to Settings at 1100x760, Knowledge was lit under a "Work" heading 
 Found on the way, not fixed here: visiting Automation in an off-screen 720pt-tall window and then navigating on throws AppKit's "more Update Constraints in Window passes than there are views".
 `AutomationController.viewDidLayout` calls `SettingsRow.relayoutDescription`, which invalidates a label's intrinsic size from inside a layout pass.
 It showed up only in a throwaway probe that visited every route of every module in one window.
+
+## Review #5's UX findings, R5-UX-01 to R5-UX-11 (`fm/grand-line-ux-fixes`)
+
+One PR for the eleven UX items in section 8 of review #5, each in its own commits.
+`ReviewFiveUXSelfTest` (`FM_RUN_REVIEW5_UX_TESTS`, pure logic) holds the model and source checks for all of them.
+
+### What shipped
+
+- **R5-UX-11, both layouts stay.** The captain kept the sidebar and the floating bar permanently, with the sidebar as the default.
+  The "maintenance only" copy and the freeze wording went from Settings, the shell headers, the seven `+Classic.swift` files and the feature inventory.
+  Every change below was checked in both layouts.
+- **R5-UX-01, profile first.** The welcome sheet asks how Grand Line will be used before anything else, in both layouts.
+  A Personal profile lists and counts only the Setup steps it can use (`SetupStepKind.shown`): no firstmate home, dotfiles or agent instructions.
+  A launch with no firstmate home lands on Home whenever the profile hides Setup, in either layout.
+- **R5-UX-05, Knowledge split.** Runbooks and Postmortems are an Observe module of their own, after Logs.
+  Knowledge keeps Notebook, Docs and Reading list, and Notebook and Reading list are also door rows a Personal sidebar lists in its place.
+  `ModuleTable.litModule` and `ModuleTable.hidesPage` are the one rule for the lit row and for what ⌘K leaves out.
+  A stored hidden set is settled once (`AppSettings.settleKnowledgeSplit`), and with no profile at all the hidden set is the Operator's.
+- **R5-UX-04, the Calendar as a place.** While its row is lit, the window toolbar draws Day, Week, Month and Agenda as its tabs, with Today and New task.
+  The body is still the Tasks page's calendar, so decision 1A's shared filters hold.
+  In the sidebar layout the card hides its own Today and period pills through one fixed stylesheet the native side toggles; the bundle is not rebuilt.
+- **R5-UX-06.** A Personal host Console drops SRE Lead, Analyze Logs, Tail Logs, the cluster badge and Start Incident, in both layouts.
+- **R5-UX-07.** A Personal Home starts with Tasks, Calendar (next up), Notebook, Sticky Board, Reading List and Focus timer.
+  The Calendar and Focus timer cards are new (`HomePersonalCards.swift`).
+  The floating bar hands a Personal Home the same cards, and a Home without Crew never reports on the fleet.
+- **R5-UX-02.** `StateVocabulary` is the one table of state words.
+  It found Setup's software step and Updates naming one tool state three different ways.
+- **R5-UX-08.** `FailureExplainer` turns a Health or Updates error into `ScheduleFailureExplanation`'s three parts, and a failed row leads with what to do.
+- **R5-UX-03.** A "Things you can do" strip on Home for the first seven days, and Help › Shortcuts for This Page on ⌘/.
+- **R5-UX-09.** ⇧⌘[ and ] step a module's pages on the floating bar too, Go › Toggle Inspector is ⌥⌘I, and the dictation key asks for Accessibility once at the first press without it.
+- **R5-UX-10.** A list page keeps one hint from its empty state in its header line while it holds one to five items.
+
+### What the renders found
+
+The tour lab gained `ux profile`, `ux tips`, `ux welcome` and `ux pageshortcuts`.
+Renders of both layouts, Daylight and Dusk, at 1512 and 1100 found, and this PR fixed:
+
+- the welcome sheet's step bodies had no height, so the profile choice and the theme grid did not draw (pre-existing for the theme step),
+- the lock step's command sat on its well's edge with its first letter cut,
+- "Open Tasks › Calendar" in the ⌘/ sheet, now that `PlaceName.of` names a listed door row as the sidebar does,
+- the card's duplicate period pills clipping at 1100, and a second Today in the floating bar's drill header,
+- title-case pill words beside sentence-case cells on Updates and GitHub sync,
+- a failed Health row's next step cut off its one-line subtitle.
+
+### Left as it was
+
+- Schedule-X's "+N more" link renders "+ {{n}} events" in a crowded month cell. It is inside the vendored bundle, which this task was not to rebuild.
+- `AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` fails locally for nord-snow on `main` and on this branch alike (macOS 26 at 2x).
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` failed 2 of 13 local runs while other heavy processes ran, and passed 8 of 8 alone; `main` passed 5 of 5. Its path is unchanged unless the toolbar owns the period controls.

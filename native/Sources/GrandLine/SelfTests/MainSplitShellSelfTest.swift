@@ -357,7 +357,10 @@ enum MainSplitShellSelfTest {
                   "\(destination.rawValue) is not showing its own mounter slot", &ok)
             check(slotView?.isDescendant(of: shell.debugContentPane) == true,
                   "\(destination.rawValue)'s page is not in the content column", &ok)
-            let row = ModuleTable.sidebarModule(for: destination, pageTab: shell.debugCurrentTab?.name)
+            // A hidden door row leaves its page to the module it lives in
+            // (R5-UX-05: an Operator's Notebook lights Knowledge).
+            let row = ModuleTable.litModule(for: destination, pageTab: shell.debugCurrentTab?.name,
+                                            hidden: AppSettings.shared.hiddenModules)
             check(shell.sidebar.debugSelectedEntry == .module(row),
                   "\(destination.rawValue) did not light \(row.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
             check(shell.currentModule == module && window.title == module.title,
@@ -384,6 +387,17 @@ enum MainSplitShellSelfTest {
             let names = shell.toolbar.debugTabNames
             if module == .home {
                 check(names.isEmpty, "Home's toolbar still shows tabs \(names) (R2-UX-02 retired its spaces)", &ok)
+            } else if row == .calendar {
+                // R5-UX-04: the Calendar is a place of its own, and its tabs
+                // are its periods, with the one on screen lit.
+                let calendar = (shell.debugSlotController(.shift) as? ShiftController)?.calendar
+                check(names == ShiftCalendarScale.toolbarOrder.map(\.title)
+                        && selectedTabName(shell) == calendar?.scale.title,
+                      "the Calendar's toolbar shows \(names) with \(selectedTabName(shell) ?? "nothing") lit", &ok)
+            } else if row != module, !row.drawsToolbarTabs {
+                // R5-UX-05: a listed door row to a page of its own draws no
+                // host tab bar.
+                check(names.isEmpty, "\(row.title), a place of its own, shows \(module.title)'s tabs \(names)", &ok)
             } else if module.drawsToolbarTabs {
                 check(names == module.tabs.map(\.name), "\(module.title)'s toolbar shows \(names)", &ok)
                 let lit = selectedTabName(shell).flatMap { name in module.tabs.first { $0.name == name } }
@@ -601,14 +615,14 @@ enum MainSplitShellSelfTest {
         // suite checks; every module has been shown by now.)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
-        clickTab("Runbooks", shell)
+        clickTab("Reading list", shell)
         check(shell.sidebar.debugClick(.module(.crew)), "the Crew row is not in the sidebar", &ok)
         settle(shell)
         check(shell.currentModule == .crew, "the Crew row opened \(shell.currentModule.title)", &ok)
         check(shell.sidebar.debugClick(.module(.knowledge)), "the Knowledge row is not in the sidebar", &ok)
         settle(shell)
-        check(shell.debugCurrentDestination == .runbooks,
-              "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Runbooks tab it showed last", &ok)
+        check(shell.debugCurrentDestination == .readingList,
+              "Knowledge's row reopened \(String(describing: shell.debugCurrentDestination)), not the Reading list tab it showed last", &ok)
 
         // A page inside a module of several lights its module's row.
         shell.workspace.navigator.show(.review)
@@ -617,11 +631,16 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugSelectedEntry == .module(.crew),
               "a page reached from outside the sidebar lit \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
 
-        // Home and every module have a visible row, under their own names.
+        // Home and every module the sidebar lists have a visible row, under
+        // their own names, and a hidden one has none (R5-UX-05: an
+        // Operator's sidebar hides the Notebook and Reading list door rows).
         let entries = shell.sidebar.debugVisibleEntries
+        let hidden = AppSettings.shared.hiddenModules
         for module in WorkspaceModule.allCases {
-            check(entries.contains(.module(module)), "no visible row for \(module.title)", &ok)
+            check(entries.contains(.module(module)) == !hidden.contains(module),
+                  "\(module.title)'s row is \(entries.contains(.module(module)) ? "shown" : "missing") with \(hidden.map(\.rawValue).sorted()) hidden", &ok)
         }
+        check(!hidden.isEmpty, "the sidebar check hides nothing, so it cannot see a hidden row drawn", &ok)
     }
 
     /// Stage 6, the captain's call: the pins are the floating bar's. With
@@ -644,7 +663,7 @@ enum MainSplitShellSelfTest {
         check(Set(sections) == groups && sections.count == groups.count,
               "with pins set the sidebar draws the sections \(sections), want the four groups only", &ok)
         check(entries.first == .module(.home), "Home is not the first row under the header", &ok)
-        for module in WorkspaceModule.allCases {
+        for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
             let titles = shell.sidebar.debugContextMenuTitles(for: .module(module))
             check(!titles.contains { $0.hasPrefix("Pin ") || $0.hasPrefix("Unpin ") },
                   "\(module.title)'s menu still offers to pin: \(titles)", &ok)
@@ -714,7 +733,20 @@ enum MainSplitShellSelfTest {
             shell.workspace.navigator.show(module.primaryRoute)
             settle(shell)
             for tab in module.tabs {
+                // R5-UX-04: Tasks' Calendar tab stays a shortcut to the
+                // Calendar, which is a place with its own toolbar - so the
+                // next tab is reached from the Tasks row again.
+                if shell.toolbar.debugTabNames.firstIndex(of: tab.name) == nil {
+                    shell.openModule(module)
+                    settle(shell)
+                }
                 check(clickTab(tab.name, shell), "\(module.title)'s toolbar has no \(tab.name) tab", &ok)
+                if ModuleTable.litModule(for: tab.route, pageTab: tab.name, hidden: AppSettings.shared.hiddenModules) == .calendar {
+                    check(shell.debugCurrentTab == tab && shell.sidebar.debugSelectedEntry == .module(.calendar)
+                            && shell.toolbar.debugTabNames == ShiftCalendarScale.toolbarOrder.map(\.title),
+                          "\(module.title) › \(tab.name) did not open the Calendar with its own toolbar", &ok)
+                    continue
+                }
                 check(shell.debugCurrentDestination == tab.route,
                       "\(module.title) › \(tab.name) showed \(String(describing: shell.debugCurrentDestination))", &ok)
                 check(selectedTabName(shell) == tab.name && shell.debugCurrentTab == tab,
@@ -1383,13 +1415,26 @@ enum MainSplitShellSelfTest {
               + "Tasks on \(tasks.selectedModuleTabName)", &ok)
         // R5-BUG-05: the crumb and the header name the row the sidebar
         // lights, so the Calendar view reads "Work › Calendar" beside a lit
-        // Calendar row, while the tabs stay Tasks' own.
+        // Calendar row. R5-UX-04: its tabs are its own periods, not Tasks'
+        // views, and its actions are Today and New task.
         check(shell.currentModule == .tasks && shell.toolbar.debugCrumb.hasSuffix("Calendar"),
               "the calendar button drew \(shell.currentModule.title)'s chrome (\(shell.toolbar.debugCrumb)), "
-              + "want Tasks' tabs under a Work \u{203A} Calendar crumb", &ok)
-        check(shell.toolbar.debugTabNames == ["Board", "List", "Calendar", "Weekly review"]
-                && selectedTabName(shell) == "Calendar",
+              + "want a Work \u{203A} Calendar crumb", &ok)
+        check(shell.toolbar.debugTabNames == ["Day", "Week", "Month", "Agenda"]
+                && selectedTabName(shell) == tasks.calendar.scale.title,
               "the calendar button lit \(selectedTabName(shell) ?? "no tab") of \(shell.toolbar.debugTabNames)", &ok)
+        let actionTitles = shell.toolbar.debugPageActions.compactMap { ($0 as? HelmButton)?.title }
+        check(actionTitles.contains("Today") && (shell.toolbar.debugPrimaryAction as? HelmButton)?.title == "New task",
+              "the Calendar's toolbar carries \(actionTitles) and \(String(describing: (shell.toolbar.debugPrimaryAction as? HelmButton)?.title))", &ok)
+        // A period tab is the card's own pill: Week shows the week, and
+        // ⌘⇧] steps on to Month.
+        clickTab("Week", shell)
+        check(tasks.calendar.scale == .week && selectedTabName(shell) == "Week" && tasks.isShowingCalendar,
+              "the Week tab left the calendar on \(tasks.calendar.scale.title)", &ok)
+        shell.selectNextModuleTab(nil)
+        settle(shell)
+        check(tasks.calendar.scale == .month && selectedTabName(shell) == "Month",
+              "\u{2318}\u{21E7}] on the Calendar's Week showed \(tasks.calendar.scale.title)", &ok)
         check(shell.sidebar.debugSelectedEntry == .module(.calendar),
               "Tasks' Calendar view lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Calendar row", &ok)
         check(shell.debugHeader?.title == "Calendar" && shell.debugHeader?.subtitle == tasks.calendar.caption,
@@ -1405,16 +1450,24 @@ enum MainSplitShellSelfTest {
         check(clip.map { below.maxY <= $0.bounds.maxY + 1 && below.height > ShiftCalendarView.minimumHeight - 30 } ?? false,
               "the calendar should fill the column under the filter row, it sits at \(below) in \(clip?.bounds ?? .zero)", &ok)
 
-        // Board lights the Tasks row; the Calendar row brings the view back;
-        // the Tasks row returns to Board rather than to the Calendar.
+        // The Tasks row leaves the Calendar for Board and lights Tasks; the
+        // Calendar row brings the view back; the Tasks row returns to Board
+        // rather than to the Calendar.
+        check(shell.sidebar.debugClick(.module(.tasks)), "the sidebar has no Tasks row", &ok)
+        settle(shell)
+        // It reopens the Tasks view shown last (List, after the tab sweep),
+        // never the Calendar.
+        check(shell.sidebar.debugSelectedEntry == .module(.tasks) && tasks.debugCalendarSection.isHidden
+                && ["Board", "List"].contains(selectedTabName(shell) ?? ""),
+              "the Tasks row lit \(String(describing: shell.sidebar.debugSelectedEntry)) on \(selectedTabName(shell) ?? "nothing"), want Tasks on a Tasks view", &ok)
         clickTab("Board", shell)
-        check(shell.sidebar.debugSelectedEntry == .module(.tasks) && tasks.debugCalendarSection.isHidden,
-              "Board lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Tasks row", &ok)
+        check(!(shell.toolbar.debugPageActions.compactMap { ($0 as? HelmButton)?.title }.contains("Today")),
+              "Board's toolbar still carries the Calendar's Today", &ok)
         check(shell.toolbar.debugCrumb.hasSuffix("Tasks") && shell.debugHeader?.title == "Tasks",
               "Board's crumb and header read \(shell.toolbar.debugCrumb) / \(shell.debugHeader?.title ?? "none"), want Tasks", &ok)
         check(shell.sidebar.debugClick(.module(.calendar)), "the sidebar has no Calendar row", &ok)
         settle(shell)
-        check(tasks.isShowingCalendar && selectedTabName(shell) == "Calendar"
+        check(tasks.isShowingCalendar && selectedTabName(shell) == tasks.calendar.scale.title
                 && shell.sidebar.debugSelectedEntry == .module(.calendar),
               "the Calendar row opened Tasks on \(tasks.selectedModuleTabName)", &ok)
         check(shell.toolbar.debugCrumb.hasSuffix("Calendar"),
@@ -1464,7 +1517,8 @@ enum MainSplitShellSelfTest {
               "All tasks on the calendar should draw today's task again, got \(calendarView.debugEventIDs)", &ok)
         store.deleteTask(id: late.id)
         store.deleteTask(id: current.id)
-        clickTab("Board", shell)
+        shell.openModule(.tasks)
+        settle(shell)
     }
 
     private static func checkTheInspector(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

@@ -165,6 +165,29 @@ enum DictationPermissions {
 
     static var isAccessibilityTrusted: Bool { AXIsProcessTrusted() }
 
+    /// R5-UX-09: whether the dictation key's press should ask for
+    /// Accessibility first. The key only reaches Grand Line from another app,
+    /// and dictation only pastes, once that grant exists, so without it the
+    /// key "does nothing" everywhere but here. The first press here is the
+    /// one moment the app can catch the intent, so it asks then, once.
+    static func shouldAskForAccessibility(trusted: Bool, alreadyAsked: Bool) -> Bool {
+        !trusted && !alreadyAsked
+    }
+
+    /// What that one question says, naming the key the captain pressed.
+    static func accessibilityRequest(key: String) -> HelmConfirm.Request {
+        var request = HelmConfirm.Request(
+            title: "Let dictation work in every app",
+            body: "Hold \(key) in any app to dictate there. macOS only lets Grand Line hear that key in other apps, "
+                + "and paste what you said, once it has Accessibility access. Until then dictation works here and "
+                + "copies the text for you to paste.")
+        request.confirmTitle = "Open Accessibility Settings"
+        request.cancelTitle = "Not Now"
+        request.symbol = "waveform"
+        request.hue = .rose
+        return request
+    }
+
     /// Shows the real system microphone-access prompt the first time it's
     /// genuinely needed - a no-op (immediate `completion(true)`, no dialog)
     /// once already granted, matching `SFSpeechRecognizer.requestAuthorization`

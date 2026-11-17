@@ -90,8 +90,11 @@ enum ShiftTasksPageSelfTest {
             check(c.dueToday == 2, "due today should be 2, got \(c.dueToday)")
             check(c.overdue == 1, "overdue should be 1, got \(c.overdue)")
             let subtitle = controller.drillHeaderSubtitle ?? ""
-            check(subtitle == "4 open \u{00B7} 2 due today \u{00B7} \(c.followUps) follow-up\(c.followUps == 1 ? "" : "s") \u{00B7} 1 overdue",
-                  "the subtitle should carry all four counts, got \"\(subtitle)\"")
+            // R5-UX-10: four tasks are "the first few", so the line keeps
+            // the empty state's hint after the counts.
+            let countsLine = "4 open \u{00B7} 2 due today \u{00B7} \(c.followUps) follow-up\(c.followUps == 1 ? "" : "s") \u{00B7} 1 overdue"
+            check(subtitle == "\(countsLine) \u{00B7} \(AppSettings.shared.quickCaptureShortcut.displayString) adds one from any app",
+                  "the subtitle should carry all four counts, then the hint, got \"\(subtitle)\"")
 
             let counts = controller.debugSidebar.debugCounts
             check(counts["all"] == "\(c.open)",
@@ -124,7 +127,7 @@ enum ShiftTasksPageSelfTest {
             drainMainQueue(turns: 5)
             check(controller.isShowingCalendar, "fixture: the Calendar view did not open")
             let calendar = controller.drillHeaderSubtitle ?? ""
-            check(board.hasSuffix("\u{00B7} 1 overdue"), "the Board header reads \"\(board)\"")
+            check(board.contains("\u{00B7} 1 overdue"), "the Board header reads \"\(board)\"")
             check(calendar.contains("\u{00B7} 1 overdue") && !calendar.contains("2 overdue"),
                   "the Calendar header counts overdue differently from the Board's \"\(board)\": \"\(calendar)\"")
             check(calendar.hasSuffix("\u{00B7} 1 follow-up overdue"),

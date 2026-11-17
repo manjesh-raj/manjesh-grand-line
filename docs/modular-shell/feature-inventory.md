@@ -28,14 +28,13 @@ The sidebar is the default window layout now, for a fresh install and for anyone
 The floating bar stays selectable in the same setting, and a stored choice of it is kept.
 Where it already carries a piece of chrome, that row's Evidence names the sidebar shell's code as well as the floating bar's, so the feature stays checked in both layouts while both exist.
 
-**The floating bar is frozen (R2-ARCH-01 of the second full review).**
-The captain keeps both window layouts, and the sidebar is the default.
-The floating bar is the classic layout: it keeps working, but it is maintenance only.
-It receives no new features and no page redesigns, and Settings › Appearance › Window layout says so where the layout is chosen.
-New chrome and redesigned pages are built for the sidebar layout only, so a new row's New shell cell names the sidebar layout and nothing has to be added to the floating bar.
-What stops is the requirement that a new feature exist in both layouts.
-The checks that the floating bar is unchanged stay, and so does a fix to something it already does, because a frozen layout still has to work.
-No date has been set for retiring it; that is the captain's decision.
+**Both layouts stay (R5-UX-11 of review #5, the captain's decision).**
+The captain keeps both window layouts permanently, and the sidebar is the default.
+The floating bar stays a choice under Settings › Appearance › Window layout, and nothing about it is deleted or scheduled for retirement.
+R2-ARCH-01 of the second review had frozen it as maintenance only, and review #5 recommended a sunset date; the captain declined both.
+Settings › Appearance › Window layout says this where the layout is chosen.
+A change to behaviour both layouts share has to work in both, and the checks that the floating bar works stay.
+Chrome that only exists in the sidebar layout (the sidebar's rows, the window toolbar's tabs, the inspector) is still built there only, so a new row's New shell cell can name the sidebar layout alone.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.
@@ -82,6 +81,7 @@ Dialog Return and Escape buttons are part of the dialog they belong to and are n
   - and the focus timer chip moved into the window toolbar, just before the trailing cluster, where it now shows on Console too.
   The strip's "Crew all clear" and "Poneglyph unlocked" words have no badge, because a badge draws nothing for a real zero; Crew › Needs you and Poneglyph's own page say both.
 - **Stage 7: Knowledge has no tree column.** The captain suggested removing it and the evaluation agreed: the toolbar's tabs already switch Notebook, Runbooks, Postmortems, Docs and Reading list, each tab lists its own items, Notebook keeps its own Pages column, and ⌘K finds notebook pages, runbooks and postmortems the way the tree's search did. The tree had nothing else of its own, so the content takes its width back.
+- **R5-UX-05: Knowledge split.** Knowledge was five products in one tab bar, three of them for an SRE. Runbooks and Postmortems are a module of their own in Observe, after Logs, with those two tabs. Knowledge keeps Notebook, Docs and Reading list. Notebook and Reading list are also door rows in Work: a Personal sidebar lists them where Knowledge would be, and an Operator's lists Knowledge and hides the two rows, which would only repeat its tabs. A door row to a page of its own is its own place: its crumb, header and (empty) tab bar are its own, and ⌘K keeps the page while any row reaches it.
 - **Stage 7: Quick Connect is a caption and two icons on Console.** The Hosts icon is what Quick Connect always did: Connections › Hosts with its quick-connect field focused. The Console icon focuses the session Console already has and opens one only when there is none, the captain's Option B. In the toolbar's overflow menu the caption is the old single Quick Connect item. U-02 of the second full review took the caption out and puts the two icons on every module.
 - **Stage 7: Tasks' page column is the filter row.** In the sidebar layout the column's Workspace and Smart views are one scope control (with the Workspace counts), Follow-ups is a button with its count, and Projects is a menu that filters to one project, beside the sort and the Done window. Settings is the sidebar's own row and Shortcuts is the toolbar's Search. The floating bar keeps the column.
 - **Stage 7 draws only real figures.** Weekly review's Focus time and its comparison with last week come from the focus log and the completion history. The prototype's review checklist has no data behind it in the app, so Pushed back repeatedly sits beside Time on tasks instead. GitHub sync's forks table says when each fork was last checked, because nothing records when a fork last synced. Setup's summary cards show a dash, with the reason in their tooltip, until their reading has been taken this session.
@@ -109,10 +109,10 @@ One row per `RailDestination`. The route id stays the deep-link id after the con
 | `dest.notebook` | Notebook page | Stores space card; ⌘K notebook pages; the New Note App Intent appends to today's daily note; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Notebook |  |
 | `dest.overview` | Fleet page | Home's Fleet and Morning briefing cards; the fleet-task notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › In flight (its Needs your call list is Crew › Needs you in the sidebar layout, and its Log tab is Crew › Log) |  |
 | `dest.poneglyph` | Poneglyph page | Stores space card; quick-access square (default pin); ⌘K Lock Poneglyph; the Poneglyph menu bar extra; the Copy Credential App Intent; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Secrets › Secrets (a table, with the credential inspector in the shell's inspector; the lock state also shows on the sidebar item) |  |
-| `dest.postmortems` | Postmortems page | Stores space card; ⌘K postmortems; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Postmortems |  |
+| `dest.postmortems` | Postmortems page | Stores space card; ⌘K postmortems; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Runbooks › Postmortems |  |
 | `dest.readingList` | Reading List page | Stores space card; ⌘K saved links; ⌥Space quick capture files links here; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Reading list |  |
 | `dest.review` | Review page | Home's Merge queue card; the pr-ready notification's Show in app; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Crew › Review (a ready PR carries its Merge button there) |  |
-| `dest.runbooks` | Runbooks page | Stores space card; ⌘K runbooks; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Knowledge › Runbooks |  |
+| `dest.runbooks` | Runbooks page | Stores space card; ⌘K runbooks; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Runbooks › Runbooks |  |
 | `dest.schedules` | Schedules page | Operations space card; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Schedules (Observe group) |  |
 | `dest.settings` | Settings page | App menu Settings… ⌘,; Engineering space card; the avatar menu; ⌘K Settings; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Settings (Machine group; its categories stay in its own page column, as the prototype draws them) |  |
 | `dest.shift` | Tasks page | Command space card; quick-access square (default pin); Tasks menu; ⌘N fallback; task and follow-up notifications; the Tasks widget; the New Task App Intent; the Tasks menu bar extra; ⌘K tasks; Go menu item, ⌘K "Switch to", Recents, the ⌘⇧D map | Tasks (Work group; its views are the toolbar's tabs, and in the sidebar layout the filter row under the toolbar carries what the page column held - stage 7) |  |
@@ -144,6 +144,7 @@ One row per `DaylightModule`. Every card stays available in Home's configurable 
 | `home.automation` | Automation card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.bootstrap` | Bootstrap card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.briefing` | Morning briefing card | Home canvas only | Home (a card in the configurable set, on by default) |  |
+| `home.calendar` | Calendar card: what is dated next, from the calendar's own entries (R5-UX-07) | Command canvas | Home (a card in the configurable set; on by default for the Personal profile) |  |
 | `home.claudeStatus` | Claude card | Home canvas only | Home (a card in the configurable set, on by default) |  |
 | `home.codePreview` | Code Preview card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.commandLibrary` | DevOps Commands card | Command canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
@@ -151,6 +152,7 @@ One row per `DaylightModule`. Every card stays available in Home's configurable 
 | `home.dictation` | Dictation card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.docs` | Docs card | Stores canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.fleet` | Fleet card | Home canvas only | Home (a card in the configurable set, on by default) |  |
+| `home.focusTimer` | Focus timer card: the running session and when it ends, or today's focused minutes (R5-UX-07) | Command canvas | Home (a card in the configurable set; on by default for the Personal profile) |  |
 | `home.githubSync` | GitHub Sync card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.health` | Health card | Home canvas and the Operations canvas | Home (a card in the configurable set, on by default) |  |
 | `home.hosts` | Hosts card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
@@ -218,10 +220,10 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Notebook` | Go > Notebook | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Notebook) |  |
 | `menu.Go/Operations` | Go > Operations | shortcut ⌘3 | Main menu › Go, in the floating bar layout only (R2-UX-02: the sidebar layout's Go menu is the sidebar's own map, Home and the modules with their tabs)  |  |
 | `menu.Go/Poneglyph` | Go > Poneglyph | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Secrets) |  |
-| `menu.Go/Postmortems` | Go > Postmortems | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Postmortems) |  |
+| `menu.Go/Postmortems` | Go > Postmortems | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Runbooks › Postmortems) |  |
 | `menu.Go/Reading List` | Go > Reading List | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Reading list) |  |
 | `menu.Go/Review` | Go > Review | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › Review) |  |
-| `menu.Go/Runbooks` | Go > Runbooks | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Knowledge › Runbooks) |  |
+| `menu.Go/Runbooks` | Go > Runbooks | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Runbooks › Runbooks) |  |
 | `menu.Go/Schedules` | Go > Schedules | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Schedules) |  |
 | `menu.Go/Settings` | Go > Settings | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Settings) |  |
 | `menu.Go/Sticky Board` | Go > Sticky Board | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Sticky Board) |  |
@@ -229,6 +231,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Straw Hat Pirates` | Go > Straw Hat Pirates | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Crew › Ask the crew) |  |
 | `menu.Go/Tasks` | Go > Tasks | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Tasks) |  |
 | `menu.Go/Toggle Sidebar` | Go > Toggle Sidebar | shortcut ⌥⌘S | Main menu › Go (toggles the workspace sidebar on every page - R2-UX-09; a page's own column is Toggle Page Column) |  |
+| `menu.Go/Toggle Inspector` | Go > Toggle Inspector | shortcut ⌥⌘I | Main menu › Go (R5-UX-09: the platform's inspector chord, sidebar layout only, for the toolbar's inspector button) |  |
 | `menu.Go/Tools` | Go > Tools | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Tools) |  |
 | `menu.Go/Updates` | Go > Updates | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Setup › Updates) |  |
 | `menu.Go/Vault` | Go > Vault | no shortcut | Main menu › Go (lists the sidebar modules; this item opens Secrets › Automic Vault) |  |
@@ -261,6 +264,7 @@ Every actionable item in the real menu bar, read from `AppDelegate.buildMenu(ins
 | `menu.Go/Previous Tab` | Go > Previous Tab | shortcut ⇧⌘[ | Main menu › Go (R2-UX-03, the sidebar layout's: the showing module's previous tab) |  |
 | `menu.Go/Toggle Page Column` | Go > Toggle Page Column | shortcut ⌥⇧⌘S | Main menu › Go (R2-UX-09, the sidebar layout's: the showing page's own column - Notebook's Pages, Settings' categories, Schedules' list) |  |
 | `menu.Help/Keyboard Shortcuts…` | Help > Keyboard Shortcuts… | shortcut ⇧⌘/ | Main menu › Help (unchanged) |  |
+| `menu.Help/Shortcuts for This Page` | Help > Shortcuts for This Page | shortcut ⌘/ | Main menu › Help (R5-UX-03: the chords for the page on screen and the few that work everywhere, with a button to the full list) |  |
 | `menu.Help/Manual Checks` | Help > Manual Checks | no shortcut | Main menu › Help (unchanged) |  |
 | `menu.Hosts/Manage Snippets…` | Hosts > Manage Snippets… | shortcut ⌥⌘P | Main menu › Hosts (unchanged; its items target Connections and Console) |  |
 | `menu.Hosts/Manage SSH Keys…` | Hosts > Manage SSH Keys… | shortcut ⇧⌘K | Main menu › Hosts (unchanged; its items target Connections and Console) |  |
@@ -313,6 +317,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.terminal.splitRight` | Terminal shortcut: Split right | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
 | `key.terminal.zoomPane` | Terminal shortcut: Zoom pane | Console tabs and panes; configurable in Settings > Terminal | Console (unchanged chord; recorded in Settings › Shortcuts since T7, which checks it for clashes - Settings › Terminal links there) |  |
 | `key.⇧⌘/` | ⇧⌘/ - Keyboard Shortcuts… | Help menu | Main menu › Help (unchanged chord) |  |
+| `key.⌘/` | ⌘/ - Help: Shortcuts for This Page | Not in the app | Main menu › Help (R5-UX-03, both layouts) |  |
 | `key.⇧⌘A` | ⇧⌘A - Create RCA | Log Analyzer menu | Main menu › Log Analyzer (unchanged chord) |  |
 | `key.⇧⌘C` | ⇧⌘C - Copy Analysis | Log Analyzer menu | Main menu › Log Analyzer (unchanged chord) |  |
 | `key.⇧⌘D` | ⇧⌘D - All Destinations… | Go menu | Sidebar (reveals and focuses the sidebar, which is the whole map) |  |
@@ -368,6 +373,7 @@ The Help menu's shortcut catalog: every menu chord, plus the configurable termin
 | `key.⌥⌘N` | ⌥⌘N - New Snippet… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌥⌘P` | ⌥⌘P - Manage Snippets… | Hosts menu | Main menu › Hosts (unchanged chord) |  |
 | `key.⌥⌘S` | ⌥⌘S - Toggle Sidebar | Go menu | Main menu › Go (in the sidebar layout the workspace sidebar on every page - R2-UX-09, with a page's own column on ⌥⇧⌘S; in the floating bar the showing page's own column, unchanged) |  |
+| `key.⌥⌘I` | ⌥⌘I - Go: Toggle Inspector | Not in the app | Main menu › Go (R5-UX-09, sidebar layout) |  |
 
 ## Command palette
 
@@ -716,9 +722,10 @@ The buttons a page hands the floating bar's drill header (`drillHeaderActions`, 
 | `toolbar.ReadingListController.readerReloadTapped()` | Reload | ReadingListController page toolbar (`readerReloadTapped()`) | Knowledge › Reading list |  |
 | `toolbar.ReadingListController.refreshMetadataTapped()` | Re-read titles for everything still waiting | ReadingListController page toolbar (`refreshMetadataTapped()`) | Knowledge › Reading list |  |
 | `toolbar.ReviewController.refreshButton` | ReviewController header action `refreshButton` | the floating bar's drill header, right side | Crew › Review (moves into the window toolbar as a module action) |  |
-| `toolbar.RunbooksController.newRunbookButton` | RunbooksController header action `newRunbookButton` | the floating bar's drill header, right side | Knowledge › Runbooks (moves into the window toolbar as a module action) |  |
+| `toolbar.RunbooksController.newRunbookButton` | RunbooksController header action `newRunbookButton` | the floating bar's drill header, right side | Runbooks › Runbooks (moves into the window toolbar as a module action) |  |
 | `toolbar.SchedulesController.refreshButton` | SchedulesController header action `refreshButton` | the floating bar's drill header, right side | Schedules (moves into the window toolbar as a module action) |  |
 | `toolbar.SchedulesController.schedulesCard.addButton` | SchedulesController header action `schedulesCard.addButton` | the floating bar's drill header, right side | Schedules (moves into the window toolbar as a module action) |  |
+| `toolbar.ShiftController.calendarTodayButton` | ShiftController header action `calendarTodayButton` | Not in the app | Calendar (Today beside New task while the Calendar shows, in the window toolbar and the floating bar's drill header - R5-UX-04) |  |
 | `toolbar.ShiftController.newTaskButton` | ShiftController header action `newTaskButton` | the floating bar's drill header, right side | Tasks (the window toolbar's far-right primary action, after Search - stage 7) |  |
 | `toolbar.ShiftController.syncPill` | ShiftController header action `syncPill` | the floating bar's drill header, right side | Tasks (moves into the window toolbar as a module action) |  |
 | `toolbar.StickyBoardController.archiveButton` | StickyBoardController header action `archiveButton` | the floating bar's drill header, right side | Sticky Board (moves into the window toolbar as a module action) |  |
@@ -792,7 +799,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HelmPlateCard` | HelmPlateCard controls | `deleteClicked`, `openClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmRevealableSecretField` | HelmRevealableSecretField controls | `toggleReveal` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmZoomStepper` | HelmZoomStepper controls | `larger`, `reset`, `smaller` | Every module (a shared component; it travels with each page that uses it) |  |
-| `action.HomeCanvasController` | HomeCanvasController controls | `refreshTapped` | Home |  |
+| `action.HomeCanvasController` | HomeCanvasController controls | `dismissTipsTapped`, `refreshTapped` | Home (Hide tips is R5-UX-03's first-week strip) |  |
 | `action.HomeCardLayout` | HomeCardLayout controls | `WorkspaceSidebarMenuItem.fire`, `addClicked`, `doneClicked`, `earlierClicked`, `hideClicked`, `laterClicked`, `resetClicked`, `resetSizeClicked` | Home (Customize: the tray's Add a Card, Reset Layout and Done, and each card's Reset Size, earlier, later and hide; the size itself is dragged from the card's edges) |  |
 | `action.HostEditorController` | HostEditorController controls | `advancedToggled`, `deleteHost`, `editPortForwarding`, `panelCancelClicked`, `panelMenuClicked`, `panelMenuItemPicked`, `panelPrimaryClicked`, `panelSaveClicked`, `panelTestClicked`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
 | `action.HelmCardGrid` | HelmCardGrid controls | `HelmGridCardMenuBox.fire`, `actionClicked`, `emptyActionClicked` | Connections › Hosts and Keys (H1, K1: a card's bolt and pencil, its context menu and the empty state's action) |  |
@@ -812,7 +819,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.LockScreenController` | LockScreenController controls | `checkAgainTapped`, `copySetupCommandTapped`, `localAuthTapped`, `submitTapped` | Window (the lock overlay; since R2-SEC-06 Automic Vault's install is the Homebrew command in the copyable setup well, which Copy copies, rather than a button that ran it) |  |
 | `action.LogAnalyzerController` | LogAnalyzerController controls | `addClipboardAsEvidence`, `addCurrentInputAsEvidence`, `addFileTapped`, `analyzeClipboard`, `analyzeTapped`, `clearTapped`, `comparePickerChanged`, `copyCommandTapped`, `copyComparison`, `copyEvidence`, `copyNextSteps`, `copyRootCause`, `createIncident`, `focusInput`, `goToConsole`, `investigateFurther`, `modeChanged`, `newInvestigation`, `overrideChanged`, `runCompare`, `sendCommandTapped`, `sourceChanged`, `storageRowClicked`, `toggleHistory`, `toggleRedactions`, `wrapLinesTapped` | Logs (in the sidebar layout Analyze is the toolbar's far-right primary action, Clear and Wrap lines are on the Input card, and Investigate Further, Create Incident and ⋯ are under the likely cause; in the floating bar Wrap lines is on the Provided output card, R2-BUG-16) |  |
 | `action.LogAnalyzerViews` | LogAnalyzerViews controls | `rowClicked` | Logs |  |
-| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hideOtherApplications`, `NSApplication.hide`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom`, `NSWindow.runToolbarCustomizationPalette`, `Navigator.activateConsoleFind`, `Navigator.analyzeClipboardInLogAnalyzer`, `Navigator.captureScreenRegionFromMenu`, `Navigator.copyWhiteboardImageFromMenu`, `Navigator.logAnalyzerCopyAnalysis`, `Navigator.logAnalyzerCreateRCA`, `Navigator.logAnalyzerInvestigateFurther`, `Navigator.logAnalyzerSendToTerminal`, `Navigator.newContextualItem`, `Navigator.newHostFromMenu`, `Navigator.newKeyFromMenu`, `Navigator.newShiftFollowUpFromMenu`, `Navigator.newShiftProjectFromMenu`, `Navigator.newShiftTaskFromMenu`, `Navigator.newSnippetFromMenu`, `Navigator.nextSession`, `Navigator.previousSession`, `Navigator.revealHostsQuickConnect`, `Navigator.runCodeSnippetFromMenu`, `Navigator.selectHosts`, `Navigator.selectKeys`, `Navigator.selectSessionByShortcut`, `Navigator.selectSettings`, `Navigator.selectSnippets`, `Navigator.showLogAnalyzer`, `Navigator.showShiftWeeklyReview`, `Navigator.toggleCodePreviewSidebarFromMenu`, `WorkspaceShellController.selectDestinationFromMenu`, `WorkspaceShellController.selectNextModuleTab`, `WorkspaceShellController.selectPreviousModuleTab`, `WorkspaceShellController.selectSpaceByShortcut`, `WorkspaceShellController.toggleClipboardHistory`, `WorkspaceShellController.togglePageColumnFromMenu`, `WorkspaceShellController.toggleSidebarFromMenu` | Main menu (these are the menu items' targets - see the menu rows) |  |
+| `action.main` | main controls | `AppDelegate.showAllDestinations`, `AppDelegate.showKeyboardShortcuts`, `AppDelegate.showManualChecks`, `AppDelegate.showPageShortcuts`, `AppDelegate.showShiftQuickCapture`, `AppDelegate.showUnifiedSearch`, `ConsoleController.showFind`, `NSApplication.arrangeInFront`, `NSApplication.hideOtherApplications`, `NSApplication.hide`, `NSApplication.orderFrontStandardAboutPanel`, `NSApplication.terminate`, `NSApplication.unhideAllApplications`, `NSText.copy`, `NSText.cut`, `NSText.paste`, `NSText.selectAll`, `NSWindow.performMiniaturize`, `NSWindow.performZoom`, `NSWindow.runToolbarCustomizationPalette`, `Navigator.activateConsoleFind`, `Navigator.analyzeClipboardInLogAnalyzer`, `Navigator.captureScreenRegionFromMenu`, `Navigator.copyWhiteboardImageFromMenu`, `Navigator.logAnalyzerCopyAnalysis`, `Navigator.logAnalyzerCreateRCA`, `Navigator.logAnalyzerInvestigateFurther`, `Navigator.logAnalyzerSendToTerminal`, `Navigator.newContextualItem`, `Navigator.newHostFromMenu`, `Navigator.newKeyFromMenu`, `Navigator.newShiftFollowUpFromMenu`, `Navigator.newShiftProjectFromMenu`, `Navigator.newShiftTaskFromMenu`, `Navigator.newSnippetFromMenu`, `Navigator.nextSession`, `Navigator.previousSession`, `Navigator.revealHostsQuickConnect`, `Navigator.runCodeSnippetFromMenu`, `Navigator.selectHosts`, `Navigator.selectKeys`, `Navigator.selectSessionByShortcut`, `Navigator.selectSettings`, `Navigator.selectSnippets`, `Navigator.showLogAnalyzer`, `Navigator.showShiftWeeklyReview`, `Navigator.toggleCodePreviewSidebarFromMenu`, `WorkspaceShellController.selectDestinationFromMenu`, `WorkspaceShellController.selectNextModuleTab`, `WorkspaceShellController.selectPreviousModuleTab`, `WorkspaceShellController.selectSpaceByShortcut`, `WorkspaceShellController.toggleClipboardHistory`, `WorkspaceShellController.togglePageColumnFromMenu`, `WorkspaceShellController.toggleInspectorFromMenu`, `WorkspaceShellController.toggleSidebarFromMenu` | Main menu (these are the menu items' targets - see the menu rows) |  |
 | `action.MorningBriefingCard` | MorningBriefingCard controls | `dismissClicked`, `refreshClicked` | Home (Morning briefing card) |  |
 | `action.MultiHostSendPicker` | MultiHostSendPicker controls | `checkClicked`, `pillClicked` | Connections › Hosts (send to many hosts) |  |
 | `action.NeedsAttentionCard` | NeedsAttentionCard controls | `actionClicked`, `checkboxClicked`, `refreshClicked` | Home (Needs you card) |  |
@@ -822,13 +829,13 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.PasswordGeneratorPanel` | PasswordGeneratorPanel controls | `copyTapped`, `lengthChanged`, `regenerate`, `useTapped` | Secrets › Secrets (password generator) |  |
 | `action.PoneglyphMenuBar` | PoneglyphMenuBar controls | `copyTapped`, `iconClicked`, `openVault` | Menu bar extra (Poneglyph, unchanged) |  |
 | `action.PortForwardingController` | PortForwardingController controls | `addRuleClicked`, `cancel`, `kindChanged`, `removeClicked`, `save` | Connections › Hosts (host editor) |  |
-| `action.PostmortemsController` | PostmortemsController controls | `openLogAnalyzerTapped`, `seedExamplePostmortemTapped` | Knowledge › Postmortems |  |
+| `action.PostmortemsController` | PostmortemsController controls | `openLogAnalyzerTapped`, `seedExamplePostmortemTapped` | Runbooks › Postmortems |  |
 | `action.QuotaUsagePopover` | QuotaUsagePopover controls | `copyClicked` | Console (Claude usage popover) |  |
 | `action.ReadingListCardView` | ReadingListCardView controls | `copyLinkTapped`, `deleteTapped`, `editTagsTapped`, `openExternallyTapped`, `openTapped`, `summariseTapped`, `toggleReadTapped` | Knowledge › Reading list |  |
 | `action.ReadingListController` | ReadingListController controls | `addExampleLinkTapped`, `clicked`, `closeReaderTapped`, `pasteTapped`, `readerBackTapped`, `readerOpenExternallyTapped`, `readerReloadTapped`, `refreshMetadataTapped` | Knowledge › Reading list |  |
 | `action.RecentDestinationsPopover` | RecentDestinationsPopover controls | `buttonClicked` | Toolbar (back and forward, with the Recents list as their menu) |  |
 | `action.ReviewController` | ReviewController controls | `refreshTapped`, `toggleFailureDetail` | Crew › Review |  |
-| `action.RunbooksController` | RunbooksController controls | `ClosureSleeve.invoke`, `newRunbookTapped`, `seedExampleRunbookTapped` | Knowledge › Runbooks |  |
+| `action.RunbooksController` | RunbooksController controls | `ClosureSleeve.invoke`, `newRunbookTapped`, `seedExampleRunbookTapped` | Runbooks › Runbooks |  |
 | `action.ScheduleEditorController` | ScheduleEditorController controls | `deleteSchedule` | Schedules |  |
 | `action.ScheduleHistoryController` | ScheduleHistoryController controls | `closeClicked`, `viewLogClicked` | Schedules |  |
 | `action.ScheduleRunLogController` | ScheduleRunLogController controls | `closeClicked`, `copyLogClicked`, `copyReportClicked`, `toggleRawClicked` | Schedules |  |
@@ -842,7 +849,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `cardClicked`, `chipClicked`, `clearFilterTapped`, `fire`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
 | `action.ShiftConflictController` | ShiftConflictController controls | `applyClicked`, `cancelClicked`, `choiceClicked` | Tasks (sync conflict sheet) |  |
-| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `detailBackClicked`, `detailSaveClicked`, `filterMenuClicked`, `followUpTableCheckClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
+| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `calendarTodayClicked`, `detailBackClicked`, `detailSaveClicked`, `filterMenuClicked`, `followUpTableCheckClicked`, `followUpsJumpClicked`, `newTaskClicked`, `openFailedFile`, `projectPopupChanged`, `sortChanged`, `syncPillClicked`, `tableCheckClicked` | Tasks (the filter row's Follow-ups button and project menu, the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
 | `action.ShiftFollowUpEditorController` | ShiftFollowUpEditorController controls | `deleteFollowUp` | Tasks (follow-up editor; also opened from Calendar) |  |
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
 | `action.ShiftListViews` | ShiftListViews controls | `checkboxClicked`, `deleteClicked`, `doneClicked`, `editClicked`, `focusClicked`, `openClicked`, `pushClicked`, `reopenClicked`, `snooze30`, `snoozeCustom`, `snoozeHour`, `snoozeNextWeek`, `snoozeTomorrow`, `stopFocusClicked` | Tasks › List |  |
@@ -957,7 +964,11 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.fontSize` | Saved preference `fm.fontSize` | declared in AppSettings | Settings › Terminal |  |
 | `state.fm.hasSeenWelcome` | Saved preference `fm.hasSeenWelcome` | declared in AppSettings | Window (welcome sheet) |  |
 | `state.fm.hiddenModules` | Saved preference `fm.hiddenModules` | declared in AppSettings | Settings › Appearance (the modules the sidebar, the Go menu, ⌘K and Home's default cards leave out, R2-UX-01) |  |
+| `state.fm.hiddenModules.knowledgeSplit` | Saved preference `fm.hiddenModules.knowledgeSplit` | declared in AppSettings | System (R5-UX-05's one-time settling of a hidden set stored before Knowledge split; never shown) |  |
 | `state.fm.homeCardLayout` | Saved preference `fm.homeCardLayout` | declared in AppSettings | Home (the cards Customize arranges on Home's own space; the floating bar's hub never reads it) |  |
+| `state.fm.homeTips.dismissed` | Saved preference `fm.homeTips.dismissed` | declared in AppSettings | Home (R5-UX-03: the captain hid the first-week tips) |  |
+| `state.fm.homeTips.firstShown` | Saved preference `fm.homeTips.firstShown` | declared in AppSettings | Home (R5-UX-03: the day the first-week tips started) |  |
+| `state.fm.dictation.accessibilityAsked` | Saved preference `fm.dictation.accessibilityAsked` | declared in AppSettings | Dictation (R5-UX-09: the dictation key's one-time Accessibility question was asked) |  |
 | `state.fm.keychainMigratedFromFirstmateCockpit` | Saved preference `fm.keychainMigratedFromFirstmateCockpit` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
 | `state.fm.keychainMigratedItems` | Saved preference `fm.keychainMigratedItems` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
 | `state.fm.keychainMigrationFailedAttempts` | Saved preference `fm.keychainMigrationFailedAttempts` | declared in LegacyNameMigration | System (launch migration marker, unchanged) |  |
@@ -1145,8 +1156,8 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | `surface.notebook.tree` | Notebook page tree, daily notes and Today | Notebook page | Knowledge › Notebook (the page's own Pages column, in both layouts) | `NotebookController.swift` `todayButton`; `NotebookController.swift` `private let sidebar = HelmPageSidebar()` |
 | `surface.notebook.links` | Wiki-links and backlinks | Notebook | Knowledge › Notebook (the page's own Backlinks and page rail) | `NotebookLinks.swift` `struct NotebookBacklinkIndex` |
 | `surface.notebook.modes` | Source, Split and Preview modes | Notebook | Knowledge › Notebook (unchanged) | `NotebookController.swift` `case edit, split, preview` |
-| `surface.runbooks.grid` | Runbooks with an editor and a run in the terminal | Runbooks page | Knowledge › Runbooks (the page lists every runbook and opens one in its editor; ⌘K finds them too) | `RunbooksController.swift` `newRunbookButton` |
-| `surface.postmortems.list` | Postmortems, including SRE Lead's generated ones | Postmortems page | Knowledge › Postmortems (the page lists every postmortem; ⌘K finds them too) | `SRELeadPostmortem.swift` `enum SRELeadPostmortem` |
+| `surface.runbooks.grid` | Runbooks with an editor and a run in the terminal | Runbooks page | Runbooks › Runbooks (the page lists every runbook and opens one in its editor; ⌘K finds them too) | `RunbooksController.swift` `newRunbookButton` |
+| `surface.postmortems.list` | Postmortems, including SRE Lead's generated ones | Postmortems page | Runbooks › Postmortems (the page lists every postmortem; ⌘K finds them too) | `SRELeadPostmortem.swift` `enum SRELeadPostmortem` |
 | `surface.docs.playbook` | The DevOps Playbook viewer with back, forward and reload | Docs page | Knowledge › Docs (the page's own subtitle says whether a copy is synced) | `DocsController.swift` `openLiveButton`; `DocsController.swift` `var drillHeaderSubtitle: String?` |
 | `surface.readingList.cards` | Saved links with titles, tags, read state and an opt-in summary | Reading List page | Knowledge › Reading list | `ReadingListAI.swift` `enum ReadingListAI` |
 | `surface.knowledge.tree` | Find any notebook page, runbook or postmortem from one place | Not in the app; each page lists its own | Toolbar (⌘K finds notebook pages, runbooks and postmortems and opens each on its page, and Knowledge's tabs each list their own. The sidebar layout's tree column that repeated them was taken out in stage 7, the captain's call) | `UnifiedSearchProviders.swift` `struct UnifiedSearchNotebookProvider`; `UnifiedSearchProviders.swift` `struct UnifiedSearchDocsProvider` |

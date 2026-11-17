@@ -161,6 +161,18 @@ final class TaskCalendarController: NSViewController {
         onDrillSubtitleChanged?()
     }
 
+    /// R5-UX-04: the period on screen and the window toolbar's way to change
+    /// it. The toolbar's Day, Week, Month and Agenda tabs and the card's own
+    /// pills are one path (`ShiftCalendarView.show(scale:)`).
+    var scale: ShiftCalendarScale { calendarView.scale }
+    func show(scale: ShiftCalendarScale) { calendarView.show(scale: scale) }
+    func showToday() { calendarView.showToday() }
+    /// The sidebar layout's toolbar carries Today and the periods.
+    func setPeriodControlsInToolbar(_ inToolbar: Bool) {
+        _ = view
+        calendarView.periodControlsInToolbar = inToolbar
+    }
+
     /// The visible period's own count, or its stated absence (GL-14). The
     /// Tasks page's header carries it while this view shows.
     var caption: String { calendarView.caption }

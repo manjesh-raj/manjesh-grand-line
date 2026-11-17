@@ -153,7 +153,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         // GL-14: a list nobody has read off disk yet is not an empty list, and
         // neither of them is "0 saved".
         guard hasLoaded else { return "Opening the reading list\u{2026}" }
-        return "\(ReadingListQuery.headline(store.links)) \u{00B7} \(syncSummary)"
+        // R5-UX-10: the empty state's own hint, kept for the first few links.
+        return QuietHint.line("\(ReadingListQuery.headline(store.links)) \u{00B7} \(syncSummary)",
+                              count: store.links.count, hint: "\u{2318}V pastes a link, or drop one here")
     }
 
     /// One wording for the sync state, read by both the drill subtitle and the

@@ -281,6 +281,9 @@ final class MainSplitShellController: WorkspaceShellController {
         ) { [weak self] _ in
             self?.applyProfileToHome()
             self?.refreshModuleChrome()
+            // R5-UX-06: a host page's Console shows the profile's actions,
+            // and works them out when asked, so this order is safe.
+            self?.workspaceActionsMayHaveChanged()
         }
         workspace.homeCanvas.onCardLayoutChanged = { layout in AppSettings.shared.homeCardLayout = layout }
         workspace.homeCanvas.onCustomizingChanged = { [weak self] _ in self?.refreshModuleChrome() }
@@ -811,6 +814,11 @@ final class MainSplitShellController: WorkspaceShellController {
         setSidebarCollapsed(collapse, animated: true)
     }
 
+    /// R5-UX-09: ⌥⌘I does what the toolbar's inspector button does.
+    override func toggleInspectorFromMenu() {
+        toolbar.onToggleInspector?()
+    }
+
     /// The captain's own request, from the inspector button, the pane's close
     /// button, or a page's Show in Inspector: the only route that may widen
     /// the window for it.
@@ -1012,9 +1020,16 @@ final class MainSplitShellController: WorkspaceShellController {
     // MARK: Modules and their tabs
 
     /// A module's sidebar row: the tab it showed last, or its first. A door
-    /// row (the Calendar) opens the tab it is a door to.
+    /// row (the Calendar, Notebook, Reading list) opens the tab it is a door
+    /// to. A tab whose own door row is listed is that row's to open, so
+    /// Knowledge beside a listed Notebook row opens on Docs (R5-UX-05).
     override func openModule(_ module: WorkspaceModule) {
-        if let tab = module.doorTab ?? lastTab[module] ?? module.tabs.first {
+        let hidden = AppSettings.shared.hiddenModules
+        let owned = module.tabs.first { tab in
+            let row = ModuleTable.sidebarModule(for: tab.route, pageTab: tab.name)
+            return row == module || hidden.contains(row)
+        }
+        if let tab = module.doorTab ?? lastTab[module] ?? owned ?? module.tabs.first {
             open(tab)
         } else {
             workspace.navigator.show(module.primaryRoute)
@@ -1026,6 +1041,17 @@ final class MainSplitShellController: WorkspaceShellController {
     /// R2-UX-03: the module's tabs, wrapping at either end like a browser's.
     /// A module of one page has nowhere to go.
     override func stepModuleTab(by offset: Int) {
+        // R5-UX-04: on the Calendar, ⌘⇧[ and ] step through its periods.
+        if let calendar = shownCalendar {
+            let scales = ShiftCalendarScale.toolbarOrder
+            let index = scales.firstIndex(of: calendar.scale) ?? 0
+            calendar.show(scale: scales[(index + offset + scales.count) % scales.count])
+            refreshModuleChrome()
+            return
+        }
+        // R5-UX-05: a door row that is a place of its own (Notebook) has no
+        // tabs to step through, even though its page is one of Knowledge's.
+        guard !showsDoorAsOwnPlace else { return }
         let tabs = currentModule.tabs
         guard tabs.count > 1, let current = currentTab, let index = tabs.firstIndex(of: current) else { return }
         open(tabs[(index + offset + tabs.count) % tabs.count])
@@ -1044,10 +1070,9 @@ final class MainSplitShellController: WorkspaceShellController {
         }
     }
 
-    /// A door's route follows its own row: hiding the Calendar row takes
-    /// the Calendar out of ⌘K, and hiding Tasks does not.
+    /// Which pages ⌘K leaves out (`ModuleTable.hidesPage`).
     override func hidesPage(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.hiddenModules.contains(ModuleTable.sidebarModule(for: destination))
+        ModuleTable.hidesPage(destination, hidden: AppSettings.shared.hiddenModules)
     }
 
     /// Show a tab: its page through the navigator, like every other route,
@@ -1092,6 +1117,13 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     private func tabClicked(_ index: Int) {
+        if let calendar = shownCalendar {
+            let scales = ShiftCalendarScale.toolbarOrder
+            guard scales.indices.contains(index) else { return }
+            calendar.show(scale: scales[index])
+            refreshModuleChrome()
+            return
+        }
         let tabs = currentModule.tabs
         guard tabs.indices.contains(index) else { return }
         open(tabs[index])
@@ -1113,8 +1145,25 @@ final class MainSplitShellController: WorkspaceShellController {
     /// beside a crumb and a header that read "Work › Tasks".
     private var litModule: WorkspaceModule {
         guard !showingHostPage else { return currentModule }
-        let lit = ModuleTable.sidebarModule(for: currentRoute, pageTab: currentTab?.name)
-        return AppSettings.shared.hiddenModules.contains(lit) ? currentModule : lit
+        return ModuleTable.litModule(for: currentRoute, pageTab: currentTab?.name,
+                                     hidden: AppSettings.shared.hiddenModules)
+    }
+
+    /// R5-UX-04: the calendar, while the Calendar row is lit - Tasks'
+    /// Calendar view reached by its row, its ⌘0, its toolbar button or the
+    /// Tasks page's own Calendar tab, which stays a shortcut to it.
+    private var shownCalendar: TaskCalendarController? {
+        guard !showingHostPage, litModule == .calendar,
+              let shift = pageController as? ShiftController, shift.isShowingCalendar else { return nil }
+        return shift.calendar
+    }
+
+    /// R5-UX-05: whether what shows is a door row's page of its own - the
+    /// Notebook or Reading list row, lit - which is its own place: its crumb,
+    /// header and toolbar are the row's, not the tab bar of the module the
+    /// page lives in.
+    private var showsDoorAsOwnPlace: Bool {
+        !showingHostPage && litModule != currentModule && currentTab?.isPageTab == false
     }
 
     /// The first time a page that draws its module's tabs shows here, the
@@ -1169,12 +1218,26 @@ final class MainSplitShellController: WorkspaceShellController {
         // cards now, and Customize adds any other space's card to them.
         if module == .home {
             toolbar.setTabs([], selected: nil)
+        } else if let calendar = shownCalendar {
+            // R5-UX-04: the Calendar is a place of its own. Its toolbar is
+            // its periods - Day, Week, Month and Agenda, the card's pills -
+            // with Today and New task beside them, not Tasks' views.
+            let scales = ShiftCalendarScale.toolbarOrder
+            toolbar.setTabs(scales.map(\.title), counts: scales.map { _ in nil },
+                            selected: scales.firstIndex(of: calendar.scale),
+                            accessibilityLabel: "Calendar periods")
+        } else if showsDoorAsOwnPlace {
+            // R5-UX-05: a door row to a page of its own (Notebook, Reading
+            // list) is its own place: the crumb, the header and the toolbar
+            // are its row's, not the tab bar of the module it lives in.
+            toolbar.setTabs(lit.tabs.map(\.name), selected: nil)
         } else {
             let tabs = module.tabs
             let current = currentTab
             // A door's tab is its row's to reopen, not the module's: the Tasks
             // row after a visit to the Calendar goes back to Board or List.
-            if let current, ModuleTable.sidebarModule(for: current.route, pageTab: current.name) == module {
+            if let current, ModuleTable.litModule(for: current.route, pageTab: current.name,
+                                                  hidden: AppSettings.shared.hiddenModules) == module {
                 lastTab[module] = current
             }
             // The page that draws the module's tabs may count what each
@@ -1407,6 +1470,10 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func workspaceSubtitleMayHaveChanged() {
+        // R5-UX-04: the calendar reports a new period through its caption,
+        // and the card's own pills can change the scale, so the Calendar's
+        // tabs follow it.
+        if shownCalendar != nil { refreshModuleChrome() }
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
         contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle)

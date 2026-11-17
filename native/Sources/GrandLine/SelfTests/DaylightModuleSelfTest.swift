@@ -91,7 +91,8 @@ enum DaylightModuleSelfTest {
         // belongs beside the Console and the task queue. The deliberate table
         // change `DaylightSpace.swift`'s own doc comment says to make together
         // with `DaylightModule.space`.
-        .command: [.console, .tasks, .mergeQueue, .commandLibrary, .strawHat],
+        // R5-UX-07 added the Calendar's next-up card and the Focus timer.
+        .command: [.console, .tasks, .mergeQueue, .commandLibrary, .strawHat, .calendar, .focusTimer],
         // `fm/grandline-k8s-cluster-tail` added `.kubernetes` here - the
         // deliberate table change this file's own doc comment says to make
         // together with `DaylightModule.space`. The scout report's own
@@ -257,8 +258,10 @@ enum DaylightModuleSelfTest {
         // page. All three have a real space, so all three are still reachable
         // on their own canvas - which is exactly what the loop below this
         // asserts, and is why "trimmed" has never meant "removed".
-        if trimmed.count != 25 {
-            fail("expected exactly 25 modules trimmed from Overview, got \(trimmed.count): "
+        // 25 -> 27: R5-UX-07's Calendar and Focus timer cards, which a
+        // Personal Home places itself; the hub's seven stay the captain's.
+        if trimmed.count != 27 {
+            fail("expected exactly 27 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

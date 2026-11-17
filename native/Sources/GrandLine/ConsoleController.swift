@@ -298,7 +298,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     var findButton: HelmButton!
     /// R2-UX-06: the tab bar's trailing action cluster, in its order - the
     /// sidebar layout's window toolbar carries it (`drillHeaderActions`).
-    var pageToolViews: [NSView] = []
+    /// R5-UX-06: the cluster the profile shows, read when asked, so a reader
+    /// that hears of a profile change first still gets the new cluster.
+    var pageToolViews: [NSView] {
+        guard !Self.showsOperatorTools else { return allPageToolViews }
+        let operatorTools = Set(operatorToolViews.map(ObjectIdentifier.init))
+        return allPageToolViews.filter { !operatorTools.contains(ObjectIdentifier($0)) }
+    }
+    /// Every action the cluster was built with, before the profile is
+    /// applied.
+    var allPageToolViews: [NSView] = []
     /// R2-UX-06: set once the sidebar layout shows this console (the shared
     /// one, or a host page).
     var drawsSidebarLayout = false

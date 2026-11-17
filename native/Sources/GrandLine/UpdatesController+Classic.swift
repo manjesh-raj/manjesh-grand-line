@@ -2,8 +2,8 @@
 //
 // `UpdatesController`'s floating-bar presentation (R2-ARCH-04): the stats strip and the per-category cards of tool rows, with each row's own buttons, which the sidebar layout hides for Setup's summary and one tools table (stage 7).
 //
-// The floating bar is the classic layout, frozen by R2-ARCH-01: it gets
-// fixes but no new features and no page redesigns. So the members only its
+// The floating bar is the classic layout, kept beside the sidebar by R5-UX-11:
+// both layouts stay, and each draws its own presentation. So the members only its
 // presentation uses live here, moved verbatim out of `UpdatesController.swift`, and
 // that file carries the presentation the sidebar layout draws. A member both
 // layouts use stays there. Swift's `private` is file-scoped, so the few

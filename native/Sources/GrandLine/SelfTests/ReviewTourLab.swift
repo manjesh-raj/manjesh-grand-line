@@ -1101,6 +1101,47 @@ enum ReviewTourLab {
                               branch: "fm/demo-snooze-expiry")
             return "ux merge body:\n" + ReviewController.mergeConfirmBody(pr, url: url)
                 .split(separator: "\n").map { "    | " + $0 }.joined(separator: "\n")
+        // R5-UX-01 / R5-UX-05 / R5-UX-06 / R5-UX-07: a profile, as the
+        // welcome sheet or Settings would choose it.
+        case "profile":
+            guard parts.count == 2, let profile = WorkspaceProfile(rawValue: parts[1]) else {
+                return "ux \(argument) FAILED - want profile personal|operator"
+            }
+            AppSettings.shared.setProfile(profile)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            return "ux profile \(profile.rawValue) (hidden: \(AppSettings.shared.hiddenModules.map(\.rawValue).sorted()))"
+        // R5-UX-03: start Home's week of tips today.
+        case "tips":
+            AppSettings.shared.homeTipsFirstShown = Date()
+            AppSettings.shared.homeTipsDismissed = false
+            shell.workspace.navigator.show(.homeCanvas)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // R5-UX-01: the welcome sheet's first step, rendered on its own.
+        case "welcome":
+            guard parts.count >= 2 else { return "ux welcome FAILED - want welcome <name> [step]" }
+            let sheet = WelcomeSheetController()
+            sheet.loadView()
+            for _ in 1..<(parts.count > 2 ? Int(parts[2]) ?? 1 : 1) { sheet.debugNext() }
+            sheet.view.layoutSubtreeIfNeeded()
+            let url = outputDirectory.appendingPathComponent("\(parts[1]).png")
+            return writePNG(of: sheet.view, to: url)
+                ? "ux welcome \(sheet.debugStepTitle) -> \(url.path)" : "ux welcome FAILED - no bitmap"
+        // R5-UX-03: what ⌘/ shows on the page on screen.
+        case "pageshortcuts":
+            guard parts.count == 2 else { return "ux pageshortcuts FAILED - want pageshortcuts <name>" }
+            let place = shell.shortcutsPlace
+            let sheet = KeyboardShortcutsSheetController(
+                sections: PageShortcuts.sections(module: place.module, route: place.route,
+                                                 layout: PlaceName.layout, settings: .shared),
+                heading: "Shortcuts for \(place.module.title)",
+                subheading: "What works on this page, and anywhere in Grand Line.",
+                actionTitle: "All Shortcuts\u{2026}") {}
+            sheet.loadView()
+            sheet.view.layoutSubtreeIfNeeded()
+            let url = outputDirectory.appendingPathComponent("\(parts[1]).png")
+            return writePNG(of: sheet.view, to: url)
+                ? "ux pageshortcuts \(place.module.title) -> \(url.path)" : "ux pageshortcuts FAILED - no bitmap"
         case "focuscard":
             let canvas = shell.debugHomeCanvas
             func cards(in view: NSView) -> [HelmModuleCard] {

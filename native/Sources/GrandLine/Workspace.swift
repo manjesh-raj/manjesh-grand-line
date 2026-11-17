@@ -227,6 +227,7 @@ final class Workspace {
     private(set) lazy var shift: ShiftController = {
         let shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
         shift.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        shift.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
         // The Tasks column's footer links, forwarded rather than owned - that
         // page knows nothing about the shell or the palette
         // (`onSearchTapped`'s own convention).
@@ -803,7 +804,8 @@ final class Workspace {
             notebookStore: notebookStore,
             readingListStore: readingListStore,
             commandLibraryStore: commandLibraryStore,
-            stickyBoardStore: stickyBoardStore))
+            stickyBoardStore: stickyBoardStore,
+            focusTimer: focusTimer))
         self.homeCanvas = homeCanvas
         // The canvas renders "reading" for either card until its store has
         // loaded; this is what puts the real contents there once it has.
@@ -1079,8 +1081,9 @@ final class Workspace {
         // zeroes is worse than the page that fixes the cause.
         // R2-UX-01 (b): a profile that hides Setup has nothing there to fix -
         // a general user has no firstmate home and needs none - so it opens on
-        // Home like any other launch.
-        if FirstmateHome.homeOk() || (PlaceName.layout == .sidebar && AppSettings.shared.hiddenModules.contains(.setup)) {
+        // Home like any other launch. R5-UX-01: in either layout, so a
+        // Personal install on the floating bar does not open on Setup either.
+        if FirstmateHome.homeOk() || AppSettings.shared.hiddenModules.contains(.setup) {
             navigator.show(.homeCanvas)
         } else {
             AppLog.lifecycle.info("firstmate home not configured - opening Setup instead of the home canvas")

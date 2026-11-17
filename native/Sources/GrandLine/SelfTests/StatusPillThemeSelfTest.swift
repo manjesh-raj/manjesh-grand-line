@@ -236,7 +236,7 @@ enum StatusPillThemeSelfTest {
                 ok = false
                 continue
             }
-            guard paint.text == "Update Available" else {
+            guard paint.text == StateWord.updateAvailable.label else {
                 print("StatusPillThemeSelfTest: FAIL - Updates row \(i) reads '\(paint.text)', want 'Update Available'")
                 ok = false
                 continue

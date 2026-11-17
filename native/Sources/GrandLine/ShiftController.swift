@@ -200,8 +200,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         var title: String {
             switch self {
             case .all: return "All tasks"
-            case .dueToday: return "Due today"
-            case .overdue: return "Overdue"
+            case .dueToday: return StateWord.dueToday.label
+            case .overdue: return StateWord.overdue.label
             case .myPriorities: return "My priorities"
             case .recentlyUpdated: return "Recently updated"
             }
@@ -963,8 +963,27 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// fresh copy each time could not carry state (the property
     /// `DaylightDrillPageSlice4SelfTest` pins for Vault's own Refresh).
     var drillHeaderActions: [NSView] {
-        store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton]
+        // R5-UX-04: the Calendar's toolbar carries Today while it shows, in
+        // the sidebar layout, where the card leaves its own Today to it. The
+        // floating bar's card keeps its own, so the drill header does not
+        // repeat it.
+        let today: [NSView] = tasksView == .calendar && drawsSidebarLayout ? [calendarTodayButton] : []
+        return today + (store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton])
     }
+
+    /// R5-UX-04: the page's actions changed - the Calendar view brings its
+    /// Today button and takes it away again.
+    var onDrillActionsChanged: (() -> Void)?
+
+    /// R5-UX-04: Today on the Calendar's toolbar, the card's own Today.
+    private lazy var calendarTodayButton: HelmButton = {
+        let button = HelmButton(title: "Today", variant: .secondary, size: .small,
+                                target: self, action: #selector(calendarTodayClicked))
+        button.toolTip = "Show today"
+        return button
+    }()
+
+    @objc private func calendarTodayClicked() { calendar.showToday() }
 
     /// `.primary` - the accent-filled pill. At most one per cluster, and this
     /// is the page's one primary action.
@@ -1008,11 +1027,14 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         let c = counts()
         let parts = [
             "\(c.open) open",
-            "\(c.dueToday) due today",
+            StateWord.dueToday.counted(c.dueToday),
             "\(c.followUps) follow-up\(c.followUps == 1 ? "" : "s")",
-            "\(c.overdue) overdue",
+            StateWord.overdue.counted(c.overdue),
         ]
-        let line = parts.joined(separator: " \u{00B7} ")
+        // R5-UX-10: for the first few tasks, the one way to add one that the
+        // page itself does not show - capture from any app.
+        let line = QuietHint.line(parts.joined(separator: " \u{00B7} "), count: store.activeTasks.count,
+                                  hint: "\(AppSettings.shared.quickCaptureShortcut.displayString) adds one from any app")
         guard let filter = projectFilter,
               let name = store.projects.first(where: { $0.id == filter })?.name, !name.isEmpty else { return line }
         return "\(name) \u{00B7} " + line
@@ -1288,8 +1310,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         switch taskScope {
         case .all: break
-        case .dueToday: parts.append("due today")
-        case .overdue: parts.append("overdue")
+        case .dueToday: parts.append(StateWord.dueToday.phrase)
+        case .overdue: parts.append(StateWord.overdue.phrase)
         case .myPriorities: parts.append("marked high")
         case .recentlyUpdated: parts.append("updated this week")
         }
@@ -1316,6 +1338,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         applyTabRowAccessories()
         render()
         onModuleTabChanged?()
+        if wasCalendar != (view == .calendar) { onDrillActionsChanged?() }
     }
 
     @objc private func sortChanged() {
@@ -2983,6 +3006,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        // R5-UX-04: a calendar embedded before this (a Calendar route lands
+        // on its tab before the shell adopts the page) hands its Today and
+        // periods to the window toolbar now.
+        if calendarSection.superview != nil { calendar.setPeriodControlsInToolbar(true) }
         splitPage?.pageForcesCollapse = true
         applyContentLeadingInset()
         topToolbar?.isHidden = true

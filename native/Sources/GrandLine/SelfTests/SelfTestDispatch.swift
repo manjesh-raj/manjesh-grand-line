@@ -1391,6 +1391,12 @@ enum SelfTestDispatch {
             exit(ReviewTwoUXModelSelfTest.run() ? 0 : 1)
         }
 
+        // Review #5's UX findings, R5-UX-01 to R5-UX-11: the pure half - models,
+        // tables and source guards (`ReviewFiveUXSelfTest`).
+        if ProcessInfo.processInfo.environment["FM_RUN_REVIEW5_UX_TESTS"] == "1" {
+            exit(ReviewFiveUXSelfTest.run() ? 0 : 1)
+        }
+
         // ...and the window-backed half: a real sidebar shell, a real Settings page
         // and real pixels (`ReviewTwoUXSelfTest`, in `NEEDS_SESSION`).
         if ProcessInfo.processInfo.environment["FM_RUN_REVIEW2_UX_TESTS"] == "1" {

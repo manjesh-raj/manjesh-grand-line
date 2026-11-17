@@ -2,14 +2,14 @@
 //
 // The window's root content view controller.
 //
-// **The floating bar is the classic layout, frozen (R2-ARCH-01).** The
-// captain keeps both window layouts, and the sidebar is the default. This one
-// is kept working and kept protected - its regression checks stay - but it
-// receives no new features and no page redesigns: new chrome is built for the
-// sidebar layout only, and Settings says so where the layout is chosen
-// ("Floating bar (classic)", maintenance only). The freeze is recorded in
-// `docs/modular-shell/feature-inventory.md`. A fix to something this layout
-// already does still belongs here.
+// **The floating bar is the classic layout, and it stays (R5-UX-11).** The
+// captain keeps both window layouts permanently, and the sidebar is the
+// default. R2-ARCH-01 froze this one as maintenance only and review #5
+// recommended a sunset date; the captain declined both. Its regression checks
+// stay, a change to shared behaviour has to work here as well as in the
+// sidebar layout, and Settings says so where the layout is chosen
+// (`WorkspaceLayout.choiceNote`). The decision is recorded in
+// `docs/modular-shell/feature-inventory.md`.
 //
 // **Read the Daylight Phase 2 note below first** - it describes the shell as
 // it is now (a floating bar plus a body container). The paragraphs
@@ -226,6 +226,9 @@ final class AppShellController: WorkspaceShellController {
         root.addSubview(bodyContainer)
 
         bar.onDrillBack = { [weak self] in self?.workspace.navigator.show(.homeCanvas) }
+        applyProfileToHome()
+        NotificationCenter.default.addObserver(self, selector: #selector(hiddenModulesDidChange(_:)),
+                                               name: AppSettings.hiddenModulesDidChange, object: nil)
         // A3: the bar is the only thing that reacts to the scroll edge, and
         // the observer is the only thing that knows about it.
         scrollEdge.onChange = { [weak self] active in self?.bar.setScrollEdgeActive(active) }
@@ -635,6 +638,24 @@ final class AppShellController: WorkspaceShellController {
         AppLog.ui.error("contentView width had drifted from the window's (\(actual, privacy: .public) vs \(expected, privacy: .public)) - resynced")
         view.setFrameSize(NSSize(width: expected, height: view.bounds.height))
     }
+
+    /// R5-UX-07: a Personal profile's Home is the one a general user can act
+    /// on in this layout too - its own default cards, and an attention card
+    /// that does not ask for a firstmate home. An Operator's floating Home is
+    /// the hand-placed hub it always was, so it is handed nothing.
+    private func applyProfileToHome() {
+        let canvas = workspace.homeCanvas
+        guard AppSettings.shared.effectiveProfile == .personal else {
+            canvas.hiddenModules = []
+            canvas.cardLayout = nil
+            return
+        }
+        canvas.standardCardLayout = .standard(for: .personal)
+        canvas.hiddenModules = AppSettings.shared.hiddenModules
+        canvas.cardLayout = AppSettings.shared.homeCardLayout
+    }
+
+    @objc private func hiddenModulesDidChange(_ note: Notification) { applyProfileToHome() }
 
     deinit {
         if let windowResizeObserver {
@@ -1055,6 +1076,27 @@ final class AppShellController: WorkspaceShellController {
     }
 
     override func workspaceSubtitleMayHaveChanged() { refreshDrillHeaderSubtitle() }
+
+    /// R5-UX-09: ⇧⌘[ and ⇧⌘] here step through the showing module's pages
+    /// - Knowledge's Notebook, Docs and Reading list, Setup's four, Crew's
+    /// three - which the floating bar draws as separate pages, so no chord
+    /// reached them. A page's own tabs (Console, Tools) are
+    /// `TabKeyboardShortcuts`', which sees the chord first.
+    override func stepModuleTab(by offset: Int) {
+        guard case .rail(let route)? = workspace.navigator.currentDestinationKind else { return }
+        let pages = Self.steppablePages(from: route)
+        guard pages.count > 1, let index = pages.firstIndex(of: ModuleTable.landing(for: route).route) else { return }
+        workspace.navigator.show(pages[(index + offset + pages.count) % pages.count])
+    }
+
+    /// The pages ⇧⌘[ and ⇧⌘] step through from `route`: its module's, each
+    /// once, the way a tab row orders them. A door's route that lands on
+    /// another page's view (the Calendar, on Tasks) is that page, not a
+    /// step of its own.
+    static func steppablePages(from route: RailDestination) -> [RailDestination] {
+        ModuleTable.module(for: ModuleTable.landing(for: route).route).pages
+            .filter { ModuleTable.landing(for: $0).route == $0 }
+    }
 
     override func workspaceActionsMayHaveChanged() { refreshDrillHeaderActions() }
 

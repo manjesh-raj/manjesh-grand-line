@@ -62,9 +62,11 @@ enum ReviewFourUXSelfTest {
               "R4-UX-01: the Calendar's chord reads \(WorkspaceGoMenu.chordText(for: .calendar) ?? "nothing")", &ok)
         check(WorkspaceGoMenu.chord(for: .calendar, hidden: [.calendar]) == nil,
               "R4-UX-01: a hidden Calendar still claims ⌘0", &ok)
-        // The digits the captain already knows stay put.
-        check(WorkspaceGoMenu.chord(for: .home) == 1 && WorkspaceGoMenu.chord(for: .tasks) == 2
-                && WorkspaceGoMenu.chord(for: .crew) == 3 && WorkspaceGoMenu.chord(for: .logs) == 9,
+        // The digits the captain already knows stay put, in the Operator's
+        // sidebar (R5-UX-05's door rows are hidden there).
+        let op = WorkspaceProfile.operator.hiddenModules
+        check(WorkspaceGoMenu.chord(for: .home, hidden: op) == 1 && WorkspaceGoMenu.chord(for: .tasks, hidden: op) == 2
+                && WorkspaceGoMenu.chord(for: .crew, hidden: op) == 3 && WorkspaceGoMenu.chord(for: .logs, hidden: op) == 9,
               "R4-UX-01: an existing digit moved", &ok)
 
         let menu = ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar)

@@ -67,6 +67,10 @@ final class AppSettings {
         static let appLockEnabled = "fm.appLockEnabled"
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
+        static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
+        static let homeTipsFirstShown = "fm.homeTips.firstShown"
+        static let homeTipsDismissed = "fm.homeTips.dismissed"
+        static let dictationAccessibilityAsked = "fm.dictation.accessibilityAsked"
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
         static let hostTagMatchAll = "fm.connections.tagMatchAll"
@@ -824,14 +828,80 @@ final class AppSettings {
     ///   it had stays in its sidebar.
     func settleFirstLaunch(isExistingInstall existing: Bool) {
         if appLockEnabled == nil, !existing { appLockEnabled = false }
+        // Before the profile below writes a set of this build's shape.
+        settleKnowledgeSplit()
         if workspaceProfile == nil { setProfile(existing ? .operator : .personal) }
+        // R5-UX-03: the week of Home tips starts at the first launch that
+        // has them. A self-test or tour process never runs this, so its
+        // Home shows no tip unless a suite starts the week itself.
+        if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }
+    }
+
+    /// R5-UX-03: the day Home's "Things you can do" strip first showed, which
+    /// starts its week (`HomeTips`). `nil` until a launch settles it.
+    var homeTipsFirstShown: Date? {
+        get { defaults.object(forKey: Keys.homeTipsFirstShown) as? Date }
+        set { defaults.set(newValue, forKey: Keys.homeTipsFirstShown) }
+    }
+
+    /// R5-UX-09: the dictation key's one-time Accessibility question has been
+    /// asked. Once asked, whatever the answer, it is not asked again; the
+    /// Dictation page's own button stays for a later change of mind.
+    var dictationAccessibilityAsked: Bool {
+        get { defaults.bool(forKey: Keys.dictationAccessibilityAsked) }
+        set { defaults.set(newValue, forKey: Keys.dictationAccessibilityAsked) }
+    }
+
+    /// R5-UX-03: the captain hid the tips. For good - the strip does not
+    /// come back the next day.
+    var homeTipsDismissed: Bool {
+        get { defaults.bool(forKey: Keys.homeTipsDismissed) }
+        set { defaults.set(newValue, forKey: Keys.homeTipsDismissed) }
+    }
+
+    /// R5-UX-05: Knowledge split into Knowledge (Notebook, Docs, Reading
+    /// list), two door rows for Notebook and Reading list, and Runbooks in
+    /// Observe. A hidden set stored before the split names none of the three
+    /// new rows, so read as it stands it would list all of them: the door
+    /// rows beside the Knowledge tabs they repeat, and Runbooks in a Personal
+    /// sidebar. Settled once, by what the set already said:
+    ///
+    /// - Knowledge hidden: the three new rows are hidden with it.
+    /// - A Personal install: Knowledge and Runbooks are hidden, and Notebook
+    ///   and Reading list become its rows - the Personal shape.
+    /// - Anything else (Operator, or Custom from it): the two door rows are
+    ///   hidden, so the sidebar is the one it had, with Runbooks in Observe.
+    ///
+    /// A set never stored is the profile's own, which already has the new
+    /// shape, so there is nothing to settle.
+    func settleKnowledgeSplit() {
+        guard !defaults.bool(forKey: Keys.knowledgeSplitSettled) else { return }
+        defaults.set(true, forKey: Keys.knowledgeSplitSettled)
+        guard let stored = defaults.stringArray(forKey: Keys.hiddenModules) else { return }
+        var hidden = Set(stored.compactMap(WorkspaceModule.init(rawValue:)))
+        if hidden.contains(.knowledge) {
+            hidden.formUnion([.notebook, .readingList, .runbooks])
+        } else if workspaceProfile == .personal {
+            hidden.formUnion([.knowledge, .runbooks])
+        } else {
+            hidden.formUnion([.notebook, .readingList])
+        }
+        hiddenModules = hidden
     }
 
     /// R2-UX-01 (b): the profile the sidebar started from (`WorkspaceProfile`).
     /// `nil` only before `settleFirstLaunch` - and in a self-test or tour
-    /// process, which never runs it, so those see every module.
+    /// process, which never runs it, so those see the Operator's modules.
     var workspaceProfile: WorkspaceProfile? {
         defaults.string(forKey: Keys.workspaceProfile).flatMap(WorkspaceProfile.init(rawValue:))
+    }
+
+    /// R5-UX-01: the profile the current hidden set reads as - the one
+    /// Settings shows selected - or, for a set edited into neither (Custom),
+    /// the one last chosen. What a Personal install leaves out beyond the
+    /// sidebar (Setup's firstmate steps) follows this.
+    var effectiveProfile: WorkspaceProfile? {
+        WorkspaceProfile.matching(hiddenModules) ?? workspaceProfile
     }
 
     /// Choose a profile: its hidden set replaces the current one.
@@ -844,11 +914,12 @@ final class AppSettings {
     /// its Go menu, the ⌘K palette and Home's default cards. Stored as module
     /// ids; an id this build does not know is dropped on read, and Home and
     /// Settings can never be hidden. With nothing stored it is the profile's
-    /// set, and with no profile, none.
+    /// set, and with no profile, the Operator's - every module, with
+    /// Knowledge's pages as its tabs rather than also as door rows (R5-UX-05).
     var hiddenModules: Set<WorkspaceModule> {
         get {
             guard let stored = defaults.stringArray(forKey: Keys.hiddenModules) else {
-                return workspaceProfile?.hiddenModules ?? []
+                return (workspaceProfile ?? .operator).hiddenModules
             }
             return Set(stored.compactMap(WorkspaceModule.init(rawValue:)).filter(\.canBeHidden))
         }

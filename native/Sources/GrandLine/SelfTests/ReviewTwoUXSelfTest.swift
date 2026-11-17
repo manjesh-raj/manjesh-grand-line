@@ -135,7 +135,7 @@ enum ReviewTwoUXSelfTest {
         check(shell.debugCurrentDestination == .kubernetes, "a hidden module's page no longer opens from a link", &ok)
         AppSettings.shared.setProfile(.operator)
         settle(shell)
-        check(sidebarModules(shell) == WorkspaceSidebarModel.listedModules(),
+        check(sidebarModules(shell) == WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.operator.hiddenModules),
               "after choosing Operator the sidebar lists \(sidebarModules(shell).map(\.rawValue))", &ok)
         check(shell.debugHomeCanvas.cardLayout == .standard, "an Operator Home does not show the hub's own cards", &ok)
         shell.workspace.navigator.show(.homeCanvas)
@@ -284,11 +284,15 @@ enum ReviewTwoUXSelfTest {
     }
 
     private static func checkTheTabChords(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        // An Operator's Knowledge: Notebook, Docs and Reading list as tabs
+        // (R5-UX-05 moved Runbooks and Postmortems to Observe).
+        AppSettings.shared.setProfile(.operator)
+        settle(shell)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         shell.selectNextModuleTab(nil)
         settle(shell)
-        check(shell.debugCurrentTab?.name == "Runbooks", "\u{2318}\u{21E7}] on Notebook showed \(shell.debugCurrentTab?.name ?? "nothing")", &ok)
+        check(shell.debugCurrentTab?.name == "Docs", "\u{2318}\u{21E7}] on Notebook showed \(shell.debugCurrentTab?.name ?? "nothing")", &ok)
         shell.selectPreviousModuleTab(nil)
         shell.selectPreviousModuleTab(nil)
         settle(shell)
@@ -572,7 +576,9 @@ enum ReviewTwoUXSelfTest {
         for destination in [RailDestination.homeCanvas, .shift, .overview, .notebook, .health, .settings] {
             shell.workspace.navigator.show(destination)
             settle(shell)
-            let module = ModuleTable.module(for: destination)
+            // The lit row's name: a door row that is listed (the Notebook,
+            // with nothing hidden) is its own place (R5-UX-05).
+            let module = ModuleTable.litModule(for: destination, hidden: AppSettings.shared.hiddenModules)
             check(shell.toolbar.debugCrumb.contains(module.title), "\(module.title)'s crumb does not name it: \(shell.toolbar.debugCrumb)", &ok)
             check(!shell.debugContentPaneHeader.debugDrawsTitle,
                   "\(module.title)'s content header still draws its name under the crumb", &ok)
