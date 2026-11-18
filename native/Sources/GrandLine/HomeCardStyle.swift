@@ -16,6 +16,11 @@
 // checked. Only Home's own arranged cards have a size to choose; on another
 // space or on the floating bar's hub the menu offers colour alone.
 //
+// **Hide is the arrangement's too.** The same cards offer "Hide from Home",
+// which is the same edit Customize's hide button makes, so either card can be
+// taken off Home without entering Customize. Customize's Add a Card brings it
+// back, and the toast that follows a hide says so.
+//
 // **Colour is kept per card, apart from the layout** (`AppSettings.
 // homeCardColors`), because it applies wherever the card is drawn. The theme's
 // accent is the default and follows the theme. A preset or a custom colour is
@@ -220,9 +225,14 @@ struct HomeCardStyleMenu {
     let chooseColor: (HomeCardColor) -> Void
     /// Open the system colour panel for a custom colour.
     let chooseCustomColor: () -> Void
+    /// Take the card off Home. `nil` where the card has no place to leave,
+    /// which is the same set of cards as `sizing`.
+    var hide: (() -> Void)? = nil
     var theme: HelmTheme = ThemeManager.shared.theme
 
-    static let tooltip = "Card size and colour"
+    static let hideTitle = "Hide from Home"
+
+    static let tooltip = "Card size, colour and hiding"
     static let symbol = "paintpalette"
 
     func makeMenu() -> NSMenu {
@@ -258,6 +268,14 @@ struct HomeCardStyleMenu {
         custom.toolTip = "Pick any colour. The card keeps white text readable on it."
         custom.indentationLevel = 1
         menu.addItem(custom)
+
+        if let hide {
+            menu.addItem(.separator())
+            let item = Self.item(Self.hideTitle) { hide() }
+            item.image = HelmSymbol.image("eye.slash", pointSize: HelmType.scaled(13), weight: .medium)
+            item.toolTip = "Customize's Add a Card brings it back."
+            menu.addItem(item)
+        }
         return menu
     }
 

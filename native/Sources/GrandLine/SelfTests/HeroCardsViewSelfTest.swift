@@ -44,6 +44,9 @@ enum HeroCardsViewSelfTest {
             checkTheSizeItemsArrangeTheCard,
             checkTheColourItemsRepaintTheCard,
             checkTheMenuButtonDoesNotOpenTheCard,
+            checkBothCardsOfferThePaletteAtEverySize,
+            checkAnUnfinishedDragEndsWithCustomize,
+            checkHideFromTheMenuAndBringItBack,
             writeRenders,
         ]
         for check in checks {
@@ -346,6 +349,141 @@ enum HeroCardsViewSelfTest {
                   "the palette button stays up while Customize is arranging", &ok)
             canvas.setCustomizing(false)
         }
+    }
+
+    /// Both cards carry the palette at every size and in both themes, as one
+    /// header control row: inside the card and clear of Refresh. The menu it
+    /// opens offers the sizes, the colours and Hide.
+    private static func checkBothCardsOfferThePaletteAtEverySize(_ ok: inout Bool) {
+        for theme in [daylight, dusk] {
+            for mode in HomeCardSizeMode.allCases {
+                mountCanvas(mode, state: .normal, theme: theme) { canvas, _ in
+                    for module in HomeCardStyle.modules {
+                        let name = "\(theme.id) \(mode) \(module.title)"
+                        guard let card = canvas.cardForTests(module) else {
+                            fail("\(name): the canvas drew no card", &ok)
+                            continue
+                        }
+                        let button = card.debugHeaderMenuButton
+                        check(!button.isHidden, "\(name): the palette button is hidden", &ok)
+                        let surface = card.debugCardHitView
+                        let frame = button.convert(button.bounds, to: surface)
+                        check(frame.width > 0 && surface.bounds.contains(frame),
+                              "\(name): the palette button at \(frame) is outside the \(surface.bounds.size) card", &ok)
+                        if let action = card.debugHeaderActionFrameInCard {
+                            check(!action.intersects(frame),
+                                  "\(name): the palette button \(frame) overlaps the header action \(action)", &ok)
+                        }
+                        let titles = card.debugHeaderMenu()?.items.map(\.title) ?? []
+                        for title in ["Narrow", "Default", "Full width", "Theme accent", HomeCardStyleMenu.hideTitle] {
+                            check(titles.contains(title), "\(name): the palette menu has no \(title) (\(titles))", &ok)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A resize drag whose mouse-up never arrives must not outlive Customize.
+    /// It did: Done rebuilt Home but kept the dragged card, strip and grips
+    /// included, so the Claude card showed Customize's reset, move and hide
+    /// controls where its palette belongs, while Fleet showed its palette.
+    /// The drag enters through the grip's own mouse handlers.
+    private static func checkAnUnfinishedDragEndsWithCustomize(_ ok: inout Bool) {
+        for edge in HomeCardResizeHandle.Edge.allCases {
+            mountCanvas(.standard, state: .normal, theme: daylight) { canvas, window in
+                var stored: [HomeCardLayout] = []
+                canvas.onCardLayoutChanged = { stored.append($0) }
+                canvas.setCustomizing(true)
+                window.layoutIfNeeded()
+                guard let card = canvas.cardForTests(.claudeStatus),
+                      let grip = canvas.resizeHandlesForTests[.claudeStatus]?.first(where: { $0.edge == edge }) else {
+                    fail("\(edge): Customize drew no Claude card or grip", &ok)
+                    return
+                }
+                let start = grip.convert(NSPoint(x: grip.bounds.midX, y: grip.bounds.midY), to: nil)
+                func event(_ type: NSEvent.EventType, _ point: NSPoint) -> NSEvent? {
+                    NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0,
+                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                       clickCount: 1, pressure: 1)
+                }
+                let before = canvas.cardLayout
+                if let down = event(.leftMouseDown, start) { grip.mouseDown(with: down) }
+                if let drag = event(.leftMouseDragged, NSPoint(x: start.x + 120, y: start.y - 60)) {
+                    grip.mouseDragged(with: drag)
+                }
+                // The drag really sized the card, so the checks below can fail.
+                check(canvas.cardLayout != before, "\(edge): fixture: the drag did not size the card", &ok)
+                let dragged = canvas.cardLayout
+
+                canvas.setCustomizing(false)
+                window.layoutIfNeeded()
+                guard let after = canvas.cardForTests(.claudeStatus) else {
+                    fail("\(edge): Done drew no Claude card", &ok)
+                    return
+                }
+                check(after.debugHeaderAccessoryFrameInCard == nil,
+                      "\(edge): the Claude card kept Customize's strip after Done", &ok)
+                check(!after.subviews.contains { $0 is HomeCardResizeHandle },
+                      "\(edge): the Claude card kept its grips after Done", &ok)
+                check(!after.debugHeaderMenuButton.isHidden,
+                      "\(edge): the Claude card's palette is hidden after Done", &ok)
+                check(after !== card || after.debugHeaderAccessoryFrameInCard == nil,
+                      "\(edge): Done kept the dragged card as it was", &ok)
+                // The size the card was dragged to is what Home keeps.
+                check(canvas.cardLayout == dragged && stored.last == dragged,
+                      "\(edge): the dragged size was not kept (stored \(stored.count) layouts)", &ok)
+            }
+        }
+    }
+
+    /// "Hide from Home" on either card takes it off Home, the toast's Undo
+    /// puts it back, and Customize's Add a Card brings it back too.
+    private static func checkHideFromTheMenuAndBringItBack(_ ok: inout Bool) {
+        for module in HomeCardStyle.modules {
+            mountCanvas(.standard, state: .normal, theme: daylight) { canvas, window in
+                var stored: [HomeCardLayout] = []
+                canvas.onCardLayoutChanged = { stored.append($0) }
+                func hide() {
+                    let item = canvas.cardForTests(module)?.debugHeaderMenu()?.items
+                        .first { $0.title == HomeCardStyleMenu.hideTitle }
+                    guard let item else {
+                        fail("\(module.title): the palette menu has no Hide", &ok)
+                        return
+                    }
+                    fire(item)
+                    window.layoutIfNeeded()
+                }
+                let before = canvas.cardLayout
+                check(before?.shown.contains(module) ?? false, "\(module.title): fixture: the card is not on Home", &ok)
+
+                hide()
+                check(!(canvas.cardLayout?.shown.contains(module) ?? true) && canvas.cardForTests(module) == nil,
+                      "\(module.title): Hide from Home left the card on Home", &ok)
+                check(stored.last == canvas.cardLayout, "\(module.title): the hide was not kept", &ok)
+                check(Toast.debugCount(in: canvas.view) == 1, "\(module.title): no toast said how to bring it back", &ok)
+                let undo = allViews(in: canvas.view).compactMap { $0 as? HelmButton }.first { $0.title == "Undo" }
+                check(undo != nil, "\(module.title): the toast has no Undo", &ok)
+                undo?.performClick(nil)
+                window.layoutIfNeeded()
+                check(canvas.cardLayout == before && canvas.cardForTests(module) != nil && stored.last == before,
+                      "\(module.title): Undo did not put the card back", &ok)
+
+                hide()
+                canvas.setCustomizing(true)
+                let tray = canvas.customizeTrayForTests
+                check(tray?.hiddenCards.contains(module) ?? false,
+                      "\(module.title): Customize's Add a Card does not offer the hidden card", &ok)
+                tray?.onAdd?(module)
+                check(canvas.cardLayout?.shown.contains(module) ?? false && canvas.cardForTests(module) != nil,
+                      "\(module.title): Add a Card did not bring the card back", &ok)
+                canvas.setCustomizing(false)
+            }
+        }
+    }
+
+    private static func allViews(in root: NSView) -> [NSView] {
+        [root] + root.subviews.flatMap { allViews(in: $0) }
     }
 
     /// `color` is exactly `ink`, alpha included. A luminance ratio is not

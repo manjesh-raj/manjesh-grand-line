@@ -863,6 +863,7 @@ final class HomeCanvasController: NSViewController {
         guard newSpace != space else { return }
         // Only Home's own space is arranged, so leaving it ends Customize.
         if isCustomizing, newSpace != .overview {
+            endCardResize()
             isCustomizing = false
             onCustomizingChanged?(false)
         }
@@ -1847,6 +1848,11 @@ final class HomeCanvasController: NSViewController {
         let customizing = customizing && cardLayout != nil
         guard customizing != isCustomizing else { return }
         if customizing, space != .overview { space = .overview }
+        // A drag still in progress ends with Customize. Left running, the
+        // rebuild below keeps its card, strip and grips included, and that
+        // card shows Customize's controls in place of its own until Home is
+        // rebuilt again with no drag on.
+        if !customizing { endCardResize() }
         isCustomizing = customizing
         guard isViewLoaded else { return }
         render()
@@ -2081,7 +2087,11 @@ final class HomeCanvasController: NSViewController {
         #endif
         // A card being dragged to a new size survives the rebuild its drag
         // causes: its grips are the views the drag's events are going to.
-        let kept = cardResize.flatMap { resize in cardsByModule[resize.module].map { (resize.module, $0) } }
+        // Only while Customize is on: outside it nothing would take the
+        // kept card's strip and grips off again.
+        let kept = isCustomizing
+            ? cardResize.flatMap { resize in cardsByModule[resize.module].map { (resize.module, $0) } }
+            : nil
         for row in gridStack.arrangedSubviews {
             gridStack.removeArrangedSubview(row)
             row.removeFromSuperview()
@@ -3647,20 +3657,37 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
-    /// The style menu for `module` as it stands now. Size is offered only on
-    /// Home's own arranged cards, which are the only cards with a width the
-    /// captain owns.
+    /// The style menu for `module` as it stands now. Size and Hide are
+    /// offered only on Home's own arranged cards, which are the only cards
+    /// with a width and a place the captain owns.
     func makeStyleMenu(for module: DaylightModule) -> HomeCardStyleMenu {
         var sizing: HomeCardStyleMenu.Sizing?
+        var hide: (() -> Void)?
         if showsArrangedCards, let layout = cardLayout, layout.shown.contains(module) {
             sizing = HomeCardStyleMenu.Sizing(
                 current: HomeCardSizeMode(columns: layout.size(of: module).columns),
                 choose: { [weak self] mode in self?.setCardSize(mode, for: module) })
+            hide = { [weak self] in self?.hideCard(module) }
         }
         return HomeCardStyleMenu(
             cardTitle: module.title, sizing: sizing, color: HomeCardStyle.color(for: module),
             chooseColor: { [weak self] color in self?.setCardColor(color, for: module) },
-            chooseCustomColor: { [weak self] in self?.chooseCustomCardColor(for: module) })
+            chooseCustomColor: { [weak self] in self?.chooseCustomCardColor(for: module) },
+            hide: hide)
+    }
+
+    /// The same edit Customize's hide button makes. Customize's Add a Card
+    /// brings the card back, and the toast says so, with an Undo that puts
+    /// back the arrangement as it was (GL-33).
+    private func hideCard(_ module: DaylightModule) {
+        guard let before = cardLayout else { return }
+        arrange { $0.hide(module) }
+        guard isViewLoaded, cardLayout != before else { return }
+        Toast.showUndo(in: view, message: "\(module.title) hidden. Add it back from Customize.") { [weak self] in
+            guard let self else { return }
+            self.cardLayout = before
+            self.onCardLayoutChanged?(before)
+        }
     }
 
     /// The same edit a resize drag makes, so it is kept with the rest of
