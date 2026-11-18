@@ -708,7 +708,9 @@ enum ModuleTable {
     /// dropped the content column's header on Connections and Console;
     /// every other module keeps it.
     static let modules: [WorkspaceModuleDescriptor] = [
-        WorkspaceModuleDescriptor(module: .home, title: "Home", group: nil, children: []),
+        // The feel pass: Home's own greeting is its title and its summary
+        // line, so the column's date line would say the date twice.
+        WorkspaceModuleDescriptor(module: .home, title: "Home", group: nil, children: [], showsHeader: false),
         WorkspaceModuleDescriptor(module: .tasks, title: "Tasks", group: .work,
                                   children: ["Board", "List", "Calendar", "Weekly review"], pageTabHost: .shift),
         // A door, not a page: Tasks' Calendar view (`ModuleDescriptor.door`),

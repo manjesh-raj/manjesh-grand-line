@@ -324,6 +324,30 @@ final class HomeCanvasController: NSViewController {
     private let attentionCard = NeedsAttentionCard()
     private let gridStack = NSStackView()
 
+    // MARK: The feel pass (the sidebar layout's Home)
+    //
+    // The Fable second-opinion review's Stage 1, cut to the feasibility
+    // audit's items 1 to 3: the prototype's Home, drawn natively, on Home's
+    // own space in the sidebar layout. Top to bottom: a greeting as the page
+    // title with a one-line summary, the Morning briefing as a gradient hero
+    // with the services ring inside it, a strip of four KPI tiles, then the
+    // attention card and the captain's cards as before. The floating bar's
+    // hand-placed hub is left exactly as it is (`showsArrangedCards` is
+    // false there).
+    //
+    // Rule 1 holds: every figure here is one this page already reads for a
+    // card (the injected `ShiftStore`, the pushed fleet and quota, the health
+    // registry's summary). There are no sparklines: nothing records a series
+    // of any of these figures, and a trend line needs one.
+
+    private let greetingTitle = NSTextField(labelWithString: "")
+    private let greetingSummary = NSTextField(labelWithString: "")
+    private let greetingHeader = NSStackView()
+    private let briefingHero = HelmHeroCard()
+    private let kpiStrip = HelmKPIStrip(density: .boxed)
+    /// Where each KPI tile goes when pressed, in the strip's order.
+    private var kpiDestinations: [RailDestination] = []
+
     private var cards: [HelmModuleCard] = []
     /// P2: the page's cards by module, the placement each was built for, and
     /// the layout they were built into - so a render that changes only data
@@ -605,10 +629,16 @@ final class HomeCanvasController: NSViewController {
         stack.spacing = Self.gridSpacing
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
+        buildFeelPass()
+        stack.addArrangedSubview(greetingHeader)
+        stack.addArrangedSubview(briefingHero)
+        stack.addArrangedSubview(kpiStrip)
         stack.addArrangedSubview(heroCard)
         stack.addArrangedSubview(attentionCard)
         stack.addArrangedSubview(tipRow)
         stack.addArrangedSubview(gridStack)
+        // The prototype's 22pt under the page title, before the hero.
+        stack.setCustomSpacing(HelmMetrics.s5, after: greetingHeader)
         tipRow.isHidden = true
 
         attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
@@ -683,6 +713,9 @@ final class HomeCanvasController: NSViewController {
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            greetingHeader.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            briefingHero.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            kpiStrip.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         tipRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
@@ -936,11 +969,138 @@ final class HomeCanvasController: NSViewController {
     private func render() {
         healthSummary = ServiceHealthRegistry.shared.summary()
         renderGreeting()
+        renderFeelPass()
         renderAttention()
         renderTip()
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
     }
+
+    // MARK: The feel pass
+
+    /// The summary line's size: the prototype's 14 under a 30pt title.
+    static let greetingSummarySize: CGFloat = 14
+
+    private func buildFeelPass() {
+        greetingTitle.lineBreakMode = .byTruncatingTail
+        greetingSummary.lineBreakMode = .byTruncatingTail
+        for label in [greetingTitle, greetingSummary] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            // Gotcha (13): the largest type on the page is never a width floor.
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        }
+        greetingTitle.setAccessibilityRole(.staticText)
+        greetingHeader.setViews([greetingTitle, greetingSummary], in: .top)
+        greetingHeader.orientation = .vertical
+        greetingHeader.alignment = .leading
+        greetingHeader.spacing = HelmMetrics.s1 + 2
+        greetingHeader.translatesAutoresizingMaskIntoConstraints = false
+        greetingHeader.setHuggingPriority(.defaultLow, for: .horizontal)
+        greetingHeader.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        greetingHeader.isHidden = true
+        briefingHero.isHidden = true
+        kpiStrip.isHidden = true
+        kpiStrip.onActivate = { [weak self] index in
+            guard let self, self.kpiDestinations.indices.contains(index) else { return }
+            self.onOpenDestination?(self.kpiDestinations[index])
+        }
+    }
+
+    /// The greeting, the hero and the strip, on Home's arranged space only.
+    private func renderFeelPass(now: Date = Date()) {
+        let on = showsArrangedCards
+        greetingHeader.isHidden = !on
+        kpiStrip.isHidden = !on
+        briefingHero.isHidden = !briefingIsHero
+        guard on else { return }
+
+        let counts = HomeTaskCounts(store: sources.shiftStore, now: now)
+        var prsReady: Int?
+        if case let .value(count) = prReading { prsReady = count }
+        let crewShown = !hiddenModules.contains(.crew)
+        let healthShown = !hiddenModules.contains(.health)
+        let fleetAnswer = crewShown ? overviewAnswer() : nil
+        let facts = HomeGreeting.Facts(
+            dueToday: hiddenModules.contains(.tasks) ? nil : counts?.due,
+            overdue: counts?.overdue,
+            fleetNeedsYou: fleetAnswer.flatMap { $0.tint == .good ? nil : $0.title },
+            prsReady: crewShown ? prsReady : nil,
+            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil)
+        greetingTitle.stringValue = HomeGreeting.title(
+            captain: HomeGreeting.captainName(fleetCaptain: fleetSnapshot?.captain), now: now)
+        greetingSummary.stringValue = HomeGreeting.summary(facts, now: now)
+        greetingHeader.setAccessibilityElement(true)
+        greetingHeader.setAccessibilityRole(.group)
+        greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
+
+        if briefingIsHero { renderBriefingHero(fleetNeedsYou: facts.fleetNeedsYou != nil, healthShown: healthShown) }
+        renderKPIs(counts: counts)
+    }
+
+    private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool) {
+        let record = AppSettings.shared.morningBriefingRecord
+        let words = HomeBriefingHero.words(record: record, enabled: AppSettings.shared.morningBriefingEnabled,
+                                           settingsName: PlaceName.of(.settings))
+        var kicker = "Morning briefing"
+        if let record, !record.clauses.isEmpty {
+            kicker += " \u{00B7} generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
+            kicker += " \u{00B7} \(record.sources.count) source\(record.sources.count == 1 ? "" : "s")"
+            if record.isDegraded { kicker += " \u{00B7} offline" }
+        }
+        // The feasibility audit's ring: the services figure Home's Health
+        // card already draws, at the hero's 86pt. No ring when the profile
+        // hides Health, and none before anything has reported - an empty
+        // ring would read as zero healthy (GL-14).
+        var ring: HelmHeroCard.Content.Ring?
+        if healthShown, healthSummary.total > 0 {
+            ring = .init(value: healthSummary.healthy, total: healthSummary.total, caption: "services healthy")
+        }
+        briefingHero.configure(.init(kicker: kicker, title: words.title, body: words.body, ring: ring))
+
+        // The prototype's two actions, each only when it has somewhere real
+        // to go: the crew's decisions when one is waiting, Health when a
+        // service is failing.
+        var actions: [(String, Selector)] = []
+        if fleetNeedsYou { actions.append(("Open Needs you", #selector(heroOpenDecisions))) }
+        if healthShown, healthSummary.failing > 0 { actions.append(("See Health", #selector(heroOpenHealth))) }
+        if heroActionTitles != actions.map(\.0) {
+            heroActionTitles = actions.map(\.0)
+            briefingHero.setActions(actions.map { HelmButton(title: $0.0, variant: .secondary, target: self, action: $0.1) })
+        }
+    }
+
+    /// The titles the hero's buttons were last built with, so a render that
+    /// changes nothing keeps the buttons it has (and their hover state).
+    private var heroActionTitles: [String] = []
+
+    @objc private func heroOpenDecisions() {
+        if let onOpenCrewDecisions { onOpenCrewDecisions() } else { onOpenDestination?(.overview) }
+    }
+    @objc private func heroOpenHealth() { onOpenDestination?(.health) }
+
+    /// The four tiles, the feasibility audit's own: tasks due today, PRs
+    /// ready to merge, services healthy and Claude's week. A profile that
+    /// hides the crew or Health loses those tiles rather than reporting on a
+    /// module the sidebar does not show, and the strip carries what is left.
+    private func renderKPIs(counts: HomeTaskCounts?) {
+        let tiles = HomeKPITiles.tiles(
+            tasks: hiddenModules.contains(.tasks) ? nil : .init(counts: counts),
+            prs: hiddenModules.contains(.crew) ? nil : .init(reading: prReading, open: (mergedPRs ?? lastGoodPRs)?.count),
+            health: hiddenModules.contains(.health) ? nil : healthSummary,
+            claude: hiddenModules.contains(.crew) ? nil : .init(week: quotaSnapshot?.weekly, failure: quotaFailure))
+        kpiDestinations = tiles.map(\.opens)
+        kpiStrip.isHidden = tiles.isEmpty
+        kpiStrip.configure(tiles.map(\.item))
+    }
+
+    #if FM_SELFTESTS
+    var debugGreetingTitle: String { greetingHeader.isHidden ? "" : greetingTitle.stringValue }
+    var debugGreetingSummary: String { greetingHeader.isHidden ? "" : greetingSummary.stringValue }
+    var debugBriefingHero: HelmHeroCard? { briefingHero.isHidden ? nil : briefingHero }
+    var debugKPIStrip: HelmKPIStrip? { kpiStrip.isHidden ? nil : kpiStrip }
+    var debugKPIDestinations: [RailDestination] { kpiDestinations }
+    #endif
 
     // MARK: R5-UX-03 - Things you can do
 
@@ -1560,10 +1720,22 @@ final class HomeCanvasController: NSViewController {
     /// hidden, and where the drag and resize maths index `cardLayout` itself.
     private var shownLayout: HomeCardLayout? {
         guard var layout = cardLayout else { return nil }
-        if !isCustomizing, !Self.briefingHasSomethingToSay, layout.shown.contains(.briefing) {
+        // Out of the grid either way outside Customize: with nothing to say
+        // (R5-UI-08), or because the feel pass draws it as the hero above
+        // the grid (`briefingIsHero`). Customize keeps it a card, so it can
+        // still be moved, sized or hidden like every other one.
+        if !isCustomizing, layout.shown.contains(.briefing) {
             layout.hide(.briefing)
         }
         return layout
+    }
+
+    /// Whether the briefing is drawn as the feel pass's hero: Home's
+    /// arranged cards include it, it has something to say, and Customize is
+    /// not drawing it as a card.
+    private var briefingIsHero: Bool {
+        showsArrangedCards && !isCustomizing && Self.briefingHasSomethingToSay
+            && (cardLayout?.shown.contains(.briefing) ?? false)
     }
 
     /// Whether Home's own space is showing the captain's arranged cards.
@@ -1684,7 +1856,7 @@ final class HomeCanvasController: NSViewController {
     private func placeCustomizeTray() {
         let wanted = isCustomizing && showsArrangedCards
         if wanted, customizeTray.superview !== stack {
-            stack.insertArrangedSubview(customizeTray, at: 1)
+            stack.insertArrangedSubview(customizeTray, at: stack.arrangedSubviews.firstIndex(of: heroCard) ?? 1)
             customizeTray.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         } else if !wanted, customizeTray.superview === stack {
             stack.removeArrangedSubview(customizeTray)
@@ -2763,6 +2935,12 @@ final class HomeCanvasController: NSViewController {
         paintTip(theme)
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        greetingTitle.attributedStringValue = NSAttributedString(
+            string: greetingTitle.stringValue,
+            attributes: HelmType.displayTitleAttributes(color: HelmTheme.nsColor(theme.chromeInkHex)))
+        greetingSummary.font = .systemFont(ofSize: HelmType.scaled(Self.greetingSummarySize))
+        greetingSummary.textColor = HelmTheme.mutedInk(theme)
+        kpiStrip.applyTheme(theme)
         // Plain `body()` on every space now. The step up to `sectionTitle()`
         // belonged to the hub's hero band, whose detail line carried real
         // numbers; the four spaces that still draw this row only name

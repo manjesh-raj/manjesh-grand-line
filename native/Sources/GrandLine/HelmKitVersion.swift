@@ -228,6 +228,7 @@ enum HelmKit {
         Component("ShiftProjectPalette", "2.0.0", file: "ShiftBoardViews.swift"),
         Component("Home Health card", "1.0.1", file: "HomeCanvasController.swift"),
         Component("Home Tasks card", "1.0.1", file: "HomeCanvasController.swift"),
+        Component("Home (page)", "1.0.0", file: "HomeCanvasController.swift"),
         Component("MorningBriefingCard", "1.0.1", file: "MorningBriefingCard.swift"),
         Component("StateVocabulary", "1.1.0", file: "StateVocabulary.swift"),
         Component("Tasks board (page)", "1.0.2", file: "ShiftBoardViews.swift"),

@@ -79,6 +79,7 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
+                      checkHomeFeelPass,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
                       checkEveryPageStartsAtOneHeight,
@@ -992,7 +993,10 @@ enum MainSplitShellSelfTest {
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let canvas = shell.debugHomeCanvas
-        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && !canvas.usesDashboardLayoutForTests,
+        // The feel pass draws the briefing as the hero above the grid, so the
+        // grid is the arranged cards less that one (`checkHomeFeelPass`).
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing }
+                && !canvas.usesDashboardLayoutForTests,
               "Home shows \(canvas.visibleModulesForTests.map(\.rawValue)), not its arranged cards", &ok)
         check(shell.toolbar.debugModuleActionButton?.title == "Customize", "Home offers no Customize", &ok)
         // Claude's card carries a header action (Refresh), which the arranging
@@ -1075,7 +1079,8 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(!canvas.isCustomizing && canvas.customizeTrayForTests == nil && canvas.cardStripsForTests.isEmpty,
               "Done left Customize's controls on Home", &ok)
-        check(canvas.visibleModulesForTests == after, "Done changed the arrangement", &ok)
+        // Customize draws the briefing as a card; after Done it is the hero.
+        check(canvas.visibleModulesForTests == after.filter { $0 != .briefing }, "Done changed the arrangement", &ok)
         check(canvas.cardForTests(.claudeStatus)?.debugHeaderActionFrameInCard != nil,
               "Done did not give Claude's card its Refresh back", &ok)
 
@@ -1102,6 +1107,59 @@ enum MainSplitShellSelfTest {
     /// no card is narrower than the canvas's minimum, and nothing overlaps.
     /// Home's own cards and the captain's own arrangement (from their
     /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    /// The feel pass (the feasibility audit's items 1 to 3) on real Home in a
+    /// real window: the greeting is the page's title in place of the
+    /// column's date line, the briefing is the gradient hero above the grid
+    /// rather than a card in it, the strip has the audit's four tiles, and
+    /// Customize draws the briefing as a card again so it can be placed.
+    private static func checkHomeFeelPass(_ shell: MainSplitShellController, _ window: NSWindow,
+                                          _ ok: inout Bool) {
+        let saved = AppSettings.shared.homeCardLayout
+        defer {
+            AppSettings.shared.homeCardLayout = saved
+            shell.debugHomeCanvas.cardLayout = saved
+            shell.debugHomeCanvas.setCustomizing(false)
+            resize(window, width: 1512, shell)
+        }
+        shell.workspace.navigator.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        AppSettings.shared.homeCardLayout = .standard
+        canvas.cardLayout = .standard
+        check(HomeCardLayout.standard.shown.contains(.briefing) && HomeCanvasController.briefingHasSomethingToSay,
+              "fixture: the briefing is not on Home with something to say - the hero check measures nothing", &ok)
+        resize(window, width: 1512, shell)
+        settle(shell)
+        _ = settleHomeGrid(shell, canvas)
+        check(canvas.debugGreetingTitle.hasSuffix(HomeGreeting.captainName(fleetCaptain: nil))
+                || canvas.debugGreetingTitle.contains(", "),
+              "Home's greeting reads \"\(canvas.debugGreetingTitle)\"", &ok)
+        check(canvas.debugGreetingSummary.hasPrefix(MainSplitShellController.homeSubtitle() + ". "),
+              "Home's summary does not open with the day: \"\(canvas.debugGreetingSummary)\"", &ok)
+        check(shell.debugHeader == nil, "the column still draws Home's date line over the greeting", &ok)
+        guard let hero = canvas.debugBriefingHero else {
+            fail("the briefing is not drawn as the hero", &ok)
+            return
+        }
+        check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
+        check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
+        let tiles = canvas.debugKPIStrip?.debugCells ?? []
+        check(tiles.map(\.debugCaption) == ["Tasks due today", "PRs ready to merge", "Services healthy", "Claude week"],
+              "Home's strip is \(tiles.map(\.debugCaption))", &ok)
+        check(canvas.debugKPIDestinations == [.shift, .review, .health, .console],
+              "Home's tiles open \(canvas.debugKPIDestinations)", &ok)
+        // Top to bottom: greeting, hero, strip.
+        if let strip = canvas.debugKPIStrip {
+            let heroTop = hero.convert(hero.bounds, to: nil).maxY
+            let stripTop = strip.convert(strip.bounds, to: nil).maxY
+            check(heroTop > stripTop, "the strip sits above the hero", &ok)
+        }
+        canvas.setCustomizing(true)
+        settle(shell)
+        _ = settleHomeGrid(shell, canvas)
+        check(canvas.debugBriefingHero == nil && canvas.cardForTests(.briefing) != nil,
+              "Customize does not draw the briefing as a card the captain can place", &ok)
+    }
+
     /// R5-UI-08: with the briefing off and nothing on record, Home's own
     /// cards are the other four, and the slot the briefing had is not left as
     /// a hole: every row still reaches the grid's edge. Customize still draws
@@ -1189,8 +1247,10 @@ enum MainSplitShellSelfTest {
                     let rows = canvas.gridRowsForTests
                     let gridWidth = rows.map(\.frame.width).max() ?? 0
                     let cards = rows.map { $0.arrangedSubviews.compactMap { $0 as? HelmModuleCard } }
-                    check(cards.joined().count == layout.shown.count,
-                          "\(when): \(cards.joined().count) of \(layout.shown.count) cards are on Home", &ok)
+                    // Less the briefing, which the feel pass draws as the hero.
+                    let inGrid = layout.shown.filter { $0 != .briefing }.count
+                    check(cards.joined().count == inGrid,
+                          "\(when): \(cards.joined().count) of \(inGrid) cards are on Home", &ok)
                     for (index, row) in cards.enumerated() {
                         guard let last = row.last else { continue }
                         let stack = rows[index]
