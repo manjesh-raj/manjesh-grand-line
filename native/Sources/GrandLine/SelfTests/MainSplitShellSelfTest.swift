@@ -79,7 +79,7 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
-                      checkHomeFeelPass,
+                      checkHomeFeelPass, checkToolbarTabsSlide,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
                       checkEveryPageStartsAtOneHeight,
@@ -351,18 +351,15 @@ enum MainSplitShellSelfTest {
     /// target and action, the way a real click reaches it.
     @discardableResult
     private static func clickTab(_ name: String, _ shell: MainSplitShellController) -> Bool {
-        let tabs = shell.toolbar.debugTabs
         guard let index = shell.toolbar.debugTabNames.firstIndex(of: name) else { return false }
-        tabs.selectedSegment = index
-        _ = tabs.sendAction(tabs.action, to: tabs.target)
+        shell.toolbar.debugClickTab(index)
         settle(shell)
         return true
     }
 
     private static func selectedTabName(_ shell: MainSplitShellController) -> String? {
-        let tabs = shell.toolbar.debugTabs
         let names = shell.toolbar.debugTabNames
-        return names.indices.contains(tabs.selectedSegment) ? names[tabs.selectedSegment] : nil
+        return shell.toolbar.debugSelectedTab.map { names[$0] }
     }
 
     // MARK: 1 - every route
@@ -1107,6 +1104,33 @@ enum MainSplitShellSelfTest {
     /// no card is narrower than the canvas's minimum, and nothing overlaps.
     /// Home's own cards and the captain's own arrangement (from their
     /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    /// The feel pass's item 5: the toolbar's module tabs are the kit's
+    /// sliding strip, and a click moves its thumb onto the tab it chose.
+    private static func checkToolbarTabsSlide(_ shell: MainSplitShellController, _ window: NSWindow,
+                                              _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        shell.workspace.navigator.show(.shift)
+        settle(shell)
+        guard let strip = shell.toolbar.debugTabs, shell.toolbar.debugTabNames.count > 1 else {
+            fail("Tasks shows no tab strip in the toolbar - the slide check is vacuous", &ok)
+            return
+        }
+        let names = shell.toolbar.debugTabNames
+        // A tab that is not lit already, or nothing has to move.
+        let start = shell.toolbar.debugSelectedTab ?? 0
+        let index = start == 0 ? 1 : 0
+        let target = names[index]
+        let before = strip.debugThumbFrame
+        check(clickTab(target, shell), "the toolbar has no \(target) tab", &ok)
+        settle(shell)
+        let lit = shell.toolbar.debugSelectedTab
+        check(lit == index, "clicking \(target) lit tab \(String(describing: lit))", &ok)
+        let after = shell.toolbar.debugTabs?.debugThumbFrame ?? .zero
+        check(after.width > 0 && abs(after.minX - before.minX) > 1,
+              "the thumb did not move to \(target): \(before) then \(after)", &ok)
+        _ = clickTab(names[start], shell)
+    }
+
     /// The feel pass (the feasibility audit's items 1 to 3) on real Home in a
     /// real window: the greeting is the page's title in place of the
     /// column's date line, the briefing is the gradient hero above the grid

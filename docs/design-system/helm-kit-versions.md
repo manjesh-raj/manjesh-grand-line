@@ -36,6 +36,13 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.2.0 - Feel pass item 5: the toolbar tabs slide
+
+- `HelmSegmentedTabs` 1.0.0 → 1.1.0 (minor): `setToolTip(_:forID:)`, so a segment can explain itself on hover.
+- `WorkspaceToolbar` 1.1.1 → 1.2.0 (minor): the module tabs in the toolbar's centre are a `HelmSegmentedTabs` (compact) instead of an `NSSegmentedControl`, so the selection is the kit's thumb sliding from the old tab to the new one, as the page's own filter rows already do. The strip is rebuilt only when the tab names change, a count change retitles its pill, and the theme repaints it. Everything else in the toolbar stays a system control.
+
+## 6.1.0 - Feel pass items 1 to 3: the display title, the hero and its ring
+
 ## 6.1.0 - Feel pass items 1 to 3: the display title, the hero and its ring
 
 The native feel pass on Home (the Fable second-opinion review's Stage 1, cut to the feasibility audit's six items).

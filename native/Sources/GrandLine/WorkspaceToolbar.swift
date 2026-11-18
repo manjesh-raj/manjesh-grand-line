@@ -7,7 +7,10 @@
 // Every control is a standard `NSToolbarItem` - an image item, or a view item
 // whose view is a plain `NSButton` or `NSSegmentedControl` - so the toolbar
 // looks like the system's on every macOS this app runs on (Liquid Glass
-// capsules on macOS 26), and nothing here repaints a bezel of its own.
+// capsules on macOS 26), and nothing here repaints a bezel of its own. The one
+// exception is the module tabs in the middle: the feel pass's item 5 draws
+// them as `HelmSegmentedTabs`, for its sliding thumb, which a system
+// segmented control does not have.
 //
 // What sits where, left to right:
 //
@@ -170,7 +173,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     let clipboardAnchor = NSView()
     private let recentsHost = NSView()
     private let crumb = NSTextField(labelWithString: "")
-    private let tabs = NSSegmentedControl()
+    /// The module's tabs (the feel pass's item 5): a `HelmSegmentedTabs`,
+    /// whose thumb slides from the old tab to the new one. The toolbar item
+    /// holds this host; the strip inside is rebuilt only when the tab names
+    /// change, so a count moving keeps the same pills.
+    private let tabs = NSStackView()
+    private var tabStrip: HelmSegmentedTabs?
+    /// The labels the strip was last built or retitled with, counts included.
+    private var tabLabels: [String] = []
+    private var tabThemeToken: ThemeObservation?
     private let pageActions = NSStackView()
     /// The page's primary action, after Search. A stack holding at most one
     /// view, so the toolbar item keeps one view while the page's button
@@ -263,6 +274,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     deinit {
         if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
+        if let tabThemeToken { ThemeManager.shared.unobserve(tabThemeToken) }
     }
 
     // MARK: Customisation (R2-ARCH-06)
@@ -414,9 +426,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         crumb.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         crumb.setAccessibilityRole(.staticText)
 
-        tabs.trackingMode = .selectOne
-        tabs.target = self
-        tabs.action = #selector(tabClicked(_:))
+        tabs.orientation = .horizontal
+        tabThemeToken = ThemeManager.shared.observe { [weak self] theme in self?.tabStrip?.applyTheme(theme) }
 
         moduleActionButton.imagePosition = .imageLeading
         moduleActionButton.target = self
@@ -772,27 +783,40 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// drawn after its tab's name, as the prototype's "Hosts 7" (stage 6).
     func setTabs(_ names: [String], counts: [Int?] = [], tooltips: [String?] = [], selected: Int?,
                  accessibilityLabel: String = "Tabs") {
+        let rebuild = names != tabNames || tabStrip == nil
         tabNames = names
         let labels = names.enumerated().map { index, name in
             Self.tabLabel(name, count: index < counts.count ? counts[index] : nil)
         }
-        if tabs.segmentCount != labels.count || (0..<labels.count).contains(where: { tabs.label(forSegment: $0) != labels[$0] }) {
-            tabs.segmentCount = labels.count
-            for (index, label) in labels.enumerated() {
-                tabs.setLabel(label, forSegment: index)
-                tabs.setWidth(0, forSegment: index)
+        if rebuild {
+            tabStrip?.removeFromSuperview()
+            let strip = HelmSegmentedTabs(
+                items: labels.enumerated().map { .init(id: "\($0.offset)", title: $0.element) },
+                selected: selected.map { "\($0)" } ?? "", size: .compact)
+            strip.onSelect = { [weak self] id in
+                guard let self, let index = Int(id), self.tabNames.indices.contains(index) else { return }
+                self.onSelectTab?(index)
             }
+            strip.applyTheme(ThemeManager.shared.theme)
+            tabs.addArrangedSubview(strip)
+            tabStrip = strip
+        } else if labels != tabLabels {
+            for (index, label) in labels.enumerated() { tabStrip?.setTitle(label, forID: "\(index)") }
         }
+        tabLabels = labels
         for index in 0..<names.count {
-            tabs.setToolTip(index < tooltips.count ? tooltips[index] : nil, forSegment: index)
+            tabStrip?.setToolTip(index < tooltips.count ? tooltips[index] : nil, forID: "\(index)")
         }
-        tabs.selectedSegment = selected ?? -1
+        // Moving the thumb, not firing: the shell already knows what shows.
+        tabStrip?.select(selected.map { "\($0)" } ?? "")
+        tabs.setAccessibilityElement(true)
+        tabs.setAccessibilityRole(.tabGroup)
         tabs.setAccessibilityLabel(accessibilityLabel)
         wantsTabs = !names.isEmpty
         reconcileDynamicItems()
     }
 
-    /// A tab's label: its name, then its count when it has one. A segment
+    /// A tab's label: its name, then its count when it has one. A pill's
     /// label is one plain string, so the count is set off by a figure space
     /// rather than drawn in a quieter ink.
     static func tabLabel(_ name: String, count: Int?) -> String {
@@ -1172,12 +1196,6 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         }
     }
 
-    @objc private func tabClicked(_ sender: NSSegmentedControl) {
-        // The index is what the shell matches, so a count in the label never
-        // reaches it.
-        guard sender.selectedSegment >= 0, sender.selectedSegment < sender.segmentCount else { return }
-        onSelectTab?(sender.selectedSegment)
-    }
 
     #if FM_SELFTESTS
     /// The item identifiers in toolbar order - what the suite asserts the
@@ -1186,11 +1204,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     var debugPageActions: [NSView] { pageActions.arrangedSubviews }
     var debugNavigation: NSSegmentedControl { navigation }
     var debugSidebarButton: NSButton { sidebarButton }
-    var debugTabs: NSSegmentedControl { tabs }
+    var debugTabs: HelmSegmentedTabs? { tabStrip }
     /// The tab labels, as the toolbar draws them.
     var debugTabNames: [String] { wantsTabs ? tabNames : [] }
     /// The tab labels as drawn, counts included.
-    var debugTabLabels: [String] { wantsTabs ? (0..<tabs.segmentCount).compactMap { tabs.label(forSegment: $0) } : [] }
+    var debugTabLabels: [String] { wantsTabs ? tabLabels : [] }
+    /// The lit tab's index, or nil for none.
+    var debugSelectedTab: Int? { tabStrip.flatMap { Int($0.selected) }.flatMap { tabNames.indices.contains($0) ? $0 : nil } }
+    /// Click a tab the way a real pill click reaches the shell.
+    func debugClickTab(_ index: Int) { tabStrip?.debugClickTab(id: "\(index)") }
     var debugPrimaryAction: NSView? { shownPrimary }
     var debugCrumb: String { crumb.stringValue }
     var debugIsCompact: Bool { isCompact }

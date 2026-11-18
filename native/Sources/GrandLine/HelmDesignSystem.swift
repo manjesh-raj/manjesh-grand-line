@@ -4281,6 +4281,13 @@ final class HelmSegmentedTabs: NSView {
         pills.first { $0.id == id }?.label.stringValue = title
     }
 
+    /// One pill's tooltip (1.1.0) - for a strip whose segments explain
+    /// themselves on hover, as the window toolbar's tabs did while they were
+    /// an `NSSegmentedControl`.
+    func setToolTip(_ toolTip: String?, forID id: String) {
+        pills.first { $0.id == id }?.container.toolTip = toolTip
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         appliedTheme = theme
         if theme.isDaylight { applyDaylightTheme(theme); return }
