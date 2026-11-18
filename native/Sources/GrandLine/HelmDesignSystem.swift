@@ -784,19 +784,30 @@ final class HelmCard: NSView {
     /// `HelmKitSourceGuardSelfTest` fails the run on a new
     /// `shadowOpacity = ` assignment in a file that reads the elevation colour.
     ///
-    /// The colour goes in opaque and the alpha is the opacity. `blurScale`
-    /// exists for the one caller whose shape is much smaller than a card (the
-    /// toast capsule), where the card blur would read as a smudge.
+    /// The colour goes in opaque and the alpha is the opacity.
+    ///
+    /// **The blur is halved on the way in, because the two radii are not the
+    /// same unit.** `NSShadow.shadowBlurRadius` means what a CSS blur means
+    /// (a Gaussian whose standard deviation is half of it), and §2.5's
+    /// numbers are CSS. `CALayer.shadowRadius` is the standard deviation
+    /// itself. Measured on one 200pt square, sampled above its edge:
+    /// `shadowRadius` 8 and an `NSShadow` blur of 16 drawn with `set()`
+    /// rendered identical pixels (sigma 8.1 / 7.7 / 7.3 at 4 / 8 / 12pt),
+    /// while `shadowRadius` 16 measured sigma 15.8 / 15.4 / 15.3. Copying the
+    /// blur across unconverted rendered every layer-backed elevation at twice
+    /// §2.5's blur and twice what the same `NSShadow` draws for
+    /// `ConsoleCardChrome` - and on the floating bar, which sits 14pt below
+    /// the window's top edge, the doubled halo filled that whole strip
+    /// (`AppShellBodyWidthSelfTest`'s top-strip case, on `nord-snow`).
     static func applyElevation(_ level: Elevation,
                                to layer: CALayer,
                                theme: HelmTheme,
-                               path: CGPath? = nil,
-                               blurScale: CGFloat = 1) {
+                               path: CGPath? = nil) {
         let shadow = elevation(for: theme, level: level)
         let color = shadow.shadowColor ?? .black
         layer.shadowColor = color.withAlphaComponent(1).cgColor
         layer.shadowOpacity = Float(color.alphaComponent)
-        layer.shadowRadius = shadow.shadowBlurRadius * blurScale
+        layer.shadowRadius = shadow.shadowBlurRadius / 2
         layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
         layer.shadowPath = path
     }

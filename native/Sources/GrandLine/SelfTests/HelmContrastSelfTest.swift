@@ -2474,6 +2474,29 @@ enum HelmContrastSelfTest {
             ok = false
         }
         print("  OK   12 pre-existing palettes keep their historical resting shadow")
+
+        // What `applyElevation` puts on a layer, in the layer's own units:
+        // `CALayer.shadowRadius` is a standard deviation and an `NSShadow`
+        // blur is twice one (`applyElevation`'s comment has the measurement).
+        // A 1:1 copy renders every layer-backed card at twice §2.5's blur.
+        for theme in [daylight] + HelmTheme.allThemes.filter({ ["nord-snow", "ayu-dark"].contains($0.id) }) {
+            for level in [HelmCard.Elevation.resting, .raised] {
+                let shadow = HelmCard.elevation(for: theme, level: level)
+                let layer = CALayer()
+                HelmCard.applyElevation(level, to: layer, theme: theme)
+                let label = "\(theme.id) \(level) on a layer"
+                let alpha = HelmCard.debugEffectiveShadowAlpha(of: layer)
+                if abs(layer.shadowRadius - shadow.shadowBlurRadius / 2) > 0.01
+                    || abs(alpha - (shadow.shadowColor?.alphaComponent ?? 0)) > 0.005 {
+                    SelfTestAssertions.reportFailure("\(label): shadowRadius \(layer.shadowRadius) alpha \(fmt(Double(alpha))), "
+                        + "want \(shadow.shadowBlurRadius / 2) (half the NSShadow blur \(shadow.shadowBlurRadius)) "
+                        + "and \(fmt(Double(shadow.shadowColor?.alphaComponent ?? 0)))")
+                    ok = false
+                } else {
+                    SelfTestAssertions.reportPass("\(pad(label, 30)) shadowRadius \(layer.shadowRadius) = blur \(shadow.shadowBlurRadius) / 2")
+                }
+            }
+        }
     }
 
     // MARK: Daylight - the new type roles

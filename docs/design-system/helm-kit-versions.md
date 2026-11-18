@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 5.0.0 - Layer shadows at §2.5's blur
+
+- `HelmCard` 1.1.0 → 2.0.0 (major): `applyElevation` sets `CALayer.shadowRadius` to half the elevation's `NSShadow` blur, because `shadowRadius` is a standard deviation and an `NSShadow` (or CSS) blur is twice one. Every layer-backed elevation had rendered at twice §2.5's blur, and the floating bar's halo filled the window's top strip (`AppShellBodyWidthSelfTest`'s top-strip case on `nord-snow`). The `blurScale` parameter is removed: its one caller, the toast, used 0.5 to work around the same doubling and now renders the same pixels without it.
+
 ## 4.0.4 - S27 follow-up: the crew panel is never a width floor
 
 - `WorkspaceInspectorCrewPanel` 1.0.0 → 1.0.1 (patch): the panel's tie to the inspector pane yields at 490, so the composer's own required width can never be a floor on the window or the split view, and the shell mounts the panel only while the captain has the pane open. A collapsed pane holding it collapsed the sidebar at Home's narrowest width on CI's 1x runner (`MainSplitShellSelfTest`, "homeCanvas at 898pt").
