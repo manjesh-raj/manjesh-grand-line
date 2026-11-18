@@ -217,6 +217,20 @@ enum HelmType {
     /// A card / section header title. Was 14 / 14.5 / 15 depending on page.
     static func sectionTitle() -> NSFont { .systemFont(ofSize: scaled(15), weight: .semibold) }
 
+    /// A page's display title (1.1.0, the feel pass's item 1): the
+    /// prototype's 30pt bold, tracked tight, with tabular numerals so a
+    /// title carrying a figure does not shift as it changes. Set it with
+    /// `displayTitleAttributes`, which carries the tracking.
+    static func displayTitle() -> NSFont { .monospacedDigitSystemFont(ofSize: scaled(30), weight: .bold) }
+
+    /// The prototype's `letter-spacing: -.025em` at the title's own size.
+    static var displayTitleKern: CGFloat { -0.025 * scaled(30) }
+
+    /// Attributes for a display title in `color`.
+    static func displayTitleAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
+        [.font: displayTitle(), .kern: displayTitleKern, .foregroundColor: color]
+    }
+
     /// The title line of a row inside a card.
     static func rowTitle() -> NSFont { .systemFont(ofSize: scaled(13), weight: .semibold) }
 

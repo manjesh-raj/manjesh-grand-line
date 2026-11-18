@@ -2960,29 +2960,45 @@ enum HelmDaylightPriority {
 final class HelmRingGauge: NSView {
     static let side: CGFloat = 66
     static let lineWidth: CGFloat = 7
+    /// The centre label's size at `side`.
+    static let labelSize: CGFloat = 15
+    /// The feel pass's hero ring (1.2.0, the feasibility audit's item 2).
+    static let heroSide: CGFloat = 86
+
+    /// This ring's diameter. The stroke and the centre label scale with it
+    /// from the 66pt design, so a larger ring keeps the same proportions
+    /// rather than a thin line around a small number.
+    let diameter: CGFloat
+    private var scale: CGFloat { diameter / Self.side }
+    private var strokeWidth: CGFloat { Self.lineWidth * scale }
 
     private let track = CAShapeLayer()
     private let value = CAShapeLayer()
     private let label = NSTextField(labelWithString: "")
     private var fraction: Double = 0
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    override convenience init(frame frameRect: NSRect) {
+        self.init(side: Self.side)
+    }
+
+    init(side: CGFloat) {
+        diameter = side
+        super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         for shape in [track, value] {
             shape.fillColor = nil
-            shape.lineWidth = Self.lineWidth
+            shape.lineWidth = strokeWidth
             shape.lineCap = .round
             layer?.addSublayer(shape)
         }
-        label.font = HelmType.rounded(HelmType.scaled(15), .heavy)
+        label.font = HelmType.rounded(HelmType.scaled(Self.labelSize * scale), .heavy)
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: Self.side),
-            heightAnchor.constraint(equalToConstant: Self.side),
+            widthAnchor.constraint(equalToConstant: diameter),
+            heightAnchor.constraint(equalToConstant: diameter),
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -3038,8 +3054,8 @@ final class HelmRingGauge: NSView {
     /// cannot silently drop back to the proportional face.
     private func applyLabelFont() {
         label.font = monospacedLabel
-            ? .monospacedDigitSystemFont(ofSize: HelmType.scaled(15), weight: .heavy)
-            : HelmType.rounded(HelmType.scaled(15), .heavy)
+            ? .monospacedDigitSystemFont(ofSize: HelmType.scaled(Self.labelSize * scale), weight: .heavy)
+            : HelmType.rounded(HelmType.scaled(Self.labelSize * scale), .heavy)
     }
 
     /// F7: the arc's own hue, overriding the `hue` `applyTheme` is handed.
@@ -3052,9 +3068,16 @@ final class HelmRingGauge: NSView {
         didSet { if valueColorOverride != oldValue { value.strokeColor = valueColorOverride?.cgColor ?? value.strokeColor } }
     }
 
+    /// The feel pass's hero (1.2.0): a ring drawn on a coloured gradient
+    /// rather than on a card, where the theme's inset track and page ink
+    /// would vanish. Both `nil` by default, so every other ring paints what
+    /// it always did.
+    var trackColorOverride: NSColor?
+    var labelColorOverride: NSColor?
+
     override func layout() {
         super.layout()
-        let inset = Self.lineWidth / 2
+        let inset = strokeWidth / 2
         let rect = bounds.insetBy(dx: inset, dy: inset)
         let radius = min(rect.width, rect.height) / 2
         let centre = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -3081,11 +3104,15 @@ final class HelmRingGauge: NSView {
         let trackColor = theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)
-        track.strokeColor = trackColor.cgColor
         let verdict = verdictTint.map { HelmTheme.nsColor($0.hex(in: theme)) }
-        value.strokeColor = (valueColorOverride ?? verdict ?? hue.baseColor(in: theme)).cgColor
+        // Standalone sublayers: a theme change lands at once rather than
+        // cross-fading the arc (`HelmMotion.swift`'s implicit-animation note).
+        HelmMotion.withoutActions {
+            track.strokeColor = (trackColorOverride ?? trackColor).cgColor
+            value.strokeColor = (valueColorOverride ?? verdict ?? hue.baseColor(in: theme)).cgColor
+        }
         applyLabelFont()
-        label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        label.textColor = labelColorOverride ?? HelmTheme.nsColor(theme.chromeInkHex)
     }
 
     // MARK: Probe / self-test surface
