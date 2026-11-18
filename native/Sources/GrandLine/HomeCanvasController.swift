@@ -347,6 +347,19 @@ final class HomeCanvasController: NSViewController {
     private let kpiStrip = HelmKPIStrip(density: .boxed)
     /// Where each KPI tile goes when pressed, in the strip's order.
     private var kpiDestinations: [RailDestination] = []
+    /// The content's top edge: S03's first-content line, lifted by the
+    /// greeting's own ink inset while the greeting is the first thing drawn
+    /// (`greetingInkInset`).
+    private var stackTop: NSLayoutConstraint?
+
+    /// How far a display title's capitals sit below its frame's top: the
+    /// font's ascender less its cap height. S03 puts every page's first ink
+    /// on one line, and a card's ink starts at its frame while a 30pt title's
+    /// starts this far inside it, so the greeting is lifted by this much.
+    static var greetingInkInset: CGFloat {
+        let font = HelmType.displayTitle()
+        return max(0, floor(font.ascender - font.capHeight))
+    }
 
     private var cards: [HelmModuleCard] = []
     /// P2: the page's cards by module, the placement each was built for, and
@@ -708,7 +721,6 @@ final class HomeCanvasController: NSViewController {
             // alongside these two: a document forced to fill a viewport it is
             // shorter than, while also being exactly its content's height, is
             // two required constraints in direct conflict.
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin),
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -Self.contentBottomMargin),
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -718,6 +730,9 @@ final class HomeCanvasController: NSViewController {
             kpiStrip.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         tipRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let top = stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin)
+        top.isActive = true
+        stackTop = top
         let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
         attentionTie.isActive = true
         attentionWidthTie = attentionTie
@@ -1013,6 +1028,7 @@ final class HomeCanvasController: NSViewController {
         greetingHeader.isHidden = !on
         kpiStrip.isHidden = !on
         briefingHero.isHidden = !briefingIsHero
+        stackTop?.constant = Self.contentTopMargin - (on ? Self.greetingInkInset : 0)
         guard on else { return }
 
         let counts = HomeTaskCounts(store: sources.shiftStore, now: now)
