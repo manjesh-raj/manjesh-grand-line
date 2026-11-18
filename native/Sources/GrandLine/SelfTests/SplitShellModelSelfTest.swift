@@ -174,9 +174,10 @@ enum SplitShellModelSelfTest {
               "Settings' categories moved into the toolbar; its page keeps its own column", &ok)
         // The captain's call: no big title on Connections and Console; every
         // other module keeps its title and subtitle. Tasks' Calendar view
-        // draws Tasks' title with the calendar's caption under it.
+        // draws Tasks' title with the calendar's caption under it. The feel
+        // pass drops Home's too: its own greeting is the title and the day.
         let headless = WorkspaceModule.allCases.filter { !$0.showsHeader }
-        check(headless == [.connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
+        check(headless == [.home, .connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
     /// Stage 6, the captain's call: the sidebar lists no pins. A Pinned

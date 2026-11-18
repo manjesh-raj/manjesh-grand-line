@@ -541,6 +541,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // The account menu is Log Out only (stage 6). Settings is its own
         // sidebar module, and ⌘, and the app menu still reach it.
         sidebar.onLogOut = { [weak self] in self?.requestLogout() }
+        sidebar.onSearch = { [weak self] in self?.workspace.onSearchTapped?() }
         sidebar.reload(sessions: workspace.hosts.sessions)
     }
 

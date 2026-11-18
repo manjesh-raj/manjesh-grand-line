@@ -119,8 +119,11 @@ enum WorkspaceSidebarMetrics {
     /// R5-UX-05 added Runbooks to an Operator's Observe group, one 32pt row,
     /// and the gap gave again: 24 keeps the default list (25 rows with one
     /// session) inside the same clip view, and every row keeps the Large
-    /// size.
-    static let sectionRowHeight: CGFloat = 24
+    /// size. The feel pass's search pill (item 4) took 25pt more of the
+    /// column, and the captain's call was that the gap gives once more: 18
+    /// is the 13pt heading's own height with a 2pt foot, so the default list
+    /// still fits a 950pt window with every row at the Large size.
+    static let sectionRowHeight: CGFloat = 18
     static let moduleTextSize: CGFloat = 15
     static let sessionTextSize: CGFloat = 14
     static let sectionTextSize: CGFloat = 13
@@ -160,13 +163,18 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     var onEndSession: ((UUID) -> Void)?
     var onConnectHost: (() -> Void)?
     var onLogOut: (() -> Void)?
+    /// The search pill: the ⌘K palette, the same one the toolbar's Search
+    /// opens (the feel pass's item 4).
+    var onSearch: (() -> Void)?
 
     let outlineView = WorkspaceSidebarOutlineView()
     private let scrollView = NSScrollView()
     private let header = WorkspaceSidebarHeader()
-    /// The rule between the account header and Home (stage 6): without it
-    /// the header's tile and Home's glyph read as one cramped block.
-    private let headerRule = NSView()
+    /// The feel pass's item 4: "Search or jump to", under the account
+    /// header, the prototype's sidebar search pill. It is also the divider
+    /// between the header and Home: stage 6's 1pt rule did that job, and the
+    /// captain dropped it for the pill rather than draw both.
+    private let searchPill = WorkspaceSidebarSearchPill()
     private let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace.sidebar.column"))
 
     private var roots: [WorkspaceSidebarItem] = []
@@ -192,6 +200,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// The chrome text scale the rows were built at. A change of it is the
     /// one theme re-fire that rebuilds them (R2-PERF-02).
     private var builtTextScale = ChromeTextScale.shared.scale
+    /// The density the rows were last built at: a change rebuilds them, as a
+    /// text-scale change does, because both move `HelmType.scaledRowHeight`.
+    private var builtDensity = HelmDensity.current
 
     // MARK: Build
 
@@ -202,9 +213,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         header.translatesAutoresizingMaskIntoConstraints = false
         header.onClick = { [weak self] in self?.showAccountMenu() }
         root.addSubview(header)
-        headerRule.wantsLayer = true
-        headerRule.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(headerRule)
+        searchPill.translatesAutoresizingMaskIntoConstraints = false
+        searchPill.onClick = { [weak self] in self?.onSearch?() }
+        root.addSubview(searchPill)
 
         column.resizingMask = .autoresizingMask
         outlineView.addTableColumn(column)
@@ -242,13 +253,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s2),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s2),
 
-            // The rule sits between two equal gaps, inset like the rows'
-            // own wash so it lines up with the list rather than the panel.
-            headerRule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.headerRuleGap),
-            headerRule.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
-            headerRule.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
-            headerRule.heightAnchor.constraint(equalToConstant: 1),
-            scrollView.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: Self.headerRuleGap),
+            // The pill sits between two equal gaps under the header, inset
+            // like the rows' own wash so its edges line up with the list's.
+            searchPill.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.pillGap),
+            searchPill.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
+            searchPill.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
+            scrollView.topAnchor.constraint(equalTo: searchPill.bottomAnchor, constant: Self.pillGap),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -269,8 +279,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         rebuild()
     }
 
-    /// The space above and below the header rule.
-    static let headerRuleGap: CGFloat = HelmMetrics.s2
+    /// The space above and below the search pill.
+    static let pillGap: CGFloat = HelmMetrics.s1 + 2
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
@@ -459,7 +469,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         typealias M = WorkspaceSidebarMetrics
         guard let item = item as? WorkspaceSidebarItem else { return HelmType.scaledRowHeight(M.moduleRowHeight) }
         switch item.entry {
-        case .section: return HelmType.scaledRowHeight(M.sectionRowHeight)
+        // A heading never takes Compact's step: 18 is already the floor its
+        // 13pt label fits in, so it follows the text scale alone.
+        case .section: return max(HelmType.scaledRowHeight(M.sectionRowHeight), HelmType.scaled(M.sectionRowHeight))
         case .module: return HelmType.scaledRowHeight(M.moduleRowHeight)
         case .session: return HelmType.scaledRowHeight(M.sessionRowHeight)
         }
@@ -638,10 +650,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private func applyTheme(_ theme: HelmTheme) {
         header.applyTheme(theme)
-        // The divider recipe the layout's other rules use, so they are one
-        // weight.
-        headerRule.layer?.backgroundColor = HelmDisplayAccessibility.strengthenedEdge(
-            HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha), theme: theme).cgColor
+        searchPill.applyTheme(theme)
         guard isViewLoaded else { return }
         // R2-PERF-02: a theme change repaints the rows it can see, in place,
         // the way `setSignals` repaints a badge. It used to reload the list -
@@ -649,11 +658,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         // scrolled back to the lit row - on every ⌘-toggle and every sunset
         // under Follow system. GL-24: a theme observer repaints.
         let scale = ChromeTextScale.shared.scale
-        guard scale != builtTextScale else {
+        let density = HelmDensity.current
+        guard scale != builtTextScale || density != builtDensity else {
             repaintRows(theme)
             return
         }
         builtTextScale = scale
+        builtDensity = density
         // GL-32: a text-scale change re-fires the theme too, and that one
         // does rebuild: the row heights and every font follow the scale, and
         // a cell sets its fonts and sizes once, when it is built.
@@ -736,8 +747,18 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return true
     }
     var debugHeader: WorkspaceSidebarHeader { header }
+    var debugSearchPill: WorkspaceSidebarSearchPill { searchPill }
     /// The cell drawn for `entry`, scrolled into view first - the way the
     /// list draws a row the captain scrolls to.
+    /// The drawn height of `entry`'s row, or nil when it has none.
+    func debugRowHeight(for entry: WorkspaceSidebarEntry) -> CGFloat? {
+        guard let item = (0..<outlineView.numberOfRows).lazy
+            .compactMap({ self.outlineView.item(atRow: $0) as? WorkspaceSidebarItem })
+            .first(where: { $0.entry == entry }) else { return nil }
+        let row = outlineView.row(forItem: item)
+        return row >= 0 ? outlineView.rect(ofRow: row).height : nil
+    }
+
     func debugCell(for entry: WorkspaceSidebarEntry) -> NSView? {
         guard let row = (0..<outlineView.numberOfRows).first(where: {
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
@@ -753,7 +774,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         }) else { return nil }
         return outlineView.rowView(atRow: row, makeIfNecessary: false) as? WorkspaceSidebarRowView
     }
-    var debugHeaderRule: NSView { headerRule }
+
     /// Draw the list's scroller as `style` - a legacy track narrows every
     /// row, the way "Show scroll bars: Always" does (gotcha (4)).
     func debugSetScrollerStyle(_ style: NSScroller.Style) {
@@ -987,7 +1008,8 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s1),
+            // A 2pt foot, so the heading's own height fits the 18pt row.
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s0),
         ])
     }
 
@@ -1360,5 +1382,85 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     #if FM_SELFTESTS
     var debugTitle: String { title.stringValue }
     var debugSubtitle: String { subtitle.stringValue }
+    #endif
+}
+
+/// The sidebar's search pill (the feel pass's item 4): a magnifier, "Search
+/// or jump to" and the ⌘K keycap, on a quiet fill that deepens under the
+/// pointer. A press opens the ⌘K palette - the same entry point the
+/// toolbar's Search and the menu item reach, so there is still one search.
+///
+/// A `HoverHighlightView`, so it is a real button to VoiceOver and the
+/// keyboard (GL-16) and takes the app's eased hover fill.
+final class WorkspaceSidebarSearchPill: HoverHighlightView {
+    static let height: CGFloat = 28
+    static let placeholder = "Search or jump to"
+    /// The page ink's share of the resting fill; the hover takes
+    /// `WorkspaceSidebarHeader.hoverAlpha` on top.
+    static let restAlpha: CGFloat = 0.06
+    /// The prototype's 13pt placeholder. A field's text, not a row's, so the
+    /// sidebar's Large row sizes do not apply to it.
+    static let textSize: CGFloat = 13
+
+    private let glyph = NSImageView()
+    private let label = NSTextField(labelWithString: WorkspaceSidebarSearchPill.placeholder)
+    private let keys = HelmKeyHint(keys: [HelmKeyHint.command, "K"])
+    var onClick: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        cornerRadius = HelmMetrics.rControl
+        pressScale = HelmButton.pressScale
+        accessibilityLabelOverride = "Search"
+        toolTip = "Search and commands (\u{2318}K)"
+        glyph.image = HelmSymbol.image("magnifyingglass", pointSize: HelmType.scaled(Self.textSize), weight: .regular)
+        label.font = .systemFont(ofSize: HelmType.scaled(Self.textSize))
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for view in [glyph, label, keys] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
+        keys.setContentHuggingPriority(.required, for: .horizontal)
+        keys.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: Self.height),
+            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2 + 2),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: HelmMetrics.s2),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            keys.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s2),
+            keys.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
+            keys.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    @objc private func clicked() { onClick?() }
+
+    func applyTheme(_ theme: HelmTheme) {
+        let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
+        let panel = HelmContrast.components(HelmTheme.sidePanelFill(theme))
+        // Flattened over the panel, so the text's contrast below is measured
+        // against what is really drawn.
+        let rest = HelmContrast.color(HelmContrast.mix(ink, panel, Double(Self.restAlpha)))
+        let hover = HelmContrast.color(HelmContrast.mix(ink, panel, Double(Self.restAlpha + WorkspaceSidebarHeader.hoverAlpha)))
+        normalColor = rest
+        hoverColor = hover
+        // Legible over the deeper of the two fills, so hovering never takes
+        // the words under the floor.
+        let muted = HelmContrast.legible(HelmTheme.mutedInk(theme), over: hover)
+        label.textColor = muted
+        glyph.contentTintColor = muted
+        keys.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugLabelColor: NSColor? { label.textColor }
+    var debugRestFill: NSColor { normalColor }
+    var debugHoverFill: NSColor { hoverColor }
     #endif
 }

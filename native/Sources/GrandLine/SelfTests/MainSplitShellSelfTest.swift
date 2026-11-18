@@ -79,6 +79,7 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
+                      checkHomeFeelPass, checkToolbarTabsSlide, checkDensityReachesTheSidebar,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
                       checkEveryPageStartsAtOneHeight,
@@ -350,18 +351,15 @@ enum MainSplitShellSelfTest {
     /// target and action, the way a real click reaches it.
     @discardableResult
     private static func clickTab(_ name: String, _ shell: MainSplitShellController) -> Bool {
-        let tabs = shell.toolbar.debugTabs
         guard let index = shell.toolbar.debugTabNames.firstIndex(of: name) else { return false }
-        tabs.selectedSegment = index
-        _ = tabs.sendAction(tabs.action, to: tabs.target)
+        shell.toolbar.debugClickTab(index)
         settle(shell)
         return true
     }
 
     private static func selectedTabName(_ shell: MainSplitShellController) -> String? {
-        let tabs = shell.toolbar.debugTabs
         let names = shell.toolbar.debugTabNames
-        return names.indices.contains(tabs.selectedSegment) ? names[tabs.selectedSegment] : nil
+        return shell.toolbar.debugSelectedTab.map { names[$0] }
     }
 
     // MARK: 1 - every route
@@ -992,7 +990,10 @@ enum MainSplitShellSelfTest {
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         let canvas = shell.debugHomeCanvas
-        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown && !canvas.usesDashboardLayoutForTests,
+        // The feel pass draws the briefing as the hero above the grid, so the
+        // grid is the arranged cards less that one (`checkHomeFeelPass`).
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing }
+                && !canvas.usesDashboardLayoutForTests,
               "Home shows \(canvas.visibleModulesForTests.map(\.rawValue)), not its arranged cards", &ok)
         check(shell.toolbar.debugModuleActionButton?.title == "Customize", "Home offers no Customize", &ok)
         // Claude's card carries a header action (Refresh), which the arranging
@@ -1075,7 +1076,8 @@ enum MainSplitShellSelfTest {
         settle(shell)
         check(!canvas.isCustomizing && canvas.customizeTrayForTests == nil && canvas.cardStripsForTests.isEmpty,
               "Done left Customize's controls on Home", &ok)
-        check(canvas.visibleModulesForTests == after, "Done changed the arrangement", &ok)
+        // Customize draws the briefing as a card; after Done it is the hero.
+        check(canvas.visibleModulesForTests == after.filter { $0 != .briefing }, "Done changed the arrangement", &ok)
         check(canvas.cardForTests(.claudeStatus)?.debugHeaderActionFrameInCard != nil,
               "Done did not give Claude's card its Refresh back", &ok)
 
@@ -1102,6 +1104,108 @@ enum MainSplitShellSelfTest {
     /// no card is narrower than the canvas's minimum, and nothing overlaps.
     /// Home's own cards and the captain's own arrangement (from their
     /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    /// The feel pass's item 6: switching density reaches rows already on
+    /// screen. The sidebar repaints a theme re-fire in place, so it has to
+    /// notice that its row heights moved, as it does for the text scale.
+    private static func checkDensityReachesTheSidebar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                      _ ok: inout Bool) {
+        let saved = AppSettings.shared.density
+        defer {
+            AppSettings.shared.density = saved
+            settle(shell)
+        }
+        AppSettings.shared.density = .comfortable
+        settle(shell)
+        let comfortable = shell.sidebar.debugRowHeight(for: .module(.tasks)) ?? 0
+        AppSettings.shared.density = .compact
+        settle(shell)
+        let compact = shell.sidebar.debugRowHeight(for: .module(.tasks)) ?? 0
+        check(comfortable > 0 && compact > 0 && compact < comfortable,
+              "the sidebar's Tasks row is \(comfortable)pt Comfortable and \(compact)pt Compact", &ok)
+        check(abs(compact - HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight)) < 0.5,
+              "the Compact Tasks row is \(compact)pt, want \(HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight))", &ok)
+    }
+
+    /// The feel pass's item 5: the toolbar's module tabs are the kit's
+    /// sliding strip, and a click moves its thumb onto the tab it chose.
+    private static func checkToolbarTabsSlide(_ shell: MainSplitShellController, _ window: NSWindow,
+                                              _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        shell.workspace.navigator.show(.shift)
+        settle(shell)
+        guard let strip = shell.toolbar.debugTabs, shell.toolbar.debugTabNames.count > 1 else {
+            fail("Tasks shows no tab strip in the toolbar - the slide check is vacuous", &ok)
+            return
+        }
+        let names = shell.toolbar.debugTabNames
+        // A tab that is not lit already, or nothing has to move.
+        let start = shell.toolbar.debugSelectedTab ?? 0
+        let index = start == 0 ? 1 : 0
+        let target = names[index]
+        let before = strip.debugThumbFrame
+        check(clickTab(target, shell), "the toolbar has no \(target) tab", &ok)
+        settle(shell)
+        let lit = shell.toolbar.debugSelectedTab
+        check(lit == index, "clicking \(target) lit tab \(String(describing: lit))", &ok)
+        let after = shell.toolbar.debugTabs?.debugThumbFrame ?? .zero
+        check(after.width > 0 && abs(after.minX - before.minX) > 1,
+              "the thumb did not move to \(target): \(before) then \(after)", &ok)
+        _ = clickTab(names[start], shell)
+    }
+
+    /// The feel pass (the feasibility audit's items 1 to 3) on real Home in a
+    /// real window: the greeting is the page's title in place of the
+    /// column's date line, the briefing is the gradient hero above the grid
+    /// rather than a card in it, the strip has the audit's four tiles, and
+    /// Customize draws the briefing as a card again so it can be placed.
+    private static func checkHomeFeelPass(_ shell: MainSplitShellController, _ window: NSWindow,
+                                          _ ok: inout Bool) {
+        let saved = AppSettings.shared.homeCardLayout
+        defer {
+            AppSettings.shared.homeCardLayout = saved
+            shell.debugHomeCanvas.cardLayout = saved
+            shell.debugHomeCanvas.setCustomizing(false)
+            resize(window, width: 1512, shell)
+        }
+        shell.workspace.navigator.show(.homeCanvas)
+        let canvas = shell.debugHomeCanvas
+        AppSettings.shared.homeCardLayout = .standard
+        canvas.cardLayout = .standard
+        check(HomeCardLayout.standard.shown.contains(.briefing) && HomeCanvasController.briefingHasSomethingToSay,
+              "fixture: the briefing is not on Home with something to say - the hero check measures nothing", &ok)
+        resize(window, width: 1512, shell)
+        settle(shell)
+        _ = settleHomeGrid(shell, canvas)
+        check(canvas.debugGreetingTitle.hasSuffix(HomeGreeting.captainName(fleetCaptain: nil))
+                || canvas.debugGreetingTitle.contains(", "),
+              "Home's greeting reads \"\(canvas.debugGreetingTitle)\"", &ok)
+        check(canvas.debugGreetingSummary.hasPrefix(MainSplitShellController.homeSubtitle() + ". "),
+              "Home's summary does not open with the day: \"\(canvas.debugGreetingSummary)\"", &ok)
+        check(shell.debugHeader == nil, "the column still draws Home's date line over the greeting", &ok)
+        guard let hero = canvas.debugBriefingHero else {
+            fail("the briefing is not drawn as the hero", &ok)
+            return
+        }
+        check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
+        check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
+        let tiles = canvas.debugKPIStrip?.debugCells ?? []
+        check(tiles.map(\.debugCaption) == ["Tasks due today", "PRs ready to merge", "Services healthy", "Claude week"],
+              "Home's strip is \(tiles.map(\.debugCaption))", &ok)
+        check(canvas.debugKPIDestinations == [.shift, .review, .health, .console],
+              "Home's tiles open \(canvas.debugKPIDestinations)", &ok)
+        // Top to bottom: greeting, hero, strip.
+        if let strip = canvas.debugKPIStrip {
+            let heroTop = hero.convert(hero.bounds, to: nil).maxY
+            let stripTop = strip.convert(strip.bounds, to: nil).maxY
+            check(heroTop > stripTop, "the strip sits above the hero", &ok)
+        }
+        canvas.setCustomizing(true)
+        settle(shell)
+        _ = settleHomeGrid(shell, canvas)
+        check(canvas.debugBriefingHero == nil && canvas.cardForTests(.briefing) != nil,
+              "Customize does not draw the briefing as a card the captain can place", &ok)
+    }
+
     /// R5-UI-08: with the briefing off and nothing on record, Home's own
     /// cards are the other four, and the slot the briefing had is not left as
     /// a hole: every row still reaches the grid's edge. Customize still draws
@@ -1189,8 +1293,10 @@ enum MainSplitShellSelfTest {
                     let rows = canvas.gridRowsForTests
                     let gridWidth = rows.map(\.frame.width).max() ?? 0
                     let cards = rows.map { $0.arrangedSubviews.compactMap { $0 as? HelmModuleCard } }
-                    check(cards.joined().count == layout.shown.count,
-                          "\(when): \(cards.joined().count) of \(layout.shown.count) cards are on Home", &ok)
+                    // Less the briefing, which the feel pass draws as the hero.
+                    let inGrid = layout.shown.filter { $0 != .briefing }.count
+                    check(cards.joined().count == inGrid,
+                          "\(when): \(cards.joined().count) of \(inGrid) cards are on Home", &ok)
                     for (index, row) in cards.enumerated() {
                         guard let last = row.last else { continue }
                         let stack = rows[index]
@@ -2168,24 +2274,32 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugClick(.module(.settings)), "the Settings row cannot be clicked", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .settings, "the Settings row did not open Settings", &ok)
-        // A rule, with room either side, between the header and Home.
+        // The search pill, with room either side, between the header and
+        // Home - the divider since the feel pass dropped stage 6's rule.
         let root = shell.sidebar.view
         root.layoutSubtreeIfNeeded()
         let header = shell.sidebar.debugHeader.convert(shell.sidebar.debugHeader.bounds, to: root)
-        let rule = shell.sidebar.debugHeaderRule.convert(shell.sidebar.debugHeaderRule.bounds, to: root)
+        let pill = shell.sidebar.debugSearchPill.convert(shell.sidebar.debugSearchPill.bounds, to: root)
         // The list's top, which is where Home sits until the list scrolls.
         guard let list = shell.sidebar.outlineView.enclosingScrollView else {
             fail("the sidebar list has no scroll view", &ok)
             return
         }
         let listFrame = list.convert(list.bounds, to: root)
-        let gapAbove = root.isFlipped ? rule.minY - header.maxY : header.minY - rule.maxY
-        let gapBelow = root.isFlipped ? listFrame.minY - rule.maxY : rule.minY - listFrame.maxY
-        check(rule.height == 1 && rule.width > header.width * 0.8,
-              "the header rule is \(rule.size), want a 1pt line across the sidebar", &ok)
-        check(gapAbove >= WorkspaceSidebarController.headerRuleGap - 0.5 && gapBelow >= WorkspaceSidebarController.headerRuleGap - 0.5,
-              "the rule sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.headerRuleGap) each", &ok)
-        check(shell.sidebar.debugHeaderRule.layer?.backgroundColor != nil, "the header rule is not painted", &ok)
+        let gapAbove = root.isFlipped ? pill.minY - header.maxY : header.minY - pill.maxY
+        let gapBelow = root.isFlipped ? listFrame.minY - pill.maxY : pill.minY - listFrame.maxY
+        check(abs(pill.height - WorkspaceSidebarSearchPill.height) < 0.5 && pill.width > header.width * 0.8,
+              "the search pill is \(pill.size), want a \(WorkspaceSidebarSearchPill.height)pt pill across the sidebar", &ok)
+        check(gapAbove >= WorkspaceSidebarController.pillGap - 0.5 && gapBelow >= WorkspaceSidebarController.pillGap - 0.5,
+              "the pill sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.pillGap) each", &ok)
+        // It opens the same palette the toolbar's Search does.
+        var searched = false
+        let previousSearch = shell.sidebar.onSearch
+        shell.sidebar.onSearch = { searched = true }
+        _ = shell.sidebar.debugSearchPill.performPrimaryAction()
+        shell.sidebar.onSearch = previousSearch
+        check(searched, "the search pill's press reaches nothing", &ok)
+        check(previousSearch != nil, "the shell never wired the search pill to the palette", &ok)
         // Log Out goes through the one confirmation, then the app delegate.
         var loggedOut = false
         let previous = shell.onLogoutRequested

@@ -217,6 +217,20 @@ enum HelmType {
     /// A card / section header title. Was 14 / 14.5 / 15 depending on page.
     static func sectionTitle() -> NSFont { .systemFont(ofSize: scaled(15), weight: .semibold) }
 
+    /// A page's display title (1.1.0, the feel pass's item 1): the
+    /// prototype's 30pt bold, tracked tight, with tabular numerals so a
+    /// title carrying a figure does not shift as it changes. Set it with
+    /// `displayTitleAttributes`, which carries the tracking.
+    static func displayTitle() -> NSFont { .monospacedDigitSystemFont(ofSize: scaled(30), weight: .bold) }
+
+    /// The prototype's `letter-spacing: -.025em` at the title's own size.
+    static var displayTitleKern: CGFloat { -0.025 * scaled(30) }
+
+    /// Attributes for a display title in `color`.
+    static func displayTitleAttributes(color: NSColor) -> [NSAttributedString.Key: Any] {
+        [.font: displayTitle(), .kern: displayTitleKern, .foregroundColor: color]
+    }
+
     /// The title line of a row inside a card.
     static func rowTitle() -> NSFont { .systemFont(ofSize: scaled(13), weight: .semibold) }
 
@@ -401,8 +415,16 @@ enum HelmType {
     /// change already fires an app-wide theme re-fire - the same fan-out
     /// `ChromeTextScale`'s own header describes, rather than a second
     /// observation per list.
+    ///
+    /// The captain's density (1.2.0, `HelmDensity`) is the second factor:
+    /// Compact rows are the prototype's 30/36 of their Comfortable height,
+    /// rounded to a whole point so a row edge never lands between pixels.
+    /// Comfortable multiplies by exactly 1 and is never rounded, so every
+    /// height is what it was before density existed.
     static func scaledRowHeight(_ base: CGFloat) -> CGFloat {
-        base * ChromeTextScale.shared.scale
+        let height = base * ChromeTextScale.shared.scale
+        let factor = HelmDensity.current.rowFactor
+        return factor == 1 ? height : (height * factor).rounded()
     }
 
     static func scaled(_ points: CGFloat) -> CGFloat {
@@ -4027,6 +4049,10 @@ final class HelmSegmentedTabs: NSView {
     private let thumb = NSView()
     private var pills: [Pill] = []
     private let size: Size
+    /// `labelSize` (1.1.0): a fixed point size that does not follow the
+    /// chrome text scale, or nil for the size's own scaled one.
+    private let fixedLabelSize: CGFloat?
+    private var labelPointSize: CGFloat { fixedLabelSize ?? size.labelSize }
     private var selectedID: String
 
     /// Fires with the selected item's `id`. The component does **not** switch
@@ -4057,9 +4083,17 @@ final class HelmSegmentedTabs: NSView {
     ///
     /// F22's compact popover is the first caller: a 330pt menu-bar popover
     /// whose reviewed mockup draws four equal full-width segments.
+    /// `pillInset` and `labelSize` (1.1.0) are for a caller that has to fit
+    /// where a system segmented control used to: the window toolbar's tabs.
+    /// The toolbar is system chrome, which does not follow the chrome text
+    /// scale, and at 1512pt with Larger text it has no room for a wider strip
+    /// (`WorkspaceToolbarSelfTest`). `pillInset` overrides the size's
+    /// horizontal pill inset, and `labelSize` fixes the label's point size.
     init(items: [Item], selected: String? = nil, size: Size = .standard,
-         equalWidths: Bool = false) {
+         equalWidths: Bool = false, pillInset: CGFloat? = nil, labelSize: CGFloat? = nil) {
         self.size = size
+        self.fixedLabelSize = labelSize
+        let pillInsetH = pillInset ?? size.pillInsetH
         self.selectedID = selected ?? items.first?.id ?? ""
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -4072,12 +4106,12 @@ final class HelmSegmentedTabs: NSView {
             container.identifier = NSUserInterfaceItemIdentifier(item.id)
 
             let label = NSTextField(labelWithString: item.title)
-            label.font = .systemFont(ofSize: size.labelSize, weight: .medium)
+            label.font = .systemFont(ofSize: labelSize ?? size.labelSize, weight: .medium)
             label.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(label)
             NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: size.pillInsetH),
-                label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -size.pillInsetH),
+                label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pillInsetH),
+                label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -pillInsetH),
                 label.topAnchor.constraint(equalTo: container.topAnchor, constant: size.pillInsetV),
                 label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -size.pillInsetV),
             ])
@@ -4267,6 +4301,13 @@ final class HelmSegmentedTabs: NSView {
         pills.first { $0.id == id }?.label.stringValue = title
     }
 
+    /// One pill's tooltip (1.1.0) - for a strip whose segments explain
+    /// themselves on hover, as the window toolbar's tabs did while they were
+    /// an `NSSegmentedControl`.
+    func setToolTip(_ toolTip: String?, forID id: String) {
+        pills.first { $0.id == id }?.container.toolTip = toolTip
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         appliedTheme = theme
         if theme.isDaylight { applyDaylightTheme(theme); return }
@@ -4321,7 +4362,7 @@ final class HelmSegmentedTabs: NSView {
             pill.container.normalColor = .clear
             pill.container.hoverColor = isActive ? .clear : line.withAlphaComponent(0.25)
             pill.label.textColor = isActive ? activeInk : muted
-            pill.label.font = .systemFont(ofSize: size.labelSize, weight: isActive ? .semibold : .medium)
+            pill.label.font = .systemFont(ofSize: labelPointSize, weight: isActive ? .semibold : .medium)
             pill.container.cornerRadius = size.pillRadius
         }
         thumb.layer?.backgroundColor = activeWash.cgColor
@@ -4360,7 +4401,7 @@ final class HelmSegmentedTabs: NSView {
             pill.container.normalColor = .clear
             pill.container.hoverColor = isActive ? .clear : inset
             pill.label.textColor = isActive ? activeInk : muted
-            pill.label.font = HelmType.rounded(size.labelSize, isActive ? .semibold : .medium)
+            pill.label.font = HelmType.rounded(labelPointSize, isActive ? .semibold : .medium)
         }
         thumb.layer?.backgroundColor = ink.cgColor
         if let active = pills.first(where: { $0.id == selectedID }) {

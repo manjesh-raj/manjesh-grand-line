@@ -234,7 +234,7 @@ enum ModuleTableSelfTest {
     /// children, symbol, the page that draws its own tabs, and whether the
     /// content column opens with its header.
     static let pinnedModules: [(WorkspaceModule, String, WorkspaceGroup?, [String], String, RailDestination?, Bool)] = [
-        (.home, "Home", nil, [], "sailboat.fill", nil, true),
+        (.home, "Home", nil, [], "sailboat.fill", nil, false),
         (.tasks, "Tasks", .work, ["Board", "List", "Calendar", "Weekly review"], "checkmark.circle", .shift, true),
         (.calendar, "Calendar", .work, [], "calendar.badge.checkmark", nil, true),
         (.crew, "Crew", .work, ["Needs you", "In flight", "Review", "Ask the crew", "Log"], "person.3.fill", .overview, true),

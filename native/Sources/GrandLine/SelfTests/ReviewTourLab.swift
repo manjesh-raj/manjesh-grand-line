@@ -300,6 +300,8 @@ enum ReviewTourLab {
         /// the captain sees after the relaunch Settings offers. Anywhere else
         /// it is a live change.
         case textScale(CGFloat)
+        /// `density comfortable|compact`: the feel pass's density, live.
+        case density(HelmDensity)
         /// The theme split: `terminal match`, `terminal <scheme>`, or
         /// `terminal <light>/<dark>` for a pair that changes with appearance.
         case terminalColors(String)
@@ -538,6 +540,12 @@ enum ReviewTourLab {
                 return .failure(.badArgument(argument))
             }
             return .success(.textScale(step.scale))
+        case "density":
+            guard !argument.isEmpty else { return .failure(.missingArgument("density")) }
+            guard let density = HelmDensity(rawValue: argument.lowercased()) else {
+                return .failure(.badArgument(argument))
+            }
+            return .success(.density(density))
         default:
             return .failure(.unknownVerb(verb))
         }
@@ -606,6 +614,10 @@ enum ReviewTourLab {
                 ChromeTextScale.shared.setScale(scale)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("textscale \(scale) (live)")
+            case .density(let density):
+                AppSettings.shared.density = density
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("density \(density.rawValue)")
             case .resize(let width, let height):
                 var frame = window.frame
                 frame.size = NSSize(width: width, height: height)

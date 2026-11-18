@@ -551,6 +551,12 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_UIUX_PROPOSALS_TESTS"] == "1" {
             exit(UIUXProposalsSelfTest.run() ? 0 : 1)
         }
+        // The feel pass on Home (the Fable second-opinion review's Stage 1,
+        // the feasibility audit's items 1 to 3), the halves that need no
+        // window. See `FeelPassSelfTest`'s header.
+        if ProcessInfo.processInfo.environment["FM_RUN_FEEL_PASS_TESTS"] == "1" {
+            exit(FeelPassSelfTest.run() ? 0 : 1)
+        }
 
         // The UI/UX revamp's component kit (UI-39): what each piece paints. Pure
         // logic; its window-backed geometry half is FM_RUN_HELM_KIT_VIEW_TESTS.

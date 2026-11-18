@@ -117,10 +117,8 @@ enum SidebarPolishSelfTest {
     /// action, the way a real click reaches it.
     @discardableResult
     private static func clickTab(_ name: String, _ shell: MainSplitShellController) -> Bool {
-        let tabs = shell.toolbar.debugTabs
         guard let index = shell.toolbar.debugTabNames.firstIndex(of: name) else { return false }
-        tabs.selectedSegment = index
-        _ = tabs.sendAction(tabs.action, to: tabs.target)
+        shell.toolbar.debugClickTab(index)
         settle(shell)
         return true
     }

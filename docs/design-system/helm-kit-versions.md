@@ -36,6 +36,35 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.5.0 - Feel pass: CI's two findings
+
+- `HelmSegmentedTabs` 1.1.0 → 1.2.0 (minor): two init options for a strip in system chrome. `pillInset` overrides the size's horizontal pill inset, and `labelSize` fixes the label's point size so it does not follow the chrome text scale. The window toolbar's tabs take 8pt and 11.5pt: the toolbar is system chrome that never followed the text scale, and at 1512pt with Larger text the wider strip pushed Crew's and Connections' crumbs into the overflow menu on CI (`WorkspaceToolbarSelfTest`). `FeelPassSelfTest` now holds the strip to the system control's width at every text scale.
+- `HelmHeroCard` 1.0.0 → 1.0.1 (patch): the gradient's colour writes go through `HelmMotion.withoutImplicitAnimation`, the app's one gradient gate, like every other gradient site (`DaylightHardeningSelfTest`).
+
+## 6.4.0 - Feel pass item 4: the sidebar's search pill
+
+- `WorkspaceSidebar` none → 1.0.0 (new): a 28pt "Search or jump to" pill with the ⌘K keycap under the account header opens the same ⌘K palette as the toolbar's Search. Its words are corrected against its deeper hover fill, so they clear the text floor in every theme. It replaces stage 6's 1pt header rule as the divider between the header and Home, with 6pt above and below it. To keep the whole default list inside a 950pt window (R4-BUG-03), the group heading rows go from 24pt to 18pt (a 2pt foot under the 13pt heading), the captain's call. Headings take no Compact step, because 18pt is already the height their label needs.
+
+## 6.3.0 - Feel pass item 6: Comfortable and Compact density
+
+- `HelmDensity` none → 1.0.0 (new): Comfortable or Compact, stored as `AppSettings.density` and chosen in Settings, Appearance, Window. Compact's row factor is the prototype's 30/36.
+- `HelmType` 1.1.0 → 1.2.0 (minor): `scaledRowHeight` multiplies by the density's row factor after the text scale, rounding a Compact height to a whole point. Comfortable multiplies by exactly 1 and is not rounded, so every existing height is unchanged. A density change re-fires the current theme, which is where every list already re-reads its row height.
+
+## 6.2.0 - Feel pass item 5: the toolbar tabs slide
+
+- `HelmSegmentedTabs` 1.0.0 → 1.1.0 (minor): `setToolTip(_:forID:)`, so a segment can explain itself on hover.
+- `WorkspaceToolbar` 1.1.1 → 1.2.0 (minor): the module tabs in the toolbar's centre are a `HelmSegmentedTabs` (compact) instead of an `NSSegmentedControl`, so the selection is the kit's thumb sliding from the old tab to the new one, as the page's own filter rows already do. The strip is rebuilt only when the tab names change, a count change retitles its pill, and the theme repaints it. Everything else in the toolbar stays a system control.
+
+## 6.1.0 - Feel pass items 1 to 3: the display title, the hero and its ring
+
+The native feel pass on Home (the Fable second-opinion review's Stage 1, cut to the feasibility audit's six items).
+This release carries items 1 to 3: the greeting title, the Morning briefing hero and the Home KPI strip.
+
+- `HelmType` 1.0.0 → 1.1.0 (minor): `displayTitle()`, `displayTitleKern` and `displayTitleAttributes(color:)`, a page's 30pt bold display title, tracked at the prototype's -0.025em, with tabular numerals. Home's greeting is its first user.
+- `HelmRingGauge` 1.1.0 → 1.2.0 (minor): `init(side:)`, so a ring can be drawn larger than 66pt with its stroke and centre label scaled to match (`heroSide` is 86). `trackColorOverride` and `labelColorOverride` let a ring sit on a coloured gradient. The track and arc colours now change without an implicit cross-fade on a theme change.
+- `HelmHeroCard` none → 1.0.0 (new): a full-width card on the theme's accent, washed from a lighter corner to a deeper one with a radial glow, carrying a kicker, a headline, a three-line body, up to two actions and an 86pt count ring. White ink is kept wherever it clears the text floor; otherwise both stops are deepened until it does (`FeelPassSelfTest` sweeps every theme).
+- `Home (page)` none → 1.0.0 (new): in the sidebar layout, Home opens with a greeting as its display title and a one-line summary of the day (the column's date line is dropped, since the summary carries the date), then the Morning briefing as a `HelmHeroCard` with the services ring, then a `.boxed` `HelmKPIStrip` of four tiles (tasks due today, PRs ready to merge, services healthy, Claude week), each a button to the page that owns it. The briefing leaves the card grid while it is the hero, and Customize draws it as a card again. No sparklines: nothing records a series. The floating bar's hub is unchanged.
+
 ## 6.0.0 - S03: one page frame
 
 - `HelmPageScaffold` none → 1.0.0 (new): the page frame. A scrolling page hands it its blocks and keeps none of the mechanics: the scroll view, the flipped document pinned to the clip view (gotchas (4) and (9)), the 24pt gutter, the first-content line and an optional top slot that stays put while the content scrolls. A page that does not scroll reaches the same line through `HelmPageScaffold.pinFirstContent`.
