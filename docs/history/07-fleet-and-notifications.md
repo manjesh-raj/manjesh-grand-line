@@ -1781,3 +1781,41 @@ The ring is new too: what is done today out of everything the snapshot knows (do
   It also covers the preset spread, the stored value and its passthrough, the size modes and thresholds, the menu's shape and actions, and the five states' words on both cards.
 - `HeroCardsViewSelfTest` (windowed) mounts the real Home canvas at the three sizes in Daylight and Dusk across the five states, and checks the gradient's region, the ink on every label, that every label sits inside its card, that the size items reach the arrangement and the colour items repaint only their own card, and that a click on the palette button does not open the card.
   `FM_HERO_RENDER_DIR` writes the renders the PR carries.
+
+## The hero cards' palette, and hiding either card (`fm/grand-line-claude-card-customize-hide`, Helm 6.7.0)
+
+The captain's report after #607: the Claude card had no size or colour control while the Fleet card did, and the Fleet card had no way to be hidden while the Claude card did.
+
+### What was actually wrong
+
+Both cards always had the palette outside Customize.
+What the captain saw on the Claude card was Customize's strip (reset size, earlier, later, hide) outside Customize, in place of the palette.
+The captain's stored layout gives the Claude card a dragged height (280pt), and that is the path that leaves it there.
+
+A resize drag sets `cardResize` on mouse-down and clears it on mouse-up.
+Each step of the drag rebuilds Home and keeps the dragged card, so the grip receiving the drag's events survives.
+When the mouse-up never arrives, `cardResize` stays set.
+Done then rebuilds Home, `rebuildGrid` keeps that card again, and `attachCustomizeStrip` returns early outside Customize without taking the old strip and grips off.
+`HelmModuleCard` hides its own header controls while an accessory is mounted, so the palette stayed hidden until the next rebuild with no drag on, and with `cardResize` still set there never was one.
+
+Reproduced in a probe by sending the grip a real mouse-down and drag, leaving out the mouse-up, and pressing Done.
+The probe window cannot become key, so `NSWindow.sendEvent` does not dispatch mouse events to it, and why the captain's mouse-up went missing is not measured here.
+The fix does not depend on it.
+
+### What shipped
+
+- Leaving Customize, by Done or by switching space, ends a drag in progress through `endCardResize`, which keeps the size the drag reached.
+- `rebuildGrid` keeps a dragged card only while Customize is on.
+- The palette menu ends with "Hide from Home" on Home's arranged cards, for both hero cards.
+  It is the same `HomeCardLayout.hide` edit as Customize's hide button.
+  A toast follows with Undo, which restores the arrangement in hand (GL-33), and says Customize brings the card back.
+- The way back is Customize, then Add a Card, which lists every hidden card.
+
+### Verification
+
+- `HeroCardsViewSelfTest.checkAnUnfinishedDragEndsWithCustomize` drives each of the three grips through its own `mouseDown`/`mouseDragged`, presses Done, and checks the strip, the grips and the palette.
+  Reverting the fix failed all 15 of its checks.
+- `checkBothCardsOfferThePaletteAtEverySize` checks both cards at all three sizes in Daylight and Dusk: the palette is visible, inside the card, clear of Refresh, and its menu offers the sizes, the colours and Hide.
+- `checkHideFromTheMenuAndBringItBack` hides each card from its menu, then brings it back with the toast's Undo and again with Customize's Add a Card.
+  Removing the Hide wiring failed it and the menu check by name.
+- The `rebuildGrid` guard is a backstop and has no check of its own: with `endCardResize` on both exits from Customize, a drag cannot outlive Customize to reach it.

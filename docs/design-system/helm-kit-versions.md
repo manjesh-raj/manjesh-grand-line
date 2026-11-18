@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.7.0 - Hero cards: the palette stays, and either card can be hidden
+
+The captain found the Claude card showing Customize's reset, move and hide controls outside Customize, with no palette, while the Fleet card had its palette and no way to hide it.
+
+- `Home Claude card` 1.0.0 → 1.1.0 (minor): the palette menu ends with "Hide from Home" on Home's arranged cards. It is the same edit Customize's hide button makes, and the toast that follows has Undo and says Customize brings the card back.
+- `Home Fleet card` 1.0.0 → 1.1.0 (minor): the same "Hide from Home" item, which the Fleet card had no way to do outside Customize.
+- `Home (page)` 1.0.0 → 1.0.1 (patch): leaving Customize ends a resize drag that is still in progress and keeps the size it reached. A drag whose mouse-up never arrived used to survive Done, and the rebuild kept its card with Customize's strip and grips still on it, which hid the card's own palette.
+
 ## 6.6.0 - Hero cards: Claude usage and Fleet
 
 The captain's picks on the widget-style board: the Claude usage card as the split hero, the Fleet card as the full hero, each with a size and a colour the captain chooses.

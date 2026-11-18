@@ -189,13 +189,14 @@ enum HeroCardsSelfTest {
         var sized: HomeCardSizeMode?
         var coloured: HomeCardColor?
         var customs = 0
+        var hides = 0
         let menu = HomeCardStyleMenu(cardTitle: "Fleet",
                                      sizing: .init(current: .narrow, choose: { sized = $0 }),
                                      color: .preset(.rose), chooseColor: { coloured = $0 },
-                                     chooseCustomColor: { customs += 1 }).makeMenu()
+                                     chooseCustomColor: { customs += 1 }, hide: { hides += 1 }).makeMenu()
         let titles = menu.items.map(\.title)
         let expected = ["Size", "Narrow", "Default", "Full width", "", "Colour", "Theme accent"]
-            + HomeCardColorPreset.allCases.map(\.title) + ["Custom colour\u{2026}"]
+            + HomeCardColorPreset.allCases.map(\.title) + ["Custom colour\u{2026}", "", HomeCardStyleMenu.hideTitle]
         check(titles == expected, "the menu reads \(titles)", &ok)
         check(menu.items.filter { $0.state == .on }.map(\.title) == ["Narrow", "Rose"],
               "the checked items are \(menu.items.filter { $0.state == .on }.map(\.title))", &ok)
@@ -209,6 +210,8 @@ enum HeroCardsSelfTest {
         fire("Full width")
         fire("Forest")
         fire("Custom colour\u{2026}")
+        fire(HomeCardStyleMenu.hideTitle)
+        check(hides == 1, "Hide from Home hid the card \(hides) times", &ok)
         check(sized == .fullWidth, "Full width chose \(String(describing: sized))", &ok)
         check(coloured == .preset(.forest), "Forest chose \(String(describing: coloured))", &ok)
         check(customs == 1, "Custom colour opened the panel \(customs) times", &ok)
@@ -216,6 +219,8 @@ enum HeroCardsSelfTest {
         let colourOnly = HomeCardStyleMenu(cardTitle: "Fleet", sizing: nil, color: .custom("#123456"),
                                            chooseColor: { _ in }, chooseCustomColor: {}).makeMenu()
         check(!colourOnly.items.contains { $0.title == "Narrow" }, "a card with no size to choose offers sizes", &ok)
+        check(!colourOnly.items.contains { $0.title == HomeCardStyleMenu.hideTitle },
+              "a card with no place on Home offers Hide", &ok)
         check(colourOnly.items.first { $0.title == "Custom colour\u{2026}" }?.state == .on,
               "a custom colour does not check Custom colour", &ok)
     }
