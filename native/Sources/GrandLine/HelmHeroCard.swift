@@ -15,10 +15,9 @@
 // can do it does the ink step toward black instead. The rule is asserted for
 // every theme the app ships (`FeelPassSelfTest`).
 //
-// **Every layer here is a standalone sublayer**, so a `colors` write goes
-// through `HelmMotion.withoutImplicitAnimation` (the app's one gradient gate)
-// and a `frame` write through `HelmMotion.withoutActions`: the implicit-
-// animation trap `HelmMotion.swift`'s header records.
+// **The gradient and the glow are `HelmHeroSurface`'s** (1.0.2). The recipe
+// and the palette rule moved there when two Home cards took the hero style,
+// so this card and `HelmModuleCard` paint one copy of it.
 //
 // **Not a button.** The hero's actions are real `HelmButton`s; the card
 // itself takes no click, so there is no second target competing with them
@@ -28,30 +27,11 @@ import AppKit
 
 final class HelmHeroCard: NSView {
 
-    /// The colours one theme's hero is drawn in.
-    struct Palette: Equatable {
-        /// The top-left stop.
-        let start: (Double, Double, Double)
-        /// The bottom-right stop.
-        let end: (Double, Double, Double)
-        /// The text, the ring's arc and the ring's centre label.
-        let ink: (Double, Double, Double)
+    /// The colours one hero is drawn in. The recipe lives on
+    /// `HelmHeroSurface`, which a module card paints too.
+    typealias Palette = HelmHeroSurface.Palette
 
-        static func == (a: Palette, b: Palette) -> Bool {
-            a.start == b.start && a.end == b.end && a.ink == b.ink
-        }
-    }
-
-    /// The prototype's two stops: the accent with 8% white, and the accent
-    /// with 38% black.
-    static let startLift = 0.08
-    static let endDepth = 0.38
-    /// How far `palette(for:)` may deepen both stops looking for white ink,
-    /// in steps of `deepenStep`.
-    static let maxDeepen = 0.6
-    static let deepenStep = 0.02
-    static let glowSide: CGFloat = 220
-    static let glowAlpha: CGFloat = 0.28
+    static var startLift: Double { HelmHeroSurface.startLift }
     static let insets = NSEdgeInsets(top: 22, left: 24, bottom: 22, right: 28)
     static let titleSize: CGFloat = 22
     static let bodySize: CGFloat = 13.5
@@ -73,8 +53,8 @@ final class HelmHeroCard: NSView {
         }
     }
 
-    private let gradient = CAGradientLayer()
-    private let glow = CAGradientLayer()
+    /// The gradient and the glow - the one copy of the recipe.
+    private let surface = HelmHeroSurface()
     private let kickerLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
@@ -93,13 +73,13 @@ final class HelmHeroCard: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
         layer?.masksToBounds = true
-        gradient.startPoint = CGPoint(x: 0, y: 1)
-        gradient.endPoint = CGPoint(x: 1, y: 0)
-        glow.type = .radial
-        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
-        glow.endPoint = CGPoint(x: 1, y: 1)
-        layer?.addSublayer(gradient)
-        layer?.addSublayer(glow)
+        addSubview(surface)
+        NSLayoutConstraint.activate([
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+            surface.topAnchor.constraint(equalTo: topAnchor),
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         kickerLabel.lineBreakMode = .byTruncatingTail
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.titleSize), weight: .bold)
@@ -217,32 +197,13 @@ final class HelmHeroCard: NSView {
 
     // MARK: The palette
 
-    /// The hero's colours for `theme`. See the file header for the rule.
+    /// The hero's colours for `theme`. See `HelmHeroSurface` for the rule.
     static func palette(for theme: HelmTheme) -> Palette {
-        palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.accentHex)))
+        HelmHeroSurface.palette(for: theme)
     }
 
     static func palette(accent: (Double, Double, Double)) -> Palette {
-        let white = (1.0, 1.0, 1.0)
-        let black = (0.0, 0.0, 0.0)
-        let start = HelmContrast.mix(white, accent, startLift)
-        let end = HelmContrast.mix(black, accent, endDepth)
-        var deepen = 0.0
-        while deepen <= maxDeepen + 1e-9 {
-            let s = HelmContrast.mix(black, start, deepen)
-            let e = HelmContrast.mix(black, end, deepen)
-            if HelmContrast.ratio(white, s) >= HelmContrast.textTarget {
-                return Palette(start: s, end: e, ink: white)
-            }
-            deepen += deepenStep
-        }
-        // No deepening the design allows gets white there: a very light
-        // accent. Keep the prototype's stops and set the ink dark enough for
-        // both of them.
-        let lighter = HelmContrast.relativeLuminance(start) >= HelmContrast.relativeLuminance(end) ? start : end
-        let ink = HelmContrast.components(HelmContrast.legibleOn(fill: HelmContrast.color(lighter),
-                                                                preferring: HelmContrast.color(black)))
-        return Palette(start: start, end: end, ink: ink)
+        HelmHeroSurface.palette(accent: accent)
     }
 
     // MARK: Theme and layout
@@ -255,11 +216,11 @@ final class HelmHeroCard: NSView {
         // The app's one gradient gate, as at every other gradient site
         // (`DaylightHardeningSelfTest` guards it): instant under Reduce
         // Motion, and a theme change is the window's own crossfade anyway.
+        // The surface's own colour writes go through the same gate.
         HelmMotion.withoutImplicitAnimation {
             layer?.cornerRadius = radius
-            gradient.colors = [HelmContrast.color(palette.start).cgColor, HelmContrast.color(palette.end).cgColor]
-            glow.colors = [ink.withAlphaComponent(Self.glowAlpha).cgColor, ink.withAlphaComponent(0).cgColor]
         }
+        surface.apply(palette)
         // The kicker keeps the page's kicker recipe, in the hero's ink.
         kickerLabel.attributedStringValue = NSAttributedString(string: kickerLabel.stringValue,
                                                                attributes: HelmType.kickerAttributes(color: ink))
@@ -279,11 +240,6 @@ final class HelmHeroCard: NSView {
 
     override func layout() {
         super.layout()
-        HelmMotion.withoutActions {
-            gradient.frame = bounds
-            let side = Self.glowSide
-            glow.frame = CGRect(x: bounds.maxX - side + 40, y: bounds.maxY - side + 60, width: side, height: side)
-        }
         // Gotcha (22): the body wraps at a width this label does not decide -
         // the card's own, less the insets and the ring's column.
         let ringRoom = ringColumn.isHidden ? 0 : ringColumn.fittingSize.width + HelmMetrics.s5
@@ -299,7 +255,7 @@ final class HelmHeroCard: NSView {
     var debugContent: Content { content }
     var debugTitleColor: NSColor? { titleLabel.textColor }
     var debugBodyColor: NSColor? { bodyLabel.textColor }
-    var debugGradientColors: [CGColor] { (gradient.colors as? [CGColor]) ?? [] }
+    var debugGradientColors: [CGColor] { surface.debugGradientColors }
     var debugRing: HelmRingGauge { ring }
     var debugRingShown: Bool { !ringColumn.isHidden }
     var debugActionTitles: [String] { actionsRow.arrangedSubviews.compactMap { ($0 as? NSButton)?.title } }

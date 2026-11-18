@@ -412,6 +412,140 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// cards stay distinguishable by the things that actually differ:
         /// title, subtitle and artwork.
         case skeleton(rows: Int = 2)
+        /// 1.3.0: the hero's own words on a hero card - a headline, a short
+        /// body, a ring and a KPI strip, all in the hero's ink. Home's Fleet
+        /// card (the captain's "full hero"). Set `Content.hero` with it, or
+        /// it draws on the plain card surface.
+        case heroSummary(HeroSummary)
+        /// 1.3.0: a hero panel (headline and ring) beside the dense usage
+        /// report, or above it when the card is narrow. Home's Claude usage
+        /// card (the captain's "split hero"). Set `Content.hero` with it.
+        case heroSplit(HeroSplit)
+    }
+
+    // MARK: The hero (1.3.0)
+    //
+    // A module card painted with `HelmHeroSurface`, the briefing hero's
+    // gradient and glow. The card is still a module card - one click target,
+    // a header with its actions, Customize's strip and the resize grips - so
+    // only its colours and its body change.
+    //
+    // Where the gradient goes follows from the body. A `.heroSummary` fills
+    // the whole card. A `.heroSplit` paints a column down the leading edge
+    // (its panel) and leaves the report on the card's own surface, or, when
+    // narrow, a band across the top through the header and the panel. Every
+    // word on the gradient takes the palette's ink, and a ring's arc takes a
+    // state's colour lifted to read on the gradient
+    // (`HelmHeroSurface.signalColor`).
+
+    /// The colour a hero card is painted in.
+    struct HeroTone: Equatable {
+        enum Colour: Equatable {
+            /// The theme's accent, re-read on every theme change.
+            case themeAccent
+            /// A fixed sRGB colour, the same in every theme.
+            case fixed(red: Double, green: Double, blue: Double)
+        }
+
+        var colour: Colour
+        /// GL-14's stale reading: the colour steps toward grey
+        /// (`HelmHeroSurface.dimmed`), so figures that may be behind do not
+        /// look as alive as fresh ones.
+        var isDimmed: Bool = false
+
+        func accent(in theme: HelmTheme) -> (Double, Double, Double) {
+            switch colour {
+            case .themeAccent: return HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+            case let .fixed(red, green, blue): return (red, green, blue)
+            }
+        }
+
+        func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
+            let accent = accent(in: theme)
+            return HelmHeroSurface.palette(accent: isDimmed ? HelmHeroSurface.dimmed(accent) : accent)
+        }
+    }
+
+    /// A percent or count ring on the hero.
+    struct HeroRing: Equatable {
+        /// 0...1 of the arc.
+        let fraction: Double
+        /// The centre label - "49%", "20".
+        let label: String
+        /// The words with the ring - "of week used". `nil` draws none.
+        let caption: String?
+        /// What VoiceOver reads for the ring.
+        let spoken: String
+        /// What the ring is saying. `.warn` and `.bad` paint the arc in that
+        /// state's colour; `.ok` and `.idle` paint it in the ink.
+        let state: HelmModuleRowState
+    }
+
+    /// The three widths a hero body is drawn at. The caller picks one from
+    /// the width the grid built the card for (`HeroLayout.init(cardWidth:)`).
+    enum HeroLayout: Equatable {
+        case narrow, standard, wide
+
+        /// Below this a hero card stacks; at and above `wideWidth` it lays
+        /// everything out in one row. The prototype's three frames are 290,
+        /// 584 and about 1180pt.
+        static let narrowWidth: CGFloat = 400
+        static let wideWidth: CGFloat = 880
+
+        init(cardWidth: CGFloat) {
+            if cardWidth < Self.narrowWidth {
+                self = .narrow
+            } else if cardWidth < Self.wideWidth {
+                self = .standard
+            } else {
+                self = .wide
+            }
+        }
+    }
+
+    /// `.heroSummary`'s payload.
+    struct HeroSummary: Equatable {
+        let headline: String
+        let body: String?
+        let ring: HeroRing?
+        /// A `HelmKPIStrip`'s items, drawn in the hero's ink.
+        let items: [HelmKPIStrip.Item]
+        let layout: HeroLayout
+    }
+
+    /// `.heroSplit`'s payload.
+    struct HeroSplit: Equatable {
+        /// What the card's own surface shows beside the panel.
+        enum Detail: Equatable {
+            /// The readings, as `.usageReportDense` draws them.
+            case report([HelmModuleUsageSection])
+            /// Nothing has arrived yet (UI-12's skeleton).
+            case loading
+            /// A stated gap, in words (GL-14).
+            case note(String)
+        }
+
+        let headline: String
+        /// Drawn only in the wide layout, which has room for it.
+        let body: String?
+        let ring: HeroRing?
+        let detail: Detail
+        let layout: HeroLayout
+
+        /// The panel's width beside the report: the prototype's 226pt at the
+        /// standard width and 470pt at the wide one.
+        static let standardPanelWidth: CGFloat = 226
+        static let widePanelWidth: CGFloat = 470
+
+        /// How wide the report beside the panel is, for a card `cardWidth`
+        /// wide - what a caller needs to pick the report's short labels.
+        static func detailWidth(cardWidth: CGFloat, layout: HeroLayout) -> CGFloat {
+            switch layout {
+            case .narrow: return cardWidth
+            case .standard: return cardWidth - standardPanelWidth
+            case .wide: return cardWidth - widePanelWidth
+            }
+        }
     }
 
     /// §6.1's "2-3 rows". A module that hands over more is showing a table on
@@ -498,6 +632,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         let handler: () -> Void
     }
 
+    /// 1.3.0: a second header control that opens a menu - Home's card style
+    /// (size and colour) on the two hero cards. Built when it is pressed, so
+    /// it always shows the current choice. Gesture arbitration is the same
+    /// as `HeaderAction`'s: a click on it never also opens the card.
+    struct HeaderMenu {
+        let symbol: String
+        /// The hover text, and what VoiceOver reads - see `HeaderAction`.
+        let tooltip: String
+        let makeMenu: () -> NSMenu
+    }
+
     struct Content {
         var title: String
         var subtitle: String
@@ -559,6 +704,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// (`fm/grandline-home-fit-implement`), and says how many it is
         /// showing in its footer, so a longer list is never a silent cap.
         var peekRowLimit: Int? = nil
+        /// 1.3.0: paint the card with the hero surface in this tone. Only the
+        /// two hero bodies are drawn for it; `nil` everywhere else.
+        var hero: HeroTone? = nil
+        /// See `HeaderMenu`. `nil` on every card but the two hero cards.
+        var headerMenu: HeaderMenu? = nil
 
         /// P4 of the polish report, the density rule: a card is a bounded
         /// summary. It shows at most `limit` rows, and when it has more than
@@ -737,6 +887,29 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private let actionButton = HelmPageToolbar.iconButton(
         symbol: "arrow.clockwise", tooltip: "", target: nil, action: nil)
     private var headerActionHandler: (() -> Void)?
+    /// `Content.headerMenu`'s control, built and hidden like `actionButton`.
+    private let menuButton = HelmPageToolbar.iconButton(
+        symbol: "paintpalette", tooltip: "", target: nil, action: nil)
+    private var headerMenuProvider: (() -> NSMenu)?
+
+    // The hero (1.3.0). The surface sits behind everything else on `card`, and
+    // its constraints follow the body - see `applyHeroRegion`.
+    private let heroSurface = HelmHeroSurface()
+    private var heroSurfaceConstraints: [NSLayoutConstraint] = []
+    /// A split card's header: the title column stops at the panel's edge, and
+    /// this spacer takes the rest so the status and actions stay right.
+    private let headerSpacer = NSView()
+    private var titleCapToPanel: NSLayoutConstraint?
+    /// The hero body's words, all painted in the palette's ink.
+    private var heroInkLabels: [NSTextField] = []
+    /// The hero body's rings, with what each is saying.
+    private var heroRings: [(gauge: HelmRingGauge, state: HelmModuleRowState)] = []
+    /// Wrapping hero labels and the width each wraps at, from the body's
+    /// own width (gotcha (22)).
+    private var heroWraps: [(label: NSTextField, width: (CGFloat) -> CGFloat)] = []
+    /// A narrow split card's panel: the band runs from the card's top to
+    /// this view's bottom, plus the panel's inset.
+    private var heroPanelAnchor: NSView?
 
     /// `Content.footer`'s strip, built once with the rest of the chrome and
     /// hidden when the content carries none - the same arrangement as
@@ -1015,7 +1188,22 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         actionButton.setContentHuggingPriority(.required, for: .horizontal)
         actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let headerRow = NSStackView(views: [tile, textStack, statusColumn, actionButton])
+        menuButton.target = self
+        menuButton.action = #selector(headerMenuTapped)
+        menuButton.isHidden = true
+        menuButton.setContentHuggingPriority(.required, for: .horizontal)
+        menuButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        // Gotcha (12): a bare view has no intrinsic size, so its "as narrow
+        // as possible" is a real constraint at priority 1 - it only takes
+        // what nothing else in the row wants.
+        headerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        headerSpacer.isHidden = true
+        let spacerHug = headerSpacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerHug.priority = NSLayoutConstraint.Priority(1)
+        spacerHug.isActive = true
+
+        let headerRow = NSStackView(views: [tile, textStack, headerSpacer, statusColumn, actionButton, menuButton])
         self.headerRowRef = headerRow
         self.textStackRef = textStack
         headerRow.orientation = .horizontal
@@ -1037,9 +1225,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         buildFooter()
 
+        heroSurface.isHidden = true
+        card.addSubview(heroSurface)
         card.addSubview(headerRow)
         card.addSubview(bodyContainer)
         card.addSubview(footerContainer)
+        // A split card's title column stops at its panel's edge. Inactive
+        // until `applyHeroRegion` sets its constant.
+        titleCapToPanel = textStack.trailingAnchor.constraint(lessThanOrEqualTo: card.leadingAnchor)
 
         // PF2's floor (see `minimumHeight`), kept so `hugsContent` can drop it.
         let floor = heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight)
@@ -1207,6 +1400,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         let arranging = headerAccessory != nil
         statusColumn.isHidden = arranging || (chipView.isHidden && headerCaptionLabel.isHidden)
         actionButton.isHidden = arranging || content?.headerAction == nil
+        menuButton.isHidden = arranging || content?.headerMenu == nil
     }
 
     // MARK: Configure
@@ -1271,6 +1465,15 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             actionButton.isHidden = true
             headerActionHandler = nil
         }
+        if let menu = content.headerMenu {
+            menuButton.isHidden = false
+            menuButton.symbolName = menu.symbol
+            menuButton.toolTip = menu.tooltip
+            headerMenuProvider = menu.makeMenu
+        } else {
+            menuButton.isHidden = true
+            headerMenuProvider = nil
+        }
         // Live data keeps arriving while Home is arranged, and the two
         // branches above would show what the accessory stands in for.
         applyHeaderAccessory()
@@ -1294,6 +1497,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         peekRowLimit = content.peekRowLimit
         rebuildBody(content.body)
+        applyHeroRegion()
 
         // GL-16: §6.1's own label spec - "<title>, <subtitle>, <chip text>".
         // Set explicitly rather than left to `HoverHighlightView`'s
@@ -1340,6 +1544,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         metricLabels.removeAll()
         ringTitle = nil
         unitLabels.removeAll()
+        heroInkLabels.removeAll()
+        heroRings.removeAll()
+        heroWraps.removeAll()
+        heroPanelAnchor = nil
 
         let content: NSView
         switch body {
@@ -1366,6 +1574,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildKPIs(note: note, items: Array(items.prefix(Self.maxTiles)))
         case let .skeleton(rows):
             content = buildSkeleton(rows: rows)
+        case let .heroSummary(summary):
+            content = buildHeroSummary(summary)
+        case let .heroSplit(split):
+            content = buildHeroSplit(split)
         }
 
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -2185,6 +2397,321 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return stack
     }
 
+    // MARK: The hero bodies (1.3.0)
+
+    /// Where the gradient is painted, from the content: nowhere without a
+    /// `hero` tone or with any other body.
+    private enum HeroRegion: Equatable {
+        case card
+        case leading(CGFloat)
+        case band
+    }
+
+    private var heroRegion: HeroRegion? {
+        guard content?.hero != nil, let body = content?.body else { return nil }
+        switch body {
+        case .heroSummary:
+            return .card
+        case let .heroSplit(split):
+            switch split.layout {
+            case .narrow: return .band
+            case .standard: return .leading(HeroSplit.standardPanelWidth)
+            case .wide: return .leading(HeroSplit.widePanelWidth)
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// The panel's own inset, inside the gradient, below its last line.
+    static let heroPanelInset: CGFloat = 14
+
+    /// Pin the surface to the region, and cap the header's title column at a
+    /// split card's panel. Everything here is a constraint on views the card
+    /// already owns, so nothing outside the card can be moved by it - the
+    /// surface has no intrinsic size and nothing is tied to it.
+    private func applyHeroRegion() {
+        NSLayoutConstraint.deactivate(heroSurfaceConstraints)
+        heroSurfaceConstraints.removeAll()
+        titleCapToPanel?.isActive = false
+        headerSpacer.isHidden = true
+        headerCaptionLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        guard let region = heroRegion else {
+            heroSurface.isHidden = true
+            return
+        }
+        heroSurface.isHidden = false
+        var pins = [
+            heroSurface.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            heroSurface.topAnchor.constraint(equalTo: card.topAnchor),
+        ]
+        switch region {
+        case .card:
+            pins += [
+                heroSurface.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+                heroSurface.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            ]
+        case let .leading(width):
+            pins += [
+                heroSurface.widthAnchor.constraint(equalToConstant: width),
+                heroSurface.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            ]
+            titleCapToPanel?.constant = width - Self.horizontalInset
+            titleCapToPanel?.isActive = true
+            headerSpacer.isHidden = false
+            // Beside a panel the slack goes to the spacer, and the status
+            // column's own `columnHug` (251) would squeeze the caption to
+            // "U..." for it. One above that keeps the words; still far under
+            // 500, so never a floor on the window (gotcha (13)).
+            headerCaptionLabel.setContentCompressionResistancePriority(
+                NSLayoutConstraint.Priority(HelmDaylightPriority.columnHug.rawValue + 1), for: .horizontal)
+        case .band:
+            pins.append(heroSurface.trailingAnchor.constraint(equalTo: card.trailingAnchor))
+            if let anchor = heroPanelAnchor {
+                pins.append(heroSurface.bottomAnchor.constraint(equalTo: anchor.bottomAnchor,
+                                                                constant: Self.heroPanelInset))
+            } else {
+                pins.append(heroSurface.bottomAnchor.constraint(equalTo: bodyContainer.topAnchor))
+            }
+        }
+        NSLayoutConstraint.activate(pins)
+        heroSurfaceConstraints = pins
+    }
+
+    /// Whether the header sits on the gradient: all of it on a full or band
+    /// hero, and only the tile and the title column beside a split panel.
+    private var heroCoversWholeHeader: Bool {
+        switch heroRegion {
+        case .card?, .band?: return true
+        case .leading?, nil: return false
+        }
+    }
+
+    /// A wrapping label in the hero's ink. Its colour is painted in
+    /// `applyTheme`; `width` is the wrap width from the body's own width.
+    private func heroLabel(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
+                           maxLines: Int, width: @escaping (CGFloat) -> CGFloat) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: HelmType.scaled(size), weight: weight)
+        label.isSelectable = false
+        label.maximumNumberOfLines = maxLines
+        // `noteLabel`'s two halves (review #3's B7, R2-BUG-08): wrap, and put
+        // the ellipsis on the last line kept.
+        label.lineBreakMode = .byWordWrapping
+        label.cell?.truncatesLastVisibleLine = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
+        heroInkLabels.append(label)
+        heroWraps.append((label, width))
+        return label
+    }
+
+    /// A ring on the gradient, with its caption under it (`.below`), beside
+    /// it (`.beside`) or none.
+    private enum HeroCaptionPlacement { case below, beside, none }
+
+    private func heroRingView(_ ring: HeroRing, side: CGFloat, caption: HeroCaptionPlacement,
+                              captionWidth: CGFloat = 150) -> NSView {
+        let gauge = HelmRingGauge(side: side)
+        gauge.configure(fraction: ring.fraction, text: ring.label)
+        gauge.setSpokenLabel(ring.spoken)
+        heroRings.append((gauge, ring.state))
+        guard let text = ring.caption, !text.isEmpty, caption != .none else { return gauge }
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .medium)
+        label.isSelectable = false
+        label.maximumNumberOfLines = 2
+        label.lineBreakMode = .byWordWrapping
+        label.cell?.truncatesLastVisibleLine = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.preferredMaxLayoutWidth = captionWidth
+        label.setAccessibilityElement(false)
+        heroInkLabels.append(label)
+
+        let stack = NSStackView(views: [gauge, label])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setClippingResistancePriority(.required, for: .vertical)
+        switch caption {
+        case .below:
+            label.alignment = .center
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+            stack.orientation = .vertical
+            stack.alignment = .centerX
+            stack.spacing = HelmMetrics.s1 + 2
+            stack.setHuggingPriority(.defaultHigh, for: .horizontal)
+            stack.setClippingResistancePriority(.required, for: .horizontal)
+        case .beside, .none:
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            stack.orientation = .horizontal
+            stack.alignment = .centerY
+            stack.spacing = HelmMetrics.s3
+            stack.distribution = .fill
+            stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        }
+        return stack
+    }
+
+    /// A horizontal row inside a hero body, compressible like every other
+    /// row in this card (gotcha (13)).
+    private func heroRow(_ views: [NSView], alignment: NSLayoutConstraint.Attribute,
+                         spacing: CGFloat) -> NSStackView {
+        let row = compressibleStack(NSStackView(views: views))
+        row.orientation = .horizontal
+        row.alignment = alignment
+        row.spacing = spacing
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// `.heroSummary`: the prototype's full hero. Narrow stacks the headline
+    /// beside a small ring, then the body, then the numbers. Standard puts
+    /// the words beside the 86pt ring and the numbers under both. Wide lays
+    /// the words, the numbers and the ring out in one row.
+    private func buildHeroSummary(_ summary: HeroSummary) -> NSView {
+        let strip = HelmKPIStrip()
+        strip.figureSize = summary.layout == .narrow ? 22 : 24
+        strip.configure(summary.items, theme: ThemeManager.shared.theme)
+        strip.showsTopRule = summary.layout != .wide
+        kpiStrip = strip
+
+        switch summary.layout {
+        case .narrow:
+            let ringSide: CGFloat = 60
+            let headline = heroLabel(summary.headline, size: 20, weight: .bold, maxLines: 2) {
+                $0 - (summary.ring == nil ? 0 : ringSide + HelmMetrics.s3)
+            }
+            var top: [NSView] = [headline]
+            if let ring = summary.ring { top.append(heroRingView(ring, side: ringSide, caption: .none)) }
+            var stacked: [NSView] = [heroRow(top, alignment: .centerY, spacing: HelmMetrics.s3)]
+            if let body = summary.body, !body.isEmpty {
+                stacked.append(heroLabel(body, size: 12.5, maxLines: 3) { $0 })
+            }
+            stacked.append(strip)
+            return verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+
+        case .standard:
+            let ringColumn = summary.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
+                                                            captionWidth: 130) }
+            let reserved = ringColumn == nil ? 0 : 130 + HelmMetrics.s4
+            var words: [NSView] = [heroLabel(summary.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                             maxLines: 2) { $0 - reserved }]
+            if let body = summary.body, !body.isEmpty {
+                words.append(heroLabel(body, size: HelmHeroCard.bodySize, maxLines: 3) { $0 - reserved })
+            }
+            let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
+            let top = heroRow([text] + [ringColumn].compactMap { $0 }, alignment: .top, spacing: HelmMetrics.s4)
+            return verticalStack([top, strip], spacing: HelmMetrics.s3)
+
+        case .wide:
+            let ringColumn = summary.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
+                                                            captionWidth: 150) }
+            let textWidth: CGFloat = 480
+            var words: [NSView] = [heroLabel(summary.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                             maxLines: 2) { min(textWidth, $0) }]
+            if let body = summary.body, !body.isEmpty {
+                words.append(heroLabel(body, size: HelmHeroCard.bodySize, maxLines: 3) { min(textWidth, $0) })
+            }
+            let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
+            let cap = text.widthAnchor.constraint(equalToConstant: textWidth)
+            cap.priority = HelmDaylightPriority.contentTie
+            cap.isActive = true
+            let row = heroRow([text, strip] + [ringColumn].compactMap { $0 }, alignment: .centerY,
+                              spacing: HelmMetrics.s6)
+            return verticalStack([row], spacing: 0)
+        }
+    }
+
+    /// `.heroSplit`: the prototype's split hero. The panel is the headline
+    /// and the ring on the gradient; the detail is the report on the card's
+    /// own surface, exactly as `.usageReportDense` draws it.
+    private func buildHeroSplit(_ split: HeroSplit) -> NSView {
+        let detail: NSView
+        switch split.detail {
+        case let .report(sections): detail = buildUsageReportDense(sections)
+        case .loading: detail = buildSkeleton(rows: 3)
+        case let .note(text): detail = verticalStack([noteLabel(text, maxLines: 4)], spacing: 0)
+        }
+
+        if split.layout == .narrow {
+            let ringSide: CGFloat = 60
+            let headline = heroLabel(split.headline, size: 20, weight: .bold, maxLines: 2) {
+                $0 - (split.ring == nil ? 0 : ringSide + HelmMetrics.s3)
+            }
+            var top: [NSView] = [headline]
+            if let ring = split.ring { top.append(heroRingView(ring, side: ringSide, caption: .none)) }
+            let panel = heroRow(top, alignment: .centerY, spacing: HelmMetrics.s3)
+            heroPanelAnchor = panel
+            // The band ends `heroPanelInset` under the panel, and the report
+            // starts as far again under the band.
+            return verticalStack([panel, detail], spacing: Self.heroPanelInset * 2)
+        }
+
+        let panelWidth = split.layout == .wide ? HeroSplit.widePanelWidth : HeroSplit.standardPanelWidth
+        // The panel's content width: the panel, less the card's inset on its
+        // leading side and the same again inside its trailing edge.
+        let inner = panelWidth - Self.horizontalInset * 2
+        let panel: NSView
+        if split.layout == .wide {
+            let ringColumn = split.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
+                                                          captionWidth: 120) }
+            let reserved = ringColumn == nil ? 0 : 120 + HelmMetrics.s4
+            var words: [NSView] = [heroLabel(split.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                             maxLines: 2) { _ in inner - reserved }]
+            if let body = split.body, !body.isEmpty {
+                words.append(heroLabel(body, size: HelmHeroCard.bodySize, maxLines: 3) { _ in inner - reserved })
+            }
+            let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
+            panel = heroRow([text] + [ringColumn].compactMap { $0 }, alignment: .top, spacing: HelmMetrics.s4)
+        } else {
+            let ringSide = HelmRingGauge.side
+            var stacked: [NSView] = [heroLabel(split.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                               maxLines: 3) { _ in inner }]
+            if let ring = split.ring {
+                stacked.append(heroRingView(ring, side: ringSide, caption: .beside,
+                                            captionWidth: inner - ringSide - HelmMetrics.s3))
+            }
+            panel = verticalStack(stacked, spacing: HelmMetrics.s3 + 2)
+        }
+        // At `contentTie`, never required: a fixed width above 500 would be a
+        // floor on the window (gotcha (13)), and a split card is never drawn
+        // narrower than its narrow layout's threshold anyway.
+        let fixed = panel.widthAnchor.constraint(equalToConstant: inner)
+        fixed.priority = HelmDaylightPriority.contentTie
+        fixed.isActive = true
+        // The report keeps its own height at the top of its column: in a
+        // stretching stack a panel taller than the report pulled the grid's
+        // rows apart. Gravity areas place a view without stretching it.
+        let column = NSStackView()
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.distribution = .gravityAreas
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.setViews([detail], in: .top)
+        column.setHuggingPriority(.defaultLow, for: .horizontal)
+        column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        column.setClippingResistancePriority(.required, for: .vertical)
+        detail.trailingAnchor.constraint(equalTo: column.trailingAnchor).isActive = true
+        // An `NSGridView` has no height of its own to hug, so say it: as short
+        // as its rows allow. Above the stack's 250, far under the labels'
+        // own 750, so it closes the gaps and never clips a row.
+        let hug = detail.heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(260)
+        hug.isActive = true
+        // The report starts the card's inset past the panel's edge.
+        return heroRow([panel, column], alignment: .top, spacing: Self.horizontalInset * 2)
+    }
+
+    @objc private func headerMenuTapped() {
+        guard let menu = headerMenuProvider?() else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: menuButton.bounds.height + HelmMetrics.s1), in: menuButton)
+    }
+
     // MARK: Hover (§6.1)
 
     override func updateTrackingAreas() {
@@ -2250,6 +2777,29 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     /// The `.ring` body's gauge, or nil for any other body.
     var debugRingGauge: HelmRingGauge? { ringGauge }
+
+    // The hero (1.3.0).
+    /// The surface, when the card is painted with one.
+    var debugHeroSurface: HelmHeroSurface? { heroSurface.isHidden ? nil : heroSurface }
+    /// "card", "leading:<width>", "band", or nil.
+    var debugHeroRegion: String? {
+        switch heroRegion {
+        case .card?: return "card"
+        case let .leading(width)?: return "leading:\(Int(width))"
+        case .band?: return "band"
+        case nil: return nil
+        }
+    }
+    var debugHeroInkLabels: [NSTextField] { heroInkLabels }
+    var debugHeroRings: [HelmRingGauge] { heroRings.map(\.gauge) }
+    var debugHeroPanelAnchor: NSView? { heroPanelAnchor }
+    var debugTitleLabel: NSTextField { titleLabel }
+    var debugSubtitleLabel: NSTextField { subtitleLabel }
+    var debugChipLabel: NSTextField { chipLabel }
+    var debugHeaderCaptionLabel: NSTextField { headerCaptionLabel }
+    var debugHeaderMenuButton: HelmButton { menuButton }
+    /// The header menu as pressing its button would open it.
+    func debugHeaderMenu() -> NSMenu? { headerMenuProvider?() }
     /// S11: the ring title's painted colour and text, `nil` when untinted.
     var debugRingTitle: (text: String, color: NSColor?)? { ringTitle.map { ($0.label.stringValue, $0.label.textColor) } }
     #endif
@@ -2300,6 +2850,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private func applyNoteWrapWidth() {
         let available = bounds.width - Self.horizontalInset * 2
         guard available > 0 else { return }
+        // The hero's words, each from the body width by its own rule (the
+        // ring beside it, the panel it sits in).
+        for (label, rule) in heroWraps {
+            let width = floor(rule(available))
+            guard width > 0, abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
         for label in noteLabels {
             var width = available
             // R4-UI-02: a ring body's note sits beside the gauge, so the body
@@ -2454,7 +3012,50 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         ringGauge?.applyTheme(theme, hue: content?.hue ?? .green)
         progressBar?.applyTheme(theme, hue: content?.hue ?? .amber)
         paragraphView?.applyTheme(theme)
+        applyHeroTheme(theme)
         applyShadow(theme, raised: isHovering)
+    }
+
+    /// The hero's colours, over what `applyTheme` painted for the plain card:
+    /// the surface, every word on it in the palette's ink, and each ring's
+    /// arc in its state's colour lifted to read on the gradient. A split
+    /// card's report keeps the theme's colours, because it sits on the card.
+    private func applyHeroTheme(_ theme: HelmTheme) {
+        guard let tone = content?.hero, let region = heroRegion else {
+            kpiStrip?.heroInk = nil
+            return
+        }
+        let palette = tone.palette(in: theme)
+        heroSurface.apply(palette)
+        let ink = HelmContrast.color(palette.ink)
+
+        titleLabel.textColor = ink
+        subtitleLabel.textColor = ink
+        if heroCoversWholeHeader {
+            headerCaptionLabel.textColor = ink
+            // The word chip ("All clear") takes the ink. A pill keeps its own
+            // opaque wash, which is legible on any surface by construction.
+            if content?.chip?.kind.isDefaultState == true { chipLabel.textColor = ink }
+        }
+        if region == .card {
+            // The whole card is the gradient, so the plain card's hairline
+            // would draw a second edge around it.
+            card.layer?.borderColor = NSColor.clear.cgColor
+        }
+        for label in heroInkLabels { label.textColor = ink }
+        for (gauge, state) in heroRings {
+            let arc: NSColor
+            switch state {
+            case .warn: arc = HelmHeroSurface.signalColor(tintHex: theme.ansiHex[3], on: palette)
+            case .bad: arc = HelmHeroSurface.signalColor(tintHex: theme.ansiHex[1], on: palette)
+            case .ok, .idle: arc = ink
+            }
+            gauge.trackColorOverride = ink.withAlphaComponent(0.25)
+            gauge.labelColorOverride = ink
+            gauge.valueColorOverride = arc
+            gauge.applyTheme(theme, hue: content?.hue ?? .blue)
+        }
+        if case .heroSummary? = content?.body { kpiStrip?.heroInk = ink }
     }
 
     /// The one place `.usageReport` turns a `HelmModuleRowState` into **text**
@@ -2561,8 +3162,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                            shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
         guard let container = recognizer.view else { return true }
         let point = container.convert(event.locationInWindow, from: nil)
-        if !actionButton.isHidden,
-           actionButton.convert(actionButton.bounds, to: container).contains(point) {
+        for control in [actionButton, menuButton] where !control.isHidden
+            && control.convert(control.bounds, to: container).contains(point) {
             return false
         }
         // UI-10: a clickable peek row owns its own click. Walk up from the
@@ -3329,6 +3930,10 @@ extension HelmModuleCard.Content {
         if let footer {
             parts.append("footer:\(footer.caption):\(footer.actionTitle ?? "-"):\(footer.handler == nil)")
         }
+        // 1.3.0. The tone does not move the layout, but a card configured in
+        // place must repaint when only its colour changed.
+        if let hero { parts.append("hero:\(String(describing: hero))") }
+        if let headerMenu { parts.append("menu:\(headerMenu.symbol):\(headerMenu.tooltip)") }
         return parts.joined(separator: "\u{1F}")
     }
 }

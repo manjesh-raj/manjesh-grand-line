@@ -994,7 +994,14 @@ enum E2ETestingPolicySelfTest {
     /// suites that mounted a `ConsoleController` in a window but assert only
     /// model, control and string state: Claude usage, forward-drags toggle,
     /// the herdr restart button, SRE Lead per tab and its notifications.
-    private static let windowBackedSuiteCeiling = 131
+    ///
+    /// 132 for `HeroCardsViewSelfTest`: where the hero's gradient lands at
+    /// each card size, whether every word on it fits inside the card, and
+    /// whether the style menu reaches the real arrangement are real layout,
+    /// decided by the Home canvas in a window. Everything that is model -
+    /// the palette over every colour and theme, the five states' words, the
+    /// colour store, the menu's shape - is in the headless `HeroCardsSelfTest`.
+    private static let windowBackedSuiteCeiling = 132
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

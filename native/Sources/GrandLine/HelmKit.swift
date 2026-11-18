@@ -824,6 +824,24 @@ final class HelmKPIStrip: NSView {
     private let topRule = NSView()
     private var theme: HelmTheme = ThemeManager.shared.theme
 
+    /// 1.2.0: the ink of a strip drawn on a hero gradient (Home's Fleet
+    /// hero, through `HelmModuleCard`). Every caption and known figure takes
+    /// it, a quiet or unknown figure takes it at `heroQuietAlpha`, and the
+    /// hairlines at `heroRuleAlpha`. A tinted figure is ink too: on a
+    /// gradient the card's own verdict carries the state, not a figure.
+    /// `nil` - every other strip - paints the theme's colours.
+    var heroInk: NSColor? {
+        didSet { if heroInk != oldValue { applyTheme(theme) } }
+    }
+    static let heroQuietAlpha: CGFloat = 0.72
+    static let heroRuleAlpha: CGFloat = 0.32
+
+    /// 1.2.0: the `.inline` figure's size before the text scale. 19 on a
+    /// card; Fleet's hero sets the prototype's 24.
+    var figureSize: CGFloat = HelmKPIStrip.metricSize {
+        didSet { if figureSize != oldValue { applyTheme(theme) } }
+    }
+
     /// Whether a hairline runs above the strip - Fleet's card puts its
     /// sentence above the numbers and a rule between them.
     var showsTopRule: Bool = false {
@@ -895,7 +913,7 @@ final class HelmKPIStrip: NSView {
                 line.heightAnchor.constraint(equalTo: row.heightAnchor).isActive = true
             }
             let value = NSTextField(labelWithString: item.reading.text { $0 })
-            value.font = HelmType.metric(Self.metricSize)
+            value.font = HelmType.metric(figureSize)
             value.lineBreakMode = .byTruncatingTail
             let caption = NSTextField(labelWithString: item.caption)
             caption.font = .systemFont(ofSize: HelmType.scaled(Self.captionSize), weight: .medium)
@@ -981,7 +999,10 @@ final class HelmKPIStrip: NSView {
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         for (index, item) in items.enumerated() where index < valueLabels.count {
             let color: NSColor
-            if !item.reading.isKnown {
+            if let heroInk {
+                let quiet = !item.reading.isKnown || item.emphasis == .quiet
+                color = quiet ? heroInk.withAlphaComponent(Self.heroQuietAlpha) : heroInk
+            } else if !item.reading.isKnown {
                 color = muted
             } else {
                 switch item.emphasis {
@@ -992,10 +1013,10 @@ final class HelmKPIStrip: NSView {
                 }
             }
             valueLabels[index].textColor = color
-            valueLabels[index].font = HelmType.metric(Self.metricSize)
-            captionLabels[index].textColor = muted
+            valueLabels[index].font = HelmType.metric(figureSize)
+            captionLabels[index].textColor = heroInk ?? muted
         }
-        let line = HelmFlatList.hairRowColor(theme)
+        let line = heroInk?.withAlphaComponent(Self.heroRuleAlpha) ?? HelmFlatList.hairRowColor(theme)
         for separator in separators { separator.layer?.backgroundColor = line.cgColor }
         topRule.layer?.backgroundColor = line.cgColor
     }

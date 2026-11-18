@@ -3031,7 +3031,7 @@ final class HomeCanvasController: NSViewController {
         switch module {
         case .briefing: fillBriefing(&content, placement: placement)
         case .claudeStatus: fillClaudeStatus(&content, placement: placement)
-        case .fleet: fillFleet(&content)
+        case .fleet: fillFleet(&content, placement: placement)
         case .strawHat: fillStrawHat(&content)
         case .tasks: fillTasks(&content)
         case .mergeQueue: fillMergeQueue(&content)
@@ -3174,6 +3174,14 @@ final class HomeCanvasController: NSViewController {
                 : "Refresh the Claude quota",
             isBusy: isRefreshingQuota,
             handler: { [weak self] in self?.refreshQuotaTapped() })
+
+        // The captain's split hero, wherever the card is a shelf card. The
+        // floating bar's hub keeps its dense card below: that dashboard is
+        // fitted to its window, and a hero's panel is not in its budget.
+        if case let .shelf(width) = placement {
+            fillClaudeHero(&content, width: width)
+            return
+        }
 
         guard let snapshot = quotaSnapshot else {
             // Two genuinely different states, and they read differently.
@@ -3556,7 +3564,13 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
-    private func fillFleet(_ content: inout HelmModuleCard.Content) {
+    private func fillFleet(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
+        // The captain's full hero, wherever the card is a shelf card - the
+        // same split as the Claude card's.
+        if case let .shelf(width) = placement {
+            fillFleetHero(&content, width: width)
+            return
+        }
         guard let snapshot = fleetSnapshot else {
             // UI-12: the one loading idiom, the skeleton every card uses.
             content.subtitle = "reading"
@@ -3611,6 +3625,323 @@ final class HomeCanvasController: NSViewController {
             ? "\(working.count) crew working."
             : "\(needs.count) waiting on you: \(needs.prefix(2).map(\.id).joined(separator: ", "))."
         content.body = .kpis(note: lead, items: items)
+    }
+
+    // MARK: The hero cards (the widget-style board's picks)
+    //
+    // The captain picked the split hero for the Claude card and the full hero
+    // for Fleet, each with a colour they choose (`HomeCardStyle`). The readings
+    // and their thresholds are the cards' own - `claudeUsageSections`,
+    // `claudeChip` and `QuotaSeverity` for Claude, the snapshot's counts for
+    // Fleet - so the hero changes how a card looks and never what it says.
+
+    /// The colour the captain chose for `module`, dimmed for a stale reading.
+    private func heroTone(for module: DaylightModule, dimmed: Bool) -> HelmModuleCard.HeroTone {
+        HelmModuleCard.HeroTone(colour: HomeCardStyle.color(for: module).heroColour, isDimmed: dimmed)
+    }
+
+    /// The palette button on a hero card's header.
+    private func styleMenu(for module: DaylightModule) -> HelmModuleCard.HeaderMenu {
+        HelmModuleCard.HeaderMenu(symbol: HomeCardStyleMenu.symbol, tooltip: HomeCardStyleMenu.tooltip) { [weak self] in
+            self?.makeStyleMenu(for: module).makeMenu() ?? NSMenu()
+        }
+    }
+
+    /// The style menu for `module` as it stands now. Size is offered only on
+    /// Home's own arranged cards, which are the only cards with a width the
+    /// captain owns.
+    func makeStyleMenu(for module: DaylightModule) -> HomeCardStyleMenu {
+        var sizing: HomeCardStyleMenu.Sizing?
+        if showsArrangedCards, let layout = cardLayout, layout.shown.contains(module) {
+            sizing = HomeCardStyleMenu.Sizing(
+                current: HomeCardSizeMode(columns: layout.size(of: module).columns),
+                choose: { [weak self] mode in self?.setCardSize(mode, for: module) })
+        }
+        return HomeCardStyleMenu(
+            cardTitle: module.title, sizing: sizing, color: HomeCardStyle.color(for: module),
+            chooseColor: { [weak self] color in self?.setCardColor(color, for: module) },
+            chooseCustomColor: { [weak self] in self?.chooseCustomCardColor(for: module) })
+    }
+
+    /// The same edit a resize drag makes, so it is kept with the rest of
+    /// Home's arrangement. The captain's height, if any, stays.
+    private func setCardSize(_ mode: HomeCardSizeMode, for module: DaylightModule) {
+        arrange { layout in
+            var size = layout.size(of: module)
+            size.columns = mode.columns
+            layout.setSize(size, for: module)
+        }
+    }
+
+    private func setCardColor(_ color: HomeCardColor, for module: DaylightModule) {
+        HomeCardStyle.setColor(color, for: module)
+        guard isViewLoaded else { return }
+        render()
+    }
+
+    private func chooseCustomCardColor(for module: DaylightModule) {
+        let current = HomeCardStyle.color(for: module).rgb(in: ThemeManager.shared.theme)
+        HomeCardColorPanel.shared.open(current: current) { [weak self] color in
+            self?.setCardColor(color, for: module)
+        }
+    }
+
+    /// The split hero's panel for one reading: what the gradient says.
+    struct ClaudeHeroPanel: Equatable {
+        let headline: String
+        let body: String?
+        let ring: HelmModuleCard.HeroRing?
+        /// The header's status. `nil` while the headline is the verdict;
+        /// only a refresh that failed adds one.
+        let chip: HelmModuleChip?
+        /// GL-14: the figures may be behind, so the colour dims.
+        let isStale: Bool
+    }
+
+    /// The panel for a reading, a failure, or neither yet. `static` so a suite
+    /// can assert every state from a fabricated snapshot.
+    ///
+    /// The headline is the card's one verdict - `claudeChip`'s, worded as a
+    /// sentence - and the ring shows the reading that verdict is about: the
+    /// spend against its cap when the spend is what is alarming, otherwise
+    /// the window that runs out first.
+    static func claudeHeroPanel(snapshot: QuotaSnapshot?, failure: String?, fetchedAt: Date?,
+                                now: Date = Date()) -> ClaudeHeroPanel {
+        guard let snapshot else {
+            if failure != nil {
+                return ClaudeHeroPanel(headline: "No reading yet",
+                                       body: "The Claude quota could not be read. Refresh to try again.",
+                                       ring: nil, chip: .warn("unavailable"), isStale: true)
+            }
+            return ClaudeHeroPanel(headline: "Reading the quota\u{2026}", body: nil, ring: nil, chip: nil,
+                                   isStale: false)
+        }
+
+        let verdict = claudeChip(for: snapshot)
+        let spendFraction = claudeSpendFraction(for: snapshot)
+        let worst = claudeWorstWindow(for: snapshot)
+        // The spend is the subject when it is the verdict: `claudeChip` lets
+        // it win only when it is at least as alarming as the worst window.
+        let spendIsTheSubject = spendFraction != nil
+            && QuotaSeverity(percentUsed: (spendFraction ?? 0) * 100) != .comfortable
+            && claudeSpendWinsVerdict(snapshot)
+
+        var ring: HelmModuleCard.HeroRing?
+        if spendIsTheSubject, let fraction = spendFraction, let limit = snapshot.extraUsage?.limitUsd {
+            let percent = percentText(fraction * 100)
+            ring = HelmModuleCard.HeroRing(
+                fraction: min(1, fraction), label: percent, caption: "of the \(dollarText(limit)) cap",
+                spoken: "Extra usage, \(percent) of the \(dollarText(limit)) cap",
+                state: QuotaSeverity(percentUsed: fraction * 100).moduleRowState)
+        } else if let worst {
+            let percent = percentText(worst.window.percentUsed)
+            let noun = claudeWindowNoun(worst.name)
+            ring = HelmModuleCard.HeroRing(
+                fraction: max(0, min(1, worst.window.percentUsed / 100)), label: percent,
+                caption: "of \(noun) used", spoken: "\(percent) of \(noun) used",
+                state: QuotaSeverity(percentUsed: worst.window.percentUsed).moduleRowState)
+        }
+
+        let headline: String
+        switch verdict?.kind {
+        case nil: headline = "No limits reported"
+        case .ok?: headline = worst?.name == "Session" ? "Plenty of room this session" : "Plenty of room this week"
+        default: headline = verdict?.text ?? "Plenty of room"
+        }
+
+        var sentences: [String] = []
+        if let worst {
+            let noun = claudeWindowNoun(worst.name)
+            // `String(...)` on both halves: a `Substring` in a concatenation
+            // is what CI's compiler rejected once (AGENTS.md's toolchain note).
+            var sentence = String(noun.prefix(1)).uppercased() + String(noun.dropFirst())
+                + " is at \(percentText(worst.window.percentUsed))"
+            if let resets = worst.window.resetsCompact(now: now) { sentence += " and resets \(resets)" }
+            sentences.append(sentence + ".")
+        }
+        if let spend = claudeSpendSentence(for: snapshot) {
+            if spendIsTheSubject { sentences.insert(spend, at: 0) } else { sentences.append(spend) }
+        }
+
+        if failure != nil {
+            let time = fetchedAt.map { briefingTimeFormatter.string(from: $0) }
+            return ClaudeHeroPanel(headline: time.map { "Showing the \($0) reading" } ?? "Showing the last reading",
+                                   body: "The last refresh failed, so these figures may be behind.",
+                                   ring: ring, chip: .warn("Can't reach"), isStale: true)
+        }
+        return ClaudeHeroPanel(headline: headline, body: sentences.isEmpty ? nil : sentences.joined(separator: " "),
+                               ring: ring, chip: nil, isStale: false)
+    }
+
+    /// Whether the spend, rather than a window, carries `claudeChip`'s verdict.
+    private static func claudeSpendWinsVerdict(_ snapshot: QuotaSnapshot) -> Bool {
+        guard let spend = claudeSpendFraction(for: snapshot) else { return false }
+        let spendSeverity = QuotaSeverity(percentUsed: spend * 100)
+        let windowSeverity = claudeWorstWindow(for: snapshot).map { QuotaSeverity(percentUsed: $0.window.percentUsed) }
+        return claudeSeverityRank(spendSeverity) >= claudeSeverityRank(windowSeverity ?? .comfortable)
+    }
+
+    /// "the week", "the session", "the Fable week" - `claudeWorstWindow`'s
+    /// names in a sentence.
+    private static func claudeWindowNoun(_ name: String) -> String {
+        switch name {
+        case "Session": return "the session"
+        case "Fable": return "the Fable week"
+        default: return "the week"
+        }
+    }
+
+    /// The extra-usage pool in one sentence, or `nil` when it was not reported.
+    private static func claudeSpendSentence(for snapshot: QuotaSnapshot) -> String? {
+        guard let credits = snapshot.extraUsage, let spent = credits.spentUsd else { return nil }
+        guard let limit = credits.limitUsd, limit > 0 else {
+            return spent > 0 ? "\(dollarText(spent)) of extra usage spent, with no cap set." : "No extra usage spent."
+        }
+        if spent >= limit { return "Extra usage hit the \(dollarText(limit)) cap and is paused." }
+        if spent <= 0 { return "No extra usage spent." }
+        return "\(dollarText(spent)) of the \(dollarText(limit)) extra-usage cap is spent."
+    }
+
+    /// The Claude card as the split hero: the verdict and its ring on the
+    /// panel, every reading and reset time on the card beside it - the dense
+    /// report's own rows, so no figure, threshold or short-label rule moves.
+    private func fillClaudeHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
+        let layout = HelmModuleCard.HeroLayout(cardWidth: width)
+        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
+        let panel = Self.claudeHeroPanel(snapshot: quotaSnapshot, failure: quotaFailure, fetchedAt: quotaFetchedAt)
+
+        if let snapshot = quotaSnapshot {
+            content.subtitle = Self.claudeSubtitle(for: snapshot)
+        } else {
+            content.subtitle = quotaFailure == nil ? "reading" : "no reading"
+        }
+        content.chip = panel.chip
+        if let failure = quotaFailure {
+            content.toolTip = "The last refresh failed: \(failure)"
+        } else if quotaSnapshot != nil, let fetchedAt = quotaFetchedAt {
+            // The narrow band has no room beside Refresh and the palette, so
+            // the age moves to the card's hover text there (the compact rule).
+            let updated = Self.claudeUpdatedText(fetchedAt: fetchedAt)
+            if layout == .narrow { content.toolTip = updated } else { content.headerCaption = updated }
+        }
+
+        let detail: HelmModuleCard.HeroSplit.Detail
+        if let snapshot = quotaSnapshot {
+            detail = .report(Self.claudeUsageSections(
+                for: snapshot, headerCarriesVerdict: true,
+                shortLabels: Self.claudeUsesShortLabels(forCardWidth: detailWidth)))
+        } else if let failure = quotaFailure {
+            detail = .note(failure)
+        } else {
+            detail = .loading
+        }
+        content.body = .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
+                                                           ring: panel.ring, detail: detail, layout: layout))
+        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
+        content.headerMenu = styleMenu(for: .claudeStatus)
+    }
+
+    /// The full hero's words for a fleet reading. `static` for the suite.
+    struct FleetHero: Equatable {
+        let subtitle: String
+        let chip: HelmModuleChip?
+        let headline: String
+        let body: String
+        let ring: HelmModuleCard.HeroRing?
+        let items: [HelmKPIStrip.Item]
+        let isStale: Bool
+    }
+
+    /// Five states, worst first: a crewmate blocked (red), one waiting on a
+    /// decision (amber), a watcher that has stopped reporting (dimmed),
+    /// crew working, and all clear. Two of them are new on this card: today
+    /// `blocked` and `needs_decision` both read amber, and the watcher's
+    /// health was not read at all.
+    ///
+    /// The ring is the day's progress: what is done today out of everything
+    /// the snapshot knows about (done, working and queued), so the arc fills
+    /// as the queue drains. The centre is the done count.
+    static func fleetHero(snapshot: FleetSnapshot?) -> FleetHero {
+        let captions = ["Working", "Done today", "Queued"]
+        let unread = captions.map { HelmKPIStrip.Item(.unread, caption: $0) }
+        guard let snapshot else {
+            return FleetHero(subtitle: "reading", chip: nil, headline: "Reading the fleet\u{2026}",
+                             body: "Counting the crew's lanes.", ring: nil, items: unread, isStale: false)
+        }
+        // GL-14, as the plain card already had it: no firstmate home is not
+        // a fleet of zeroes.
+        guard snapshot.homeOk else {
+            return FleetHero(subtitle: "not read", chip: .warn(HelmReading<String>.unknownCaption),
+                             headline: "Fleet not read",
+                             body: "Point Grand Line at your firstmate home in \(PlaceName.of(.bootstrap)).",
+                             ring: nil, items: unread, isStale: true)
+        }
+
+        let working = snapshot.tasks.filter { $0.status == "working" }
+        let blocked = snapshot.tasks.filter { $0.status == "blocked" }
+        let deciding = snapshot.tasks.filter { $0.status == "needs_decision" }
+        let items: [HelmKPIStrip.Item] = [
+            .count(working.count, caption: "Working"),
+            .count(snapshot.doneCount, caption: "Done today"),
+            .count(snapshot.queuedCount, caption: "Queued"),
+        ]
+        let open = working.count + snapshot.queuedCount
+        let total = snapshot.doneCount + open
+        let state: HelmModuleRowState = !blocked.isEmpty ? .bad : (!deciding.isEmpty ? .warn : .ok)
+        let ring = HelmModuleCard.HeroRing(
+            fraction: total > 0 ? Double(snapshot.doneCount) / Double(total) : 0,
+            label: "\(snapshot.doneCount)", caption: "done today \u{00B7} \(open) open",
+            spoken: "\(snapshot.doneCount) done today, \(open) still open", state: state)
+        let watcher: String
+        switch snapshot.watcher.status {
+        case "healthy": watcher = "watcher ok"
+        case "stale": watcher = "watcher stale"
+        default: watcher = "watcher off"
+        }
+        func names(_ tasks: [FleetTask]) -> String { tasks.prefix(2).map(\.id).joined(separator: ", ") }
+        func crew(_ count: Int) -> String { count == 1 ? "crewmate" : "crewmates" }
+
+        if !blocked.isEmpty {
+            var body = "\(names(blocked)) \(blocked.count == 1 ? "is" : "are") blocked and \(blocked.count == 1 ? "needs" : "need") help."
+            if !deciding.isEmpty { body += " \(deciding.count) more \(deciding.count == 1 ? "is" : "are") waiting on you." }
+            return FleetHero(subtitle: watcher, chip: .bad("\(blocked.count) blocked"),
+                             headline: "\(blocked.count) \(crew(blocked.count)) blocked", body: body,
+                             ring: ring, items: items, isStale: false)
+        }
+        if !deciding.isEmpty {
+            var body = "\(names(deciding)) \(deciding.count == 1 ? "wants" : "want") a decision."
+            if !working.isEmpty { body += " \(working.count) other crew \(working.count == 1 ? "is" : "are") working." }
+            return FleetHero(subtitle: watcher, chip: .warn("\(deciding.count) need\(deciding.count == 1 ? "s" : "") you"),
+                             headline: "\(deciding.count) waiting on you", body: body,
+                             ring: ring, items: items, isStale: false)
+        }
+        if snapshot.watcher.status == "stale" {
+            return FleetHero(subtitle: watcher, chip: .warn("Watcher stale"), headline: "Counts may be behind",
+                             body: "The watcher has stopped reporting, so these numbers may be out of date.",
+                             ring: ring, items: items, isStale: true)
+        }
+        if !working.isEmpty {
+            return FleetHero(subtitle: watcher, chip: .ok("All clear"),
+                             headline: "\(working.count) crew working",
+                             body: "\(working.count == 1 ? "One lane is" : "\(working.count) lanes are") running. Nothing is waiting on you.",
+                             ring: ring, items: items, isStale: false)
+        }
+        return FleetHero(subtitle: watcher, chip: .ok("All clear"), headline: "All clear",
+                         body: "All hands idle. Nothing is running and nothing is waiting on you.",
+                         ring: ring, items: items, isStale: false)
+    }
+
+    /// The Fleet card as the full hero.
+    private func fillFleetHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
+        let hero = Self.fleetHero(snapshot: fleetSnapshot)
+        content.subtitle = hero.subtitle
+        content.chip = hero.chip
+        if fleetSnapshot == nil { content.toolTip = "Reading the fleet's state\u{2026}" }
+        content.body = .heroSummary(HelmModuleCard.HeroSummary(
+            headline: hero.headline, body: hero.body, ring: hero.ring, items: hero.items,
+            layout: HelmModuleCard.HeroLayout(cardWidth: width)))
+        content.hero = heroTone(for: .fleet, dimmed: hero.isStale)
+        content.headerMenu = styleMenu(for: .fleet)
     }
 
     private func fillTasks(_ content: inout HelmModuleCard.Content) {

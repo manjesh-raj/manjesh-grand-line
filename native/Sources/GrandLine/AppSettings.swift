@@ -64,6 +64,7 @@ final class AppSettings {
         static let systemDarkThemeID = "fm.systemDarkThemeID"
         static let workspaceLayout = "fm.workspaceLayout"
         static let homeCardLayout = "fm.homeCardLayout"
+        static let homeCardColors = "fm.homeCardColors"
         static let appLockEnabled = "fm.appLockEnabled"
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
@@ -757,6 +758,17 @@ final class AppSettings {
             guard let data = newValue.storedData else { return }
             defaults.set(data, forKey: Keys.homeCardLayout)
         }
+    }
+
+    /// The colour each hero card on Home is painted in, by card id
+    /// (`HomeCardColor.storedValue`). A card with no entry takes the theme's
+    /// accent. Kept apart from `homeCardLayout`, because a colour applies on
+    /// every space and in both layouts while the layout is the sidebar's
+    /// arrangement only. A value this build cannot read is skipped by
+    /// `HomeCardColor(storedValue:)`, not dropped from the map (GL-01).
+    var homeCardColors: [String: String] {
+        get { (defaults.dictionary(forKey: Keys.homeCardColors) ?? [:]).compactMapValues { $0 as? String } }
+        set { defaults.set(newValue, forKey: Keys.homeCardColors) }
     }
 
     /// R2-UX-01: whether Grand Line asks for its password when it opens, and

@@ -1959,6 +1959,16 @@ enum SelfTestDispatch {
             exit(ClaudeStatusCardSelfTest.run() ? 0 : 1)
         }
 
+        // Home's two hero cards (the widget-style board's picks). The pure half
+        // needs no window; the view half mounts the real canvas. See
+        // `HeroCardsSelfTest` and `HeroCardsViewSelfTest`.
+        if ProcessInfo.processInfo.environment["FM_RUN_HERO_CARDS_TESTS"] == "1" {
+            exit(HeroCardsSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_HERO_CARDS_VIEW_TESTS"] == "1" {
+            exit(HeroCardsViewSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
         // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {
