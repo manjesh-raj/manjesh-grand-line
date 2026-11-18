@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// `HelmHeroColumn` - the hero's gradient as a page's column (Helm 6.7.0), the
+// `HelmHeroColumn` - the hero's gradient as a page's column (Helm 6.8.0), the
 // captain's H-4 (Health) and C-4 (Connections) picks on the page-redesign
 // board (`data/grand-line-page-redesign-mockups/`).
 //

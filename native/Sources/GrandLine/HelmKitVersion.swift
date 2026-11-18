@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "6.7.0"
+    static let version = "6.8.0"
 
     struct Component {
         let name: String
@@ -235,9 +235,9 @@ enum HelmKit {
         Component("ShiftProjectPalette", "2.0.0", file: "ShiftBoardViews.swift"),
         Component("Home Health card", "1.0.1", file: "HomeCanvasController.swift"),
         Component("Home Tasks card", "1.0.1", file: "HomeCanvasController.swift"),
-        Component("Home (page)", "1.0.0", file: "HomeCanvasController.swift"),
-        Component("Home Claude card", "1.0.0", file: "HomeCanvasController.swift"),
-        Component("Home Fleet card", "1.0.0", file: "HomeCanvasController.swift"),
+        Component("Home (page)", "1.0.1", file: "HomeCanvasController.swift"),
+        Component("Home Claude card", "1.1.0", file: "HomeCanvasController.swift"),
+        Component("Home Fleet card", "1.1.0", file: "HomeCanvasController.swift"),
         Component("Health (page)", "1.0.0", file: "HealthController.swift"),
         Component("Connections (page)", "1.0.0", file: "HostsController.swift"),
         Component("MorningBriefingCard", "1.0.1", file: "MorningBriefingCard.swift"),

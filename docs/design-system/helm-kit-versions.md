@@ -36,7 +36,7 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
-## 6.7.0 - Hero columns: Health (H-4) and Connections (C-4)
+## 6.8.0 - Hero columns: Health (H-4) and Connections (C-4)
 
 The captain's picks on the page-redesign board: Health's verdict, ring and buckets, and Connections' session verdict, recent hosts and Quick connect, each in a hero column beside the page's content.
 
@@ -50,6 +50,14 @@ The captain's picks on the page-redesign board: Health's verdict, ring and bucke
 - `HelmSplitPage` 1.1.0 → 1.2.0 (minor): `collapsesBelowWidth` puts the sidebar away on a page narrower than that and brings it back when there is room, without forgetting the captain's Toggle Sidebar. `pin(_:insets:yieldsWidth:)` holds a column's trailing edge at 490 and a pane minimum of `yieldingMinimumThickness`, so the content's floor moves the divider rather than the window. `preferredSidebarWidth` is the width the column comes back at, and a column with one has no drag. `floorWidth(of:)` is the narrowest a view can be before its constraints would hold the window open, which is what a page adds to its column for `collapsesBelowWidth`. `onNarrowChanged` fires before the divider moves.
 - `Health (page)` none → 1.0.0 (new): H-4. The page is a `HelmSplitPage`. The hero column (verdict, healthy ring, Healthy / Recent failure / Failing / Not run yet with the services in each, and Retry and Diagnostics pills while something needs attention) is its sidebar, the theme's accent and red while a service fails, dimmed before anything reports. The table starts at the top of the page beside it, and the summary cards over it are gone. On a page too narrow for the column and a table that keeps every column (1153pt), or with the column hidden, the same column is a band over the table.
 - `Connections (page)` none → 1.0.0 (new): C-4. The split's sidebar pane holds a hero column in the sidebar layout: the session verdict and the online ring, the three hosts connected last with Switch or Connect pills, a Quick connect field, and Keys, Snippets and Groups at its foot. The host cards are C-1's 98pt card, two to a row. Recent leaves the grid while the column shows and returns above All hosts when the column is put away (the inspector opening, a narrow window, Toggle Sidebar), and H3's Connect button steps aside beside the column, whose field takes a typed user@host. The floating bar's page is unchanged.
+
+## 6.7.0 - Hero cards: the palette stays, and either card can be hidden
+
+The captain found the Claude card showing Customize's reset, move and hide controls outside Customize, with no palette, while the Fleet card had its palette and no way to hide it.
+
+- `Home Claude card` 1.0.0 → 1.1.0 (minor): the palette menu ends with "Hide from Home" on Home's arranged cards. It is the same edit Customize's hide button makes, and the toast that follows has Undo and says Customize brings the card back.
+- `Home Fleet card` 1.0.0 → 1.1.0 (minor): the same "Hide from Home" item, which the Fleet card had no way to do outside Customize.
+- `Home (page)` 1.0.0 → 1.0.1 (patch): leaving Customize ends a resize drag that is still in progress and keeps the size it reached. A drag whose mouse-up never arrived used to survive Done, and the rebuild kept its card with Customize's strip and grips still on it, which hid the card's own palette.
 
 ## 6.6.0 - Hero cards: Claude usage and Fleet
 

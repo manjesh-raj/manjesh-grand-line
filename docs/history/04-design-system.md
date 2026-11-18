@@ -1148,14 +1148,14 @@ The guard checks that strip's frame rather than its ink, and says so.
 `MainSplitShellSelfTest`'s Home arrangement checks ("4 of 5 cards are on Home": the Morning briefing card missing) failed twice in a row and then passed with no change, on this branch and on a build without it.
 The cause was not found in this task.
 
-## Hero columns: Health (H-4) and Connections (C-4), Helm 6.7.0
+## Hero columns: Health (H-4) and Connections (C-4), Helm 6.8.0
 
 Task `grand-line-health-connections-hero-pages`, 2026-11-18.
 The captain picked H-4 and C-4 on the page-redesign board (`data/grand-line-page-redesign-mockups/`): the page's summary as a 300pt gradient column beside its content.
 Health's column carries the verdict, the healthy ring and the four buckets, red while a service fails.
 Connections' column carries the session verdict, the online ring, the three recent hosts, Quick connect and the Keys, Snippets and Groups figures, beside C-1's 98pt host cards two to a row.
 
-What shipped in the kit is in `docs/design-system/helm-kit-versions.md` under 6.7.0: `HelmHeroColumn` and `HelmHeroRow` (new), `HelmHeroSurface.palette(accent:quietInk:)`, `HelmButton.heroInk`, `HelmSearchField.heroInk`, `HelmCardGrid`'s card options and action column, and `HelmSplitPage`'s width rule.
+What shipped in the kit is in `docs/design-system/helm-kit-versions.md` under 6.8.0: `HelmHeroColumn` and `HelmHeroRow` (new), `HelmHeroSurface.palette(accent:quietInk:)`, `HelmButton.heroInk`, `HelmSearchField.heroInk`, `HelmCardGrid`'s card options and action column, and `HelmSplitPage`'s width rule.
 The suites are `PageHeroColumnsSelfTest` (headless: the words, the palette sweep, the kit options) and `PageHeroColumnsViewSelfTest` (a real sidebar shell), and `FM_PAGE_HERO_RENDER_DIR` writes the renders.
 
 **Text on the gradient needed a deeper palette.**
