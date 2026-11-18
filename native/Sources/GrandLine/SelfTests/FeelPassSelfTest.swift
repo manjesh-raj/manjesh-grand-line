@@ -328,7 +328,11 @@ enum FeelPassSelfTest {
                 }
                 let mine = strip.fittingSize.width
                 let system = segmented.fittingSize.width
-                check(mine <= system + 1,
+                // A point per tab: at a 1x backing scale (CI's runner) each
+                // pill's width rounds to a whole point on its own, and the
+                // strip measured 333pt against 331pt there with a 2x Mac at
+                // 325pt. The overrun this guards against was 30 to 70pt.
+                check(mine <= system + CGFloat(labels.count),
                       "at \(step.title) text the tabs \(names) are \(mine)pt, wider than the \(system)pt system control", &ok)
             }
         }
