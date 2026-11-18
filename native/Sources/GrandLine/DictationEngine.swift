@@ -1104,12 +1104,14 @@ final class DictationEngine {
         /// `fm/grand-line-dictation-autopaste-denied` measured why, from
         /// `tccd`'s own log on the captain's machine: the row stores the
         /// designated requirement the app had when it was granted, which for
-        /// this app pins the signing certificate's leaf hash. Recreating the
-        /// "Grand Line Local Dev" certificate moved that hash, `tccd` logged
-        /// "Failed to match existing code requirement" and denied, and a
-        /// toggle is recorded as a `Modify` of the same stale row.
-        /// `Scripts/check-signing-identity.sh` now catches the certificate
-        /// change at build time.
+        /// the self-signed "Grand Line Local Dev" build pinned the signing
+        /// certificate's leaf hash. Recreating that certificate moved the
+        /// hash, `tccd` logged "Failed to match existing code requirement" and
+        /// denied, and a toggle is recorded as a `Modify` of the same stale
+        /// row. `Scripts/check-signing-identity.sh` catches such a change at
+        /// build time, and `Scripts/local-signing-identity.sh` now anchors
+        /// the requirement on a local CA, so reissuing the certificate no
+        /// longer moves it.
         case skippedNoTrust
         /// Trust was true, but `CGEvent(keyboardEventSource:virtualKey:keyDown:)`
         /// returned `nil` for one or both events - undocumented when this can

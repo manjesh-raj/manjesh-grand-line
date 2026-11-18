@@ -8,8 +8,9 @@
 #
 #   Scripts/check-signing-identity.sh compare <previous-requirement> <bundle>
 #       Exit 0 and print nothing when <previous-requirement> is empty (a first
-#       build) or matches <bundle>'s. Otherwise print the one-time repair and
-#       exit 3. `build_native_app.sh` treats that as a warning, not a failure.
+#       build) or <bundle> still satisfies it. Otherwise print the one-time
+#       repair and exit 3. `build_native_app.sh` treats that as a warning, not
+#       a failure.
 #
 # Why this exists (fm/grand-line-dictation-autopaste-denied): macOS records
 # every privacy grant against the designated requirement the app had when the
@@ -31,6 +32,15 @@
 # and the very next check still compared against the old certificate. The
 # app's own `CGRequestPostEventAccess()` cannot repair it either, because macOS
 # only prompts when no record exists. The record has to be removed.
+#
+# `compare` asks the question `tccd` asks rather than comparing text: does the
+# new build satisfy the requirement the old one was granted under? That is
+# what lets fm/grand-line-stable-signing-identity reissue the signing
+# certificate silently. A build signed by a new leaf from the same local CA
+# carries a different certificate but still satisfies
+# `certificate root = H"<CA>"`, so no grant is lost and nothing is printed.
+# Recreating the CA, or any certificate a leaf-pinned grant names, still
+# prints the repair.
 
 set -euo pipefail
 
@@ -66,8 +76,12 @@ case "$1" in
     previous="$2"
     bundle="$3"
     [ -n "$previous" ] || exit 0
+    # `-R` reads an argument that starts with "=" as requirement text. A
+    # plain `codesign --verify` would not check any requirement at all.
+    if codesign --verify -R "=$previous" "$bundle" >/dev/null 2>&1; then
+      exit 0
+    fi
     current="$(designated_requirement "$bundle" || true)"
-    [ "$current" != "$previous" ] || exit 0
 
     identifier="$(signing_identifier "$bundle" || true)"
     identifier="${identifier:-com.manjesh.grandline.native}"
@@ -93,6 +107,17 @@ case "$1" in
     Saved SSH keys in the Keychain were bound to the old identity too, so
     expect macOS to ask once before Grand Line can read each of them.
 WARNING
+    # The move from a self-signed certificate to the local CA is the last
+    # time this should print, so say so then. A CA replaced by another CA is
+    # the old failure again and gets no such promise.
+    if [[ "$current" == *'certificate root = H'* && "$previous" != *'certificate root = H'* ]]; then
+      cat <<ANCHORED
+
+    The new identity is anchored on a local CA rather than on one
+    certificate, so reissuing its certificate later keeps every grant. This
+    repair should not be needed again.
+ANCHORED
+    fi
     exit 3
     ;;
   *)

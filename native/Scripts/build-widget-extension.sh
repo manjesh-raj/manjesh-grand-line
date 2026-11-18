@@ -32,22 +32,9 @@ EXT_BUNDLE_ID="$APP_BUNDLE_ID.widgets"
 SRC_DIR="Widgets/$EXT_NAME"
 OUT_DIR=".build/widgets"
 APPEX="$OUT_DIR/$EXT_NAME.appex"
-SIGNING_IDENTITY="Grand Line Local Dev"
-# The rename to "Grand Line" renamed this identity too, and a captain who has
-# not yet created the new certificate would otherwise silently drop to an
-# unsigned build - which gets a fresh ad-hoc code identity on every rebuild and
-# loses Keychain ACL trust for the saved SSH keys, the exact failure the rename
-# is careful to avoid everywhere else. So the old name is still accepted when
-# only it exists. Creating the new cert and deleting the old one is the clean
-# end state; native/README.md's "Local signing setup" has the commands.
-LEGACY_SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
-if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGNING_IDENTITY"; then
-  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LEGACY_SIGNING_IDENTITY"; then
-    echo "Note: signing with the pre-rename identity \"$LEGACY_SIGNING_IDENTITY\"."
-    echo "      See native/README.md's \"Local signing setup\" to create \"$SIGNING_IDENTITY\"."
-    SIGNING_IDENTITY="$LEGACY_SIGNING_IDENTITY"
-  fi
-fi
+# The local identity is chosen by Scripts/local-signing-identity.sh, the same
+# as for the app, so the extension and the host are never signed by two
+# different certificates.
 # Interactive widgets are macOS 14 (Button(intent:) inside a widget). The host
 # app stays on 13.0 - only this bundle needs 14.
 DEPLOYMENT_TARGET="14.0"
@@ -142,6 +129,16 @@ sed -e "s|__BUNDLE_ID__|$EXT_BUNDLE_ID|" \
 TEAM_ID="$(security find-identity -v -p codesigning 2>/dev/null \
   | sed -n 's/.*"Developer ID Application: .*(\([A-Z0-9]\{10\}\))".*/\1/p' | head -1)"
 
+LOCAL_SIGN_STATUS=4
+if [ -z "$TEAM_ID" ]; then
+  LOCAL_SIGN_STATUS=0
+  Scripts/local-signing-identity.sh sign "$APPEX" "$EXT_BUNDLE_ID" \
+    --entitlements "$SRC_DIR/$EXT_NAME.entitlements" || LOCAL_SIGN_STATUS=$?
+  # 4 is "no local identity at all". Anything else is a real failure, which
+  # must not be papered over with the ad-hoc fallback below.
+  [ "$LOCAL_SIGN_STATUS" -eq 4 ] || [ "$LOCAL_SIGN_STATUS" -eq 0 ] || exit "$LOCAL_SIGN_STATUS"
+fi
+
 if [ -n "$TEAM_ID" ]; then
   echo "Signing with Developer ID (team $TEAM_ID) and the App Group entitlement…"
   ENTITLEMENTS="$OUT_DIR/entitlements.plist"
@@ -154,11 +151,7 @@ if [ -n "$TEAM_ID" ]; then
   echo "  NOTE: GrandLineWidgetContainer.appGroupIdentifier must be"
   echo "        \"$TEAM_ID.group.$APP_BUNDLE_ID\" for the app and the"
   echo "        extension to agree. WidgetSnapshotSelfTest asserts it."
-elif security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGNING_IDENTITY"; then
-  echo "Signing with the local identity \"$SIGNING_IDENTITY\"…"
-  codesign --force --sign "$SIGNING_IDENTITY" \
-    --entitlements "$SRC_DIR/$EXT_NAME.entitlements" \
-    --identifier "$EXT_BUNDLE_ID" "$APPEX"
+elif [ "$LOCAL_SIGN_STATUS" -eq 0 ]; then
   echo ""
   echo "⚠️  No Developer ID identity on this machine, so this bundle has no Team ID."
   echo "    The extension is built and signed, and it will NOT read the app's data:"
@@ -184,8 +177,6 @@ if [ "$EMBED" -eq 1 ]; then
   ditto "$APPEX" "$APP_DIR/Contents/PlugIns/$EXT_NAME.appex"
   # Re-sign the app: embedding a bundle invalidates the outer signature's
   # sealed resources.
-  if security find-identity -v -p codesigning | grep -q "$SIGNING_IDENTITY"; then
-    codesign --force --sign "$SIGNING_IDENTITY" --identifier "$APP_BUNDLE_ID" "$APP_DIR"
-  fi
+  Scripts/local-signing-identity.sh sign "$APP_DIR" "$APP_BUNDLE_ID" || [ $? -eq 4 ]
   echo "✓ Embedded into $APP_DIR/Contents/PlugIns/$EXT_NAME.appex"
 fi
