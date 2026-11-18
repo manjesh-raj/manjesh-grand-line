@@ -36,6 +36,7 @@ import AVFoundation
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Security
 import Speech
 
 /// A single permission's tri-state, mirroring the shape every other
@@ -112,7 +113,12 @@ enum DictationStatus: Equatable {
         case .cleaningUp: return "Rewriting your transcript into a clean sentence…"
         case .didNotCatchThat: return "No speech was recognized that time - hold \(shortcutDisplay) and try again."
         case .systemDictationDisabled: return "macOS's own Dictation setting is off, so Grand Line can't transcribe speech. Turn it on in System Settings > Keyboard > Dictation, then try again."
-        case .copiedOnly: return "Grand Line couldn't paste automatically that time, so the transcript is on your clipboard instead - press \u{2318}V to paste it. macOS has been asked for the permission that posts the paste; answer Allow and the next dictation will paste on its own. If no prompt appeared, remove Grand Line from System Settings > Privacy & Security > Accessibility and re-add it - a real permission check just came back denied."
+        // fm/grand-line-dictation-autopaste-denied: the old copy told the
+        // captain to "remove and re-add" without saying that the switch does
+        // not count. They switched it off and on, which macOS records as a
+        // change to the existing grant, and that grant was pinned to a
+        // certificate the app is no longer signed with. Say so plainly.
+        case .copiedOnly: return "Grand Line couldn't paste automatically that time, so the transcript is on your clipboard instead - press \u{2318}V to paste it. macOS denied the permission that posts the paste. If Grand Line is already switched on in System Settings > Privacy & Security > Accessibility, macOS is holding a grant made for an older signature of the app, and switching it off and on keeps that old grant. Select Grand Line there, remove it with the minus button, add it back with plus, then quit and reopen Grand Line. If it isn't listed, answer Allow when macOS asks and the next dictation will paste on its own."
         }
     }
 
@@ -1094,6 +1100,16 @@ final class DictationEngine {
         /// identical mechanism for the Keychain ACL). Toggling the row off
         /// and back on does not reliably fix this - removing it and
         /// re-adding it does.
+        ///
+        /// `fm/grand-line-dictation-autopaste-denied` measured why, from
+        /// `tccd`'s own log on the captain's machine: the row stores the
+        /// designated requirement the app had when it was granted, which for
+        /// this app pins the signing certificate's leaf hash. Recreating the
+        /// "Grand Line Local Dev" certificate moved that hash, `tccd` logged
+        /// "Failed to match existing code requirement" and denied, and a
+        /// toggle is recorded as a `Modify` of the same stale row.
+        /// `Scripts/check-signing-identity.sh` now catches the certificate
+        /// change at build time.
         case skippedNoTrust
         /// Trust was true, but `CGEvent(keyboardEventSource:virtualKey:keyDown:)`
         /// returned `nil` for one or both events - undocumented when this can
@@ -1148,6 +1164,7 @@ final class DictationEngine {
             // version of that repair - see its own doc comment.
             guard requestPostEventAccessIfNotYetAsked() else {
                 AppLog.dictation.notice("paste skipped: no post-event access - transcript left on the pasteboard only")
+                logClosedGateIdentity()
                 return .skippedNoTrust
             }
             AppLog.dictation.notice("post-event access became true on request - continuing with the synthetic \u{2318}V")
@@ -1168,6 +1185,41 @@ final class DictationEngine {
         keyUp.post(tap: .cghidEventTap)
         AppLog.dictation.notice("posted synthetic \u{2318}V (frontmost app at post time: \(frontmost, privacy: .public))")
         return .posted
+    }
+
+    /// The two facts that decide a denied paste when System Settings shows
+    /// the grant switched on, logged next to the denial.
+    ///
+    /// `fm/grand-line-dictation-autopaste-denied` found both on the captain's
+    /// machine, and both are invisible from inside the app's own permission
+    /// reads, which only ever say "false":
+    ///
+    /// - `tccd` compares every check against the designated requirement the
+    ///   app had when the grant was made. When the signing certificate is
+    ///   recreated the requirement moves, and `tccd` logs "Failed to match
+    ///   existing code requirement" with both requirements. Logging ours here
+    ///   makes the two logs comparable line for line.
+    /// - A rebuild that replaces the bundle under a running copy leaves `tccd`
+    ///   unable to read this process's signature at all (`-67034`), which
+    ///   also denies until the app is relaunched.
+    private static func logClosedGateIdentity() {
+        let requirement = runningDesignatedRequirement() ?? "unavailable"
+        let matchesDisk = KeychainKeyStore.runningCodeMatchesDisk()
+        AppLog.dictation.notice("closed paste gate: running as \(requirement, privacy: .public); code matches its bundle on disk: \(matchesDisk, privacy: .public)")
+    }
+
+    /// This process's designated requirement as text, the same string
+    /// `codesign -d -r-` prints for the bundle. `nil` when it cannot be read.
+    static func runningDesignatedRequirement() -> String? {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return nil }
+        var requirement: SecRequirement?
+        guard SecCodeCopyDesignatedRequirement(staticCode, [], &requirement) == errSecSuccess, let requirement else { return nil }
+        var text: CFString?
+        guard SecRequirementCopyString(requirement, [], &text) == errSecSuccess, let text else { return nil }
+        return text as String
     }
 
     // MARK: Probe / self-test surface (GL-29)
@@ -1322,11 +1374,13 @@ final class DictationEngine {
     /// which prints "paste skipped: AXIsProcessTrusted() read false" for every
     /// dictation.
     ///
-    /// `CGRequestPostEventAccess()` is the supported in-app version of that
-    /// hand repair: it presents the system's own post-event access prompt and
-    /// registers *the currently running binary's* signature with `tccd`,
-    /// rather than relying on whichever older signature the existing row was
-    /// recorded against. It cannot block on the captain's answer, so the
+    /// `CGRequestPostEventAccess()` presents the system's own post-event
+    /// access prompt when macOS has no record for this app yet. It does
+    /// **not** replace an existing record: measured on
+    /// `fm/grand-line-dictation-autopaste-denied`, with a row pinned to an
+    /// older certificate it answered `false` at once, showed nothing and
+    /// wrote nothing, so that case still needs the row removed by hand (see
+    /// `PasteOutcome.skippedNoTrust`). It cannot block on the captain's answer, so the
     /// dictation that raises the prompt still ends up copy-only and this
     /// function says `false` for it; the dictation after it takes the
     /// `alreadyAsked` path, re-reads the gate, and pastes. That is worth

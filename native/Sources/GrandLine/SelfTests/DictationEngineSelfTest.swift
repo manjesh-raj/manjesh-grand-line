@@ -84,6 +84,8 @@ enum DictationEngineSelfTest {
             ("pasteSkipsSyntheticKeystrokeWhenUntrustedAndReportsCopiedOnly", test_pasteSkipsSyntheticKeystrokeWhenUntrusted),
             ("pasteGateOpensOnPostEventAccessAloneNotJustAXTrust", test_pasteGateOpensOnPostEventAccessAlone),
             ("anUntrustedSuiteNeverRaisesARealTCCPrompt", test_untrustedPasteNeverPromptsInTests),
+            ("aDeniedPasteLogsTheSameRequirementTheBuildCheckReads", test_runningRequirementMatchesTheBuildCheck),
+            ("copiedOnlyCopyRulesOutTheToggle", test_copiedOnlyCopyRulesOutTheToggle),
             ("doubleFinishDeliversOnce", test_doubleFinishDeliversOnce),
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
@@ -485,6 +487,54 @@ enum DictationEngineSelfTest {
         RunLoop.current.run(until: Date().addingTimeInterval(0.8))
         guard !h.engine.isWhisperEngineResident else {
             return "after unplugging, the re-armed deadline did not release the engine"
+        }
+        return nil
+    }
+
+    /// `fm/grand-line-dictation-autopaste-denied`. A denied paste logs the
+    /// running designated requirement so it can be read against `tccd`'s
+    /// "Failed to match existing code requirement" line and against what
+    /// `Scripts/check-signing-identity.sh` printed at build time. That only
+    /// works while all of them spell the requirement the same way, so this
+    /// compares the app's own reading with the script's, for the binary that
+    /// is running this suite.
+    private static func test_runningRequirementMatchesTheBuildCheck() -> String? {
+        guard let requirement = DictationEngine.runningDesignatedRequirement(), !requirement.isEmpty else {
+            return "could not read this process's own designated requirement"
+        }
+        guard let sources = SelfTestSources.appSourceDirectory(),
+              let executable = Bundle.main.executablePath else { return nil }
+        let script = sources
+            .deletingLastPathComponent()   // Sources
+            .deletingLastPathComponent()   // native
+            .appendingPathComponent("Scripts/check-signing-identity.sh").path
+        guard FileManager.default.isExecutableFile(atPath: script) else {
+            return "Scripts/check-signing-identity.sh is missing or not executable at \(script)"
+        }
+        let result = Subprocess.run(executable: script, arguments: ["requirement", executable], timeout: 20)
+        guard result.ok else {
+            return "the build check could not read \(executable): \(result.stderr)"
+        }
+        guard result.stdout == requirement else {
+            return "the app logs \"\(requirement)\" but the build check reads \"\(result.stdout)\" for the same binary"
+        }
+        return nil
+    }
+
+    /// The captain's own attempt at the repair was switching the
+    /// Accessibility row off and on, which macOS records as a change to the
+    /// existing, stale grant. The status copy has to rule that out and name
+    /// the action that does work, or it sends them round the same loop.
+    private static func test_copiedOnlyCopyRulesOutTheToggle() -> String? {
+        let detail = DictationStatus.copiedOnly.detail(shortcutDisplay: "Right \u{2325}")
+        guard detail.contains("\u{2318}V") else {
+            return "the copy no longer tells the captain the transcript is one \u{2318}V away"
+        }
+        guard detail.contains("switching it off and on keeps that old grant") else {
+            return "the copy no longer says the toggle does not repair a stale grant"
+        }
+        guard detail.contains("minus button"), detail.contains("quit and reopen") else {
+            return "the copy no longer names the repair that works: remove the row, add it back, relaunch"
         }
         return nil
     }

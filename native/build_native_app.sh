@@ -151,6 +151,18 @@ if [ -d "$APP_DIR/Contents/Resources/Metadata.appintents" ]; then
   cp -R "$APP_DIR/Contents/Resources/Metadata.appintents" "$PREVIOUS_APPINTENTS"
 fi
 
+# The code identity of the copy this build replaces, read before either copy
+# is removed. macOS ties every privacy grant (Accessibility above all, which
+# dictation's paste needs) to that identity, so a build signed differently
+# silently loses them all. Scripts/check-signing-identity.sh explains the
+# incident behind this, and the end of this script says what to do about it.
+# /Applications first, because that is the copy `tccd` resolves the bundle id
+# to.
+PREVIOUS_REQUIREMENT="$(Scripts/check-signing-identity.sh requirement "/Applications/$APP_NAME")"
+if [ -z "$PREVIOUS_REQUIREMENT" ]; then
+  PREVIOUS_REQUIREMENT="$(Scripts/check-signing-identity.sh requirement "$APP_DIR")"
+fi
+
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
@@ -373,6 +385,10 @@ else
   echo "    or its troubleshooting note if the certificate exists but is invalid."
 fi
 
+# Compared now and printed last, so the repair is the final thing on screen
+# rather than scrolled away above the install output.
+IDENTITY_WARNING="$(Scripts/check-signing-identity.sh compare "$PREVIOUS_REQUIREMENT" "$APP_DIR" || true)"
+
 # Install/update the copy in /Applications so the app behaves like a normal
 # installed app - every rebuild keeps /Applications in sync automatically,
 # with no separate manual install step. /Applications is normally writable by
@@ -467,3 +483,6 @@ if [ "$KEPT_PREVIOUS" -eq 1 ]; then
   echo "      rm -rf \"$INSTALLED_APP\" && mv \"$PREVIOUS_APP\" \"$INSTALLED_APP\""
 fi
 echo "  Open with:  open $APP_DIR"
+if [ -n "$IDENTITY_WARNING" ]; then
+  printf '%s\n' "$IDENTITY_WARNING"
+fi

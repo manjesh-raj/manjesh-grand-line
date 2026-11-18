@@ -1010,10 +1010,13 @@ And two about TCC, which cost two separate investigations:
   `AXIsProcessTrusted()` answers "may this process drive other apps through the
   AX API"; `CGPreflightPostEventAccess()` answers "may it *post* events", and
   they are free to disagree. When the gate is closed, **ask rather than narrate**
-  - `CGRequestPostEventAccess()` re-registers the currently running binary's
-  signature with `tccd`, which is what a captain editing System Settings by hand
-  cannot reliably do. Hop such a call to the main thread, and short-circuit it
-  under `#if FM_SELFTESTS` with a reset hook.
+  - `CGRequestPostEventAccess()` prompts when macOS has no record for the app.
+  It does **not** replace an existing record: a row pinned to an older signing
+  certificate answers `false` with no prompt, and switching it off and on in
+  System Settings keeps the stale record. Only removing the row repairs it, and
+  `Scripts/check-signing-identity.sh` says so at build time. Hop such a call to
+  the main thread, and short-circuit it under `#if FM_SELFTESTS` with a reset
+  hook.
 
 ### (22) A wrapping label's `preferredMaxLayoutWidth` must never come from its own resolved width
 
