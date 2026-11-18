@@ -1212,6 +1212,43 @@ final class HelmButton: NSButton {
         didSet { if labelColorOverride != oldValue { restyle() } }
     }
 
+    /// 1.2.0: a ghost pill on a hero gradient (`HelmHeroColumn`). The border
+    /// is the hero's ink at `heroBorderAlpha` and the label the ink itself,
+    /// as the board's `.pill` draws them; the fill is a translucent shade of
+    /// the ink's opposite (`heroShade`), deeper on hover and press. A wash of
+    /// the ink itself, the board's frosted fill, lifts the backdrop toward
+    /// the label: the hero's palette holds white at exactly the text floor,
+    /// so a 28% white press measured 2.73:1 on Rosé Pine. A shade can only
+    /// add contrast. Overrides the variant, and its disabled recipe fades the
+    /// label rather than swapping to the page's neutral surface, which would
+    /// read as a hole in the gradient. `nil`, the default, changes nothing.
+    var heroInk: NSColor? {
+        didSet { if heroInk != oldValue { restyle() } }
+    }
+
+    static let heroFillAlpha: CGFloat = 0.16
+    static let heroBorderAlpha: CGFloat = 0.38
+
+    /// What sits under text in the ink on a hero: black under a light ink,
+    /// white under a dark one (a very pale hero colour).
+    static func heroShade(for ink: NSColor) -> NSColor {
+        HelmContrast.relativeLuminance(HelmContrast.components(ink)) > 0.5 ? .black : .white
+    }
+
+    /// The ghost pill's colours on a hero whose ink is `ink`.
+    static func heroPalette(ink: NSColor, enabled: Bool) -> Palette {
+        let shade = heroShade(for: ink)
+        guard enabled else {
+            let fill = shade.withAlphaComponent(0.08)
+            return Palette(fill: fill, hoverFill: fill, pressedFill: fill,
+                           border: ink.withAlphaComponent(0.2), label: ink.withAlphaComponent(0.5))
+        }
+        return Palette(fill: shade.withAlphaComponent(heroFillAlpha),
+                       hoverFill: shade.withAlphaComponent(heroFillAlpha + 0.06),
+                       pressedFill: shade.withAlphaComponent(heroFillAlpha + 0.12),
+                       border: ink.withAlphaComponent(heroBorderAlpha), label: ink)
+    }
+
     /// Drawn *below* the layer's own background colour, which `restyle` sets
     /// to clear while the gradient is showing. Clipped correctly with no extra
     /// work because this view already sets `masksToBounds` and a corner radius
@@ -1832,9 +1869,14 @@ final class HelmButton: NSButton {
         let theme = ThemeManager.shared.theme
         // UI2: a disabled button is a different recipe, not the same one at a
         // lower alpha. See `disabledPalette`.
-        let p = isEnabled
-            ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue, tintHex: tintHex)
-            : Self.disabledPalette(variant: variant, theme: theme)
+        let p: Palette
+        if let heroInk {
+            p = Self.heroPalette(ink: heroInk, enabled: isEnabled)
+        } else {
+            p = isEnabled
+                ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue, tintHex: tintHex)
+                : Self.disabledPalette(variant: variant, theme: theme)
+        }
 
         let fill: NSColor
         if !isEnabled { fill = p.fill }
@@ -1846,7 +1888,7 @@ final class HelmButton: NSButton {
         // A disabled `.primary` takes the neutral surface above, so the
         // domain-hue ramp underneath it has to come off with the fill - it
         // draws in its own layer and would otherwise show straight through.
-        let showsGradient = gradientFill && variant == .primary && theme.isDaylight && isEnabled
+        let showsGradient = gradientFill && variant == .primary && theme.isDaylight && isEnabled && heroInk == nil
         if showsGradient {
             if !fillGradientInstalled, let layer {
                 fillGradient.startPoint = HelmDomainHue.ribbonStart
@@ -1882,7 +1924,7 @@ final class HelmButton: NSButton {
         // use - the same weight `HelmInputSurface.focusBorderWidth` settled
         // on, since a capsule on warm paper needs a touch more edge than a
         // squared control on a tonal one.
-        layer?.borderWidth = p.border.alphaComponent > 0 ? (theme.isDaylight ? 1.5 : 1) : 0
+        layer?.borderWidth = p.border.alphaComponent > 0 ? (theme.isDaylight && heroInk == nil ? 1.5 : 1) : 0
         // UI2: the "switched off" signal now lives in the colours above, so
         // the whole-control dim is gone. It was what turned an accent fill
         // into a washed version of the same hue; a neutral control at 42%

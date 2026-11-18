@@ -31,6 +31,28 @@
 // page puts *inside* the pane must be able to give way. `pin(_:insets:)` is
 // the one way in, and it holds the trailing edge below required for exactly
 // that reason.
+//
+// **1.2.0: a column that gives way on a narrow page.** The hero-column pages
+// (Health's H-4 and Connections' C-4 on the page-redesign board) put a 300pt
+// gradient column in the sidebar pane, beside content that needs room of its
+// own. `collapsesBelowWidth` puts the column away while the split's own view
+// is narrower than that - a narrow window, or the shell's inspector opening -
+// and brings it back when there is room again, without forgetting what the
+// captain chose with Toggle Sidebar. The split's own width does not move when
+// its sidebar collapses, so the rule cannot flap.
+//
+// For that the column must never be what holds the window open (gotcha
+// (13)): a required column width beside content with a floor of its own made
+// the window grow by 170pt when the inspector opened, so the split never saw
+// a narrow width to collapse at. A page whose column gives way pins it with
+// `pin(_:insets:yieldsWidth:)`, which holds the column's trailing edge under
+// the window's 500, and gives the pane a low minimum, so the content's floor
+// moves the divider rather than the window. The page sets
+// `collapsesBelowWidth` to the column plus that floor, and the column comes
+// back at `preferredSidebarWidth`. Reading the squeeze from the pane's frame
+// instead was tried and measured wrong: `NSSplitView`'s own proportional
+// resize runs before Auto Layout corrects it, so a pane reads squeezed for a
+// pass on every resize.
 
 import AppKit
 
@@ -192,14 +214,20 @@ final class HelmSplitPage: NSSplitViewController {
     /// Pin `child` inside `pane` at `insets`. The trailing and bottom edges
     /// sit just below required, so a collapsed (zero-width) pane can drop them
     /// rather than leave AppKit an unsatisfiable set to break at random.
-    static func pin(_ child: NSView, in pane: NSView, insets: NSEdgeInsets, bottomIsCeiling: Bool = false) {
+    ///
+    /// - Parameter yieldsWidth: 1.2.0: hold the trailing edge at
+    ///   `yieldingPriority`, under the window's own 500, so a column with a
+    ///   floor of its own overruns a squeezed pane for the moment before
+    ///   `collapsesBelowWidth` puts it away, rather than growing the window.
+    static func pin(_ child: NSView, in pane: NSView, insets: NSEdgeInsets, bottomIsCeiling: Bool = false,
+                    yieldsWidth: Bool = false) {
         // A page's own column - directly, or inside a wrapper - takes the
         // pane's width rather than holding its own.
         yieldColumns(in: child)
         child.translatesAutoresizingMaskIntoConstraints = false
         if child.superview !== pane { pane.addSubview(child) }
         let trailing = child.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -insets.right)
-        trailing.priority = NSLayoutConstraint.Priority(999)
+        trailing.priority = yieldsWidth ? yieldingPriority : NSLayoutConstraint.Priority(999)
         let bottom = bottomIsCeiling
             ? child.bottomAnchor.constraint(lessThanOrEqualTo: pane.bottomAnchor, constant: -insets.bottom)
             : child.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -insets.bottom)
@@ -227,6 +255,26 @@ final class HelmSplitPage: NSSplitViewController {
     /// preference inside a pane. Both well under 500, so neither can be a floor
     /// on the window (AGENTS.md gotcha (13)).
     static let sidebarHoldingPriority = NSLayoutConstraint.Priority(489)
+    /// A yielding column's trailing pin (1.2.0): over the sidebar's hold, so
+    /// it keeps the pane's width whenever the pane has one, and under the
+    /// window's 500.
+    static let yieldingPriority = NSLayoutConstraint.Priority(490)
+    /// A yielding column's pane minimum: room to squeeze before it goes.
+    static let yieldingMinimumThickness: CGFloat = 60
+
+    /// 1.2.0: the narrowest `view` can be before its own constraints would
+    /// hold the window open - only what is above the window's 500 counts, so
+    /// a preferred width at a low priority (a search field's 460 at 251) does
+    /// not. What a page adds to its column to get `collapsesBelowWidth`.
+    /// `fittingSize` alone honours everything above 50, and overstated
+    /// Connections' filter row by about 320pt.
+    static func floorWidth(of view: NSView) -> CGFloat {
+        let squeeze = view.widthAnchor.constraint(equalToConstant: 0)
+        squeeze.priority = NSLayoutConstraint.Priority(501)
+        squeeze.isActive = true
+        defer { squeeze.isActive = false }
+        return ceil(view.fittingSize.width)
+    }
     static let contentGrowPriority = NSLayoutConstraint.Priority(480)
 
     private static func yieldColumns(in view: NSView) {
@@ -244,9 +292,18 @@ final class HelmSplitPage: NSSplitViewController {
     override func toggleSidebar(_ sender: Any?) {
         // A column the page has put away is not the captain's to bring back
         // from here - Tasks' only belongs to its board.
-        guard !pageForcesCollapse else { return }
+        guard !collapseIsForced else { return }
         collapsedByCaptain.toggle()
         applyCollapse(animated: true)
+        if !collapsedByCaptain { restorePreferredWidth() }
+    }
+
+    /// No drag handle on a column of one width (`preferredSidebarWidth`).
+    override func splitView(_ splitView: NSSplitView, effectiveRect proposedEffectiveRect: NSRect,
+                            forDrawnRect drawnRect: NSRect, ofDividerAt dividerIndex: Int) -> NSRect {
+        guard preferredSidebarWidth == nil else { return .zero }
+        return super.splitView(splitView, effectiveRect: proposedEffectiveRect, forDrawnRect: drawnRect,
+                               ofDividerAt: dividerIndex)
     }
 
     /// The captain's own choice, from Toggle Sidebar or a drag.
@@ -262,15 +319,102 @@ final class HelmSplitPage: NSSplitViewController {
         }
     }
 
+    /// 1.2.0: below this width of the split's own view the sidebar is put
+    /// away, and above it the captain's own choice comes back. `nil` (the
+    /// default) never collapses for width.
+    var collapsesBelowWidth: CGFloat? {
+        didSet { if collapsesBelowWidth != oldValue { evaluateWidth() } }
+    }
+
+    /// Whether `collapsesBelowWidth` is holding the sidebar away right now.
+    private(set) var isNarrow = false
+
+    /// 1.2.0: fired when the width rule is about to put the column away or
+    /// bring it back, before the divider moves - so a page whose content
+    /// floor depends on the column (Connections hides a button beside it)
+    /// can change it first, and the reopening column never meets the wider
+    /// floor.
+    var onNarrowChanged: ((Bool) -> Void)?
+
+    /// Whether the column would be open if the page let it - not put away
+    /// by the width rule, and not by the captain.
+    var sidebarIsWanted: Bool { !isNarrow && !collapsedByCaptain }
+
+    /// 1.2.0: the pane's width when the column comes back from a narrow page
+    /// (or is first given one). A column that yields was squeezed before it
+    /// collapsed, and the split would otherwise reopen it at that width.
+    ///
+    /// A column with a preferred width has that one width: its divider does
+    /// not drag, because a drag below the column's own floor would overrun
+    /// it the way a squeeze does, with no width rule to put it away.
+    var preferredSidebarWidth: CGFloat? {
+        didSet { if preferredSidebarWidth != oldValue { restorePreferredWidth() } }
+    }
+
+    /// Move the divider to `preferredSidebarWidth`, a turn later, while the
+    /// column is open - the way a drag would. Only ever asked for when the
+    /// page has room for it (`evaluateWidth`), because the move outranks the
+    /// window's own size.
+    private func restorePreferredWidth() {
+        guard preferredSidebarWidth != nil, !restoringWidth else { return }
+        restoringWidth = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.restoringWidth = false
+                if self.isViewLoaded { self.evaluateWidth() }
+            }
+            guard self.isViewLoaded, !self.sidebarItem.isCollapsed, let width = self.preferredSidebarWidth,
+                  abs(self.sidebarPane.frame.width - width) > 0.5 else { return }
+            self.splitView.setPosition(width, ofDividerAt: 0)
+            self.view.layoutSubtreeIfNeeded()
+        }
+    }
+
+    /// Whether anything other than the captain is holding the column away.
+    private var collapseIsForced: Bool { pageForcesCollapse || isNarrow }
+
     private func applyCollapse(animated: Bool) {
-        setSidebarCollapsed(pageForcesCollapse || collapsedByCaptain, animated: animated)
+        setSidebarCollapsed(collapseIsForced || collapsedByCaptain, animated: animated)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        evaluateWidth()
+    }
+
+    /// Set while the divider is on its way to `preferredSidebarWidth`.
+    private var restoringWidth = false
+
+    /// Re-read the width rule. The collapse itself waits a turn of the run
+    /// loop: moving the divider inside the layout pass that measured the width
+    /// would ask AppKit for a second pass from within the first.
+    private func evaluateWidth() {
+        let width = view.bounds.width
+        let narrow = collapsesBelowWidth.map { width > 0 && width < $0 } ?? false
+        if narrow != isNarrow {
+            isNarrow = narrow
+            DispatchQueue.main.async { [weak self] in
+                self?.onNarrowChanged?(narrow)
+                self?.applyCollapse(animated: false)
+                if !narrow { self?.restorePreferredWidth() }
+            }
+        } else if !narrow, let preferred = preferredSidebarWidth, !restoringWidth, !sidebarItem.isCollapsed,
+                  sidebarPane.frame.width > 0, sidebarPane.frame.width < preferred - 0.5 {
+            // Open, with room, and short of its width: the pane's first width
+            // was another column's, or it reopened at a squeezed one.
+            restorePreferredWidth()
+        }
     }
 
     override func splitViewDidResizeSubviews(_ notification: Notification) {
         super.splitViewDidResizeSubviews(notification)
         // A drag that collapses or reopens the column is the captain's choice
         // too, unless the page is forcing it.
-        if !pageForcesCollapse { collapsedByCaptain = sidebarItem.isCollapsed }
+        // A column of one width has no drag (`preferredSidebarWidth`), so its
+        // pane only collapses by Toggle Sidebar or by a squeeze, which is not
+        // the captain's choice.
+        if !collapseIsForced, preferredSidebarWidth == nil { collapsedByCaptain = sidebarItem.isCollapsed }
         reportCollapseIfChanged()
     }
 
@@ -314,6 +458,7 @@ final class HelmSplitPage: NSSplitViewController {
     }
 
     #if FM_SELFTESTS
+    var debugIsNarrow: Bool { isNarrow }
     var debugSidebarWidth: CGFloat { sidebarPane.frame.width }
     var debugDividerColor: NSColor { (splitView as? ThemedSplitView)?.themedDividerColor ?? .clear }
     #endif

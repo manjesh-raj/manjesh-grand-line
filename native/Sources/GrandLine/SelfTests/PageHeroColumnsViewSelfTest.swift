@@ -1,0 +1,469 @@
+// Grand Line - native macOS app.
+//
+// Health's and Connections' hero columns (H-4 and C-4 on the page-redesign
+// board), mounted in a real off-screen sidebar shell with the tour lab's demo
+// hosts and service reports, and driven through the pages' own controls.
+//
+// Window-backed, because what it asserts is real layout and real dispatch:
+//
+//   - H-4: the column is the split's sidebar and the table starts at the top
+//     of the page beside it, the column is red while a service fails and the
+//     accent otherwise, its buckets read the registry, its Retry pill runs
+//     the service's own retry, and a narrow page moves the same column across
+//     the top of the table as a band and back.
+//   - C-4: the column sits beside the host cards, which run two to a row at
+//     C-1's 98pt; Recent is the column's (with Switch for a live session and
+//     Connect otherwise) and leaves the grid, and comes back to the grid when
+//     the column is put away; Quick connect's Return connects; and no line of
+//     a card runs under its action column.
+//   - Every word and control on either column is in the hero's ink.
+//
+// The words themselves - every verdict, the ring, the buckets, the pills -
+// are asserted headless in `PageHeroColumnsSelfTest`.
+//
+// With `FM_PAGE_HERO_RENDER_DIR` set it also writes one PNG per page, state,
+// width and theme into that folder (the PR's renders). Nothing is written
+// otherwise.
+//
+// Window-backed: listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`.
+//
+// Run with:
+//   swift build && FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS=1 .build/debug/GrandLine; echo $?
+
+// GL-27: compiled into debug builds only. Do not remove this guard -
+// `Phase3PolishSelfTest` asserts every file in this directory carries it.
+#if FM_SELFTESTS
+
+import AppKit
+
+enum PageHeroColumnsViewSelfTest {
+
+    static func run() -> Bool {
+        HelmMotion.reducedOverrideForTests = true
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        let savedTheme = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(savedTheme) }
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("page-hero-columns-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let callerStores = SelfTestScratchStores.fingerprints()
+        let checksOK = SelfTestScratchStores.within(scratch.appendingPathComponent("stores", isDirectory: true)) {
+            var allOK = true
+            ThemeManager.shared.setTheme(daylight)
+            let (window, shell) = ReviewTourLab.makeOffScreenSplitShell()
+            window.orderFront(nil)
+            defer { window.orderOut(nil) }
+            ReviewTourLab.seedDemoHosts(shell.workspace)
+            settle(shell)
+            let checks: [(MainSplitShellController, NSWindow, inout Bool) -> Void] = [
+                checkHealthColumn, checkHealthTone, checkHealthRetry, checkHealthBand,
+                checkConnectionsColumn, checkConnectionsRecent, checkConnectionsQuickConnect,
+                checkConnectionsCards, checkConnectionsCollapse, writeRenders,
+            ]
+            for check in checks {
+                var ok = true
+                autoreleasepool { check(shell, window, &ok) }
+                allOK = allOK && ok
+            }
+            return allOK
+        }
+        var storesOK = true
+        let touched = SelfTestScratchStores.fingerprints().filter { callerStores[$0.key] != $0.value }.keys.sorted()
+        check(touched.isEmpty, "the suite wrote to the caller's stores: \(touched)", &storesOK)
+        let allOK = checksOK && storesOK
+        print(allOK ? "PageHeroColumnsViewSelfTest: all checks passed" : "PageHeroColumnsViewSelfTest: FAILED")
+        return allOK
+    }
+
+    // MARK: Harness
+
+    static var daylight: HelmTheme { HelmTheme.appThemes.first { $0.id == "daylight" } ?? ThemeManager.shared.theme }
+    static var dusk: HelmTheme { HelmTheme.appThemes.first { $0.id == "dusk" } ?? ThemeManager.shared.theme }
+
+    static func settle(_ shell: WorkspaceShellController) {
+        for _ in 0..<3 {
+            shell.view.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        shell.view.layoutSubtreeIfNeeded()
+    }
+
+    static func resize(_ window: NSWindow, width: CGFloat, _ shell: WorkspaceShellController) {
+        var frame = window.frame
+        frame.size.width = width
+        window.setFrame(frame, display: true)
+        settle(shell)
+    }
+
+    /// Every registered service gone, so a check starts from nothing.
+    static func clearHealth() {
+        let registry = ServiceHealthRegistry.shared
+        for service in registry.knownServices() { registry.unregister(service) }
+    }
+
+    /// Every service healthy.
+    static func seedHealthy() {
+        clearHealth()
+        let now = Date()
+        for (index, service) in HealthService.allCases.enumerated() {
+            ServiceHealthRegistry.shared.recordSuccess(service, at: now.addingTimeInterval(-Double(20 + index * 37)))
+        }
+    }
+
+    @discardableResult
+    static func showHealth(_ shell: MainSplitShellController) -> HealthController {
+        shell.workspace.navigator.show(.health)
+        settle(shell)
+        let health = shell.workspace.health
+        health.debugRefresh()
+        settle(shell)
+        return health
+    }
+
+    @discardableResult
+    static func showHosts(_ shell: MainSplitShellController) -> HostsController {
+        shell.workspace.navigator.show(.hosts)
+        let hosts = shell.workspace.hostsPanel
+        hosts.selectModuleTab(named: "Hosts")
+        shell.setInspectorShown(false)
+        settle(shell)
+        return hosts
+    }
+
+    /// A frame in the page's own coordinates.
+    static func frame(of view: NSView, in page: NSView) -> NSRect {
+        view.convert(view.bounds, to: page)
+    }
+
+    /// Whether `color` is `ink` (components and alpha), not merely as bright.
+    static func isInk(_ color: NSColor?, _ ink: NSColor, alpha: CGFloat = 1) -> Bool {
+        guard let color = color?.usingColorSpace(.sRGB), let ink = ink.usingColorSpace(.sRGB) else { return false }
+        return abs(color.redComponent - ink.redComponent) < 0.02 && abs(color.greenComponent - ink.greenComponent) < 0.02
+            && abs(color.blueComponent - ink.blueComponent) < 0.02 && abs(color.alphaComponent - alpha) < 0.03
+    }
+
+    // MARK: H-4
+
+    private static func checkHealthColumn(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        seedHealthy()
+        let health = showHealth(shell)
+        let card = health.debugHealthCard
+        let column = card.heroColumn
+        guard let split = health.splitPage else {
+            fail("H-4: Health is not a split page in the sidebar layout", &ok)
+            return
+        }
+        check(column.superview === split.sidebarPane && !split.isSidebarCollapsed,
+              "H-4: the hero column is not in the split's open sidebar pane", &ok)
+        check(column.arrangement == .column, "H-4: the column is drawn as a \(column.arrangement)", &ok)
+        let page = health.view
+        let columnFrame = frame(of: column, in: page)
+        let tableFrame = frame(of: card.debugServicesTable.card, in: page)
+        check(abs(columnFrame.width - HelmHeroColumn.width) < 1, "H-4: the column is \(columnFrame.width)pt wide", &ok)
+        // Nothing above the table: it starts on the column's own top line.
+        check(abs(columnFrame.maxY - tableFrame.maxY) < 1.5,
+              "H-4: the table's top (\(tableFrame.maxY)) is not the column's (\(columnFrame.maxY))", &ok)
+        check(tableFrame.minX > columnFrame.maxX + HelmMetrics.s4 - 0.5,
+              "H-4: the table (\(tableFrame.minX)) does not start past the column (\(columnFrame.maxX))", &ok)
+        let counts = ServiceHealthRegistry.shared.summary()
+        check(card.debugHeroBucketFigures == ["\(counts.total)", "0", "0", "0"],
+              "H-4: an all-healthy column reads \(card.debugHeroBucketFigures)", &ok)
+        check(column.debugHeadline.contains("healthy"), "H-4: the headline reads \(column.debugHeadline)", &ok)
+        // Every word on the column in the ink.
+        let ink = column.ink
+        check(isInk(column.debugHeadlineLabel.textColor, ink), "H-4: the headline is not in the hero's ink", &ok)
+        for row in column.debugRows {
+            check(isInk(row.titleLabel.textColor, ink), "H-4: the \(row.titleLabel.stringValue) row's title is not in the ink", &ok)
+        }
+        // The column takes Toggle Sidebar like any split page's column.
+        check((health as HelmSplitPageHosting).splitPage === split, "H-4: Toggle Sidebar cannot reach the column", &ok)
+    }
+
+    private static func checkHealthTone(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let theme = ThemeManager.shared.theme
+        let accent = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
+        let redRGB = HelmContrast.components(HelmTheme.nsColor(HelmTint.critical.hex(in: theme)))
+        let red = HelmHeroColumn.palette(for: .init(colour: .fixed(red: redRGB.0, green: redRGB.1, blue: redRGB.2)), in: theme)
+        check(accent != red, "fixture: the accent and the red palettes are the same, the tone check measures nothing", &ok)
+
+        seedHealthy()
+        var health = showHealth(shell)
+        check(health.debugHealthCard.heroColumn.debugPalette == accent, "H-4: a healthy column is not the accent", &ok)
+
+        ReviewTourLab.seedDemoHealth(health)
+        health = showHealth(shell)
+        let column = health.debugHealthCard.heroColumn
+        check(column.debugPalette == red, "H-4: a column with a failing service is not red", &ok)
+        check(column.debugHeadline.hasPrefix(HealthService.dotfilesAutoSync.title),
+              "H-4: the failing headline reads \(column.debugHeadline)", &ok)
+
+        clearHealth()
+        health = showHealth(shell)
+        let unknown = health.debugHealthCard.heroColumn
+        check(unknown.debugPalette == HelmHeroColumn.palette(for: .init(colour: .themeAccent, isDimmed: true), in: theme),
+              "H-4: a column with nothing reported is not the dimmed accent (GL-14)", &ok)
+        check(unknown.debugRing == nil && health.debugHealthCard.debugHeroBucketFigures.allSatisfy { $0 == "\u{2014}" },
+              "H-4: nothing reported still draws a ring or zeros (\(health.debugHealthCard.debugHeroBucketFigures))", &ok)
+    }
+
+    private static func checkHealthRetry(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        var health = showHealth(shell)
+        ReviewTourLab.seedDemoHealth(health)
+        var retried: [HealthService] = []
+        health.retryActions = [.backgroundSignals: { retried.append(.backgroundSignals) },
+                               .dotfilesAutoSync: { retried.append(.dotfilesAutoSync) }]
+        health = showHealth(shell)
+        let column = health.debugHealthCard.heroColumn
+        func buttons(in view: NSView) -> [HelmButton] {
+            (view as? HelmButton).map { [$0] } ?? view.subviews.flatMap(buttons)
+        }
+        let pills = column.footViews.flatMap(buttons)
+        // Three pills wrap rather than run the column past its pane.
+        let columnFrame = column.convert(column.bounds, to: nil)
+        check(pills.allSatisfy { $0.convert($0.bounds, to: nil).maxX <= columnFrame.maxX - HelmHeroColumn.insets.right + 0.5 },
+              "H-4: a foot pill runs past the column", &ok)
+        check(abs(column.frame.width - HelmHeroColumn.width) < 1, "H-4: with three pills the column is \(column.frame.width)pt", &ok)
+        let titles = pills.map(\.title)
+        check(titles.count == 3 && titles.last == "Diagnostics", "H-4: the foot's pills are \(titles)", &ok)
+        // Worst first: the failing dotfiles sync, then the signals' recent failure.
+        pills.first?.performClick(nil)
+        check(retried == [.dotfilesAutoSync], "H-4: the first Retry ran \(retried)", &ok)
+        check(pills.allSatisfy { isInk($0.heroInk, column.ink) }, "H-4: a foot pill is not in the hero's ink", &ok)
+        health.retryActions = [.backgroundSignals: {}, .dotfilesAutoSync: {}]
+    }
+
+    private static func checkHealthBand(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let health = showHealth(shell)
+        guard let split = health.splitPage, let scaffold = health.debugScaffold else {
+            fail("H-4: no split page", &ok)
+            return
+        }
+        let column = health.debugHealthCard.heroColumn
+        resize(window, width: 1000, shell)
+        settle(shell)
+        check(health.view.bounds.width < HealthController.heroCollapseWidth,
+              "fixture: at 1000 the page is \(health.view.bounds.width)pt, not narrow", &ok)
+        check(split.isSidebarCollapsed, "H-4: a narrow page keeps the column open", &ok)
+        check(column.superview === scaffold && column.arrangement == .band,
+              "H-4: a narrow page does not show the verdict as a band over the table", &ok)
+        let band = frame(of: column, in: health.view)
+        let table = frame(of: health.debugHealthCard.debugServicesTable.card, in: health.view)
+        check(band.minY >= table.maxY - 0.5, "H-4: the band (\(band)) overlaps the table (\(table))", &ok)
+        resize(window, width: 1512, shell)
+        settle(shell)
+        check(!split.isSidebarCollapsed && column.superview === split.sidebarPane && column.arrangement == .column,
+              "H-4: widening the page did not bring the column back", &ok)
+    }
+
+    // MARK: C-4
+
+    private static func checkConnectionsColumn(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        guard let column = hosts.heroColumn, let split = hosts.splitPage else {
+            fail("C-4: Connections has no hero column in the sidebar layout", &ok)
+            return
+        }
+        check(hosts.heroColumnShowing && column.superview === split.sidebarPane && !column.isHidden,
+              "C-4: the hero column is not showing in the split's pane", &ok)
+        check(hosts.sidebar.isHidden, "C-4: the nav column shows beside the hero column", &ok)
+        let page = hosts.view
+        let columnFrame = frame(of: column, in: page)
+        let gridFrame = frame(of: hosts.hostsGrid, in: page)
+        check(abs(columnFrame.width - HelmHeroColumn.width) < 1, "C-4: the column is \(columnFrame.width)pt wide", &ok)
+        check(gridFrame.minX > columnFrame.maxX + HelmMetrics.s4 - 0.5,
+              "C-4: the cards (\(gridFrame.minX)) do not start past the column (\(columnFrame.maxX))", &ok)
+        check(hosts.hostsGrid.columnCount == 2, "C-4: the cards run \(hosts.hostsGrid.columnCount) to a row at 1512", &ok)
+        check(column.debugSectionTitles == ["Recent", "Quick connect"], "C-4: the sections are \(column.debugSectionTitles)", &ok)
+        check(isInk(column.debugHeadlineLabel.textColor, column.ink), "C-4: the headline is not in the hero's ink", &ok)
+        check(isInk(hosts.heroQuickConnectField.heroInk, column.ink), "C-4: Quick connect is not drawn for the gradient", &ok)
+    }
+
+    private static func checkConnectionsRecent(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let store = shell.workspace.hostStore
+        guard let grafana = store.hosts.first(where: { $0.label == "grafana" }),
+              let bastion = store.hosts.first(where: { $0.label == "bastion-stg" }),
+              let edge = store.hosts.first(where: { $0.label == "edge-proxy-01" }) else {
+            fail("C-4: the demo hosts are missing", &ok)
+            return
+        }
+        store.recordConnection(id: edge.id, at: Date().addingTimeInterval(-2 * 86_400))
+        store.recordConnection(id: grafana.id, at: Date().addingTimeInterval(-3 * 3600))
+        store.recordConnection(id: bastion.id, at: Date().addingTimeInterval(-42 * 60))
+        let savedLive = hosts.liveSession, savedSwitch = hosts.onSwitchToSession, savedConnect = hosts.onConnect
+        var switched: [UUID] = []
+        var connected: [UUID?] = []
+        hosts.liveSession = { id in
+            id == bastion.id ? HostSession(hostID: id, label: "bastion-stg", accentHex: nil,
+                                           startedAt: Date().addingTimeInterval(-42 * 60), state: .connected) : nil
+        }
+        hosts.onSwitchToSession = { switched.append($0) }
+        hosts.onConnect = { id, _, _, _, _, _ in connected.append(id) }
+        defer { hosts.liveSession = savedLive; hosts.onSwitchToSession = savedSwitch; hosts.onConnect = savedConnect }
+        hosts.refreshLiveSessionState()
+        settle(shell)
+        guard let column = hosts.heroColumn else { return }
+        let rows = column.debugRows.filter { $0.trailing != nil }
+        check(rows.map(\.titleLabel.stringValue) == ["bastion-stg", "grafana", "edge-proxy-01"],
+              "C-4: Recent reads \(rows.map(\.titleLabel.stringValue)), newest first", &ok)
+        check(column.debugHeadline == "1 live session, on bastion-stg.", "C-4: the headline reads \(column.debugHeadline)", &ok)
+        check(!hosts.hostsGrid.debugSectionTitles.contains("Recent"),
+              "C-4: the grid still draws a Recent row beside the column (\(hosts.hostsGrid.debugSectionTitles))", &ok)
+        let pills = rows.compactMap { $0.trailing as? HelmButton }
+        check(pills.first?.title == "Switch", "C-4: a live host's pill reads \(pills.first?.title ?? "nothing")", &ok)
+        pills.first?.performClick(nil)
+        check(switched == [bastion.id], "C-4: Switch ran \(switched)", &ok)
+        if pills.count > 1 { pills[1].performClick(nil) }
+        check(connected == [grafana.id], "C-4: grafana's Connect ran \(connected)", &ok)
+        check(pills.allSatisfy { isInk($0.heroInk, column.ink) }, "C-4: a Recent pill is not in the hero's ink", &ok)
+    }
+
+    private static func checkConnectionsQuickConnect(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let savedConnect = hosts.onConnect
+        var connects: [(id: UUID?, label: String)] = []
+        hosts.onConnect = { id, label, _, _, _, _ in connects.append((id, label)) }
+        defer { hosts.onConnect = savedConnect }
+        let field = hosts.heroQuickConnectField
+        field.stringValue = "deploy@build-07.example.test"
+        let consumed = field.onCommand?(#selector(NSResponder.insertNewline(_:))) ?? false
+        check(consumed, "C-4: Return in Quick connect was not handled", &ok)
+        check(connects.count == 1 && connects.first?.id == nil && connects.first?.label.contains("build-07") == true,
+              "C-4: Quick connect ran \(connects.map(\.label))", &ok)
+        check(field.stringValue.isEmpty, "C-4: Quick connect kept its text after connecting", &ok)
+        field.stringValue = "grafana"
+        _ = field.onCommand?(#selector(NSResponder.insertNewline(_:)))
+        let grafana = shell.workspace.hostStore.hosts.first { $0.label == "grafana" }
+        check(connects.count == 2 && connects.last?.id == grafana?.id, "C-4: a saved host's name did not connect it", &ok)
+    }
+
+    private static func checkConnectionsCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        let grid = hosts.hostsGrid
+        check(abs(grid.cardHeight - HelmType.scaledRowHeight(HelmCardGrid.roomyCardHeight)) < 0.5,
+              "C-1: the host cards are \(grid.cardHeight)pt tall", &ok)
+        // A host whose address cannot fit, so the check can see a line that
+        // runs under the buttons.
+        let long = Host(label: "long-address", address: "bastion-01.staging.eu-west-1.compute.example.test",
+                        port: 2222, username: "deploy-automation")
+        shell.workspace.hostStore.add(long)
+        settle(shell)
+        defer { shell.workspace.hostStore.delete(id: long.id); settle(shell) }
+        var overlaps: [String] = []
+        var truncated = false
+        for entry in grid.debugPlaced {
+            guard let card = grid.debugCardView(key: entry.key) else { continue }
+            card.layoutSubtreeIfNeeded()
+            let label = card.debugSubtitleLabel
+            if entry.key == long.id.uuidString { truncated = label.frame.width < label.attributedStringValue.size().width }
+            let actionsLeft = card.debugActionButtons.map { card.convert($0.bounds, from: $0).minX }.min() ?? card.bounds.maxX
+            let right = card.convert(label.bounds, from: label).maxX
+            if right > actionsLeft + 0.5 { overlaps.append("\(card.debugTitle): \(right) > \(actionsLeft)") }
+        }
+        check(truncated, "fixture: the long address fits its card, so the overlap check measures nothing", &ok)
+        check(overlaps.isEmpty, "C-1: a card's address runs under its icon buttons: \(overlaps)", &ok)
+        // The buttons stand in a column: one above the other.
+        if let card = grid.debugPlaced.dropFirst().first.flatMap({ grid.debugCardView(key: $0.key) }) {
+            let frames = card.debugActionButtons.map { card.convert($0.bounds, from: $0) }
+            check(frames.count == 2 && abs(frames[0].midX - frames[1].midX) < 0.5 && abs(frames[0].midY - frames[1].midY) > 20,
+                  "C-1: the bolt and pencil are not stacked in a column (\(frames))", &ok)
+        }
+    }
+
+    private static func checkConnectionsCollapse(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        guard let split = hosts.splitPage else { return }
+        let store = shell.workspace.hostStore
+        if let lab = store.hosts.first(where: { $0.label == "lab-box" }) { store.recordConnection(id: lab.id) }
+        // The shell's inspector opening is what narrows the page at 1512.
+        shell.setInspectorShown(true)
+        settle(shell)
+        check(hosts.view.bounds.width < split.collapsesBelowWidth ?? 0,
+              "fixture: with the inspector open the page is \(hosts.view.bounds.width)pt, not narrower than the column needs", &ok)
+        // Gotcha (13): the column gives way; the window does not grow for it.
+        check(abs(window.frame.width - 1512) < 0.5, "C-4: opening the inspector grew the window to \(window.frame.width)", &ok)
+        check(split.isSidebarCollapsed && !hosts.heroColumnShowing, "C-4: a narrow page keeps the column open", &ok)
+        check(hosts.hostsGrid.debugSectionTitles.first == "Recent",
+              "C-4: with the column away the grid has no Recent row (\(hosts.hostsGrid.debugSectionTitles))", &ok)
+        shell.setInspectorShown(false)
+        settle(shell)
+        check(abs(window.frame.width - 1512) < 0.5, "C-4: closing the inspector left the window at \(window.frame.width)", &ok)
+        check(!split.isSidebarCollapsed && hosts.heroColumnShowing, "C-4: widening the page did not bring the column back", &ok)
+        check(abs(split.sidebarPane.frame.width - (HelmMetrics.pageGutter + HelmHeroColumn.width)) < 0.5,
+              "C-4: the column came back \(split.sidebarPane.frame.width)pt wide", &ok)
+        check(!hosts.hostsGrid.debugSectionTitles.contains("Recent"), "C-4: Recent did not move back into the column", &ok)
+        // Toggle Sidebar puts it away too, and is remembered across a width change.
+        split.toggleSidebar(nil)
+        settle(shell)
+        check(split.isSidebarCollapsed && hosts.hostsGrid.debugSectionTitles.first == "Recent",
+              "C-4: Toggle Sidebar did not put the column away and bring Recent back", &ok)
+        split.toggleSidebar(nil)
+        settle(shell)
+        check(!split.isSidebarCollapsed, "C-4: Toggle Sidebar did not bring the column back", &ok)
+    }
+
+    // MARK: Renders
+
+    private static func writeRenders(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        guard let dir = ProcessInfo.processInfo.environment["FM_PAGE_HERO_RENDER_DIR"], !dir.isEmpty else { return }
+        let folder = URL(fileURLWithPath: dir)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let store = shell.workspace.hostStore
+        let bastion = store.hosts.first { $0.label == "bastion-stg" }
+        let hosts = shell.workspace.hostsPanel
+        let savedLive = hosts.liveSession
+        defer { hosts.liveSession = savedLive }
+        for theme in [daylight, dusk] {
+            ThemeManager.shared.setTheme(theme)
+            for width in [1512, 1100] as [CGFloat] {
+                resize(window, width: width, shell)
+                // Health: healthy, failing, nothing reported.
+                for state in ["healthy", "failing", "unknown"] {
+                    switch state {
+                    case "healthy": seedHealthy()
+                    case "failing": clearHealth(); ReviewTourLab.seedDemoHealth(shell.workspace.health)
+                    default: clearHealth()
+                    }
+                    let health = showHealth(shell)
+                    write(health.view, to: folder.appendingPathComponent("health-\(theme.id)-\(state)-\(Int(width)).png"))
+                }
+                // Connections: no live session, and one.
+                for state in ["idle", "live"] {
+                    hosts.liveSession = state == "live" ? { id in
+                        id == bastion?.id ? HostSession(hostID: id, label: "bastion-stg", accentHex: nil,
+                                                        startedAt: Date().addingTimeInterval(-42 * 60),
+                                                        state: .connected) : nil
+                    } : nil
+                    showHosts(shell)
+                    hosts.refreshLiveSessionState()
+                    settle(shell)
+                    write(hosts.view, to: folder.appendingPathComponent("connections-\(theme.id)-\(state)-\(Int(width)).png"))
+                }
+            }
+        }
+        ThemeManager.shared.setTheme(daylight)
+        resize(window, width: 1512, shell)
+        print("PageHeroColumnsViewSelfTest: renders written to \(dir)")
+    }
+
+    private static func write(_ view: NSView, to url: URL) {
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: url)
+    }
+}
+
+#endif

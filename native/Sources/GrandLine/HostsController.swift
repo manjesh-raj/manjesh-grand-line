@@ -420,8 +420,22 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     private(set) var drawsSidebarLayout = false
     private(set) lazy var hostsTable = Self.makeHostsTable()
     /// H1: the hosts as cards, the sidebar layout's default view (C4).
-    /// `HostsController+Cards.swift` fills it.
-    private(set) lazy var hostsGrid = HelmCardGrid()
+    /// `HostsController+Cards.swift` fills it. C-1's roomy card: 98pt tall,
+    /// at least 280pt wide, so two sit beside the hero column.
+    private(set) lazy var hostsGrid = HelmCardGrid(cardHeight: HelmCardGrid.roomyCardHeight,
+                                                   minimumCardWidth: HelmCardGrid.roomyMinimumCardWidth,
+                                                   maximumColumns: 2)
+    /// C-4: the hero column in the split's sidebar pane, sidebar layout only
+    /// (`HostsController+HeroColumn.swift`).
+    var heroColumn: HelmHeroColumn?
+    /// The column's Recent pills' runs, by tag.
+    var heroRecentRuns: [() -> Void] = []
+    /// The column's Quick connect field. One instance, so its text survives
+    /// a re-render.
+    private(set) lazy var heroQuickConnectField = HelmSearchField(placeholder: "user@host", symbol: "bolt.fill")
+    /// Whether the shell has the page's tab control put away (the toolbar
+    /// carries the tabs) - the sidebar layout.
+    private(set) var moduleTabControlHidden = false
     /// H6: the host form in the side panel, and which record it is for -
     /// a host's id, or `newHostPanelKey` (H10). `HostsController+Panel.swift`.
     var hostPanel: HostEditorController?
@@ -948,6 +962,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             refreshDetailPanel()
             refreshExpansionPanel()
         }
+        // C-4: the column's room depends on the showing tab's top row.
+        if heroColumn != nil { refreshSplitColumn() }
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()
@@ -1373,6 +1389,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         #endif
         hostsList.setItems(items)
         if drawsSidebarLayout { renderHostsTable(hosts, query: query) }
+        renderHeroColumn()
         refreshWorkspacePanel()
         refreshDetailPanel()
         refreshFindOrConnectButton()
@@ -1525,6 +1542,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         keysTitleLabel.stringValue = HostsTab.keys.title
         keysList.setItems(items)
         if drawsSidebarLayout { renderKeysTable() }
+        renderHeroColumn()
         refreshWorkspacePanel()
         refreshDetailPanel()
         onDrillSubtitleChanged?()
@@ -1543,6 +1561,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         snippetsTitleLabel.stringValue = HostsTab.snippets.title
         snippetsList.setItems(items)
         if drawsSidebarLayout { renderSnippetsTable() }
+        renderHeroColumn()
         refreshWorkspacePanel()
         refreshExpansionPanel()
         refreshDetailPanel()
@@ -1637,8 +1656,18 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// H3: the Connect button beside the field lights up when the text names
     /// one host to connect to, and says which.
-    private func refreshFindOrConnectButton() {
+    /// The width H3's Connect button takes in the filter row while it
+    /// shows, with its spacing - what the row's floor loses beside the hero
+    /// column, which hides it.
+    var findOrConnectRoom: CGFloat {
+        findOrConnectButton.isHidden ? 0 : ceil(findOrConnectButton.fittingSize.width) + HelmMetrics.s3
+    }
+
+    func refreshFindOrConnectButton() {
         guard drawsSidebarLayout else { return }
+        // C-4: while the hero column shows, its Quick connect is where a
+        // typed user@host goes; Return in this field still connects.
+        findOrConnectButton.isHidden = heroColumnWanted
         let target = quickConnectTarget(for: searchField.stringValue, explicitAddressOnly: true)
         findOrConnectButton.isEnabled = target != nil
         let words = target.map { "Connect to \($0.name)" } ?? "Type a host's name, or ssh user@hostname, to connect"
@@ -1952,11 +1981,21 @@ extension HostsController: ModuleTabHosting {
     /// other rows have homes in the sidebar layout: Commands is Connections'
     /// fourth tab, Activity is a Connections toolbar button, and the keychain
     /// card's counts are in the page's own stat strip.
+    ///
+    /// C-4: in the sidebar layout the pane holds the hero column instead, so
+    /// it stays open (`refreshSplitColumn`).
     func setModuleTabControlHidden(_ hidden: Bool) {
-        splitPage?.pageForcesCollapse = hidden
-        // With no column beside it the content starts at the page gutter,
-        // like every other page's.
-        contentLeading?.constant = hidden ? HelmMetrics.pageGutter : HelmMetrics.s4 - HelmSplitPage.dividerThickness
+        moduleTabControlHidden = hidden
+        refreshSplitColumn()
+    }
+
+    /// With no column beside it the content starts at the page gutter, like
+    /// every other page's; beside the nav column it is `s4` past it, and
+    /// beside the hero column the board's 20pt.
+    func refreshContentLeading() {
+        let collapsed = splitPage.map { $0.isSidebarCollapsed || $0.pageForcesCollapse } ?? true
+        let beside = heroColumn != nil && moduleTabControlHidden ? HelmMetrics.s5 : HelmMetrics.s4
+        contentLeading?.constant = collapsed ? HelmMetrics.pageGutter : beside - HelmSplitPage.dividerThickness
     }
 }
 
@@ -2031,6 +2070,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
         hostsTable.accessibilityName = "Hosts"
         adoptHostsGrid()
         adoptKeysGrid()
+        adoptHeroColumn()
         keysTable.accessibilityName = "SSH keys"
         snippetsTable.accessibilityName = "Snippets"
         // The prototype's Keys card names what it holds and where it is kept.

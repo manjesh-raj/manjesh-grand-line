@@ -146,6 +146,31 @@ final class HelmHeroSurface: NSView {
         return Palette(start: start, end: end, ink: ink)
     }
 
+    /// 1.1.0: the same rule for a surface whose second lines are the ink at
+    /// a lower alpha (`HelmHeroColumn`'s row details, section titles and ring
+    /// caption). Both stops are deepened until white at `quietInk` alpha also
+    /// clears the text floor on the lighter stop. The plain rule stops at
+    /// exactly the floor for white, so on Rosé Pine's accent 80% white
+    /// measured 3.41:1. Where no deepening the design allows gets there, it
+    /// falls back to the plain rule.
+    static func palette(accent: (Double, Double, Double), quietInk: Double) -> Palette {
+        let white = (1.0, 1.0, 1.0)
+        let black = (0.0, 0.0, 0.0)
+        let start = HelmContrast.mix(white, accent, startLift)
+        let end = HelmContrast.mix(black, accent, endDepth)
+        var deepen = 0.0
+        while deepen <= maxDeepen + 1e-9 {
+            let s = HelmContrast.mix(black, start, deepen)
+            let e = HelmContrast.mix(black, end, deepen)
+            let lighter = HelmContrast.relativeLuminance(s) >= HelmContrast.relativeLuminance(e) ? s : e
+            if HelmContrast.ratio(HelmContrast.mix(white, lighter, quietInk), lighter) >= HelmContrast.textTarget {
+                return Palette(start: s, end: e, ink: white)
+            }
+            deepen += deepenStep
+        }
+        return palette(accent: accent)
+    }
+
     /// GL-14's stale tone: `accent` most of the way to a grey of its own
     /// lightness. Run the result through `palette(accent:)` like any other.
     static func dimmed(_ accent: (Double, Double, Double)) -> (Double, Double, Double) {

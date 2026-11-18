@@ -768,7 +768,28 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     }
     private let size: Size
 
-    init(placeholder: String = "", size: Size = .standard, shortcutHint: String? = nil) {
+    /// 1.1.0: a field on a hero gradient (`HelmHeroColumn`'s Quick connect).
+    /// The well is a shade of the ink's opposite at `heroFillAlpha` (as a
+    /// ghost pill's is, `HelmButton.heroShade`) with a hairline of the ink,
+    /// the text and glyph the ink, the placeholder the ink at
+    /// `heroPlaceholderAlpha`,
+    /// and focus a 2pt ring of the ink in place of the accent lamp, which on
+    /// a gradient of the accent would not show. The column sets it, along
+    /// with the dark appearance a white-ink hero takes, so the caret and the
+    /// selection are the light ones. `nil` keeps the sunken well.
+    var heroInk: NSColor? {
+        didSet { if heroInk != oldValue { applyTheme(lastTheme) } }
+    }
+
+    static let heroFillAlpha: CGFloat = 0.16
+    static let heroBorderAlpha: CGFloat = 0.32
+    static let heroPlaceholderAlpha: CGFloat = 0.8
+
+    /// - Parameter symbol: 1.1.0: the glyph at the well's leading edge. A
+    ///   magnifying glass for a search; a field that does something else says
+    ///   what (Quick connect's bolt).
+    init(placeholder: String = "", size: Size = .standard, shortcutHint: String? = nil,
+         symbol: String = "magnifyingglass") {
         self.size = size
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -777,7 +798,7 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         HelmField.makeSunken(well)
         well.translatesAutoresizingMaskIntoConstraints = false
 
-        icon.image = HelmSymbol.image("magnifyingglass", pointSize: 12,
+        icon.image = HelmSymbol.image(symbol, pointSize: 12,
                                       weight: HelmSymbol.weight(for: .medium))
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
@@ -901,6 +922,10 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
 
     func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
+        if let heroInk {
+            applyHeroInk(heroInk)
+            return
+        }
         HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
                                focused: isFocused, hue: domainHue, animated: animated)
         let ink = HelmField.ink(theme)
@@ -913,6 +938,21 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         hintChip?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(0.45).cgColor
         hintLabel?.textColor = HelmField.mutedInk(theme)
+    }
+
+    /// The hero recipe - see `heroInk`.
+    private func applyHeroInk(_ ink: NSColor) {
+        HelmMotion.withoutActions {
+            well.layer?.backgroundColor = HelmButton.heroShade(for: ink).withAlphaComponent(Self.heroFillAlpha).cgColor
+            well.layer?.borderColor = ink.withAlphaComponent(isFocused ? 0.9 : Self.heroBorderAlpha).cgColor
+            well.layer?.borderWidth = isFocused ? 2 : 1
+            layer?.shadowOpacity = 0
+        }
+        editor.textColor = ink
+        placeholderLabel.textColor = ink.withAlphaComponent(Self.heroPlaceholderAlpha)
+        icon.contentTintColor = ink.withAlphaComponent(isFocused ? 1 : 0.85)
+        hintChip?.layer?.backgroundColor = ink.withAlphaComponent(0.2).cgColor
+        hintLabel?.textColor = ink
     }
 
     private func updatePlaceholderVisibility() {

@@ -29,6 +29,15 @@
 // Keyboard: arrows move between cards (and select, so the inspector
 // follows), Return activates, Space shows the details, ⌘E edits, Delete
 // deletes - each only where the page gave the card that action.
+//
+// **1.1.0, C-1's card** (the page-redesign board): a grid can be built with
+// its own card height and minimum card width (Connections' hosts take the
+// board's 98pt and 280pt, two to a row beside the hero column), and every
+// card's icon buttons stand in a column of their own at the trailing edge,
+// centred, which every line of the card stops before. Before, only the title
+// stopped short of them, so a long address ran underneath the bolt and the
+// pencil on hover. The tile is the Daylight `HelmGradientTile`, in a host's
+// own colour where it has one.
 
 import AppKit
 
@@ -107,7 +116,23 @@ final class HelmCardGrid: NSView {
     static let baseCardHeight: CGFloat = 76
     static var cardHeight: CGFloat { HelmType.scaledRowHeight(baseCardHeight) }
     static let baseMinimumCardWidth: CGFloat = 236
-    static var minimumCardWidth: CGFloat { (baseMinimumCardWidth * ChromeTextScale.shared.scale).rounded() }
+    static var minimumCardWidth: CGFloat { scaledMinimumWidth(baseMinimumCardWidth) }
+    /// C-1's roomy host card (1.1.0).
+    static let roomyCardHeight: CGFloat = 98
+    static let roomyMinimumCardWidth: CGFloat = 280
+
+    static func scaledMinimumWidth(_ base: CGFloat) -> CGFloat { (base * ChromeTextScale.shared.scale).rounded() }
+
+    /// This grid's card height and minimum card width before the chrome text
+    /// scale (1.1.0). The defaults are the class's own.
+    private(set) var baseHeight: CGFloat = HelmCardGrid.baseCardHeight
+    private(set) var baseMinimumWidth: CGFloat = HelmCardGrid.baseMinimumCardWidth
+    var cardHeight: CGFloat { HelmType.scaledRowHeight(baseHeight) }
+    var minimumCardWidth: CGFloat { Self.scaledMinimumWidth(baseMinimumWidth) }
+    /// At most this many cards to a row, however wide the grid (1.1.0) -
+    /// C-4's two-wide cards beside the hero column. `nil` fits as many as
+    /// the width takes.
+    private(set) var maximumColumns: Int?
     static let spacing: CGFloat = 12
     static let headerHeight: CGFloat = 30
     /// The gap above a section header that follows another section.
@@ -158,6 +183,15 @@ final class HelmCardGrid: NSView {
         scroll.contentView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipResized),
                                                name: NSView.frameDidChangeNotification, object: scroll.contentView)
+    }
+
+    /// 1.1.0: a grid whose cards are `cardHeight` tall and at least
+    /// `minimumCardWidth` wide, both before the chrome text scale.
+    convenience init(cardHeight: CGFloat, minimumCardWidth: CGFloat, maximumColumns: Int? = nil) {
+        self.init(frame: .zero)
+        baseHeight = cardHeight
+        baseMinimumWidth = minimumCardWidth
+        self.maximumColumns = maximumColumns
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -286,11 +320,23 @@ final class HelmCardGrid: NSView {
     }
 
     /// The columns and card width at `width`, the same arithmetic every other
-    /// card grid here uses.
+    /// card grid here uses, for a grid of the default card.
     static func plan(width: CGFloat) -> (columns: Int, cardWidth: CGFloat) {
+        plan(width: width, minimumCardWidth: minimumCardWidth)
+    }
+
+    static func plan(width: CGFloat, minimumCardWidth: CGFloat) -> (columns: Int, cardWidth: CGFloat) {
         let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: minimumCardWidth, spacing: spacing)
         let cardWidth = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: spacing)
         return (columns, cardWidth)
+    }
+
+    /// This grid's plan at `width`, from its own minimum card width and
+    /// column cap.
+    func plan(width: CGFloat) -> (columns: Int, cardWidth: CGFloat) {
+        let fitted = Self.plan(width: width, minimumCardWidth: minimumCardWidth)
+        guard let cap = maximumColumns, fitted.columns > cap else { return fitted }
+        return (cap, HelmResponsiveGrid.itemWidth(containerWidth: width, columns: cap, spacing: Self.spacing))
     }
 
     /// `value` on the backing store's pixel grid: whole points at 1x, half
@@ -321,11 +367,11 @@ final class HelmCardGrid: NSView {
         let width = contentWidth
         guard width > 0 else { return }
         laidOutWidth = width
-        let (columns, cardWidth) = Self.plan(width: width)
+        let (columns, cardWidth) = plan(width: width)
         columnCount = columns
         let scale = window?.backingScaleFactor ?? 2
         func px(_ value: CGFloat) -> CGFloat { Self.pixelAligned(value, scale: scale) }
-        let height = Self.cardHeight
+        let height = cardHeight
         var y: CGFloat = 0
         var placed: [(id: String, key: String, frame: NSRect)] = []
         var usedHeaders = Set<Int>()
@@ -449,7 +495,8 @@ final class HelmCardGrid: NSView {
 // MARK: - One card
 
 /// A record card: the tile, the title, one subtitle, a status or detail line
-/// or badges, and the always-visible icon buttons.
+/// or badges, and the always-visible icon buttons in a column of their own at
+/// the trailing edge (1.2.0).
 final class HelmGridCardView: HoverHighlightView {
     fileprivate weak var grid: HelmCardGrid?
 
@@ -457,7 +504,9 @@ final class HelmGridCardView: HoverHighlightView {
         didSet { if isSelected != oldValue { applyState() } }
     }
 
-    private let tile = IconTileView(size: 34, cornerRadius: 9)
+    /// 1.2.0: the Daylight gradient tile, in the card's own colour where it
+    /// has one (a host's accent) and its tint's domain hue otherwise.
+    private let tile = HelmGradientTile(size: .drill)
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let statusPill = HelmStatusPill(style: .dotWord)
@@ -522,11 +571,13 @@ final class HelmGridCardView: HoverHighlightView {
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s0
-        text.setCustomSpacing(HelmMetrics.s1, after: subtitleLabel)
+        text.setCustomSpacing(HelmMetrics.s1 + 2, after: subtitleLabel)
         text.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        actionRow.orientation = .horizontal
+        // 1.2.0: the icon buttons stand in a column, centred on the card's
+        // height, and every line of text stops before it.
+        actionRow.orientation = .vertical
         actionRow.spacing = HelmMetrics.s0
-        actionRow.alignment = .centerY
+        actionRow.alignment = .centerX
         for view in [tile, text, actionRow] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -534,18 +585,19 @@ final class HelmGridCardView: HoverHighlightView {
         actionRow.setContentHuggingPriority(.required, for: .horizontal)
         actionRow.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            tile.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3 + 2),
+            tile.centerYAnchor.constraint(equalTo: centerYAnchor),
             text.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
-            text.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3 - 1),
-            // Only the title shares its line with the icon buttons; the lines
-            // under it run to the card's edge.
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionRow.leadingAnchor, constant: -HelmMetrics.s1),
+            text.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Every line stops before the action column, not only the title
+            // (C-1: a long address ran under the bolt and the pencil).
+            text.trailingAnchor.constraint(lessThanOrEqualTo: actionRow.leadingAnchor, constant: -HelmMetrics.s2),
             text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.s3),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: text.widthAnchor),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: text.widthAnchor),
             metaRow.widthAnchor.constraint(lessThanOrEqualTo: text.widthAnchor),
             actionRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
-            actionRow.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
+            actionRow.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         onHoverChange = { [weak self] _ in self?.applyState() }
         onKeyDown = { [weak self] event in self?.handleKey(event) ?? false }
@@ -555,9 +607,11 @@ final class HelmGridCardView: HoverHighlightView {
 
     func configure(_ card: HelmCardGrid.Card, theme: HelmTheme) {
         self.theme = theme
-        tile.configure(symbol: card.symbol, tint: card.tint, pointSize: HelmType.scaled(14))
-        if let hex = card.tintHex { tile.overrideFill(hex: hex) }
-        tile.applyTheme(theme)
+        if let hex = card.tintHex {
+            tile.configure(symbol: card.symbol, literalHex: hex)
+        } else {
+            tile.configure(symbol: card.symbol, hue: HelmDomainHue(tint: card.tint))
+        }
         titleLabel.stringValue = card.title
         titleLabel.font = HelmType.rowTitle()
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)

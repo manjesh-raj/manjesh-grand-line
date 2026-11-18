@@ -229,6 +229,7 @@ FM_RUN_HOME_FIT_TESTS 12
 FM_RUN_CONTRAST_TESTS 11
 FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 11
 FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
+FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 12
 "
 DEFAULT_SHARD_WEIGHT=3
 
@@ -375,6 +376,10 @@ NEEDS_SESSION=(
   # The polish stage: the sidebar layout's motion, badges and status line.
   "FM_RUN_SIDEBAR_POLISH_TESTS"
   "FM_RUN_SIDEBAR_PAGE_FIXES_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()
+  # H-4 and C-4's hero columns in a real sidebar shell: where the column
+  # sits beside the table and the cards, the band on a narrow page, and the
+  # column giving way to the inspector without growing the window.
+  "FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # Stage 7: the sidebar's size, Quick Connect, Setup and Tasks in a real
   # sidebar shell. Its models and source guards
   # (`FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS`) are deliberately NOT here.
