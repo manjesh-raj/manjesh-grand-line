@@ -186,113 +186,83 @@ work lands.
 
 ### Local signing setup (one-time, per machine)
 
-The script codesigns with a local self-signed identity named exactly
-**"Grand Line Local Dev"** when one exists, and warns and continues
-unsigned when it does not.
-
-That identity used to be called "Firstmate Cockpit Local Dev", and the script
-still accepts the old name when only that certificate exists - otherwise the
-rename would have quietly dropped every existing machine to an unsigned build,
-which is the one failure this whole section is about. Create the new
-certificate with the commands below and delete the old one; the note the script
-prints goes away when you do.
-
-This is not tidiness. Saved SSH keys live in the macOS Keychain, and a
-Keychain item's default ACL trusts only the code identity that created it - so
-an unsigned build, which gets a *different* ad-hoc identity on every rebuild,
-makes yesterday's saved key unreadable today. One fixed identity keeps that
-trust stable.
-
-The commands assume Homebrew's OpenSSL 3.x or later (`openssl version`). The
-`/usr/bin/openssl` macOS ships is LibreSSL, which builds the same certificate
-but has no `-legacy` flag, so drop that flag from step 2 if you use it.
+Run this once on each machine that builds the app:
 
 ```bash
-# 1. A self-signed leaf cert for code signing. All three extensions are
-#    needed. Without basicConstraints, OpenSSL 3.x marks the cert as a CA,
-#    and without keyUsage macOS rejects it as "Invalid Key Usage for policy".
-openssl req -x509 -newkey rsa:2048 -keyout /tmp/grandline.key -out /tmp/grandline.crt \
-  -days 3650 -nodes -subj "/CN=Grand Line Local Dev" \
-  -addext "basicConstraints=critical,CA:false" \
-  -addext "keyUsage=critical,digitalSignature" \
-  -addext "extendedKeyUsage=critical,codeSigning"
-
-# 2. As a .p12. `-legacy` is required - OpenSSL 3.x's default PKCS12
-#    encryption is not readable by macOS's importer without it.
-openssl pkcs12 -export -legacy -inkey /tmp/grandline.key -in /tmp/grandline.crt \
-  -out /tmp/grandline.p12 -passout pass:temporary
-
-# 3. Import, trusted for codesign specifically.
-security import /tmp/grandline.p12 -k ~/Library/Keychains/login.keychain-db \
-  -P temporary -T /usr/bin/codesign
-
-# 4. Trust it. Note `-r trustRoot`, not `-r trustAsRoot` - the latter fails
-#    with a parameter error on this cert shape.
-security add-trusted-cert -d -r trustRoot -p codeSign \
-  -k ~/Library/Keychains/login.keychain-db /tmp/grandline.crt
-
-rm -f /tmp/grandline.key /tmp/grandline.crt /tmp/grandline.p12
+Scripts/local-signing-identity.sh setup
 ```
 
-Verify that macOS accepts it for code signing. `-v` lists valid identities
-only, which is the same check the build script makes:
+It creates two certificates in the login keychain.
 
-```console
-$ security find-identity -v -p codesigning
-  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Grand Line Local Dev"
-     1 valid identities found
+- **"Grand Line Local CA"** is a local certificate authority, valid for 30 years.
+  It is the app's identity as far as macOS is concerned, so it is created once and never replaced.
+- **"Grand Line Code Signing"** is the certificate builds are actually signed with.
+  The CA issues it, and `setup` issues it again whenever it is missing, expired or invalid.
+
+macOS asks for your password once, to trust the CA for code signing.
+`Scripts/local-signing-identity.sh status` says which identity a build will use.
+It needs `openssl`, either Homebrew's OpenSSL 3.x or the LibreSSL `/usr/bin/openssl` macOS ships.
+
+**Why a CA.**
+macOS files every privacy grant (Accessibility, which dictation's paste needs, Screen Recording, Input Monitoring) and every Keychain ACL under the app's designated requirement.
+For a self-signed certificate, codesign's default requirement pins that exact certificate:
+
+```text
+identifier "com.manjesh.grandline.native" and certificate leaf = H"<certificate sha1>"
 ```
 
-The hash is your certificate's own SHA-1 and will differ. Other valid
-identities on the machine, such as an Apple Development one, show up as extra
-numbered lines. What matters is that "Grand Line Local Dev" is listed here
-with no status in parentheses after it.
+So recreating the certificate revoked every grant at once, which is what happened on 2026-11-15.
+Builds signed by `local-signing-identity.sh` carry an explicit requirement that names the CA instead:
 
-**Troubleshooting.** If the build prints `No "Grand Line Local Dev"
-codesigning identity found - building unsigned`, or `codesign` fails with
-`Grand Line Local Dev: no identity found`, the certificate is either missing
-or present but invalid. Run the same command without `-v`, which also lists
-invalid identities and says why each one is rejected:
-
-```bash
-security find-identity -p codesigning
+```text
+identifier "com.manjesh.grandline.native" and certificate root = H"<CA sha1>"
 ```
 
-- `(Invalid Key Usage for policy)` after the name means the certificate was
-  made without the `basicConstraints` and `keyUsage` extensions in step 1.
-  An older version of this recipe did exactly that.
-- `(CSSMERR_TP_NOT_TRUSTED)` means step 4 did not run or did not succeed.
-- No "Grand Line Local Dev" line at all means step 3 did not import it.
+A reissued "Grand Line Code Signing" certificate still satisfies it, so no grant is lost.
+A certificate with the same names from any other CA does not.
+Saved SSH keys benefit the same way, because a Keychain item's ACL trusts the requirement too.
 
-A bad certificate cannot be repaired in place. Remove it, then run the whole
-recipe again. Do the removal first, while only one certificate has the name,
-because `-c` matches by name and refuses an ambiguous match:
-
-```bash
-# Drop the trust setting step 4 added, then the certificate and its key.
-security find-certificate -c "Grand Line Local Dev" -p > /tmp/grandline-old.crt
-security remove-trusted-cert -d /tmp/grandline-old.crt
-security delete-identity -c "Grand Line Local Dev"
-rm -f /tmp/grandline-old.crt
-```
-
-If you already created a second, good certificate next to the bad one, delete
-the bad one by the hash `security find-identity -p codesigning` prints for it
-instead: `security delete-identity -Z <hash>`.
-
-**A new certificate is a new app identity to macOS.** Every privacy grant
-(Accessibility, which dictation's paste needs, Screen Recording, Input
-Monitoring) and every Keychain ACL is pinned to the certificate the app was
-signed with when it was granted. After you replace the certificate, System
-Settings still shows Grand Line switched on, but macOS denies it, and switching
-it off and on does not help. The next `build_native_app.sh` notices the change
-and prints the one-time repair, which is to quit Grand Line and run:
+**Moving an existing machine onto the CA (once).**
+Until `setup` has run, builds keep signing with the older self-signed "Grand Line Local Dev" certificate (or "Firstmate Cockpit Local Dev" before that) and print a note saying so.
+After `setup`, the first build is signed by the CA, which is a new identity to macOS one last time.
+`build_native_app.sh` notices and prints the repair, which is to quit Grand Line and run:
 
 ```bash
 tccutil reset All com.manjesh.grandline.native
 ```
 
-Then open Grand Line and allow each permission again.
+Then open Grand Line and allow each permission again when it asks, and choose Always Allow when macOS asks about each saved SSH key.
+Once that build is installed, the old certificate can go:
+
+```bash
+security delete-identity -c "Grand Line Local Dev"
+```
+
+**If the build says the certificate is missing or invalid**, run `setup` again.
+It reissues "Grand Line Code Signing" from the existing CA and keeps every grant.
+macOS asks before `setup` reads the CA's private key, which is stored in the login keychain as "Grand Line Local CA private key" and readable by no application without asking.
+To see why a certificate is rejected, list identities without `-v`:
+
+```bash
+security find-identity -p codesigning
+```
+
+`(CSSMERR_TP_NOT_TRUSTED)` after "Grand Line Code Signing" means the CA's trust setting is gone.
+`(Invalid Key Usage for policy)` after "Grand Line Local Dev" is the older recipe's defect, and is fixed by moving to the CA rather than by recreating that certificate.
+
+**Replacing the CA itself** is the one thing that still costs every grant, so `setup` never does it on its own and refuses to run with two CAs of the same name.
+If the CA really is lost, delete what is left of it, run `setup`, and then do the one-time `tccutil reset` above:
+
+```bash
+security find-certificate -c "Grand Line Local CA" -p > /tmp/grandline-ca.crt
+security remove-trusted-cert -d /tmp/grandline-ca.crt
+security delete-certificate -c "Grand Line Local CA"
+security delete-generic-password -s "Grand Line Local CA private key"
+rm -f /tmp/grandline-ca.crt
+```
+
+Whenever a build stops satisfying the requirement of the copy it replaces, `build_native_app.sh` prints the repair last, so it is the final thing on screen.
+System Settings keeps showing Grand Line switched on in that state, and switching it off and on does not help, because macOS keeps the old record.
 
 ---
 

@@ -132,3 +132,54 @@
   With Grand Line quit, run `tccutil reset All com.manjesh.grandline.native` (or remove the Grand Line row under Accessibility with the minus button and add it back with plus), then open Grand Line and allow each permission again.
   This task did not reset the captain's grants itself, and `tccutil`'s service names could not be checked against a throwaway bundle, which is why the script prints `All`.
   A real ⌘V landing in another app after that repair is still the captain's check.
+
+- **`fm/grand-line-stable-signing-identity` removes the trigger behind the previous round: a reissued signing certificate no longer revokes the app's privacy grants.**
+  The previous round made the failure loud. This one makes the common case of it impossible.
+
+  **Reproduced with throwaway bundles, never the captain's grants.**
+  Apple's `codesign` refuses a certificate that is not trusted for code signing, and trusting one changes the user's trust settings behind a password prompt.
+  So the throwaway signatures were made by `rcodesign` 0.29.0 from PEM files, and every evaluation was Apple's own `codesign --verify -R`, the same Security framework requirement check `tccd` runs a stored `csreq` through.
+  With today's recipe, a rebuild signed by the same self-signed certificate satisfied the requirement recorded for the first build, and a rebuild after recreating the certificate with the same name did not.
+  The installed app's requirement, read without changing anything, has exactly that leaf-pinned shape (`certificate leaf = H"4d4f5ad8..."`).
+  `tccd`'s log on 2026-11-18 still showed "Failed to match existing code requirement" for Accessibility and Screen Recording, so the captain had not run the previous round's reset yet.
+
+  **What was measured, option by option.**
+  - A local CA plus a leaf it issues, signed with the explicit requirement `identifier "<id>" and certificate root = H"<CA sha1>"`: a second leaf from the same CA satisfied the first build's requirement, and an impostor with identical names under its own CA did not.
+  - The same with the CA's certificate left out of the signature: the requirement failed, which is why the build checks it after signing.
+  - `certificate leaf[subject.CN] = "..."`: satisfied by anyone's self-signed certificate with that name.
+  - Ad hoc: an explicit `identifier "<id>"`-only requirement is accepted by `codesign` and satisfied by any other ad hoc binary claiming the identifier, and the implicit ad hoc requirement is a `cdhash` that changes on every rebuild. Neither is usable.
+  - An EC P-384 CA: Apple's `codesign` could not read the chain at all (`Authority=(unavailable)`, `CSSMERR_TP_NOT_TRUSTED`), where the same shape with an RSA CA verified. The CA is RSA 3072.
+  - `codesign --verify` without `-R` does **not** check the designated requirement. A bundle whose explicit requirement it fails still verified clean.
+  - `security -i` truncates a long line silently. A 3164-character value survived and a 3312-character one did not, which is why the CA key is stored as base64 DER (about 2400 characters) behind a length check.
+
+  **Chosen: the CA, over a single long-lived self-signed identity.**
+  A stable self-signed certificate that is never regenerated would have kept today's grants without a migration, but its requirement still pins the certificate.
+  Anything that forces a new one (the old recipe's "Invalid Key Usage for policy", an expiry, a deletion) revokes everything again, which is the incident itself.
+  With the CA, the leaf is disposable and the CA is the only thing that must never change, and `setup` refuses to make a second one.
+  The captain has to reset the grants once either way, because the leaf-pinned grant from before 2026-11-15 was already stale.
+
+  **The change.**
+  `Scripts/local-signing-identity.sh` is now the one place that picks the signing identity, for `build_native_app.sh` and `build-widget-extension.sh` both.
+  `setup` creates the CA once (30 years, RSA 3072, trusted for code signing), stores its private key as a keychain item no application may read without asking, and issues "Grand Line Code Signing" from it.
+  Run again, it only reissues the leaf.
+  `sign` signs with that leaf and the explicit CA requirement, then checks it with `codesign --verify -R`.
+  Until `setup` has run, it falls back to the old self-signed identities and says why that is fragile.
+  `check-signing-identity.sh compare` now asks `tccd`'s question, whether the new build satisfies the previous requirement, rather than comparing text, so a reissued leaf is silent and a replaced CA still prints the repair.
+  When the move is from a self-signed certificate onto the CA, the warning also says it should be the last one.
+
+  **Verified.**
+  `test_local_signing_identity.py` covers the certificate recipe (chain, extensions, lifetimes, the stored-key size), the requirement text and its `csreq` round trip, the exact-name CA lookup, refusing two CAs, never using an untrusted leaf, and that both build scripts sign only through the script.
+  It runs against a throwaway keychain file through `FM_SIGNING_KEYCHAIN` and reads no secret, so it can raise no prompt.
+  Injections: a text compare fails `test_a_requirement_the_new_build_still_satisfies_is_silent`, the promise printed for a CA-to-CA change fails `test_moving_onto_a_local_ca_says_it_is_the_last_time`, a substring CA match fails `test_a_longer_name_is_not_the_ca`, and taking the first of two CAs fails `test_two_cas_with_the_name_are_refused`.
+  Dropping `-v` from the identity lookup is **not** caught, because the exact-name match already rejects a line carrying a status such as `(CSSMERR_TP_NOT_TRUSTED)`. The two are redundant rather than one untested.
+  The certificate recipe passes the tests under Homebrew OpenSSL 4.1 and 3.6 and the system LibreSSL 3.3.6.
+  It carries its own OpenSSL configuration, subject included, because CI's runner made a leaf its own `openssl verify` could not chain to the CA ("unable to get local issuer certificate") while every OpenSSL here verified it.
+  The suspected cause is the host's `openssl.cnf` being merged in, which the recipe now never reads, but the runner's OpenSSL version was not recorded, so that cause is inferred.
+  The failure message now carries the OpenSSL version and both certificates.
+  Moving the subject into the file was itself measured: with `prompt = no`, LibreSSL ignores `-subj`.
+
+  **Not verified here.**
+  `setup` itself was not run, because it trusts a certificate and imports identities into the login keychain behind password prompts.
+  So Apple's `codesign` has not yet signed with the CA-issued identity on any machine. `setup`'s last step does exactly that with a scratch bundle and refuses to report success if the requirement does not hold.
+  That `tccd` records the explicit requirement for a new grant, and keeps honouring it after the leaf is reissued, follows from it storing the designated requirement and evaluating it with the same check measured above, but it was not observed, because that needs a real grant.
+  The Keychain prompts for saved SSH keys after the move were not observed either.

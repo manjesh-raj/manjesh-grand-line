@@ -34,22 +34,10 @@ fi
 VERSION="$SHORT_VERSION"
 BUILD_VERSION="${GIT_DESCRIBE#v}"
 ICON_SRC="../assets/icon.icns"
-SIGNING_IDENTITY="Grand Line Local Dev"
-# The rename to "Grand Line" renamed this identity too, and a captain who has
-# not yet created the new certificate would otherwise silently drop to an
-# unsigned build - which gets a fresh ad-hoc code identity on every rebuild and
-# loses Keychain ACL trust for the saved SSH keys, the exact failure the rename
-# is careful to avoid everywhere else. So the old name is still accepted when
-# only it exists. Creating the new cert and deleting the old one is the clean
-# end state; native/README.md's "Local signing setup" has the commands.
-LEGACY_SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
-if ! security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGNING_IDENTITY"; then
-  if security find-identity -v -p codesigning 2>/dev/null | grep -q "$LEGACY_SIGNING_IDENTITY"; then
-    echo "Note: signing with the pre-rename identity \"$LEGACY_SIGNING_IDENTITY\"."
-    echo "      See native/README.md's \"Local signing setup\" to create \"$SIGNING_IDENTITY\"."
-    SIGNING_IDENTITY="$LEGACY_SIGNING_IDENTITY"
-  fi
-fi
+# Which certificate signs the bundle, and with what designated requirement, is
+# decided in one place: Scripts/local-signing-identity.sh. It prefers the
+# CA-issued "Grand Line Code Signing" identity, whose grants survive the
+# certificate being reissued, and falls back to the older self-signed ones.
 
 # ---------------------------------------------------------------------------
 # F21 (App Intents / Shortcuts).
@@ -373,16 +361,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if security find-identity -v -p codesigning | grep -q "$SIGNING_IDENTITY"; then
-  echo "Signing with local identity \"$SIGNING_IDENTITY\"…"
-  codesign --force --sign "$SIGNING_IDENTITY" --identifier "$BUNDLE_ID" "$APP_DIR"
-else
-  echo "⚠️  No \"$SIGNING_IDENTITY\" codesigning identity found - building unsigned."
+SIGN_STATUS=0
+Scripts/local-signing-identity.sh sign "$APP_DIR" "$BUNDLE_ID" || SIGN_STATUS=$?
+if [ "$SIGN_STATUS" -eq 4 ]; then
+  echo "⚠️  No local codesigning identity found - building unsigned."
   echo "    Saved Keychain items (SSH keys/passphrases) may stop being readable"
   echo "    after a future rebuild, since an unsigned/ad-hoc binary gets a new"
-  echo "    code identity on every rebuild. See native/README.md's"
-  echo "    \"Local signing setup\" section to create this identity once per machine,"
-  echo "    or its troubleshooting note if the certificate exists but is invalid."
+  echo "    code identity on every rebuild. Run Scripts/local-signing-identity.sh"
+  echo "    setup once per machine, or see native/README.md's \"Local signing"
+  echo "    setup\" if the certificate exists but is invalid."
+elif [ "$SIGN_STATUS" -ne 0 ]; then
+  exit "$SIGN_STATUS"
 fi
 
 # Compared now and printed last, so the repair is the final thing on screen

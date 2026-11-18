@@ -92,6 +92,33 @@ class CheckSigningIdentityTests(unittest.TestCase):
         # The captain's own attempt was the toggle; the warning must rule it out.
         self.assertIn("does not fix it", result.stdout)
 
+    def test_a_requirement_the_new_build_still_satisfies_is_silent(self):
+        # What lets the CA-issued certificate be reissued quietly: the text
+        # differs, but tccd only asks whether the new code satisfies the old
+        # requirement, and it does.
+        previous = 'identifier "com.example.grandline.first"'
+        self.assertNotEqual(previous, self.requirement(self.first))
+        result = run("compare", previous, self.first)
+        self.assertEqual((result.returncode, result.stdout), (0, ""))
+
+    def test_moving_onto_a_local_ca_says_it_is_the_last_time(self):
+        # Ad hoc with an explicit requirement: codesign records the text as
+        # given, which is all `compare` reads of the new build's own side.
+        anchored = 'identifier "com.example.grandline.second" and certificate root = H"%s"' % ("ab" * 20)
+        subprocess.run(["codesign", "--force", "--sign", "-", "--identifier", "com.example.grandline.second",
+                        "-r", "=designated => " + anchored, self.second], check=True, capture_output=True)
+        self.assertEqual(self.requirement(self.second), anchored)
+
+        result = run("compare", self.requirement(self.first), self.second)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("should not be needed again", result.stdout)
+
+        # A CA replaced by another CA is the old failure, and gets no promise.
+        other_ca = anchored.replace("ab" * 20, "cd" * 20)
+        result = run("compare", other_ca, self.second)
+        self.assertEqual(result.returncode, 3)
+        self.assertNotIn("should not be needed again", result.stdout)
+
     def test_dropping_to_an_unsigned_build_is_a_change_too(self):
         unsigned = make_bundle(self.root, "Unsigned", "com.example.grandline.unsigned", sign=False)
         result = run("compare", self.requirement(self.first), unsigned)
