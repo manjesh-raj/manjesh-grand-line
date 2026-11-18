@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
-// The 2026-11-17 UI/UX proposals the captain approved (S01, S02, S04 to S18,
-// S20, S21, S23 to S27), checked where a check can be made without a window. Each case names its
+// The 2026-11-17 UI/UX proposals the captain approved (S01 to S18, S20 to
+// S27), checked where a check can be made without a window. Each case names its
 // proposal. The window-backed halves (geometry that needs a real layout pass
 // in a real window) live in the existing window suites that already measure
 // those pages.
@@ -42,6 +42,7 @@ enum UIUXProposalsSelfTest {
             ("S20 28pt icon targets", checkIconTargets),
             ("S21 page-tab chords", checkPageTabChords),
             ("S27 the inspector's crew panel", checkInspectorCrewPanel),
+            ("S22 an empty state follows the theme", checkEmptyStateFollowsTheTheme),
         ]
         for (name, body) in cases {
             var ok = true
@@ -784,6 +785,39 @@ enum UIUXProposalsSelfTest {
         let x = HelmContrast.components(a), y = HelmContrast.components(b)
         return abs(x.0 - y.0) <= tolerance && abs(x.1 - y.1) <= tolerance && abs(x.2 - y.2) <= tolerance
     }
+
+    // MARK: - S22
+
+    /// The inspector's "Nothing selected" kept the theme it was built under:
+    /// `HelmEmptyState` applied the theme once at `init`, and a host that
+    /// did not pass a change on (the inspector) left it there. Under Daylight
+    /// that was Dusk's near-white ink, the pale title. The component follows
+    /// the theme itself now, so a state built under one register and shown
+    /// under the other takes the new register's ink and muted ink with no
+    /// help from its host. The window-backed half, in the real inspector,
+    /// is `MainSplitShellSelfTest.checkTheInspectorEmptyStateFollowsTheTheme`.
+    private static func checkEmptyStateFollowsTheTheme(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        func same(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a else { return false }
+            let x = HelmContrast.components(a), y = HelmContrast.components(b)
+            return abs(x.0 - y.0) <= 0.02 && abs(x.1 - y.1) <= 0.02 && abs(x.2 - y.2) <= 0.02
+        }
+        check(!same(HelmTheme.nsColor(HelmTheme.daylight.chromeInkHex), HelmTheme.nsColor(HelmTheme.dusk.chromeInkHex)),
+              "S22: Daylight's and Dusk's ink are too close for this check to fail", &ok)
+        for (from, to) in [(HelmTheme.dusk, HelmTheme.daylight), (HelmTheme.daylight, HelmTheme.dusk)] {
+            ThemeManager.shared.setTheme(from)
+            let empty = HelmEmptyState(symbol: "sidebar.right", title: "Nothing selected",
+                                       body: "Pick something on this page to see it here.", size: .standard)
+            ThemeManager.shared.setTheme(to)
+            check(same(empty.debugTitleLabel.textColor, HelmTheme.nsColor(to.chromeInkHex)),
+                  "S22: an empty state built under \(from.id) kept its title colour under \(to.id)", &ok)
+            check(same(empty.debugBodyLabel.textColor, HelmTheme.mutedInk(to)),
+                  "S22: an empty state built under \(from.id) kept its body colour under \(to.id)", &ok)
+        }
+    }
+
 }
 
 #endif

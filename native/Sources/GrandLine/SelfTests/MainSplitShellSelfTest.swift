@@ -80,7 +80,8 @@ enum MainSplitShellSelfTest {
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
-                      checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
+                      checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
+                      checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkTheSidebarKeepsOneWidthOnEveryPage, checkToastsLandInTheColumn,
@@ -2198,6 +2199,102 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugPerformAccountMenuItem("Log Out\u{2026}"), "the account menu has no Log Out", &ok)
         check(asked == "Log out of Grand Line?" && loggedOut, "Log Out did not confirm and lock (asked: \(asked ?? "nothing"))", &ok)
     }
+
+
+    // MARK: S22 - the inspector's empty state follows the theme
+
+    /// S22 of the 2026-11-17 UI/UX proposals. The inspector's "Nothing
+    /// selected" read paler than its own body text in Daylight. Measured
+    /// before the fix: after a switch from Dusk to Daylight the title still
+    /// held Dusk's ink (E8E6DE) and the body Dusk's muted ink, because
+    /// `HelmEmptyState` painted the theme once at `init` and the inspector
+    /// never passed a change on. The label is not vibrant, so the system
+    /// glass was not the cause.
+    ///
+    /// Each register is reached by a switch from the other one, with the
+    /// empty state already built, which is the case that went stale. The live
+    /// label colours must be the theme's ink and muted ink, and the title's
+    /// rendered glyphs must carry the ink, compared in the bitmap's own
+    /// colour space (AGENTS.md's probe rule: convert the expected colour,
+    /// leave the sample alone).
+    private static func checkTheInspectorEmptyStateFollowsTheTheme(_ shell: MainSplitShellController,
+                                                                  _ window: NSWindow, _ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved); settle(shell) }
+        resize(window, width: 1512, shell)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        shell.setInspectorShown(true)
+        settle(shell)
+        defer { shell.setInspectorShown(false); shell.debugResetInspectorPreference(); settle(shell) }
+        shell.inspector.setContent(nil)
+        settle(shell)
+        let empty = shell.inspector.debugEmptyState
+        check(!empty.isHidden, "S22: the inspector's empty state is not showing", &ok)
+
+        func close(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a = a?.usingColorSpace(.sRGB), let b = b.usingColorSpace(.sRGB) else { return false }
+            return abs(a.redComponent - b.redComponent) <= 0.02 && abs(a.greenComponent - b.greenComponent) <= 0.02
+                && abs(a.blueComponent - b.blueComponent) <= 0.02
+        }
+        func describe(_ color: NSColor?) -> String {
+            guard let c = color?.usingColorSpace(.sRGB) else { return "nil" }
+            return String(format: "%.3f %.3f %.3f", c.redComponent, c.greenComponent, c.blueComponent)
+        }
+
+        // The fixture can tell the two registers apart: Daylight's ink and
+        // Dusk's are not within the tolerance of each other.
+        let daylightInk = HelmTheme.nsColor(HelmTheme.daylight.chromeInkHex)
+        let duskInk = HelmTheme.nsColor(HelmTheme.dusk.chromeInkHex)
+        check(!close(daylightInk, duskInk), "S22: Daylight's and Dusk's ink are too close for this check to fail", &ok)
+
+        for (from, to) in [(HelmTheme.dusk, HelmTheme.daylight), (HelmTheme.daylight, HelmTheme.dusk)] {
+            ThemeManager.shared.setTheme(from)
+            settle(shell)
+            ThemeManager.shared.setTheme(to)
+            settle(shell)
+            let ink = HelmTheme.nsColor(to.chromeInkHex)
+            let title = empty.debugTitleLabel
+            check(close(title.textColor, ink),
+                  "S22: after \(from.id) → \(to.id) the empty state's title is \(describe(title.textColor)), want the ink \(describe(ink))",
+                  &ok)
+            check(close(empty.debugBodyLabel.textColor, HelmTheme.mutedInk(to)),
+                  "S22: after \(from.id) → \(to.id) the empty state's body is \(describe(empty.debugBodyLabel.textColor)), want the muted ink",
+                  &ok)
+
+            // What is painted: the title's solid glyph pixels. The state draws
+            // no ground of its own, so only fully covered pixels carry the
+            // ink unblended.
+            guard let rep = title.bitmapImageRepForCachingDisplay(in: title.bounds),
+                  title.bounds.width > 0, title.bounds.height > 0 else {
+                fail("S22: the empty state's title has no bitmap to render", &ok)
+                continue
+            }
+            title.cacheDisplay(in: title.bounds, to: rep)
+            guard let expected = ink.usingColorSpace(rep.colorSpace) else {
+                fail("S22: the ink does not convert into the render's colour space", &ok)
+                continue
+            }
+            var nearest = CGFloat.greatestFiniteMagnitude
+            var solid = 0
+            for py in 0..<rep.pixelsHigh {
+                for px in 0..<rep.pixelsWide {
+                    guard let c = rep.colorAt(x: px, y: py), c.alphaComponent >= 0.98 else { continue }
+                    solid += 1
+                    let distance = max(abs(c.redComponent - expected.redComponent),
+                                       abs(c.greenComponent - expected.greenComponent),
+                                       abs(c.blueComponent - expected.blueComponent))
+                    nearest = min(nearest, distance)
+                }
+            }
+            check(solid > 0, "S22: the title rendered no solid glyph pixel after \(from.id) → \(to.id)", &ok)
+            check(nearest <= 0.03,
+                  "S22: after \(from.id) → \(to.id) no title pixel is the ink (nearest \(String(format: "%.3f", nearest)) away)",
+                  &ok)
+        }
+        if ok { print("  OK   S22: the inspector's empty state takes the theme's ink and muted ink after a switch") }
+    }
+
 }
 
 #endif

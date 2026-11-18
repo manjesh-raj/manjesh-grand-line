@@ -36,6 +36,10 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 5.0.1 - S22: an empty state follows the theme
+
+- `HelmEmptyState` 1.0.0 → 1.0.1 (patch): the state observes the theme itself instead of painting it once at `init`. The inspector never passed a theme change on, so after Dusk to Daylight its "Nothing selected" kept Dusk's ink (E8E6DE) and muted ink on Daylight's light column, which read as a pale title. The label is not vibrant (`allowsVibrancy` false, plain Aqua appearance), so the system glass was not the cause.
+
 ## 5.0.0 - Layer shadows at §2.5's blur
 
 - `HelmCard` 1.1.0 → 2.0.0 (major): `applyElevation` sets `CALayer.shadowRadius` to half the elevation's `NSShadow` blur, because `shadowRadius` is a standard deviation and an `NSShadow` (or CSS) blur is twice one. Every layer-backed elevation had rendered at twice §2.5's blur, and the floating bar's halo filled the window's top strip (`AppShellBodyWidthSelfTest`'s top-strip case on `nord-snow`). The `blurScale` parameter is removed: its one caller, the toast, used 0.5 to work around the same doubling and now renders the same pixels without it.
