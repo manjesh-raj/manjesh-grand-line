@@ -830,7 +830,9 @@ enum MainSplitShellSelfTest {
                   "opening the captain's log lit \(String(describing: selectedTabName(shell))) in \(shell.currentModule.title)", &ok)
         }
         if let hosts = shell.debugSlotController(.hosts) as? HostsController {
-            check(hosts.splitPage?.pageForcesCollapse == true && hosts.splitPage?.isSidebarCollapsed == true,
+            // C-4: the nav column goes; the split's pane holds the hero
+            // column instead (`HostsController+HeroColumn.swift`).
+            check(hosts.sidebar.isHidden && hosts.heroColumn?.isHidden == false,
                   "the Hosts page's own column is still out beside Connections' tabs", &ok)
         }
         if let kubernetes = shell.debugSlotController(.kubernetes) as? KubernetesController {

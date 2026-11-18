@@ -206,13 +206,25 @@ enum ConnectionsCardsSelfTest {
         // the card, and a tail cut read `...:2…`. It loses its middle instead,
         // so the port is what is still drawn. The fixture has to truncate for
         // this to mean anything.
-        let address = bastionCard.debugSubtitleLabel
-        bastionCard.layoutSubtreeIfNeeded()
-        check(address.frame.width > 0 && address.frame.width < address.attributedStringValue.size().width,
-              "fixture: at 1512 the bastion's address fits its card (\(address.frame.width)pt for "
-              + "\(address.attributedStringValue.size().width)pt), so the truncation check measures nothing", &ok)
-        check(address.lineBreakMode == .byTruncatingMiddle,
-              "R5-UI-06: a host card's address truncates at its \(address.lineBreakMode == .byTruncatingTail ? "tail, cutting the port" : "\(address.lineBreakMode.rawValue)")", &ok)
+        // C-1's two-wide 98pt card fits the demo bastion's address whole, so
+        // the truncation fixture is a host whose address cannot fit.
+        let longHost = Host(label: "long-address", address: "bastion-01.staging.eu-west-1.compute.example.test",
+                            port: 2222, username: "deploy-automation")
+        shell.workspace.hostStore.add(longHost)
+        settle(shell)
+        if let longCard = grid.debugCardView(key: longHost.id.uuidString) {
+            let address = longCard.debugSubtitleLabel
+            longCard.layoutSubtreeIfNeeded()
+            check(address.frame.width > 0 && address.frame.width < address.attributedStringValue.size().width,
+                  "fixture: at 1512 the long address fits its card (\(address.frame.width)pt for "
+                  + "\(address.attributedStringValue.size().width)pt), so the truncation check measures nothing", &ok)
+            check(address.lineBreakMode == .byTruncatingMiddle,
+                  "R5-UI-06: a host card's address truncates at its \(address.lineBreakMode == .byTruncatingTail ? "tail, cutting the port" : "\(address.lineBreakMode.rawValue)")", &ok)
+        } else {
+            fail("fixture: the long-address host has no card", &ok)
+        }
+        shell.workspace.hostStore.delete(id: longHost.id)
+        settle(shell)
         // Accessibility: one button per card that says what it is, with its
         // icon buttons reachable as its children.
         check(edgeCard.accessibilityRole() == .button, "H1: a card is not a button to VoiceOver", &ok)
@@ -305,10 +317,13 @@ enum ConnectionsCardsSelfTest {
             return
         }
         let rowKeys = placed.filter { abs($0.frame.minY - firstRow) < 0.5 }.map(\.key)
-        let rowGroups = Set(rowKeys.compactMap(groupOf))
-        check(grid.columnCount >= 3 && rowKeys.count == grid.columnCount,
+        // C-4: two to a row beside the hero column, so the first row is
+        // Firstmate and one host; the run still mixes groups within a row.
+        check(grid.columnCount >= 2 && rowKeys.count == grid.columnCount,
               "flat grid: the first row holds \(rowKeys.count) of \(grid.columnCount) columns", &ok)
-        check(rowGroups.count >= 2, "flat grid: the first row holds one group's hosts (\(rowGroups))", &ok)
+        let rows = Dictionary(grouping: placed, by: { ($0.frame.minY * 2).rounded() })
+        let mixedRow = rows.values.contains { Set($0.map(\.key).compactMap(groupOf)).count >= 2 }
+        check(mixedRow, "flat grid: no row holds hosts of two groups", &ok)
         let order = placed.map(\.key).dropFirst().compactMap { key in store.hosts.first { $0.id.uuidString == key }?.label }
         check(order == ["ci-runner-03", "grafana", "edge-proxy-01", "edge-proxy-02", "bastion-stg", "db-replica-eu", "lab-box"],
               "flat grid: the order is \(order)", &ok)
@@ -524,10 +539,13 @@ enum ConnectionsCardsSelfTest {
             // away to make room, so the column barely changes - either way
             // the count is the one the column's real width calls for.
             let open = grid.columnCount
-            check(open == HelmCardGrid.plan(width: grid.debugScroll.contentSize.width).columns,
+            check(open == grid.plan(width: grid.debugScroll.contentSize.width).columns,
                   "H7 at \(width): \(open) columns in a \(grid.debugScroll.contentSize.width)pt column", &ok)
+            // C-4: at 1512 the inspector takes the hero column's room, so the
+            // column goes and the two-wide cards keep their row.
             if width == 1512 {
-                check(open < closed, "H7 at 1512: the grid kept \(closed) columns with the inspector open", &ok)
+                check(closed == 2 && hosts.splitPage?.isSidebarCollapsed == true,
+                      "H7 at 1512: \(closed) columns, and the hero column stayed beside the inspector", &ok)
             }
         }
         resize(window, width: 1512, shell)
@@ -1125,6 +1143,13 @@ enum ConnectionsCardsSelfTest {
         let button = hosts.debugFindOrConnectButton
         check(hosts.debugSearchPlaceholder == "Find a host or ssh user@hostname",
               "H3: the field reads \"\(hosts.debugSearchPlaceholder)\"", &ok)
+        // C-4: beside the hero column its Quick connect is where a typed
+        // user@host goes, and the button steps aside; with the column put
+        // away it is back.
+        check(hosts.heroColumnShowing && button.isHidden, "C-4: the Connect button shows beside the hero column", &ok)
+        hosts.splitPage?.toggleSidebar(nil)
+        settle(shell)
+        defer { hosts.splitPage?.toggleSidebar(nil); settle(shell) }
         check(button.window != nil && !button.isHiddenOrHasHiddenAncestor, "H3: the Connect button is not on screen", &ok)
         let field = hosts.debugSearchField
         check(button.frame.minX >= field.frame.maxX && abs(button.frame.midY - field.frame.midY) < 2,

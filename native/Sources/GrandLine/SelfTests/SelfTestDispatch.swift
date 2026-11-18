@@ -1969,6 +1969,17 @@ enum SelfTestDispatch {
             exit(HeroCardsViewSelfTest.run() ? 0 : 1)
         }
 
+        // Health's and Connections' hero columns (H-4 and C-4, the page-
+        // redesign board's picks). The words need no window; the columns'
+        // layout in a real shell does. See `PageHeroColumnsSelfTest` and
+        // `PageHeroColumnsViewSelfTest`.
+        if ProcessInfo.processInfo.environment["FM_RUN_PAGE_HERO_COLUMNS_TESTS"] == "1" {
+            exit(PageHeroColumnsSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS"] == "1" {
+            exit(PageHeroColumnsViewSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
         // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {

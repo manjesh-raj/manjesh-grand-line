@@ -157,6 +157,11 @@ enum ReviewTwoA11yPerfSelfTest {
         ReviewTourLab.seedDemoHealth(shell.workspace.health)
         shell.workspace.navigator.show(.health)
         settle(shell)
+        // H-4: whatever width the window was left at, the hero column's width
+        // rule moves it beside or over the table a run-loop turn or more
+        // later, and the table's columns follow. Read them once it has.
+        pump(timeout: 5) { shell.workspace.health.debugHeroColumnIsArranged }
+        settle(shell)
         let registry = ServiceHealthRegistry.shared
         let table = shell.workspace.health.debugHealthCard.debugServicesTable
         let tableView = table.debugTable

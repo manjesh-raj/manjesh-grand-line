@@ -1147,3 +1147,52 @@ The guard checks that strip's frame rather than its ink, and says so.
 **Pre-existing, not fixed here.**
 `MainSplitShellSelfTest`'s Home arrangement checks ("4 of 5 cards are on Home": the Morning briefing card missing) failed twice in a row and then passed with no change, on this branch and on a build without it.
 The cause was not found in this task.
+
+## Hero columns: Health (H-4) and Connections (C-4), Helm 6.8.0
+
+Task `grand-line-health-connections-hero-pages`, 2026-11-18.
+The captain picked H-4 and C-4 on the page-redesign board (`data/grand-line-page-redesign-mockups/`): the page's summary as a 300pt gradient column beside its content.
+Health's column carries the verdict, the healthy ring and the four buckets, red while a service fails.
+Connections' column carries the session verdict, the online ring, the three recent hosts, Quick connect and the Keys, Snippets and Groups figures, beside C-1's 98pt host cards two to a row.
+
+What shipped in the kit is in `docs/design-system/helm-kit-versions.md` under 6.8.0: `HelmHeroColumn` and `HelmHeroRow` (new), `HelmHeroSurface.palette(accent:quietInk:)`, `HelmButton.heroInk`, `HelmSearchField.heroInk`, `HelmCardGrid`'s card options and action column, and `HelmSplitPage`'s width rule.
+The suites are `PageHeroColumnsSelfTest` (headless: the words, the palette sweep, the kit options) and `PageHeroColumnsViewSelfTest` (a real sidebar shell), and `FM_PAGE_HERO_RENDER_DIR` writes the renders.
+
+**Text on the gradient needed a deeper palette.**
+The hero palette deepens its stops only until white clears 4.5:1 on the lighter one, so anything that sits on a wash, or is drawn in less than full ink, falls below the floor.
+Measured on the plain palette, worst theme Rosé Pine's accent: an 18% white pill fill 3.24:1, a 26% hover 2.82:1, a 14% field well 3.48:1, and 80% white second lines 3.41:1 (Solarized Dark's red).
+Deepening the stops until white clears a 28% white wash was tried and dropped: the lighter stop has to reach about #444, which is no longer the accent.
+So the ghost pill and the field use a translucent shade of the ink's opposite (black under white ink), which can only add contrast, and the column's palette is deepened only until 80% ink clears the floor.
+Every theme's accent and red and every Home preset pass now, and the sweep asserts that the plain palette still fails, so the deeper rule is tested.
+
+**The column must never be what holds the window open.**
+With the pane's width required, opening the shell's inspector at 1512 grew the window to 1682pt: the page could not shrink below the column plus the filter row's floor, so the split never saw a narrow width to collapse at (gotcha (13)).
+The fix is that the column yields: its trailing pin sits at 490, the pane's minimum is 60, and the content's floor moves the divider rather than the window.
+Measured after: the inspector opening at 1512 leaves the window at 1512 and puts the column away.
+Removing the 490 pin alone does not fail a check today, because the column's labels compress far enough at this width; it is kept as the safeguard.
+
+**Two ways of reading "too narrow" from frames were measured wrong.**
+
+- Reading the pane's frame in the split's `viewDidLayout`: the pane is still at its squeezed width when the page has already widened, so a closing inspector read as a fresh squeeze (needed width 1316 at a 1247pt page).
+- Reading it in `splitViewDidResizeSubviews`: `NSSplitView`'s own proportional resize runs there before Auto Layout corrects it, and the same false squeeze appeared, with the stack trace inside `-[NSSplitView resizeSubviewsWithOldSize:]`.
+
+So the page tells the split its threshold: the column plus `HelmSplitPage.floorWidth(of:)` of the showing tab's top row.
+`fittingSize` alone overstated Connections' filter row by about 320pt, because it honours every constraint above 50, including the search field's 460pt preference at 251.
+`floorWidth` adds a temporary width-zero constraint at 501, so only what can hold the window open counts.
+
+**Health's column stays only while the table keeps every column.**
+A fixed 880pt threshold left a 639pt table at a 1277pt window, below the 780pt where Recent runs hides, and CI's `ReviewTwoA11yPerfSelfTest` found no runs cells.
+The board accepted a narrower table that truncates its descriptions sooner, not one that loses a column, so the threshold is now the column plus the table's full-column width (1153pt), and below it the verdict is the band.
+
+**H3's Connect button steps aside beside the column**, whose Quick connect takes a typed user@host; Return in the filter row's field still connects.
+It has to step aside before the column reopens, or the reopening column meets the row's wider floor and the window grows by the button's width.
+`HelmSplitPage.onNarrowChanged` fires before the divider moves for exactly that.
+
+**What changed in existing suites, and why.**
+
+- `SidebarPageFixesSelfTest` reads the column's bucket figures, where it read the summary cards that H-4 removes.
+- `UIUXProposalsSelfTest`'s S14 source guard no longer lists `HealthCardView.swift` among the pages with a boxed summary row.
+- `MainSplitShellSelfTest` checks that the nav column is hidden and the hero column showing, where it checked the pane collapsed.
+- `ConnectionsCardsSelfTest`: H3 puts the column away before checking the Connect button; the flat grid allows two columns and checks that some row mixes groups; the R5-UI-06 truncation fixture is a host with a long address, because the two-wide card fits the demo bastion's whole; and H7 at 1512 checks that the column gave way to the inspector.
+
+**Not done.** The pages have no colour choice of their own; both columns are the theme's accent (Health's red while failing), the Home hero cards' default.

@@ -1001,7 +1001,14 @@ enum E2ETestingPolicySelfTest {
     /// decided by the Home canvas in a window. Everything that is model -
     /// the palette over every colour and theme, the five states' words, the
     /// colour store, the menu's shape - is in the headless `HeroCardsSelfTest`.
-    private static let windowBackedSuiteCeiling = 132
+    ///
+    /// 133 for `PageHeroColumnsViewSelfTest`: where Health's and Connections'
+    /// hero columns sit beside their table and cards, the band a narrow page
+    /// turns the column into, and the column giving way when the shell's
+    /// inspector opens without growing the window, are real layout decided
+    /// by the sidebar shell in a window. The words, the palette sweep and the
+    /// kit options are in the headless `PageHeroColumnsSelfTest`.
+    private static let windowBackedSuiteCeiling = 133
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

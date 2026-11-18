@@ -23,14 +23,22 @@
 // already keeps Schedules/Vault/Docs/Tools out of the daily-use `navStack`
 // group.
 //
-// In the sidebar layout the page is the prototype's (stage 6): summary cards
-// over one table of services, Copy diagnostics at the toolbar's far right and
-// Refresh beside the toolbar's other actions - see `HealthCardView`'s header.
-// The floating bar's page is unchanged.
+// In the sidebar layout the page is the prototype's (stage 6): one table of
+// services, Copy diagnostics at the toolbar's far right and Refresh beside the
+// toolbar's other actions - see `HealthCardView`'s header. The floating bar's
+// page is unchanged.
+//
+// H-4 (the page-redesign board, the captain's pick) made that page a
+// `HelmSplitPage`: the hero column - the verdict, the ring and the four
+// buckets, red while something fails - is the split's sidebar, and the table
+// scrolls beside it, starting at the top of the page. On a page too narrow
+// for both (`heroCollapseWidth`), or when the captain hides the column with
+// Toggle Sidebar, the same column moves across the top of the table as a band,
+// so the verdict never leaves the screen.
 
 import AppKit
 
-final class HealthController: NSViewController, DaylightDrillActions {
+final class HealthController: NSViewController, DaylightDrillActions, HelmSplitPageHosting {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
@@ -80,6 +88,8 @@ final class HealthController: NSViewController, DaylightDrillActions {
 
     /// Set once, by `adoptSidebarLayout()`.
     private(set) var drawsSidebarLayout = false
+    /// H-4: the column beside the table. Sidebar layout only.
+    private(set) var splitPage: HelmSplitPage?
     private var stack: NSStackView?
     /// S03: the page frame.
     private var scaffold: HelmPageScaffold?
@@ -184,6 +194,18 @@ final class HealthController: NSViewController, DaylightDrillActions {
 
     #if FM_SELFTESTS
     var debugHealthCard: HealthCardView { healthCard }
+    /// The width rule has finished: the pane is open exactly when the split
+    /// wants it, and the column is drawn as a column there or a band over
+    /// the table otherwise. Both moves wait a run-loop turn
+    /// (`HelmSplitPage.evaluateWidth`), so a check reading the table's
+    /// columns waits for this first.
+    var debugHeroColumnIsArranged: Bool {
+        guard let split = splitPage else { return true }
+        let open = !split.isSidebarCollapsed
+        return open == split.sidebarIsWanted
+            && healthCard.heroColumn.arrangement == (open ? .column : .band)
+    }
+    var debugScaffold: HelmPageScaffold? { scaffold }
     func debugRefresh() { refreshTapped() }
     var debugRefreshButton: HelmButton { refreshButton }
     #endif
@@ -213,9 +235,82 @@ extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidi
         let table = healthCard.adoptTableLayout()
         stack?.addArrangedSubview(table)
         if let stack { table.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        adoptHeroColumn()
         // The shell reads the page's actions right after this, on the same
         // first show, so the toolbar picks up Refresh and the primary action.
         healthCard.refresh(theme: theme)
+    }
+
+    /// Below this page width the column gives way to the band: the column,
+    /// the gutters either side of the table, and the table at the width that
+    /// still shows every column. The board accepted a narrower table that
+    /// truncates its descriptions sooner, not one that loses Recent runs -
+    /// measured, a fixed 880 left a 639pt table with no runs column at a
+    /// 1277pt window (`ReviewTwoA11yPerfSelfTest`).
+    static let heroCollapseWidth: CGFloat = HelmMetrics.pageGutter + HelmHeroColumn.width
+        + HelmSplitPage.dividerThickness + 2 * HelmMetrics.pageGutter + HealthCardView.allColumnsWidth
+
+    /// H-4: the page becomes a split, with the hero column as its sidebar
+    /// and the scrolling table as its content.
+    private func adoptHeroColumn() {
+        guard let scaffold else { return }
+        let paneWidth = HelmMetrics.pageGutter + HelmHeroColumn.width
+        // A column of one width that yields to the table's floor, so the
+        // window never grows for it (`HelmSplitPage` 1.2.0).
+        let split = HelmSplitPage(sidebarWidth: paneWidth, minimum: HelmSplitPage.yieldingMinimumThickness,
+                                  maximum: paneWidth, surface: .pageGround)
+        addChild(split)
+        view.addSubview(split.view, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            split.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            split.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            split.view.topAnchor.constraint(equalTo: view.topAnchor),
+            split.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        // The scrolling table moves into the content pane, so the column
+        // stays put while the list scrolls.
+        scaffold.removeFromSuperview()
+        HelmSplitPage.pin(scaffold, in: split.contentPane, insets: NSEdgeInsets())
+        placeHeroColumn(asBand: false, in: split)
+        split.collapsesBelowWidth = Self.heroCollapseWidth
+        split.preferredSidebarWidth = paneWidth
+        // The width rule moves the column in the same turn as it collapses
+        // the pane, so the table has its full width on the very next layout:
+        // a second turn left a slow CI runner reading a table still 639pt
+        // wide, with Recent runs hidden (`ReviewTwoA11yPerfSelfTest`).
+        split.onNarrowChanged = { [weak self, weak split] _ in
+            guard let self, let split else { return }
+            self.placeHeroColumn(asBand: !split.sidebarIsWanted, in: split)
+        }
+        split.onSidebarCollapseChanged = { [weak self, weak split] collapsed in
+            // The collapse is reported from inside the split's own resize;
+            // moving a view between panes waits a turn.
+            DispatchQueue.main.async {
+                guard let self, let split else { return }
+                self.placeHeroColumn(asBand: collapsed, in: split)
+            }
+        }
+        splitPage = split
+    }
+
+    /// The column in the split's sidebar pane, or across the top of the
+    /// table as a band while the pane is put away.
+    private func placeHeroColumn(asBand: Bool, in split: HelmSplitPage) {
+        guard let scaffold else { return }
+        let column = healthCard.heroColumn
+        let alreadyThere = asBand ? column.superview === scaffold : column.superview === split.sidebarPane
+        guard !alreadyThere else { return }
+        if column.superview === scaffold { scaffold.setTopSlot(nil) }
+        column.removeFromSuperview()
+        column.setArrangement(asBand ? .band : .column)
+        if asBand {
+            scaffold.setTopSlot(column)
+        } else {
+            HelmSplitPage.pin(column, in: split.sidebarPane,
+                              insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: HelmMetrics.pageGutter,
+                                                   bottom: HelmMetrics.pageGutter, right: 0),
+                              yieldsWidth: true)
+        }
     }
 
     /// Copy diagnostics, at the toolbar's far right.

@@ -35,6 +35,14 @@
 // layouts cannot disagree. The prototype's duration sparkline and app uptime
 // are not drawn: the registry records neither, and a chart of numbers nobody
 // measured would be the GL-14 lie this page exists to avoid.
+//
+// **H-4 (the page-redesign board) moved the summary into a hero column.** The
+// four summary cards over the table are gone. The verdict, the healthy ring,
+// the four buckets and the pills that act on a failure stack in a
+// `HelmHeroColumn` beside the table, red while something fails
+// (`HealthHeroWords` has the rules), so the table starts at the top of the
+// page and the verdict stays in view while the list scrolls. The column is
+// rebuilt by the same rebuild as the table, from the same snapshot.
 
 import AppKit
 
@@ -73,17 +81,18 @@ final class HealthCardView: NSObject {
     /// Set once, by `adoptTableLayout()`. Never set in the floating bar.
     private(set) var drawsTable = false
     private lazy var tableRoot = NSStackView()
-    // R5-UI-04: the bucket's own word, as everywhere else ("Warnings" here
-    // was a fourth name for a service with a recent failure).
-    /// S14: the summary row is a `.boxed` `HelmKPIStrip`.
-    private lazy var metricsStrip = HelmKPIStrip(density: .boxed)
+    /// H-4: the verdict, the ring and the buckets, beside the table. The page
+    /// puts it in its split's column, or across the top of a narrow page.
+    private(set) lazy var heroColumn = HelmHeroColumn()
+    /// The pills' runs, by tag, for the column's foot.
+    private var heroRetryRuns: [() -> Void] = []
     private lazy var crashHost = NSStackView()
     private lazy var servicesTable: HelmDataTable = {
         let table = HelmDataTable(columns: [
             .init(id: "service", title: "Service", width: 320, minWidth: 220, flexible: true),
             .init(id: "status", title: "Status", width: 150),
             .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600),
-            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: 780),
+            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: HealthCardView.allColumnsWidth),
         ], actionsWidth: 110)
         table.sizesToFitRows = true
         // The prototype shows Retry on the failing row at rest.
@@ -91,6 +100,11 @@ final class HealthCardView: NSObject {
         table.accessibilityName = "Background services"
         return table
     }()
+
+    /// The narrowest the services table shows every column at: below it
+    /// Recent runs hides. The page keeps its hero column beside the table
+    /// only while the table has this much (`HealthController.heroCollapseWidth`).
+    static let allColumnsWidth: CGFloat = 780
 
     /// Build the sidebar layout's rendering and hand it to the page, which
     /// puts it where the card was. The card is not drawn in that layout.
@@ -103,8 +117,8 @@ final class HealthCardView: NSObject {
         tableRoot.translatesAutoresizingMaskIntoConstraints = false
         crashHost.orientation = .vertical
         crashHost.translatesAutoresizingMaskIntoConstraints = false
-        let metrics = metricsStrip
-        for view in [metrics, crashHost, servicesTable.card] as [NSView] {
+        heroColumn.setAccessibilityLabel("Background services summary")
+        for view in [crashHost, servicesTable.card] as [NSView] {
             tableRoot.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: tableRoot.widthAnchor).isActive = true
         }
@@ -113,23 +127,11 @@ final class HealthCardView: NSObject {
         return tableRoot
     }
 
-    /// The summary cards and the table, from the registry's current state.
+    /// The hero column and the table, from the registry's current state.
     private func rebuildTable() {
-        // One snapshot for the figures and the rows (R5-BUG-02).
+        // One snapshot for the column and the rows (R5-BUG-02).
         let counts = ServiceHealthRegistry.shared.summary()
-        let known = counts.total > 0
-        // Before anything has reported, every figure is unknown, not zero.
-        let reason = "No background service has reported yet."
-        typealias Bucket = ServiceHealthSummary.Bucket
-        metricsStrip.configure([
-            .figure(known ? "\(counts.healthy) / \(counts.total)" : nil, caption: Bucket.healthy.label,
-                    unknownReason: reason),
-            .figure(known ? "\(counts.degraded)" : nil, caption: Bucket.degraded.label, tint: .warn,
-                    signals: counts.degraded > 0, unknownReason: reason),
-            .figure(known ? "\(counts.failing)" : nil, caption: Bucket.failing.label, tint: .critical,
-                    signals: counts.failing > 0, unknownReason: reason),
-            .figure(known ? "\(counts.notRun)" : nil, caption: Bucket.notRun.label, unknownReason: reason),
-        ], theme: theme)
+        renderHeroColumn(counts)
 
         for view in crashHost.arrangedSubviews {
             crashHost.removeArrangedSubview(view)
@@ -150,6 +152,100 @@ final class HealthCardView: NSObject {
         }
         servicesTable.applyTheme(theme)
         servicesTable.setRows(rows)
+    }
+
+    // MARK: The hero column (H-4)
+
+    /// The words for `counts`, as the column draws them.
+    func heroWords(_ counts: ServiceHealthSummary) -> HealthHeroWords {
+        HealthHeroWords.make(counts, canRetry: { [retryActions] in retryActions[$0] != nil },
+                             relative: Self.relative)
+    }
+
+    private func renderHeroColumn(_ counts: ServiceHealthSummary) {
+        let words = heroWords(counts)
+        let ring = words.ring.map { ring in
+            HelmHeroColumn.Ring(fraction: ring.total > 0 ? Double(ring.healthy) / Double(ring.total) : 0,
+                                label: "\(ring.healthy)/\(ring.total)", caption: words.ringCaption,
+                                spoken: "\(ring.healthy) of \(ring.total) services healthy", state: words.ringState)
+        }
+        let header = HelmHeroColumn.Header(symbol: "waveform.path.ecg", kicker: "Background services",
+                                           headline: words.headline, body: words.body, ring: ring)
+        let rows = words.buckets.map { row -> HelmHeroRow in
+            let figure = row.count.map(String.init) ?? "\u{2014}"
+            return HelmHeroRow(leading: .figure(figure, quiet: (row.count ?? 0) == 0),
+                               title: row.bucket.label, subtitle: row.detail)
+        }
+        var foot: [NSView] = []
+        heroRetryRuns = []
+        for service in words.retryable.prefix(2) {
+            guard let run = retryActions[service] else { continue }
+            let button = HelmButton(title: words.retryable.count > 1 ? "Retry \(Self.shortName(service))" : "Retry",
+                                    variant: .secondary, size: .small, symbol: "arrow.clockwise",
+                                    target: self, action: #selector(heroRetryTapped(_:)))
+            button.tag = heroRetryRuns.count
+            button.toolTip = "Run \(service.title) again"
+            heroRetryRuns.append(run)
+            foot.append(button)
+        }
+        if words.offersDiagnostics {
+            let button = HelmButton(title: "Diagnostics", variant: .secondary, size: .small, symbol: "doc.on.doc",
+                                    target: self, action: #selector(copyDiagnostics))
+            button.toolTip = "Copy diagnostics: every service's state, failed saves and the last hour of activity"
+            button.setAccessibilityLabel("Copy diagnostics")
+            foot.append(button)
+        }
+        let footRow = foot.isEmpty ? [] : [Self.pillRow(foot)]
+        let tone: HelmModuleCard.HeroTone
+        switch words.tone {
+        case .accent:
+            tone = HelmModuleCard.HeroTone(colour: .themeAccent)
+        case .unknown:
+            tone = HelmModuleCard.HeroTone(colour: .themeAccent, isDimmed: true)
+        case .failing:
+            let red = HelmContrast.components(HelmTheme.nsColor(HelmTint.critical.hex(in: theme)))
+            tone = HelmModuleCard.HeroTone(colour: .fixed(red: red.0, green: red.1, blue: red.2))
+        }
+        heroColumn.configure(header: header,
+                             sections: [.init(title: "Buckets", trailing: nil, views: rows)],
+                             foot: footRow, tone: tone)
+    }
+
+    /// A service's name short enough for a pill: its title's first word,
+    /// when two pills have to say which is which.
+    private static func shortName(_ service: HealthService) -> String {
+        service.title.split(separator: " ").first.map(String.init) ?? service.title
+    }
+
+    /// The foot's pills, two to a line: three side by side are wider than
+    /// the 300pt column, which would then run past its pane.
+    private static func pillRow(_ views: [NSView]) -> NSView {
+        var lines: [NSView] = []
+        var index = 0
+        while index < views.count {
+            let line = NSStackView(views: Array(views[index..<min(index + 2, views.count)]))
+            line.orientation = .horizontal
+            line.spacing = HelmMetrics.s2
+            line.alignment = .centerY
+            line.translatesAutoresizingMaskIntoConstraints = false
+            lines.append(line)
+            index += 2
+        }
+        for view in views {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let stack = NSStackView(views: lines)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        return stack
+    }
+
+    @objc private func heroRetryTapped(_ sender: NSButton) {
+        guard sender.tag < heroRetryRuns.count else { return }
+        heroRetryRuns[sender.tag]()
     }
 
     /// One service: what it does (or its last error), its verdict, when it
@@ -254,6 +350,7 @@ final class HealthCardView: NSObject {
     func refresh(theme: HelmTheme) {
         self.theme = theme
         card.applyTheme(theme)
+        if drawsTable { heroColumn.applyTheme(theme) }
         pendingWhileHidden = false
         lastRebuiltAt = Date()
         rebuild()
@@ -819,7 +916,8 @@ final class HealthCardView: NSObject {
     /// UI-56: the KPI line's figures, as rendered - empty while it is not
     /// in the card.
     var debugSummaryValues: [String] { summaryStrip.superview == nil ? [] : summaryStrip.debugValues }
-    var debugMetricCards: [HelmKPIStrip.BoxedCell] { metricsStrip.debugCells }
+    /// H-4: the column's bucket figures, in the board's order.
+    var debugHeroBucketFigures: [String] { heroColumn.debugRows.compactMap(\.debugFigure) }
     var debugServicesTable: HelmDataTable { servicesTable }
     /// Rebuild now, whether or not the card is on screen.
     func debugRebuild() { rebuild() }

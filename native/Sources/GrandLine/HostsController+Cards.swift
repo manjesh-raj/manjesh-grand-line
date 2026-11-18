@@ -240,7 +240,8 @@ extension HostsController {
         // it would be the header again.
         func hostCard(_ host: Host) -> HelmCardGrid.Card { self.hostCard(host, showsGroup: !grouped) }
         var sections: [HelmCardGrid.Section] = []
-        let recent = filtering ? [] : Self.recentHosts(hostStore.hosts)
+        // C-4: while the hero column shows, Recent is its job.
+        let recent = filtering || heroColumnShowing ? [] : Self.recentHosts(hostStore.hosts)
         if !recent.isEmpty {
             var section = HelmCardGrid.Section(title: "Recent", cards: recent.map(hostCard))
             section.singleRow = true

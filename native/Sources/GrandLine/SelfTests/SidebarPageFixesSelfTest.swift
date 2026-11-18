@@ -292,9 +292,10 @@ enum SidebarPageFixesSelfTest {
         check(shell.toolbar.debugPageActions.contains { $0 === health.debugRefreshButton }, "Refresh is not in the toolbar", &ok)
 
         let counts = ServiceHealthRegistry.shared.summary()
-        let values = card.debugMetricCards.map(\.debugValue)
-        check(values == ["\(counts.healthy) / \(counts.total)", "\(counts.degraded)", "\(counts.failing)", "\(counts.notRun)"],
-              "the summary cards read \(values) against \(counts)", &ok)
+        // H-4: the summary is the hero column's four buckets now.
+        let values = card.debugHeroBucketFigures
+        check(values == ["\(counts.healthy)", "\(counts.degraded)", "\(counts.failing)", "\(counts.notRun)"],
+              "the hero column's buckets read \(values) against \(counts)", &ok)
         check(counts.degraded >= 1 && counts.failing >= 1 && counts.healthy >= 1,
               "the seeded verdicts did not land - the checks below would pass vacuously", &ok)
         let table = card.debugServicesTable

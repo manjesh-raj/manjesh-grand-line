@@ -380,7 +380,9 @@ enum UIUXProposalsSelfTest {
         check(uses("let tile = HelmStatTile(symbol: \"x\")") == 1, "S14: the retired-component guard can fail", &ok)
         let offenders = names.filter { uses(source($0)) > 0 }
         check(offenders.isEmpty, "S14: no app source uses HelmStatTile or HelmMetricCard (\(offenders))", &ok)
-        for page in ["FleetController.swift", "ReviewController.swift", "SetupSummary.swift", "HealthCardView.swift",
+        // Health left this list with H-4 of the page-redesign board: its
+        // summary is the hero column's four buckets (`HealthHeroWords`).
+        for page in ["FleetController.swift", "ReviewController.swift", "SetupSummary.swift",
                      "LogAnalyzerController.swift", "ShiftController.swift"] {
             check(source(page).contains("HelmKPIStrip(density: .boxed)"), "S14: \(page) draws its summary row boxed", &ok)
         }
