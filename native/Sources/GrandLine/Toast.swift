@@ -170,7 +170,7 @@ enum Toast {
                                   daylightRadius: HelmMetrics.capsuleRadius(forHeight: pill.bounds.height))
         pill.layer?.masksToBounds = false
         if let layer = pill.layer {
-            HelmCard.applyElevation(.raised, to: layer, theme: theme, blurScale: 0.5)
+            HelmCard.applyElevation(.raised, to: layer, theme: theme)
         }
 
         // A new *undo* pill still supersedes whatever undo was on screen -

@@ -1072,3 +1072,38 @@ Tests stub the ask; nothing reaches `claude` or the network.
 The full local suite (targeted suites per change, as the captain prefers; CI runs everything).
 Hover and press states, motion (the loaders' cross-fade, the shimmer), the popover's real presentation, and a real crew reply in the inspector.
 Anything inside the web islands themselves.
+
+## Layer shadows at §2.5's blur, not twice it (`fm/grand-line-nord-snow-selftest-fix`)
+
+`AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` failed locally on `nord-snow` from PR #494 (`f32e5570`) on.
+CI stayed green throughout.
+Bisected with clean `git archive` builds, because a commit that old no longer builds in place on the Swift Build engine (`#572`'s `.metal` exclude has to be added to the export).
+`dcb3ed72` passes and `f32e5570` fails.
+
+The top strip was not unpainted.
+It was the floating bar's shadow.
+UI-37 in #494 correctly stopped the bar squaring its shadow alpha, so `nord-snow`'s legacy recipe went from an effective 0.058 to 0.24.
+That exposed an older fault: `HelmCard.applyElevation` copied `NSShadow.shadowBlurRadius` straight into `CALayer.shadowRadius`.
+Those are different units.
+An `NSShadow` blur means what a CSS blur means (a Gaussian whose standard deviation is half the radius), and `shadowRadius` is the standard deviation itself.
+Measured on one 200pt square in a standalone probe: `shadowRadius` 8 and an `NSShadow` blur of 16 drawn with `set()` rendered identical pixels (sigma about 8), and `shadowRadius` 16 measured sigma about 15.5.
+In the real suite the bar's halo fitted sigma 15 for `shadowRadius` 16.
+
+So every layer-backed elevation rendered at twice §2.5's blur (`0 6px 15px` and `0 14px 28px`).
+That also made it twice what the same `NSShadow` draws for `ConsoleCardChrome` and the Kanban's drag card.
+The bar sits 14pt below the window's top edge, and the doubled halo filled that whole strip.
+`applyElevation` now halves the blur.
+Afterwards the top row samples as the exact ground across the full width in all four palettes the case covers.
+
+The toast's `blurScale: 0.5` was a local workaround for the same doubling ("the card blur would read as a smudge").
+At 0.5 it already rendered the raised spec exactly, so it now calls `applyElevation` plainly and its pixels do not change.
+The parameter had no other caller and is gone.
+`FM_RUN_CONTRAST_TESTS` asserts the conversion on a bare layer, headless.
+That matters because CI's windowed lane never caught this regression.
+
+**Not done here.**
+`WhiteboardController.islandTokens` halves the `NSShadow` blur when writing CSS, on the stated belief that an `NSShadow` blur is twice a CSS one.
+The probe says they are the same unit, so Excalidraw's islands get half §2.5's blur.
+That is a web-island change with its own verification (`WKWebView.takeSnapshot`), and is left for a follow-up.
+Every Daylight card's shadow is now tighter than what the captain has seen since #494.
+That is the spec's own value, but it is a visible change and worth a look.
