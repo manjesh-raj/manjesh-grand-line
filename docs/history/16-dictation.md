@@ -80,3 +80,55 @@
   What the captain will see on the next launch: the first dictation against a closed gate raises the system post-event-access prompt, and answering Allow makes the dictation after it paste on its own.
   One adjacent gap deliberately left alone, because it is the hotkey rather than the paste: `DictationHotkey` has no `reassertIfTrustChanged()` the way `ShiftGlobalHotkey` does (`AGENTS.md` gotcha (21)), so its *global* monitor stays armed from the trust the process held at registration and a grant that arrives mid-session does not reach it until the next launch.
   Nothing regresses - dictating from another app already required that grant - but it is the next thing to fix if the captain reports the hotkey dead right after granting.
+
+- **`fm/grand-line-dictation-autopaste-denied` is the third round of the same symptom, and the first to find the cause on the machine rather than in the code: dictation copied instead of pasting because the Accessibility grant macOS held was pinned to a signing certificate the app is no longer signed with.**
+  The captain had switched the Accessibility row off and on, and System Settings showed Grand Line enabled.
+
+  **Reproduced from the captain's own running instance**, again through the app's dictation log category.
+  Every dictation printed "paste gate closed on the first read", then "requested post-event access from macOS - it answered false", then "paste skipped".
+  The decisive evidence was in `tccd`'s own log (`/usr/bin/log show --predicate 'process == "tccd"'`, readable without any grant).
+  Every Accessibility check for `com.manjesh.grandline.native` logged "Failed to match existing code requirement" with two requirements, the stored one and the running one:
+
+      identifier "com.manjesh.grandline.native" and certificate leaf = H"b5fff70dd171844e0be80b5bf9b7263e99338f9c"
+      identifier "com.manjesh.grandline.native" and certificate leaf = H"4d4f5ad85c2fbe6708e7f13f628dce340748a102"
+
+  `b5ff...` is the certificate the previous round recorded in this file.
+  `4d4f...` is the "Grand Line Local Dev" certificate in the keychain today, created on 2026-11-15 with #577's corrected recipe.
+  Screen Recording logged the same mismatch.
+  Note the zsh trap that cost a step: zsh has a `log` builtin, so a bare `log show` prints "too many arguments". Call `/usr/bin/log`.
+
+  **Trigger, masking condition and symptom, kept apart.**
+  The trigger was recreating the signing certificate.
+  A build signed with the local identity has a designated requirement that pins the certificate's leaf hash, so ordinary rebuilds keep every grant, and a new certificate breaks all of them at once.
+  Nothing in the build said so.
+  The masking condition was that every visible signal still looked granted.
+  System Settings lists the row by bundle id and shows it enabled.
+  Switching it off and on is recorded by `tccd` as `TCCAccessSetForBundleIdWithOptions`, a `Modify` of the existing row, and the app's check two seconds later still compared against `b5ff...`.
+  The previous round's in-app recovery could not help either: with a row present, `CGRequestPostEventAccess()` answered `false` immediately, showed nothing and made no `tccd` request.
+  The symptom was the "Copied, not pasted" status and the "Copied - press ⌘V to paste" HUD.
+
+  **A second masking condition, seen in the same log.**
+  After a rebuild replaced `dist/Grand Line.app` under a running copy, `tccd` logged "Failed to copy signing info ... -67034" for that process, so its checks failed regardless of the row until it was relaunched.
+
+  **Ruled out**: the wrong API (the previous round's two-read gate is right, both reads were genuinely false), the wrong process (`tccd` attributed every check to the dist bundle's own pid), and a stale in-process cache (`tccd` itself denied, per request).
+
+  **The fix.**
+  No code inside the app can rewrite a `tccd` record, so the fix is in the build and in what the app says.
+  `Scripts/check-signing-identity.sh` reads the designated requirement of the copy being replaced (the `/Applications` one first, which is what `tccd` resolves the bundle id to), compares it with the new build's, and when they differ prints both and the one-time repair.
+  `build_native_app.sh` prints that block last.
+  The script reads the `# designated =>` form too, because an ad-hoc signature only has the implicit requirement and `tccd` pins grants to it the same way.
+  `.copiedOnly`'s detail copy now says that switching the row off and on keeps the old grant, and names the repair that works.
+  A closed paste gate also logs the running designated requirement and whether this process's code still matches its bundle on disk, so the app's log and `tccd`'s can be compared line by line.
+  `AGENTS.md` gotcha (21) said `CGRequestPostEventAccess()` re-registers the running signature with `tccd`, which this round measured to be false with a row present, so that sentence was corrected.
+
+  **Verified.**
+  `Scripts/test_check_signing_identity.py` signs throwaway bundles ad hoc and covers the first build, the same identity, a changed identity and a drop to unsigned.
+  Making `compare` always silent fails the two "changed" cases by name.
+  `DictationEngineSelfTest.aDeniedPasteLogsTheSameRequirementTheBuildCheckReads` compares the app's own reading with the script's for the running binary, and reverting the script's `# designated` handling fails it with an empty reading.
+  `copiedOnlyCopyRulesOutTheToggle` fails against the previous copy.
+  The script was also run against the real `/Applications/Grand Line.app` with the stale `b5ff...` requirement and printed the repair.
+
+  **Not verified here, and the captain's own to do once.**
+  With Grand Line quit, run `tccutil reset All com.manjesh.grandline.native` (or remove the Grand Line row under Accessibility with the minus button and add it back with plus), then open Grand Line and allow each permission again.
+  This task did not reset the captain's grants itself, and `tccutil`'s service names could not be checked against a throwaway bundle, which is why the script prints `All`.
+  A real ⌘V landing in another app after that repair is still the captain's check.

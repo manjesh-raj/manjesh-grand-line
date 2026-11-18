@@ -280,6 +280,20 @@ If you already created a second, good certificate next to the bad one, delete
 the bad one by the hash `security find-identity -p codesigning` prints for it
 instead: `security delete-identity -Z <hash>`.
 
+**A new certificate is a new app identity to macOS.** Every privacy grant
+(Accessibility, which dictation's paste needs, Screen Recording, Input
+Monitoring) and every Keychain ACL is pinned to the certificate the app was
+signed with when it was granted. After you replace the certificate, System
+Settings still shows Grand Line switched on, but macOS denies it, and switching
+it off and on does not help. The next `build_native_app.sh` notices the change
+and prints the one-time repair, which is to quit Grand Line and run:
+
+```bash
+tccutil reset All com.manjesh.grandline.native
+```
+
+Then open Grand Line and allow each permission again.
+
 ---
 
 ## What the app is, structurally
