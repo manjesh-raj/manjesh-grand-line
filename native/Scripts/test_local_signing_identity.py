@@ -119,7 +119,14 @@ class CertificateRecipeTests(Fixture):
         self.assertIn("CN=" + CA_NAME, name(self.leaf, "issuer"))
         result = subprocess.run(["openssl", "verify", "-CAfile", self.ca, self.leaf],
                                 capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Everything needed to diagnose a failure on a runner whose OpenSSL is
+        # not this machine's, in the failure itself.
+        self.assertEqual(result.returncode, 0, "\n".join([
+            result.stdout + result.stderr,
+            openssl("version"),
+            x509(self.ca, "-text"),
+            x509(self.leaf, "-text"),
+        ]))
 
     def test_the_leaf_carries_what_macos_needs_for_code_signing(self):
         text = x509(self.leaf, "-text")

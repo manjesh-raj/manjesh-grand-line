@@ -158,32 +158,68 @@ openssl_has_pkcs12_legacy() {
   openssl pkcs12 -help 2>&1 | grep -q -- '-legacy'
 }
 
+# Run an openssl command and show its stderr only when it fails, because a
+# successful key generation prints a screen of progress characters.
+quiet_openssl() {
+  local log status=0
+  log="$(mktemp)"
+  openssl "$@" 2>"$log" || status=$?
+  if [ "$status" -ne 0 ]; then
+    cat "$log" >&2
+  fi
+  rm -f "$log"
+  return "$status"
+}
+
+# The whole OpenSSL configuration the recipe uses. Written out rather than
+# left to the host's openssl.cnf, which `openssl req` otherwise merges in: its
+# default extension sections differ between OpenSSL 1.1, 3.x, 4.x and LibreSSL,
+# and between machines. With this file, every OpenSSL makes the same two
+# certificates. The subject is in the file too, because with `prompt = no`
+# LibreSSL ignores `-subj` and uses the file's (measured: every certificate
+# came out named after a placeholder).
+write_openssl_config() { # dir common-name
+  cat > "$1/openssl.cnf" <<CONFIG
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+O = $ORGANIZATION
+CN = $2
+[ca_ext]
+basicConstraints = critical,CA:true,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+[leaf_ext]
+# All three of the first lines are needed: without basicConstraints OpenSSL
+# 3.x marks the certificate as a CA, and without keyUsage macOS rejects it as
+# "Invalid Key Usage for policy".
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid
+CONFIG
+}
+
 make_ca() { # dir
-  openssl req -x509 -newkey rsa:3072 -nodes -days "$CA_DAYS" \
-    -keyout "$1/ca.key" -out "$1/ca.crt" \
-    -subj "/O=$ORGANIZATION/CN=$CA_NAME" \
-    -addext "basicConstraints=critical,CA:true,pathlen:0" \
-    -addext "keyUsage=critical,keyCertSign,cRLSign" \
-    -addext "subjectKeyIdentifier=hash" 2>/dev/null
+  write_openssl_config "$1" "$CA_NAME"
+  quiet_openssl req -x509 -config "$1/openssl.cnf" -extensions ca_ext \
+    -newkey rsa:3072 -nodes -days "$CA_DAYS" \
+    -keyout "$1/ca.key" -out "$1/ca.crt"
+  rm -f "$1/openssl.cnf"
 }
 
 make_leaf() { # dir (holding ca.key and ca.crt)
-  # All three extensions are needed: without basicConstraints OpenSSL 3.x
-  # marks the certificate as a CA, and without keyUsage macOS rejects it as
-  # "Invalid Key Usage for policy". The Organization matches the CA's, which
-  # is also what makes codesign's own default requirement anchor on the CA.
-  printf '%s\n' \
-    "basicConstraints=critical,CA:false" \
-    "keyUsage=critical,digitalSignature" \
-    "extendedKeyUsage=critical,codeSigning" \
-    "subjectKeyIdentifier=hash" \
-    "authorityKeyIdentifier=keyid" > "$1/leaf.ext"
-  openssl req -new -newkey rsa:2048 -nodes -keyout "$1/leaf.key" -out "$1/leaf.csr" \
-    -subj "/O=$ORGANIZATION/CN=$LEAF_NAME" 2>/dev/null
-  openssl x509 -req -in "$1/leaf.csr" -CA "$1/ca.crt" -CAkey "$1/ca.key" \
+  # The Organization matches the CA's, which is also what makes codesign's own
+  # default requirement anchor on the CA rather than on the leaf.
+  write_openssl_config "$1" "$LEAF_NAME"
+  quiet_openssl req -new -config "$1/openssl.cnf" \
+    -newkey rsa:2048 -nodes -keyout "$1/leaf.key" -out "$1/leaf.csr"
+  quiet_openssl x509 -req -in "$1/leaf.csr" -CA "$1/ca.crt" -CAkey "$1/ca.key" \
     -set_serial "0x$(openssl rand -hex 16)" -days "$LEAF_DAYS" \
-    -extfile "$1/leaf.ext" -out "$1/leaf.crt" 2>/dev/null
-  rm -f "$1/leaf.csr" "$1/leaf.ext"
+    -extfile "$1/openssl.cnf" -extensions leaf_ext -out "$1/leaf.crt"
+  rm -f "$1/leaf.csr" "$1/openssl.cnf"
 }
 
 sha1_of() {

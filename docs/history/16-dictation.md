@@ -172,7 +172,11 @@
   It runs against a throwaway keychain file through `FM_SIGNING_KEYCHAIN` and reads no secret, so it can raise no prompt.
   Injections: a text compare fails `test_a_requirement_the_new_build_still_satisfies_is_silent`, the promise printed for a CA-to-CA change fails `test_moving_onto_a_local_ca_says_it_is_the_last_time`, a substring CA match fails `test_a_longer_name_is_not_the_ca`, and taking the first of two CAs fails `test_two_cas_with_the_name_are_refused`.
   Dropping `-v` from the identity lookup is **not** caught, because the exact-name match already rejects a line carrying a status such as `(CSSMERR_TP_NOT_TRUSTED)`. The two are redundant rather than one untested.
-  The certificate recipe was run with both Homebrew OpenSSL 4.1 and the system LibreSSL 3.3.6.
+  The certificate recipe passes the tests under Homebrew OpenSSL 4.1 and 3.6 and the system LibreSSL 3.3.6.
+  It carries its own OpenSSL configuration, subject included, because CI's runner made a leaf its own `openssl verify` could not chain to the CA ("unable to get local issuer certificate") while every OpenSSL here verified it.
+  The suspected cause is the host's `openssl.cnf` being merged in, which the recipe now never reads, but the runner's OpenSSL version was not recorded, so that cause is inferred.
+  The failure message now carries the OpenSSL version and both certificates.
+  Moving the subject into the file was itself measured: with `prompt = no`, LibreSSL ignores `-subj`.
 
   **Not verified here.**
   `setup` itself was not run, because it trusts a certificate and imports identities into the login keychain behind password prompts.
