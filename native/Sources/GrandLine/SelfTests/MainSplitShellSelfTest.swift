@@ -2274,24 +2274,32 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugClick(.module(.settings)), "the Settings row cannot be clicked", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .settings, "the Settings row did not open Settings", &ok)
-        // A rule, with room either side, between the header and Home.
+        // The search pill, with room either side, between the header and
+        // Home - the divider since the feel pass dropped stage 6's rule.
         let root = shell.sidebar.view
         root.layoutSubtreeIfNeeded()
         let header = shell.sidebar.debugHeader.convert(shell.sidebar.debugHeader.bounds, to: root)
-        let rule = shell.sidebar.debugHeaderRule.convert(shell.sidebar.debugHeaderRule.bounds, to: root)
+        let pill = shell.sidebar.debugSearchPill.convert(shell.sidebar.debugSearchPill.bounds, to: root)
         // The list's top, which is where Home sits until the list scrolls.
         guard let list = shell.sidebar.outlineView.enclosingScrollView else {
             fail("the sidebar list has no scroll view", &ok)
             return
         }
         let listFrame = list.convert(list.bounds, to: root)
-        let gapAbove = root.isFlipped ? rule.minY - header.maxY : header.minY - rule.maxY
-        let gapBelow = root.isFlipped ? listFrame.minY - rule.maxY : rule.minY - listFrame.maxY
-        check(rule.height == 1 && rule.width > header.width * 0.8,
-              "the header rule is \(rule.size), want a 1pt line across the sidebar", &ok)
-        check(gapAbove >= WorkspaceSidebarController.headerRuleGap - 0.5 && gapBelow >= WorkspaceSidebarController.headerRuleGap - 0.5,
-              "the rule sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.headerRuleGap) each", &ok)
-        check(shell.sidebar.debugHeaderRule.layer?.backgroundColor != nil, "the header rule is not painted", &ok)
+        let gapAbove = root.isFlipped ? pill.minY - header.maxY : header.minY - pill.maxY
+        let gapBelow = root.isFlipped ? listFrame.minY - pill.maxY : pill.minY - listFrame.maxY
+        check(abs(pill.height - WorkspaceSidebarSearchPill.height) < 0.5 && pill.width > header.width * 0.8,
+              "the search pill is \(pill.size), want a \(WorkspaceSidebarSearchPill.height)pt pill across the sidebar", &ok)
+        check(gapAbove >= WorkspaceSidebarController.pillGap - 0.5 && gapBelow >= WorkspaceSidebarController.pillGap - 0.5,
+              "the pill sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.pillGap) each", &ok)
+        // It opens the same palette the toolbar's Search does.
+        var searched = false
+        let previousSearch = shell.sidebar.onSearch
+        shell.sidebar.onSearch = { searched = true }
+        _ = shell.sidebar.debugSearchPill.performPrimaryAction()
+        shell.sidebar.onSearch = previousSearch
+        check(searched, "the search pill's press reaches nothing", &ok)
+        check(previousSearch != nil, "the shell never wired the search pill to the palette", &ok)
         // Log Out goes through the one confirmation, then the app delegate.
         var loggedOut = false
         let previous = shell.onLogoutRequested

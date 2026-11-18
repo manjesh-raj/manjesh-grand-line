@@ -36,6 +36,12 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.4.0 - Feel pass item 4: the sidebar's search pill
+
+- `WorkspaceSidebar` none → 1.0.0 (new): a 28pt "Search or jump to" pill with the ⌘K keycap under the account header opens the same ⌘K palette as the toolbar's Search. Its words are corrected against its deeper hover fill, so they clear the text floor in every theme. It replaces stage 6's 1pt header rule as the divider between the header and Home, with 6pt above and below it. To keep the whole default list inside a 950pt window (R4-BUG-03), the group heading rows go from 24pt to 18pt (a 2pt foot under the 13pt heading), the captain's call. Headings take no Compact step, because 18pt is already the height their label needs.
+
+## 6.3.0 - Feel pass item 6: Comfortable and Compact density
+
 ## 6.3.0 - Feel pass item 6: Comfortable and Compact density
 
 - `HelmDensity` none → 1.0.0 (new): Comfortable or Compact, stored as `AppSettings.density` and chosen in Settings, Appearance, Window. Compact's row factor is the prototype's 30/36.

@@ -2,7 +2,8 @@
 //
 // The feel pass (the Fable second-opinion review's Stage 1, cut to the
 // feasibility audit's six items): Home's greeting, briefing hero and KPI
-// strip, and the density switch, checked where a check needs no window. The Home wiring (the
+// strip, the sidebar's search pill and the density switch, checked where a
+// check needs no window. The Home wiring (the
 // hero replacing the briefing card, Customize bringing it back) is measured
 // in `MainSplitShellSelfTest`, which already mounts Home in a real window.
 //
@@ -34,6 +35,7 @@ enum FeelPassSelfTest {
             ("3 the four tiles and where they go", checkKPITiles),
             ("3 an unread figure is a dash, never a zero", checkKPIUnknowns),
             ("3 today's task figures", checkTaskCounts),
+            ("4 the search pill's words clear the text floor in every theme", checkSearchPillContrast),
             ("6 density is a factor on every row height", checkDensityRowHeights),
             ("6 changing density re-fires the theme", checkDensityRefires),
         ]
@@ -282,6 +284,20 @@ enum FeelPassSelfTest {
         let counts = HomeTaskCounts(tasks: tasks, followUps: [], now: now, calendar: calendar)
         check(counts.due == 2 && counts.overdue == 1 && counts.doneToday == 1,
               "the counts are due \(counts.due), overdue \(counts.overdue), done \(counts.doneToday); want 2, 1, 1", &ok)
+    }
+
+    // MARK: - Item 4
+
+    private static func checkSearchPillContrast(_ ok: inout Bool) {
+        let pill = WorkspaceSidebarSearchPill()
+        for theme in everyTheme {
+            pill.applyTheme(theme)
+            let label = pill.debugLabelColor ?? .clear
+            let worst = min(HelmContrast.ratio(label, pill.debugRestFill), HelmContrast.ratio(label, pill.debugHoverFill))
+            check(worst >= HelmContrast.textTarget - 0.01,
+                  "\(theme.id): the pill's words measure \(String(format: "%.2f", worst)) on its fill", &ok)
+        }
+        check(pill.debugHoverFill != pill.debugRestFill, "the pill's hover fill is its resting fill", &ok)
     }
 
     // MARK: - Item 6
