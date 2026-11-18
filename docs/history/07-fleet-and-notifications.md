@@ -1727,3 +1727,57 @@ Re-measuring the captain's instance with this build is their own check.
 `FleetReplyOutcome.logName` is the case name and nothing else, and `reply` logs that.
 `FleetActionsSelfTest.checkTheLogLineCarriesNoScriptOutput` asserts both the name and the call site, and putting the old line back fails it by name.
 One trap when writing that fixture: Swift's description escapes an apostrophe (`captain\'s`), so a payload containing one does not match itself in `String(describing:)`.
+
+## Home's Claude and Fleet cards in the hero style (`fm/grand-line-hero-cards-claude-fleet`, Helm 6.6.0)
+
+The captain picked two options on the widget-style board (`data/grand-line-widget-style-mockups/` in the firstmate home).
+The Claude usage card became option B, the split hero.
+The Fleet card became option A, the full hero.
+On both cards the captain asked for a size they can choose clearly (narrow, default and full width) and a colour they can change, in their words "i don't want a single color option".
+
+### What shipped
+
+- `HelmHeroSurface` is the briefing hero's gradient, glow and palette rule as a view of its own.
+  `HelmHeroCard` paints one, and so does `HelmModuleCard` now, so there is still one copy of the recipe.
+- `HelmModuleCard.Content.hero` paints a module card with it.
+  `.heroSummary` puts the whole card on the gradient (Fleet).
+  `.heroSplit` puts a panel down the leading edge, 226pt at a half-row card and 470pt at a full-row one, with the dense report's own rows on the card beside it (Claude).
+  Below 400pt the panel becomes a band across the top, through the header, and the report sits under it.
+- The palette button on each card's header opens `HomeCardStyleMenu`.
+  Size offers Narrow, Default and Full width, which are 6, 12 and 24 of `HomeCardGrid.columns`, the old fixed sizes.
+  Choosing one is the same edit a resize drag makes, so it persists in `fm.homeCardLayout`.
+  It is offered only on Home's own arranged cards, the only cards with a width the captain owns.
+  Colour offers the theme accent (the default, which follows the theme), seven presets and a custom colour from the system colour panel, stored per card in `fm.homeCardColors`.
+- The floating bar's hub keeps its dense Claude card and its plain Fleet card.
+  That dashboard is fitted to its window, and a hero panel is not in its height budget.
+
+### How colour and state interact
+
+The captain's colour is the base in every state.
+The hero does not turn amber or red.
+A warning or a limit shows through the headline (the card's one verdict, `claudeChip`'s words), through the ring's arc in the state's colour, and on the Claude card through the report's own bars and figures, which sit on the card's surface and keep their severity colours.
+On Fleet the header's status pill is the opaque tinted pill every card already uses, so it reads on any gradient.
+A ring arc on the gradient is the state's hue at full brightness, desaturated only as far as it must be to clear the non-text floor on both stops (`HelmHeroSurface.signalColor`).
+A raw amber arc on a deep blue gradient was two dark colours side by side, and the first fix, mixing the hue toward the white ink, drained Daylight's amber until a near-limit arc read as a plain white one in the renders.
+Red is dark enough that it still has to go to a light rose to clear 3:1.
+A stale reading dims the colour most of the way to a grey of its own lightness (GL-14), so figures that may be behind do not look as alive as fresh ones.
+
+Two Fleet behaviours are new and deliberate: a blocked crewmate reads red where it used to share the amber "N need you" with a decision, and a stale watcher is read at all.
+The ring is new too: what is done today out of everything the snapshot knows (done, working and queued).
+
+### Traps hit on the way
+
+- Beside a split panel the header's title column is capped at the panel's edge, and a spacer takes the slack.
+  The status column's own `columnHug` (251) then squeezed the freshness caption to "U...", because the caption yields at 250.
+  The caption takes 252 while the card is split.
+- `NSGridView` has no height of its own to hug.
+  In a row whose panel was taller than the report, the grid took the extra height and spread its rows apart.
+  The report sits in a gravity-areas stack with a 260 height hug, which closes the gaps without clipping a row.
+- Every hero label wraps at a width computed from the card's body width, less the ring or panel beside it, and never from its own (gotcha (22)).
+
+### Verification
+
+- `HeroCardsSelfTest` (headless) sweeps every colour the menu offers, fresh and dimmed, over all 26 palettes, for the text floor on both stops and the non-text floor for a warning and a limit arc.
+  It also covers the preset spread, the stored value and its passthrough, the size modes and thresholds, the menu's shape and actions, and the five states' words on both cards.
+- `HeroCardsViewSelfTest` (windowed) mounts the real Home canvas at the three sizes in Daylight and Dusk across the five states, and checks the gradient's region, the ink on every label, that every label sits inside its card, that the size items reach the arrangement and the colour items repaint only their own card, and that a click on the palette button does not open the card.
+  `FM_HERO_RENDER_DIR` writes the renders the PR carries.

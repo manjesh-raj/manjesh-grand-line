@@ -36,6 +36,17 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.6.0 - Hero cards: Claude usage and Fleet
+
+The captain's picks on the widget-style board: the Claude usage card as the split hero, the Fleet card as the full hero, each with a size and a colour the captain chooses.
+
+- `HelmHeroSurface` none → 1.0.0 (new): the briefing hero's gradient and glow as a view of their own, with the palette rule (`palette(accent:)`) moved onto it unchanged. `dimmed(_:)` steps a colour most of the way to a grey of its own lightness, for a stale reading (GL-14). `signalColor(tintHex:on:)` lifts a state hue until it clears the non-text floor on both stops, for a ring's arc on the gradient. It takes no clicks.
+- `HelmHeroCard` 1.0.1 → 1.0.2 (patch): paints a `HelmHeroSurface` instead of its own two layers. `Palette` is the surface's, and `palette(for:)` and `palette(accent:)` forward to it, so nothing it draws changes.
+- `HelmModuleCard` 1.2.0 → 1.3.0 (minor): `Content.hero` paints the card with the hero surface in a `HeroTone` (the theme's accent or a fixed colour, optionally dimmed). Two body kinds draw on it: `.heroSummary` (headline, body, ring and a KPI strip, the whole card on the gradient) and `.heroSplit` (headline and ring on a panel down the leading edge, 226pt or 470pt, or on a band across the top below 400pt, with `.usageReportDense`'s rows on the card beside or under it). Every word on the gradient takes the palette's ink, and a ring's arc takes a warning or limit colour through `signalColor`. `Content.headerMenu` adds a second header control that opens a menu, with the same gesture arbitration as the header action (gotcha (20)), and hidden while Customize arranges.
+- `HelmKPIStrip` 1.1.0 → 1.2.0 (minor): `heroInk`, so an `.inline` strip can sit on a hero gradient (figures and captions in the ink, a quiet figure at 72%, hairlines at 32%), and `figureSize`, for the hero's 22pt and 24pt figures.
+- `Home Claude card` none → 1.0.0 (new): the split hero on every shelf card. The headline is `claudeChip`'s verdict as a sentence, the ring is the spend against its cap when the spend is the verdict and otherwise the window that runs out first, and the report beside it is the dense report's own rows. The floating bar's fitted hub keeps its dense card.
+- `Home Fleet card` none → 1.0.0 (new): the full hero on every shelf card, with a ring of what is done today out of everything the snapshot knows (done, working and queued). A blocked crewmate now reads red rather than amber, and a stale watcher dims the card.
+
 ## 6.5.0 - Feel pass: CI's two findings
 
 - `HelmSegmentedTabs` 1.1.0 → 1.2.0 (minor): two init options for a strip in system chrome. `pillInset` overrides the size's horizontal pill inset, and `labelSize` fixes the label's point size so it does not follow the chrome text scale. The window toolbar's tabs take 8pt and 11.5pt: the toolbar is system chrome that never followed the text scale, and at 1512pt with Larger text the wider strip pushed Crew's and Connections' crumbs into the overflow menu on CI (`WorkspaceToolbarSelfTest`). `FeelPassSelfTest` now holds the strip to the system control's width at every text scale.

@@ -466,6 +466,7 @@ NEEDS_SESSION=(
   # real rasterised pixel back. The column-mapping half is pure logic, but
   # "the five columns are actually painted, equally wide and legibly" is not.
   "FM_RUN_CLAUDE_STATUS_CARD_TESTS"
+  "FM_RUN_HERO_CARDS_VIEW_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"
   # The theme split: a real console's terminal against its real page, and the
