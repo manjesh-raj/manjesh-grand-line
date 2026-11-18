@@ -259,7 +259,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             boardCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
             boardCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
-            boardCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardInset),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(boardCard, in: root),
             // UXP-17: the board runs to the page's foot. A footer under it
             // read "0 notes" right below a drill subtitle that already said
             // "0 notes · saved on this machine".

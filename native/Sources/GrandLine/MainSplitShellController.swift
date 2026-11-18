@@ -1577,8 +1577,11 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugSidebarPane: NSView? { splitController.splitView.arrangedSubviews.first }
     var debugHistory: NavigationHistory { history }
     /// The module header as drawn, or nil when the module has none.
+    /// The header line's words, or nil while the line is empty. S03: an
+    /// empty line keeps its slot, so this asks what it says, not whether it
+    /// is in layout.
     var debugHeader: (title: String, subtitle: String)? {
-        contentPane.header.isHidden ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
+        contentPane.header.debugIsEmpty ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
     }
     var debugSessionStripIsShown: Bool { !contentPane.sessionStrip.isHidden }
     var debugSessionStrip: SessionStripView { contentPane.sessionStrip }
@@ -1595,9 +1598,15 @@ final class MainSplitShellController: WorkspaceShellController {
     #endif
 }
 
-/// The content column, top to bottom: the module's large title, Console's
-/// session strip, and the workspace's body container, which runs to the foot
-/// of the window. The layout drew a status strip under the body until the
+/// The content column, top to bottom: the header line, Console's session
+/// strip, and the workspace's body container, which runs to the foot of the
+/// window.
+///
+/// S03: the header line is `HelmPageScaffold`'s header slot and is always in
+/// layout at its own height, so every page's body starts at the same line
+/// under the toolbar and its first content `pageContentInset` below that.
+/// Console's session strip is that module's first content, so it sits at the
+/// same line, and Console's page starts under it. The layout drew a status strip under the body until the
 /// captain had it removed from every module; its readouts live in the
 /// sidebar's badges, Console's session strip, Home's Claude card, the Tasks
 /// sync pill and the toolbar's focus chip.
@@ -1607,9 +1616,9 @@ final class WorkspaceContentPaneController: NSViewController {
     /// The floating bar's session strip, on Console only: one chip per live
     /// session, the same view and the same three verbs.
     let sessionStrip = SessionStripView()
-    /// The header and the strip, each in layout only while it shows - a
-    /// stack that detaches its hidden views, so neither needs a height
-    /// constraint fighting its own content to collapse.
+    /// The header line, always shown, and the strip, in layout only while
+    /// it shows - a stack that detaches its hidden views, so the strip needs
+    /// no height constraint fighting its own content to collapse.
     private let topStack = NSStackView()
     private var themeToken: ThemeObservation?
 
@@ -1631,18 +1640,19 @@ final class WorkspaceContentPaneController: NSViewController {
         topStack.translatesAutoresizingMaskIntoConstraints = false
         for view in [header, sessionStrip] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
-            view.isHidden = true
             topStack.addArrangedSubview(view)
             view.widthAnchor.constraint(equalTo: topStack.widthAnchor).isActive = true
         }
+        sessionStrip.isHidden = true
         sessionStrip.heightAnchor.constraint(equalToConstant: SessionStripView.height).isActive = true
-        // With both hidden the stack has no content to measure, so nothing
-        // else says how tall it is. Below the window's 500 (gotcha (13)), and
-        // below every arranged view's own height, so it only ever settles the
-        // empty case.
-        let collapsed = topStack.heightAnchor.constraint(equalToConstant: 0)
-        collapsed.priority = .defaultLow
-        collapsed.isActive = true
+        // The strip is Console's first content, so it starts where every
+        // other page's first content does.
+        topStack.setCustomSpacing(HelmMetrics.pageContentInset, after: header)
+        // Exactly as tall as what it holds. A stack's own hugging is low, so
+        // a page's height tie stretched it and pushed the body down under an
+        // empty band (measured: Notebook's body at 645pt in a 950pt window).
+        // Gotcha (12): a stack takes the stack-priority API.
+        topStack.setHuggingPriority(.required, for: .vertical)
         body.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(topStack)
         root.addSubview(body)
@@ -1670,24 +1680,21 @@ final class WorkspaceContentPaneController: NSViewController {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
-    /// The module's title and its page's subtitle, or no header at all.
+    /// The module's title and its page's subtitle. A `nil` title is a module
+    /// with no header line (Connections, Console): S03 keeps the line's slot
+    /// there too, empty, so its page starts at the same height as every
+    /// other.
     func setHeader(title: String?, subtitle: String) {
         _ = view
-        headerTitle = title
-        if let title { header.configure(title: title, subtitle: subtitle) }
-        // R2-UX-05: the header is its subtitle, so with none there is no
-        // header - unless the page has a control on that row (R5-UI-01).
-        header.isHidden = title == nil || (subtitle.isEmpty && header.accessory == nil)
+        header.configure(title: title, subtitle: subtitle)
     }
 
     /// The page's header control (`WorkspaceHeaderAccessoryProviding`), or
-    /// none. Shows the header for it when the page has no subtitle.
+    /// none.
     func setHeaderAccessory(_ accessory: NSView?) {
         _ = view
         header.setAccessory(accessory)
-        header.isHidden = headerTitle == nil || (!header.hasSubtitle && accessory == nil)
     }
-    private var headerTitle: String?
 
     func setSessionStripVisible(_ visible: Bool) {
         _ = view

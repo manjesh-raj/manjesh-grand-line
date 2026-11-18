@@ -222,9 +222,19 @@ final class CredentialVaultUnlockView: NSView {
         // to the one width where that equality has zero slack.
         let cap = card.widthAnchor.constraint(equalToConstant: 420)
         cap.priority = HelmDaylightPriority.contentTie
+        // S03: centred, but never above the page frame's first-content line.
+        // The setup card is tall, and centred in a 950pt window it rose to
+        // 86pt from the window's top, 10pt above every other page's first
+        // content and nearly touching the header line (measured). The centre
+        // gives way first, and it sits below the window's 500 (gotcha (13)):
+        // at 750 the centre held at 750 grew a short window to keep the
+        // tall card centred under the floor (measured, 722 to 731pt).
+        let centred = card.centerYAnchor.constraint(equalTo: centerYAnchor)
+        centred.priority = NSLayoutConstraint.Priority(490)
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: centerYAnchor),
+            centred,
+            card.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: HelmMetrics.pageContentInset),
             card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: HelmMetrics.pageGutter),
             card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.pageGutter),
             card.widthAnchor.constraint(lessThanOrEqualToConstant: 420),

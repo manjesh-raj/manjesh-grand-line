@@ -226,50 +226,16 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             sections.append(card(icon: iconFor(category: category), title: category, rows: categoryRows))
         }
 
-        let stack = NSStackView(views: sections)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        // UI-33's scale: 16 between sections, 24 from the top.
-        stack.spacing = HelmMetrics.s4
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: HelmMetrics.s4, bottomInset: Toast.reservedBottomSpace)
+        scaffold.install(in: root)
+        for block in sections { scaffold.addContent(block) }
+        let stack = scaffold.stack
+        // UI-33's scale: 16 between sections. The top is the page frame's (S03).
         pageStack = stack
         statsRowView = statsRow
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
-            // U10's second half: a completion toast is a floating pill at the
-            // bottom of the window, and this page's last card used to end
-            // 20pt above that edge - so "Checked 13 tools" landed on top of
-            // the "Other tools" section header and read as a collision
-            // rather than as chrome. The page reserves the pill's own band
-            // instead; `Toast.reservedBottomSpace` is the one number, so a
-            // change to the pill's size or inset moves both together.
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor,
-                                          constant: -Toast.reservedBottomSpace),
-        ])
-        for section in sections {
-            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scrollView = scroll
+        scrollView = scaffold.scrollView
 
         for row in rows { render(row) }
         applyFilter()

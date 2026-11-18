@@ -80,7 +80,9 @@ enum MainSplitShellSelfTest {
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
-                      checkTheInspectorIsTheSystemsItem, checkTheToolbarIsCustomisable,
+                      checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
+                      checkEveryPageStartsAtOneHeight,
+                      checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
                       checkTheSidebarKeepsOneWidthOnEveryPage, checkToastsLandInTheColumn,
@@ -2198,6 +2200,169 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugPerformAccountMenuItem("Log Out\u{2026}"), "the account menu has no Log Out", &ok)
         check(asked == "Log out of Grand Line?" && loggedOut, "Log Out did not confirm and lock (asked: \(asked ?? "nothing"))", &ok)
     }
+
+
+    // MARK: S22 - the inspector's empty state follows the theme
+
+    /// S22 of the 2026-11-17 UI/UX proposals. The inspector's "Nothing
+    /// selected" read paler than its own body text in Daylight. Measured
+    /// before the fix: after a switch from Dusk to Daylight the title still
+    /// held Dusk's ink (E8E6DE) and the body Dusk's muted ink, because
+    /// `HelmEmptyState` painted the theme once at `init` and the inspector
+    /// never passed a change on. The label is not vibrant, so the system
+    /// glass was not the cause.
+    ///
+    /// Each register is reached by a switch from the other one, with the
+    /// empty state already built, which is the case that went stale. The live
+    /// label colours must be the theme's ink and muted ink, and the title's
+    /// rendered glyphs must carry the ink, compared in the bitmap's own
+    /// colour space (AGENTS.md's probe rule: convert the expected colour,
+    /// leave the sample alone).
+    private static func checkTheInspectorEmptyStateFollowsTheTheme(_ shell: MainSplitShellController,
+                                                                  _ window: NSWindow, _ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved); settle(shell) }
+        resize(window, width: 1512, shell)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        shell.setInspectorShown(true)
+        settle(shell)
+        defer { shell.setInspectorShown(false); shell.debugResetInspectorPreference(); settle(shell) }
+        shell.inspector.setContent(nil)
+        settle(shell)
+        let empty = shell.inspector.debugEmptyState
+        check(!empty.isHidden, "S22: the inspector's empty state is not showing", &ok)
+
+        func close(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a = a?.usingColorSpace(.sRGB), let b = b.usingColorSpace(.sRGB) else { return false }
+            return abs(a.redComponent - b.redComponent) <= 0.02 && abs(a.greenComponent - b.greenComponent) <= 0.02
+                && abs(a.blueComponent - b.blueComponent) <= 0.02
+        }
+        func describe(_ color: NSColor?) -> String {
+            guard let c = color?.usingColorSpace(.sRGB) else { return "nil" }
+            return String(format: "%.3f %.3f %.3f", c.redComponent, c.greenComponent, c.blueComponent)
+        }
+
+        // The fixture can tell the two registers apart: Daylight's ink and
+        // Dusk's are not within the tolerance of each other.
+        let daylightInk = HelmTheme.nsColor(HelmTheme.daylight.chromeInkHex)
+        let duskInk = HelmTheme.nsColor(HelmTheme.dusk.chromeInkHex)
+        check(!close(daylightInk, duskInk), "S22: Daylight's and Dusk's ink are too close for this check to fail", &ok)
+
+        for (from, to) in [(HelmTheme.dusk, HelmTheme.daylight), (HelmTheme.daylight, HelmTheme.dusk)] {
+            ThemeManager.shared.setTheme(from)
+            settle(shell)
+            ThemeManager.shared.setTheme(to)
+            settle(shell)
+            let ink = HelmTheme.nsColor(to.chromeInkHex)
+            let title = empty.debugTitleLabel
+            check(close(title.textColor, ink),
+                  "S22: after \(from.id) → \(to.id) the empty state's title is \(describe(title.textColor)), want the ink \(describe(ink))",
+                  &ok)
+            check(close(empty.debugBodyLabel.textColor, HelmTheme.mutedInk(to)),
+                  "S22: after \(from.id) → \(to.id) the empty state's body is \(describe(empty.debugBodyLabel.textColor)), want the muted ink",
+                  &ok)
+
+            // What is painted: the title's solid glyph pixels. The state draws
+            // no ground of its own, so only fully covered pixels carry the
+            // ink unblended.
+            guard let rep = title.bitmapImageRepForCachingDisplay(in: title.bounds),
+                  title.bounds.width > 0, title.bounds.height > 0 else {
+                fail("S22: the empty state's title has no bitmap to render", &ok)
+                continue
+            }
+            title.cacheDisplay(in: title.bounds, to: rep)
+            guard let expected = ink.usingColorSpace(rep.colorSpace) else {
+                fail("S22: the ink does not convert into the render's colour space", &ok)
+                continue
+            }
+            var nearest = CGFloat.greatestFiniteMagnitude
+            var solid = 0
+            for py in 0..<rep.pixelsHigh {
+                for px in 0..<rep.pixelsWide {
+                    guard let c = rep.colorAt(x: px, y: py), c.alphaComponent >= 0.98 else { continue }
+                    solid += 1
+                    let distance = max(abs(c.redComponent - expected.redComponent),
+                                       abs(c.greenComponent - expected.greenComponent),
+                                       abs(c.blueComponent - expected.blueComponent))
+                    nearest = min(nearest, distance)
+                }
+            }
+            check(solid > 0, "S22: the title rendered no solid glyph pixel after \(from.id) → \(to.id)", &ok)
+            check(nearest <= 0.03,
+                  "S22: after \(from.id) → \(to.id) no title pixel is the ink (nearest \(String(format: "%.3f", nearest)) away)",
+                  &ok)
+        }
+        if ok { print("  OK   S22: the inspector's empty state takes the theme's ink and muted ink after a switch") }
+    }
+
+
+    // MARK: S03 - one page frame
+
+    /// S03 of the 2026-11-17 UI/UX proposals. Measured before the change
+    /// (the proposals' pixel tool over the tour renders, and
+    /// `PageScaffoldProbe` in-process): the first content started at ten
+    /// heights across the pages, from 76pt (Connections, Commands) to 117pt
+    /// (Tasks, Calendar), because each page set its own top constant and the
+    /// header line hid on pages with no subtitle.
+    ///
+    /// Every destination now has the header line's slot under the toolbar,
+    /// `pageHeaderLine` tall whether it says anything or not, and its first
+    /// content at `pageContentTop` under the toolbar. The scan is the
+    /// proposals' own: the first row in the content column that is not page
+    /// ground. A page with nothing in the scan's reach (an empty or locked
+    /// state centred lower down) has no first content to place and is
+    /// skipped, and the check fails if too few pages were measured for it to
+    /// mean anything.
+    ///
+    /// The tolerance is the line plus 4pt, minus 1: a filter row's pills
+    /// and a card's antialiased border start a point or two inside the frame
+    /// that sits on the line. Schedules is the one page whose first block
+    /// draws nothing at its own top - a borderless number strip, whose
+    /// large figures' ascent starts its ink 9pt below the frame - so there
+    /// the strip's frame is what is checked.
+    private static func checkEveryPageStartsAtOneHeight(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                        _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        var measured = 0
+        var report: [String] = []
+        for destination in RailDestination.allCases {
+            shell.workspace.navigator.show(destination)
+            settle(shell)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            settle(shell)
+            guard let reading = PageScaffoldProbe.measure(shell) else {
+                fail("S03: \(destination.rawValue) could not be measured", &ok)
+                continue
+            }
+            let slot = shell.debugContentPaneHeader.frame.height
+            check(abs(slot - HelmMetrics.pageHeaderLine) < 0.5,
+                  "S03: \(destination.rawValue)'s header line is \(slot)pt tall, want \(HelmMetrics.pageHeaderLine)", &ok)
+            let line = reading.toolbarBottom + HelmMetrics.pageContentTop
+            if destination == .schedules {
+                let strip = shell.workspace.schedules.debugSummaryStrip
+                let top = window.frame.height - strip.convert(NSPoint(x: 0, y: strip.isFlipped ? 0 : strip.bounds.height), to: nil).y
+                check(strip.window != nil && abs(top - line) < 1,
+                      "S03: Schedules' number strip starts at \(top)pt, want the line at \(line)", &ok)
+                measured += 1
+                continue
+            }
+            guard let first = reading.firstContent else {
+                report.append("\(destination.rawValue) none")
+                continue
+            }
+            measured += 1
+            report.append("\(destination.rawValue) \(first)")
+            check(first >= line - 1 && first <= line + 4,
+                  "S03: \(destination.rawValue)'s first content starts at \(first)pt, want the line at \(line) (\(reading.line))",
+                  &ok)
+        }
+        // The fixture can fail: enough pages carried content in the scan's
+        // reach for a drifted page to be seen.
+        check(measured >= 20, "S03: only \(measured) pages had first content to measure (\(report))", &ok)
+        if ok { print("  OK   S03: \(measured) pages start their first content on one line under a fixed header line") }
+    }
+
 }
 
 #endif

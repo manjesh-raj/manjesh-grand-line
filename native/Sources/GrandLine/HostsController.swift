@@ -582,7 +582,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s5),
+            // S03: the page frame's first-content line, where the search
+            // and filter row sits.
+            column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.pageContentInset),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.pageGutter),
 
         ])

@@ -682,7 +682,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
         NSLayoutConstraint.activate(HelmSplitPage.alignCappedColumn(pageContainer, in: content,
                                                                     alignment: Self.contentAlignment) + [
-            pageContainer.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s2),
+            // S03: the page frame's first-content line (the scroll view
+            // starts at the page's top in the sidebar layout).
+            pageContainer.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.pageContentInset),
             pageContainer.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s6),
             pageWidthCap,
         ])
@@ -831,7 +833,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         toolbarWidthGrow.priority = HelmSplitPage.contentGrowPriority
         toolbarWidthGrow.isActive = true
         scrollTopUnderToolbar = scroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: HelmMetrics.s2)
-        scrollTopAtRoot = scroll.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3)
+        scrollTopAtRoot = scroll.topAnchor.constraint(equalTo: root.topAnchor)
         applyHeaderRow()
 
         mountPage(selectedCategory)

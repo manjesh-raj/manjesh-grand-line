@@ -212,32 +212,13 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
         emptyReplaces = [statsRow, schedulesCardView, insightsRow]
         // The first render can land while these are still being built.
         applyPageEmptyState()
-        let stack = NSStackView(views: [statsRow, schedulesCardView, insightsRow])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: 14, bottomInset: 20)
+        for block in [statsRow, schedulesCardView, insightsRow] as [NSView] { scaffold.addContent(block) }
+        let scroll = scaffold.scrollView
 
         buildSidebar()
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            schedulesCardView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            statsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            insightsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
 
         // P9: the column is a real split-view sidebar - draggable, collapsible
         // and answering Toggle Sidebar - laid out exactly where it was pinned.
@@ -264,12 +245,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
                           bottomIsCeiling: true)
         // The scroll view started at the column's trailing edge; the divider's
         // width is taken back so it still does.
-        HelmSplitPage.pin(scroll, in: split.contentPane,
+        HelmSplitPage.pin(scaffold, in: split.contentPane,
                           insets: NSEdgeInsets(top: 0, left: -HelmSplitPage.dividerThickness, bottom: 0, right: 0))
-        // AGENTS.md gotcha #4: pin the document view to the *clip* view,
-        // never the outer scroll view - see `AutomationController`'s
-        // identical comment for the full reasoning.
-        content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
         // UXP-13: centred in the content pane like every other page-level
         // empty state, not resting at the top of the scroll document.
         pageEmptyState.placeAsPageEmptyState(in: split.contentPane)
@@ -782,6 +759,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions, HelmSpl
     /// click would still be a surprise - and this app confirms every other
     /// record delete (see `HostsController`'s own confirm alert).
     #if FM_SELFTESTS
+    /// S03: the page's first block, whose frame sits on the first-content line.
+    var debugSummaryStrip: HelmKPIStrip { summaryStrip }
     var debugSidebar: HelmPageSidebar { sidebar }
     /// UI-48: the painted fills, read straight off the layers.
     var debugSummaryValueColors: [NSColor?] { summaryStrip.debugValueColors }

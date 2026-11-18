@@ -127,13 +127,15 @@ enum SidebarPageFixesSelfTest {
         check(shell.toolbar.debugModuleActionButton?.title == "Activity", "Connections lost its Activity action", &ok)
 
         // No stat strip over the tabs and no shortcut footer under them: the
-        // tab view starts at the content column's top.
+        // tab view starts at the content column's top, which is the page
+        // frame's first-content line (S03).
         check(hosts.debugWorkspacePanel.isHidden && hosts.debugQuickActions.isHidden,
               "the stat strip or the shortcut footer still shows", &ok)
         let page = hosts.view
         let tab = hosts.debugTabView.convert(hosts.debugTabView.bounds, to: page)
         let top = page.isFlipped ? tab.minY : page.bounds.height - tab.maxY
-        check(abs(top - HelmMetrics.s5) < 1, "the tab view starts \(top)pt down the page, want \(HelmMetrics.s5)", &ok)
+        check(abs(top - HelmMetrics.pageContentInset) < 1,
+              "the tab view starts \(top)pt down the page, want \(HelmMetrics.pageContentInset)", &ok)
 
         // One filter row: the search first, then All / Online in place of
         // the floating bar's toggle.

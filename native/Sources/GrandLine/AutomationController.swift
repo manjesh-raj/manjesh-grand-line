@@ -297,47 +297,15 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         // is assembled - not here, to avoid building every row twice.
         let stepperCard = card(icon: "list.number", title: "Pipeline", content: stepperStack)
 
-        let stack = NSStackView(views: [runCard, stepperCard])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: 14, bottomInset: 20)
+        scaffold.install(in: root)
+        for block in [runCard, stepperCard] { scaffold.addContent(block) }
+        let stack = scaffold.stack
         pageStack = stack
         runCardView = runCard
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            runCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            stepperCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            // AGENTS.md gotcha #4: pin the document view to the *clip*
-            // view, never the outer scroll view. With "Show scroll bars:
-            // Always" (the default with a mouse attached) a non-overlay
-            // vertical scroller reserves a real ~15pt track that narrows the
-            // clip view without narrowing `scroll`'s own frame, so pinning to
-            // `scroll.widthAnchor` renders the content's trailing edge
-            // underneath that track.
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scrollView = scroll
+        scrollView = scaffold.scrollView
 
         applyTheme()
         rebuildStepper()

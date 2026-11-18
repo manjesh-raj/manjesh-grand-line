@@ -246,10 +246,11 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         root.addSubview(stack)
+        // S03: the page frame's gutter and first-content line.
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            HelmPageScaffold.pinFirstContent(stack, in: root),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
             // The state is centred copy, so it needs the page's width to
             // centre *in*; in a `.leading`-aligned stack it would otherwise

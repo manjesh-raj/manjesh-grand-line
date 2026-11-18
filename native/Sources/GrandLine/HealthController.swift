@@ -81,6 +81,8 @@ final class HealthController: NSViewController, DaylightDrillActions {
     /// Set once, by `adoptSidebarLayout()`.
     private(set) var drawsSidebarLayout = false
     private var stack: NSStackView?
+    /// S03: the page frame.
+    private var scaffold: HelmPageScaffold?
 
     /// Read every service's latest report again and redraw - the rows'
     /// relative times ("13 minutes ago") are written once per render. It runs
@@ -120,41 +122,15 @@ final class HealthController: NSViewController, DaylightDrillActions {
         // D5: the page used to carry its own subtitle restating what the top
         // bar and the card header already say ("Health", "last run and last
         // error"), three times on one screen. The card is the page.
-        let stack = NSStackView(views: [healthCard.card])
-        self.stack = stack
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            healthCard.card.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            // AGENTS.md gotcha #4: pin the document view to the *clip* view,
-            // never the outer scroll view - see `SchedulesController`'s
-            // identical comment for the full reasoning.
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scrollView = scroll
+        //
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: 14)
+        scaffold.install(in: root)
+        scaffold.addContent(healthCard.card)
+        self.stack = scaffold.stack
+        self.scaffold = scaffold
+        scrollView = scaffold.scrollView
 
         healthCard.refresh(theme: theme)
         // The card rebuilds itself on every `ServiceHealthRegistry` report;
@@ -201,9 +177,7 @@ final class HealthController: NSViewController, DaylightDrillActions {
     }
 
     private func scrollToTop() {
-        guard let scroll = scrollView else { return }
-        scroll.contentView.scroll(to: .zero)
-        scroll.reflectScrolledClipView(scroll.contentView)
+        scaffold?.scrollToTop()
     }
 
     // MARK: Probe / self-test surface

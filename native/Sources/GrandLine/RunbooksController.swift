@@ -238,16 +238,17 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
 
         root.addSubview(listStack)
         root.addSubview(runbookEditorContainer)
+        // S03: the page frame's gutter and first-content line.
         NSLayoutConstraint.activate([
-            listStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 18),
-            listStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
-            listStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            listStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
+            listStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            HelmPageScaffold.pinFirstContent(listStack, in: root),
             listStack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
             runbookListScroll.widthAnchor.constraint(equalTo: listStack.widthAnchor),
 
-            runbookEditorContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 18),
-            runbookEditorContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
-            runbookEditorContainer.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
+            runbookEditorContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
+            runbookEditorContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            HelmPageScaffold.pinFirstContent(runbookEditorContainer, in: root),
             runbookEditorContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
         ])
         runbookEditorContainer.isHidden = true

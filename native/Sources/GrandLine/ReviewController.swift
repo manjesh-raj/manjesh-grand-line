@@ -63,8 +63,11 @@ import AppKit
 
 final class ReviewController: NSViewController, DaylightDrillActions {
 
-    private let scroll = NSScrollView()
-    private let contentStack = NSStackView()
+    /// S03: the page frame - scroll, flipped document, gutter and the
+    /// first-content line.
+    private let scaffold = HelmPageScaffold(spacing: 20, bottomInset: 28)
+    private var scroll: NSScrollView { scaffold.scrollView }
+    private var contentStack: NSStackView { scaffold.stack }
 
     /// The hero title. "Ready to merge" is real information (which PRs need
     /// Daylight §6.4: "the old in-page hero titles and the old top-bar title
@@ -216,20 +219,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
-        // `FlippedView` (not a plain `NSView`), matching `SettingsController`'s
-        // established Fix 4 pattern and now `FleetController`'s: a non-flipped
-        // document view puts y=0 at its *bottom*, so before data arrives -
-        // while content is still shorter than the viewport, since every
-        // forge stack starts with zero arranged subviews - AppKit rests it
-        // against the bottom of the clip view, leaving a blank gap the size
-        // of the shortfall sitting above it, with the header pushed down
-        // into (or past) that gap. Once rows are added and the content
-        // grows, it snaps back up - exactly the "empty area above the
-        // header for several seconds" bug. A flipped document view pins
-        // y=0 to the top always, so the header never moves.
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-
         let header = buildHeader()
         buildStatsRow()
         let loadingSection = buildLoadingState()
@@ -254,10 +243,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         githubSectionView = githubSection
         bitbucketSectionView = bitbucketSection
 
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 20
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        scaffold.install(in: root)
         contentStack.addArrangedSubview(header)
         contentStack.addArrangedSubview(loadingSection)
         contentStack.addArrangedSubview(statsRow)
@@ -277,12 +263,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         bitbucketSection.isHidden = true
         otherSection.isHidden = true
 
-        content.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -290,19 +271,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             githubSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             bitbucketSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             otherSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-        ])
-
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
         ThemeManager.shared.observe { [weak self, weak root] theme in

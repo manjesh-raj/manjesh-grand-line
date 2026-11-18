@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
-// The 2026-11-17 UI/UX proposals the captain approved (S01, S02, S04 to S18,
-// S20, S21, S23 to S27), checked where a check can be made without a window. Each case names its
+// The 2026-11-17 UI/UX proposals the captain approved (S01 to S18, S20 to
+// S27), checked where a check can be made without a window. Each case names its
 // proposal. The window-backed halves (geometry that needs a real layout pass
 // in a real window) live in the existing window suites that already measure
 // those pages.
@@ -42,6 +42,8 @@ enum UIUXProposalsSelfTest {
             ("S20 28pt icon targets", checkIconTargets),
             ("S21 page-tab chords", checkPageTabChords),
             ("S27 the inspector's crew panel", checkInspectorCrewPanel),
+            ("S22 an empty state follows the theme", checkEmptyStateFollowsTheTheme),
+            ("S03 one page frame", checkOnePageFrame),
         ]
         for (name, body) in cases {
             var ok = true
@@ -784,6 +786,117 @@ enum UIUXProposalsSelfTest {
         let x = HelmContrast.components(a), y = HelmContrast.components(b)
         return abs(x.0 - y.0) <= tolerance && abs(x.1 - y.1) <= tolerance && abs(x.2 - y.2) <= tolerance
     }
+
+    // MARK: - S22
+
+    /// The inspector's "Nothing selected" kept the theme it was built under:
+    /// `HelmEmptyState` applied the theme once at `init`, and a host that
+    /// did not pass a change on (the inspector) left it there. Under Daylight
+    /// that was Dusk's near-white ink, the pale title. The component follows
+    /// the theme itself now, so a state built under one register and shown
+    /// under the other takes the new register's ink and muted ink with no
+    /// help from its host. The window-backed half, in the real inspector,
+    /// is `MainSplitShellSelfTest.checkTheInspectorEmptyStateFollowsTheTheme`.
+    private static func checkEmptyStateFollowsTheTheme(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        func same(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a else { return false }
+            let x = HelmContrast.components(a), y = HelmContrast.components(b)
+            return abs(x.0 - y.0) <= 0.02 && abs(x.1 - y.1) <= 0.02 && abs(x.2 - y.2) <= 0.02
+        }
+        check(!same(HelmTheme.nsColor(HelmTheme.daylight.chromeInkHex), HelmTheme.nsColor(HelmTheme.dusk.chromeInkHex)),
+              "S22: Daylight's and Dusk's ink are too close for this check to fail", &ok)
+        for (from, to) in [(HelmTheme.dusk, HelmTheme.daylight), (HelmTheme.daylight, HelmTheme.dusk)] {
+            ThemeManager.shared.setTheme(from)
+            let empty = HelmEmptyState(symbol: "sidebar.right", title: "Nothing selected",
+                                       body: "Pick something on this page to see it here.", size: .standard)
+            ThemeManager.shared.setTheme(to)
+            check(same(empty.debugTitleLabel.textColor, HelmTheme.nsColor(to.chromeInkHex)),
+                  "S22: an empty state built under \(from.id) kept its title colour under \(to.id)", &ok)
+            check(same(empty.debugBodyLabel.textColor, HelmTheme.mutedInk(to)),
+                  "S22: an empty state built under \(from.id) kept its body colour under \(to.id)", &ok)
+        }
+    }
+
+
+    // MARK: - S03
+
+    /// The page frame's headless half: the tokens add up, the header line
+    /// keeps its slot when it says nothing, a scrolling page's first block
+    /// lands on the line, and the pages that moved onto `HelmPageScaffold`
+    /// keep no frame of their own. Where every page actually starts, in the
+    /// real shell, is `MainSplitShellSelfTest.checkEveryPageStartsAtOneHeight`.
+    private static func checkOnePageFrame(_ ok: inout Bool) {
+        check(HelmMetrics.pageContentTop - HelmMetrics.pageHeaderLine == HelmMetrics.pageContentInset
+                && HelmMetrics.pageContentInset > 0,
+              "S03: the page frame's tokens do not add up", &ok)
+
+        // The header line: one height, empty or not.
+        let header = WorkspaceModuleHeader()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
+        host.addSubview(header)
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: host.topAnchor),
+            header.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+        for (title, subtitle) in [("Health", "3 services · all healthy"), ("Health", ""), (nil as String?, "")] {
+            header.configure(title: title, subtitle: subtitle)
+            host.layoutSubtreeIfNeeded()
+            check(!header.isHidden && abs(header.frame.height - HelmMetrics.pageHeaderLine) < 0.5,
+                  "S03: the header line is \(header.isHidden ? "hidden" : "\(header.frame.height)pt") for title \(title ?? "nil"), subtitle \"\(subtitle)\"",
+                  &ok)
+        }
+
+        // A scrolling page: its first block on the line, at the gutter.
+        let scaffold = HelmPageScaffold()
+        let page = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        scaffold.install(in: page)
+        let block = NSView()
+        block.heightAnchor.constraint(equalToConstant: 80).isActive = true
+        scaffold.addContent(block)
+        page.layoutSubtreeIfNeeded()
+        let frame = block.convert(block.bounds, to: scaffold.documentView)
+        check(abs(frame.minY - HelmMetrics.pageContentInset) < 0.5 && abs(frame.minX - HelmMetrics.pageGutter) < 0.5,
+              "S03: the scaffold's first block sits at \(frame.origin), want (\(HelmMetrics.pageGutter), \(HelmMetrics.pageContentInset))",
+              &ok)
+        check(abs(frame.width - (scaffold.scrollView.contentView.bounds.width - 2 * HelmMetrics.pageGutter)) < 0.5,
+              "S03: the scaffold's block is \(frame.width)pt wide, not the column", &ok)
+        // A top slot takes the line, and the content scrolls under it.
+        let slot = NSView()
+        slot.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        scaffold.setTopSlot(slot)
+        page.layoutSubtreeIfNeeded()
+        let slotTop = scaffold.isFlipped ? slot.frame.minY : scaffold.bounds.height - slot.frame.maxY
+        let scrollTop = scaffold.isFlipped ? scaffold.scrollView.frame.minY
+            : scaffold.bounds.height - scaffold.scrollView.frame.maxY
+        check(abs(slotTop - HelmMetrics.pageContentInset) < 0.5 && abs(scrollTop - (slotTop + 30)) < 0.5,
+              "S03: the scaffold's top slot sits \(slotTop)pt down with the content from \(scrollTop)pt, want the line and under it",
+              &ok)
+
+        // The pages that moved over keep no private frame: no scroll view or
+        // flipped document of their own for the page, and no top constant.
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP S03 source guard: the app's sources were not found")
+            return
+        }
+        let moved = ["HealthController", "ToolsController", "UpdatesController", "BootstrapController",
+                     "AutomationController", "GitHubSyncController", "DictationController", "ReviewController",
+                     "FleetController", "VaultController", "LogAnalyzerController", "SchedulesController",
+                     "CommandLibraryController"]
+        for name in moved {
+            guard let text = try? String(contentsOf: root.appendingPathComponent("\(name).swift"), encoding: .utf8) else {
+                fail("S03: \(name).swift could not be read", &ok)
+                continue
+            }
+            check(text.contains("HelmPageScaffold("), "S03: \(name) does not use HelmPageScaffold", &ok)
+            check(!text.contains("private let scroll = NSScrollView()") && !text.contains("let content = FlippedView()"),
+                  "S03: \(name) builds its own page scroll view or document again", &ok)
+        }
+    }
+
 }
 
 #endif

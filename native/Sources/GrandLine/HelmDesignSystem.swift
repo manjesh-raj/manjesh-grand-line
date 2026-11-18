@@ -69,6 +69,22 @@ enum HelmMetrics {
     /// destination's scroll clip view to its content column.
     static let pageGutter: CGFloat = 24
 
+    /// S03 (`HelmPageScaffold`): the page frame's two heights, both measured
+    /// from the bottom of the window toolbar.
+    ///
+    /// `pageHeaderLine` is the header line's slot: the page's subtitle, a
+    /// control on that line, or nothing - the slot keeps its height either
+    /// way, so nothing below it moves. `pageContentTop` is where every page's
+    /// first content starts: a filter row, a number strip, the first card,
+    /// a terminal's tab row. Under the 52pt window toolbar these put the
+    /// header text at 68pt and the first content at 96pt from the window's
+    /// top edge, the two lines the S03 proposal drew.
+    static let pageHeaderLine: CGFloat = 32
+    static let pageContentTop: CGFloat = 44
+    /// What a page leaves above its first content, from the top of its own
+    /// view: the part of `pageContentTop` the header line does not take.
+    static var pageContentInset: CGFloat { pageContentTop - pageHeaderLine }
+
     // The one icon-tile scale: three roles, not five sizes.
     /// Inline badge inside a dense row.
     static let tileSmall: CGFloat = 26
@@ -3631,14 +3647,33 @@ final class HelmEmptyState: NSView {
             stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: size.verticalPadding),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -size.verticalPadding),
         ])
-        applyTheme(ThemeManager.shared.theme)
+        // S22: the state follows the theme itself. It used to apply the
+        // theme once, here, and leave every later change to its host - and
+        // the inspector never passed one on, so after a switch from Dusk to
+        // Daylight its "Nothing selected" kept Dusk's near-white ink on
+        // Daylight's light column (measured: E8E6DE under Daylight). That
+        // read as a pale title in system glass, and the glass had nothing to
+        // do with it: the label is not vibrant. A host that also calls
+        // `applyTheme` repaints the same colours twice, which is harmless.
+        // Registered last, because `observe` fires at once.
+        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    deinit {
+        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+    }
+
+    private var themeToken: ThemeObservation?
+
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }
     var debugBodyText: String { bodyLabel.stringValue }
+    /// S22: the title and body labels themselves, so a check can read their
+    /// live colours and render their pixels.
+    var debugTitleLabel: NSTextField { titleLabel }
+    var debugBodyLabel: NSTextField { bodyLabel }
     /// UXP-13: whether this is a page-level state - a `.standard` one that
     /// is not boxed as an object in a flow - which is what the placement
     /// rule governs.

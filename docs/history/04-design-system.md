@@ -1107,3 +1107,43 @@ The probe says they are the same unit, so Excalidraw's islands get half §2.5's 
 That is a web-island change with its own verification (`WKWebView.takeSnapshot`), and is left for a follow-up.
 Every Daylight card's shadow is now tighter than what the captain has seen since #494.
 That is the spec's own value, but it is a visible change and worth a look.
+
+## The UI/UX proposals S03 and S22 (`fm/grand-line-uiux-proposals-s03-s22`)
+
+The last two of the 2026-11-17 proposals this round, taking the kit from Helm 5.0.0 to 6.0.0 (S22 is 5.0.1).
+S19 stays not started.
+
+**S22, the inspector's pale title.**
+The proposal suspected a render artefact of the system glass and asked for a measurement plus a guard.
+The measurement found a real defect instead.
+In the off-screen split shell, after a switch from Dusk to Daylight, the inspector's "Nothing selected" still held Dusk's ink (E8E6DE) and its body Dusk's muted ink (979283).
+`HelmEmptyState` painted the theme once at `init`, and the inspector's own `applyTheme` never repainted it.
+The label is not vibrant (`allowsVibrancy` false, a plain Aqua or DarkAqua appearance), so the glass played no part.
+The state observes the theme itself now, which covers any host that forgets.
+
+**S03, one page frame.**
+The before numbers are the scout's, re-measured on `main` with the scout's pixel tool and with `PageScaffoldProbe` in-process: under the 52pt toolbar the first content started at ten heights, from 76pt to 117pt.
+Two causes, in roughly equal parts.
+The header line hid on any page without a subtitle and on Connections and Console, so those pages started 32pt higher.
+And each page chose its own top constant (8, 12, 16, 18, 24 or 26pt).
+The header line is now a fixed 32pt slot on every module, and every page leaves `HelmMetrics.pageContentInset` (12pt) above its first content, which lands it at 96pt.
+
+Two traps found on the way, both measured in the tour lab:
+
+- The header slot's height has to be **required**. Preferred at 490 and then at 750, a page's own height ties out-pulled it, and Notebook's body was pushed to 645pt in a 950pt window.
+- With the old collapse constraint gone, the content pane's top stack needs **required vertical hugging** (gotcha (12): the stack-priority API). Without it the same page ties stretched the stack instead.
+
+The Secrets setup card was centred in its page and, at 950pt in Dusk, rose to 86pt, above the line and nearly touching the header.
+It is still centred, but its top is held at the line.
+The centre sits at 490, below the window's 500: held at 750 it grew a 750pt window to 731pt of content to keep the tall card centred under the floor (`AppShellBodyWidthSelfTest`, gotcha (13)).
+
+Home's hub sizes its rows to fill the viewport less its top and bottom margins.
+Moving the top from 8pt to 12pt left the rows 4pt shorter, and at 960x620 a loading card's skeleton no longer fit its row (`LayoutStabilitySelfTest`).
+The foot gave back the same 4pt (24pt to 20pt), so the rows' share of the viewport is what it was.
+
+Schedules' first block is a borderless number strip whose frame sits on the line while its large figures' ink starts 9pt lower.
+The guard checks that strip's frame rather than its ink, and says so.
+
+**Pre-existing, not fixed here.**
+`MainSplitShellSelfTest`'s Home arrangement checks ("4 of 5 cards are on Home": the Morning briefing card missing) failed twice in a row and then passed with no change, on this branch and on a build without it.
+The cause was not found in this task.

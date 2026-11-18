@@ -179,8 +179,9 @@ extension ShiftController {
         if tie.constant != -reserved { tie.constant = -reserved }
     }
 
-    /// The content stack's distance from the top of the scroll document.
-    static let contentTopInset: CGFloat = 24
+    /// The content stack's distance from the top of the scroll document:
+    /// the page frame's first-content line (S03), where the filter row sits.
+    static let contentTopInset: CGFloat = HelmMetrics.pageContentInset
 
     /// The floating bar's tab row: the sort belongs to the board and the
     /// list, and Colour by to the calendar. The sidebar

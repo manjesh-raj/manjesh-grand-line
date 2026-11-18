@@ -535,7 +535,8 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
             editorCard.leadingAnchor.constraint(equalTo: pane.leadingAnchor,
                                                 constant: Self.gutter - HelmSplitPage.dividerThickness),
-            editorCard.topAnchor.constraint(equalTo: pane.topAnchor, constant: Self.gutter),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(editorCard, in: pane),
             editorCard.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -Self.gutter),
 
             previewCard.leadingAnchor.constraint(equalTo: editorCard.trailingAnchor, constant: Self.gutter),

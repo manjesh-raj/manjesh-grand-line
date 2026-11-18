@@ -51,8 +51,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// captain's real `av save` in the Console tab actually completes.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
-    private let scroll = NSScrollView()
-    private let contentStack = NSStackView()
+    /// S03: the page frame - scroll, flipped document, gutter and the
+    /// first-content line.
+    private let scaffold = HelmPageScaffold(spacing: 20, bottomInset: 28)
+    private var scroll: NSScrollView { scaffold.scrollView }
+    private var contentStack: NSStackView { scaffold.stack }
 
     // Daylight §6.4: the page's own standing subtitle row is gone - the drill
     // header carries that line now (`drillHeaderSubtitle`), computed from the
@@ -203,50 +206,23 @@ final class VaultController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
-        // FlippedView - see ReviewController.loadView's identical comment for
-        // why a plain NSView here would leave a blank gap above the header
-        // until the first real render lands.
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-
         configureHeaderActions()
         _ = buildSecretsSection()
         _ = buildToolsSection()
         _ = buildRecipeSection()
 
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 20
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        scaffold.install(in: root)
         contentStack.addArrangedSubview(attentionBanner)
         contentStack.addArrangedSubview(secretsPanel)
         contentStack.addArrangedSubview(toolsPanel)
         contentStack.addArrangedSubview(recipePanel)
         attentionBanner.isHidden = true
 
-        content.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             attentionBanner.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             secretsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             toolsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             recipePanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-        ])
-
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
         ThemeManager.shared.observe { [weak self, weak root] theme in

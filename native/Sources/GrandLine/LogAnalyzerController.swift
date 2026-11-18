@@ -164,8 +164,11 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     // MARK: Chrome
 
-    private let scroll = NSScrollView()
-    private let contentStack = NSStackView()
+    /// S03: the page frame - scroll, flipped document, gutter and the
+    /// first-content line.
+    private let scaffold = HelmPageScaffold(spacing: 18, bottomInset: 28)
+    private var scroll: NSScrollView { scaffold.scrollView }
+    private var contentStack: NSStackView { scaffold.stack }
     // Daylight §6.4 deleted this page's in-page hero ("Log Analyzer", right
     // under a drill header already saying it) and its standing subtitle; the
     // two buttons that shared that row are now the drill header's own action
@@ -391,14 +394,14 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         // stretch vertically if something else constrains them - a scroll
         // view in one would collapse to its content height. Both columns are
         // pinned to the full height here instead.
-        root.addSubview(scroll)
+        root.addSubview(scaffold)
         root.addSubview(historyRail)
         historyRailWidth = historyRail.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            scroll.trailingAnchor.constraint(equalTo: historyRail.leadingAnchor),
+            scaffold.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scaffold.topAnchor.constraint(equalTo: root.topAnchor),
+            scaffold.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            scaffold.trailingAnchor.constraint(equalTo: historyRail.leadingAnchor),
 
             historyRail.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             historyRail.topAnchor.constraint(equalTo: root.topAnchor),
@@ -465,15 +468,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     // MARK: - Building: main column
 
     private func buildMainColumn() {
-        // `FlippedView`, not a plain `NSView` - AGENTS.md gotcha (9).
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 18
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-
         buildHeaderActions()
         buildImportBadge()
         let input = buildInputCard()
@@ -491,13 +485,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
             contentStack.addArrangedSubview(view)
         }
 
-        content.addSubview(contentStack)
-        var constraints: [NSLayoutConstraint] = [
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
-        ]
+        var constraints: [NSLayoutConstraint] = []
         // Every section fills the column - a stack's arranged subviews
         // otherwise size to their own content at `.leading` alignment.
         // Deliberately not `tabs`: `HelmSegmentedTabs` is a capsule that
@@ -509,15 +497,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
             constraints.append(view.widthAnchor.constraint(equalTo: contentStack.widthAnchor))
         }
         NSLayoutConstraint.activate(constraints)
-
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        // AGENTS.md gotcha (4): the clip view, never the outer scroll view.
-        NSLayoutConstraint.activate([
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
     }
 
     /// §6.4's action cluster owns these two now - built here (rather than in

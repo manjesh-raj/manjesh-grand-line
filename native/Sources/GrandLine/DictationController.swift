@@ -30,8 +30,11 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
     private let store: DictationStore
 
-    private let scroll = NSScrollView()
-    private let contentStack = NSStackView()
+    /// S03: the page frame - scroll, flipped document, gutter and the
+    /// first-content line.
+    private let scaffold = HelmPageScaffold(spacing: 20, bottomInset: 28)
+    private var scroll: NSScrollView { scaffold.scrollView }
+    private var contentStack: NSStackView { scaffold.stack }
 
     /// §6.4's action cluster - this page's one page-level action. The in-page
     /// header row that used to hold it (a subtitle line plus this button) is
@@ -160,12 +163,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
-        // FlippedView - see VaultController/ReviewController's identical
-        // comment for why a plain NSView here would leave a blank gap above
-        // the header until the first real render lands.
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-
         buildDrillActions()
         _ = buildStatusSection()
         _ = buildShortcutSection()
@@ -175,10 +172,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
         _ = buildHistorySection()
         buildFootnote()
 
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 20
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
         // §7: status and shortcut share one row. `.fillEqually` so neither
         // card can be pushed narrow by the other's content, and both cards'
         // own text stacks already yield at stack level (see `viewDidLayout`),
@@ -191,39 +184,11 @@ final class DictationController: NSViewController, DaylightDrillActions {
         statusShortcutRow.translatesAutoresizingMaskIntoConstraints = false
         statusShortcutRow.setViews([statusPanel, shortcutPanel], in: .leading)
 
-        contentStack.addArrangedSubview(statusShortcutRow)
-        contentStack.addArrangedSubview(cleanupPanel)
-        contentStack.addArrangedSubview(localWhisperPanel)
-        contentStack.addArrangedSubview(vocabularyPanel)
-        contentStack.addArrangedSubview(historyPanel)
-        contentStack.addArrangedSubview(footnoteLabel)
-
-        content.addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
-            statusShortcutRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            cleanupPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            localWhisperPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            vocabularyPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            historyPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            footnoteLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-        ])
-
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
+        scaffold.install(in: root)
+        for block in [statusShortcutRow, cleanupPanel, localWhisperPanel, vocabularyPanel, historyPanel,
+                      footnoteLabel] as [NSView] {
+            scaffold.addContent(block)
+        }
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme

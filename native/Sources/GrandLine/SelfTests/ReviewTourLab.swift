@@ -166,6 +166,9 @@ enum ReviewTourLab {
         /// Print the window's and the showing page's widths, the minimum
         /// sizes, and any view that reaches past the window's content width.
         case measureWindow(String)
+        /// S03: where the showing page's header line and first content start
+        /// (`PageScaffoldProbe`), in window points from the top.
+        case pageTop(String)
         /// Order the window in, still parked off every screen
         /// (`OffScreenProbeWindow` enforces that). AppKit only re-derives a
         /// window's frame from its content's constraints while the window is
@@ -329,7 +332,7 @@ enum ReviewTourLab {
             switch self {
             case .unknownVerb(let v):
                 return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, renderdrift, menu, wait, "
-                    + "demo, measure, measurewindow, orderfront, probe, tasks, calendar, bar, fleet, inspector, sidebar, "
+                    + "demo, measure, measurewindow, pagetop, orderfront, probe, tasks, calendar, bar, fleet, inspector, sidebar, "
                     + "tab, customize, select, textscale, settings, grouped, code)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
@@ -486,6 +489,9 @@ enum ReviewTourLab {
         case "measurewindow":
             guard !argument.isEmpty else { return .failure(.missingArgument("measurewindow")) }
             return .success(.measureWindow(argument))
+        case "pagetop":
+            guard !argument.isEmpty else { return .failure(.missingArgument("pagetop")) }
+            return .success(.pageTop(argument))
         case "tab":
             guard !argument.isEmpty else { return .failure(.missingArgument("tab")) }
             return .success(.moduleTab(argument))
@@ -990,6 +996,9 @@ enum ReviewTourLab {
                 window.orderFront(nil)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("orderfront (parked at \(Int(window.frame.minX)),\(Int(window.frame.minY)))")
+            case .pageTop(let label):
+                let reading = (shell as? MainSplitShellController).flatMap { PageScaffoldProbe.measure($0) }
+                log.append("pagetop \(label): \(reading?.line ?? "needs the sidebar layout")")
             case .measureWindow(let label):
                 log.append("== measurewindow \(label)")
                 log.append(contentsOf: windowMeasureLines(shell: shell, window: window).map { "  " + $0 })
