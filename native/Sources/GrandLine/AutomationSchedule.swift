@@ -585,6 +585,11 @@ struct ScheduleFailureExplanation: Codable, Equatable {
         self.whatToDo = whatToDo
     }
 
+    /// The three parts as one line, for a row's subtitle: "Couldn't reach
+    /// GitHub · gh is not signed in on this Mac · run gh auth login, then
+    /// Check again".
+    var sentence: String { [whatFailed, why, whatToDo].filter { !$0.isEmpty }.joined(separator: " \u{00B7} ") }
+
     /// REL-22 / GL-01: `decodeIfPresent` for every field, so a field added
     /// later cannot make an existing `schedules.json` undecodable as a whole.
     private enum DecodingKeys: String, CodingKey { case whatFailed, why, whatToDo }

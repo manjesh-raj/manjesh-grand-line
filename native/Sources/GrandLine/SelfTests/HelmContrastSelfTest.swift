@@ -1200,61 +1200,44 @@ enum HelmContrastSelfTest {
         tightWin.orderOut(nil)
     }
 
-    // MARK: 9. One stat-tile recipe (audit §3.2 "Stat tile", §6.3 #4, Phase 4)
+    // MARK: 9. One number recipe (audit §3.2 "Stat tile", §6.3 #4, Phase 4; S14)
 
-    /// Every `HelmStatTile` renders one recipe in every theme - one height, one
-    /// radius, one metric size, one caption size, `HelmCard`'s own fill and
-    /// border - and, the part that is a real defect rather than inconsistency,
-    /// **a tinted metric clears the text floor against the tile's own fill**.
-    /// Two of the three copies this replaced set the value label straight to
-    /// `HelmTheme.nsColor(tint.hex(in: theme))`, which is §5.7's "a hue is safe
-    /// as a fill, not automatically as text" mistake: Solarized Dark's green
-    /// measures 2.71:1 that way.
+    /// Every `.boxed` `HelmKPIStrip` cell renders one recipe in every theme -
+    /// one height, one figure size, one caption size, `HelmCard`'s own fill -
+    /// and, the part that is a real defect rather than inconsistency, **a
+    /// tinted figure clears the text floor against the cell's own fill**. Two
+    /// of the stat-tile copies the old `HelmStatTile` replaced set the value
+    /// straight to `HelmTheme.nsColor(tint.hex(in: theme))`, which is §5.7's
+    /// "a hue is safe as a fill, not automatically as text" mistake: Solarized
+    /// Dark's green measures 2.71:1 that way. S14 retired that tile and
+    /// `HelmMetricCard` into this one strip, so the check moved with them.
     private static func checkStatTileRecipe(_ ok: inout Bool) {
-        print("\n-- stat tiles (one recipe + legible tinted metric, all themes) --")
+        print("\n-- boxed KPI cells (one recipe + legible tinted figure, all themes) --")
         var worst = (ratio: Double.greatestFiniteMagnitude, label: "")
         for theme in everyChromePalette {
             for tint in [nil, HelmTint.good, .warn, .critical, .accent, .info, .violet] as [HelmTint?] {
-                let tile = HelmStatTile(symbol: "checkmark.circle", value: "12", caption: "a caption", tint: tint)
-                tile.applyTheme(theme)
-                tile.widthAnchor.constraint(equalToConstant: 180).isActive = true
-                let g = tile.debugGeometry()
+                let strip = HelmKPIStrip(density: .boxed)
+                strip.configure([.figure("12", caption: "a caption", tint: tint, signals: true)], theme: theme)
+                strip.frame = NSRect(x: 0, y: 0, width: 180, height: HelmKPIStrip.boxedHeight)
+                strip.layoutSubtreeIfNeeded()
+                guard let cell = strip.debugCells.first else {
+                    print("  FAIL \(theme.id): the strip drew no cell")
+                    ok = false
+                    continue
+                }
                 var problems: [String] = []
-                if abs(g.tileFrame.height - HelmStatTile.height) > 0.01 {
-                    problems.append("height \(g.tileFrame.height)")
+                if abs(cell.frame.height - HelmKPIStrip.boxedHeight) > 0.01 { problems.append("height \(cell.frame.height)") }
+                if cell.debugValuePointSize != HelmType.metric(HelmKPIStrip.boxedMetricSize).pointSize {
+                    problems.append("figure size \(cell.debugValuePointSize)")
                 }
-                if abs(g.cornerRadius - HelmMetrics.rRow) > 0.01 { problems.append("radius \(g.cornerRadius)") }
-                if abs(g.borderWidth - 1) > 0.01 { problems.append("border width \(g.borderWidth)") }
-                // Compared against the recipe's own constants rather than
-                // literals, so GL-32's chrome scale (`HelmType.scaled`) can
-                // never make this check fail for the right reason - the point
-                // is one recipe per theme, not one hardcoded point size.
-                if g.metricFont?.pointSize != HelmType.scaled(19) {
-                    problems.append("metric size \(String(describing: g.metricFont?.pointSize))")
+                let fill = cell.debugCard.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+                if let fill, HelmContrast.ratio(fill, HelmTheme.nsColor(theme.chromeBackgroundHex)) > 1.01 {
+                    problems.append("fill is not the card surface")
                 }
-                if g.captionFont?.pointSize != HelmType.scaled(HelmStatTile.captionSize) {
-                    problems.append("caption size \(String(describing: g.captionFont?.pointSize))")
-                }
-                // The fill is `HelmCard`'s, so a tile and a card on one page can
-                // never drift into two surfaces again. The alpha check matters
-                // as much as the hue: Updates' copy was the same colour at
-                // `@ 0.60`, which is a different *rendered* surface.
-                if let fill = g.fill {
-                    if HelmContrast.ratio(fill, HelmTheme.nsColor(theme.chromeBackgroundHex)) > 1.01 {
-                        problems.append("fill is not the card surface")
-                    }
-                    if abs(fill.alphaComponent - 1) > 0.01 {
-                        problems.append("fill alpha \(fmt(Double(fill.alphaComponent)))")
-                    }
-                }
-                if let metric = g.metricColor, let fill = g.fill {
+                if let metric = cell.debugValueColor, let fill {
                     let r = HelmContrast.ratio(metric, fill)
                     if r < worst.ratio { worst = (r, "\(theme.id) \(String(describing: tint))") }
-                    if r < HelmContrast.textTarget - 0.01 { problems.append("metric contrast \(fmt(r))") }
-                }
-                if let caption = g.captionColor,
-                   HelmContrast.ratio(caption, HelmTheme.mutedInk(theme)) > 1.01 {
-                    problems.append("caption not mutedInk")
+                    if r < HelmContrast.textTarget - 0.01 { problems.append("figure contrast \(fmt(r))") }
                 }
                 if !problems.isEmpty {
                     print("  FAIL \(theme.id) \(String(describing: tint)): \(problems.joined(separator: ", "))")
@@ -1262,7 +1245,7 @@ enum HelmContrastSelfTest {
                 }
             }
         }
-        print("  OK - \(Int(HelmStatTile.height))pt / radius \(Int(HelmMetrics.rRow)) / metric \(fmt(Double(HelmType.scaled(19)))) / caption \(fmt(Double(HelmType.scaled(HelmStatTile.captionSize)))), card surface, worst metric contrast \(fmt(worst.ratio)) (\(worst.label))")
+        print("  OK - \(Int(HelmKPIStrip.boxedHeight))pt / figure \(Int(HelmKPIStrip.boxedMetricSize)) / caption \(fmt(Double(HelmKPIStrip.boxedCaptionSize))), card surface, worst figure contrast \(fmt(worst.ratio)) (\(worst.label))")
     }
 
     // MARK: 10. One empty-state recipe (audit §3.2 "Empty state", §6.3 #5, Phase 4)

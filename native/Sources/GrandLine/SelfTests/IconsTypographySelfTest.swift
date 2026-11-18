@@ -66,13 +66,6 @@ enum IconsTypographySelfTest {
                   "IconTileView's symbol is flat - I1 asks for hierarchical rendering")
         }
 
-        let stat = HelmStatTile(symbol: "checkmark.seal.fill", value: "3", caption: "Ready to merge")
-        stat.applyTheme(theme)
-        check(stat.debugRenderedIcon != nil, "HelmStatTile rendered no icon")
-        if let image = stat.debugRenderedIcon {
-            check(HelmSymbol.isHierarchical(image), "HelmStatTile's symbol is flat")
-        }
-
         let empty = HelmEmptyState(symbol: "tray", title: "Nothing here yet", body: "Nothing to show.")
         empty.applyTheme(theme)
         check(empty.debugRenderedIcon != nil, "HelmEmptyState rendered no icon")
@@ -86,7 +79,7 @@ enum IconsTypographySelfTest {
               "HelmSymbol.weight does not pass a semibold text weight through")
         check(HelmSymbol.weight(for: .heavy) == .bold,
               "HelmSymbol.weight should cap a display weight at .bold - SF Symbols has no .heavy")
-        print("  OK   IconTileView / HelmStatTile / HelmEmptyState all hierarchical;"
+        print("  OK   IconTileView / HelmEmptyState all hierarchical (S14 retired HelmStatTile);"
               + " weight pairing passes semibold through")
     }
 

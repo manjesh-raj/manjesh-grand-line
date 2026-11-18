@@ -589,6 +589,19 @@ extension AppDelegate {
                                  keyEquivalent: "}").withSymbol("chevron.forward")
         nextTab.target = menuTarget
         goMenu.addItem(nextTab)
+        // S21: ⌃1 to ⌃9 pick a module's tab by number. Hidden rows, so the
+        // menu stays readable; ⌘/ lists them for the page on screen.
+        for number in 1...9 {
+            let item = NSMenuItem(title: "Tab \(number)",
+                                  action: #selector(WorkspaceShellController.selectModuleTabByNumber(_:)),
+                                  keyEquivalent: "\(number)")
+            item.keyEquivalentModifierMask = [.control]
+            item.tag = number
+            item.isHidden = true
+            item.allowsKeyEquivalentWhenHidden = true
+            item.target = menuTarget
+            goMenu.addItem(item)
+        }
         if workspaceLayout == .sidebar {
             WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
             // R2-UX-01 (b): a module shown or hidden in Settings comes and

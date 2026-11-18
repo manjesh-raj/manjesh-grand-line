@@ -1057,6 +1057,10 @@ final class ShiftStore {
     /// `addTask`/`addFollowUp` above that phase 3 never added when it shipped
     /// `updateProject` (edit-only, no creation path).
     func addProject(_ project: ShiftProject) {
+        var project = project
+        // S13: a new project takes the first identity hue no other project
+        // wears, so three projects are three colours rather than a hash's luck.
+        if project.hue == nil { project.hue = ShiftProjectPalette.firstFreeHue(among: projects) }
         projects.append(project)
         persistProjects()
         logActivity(kind: "project_created", summary: "Created project \"\(project.name)\"", targetID: project.id, now: Date())

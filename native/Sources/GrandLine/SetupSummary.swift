@@ -240,7 +240,8 @@ final class SetupSummaryFeed {
 /// re-applied the theme it was mounted with on every count change - five
 /// dark tiles on a Daylight page.
 final class SetupSummaryRow: NSView {
-    private let cards = SetupSummary.captions.map { HelmMetricCard(caption: $0, tint: nil) }
+    /// S14: the row is a `.boxed` `HelmKPIStrip`.
+    private let strip = HelmKPIStrip(density: .boxed)
     private let feed: SetupSummaryFeed
     private var feedToken: UUID?
     private var themeToken: ThemeObservation?
@@ -251,7 +252,7 @@ final class SetupSummaryRow: NSView {
         self.feed = feed
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        let row = HelmMetricRow(cards)
+        let row = strip
         addSubview(row)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -277,98 +278,19 @@ final class SetupSummaryRow: NSView {
     /// Repaint the cards from the feed's figures.
     private func render() {
         shown = feed.cards
-        for (card, figure) in zip(cards, shown) {
-            card.setTint(figure.tint)
-            card.configure(text: figure.text, signals: figure.signals, unknownReason: figure.unknownReason)
-        }
-        applyTheme(theme)
+        strip.configure(zip(SetupSummary.captions, shown).map { caption, figure in
+            .figure(figure.text, caption: caption, tint: figure.tint, signals: figure.signals,
+                    unknownReason: figure.unknownReason)
+        }, theme: theme)
     }
 
     private func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        for card in cards { card.applyTheme(theme) }
+        strip.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
-    var debugValues: [String] { cards.map(\.debugValue) }
-    var debugCards: [HelmMetricCard] { cards }
+    var debugValues: [String] { strip.debugCells.map(\.debugValue) }
+    var debugCards: [HelmKPIStrip.BoxedCell] { strip.debugCells }
     #endif
-}
-
-/// GitHub sync's "Pushing is paused" notice (stage 7): a critical-edged card
-/// - the shape Tasks' failed-read card uses for a stated failure - with the
-/// sentence wrapping under its title and the two actions under it, as the
-/// prototype draws it. Shown only while the config repo is confirmed public.
-final class SetupPausedPushNotice: NSView {
-    static let tileSide: CGFloat = 30
-
-    let card = HelmCard()
-    private let tile = IconTileView(size: SetupPausedPushNotice.tileSide, cornerRadius: 8)
-    let titleLabel = NSTextField(labelWithString: "Pushing is paused")
-    let bodyLabel = NSTextField(wrappingLabelWithString: "")
-    let actions = NSStackView()
-    private var theme: HelmTheme = ThemeManager.shared.theme
-
-    init(actionButtons: [NSView]) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        tile.configure(symbol: "exclamationmark.triangle.fill", tint: .critical)
-        tile.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = HelmType.cardTitle()
-        bodyLabel.font = HelmType.body()
-        bodyLabel.maximumNumberOfLines = 0
-        actions.orientation = .horizontal
-        actions.spacing = HelmMetrics.s2
-        actions.alignment = .centerY
-        for button in actionButtons { actions.addArrangedSubview(button) }
-        let text = NSStackView(views: [titleLabel, bodyLabel, actions])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = HelmMetrics.s1
-        text.setCustomSpacing(HelmMetrics.s3, after: bodyLabel)
-        text.translatesAutoresizingMaskIntoConstraints = false
-        let row = NSStackView(views: [tile, text])
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = HelmMetrics.s3
-        row.translatesAutoresizingMaskIntoConstraints = false
-        bodyLabel.widthAnchor.constraint(equalTo: text.widthAnchor).isActive = true
-        card.setBody(row, insets: HelmCard.contentInsets)
-        card.setAttentionEdge(.critical)
-        card.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(card)
-        NSLayoutConstraint.activate([
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.topAnchor.constraint(equalTo: topAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    /// Gotcha (22): the sentence wraps at the card's own width less the tile
-    /// and the insets - widths this label does not decide - never at its own.
-    override func layout() {
-        super.layout()
-        let insets = HelmCard.contentInsets
-        let width = max(160, floor(bounds.width - insets.left - insets.right - Self.tileSide - HelmMetrics.s3))
-        if abs(bodyLabel.preferredMaxLayoutWidth - width) > 0.5 {
-            bodyLabel.preferredMaxLayoutWidth = width
-            bodyLabel.invalidateIntrinsicContentSize()
-        }
-    }
-
-    func setBody(_ text: String) {
-        bodyLabel.stringValue = text
-        needsLayout = true
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        self.theme = theme
-        card.applyTheme(theme)
-        tile.applyTheme(theme)
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        bodyLabel.textColor = HelmTheme.mutedInk(theme)
-    }
 }

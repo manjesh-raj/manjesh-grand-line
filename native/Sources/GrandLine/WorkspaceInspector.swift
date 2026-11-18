@@ -56,10 +56,10 @@ final class WorkspaceInspectorController: NSViewController {
     private let panel = NSView()
     private let edge = NSView()
     private let titleLabel = NSTextField(labelWithString: "Inspector")
-    private let closeButton = NSButton()
+    private let closeButton = HelmIconButton(symbol: "xmark", label: "Close inspector")
     private let divider = NSView()
     private let empty = HelmEmptyState(
-        symbol: "sidebar.right",
+        symbol: HelmSymbol.Role.inspector.name,
         title: WorkspaceInspectorController.noDetailsTitle,
         body: WorkspaceInspectorController.noDetailsBody,
         size: .standard)
@@ -69,17 +69,12 @@ final class WorkspaceInspectorController: NSViewController {
     private weak var hostedView: NSView?
     private var themeToken: ThemeObservation?
 
-    static let noDetailsTitle = "No details for this page"
-    /// R4-UI-07: the modules whose pages fill the inspector, by the names the
-    /// sidebar gives them (`ModuleTable`), not by an older page's title. It
-    /// read "Hosts and Poneglyph" beside a sidebar that says Connections and
-    /// Secrets, and left out Setup, whose Updates and GitHub sync fill it too.
-    static let modulesWithDetails: [WorkspaceModule] = [.connections, .secrets, .setup]
-    static var noDetailsBody: String {
-        let names = modulesWithDetails.map(\.title)
-        let list = names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-        return "This page has nothing to show here. \(list) show the selected item's details."
-    }
+    /// S27: the pane's fallback before a page is adopted. Every page that
+    /// never fills the pane now shows the crew panel (Operator) or its
+    /// shortcuts (Personal), and a page with details shows its own words for
+    /// having nothing selected, so this is the shell's first frame only.
+    static let noDetailsTitle = "Nothing selected"
+    static let noDetailsBody = "Pick something on this page to see it here."
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 600))
@@ -96,14 +91,10 @@ final class WorkspaceInspectorController: NSViewController {
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.image = HelmSymbol.image("xmark", pointSize: HelmType.scaled(11), weight: .semibold)
-        closeButton.imagePosition = .imageOnly
-        closeButton.isBordered = false
+        // S20: a `HelmIconButton` - the 28pt target with its hover fill and
+        // focus ring.
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        closeButton.toolTip = "Close the inspector"
-        closeButton.setAccessibilityLabel("Close inspector")
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
         empty.translatesAutoresizingMaskIntoConstraints = false
         contentScroll.documentView = contentDocument
         contentScroll.hasVerticalScroller = true
@@ -229,7 +220,7 @@ final class WorkspaceInspectorController: NSViewController {
         edge.isHidden = !drawsOwnPane
         divider.layer?.backgroundColor = line.withAlphaComponent(line.alphaComponent * HelmCard.dividerAlpha).cgColor
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        closeButton.contentTintColor = HelmTheme.mutedInk(theme)
+        closeButton.applyTheme(theme)
     }
 
     #if FM_SELFTESTS

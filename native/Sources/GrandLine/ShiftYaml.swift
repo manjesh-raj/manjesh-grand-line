@@ -200,6 +200,8 @@ enum ShiftYaml {
         m[str("start_date")] = strOpt(p.startDate)
         m[str("due_date")] = strOpt(p.dueDate)
         m[str("created_at")] = str(p.createdAt)
+        // S13. Written as `.null` when unset, like every optional key here.
+        m[str("hue")] = strOpt(p.hue?.rawValue)
         return .dictionary(m)
     }
 
@@ -214,7 +216,10 @@ enum ShiftYaml {
             status: ShiftProjectStatus(rawValue: reqString(dict[str("status")] ?? .null)) ?? .notStarted,
             startDate: optString(dict[str("start_date")] ?? .null),
             dueDate: optString(dict[str("due_date")] ?? .null),
-            createdAt: reqString(dict[str("created_at")] ?? .null)
+            createdAt: reqString(dict[str("created_at")] ?? .null),
+            // S13. A missing or unknown key is "no stored hue", never a
+            // decode failure (GL-01).
+            hue: optString(dict[str("hue")] ?? .null).flatMap(HelmDomainHue.init(rawValue:))
         )
     }
 

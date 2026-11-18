@@ -282,7 +282,7 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         if !isActive {
             let close = NSButton()
             close.isBordered = false
-            close.imagePosition = .imageOnly
+            close.imagePosition = .imageOnly  // HelmIconButton-exempt: a 14pt close inside a session pill; a 28pt target would overflow the pill
             close.imageScaling = .scaleProportionallyDown
             close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "End session")
             close.symbolConfiguration = .init(pointSize: 7, weight: .bold)

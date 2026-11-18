@@ -280,6 +280,11 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     @objc func selectNextModuleTab(_ sender: Any?) { stepModuleTab(by: 1) }
     func stepModuleTab(by offset: Int) {}
 
+    /// S21: ⌃1 to ⌃9, a module's tabs by number (the hidden Go menu items).
+    @objc func selectModuleTabByNumber(_ sender: NSMenuItem) { selectModuleTab(atIndex: sender.tag - 1) }
+    /// The showing module's tab at `index`; a no-op past its last tab.
+    func selectModuleTab(atIndex index: Int) {}
+
     /// R2-UX-01 (b): whether the captain's profile hides `destination`'s
     /// module. Only the sidebar layout has modules to hide.
     func hidesPage(_ destination: RailDestination) -> Bool { false }

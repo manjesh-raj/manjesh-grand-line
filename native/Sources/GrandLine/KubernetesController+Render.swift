@@ -15,11 +15,15 @@ extension KubernetesController {
         let hasSession = !sessions.isEmpty
         scopeTabsHost.isHidden = !hasSession
         scopeEmptyState.isHidden = hasSession
+        sessionCard.isHidden = !hasSession
 
         let hasScope = hasSession && scopeHostID != nil
         feedSection.isHidden = !hasScope
         let ready = hasScope && feedTabID != nil
         workArea.isHidden = !ready
+        // S23: the table's shape while the feed tab is still to be picked.
+        pendingTablePreview.isHidden = !(hasScope && !ready)
+        pendingTableSubtitle.stringValue = "\(namespace) \u{00B7} appears once a feed tab is logged in"
 
         clusterContainer.isHidden = !(ready && pageTab == .cluster)
         tailContainer.isHidden = !(ready && pageTab == .logTail)
@@ -368,6 +372,7 @@ extension KubernetesController {
         root.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         root.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         sessionCard.applyTheme(theme)
+        pendingTablePreview.applyTheme(theme)
         scopeTabs?.applyTheme(theme)
         scopeEmptyState.applyTheme(theme)
         pageTabs.applyTheme(theme)

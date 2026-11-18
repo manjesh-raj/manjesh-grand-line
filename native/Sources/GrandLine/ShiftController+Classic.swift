@@ -67,7 +67,7 @@ extension ShiftController {
     /// modelled (`ShiftStore.projects`) and already listed individually by the
     /// board's own filter chips; nothing iterated them into nav rows.
     ///
-    /// Each row's dot takes `ShiftProjectPalette.tint(forProjectID:)`, the
+    /// Each row's dot takes the project's `ShiftProjectPalette` hue, the
     /// same stable per-project hue the board cards' accent bars and the filter
     /// chips already paint, so one project is one colour everywhere.
     func rebuildSidebarSections(projects: [ShiftProject]) {
@@ -82,7 +82,7 @@ extension ShiftController {
                          title: "Follow-ups", kind: .action)]),
             .init(header: "Projects", rows: projects.map { project in
                 .init(id: Self.projectRowID(project.id),
-                      indicator: .dot(ShiftProjectPalette.tint(forProjectID: project.id)),
+                      indicator: .hueDot(ShiftProjectPalette.hue(for: project) ?? .slate),
                       title: project.name.isEmpty ? "Untitled project" : project.name,
                       group: Self.projectGroup,
                       showsCount: false)

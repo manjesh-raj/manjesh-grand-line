@@ -311,8 +311,12 @@ enum SettingsRedesignSelfTest {
                   + "\(wantIDs)")
             ok = false
         }
-        if all.map({ $0.nameLabel.stringValue }) != AppThemeFamily.allCases.map(\.title) {
-            print("  FAIL the cards are titled \(all.map { $0.nameLabel.stringValue }), want the family names")
+        // S26: a family tile is captioned with the pair it stands for.
+        let pairNames = AppThemeFamily.allCases.map { family -> String in
+            SettingsThemeCard.pairCaption(light: family.register(.light).name, dark: family.register(.dark).name)
+        }
+        if all.map({ $0.nameLabel.stringValue }) != pairNames {
+            print("  FAIL the cards are titled \(all.map { $0.nameLabel.stringValue }), want \(pairNames)")
             ok = false
         }
         // Every card previews a real app theme, never a terminal scheme.

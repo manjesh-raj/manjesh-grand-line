@@ -183,12 +183,15 @@ enum ReviewFourUISelfTest {
         let saved = PlaceName.layout
         defer { PlaceName.layout = saved }
         PlaceName.layout = .sidebar
-        let body = WorkspaceInspectorController.noDetailsBody
-        for module in WorkspaceInspectorController.modulesWithDetails {
-            check(body.contains(module.title), "R4-UI-07: the inspector's empty state omits \(module.title): \(body)", &ok)
+        // S27 retired the "No details" copy this checked; the crew panel's
+        // context line is where the inspector names the place now, and it
+        // names the module, never a page.
+        for module in [WorkspaceModule.connections, .secrets, .setup] {
+            let line = WorkspaceInspectorCrewPanel.contextLine(.init(module: module, summary: ""))
+            check(line.contains(module.title), "R4-UI-07: the inspector's context omits \(module.title): \(line)", &ok)
+            check(!line.contains("Hosts") && !line.contains("Poneglyph"),
+                  "R4-UI-07: the inspector's context names a page, not a module: \(line)", &ok)
         }
-        check(!body.contains("Hosts") && !body.contains("Poneglyph"),
-              "R4-UI-07: the inspector's empty state names a page, not a module: \(body)", &ok)
         check(ShortcutsTable.terminalPlaces == "\(WorkspaceModule.console.title) and \(WorkspaceModule.tools.title)",
               "R4-UI-07: the terminal shortcuts work in \"\(ShortcutsTable.terminalPlaces)\"", &ok)
         check(KubernetesController.openHostTitle == "Open in \(WorkspaceModule.console.title)",

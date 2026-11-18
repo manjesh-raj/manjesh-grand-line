@@ -1089,6 +1089,13 @@ final class AppShellController: WorkspaceShellController {
         workspace.navigator.show(pages[(index + offset + pages.count) % pages.count])
     }
 
+    override func selectModuleTab(atIndex index: Int) {
+        guard case .rail(let route)? = workspace.navigator.currentDestinationKind else { return }
+        let pages = Self.steppablePages(from: route)
+        guard pages.count > 1, pages.indices.contains(index) else { return }
+        workspace.navigator.show(pages[index])
+    }
+
     /// The pages ⇧⌘[ and ⇧⌘] step through from `route`: its module's, each
     /// once, the way a tab row orders them. A door's route that lands on
     /// another page's view (the Calendar, on Tasks) is that page, not a

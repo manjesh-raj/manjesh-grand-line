@@ -62,8 +62,8 @@ enum ShiftBoardSelfTest {
 
         // Determinism across calls is the easy half.
         let id = UUID().uuidString
-        check(ShiftProjectPalette.tint(forProjectID: id) == ShiftProjectPalette.tint(forProjectID: id),
-              "the same project id should always resolve to the same tint")
+        check(ShiftProjectPalette.fallbackHue(forProjectID: id) == ShiftProjectPalette.fallbackHue(forProjectID: id),
+              "the same project id should always resolve to the same fallback hue")
 
         // The half that actually matters: the hash must not be Swift's own,
         // which is randomly seeded per process - a project would change
@@ -84,27 +84,27 @@ enum ShiftBoardSelfTest {
                   + "process-stable one, never String.hashValue")
         }
 
-        // A task with no project gets the ink tone, never one of the six
-        // identity hues - that is what keeps "no project" visually distinct
-        // from "some project".
-        check(ShiftProjectPalette.tint(forProjectID: nil) == .neutral,
-              "a task with no project should take .neutral")
-        check(ShiftProjectPalette.tint(forProjectID: "") == .neutral,
-              "an empty project id should take .neutral, not hash to a colour")
-        check(!ShiftProjectPalette.tints.contains(.neutral),
-              ".neutral must stay out of the identity rotation, or a real project "
-              + "could be coloured identically to a task with no project at all")
+        // A task with no project gets the ink tone, never an identity hue -
+        // that is what keeps "no project" visually distinct from "some
+        // project".
+        let theme = HelmTheme.daylight
+        let ink = ShiftProjectPalette.noProjectHex(in: theme)
+        check(ShiftProjectPalette.hue(forProjectID: nil, in: []) == nil,
+              "a task with no project should have no hue")
+        check(ShiftProjectPalette.hue(forProjectID: "", in: []) == nil,
+              "an empty project id should have no hue, not hash to a colour")
+        check(ShiftProjectPalette.hex(forProjectID: nil, in: [], theme: theme) == ink,
+              "a task with no project should paint page ink")
+        check(!ShiftProjectPalette.hues.map(\.categoricalHex).contains(ink),
+              "page ink must stay out of the identity set")
 
-        // Every hue in the rotation is genuinely reachable, so the palette is
-        // six colours rather than six declarations and two colours in
-        // practice.
-        var seen = Set<Int>()
-        for n in 0..<400 {
-            let tint = ShiftProjectPalette.tint(forProjectID: "project-\(n)")
-            if let index = ShiftProjectPalette.tints.firstIndex(where: { $0 == tint }) { seen.insert(index) }
-        }
-        check(seen.count == ShiftProjectPalette.tints.count,
-              "all \(ShiftProjectPalette.tints.count) project tints should be reachable, only \(seen.count) were")
+        // Every hue in the rotation is genuinely reachable through the
+        // fallback, so the palette is seven colours rather than seven
+        // declarations and two colours in practice.
+        var seen = Set<HelmDomainHue>()
+        for n in 0..<400 { seen.insert(ShiftProjectPalette.fallbackHue(forProjectID: "project-\(n)")) }
+        check(seen.count == ShiftProjectPalette.hues.count,
+              "all \(ShiftProjectPalette.hues.count) project hues should be reachable, only \(seen.count) were")
 
         // MARK: The drag payload
         //

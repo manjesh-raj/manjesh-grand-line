@@ -124,9 +124,13 @@ final class WelcomeSheetController: NSViewController {
     private let skipButton = HelmButton(title: "Skip", variant: .quiet)
 
     private let themeGrid = NSStackView()
-    private var themeButtons: [HelmButton] = []
+    /// S25: the look step shows Settings' own family tiles, four to a row.
+    private var themeCards: [(family: AppThemeFamily, card: SettingsThemeCard)] = []
     private let profileStack = NSStackView()
-    private var profileButtons: [(profile: WorkspaceProfile, button: HelmButton)] = []
+    /// S25: equal-weight choice cards, the description inside each.
+    private var profileCards: [(profile: WorkspaceProfile, card: HelmChoiceCard)] = []
+    /// The sheet's width; its height comes from its tallest step.
+    static let sheetWidth: CGFloat = 560
     private let commandWell = NSTextField(labelWithString: "")
     /// The sunken well the command sits in, with room around it. The label
     /// used to be the well itself, so its first letter sat against the
@@ -135,8 +139,10 @@ final class WelcomeSheetController: NSViewController {
     private let commandCopyButton = HelmButton(title: "Copy", variant: .secondary, symbol: "doc.on.doc")
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: 470))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.sheetWidth, height: 400))
         view = root
+        root.translatesAutoresizingMaskIntoConstraints = false
+        root.widthAnchor.constraint(equalToConstant: Self.sheetWidth).isActive = true
 
         titleLabel.font = HelmType.pageTitle()
         blurbLabel.font = HelmType.body()
@@ -165,7 +171,7 @@ final class WelcomeSheetController: NSViewController {
             profileStack.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
 
             themeGrid.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            themeGrid.trailingAnchor.constraint(lessThanOrEqualTo: bodyContainer.trailingAnchor),
+            themeGrid.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             themeGrid.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
 
             commandBox.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
@@ -207,11 +213,21 @@ final class WelcomeSheetController: NSViewController {
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
             footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -gutter),
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -gutter),
-            footer.topAnchor.constraint(greaterThanOrEqualTo: column.bottomAnchor, constant: HelmMetrics.s4),
+            // S25: the sheet is as tall as its content (the body container is
+            // already as tall as the tallest step), so no step floats in a
+            // fixed 470pt sheet.
+            footer.topAnchor.constraint(equalTo: column.bottomAnchor, constant: HelmMetrics.s5),
         ])
 
         themeObservation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         render()
+        // S25: the sheet's height is its content's. Every step body stays in
+        // the container's constraints while hidden, so this is the tallest
+        // step's height and the sheet does not resize between steps.
+        root.layoutSubtreeIfNeeded()
+        let size = NSSize(width: Self.sheetWidth, height: ceil(root.fittingSize.height))
+        root.setFrameSize(size)
+        preferredContentSize = size
     }
 
     // MARK: Steps
@@ -265,60 +281,66 @@ final class WelcomeSheetController: NSViewController {
         themeGrid.alignment = .leading
         themeGrid.spacing = HelmMetrics.s2
         themeGrid.translatesAutoresizingMaskIntoConstraints = false
-        // The app's seven families, four to a row, each in the register the
-        // app is in. Applied on click rather than on finish: a theme picker
-        // that does not show you the theme is a list of words, and this app
-        // already applies a theme instantly everywhere.
+        // The app's seven families, four to a row, as the tiles Settings ›
+        // Appearance draws. Applied on click rather than on finish: a theme
+        // picker that does not show you the theme is a list of words, and
+        // this app already applies a theme instantly everywhere.
         let families = AppThemeFamily.allCases
-        for chunk in stride(from: 0, to: families.count, by: 4) {
+        let perRow = 4
+        for chunk in stride(from: 0, to: families.count, by: perRow) {
             let row = NSStackView()
             row.orientation = .horizontal
             row.spacing = HelmMetrics.s2
-            for family in families[chunk..<min(chunk + 4, families.count)] {
-                let button = HelmButton(title: family.title, variant: .secondary, size: .small,
-                                        target: self, action: #selector(themePicked(_:)))
-                button.identifier = NSUserInterfaceItemIdentifier(family.rawValue)
-                themeButtons.append(button)
-                row.addArrangedSubview(button)
+            row.distribution = .fillEqually
+            row.translatesAutoresizingMaskIntoConstraints = false
+            for family in families[chunk..<min(chunk + perRow, families.count)] {
+                let card = SettingsThemeCard.family(family, mode: ThemeManager.shared.theme.mode,
+                                                    isActive: family == ThemeManager.shared.theme.app?.family)
+                card.onSelect = { [weak self] in self?.themePicked(family) }
+                themeCards.append((family, card))
+                row.addArrangedSubview(card)
+            }
+            // A short last row keeps the tiles the width of the full rows.
+            for _ in families[chunk..<min(chunk + perRow, families.count)].count..<perRow {
+                let filler = NSView()
+                filler.translatesAutoresizingMaskIntoConstraints = false
+                row.addArrangedSubview(filler)
             }
             themeGrid.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: themeGrid.widthAnchor).isActive = true
         }
     }
 
-    @objc private func themePicked(_ sender: NSButton) {
-        guard let id = sender.identifier?.rawValue, let family = AppThemeFamily(rawValue: id) else { return }
+    private func themePicked(_ family: AppThemeFamily) {
         ThemeManager.shared.setTheme(family.register(ThemeManager.shared.theme.mode))
         render()
     }
 
-    /// R2-UX-01 (b): one button per profile with its one-line summary under
-    /// it. The choice applies on click, like the theme step's, and the install
-    /// already started on Personal (`AppSettings.settleFirstLaunch`), so
-    /// skipping keeps that.
+    /// R2-UX-01 (b), S25: one choice card per profile, equal weight, the
+    /// summary inside the card. The choice applies on click, like the theme
+    /// step's, and the install already started on Personal
+    /// (`AppSettings.settleFirstLaunch`), so skipping keeps that.
     private func buildProfileChoice() {
-        profileStack.orientation = .vertical
-        profileStack.alignment = .leading
+        profileStack.orientation = .horizontal
+        profileStack.alignment = .top
+        profileStack.distribution = .fillEqually
         profileStack.spacing = HelmMetrics.s3
         profileStack.translatesAutoresizingMaskIntoConstraints = false
         for profile in WorkspaceProfile.allCases {
-            let button = HelmButton(title: profile.title, variant: .secondary,
-                                    target: self, action: #selector(profilePicked(_:)))
-            button.identifier = NSUserInterfaceItemIdentifier(profile.rawValue)
-            let caption = NSTextField(wrappingLabelWithString: profile.summary)
-            caption.font = HelmType.caption()
-            caption.identifier = NSUserInterfaceItemIdentifier("caption")
-            let row = NSStackView(views: [button, caption])
-            row.orientation = .vertical
-            row.alignment = .leading
-            row.spacing = HelmMetrics.s1
-            profileStack.addArrangedSubview(row)
-            caption.widthAnchor.constraint(equalTo: profileStack.widthAnchor).isActive = true
-            profileButtons.append((profile, button))
+            let card = HelmChoiceCard(title: profile.title, body: profile.summary)
+            card.onPick = { [weak self] in self?.profilePicked(profile) }
+            profileStack.addArrangedSubview(card)
+            profileCards.append((profile, card))
+        }
+        // Equal heights, so neither answer looks like the bigger one.
+        if let first = profileCards.first?.card {
+            for (_, card) in profileCards.dropFirst() {
+                card.heightAnchor.constraint(equalTo: first.heightAnchor).isActive = true
+            }
         }
     }
 
-    @objc private func profilePicked(_ sender: NSButton) {
-        guard let profile = sender.identifier.flatMap({ WorkspaceProfile(rawValue: $0.rawValue) }) else { return }
+    private func profilePicked(_ profile: WorkspaceProfile) {
         AppSettings.shared.setProfile(profile)
         render()
     }
@@ -365,14 +387,16 @@ final class WelcomeSheetController: NSViewController {
         stepLabel.textColor = HelmField.mutedInk(theme)
         commandWell.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         HelmField.applySunken(to: commandBox, theme: theme)
-        // The chosen palette reads as chosen.
-        for button in themeButtons {
-            button.variant = button.identifier?.rawValue == theme.app?.family.rawValue ? .primary : .secondary
+        // The chosen palette and the chosen profile read as chosen.
+        for (family, card) in themeCards {
+            card.setActive(family == theme.app?.family)
+            card.setActiveMode(theme.mode)
+            card.applyTheme(theme)
         }
         let chosen = WorkspaceProfile.matching(AppSettings.shared.hiddenModules)
-        for (profile, button) in profileButtons { button.variant = profile == chosen ? .primary : .secondary }
-        for case let row as NSStackView in profileStack.arrangedSubviews {
-            for case let caption as NSTextField in row.arrangedSubviews { caption.textColor = HelmField.mutedInk(theme) }
+        for (profile, card) in profileCards {
+            card.setSelected(profile == chosen)
+            card.applyTheme(theme)
         }
     }
 
@@ -388,8 +412,11 @@ final class WelcomeSheetController: NSViewController {
     var debugProfileChoiceIsHidden: Bool { profileStack.isHidden }
     /// Pick a profile through its button's own target and action.
     func debugPickProfile(_ profile: WorkspaceProfile) {
-        profileButtons.first { $0.profile == profile }?.button.performClick(nil)
+        profileCards.first { $0.profile == profile }?.card.debugPress()
     }
+    var debugProfileCards: [HelmChoiceCard] { profileCards.map(\.card) }
+    var debugThemeCards: [SettingsThemeCard] { themeCards.map(\.card) }
+    func debugPickTheme(_ family: AppThemeFamily) { themePicked(family) }
     func debugNext() { nextTapped() }
     func debugBack() { backTapped() }
     func debugSkip() { skipTapped() }

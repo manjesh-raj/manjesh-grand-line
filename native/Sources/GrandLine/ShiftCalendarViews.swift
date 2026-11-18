@@ -471,12 +471,14 @@ enum ShiftCalendarPayload {
     /// holds (GL-24).
     static func tray(_ tray: ShiftCalendarTray, projectNames: [String: String],
                      theme: HelmTheme, collapsed: Bool,
-                     colouring: ShiftCalendarColouring = .priority) -> [String: Any] {
+                     colouring: ShiftCalendarColouring = .priority,
+                     projects: [ShiftProject] = []) -> [String: Any] {
         func edge(_ item: ShiftCalendarTrayItem) -> String {
             let entry = ShiftCalendarEntry(taskID: item.id, title: item.title, day: "", time: nil,
                                            projectID: item.projectID, priority: item.priority,
                                            isProjected: false, isCompleted: false, kind: item.kind)
-            return ShiftCalendarPalette.colours(for: entry, colouring: colouring, theme: theme)["main"] ?? ""
+            return ShiftCalendarPalette.colours(for: entry, colouring: colouring, theme: theme,
+                                                projects: projects)["main"] ?? ""
         }
         func row(_ item: ShiftCalendarTrayItem) -> [String: Any] {
             let meta: String
@@ -497,7 +499,9 @@ enum ShiftCalendarPayload {
                 "count": group.items.count,
                 // No project is the neutral field's dot, not page ink
                 // (AGENTS.md's `.neutral` rule); the page draws it faint.
-                "dot": group.projectID.map { "#" + ShiftProjectPalette.tint(forProjectID: $0).hex(in: theme) } ?? "",
+                "dot": group.projectID.map {
+                    "#" + ShiftProjectPalette.hex(forProjectID: $0, in: projects, theme: theme)
+                } ?? "",
                 "items": group.items.map(row),
             ]
         }
@@ -856,7 +860,8 @@ enum ShiftCalendarPalette {
             }
         case .project:
             return projects.map { project in
-                item(projectCalendarID(project.id), projectName(project), projectColours(project.id, theme: theme))
+                item(projectCalendarID(project.id), projectName(project),
+                     projectColours(project.id, theme: theme, projects: projects))
             } + [
                 item(projectCalendarID(nil), ShiftCalendarTray.noProjectTitle, projectColours(nil, theme: theme)),
                 item(ShiftCalendarCategory.followUp.rawValue, ShiftCalendarCategory.followUp.title,
@@ -889,17 +894,18 @@ enum ShiftCalendarPalette {
     /// An entry's three colours under `colouring` - what its chip and its
     /// tray row's edge are painted in.
     static func colours(for entry: ShiftCalendarEntry, colouring: ShiftCalendarColouring,
-                        theme: HelmTheme) -> [String: String] {
+                        theme: HelmTheme, projects: [ShiftProject] = []) -> [String: String] {
         guard entry.kind == .task, colouring == .project else {
             return colours(for: ShiftCalendarCategory(entry: entry), theme: theme)
         }
-        return projectColours(entry.projectID, theme: theme)
+        return projectColours(entry.projectID, theme: theme, projects: projects)
     }
 
     /// A project's chip: the board's own project hue as a tinted surface. No
     /// project is the neutral field fill with ink text and a muted edge, the
     /// treatment the Kanban's cards give it, never a wash of page ink.
-    static func projectColours(_ projectID: String?, theme: HelmTheme) -> [String: String] {
+    static func projectColours(_ projectID: String?, theme: HelmTheme,
+                               projects: [ShiftProject] = []) -> [String: String] {
         guard let projectID, !projectID.isEmpty else {
             let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
             let fill = quantised(opaque(HelmField.fill(theme), over: surface))
@@ -909,7 +915,8 @@ enum ShiftCalendarPalette {
                 "onContainer": CodePreviewTheme.legibleHex(HelmTheme.nsColor(theme.chromeInkHex), on: fill),
             ]
         }
-        return colours(tintHex: ShiftProjectPalette.tint(forProjectID: projectID).hex(in: theme), theme: theme)
+        return colours(tintHex: ShiftProjectPalette.hex(forProjectID: projectID, in: projects, theme: theme),
+                       theme: theme)
     }
 
     /// One Schedule-X calendar per category (`ShiftCalendarCategory`).
@@ -933,7 +940,9 @@ enum ShiftCalendarPalette {
             add(category.rawValue, colours(for: category, theme: theme))
         }
         if colouring == .project {
-            for project in projects { add(projectCalendarID(project.id), projectColours(project.id, theme: theme)) }
+            for project in projects {
+                add(projectCalendarID(project.id), projectColours(project.id, theme: theme, projects: projects))
+            }
             add(projectCalendarID(nil), projectColours(nil, theme: theme))
         }
         return out
@@ -1318,8 +1327,37 @@ final class ShiftCalendarView: NSView {
     /// puts up the "no bundle" state when this machine has none.
     private func activateIfShowing() {
         guard window != nil, !isHiddenOrHasHiddenAncestor, !webView.hasLoaded else { return }
-        if !webView.activate() { showMissingBundle() }
+        if webView.activate() { showLoading() } else { showMissingBundle() }
     }
+
+    /// S18: a month of skeleton cells while the calendar's bundle loads,
+    /// cross-faded out when the page says it is ready.
+    private var loadingState: HelmSkeletonList?
+
+    private func showLoading() {
+        guard loadingState == nil else { return }
+        let state = HelmSkeletonList(island: .monthGrid,
+                                     caption: "Loading the calendar from this machine \u{00B7} nothing is fetched from the network")
+        host.addSubview(state)
+        NSLayoutConstraint.activate([
+            state.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: HelmMetrics.s4),
+            state.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -HelmMetrics.s4),
+            state.topAnchor.constraint(equalTo: host.topAnchor, constant: HelmMetrics.s4),
+            state.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -HelmMetrics.s4),
+        ])
+        loadingState = state
+    }
+
+    private func hideLoading() {
+        guard let state = loadingState else { return }
+        loadingState = nil
+        HelmMotion.fade(state, to: 0, duration: HelmMotion.stateDuration, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + HelmMotion.stateDuration) { state.removeFromSuperview() }
+    }
+
+    #if FM_SELFTESTS
+    var debugLoadingState: HelmSkeletonList? { loadingState }
+    #endif
 
     private func showMissingBundle() {
         webView.isHidden = true
@@ -1359,6 +1397,7 @@ final class ShiftCalendarView: NSView {
                 return
             }
             self.isConfigured = true
+            self.hideLoading()
             // A reloaded page starts with its own controls again.
             if self.periodControlsInToolbar { self.webView.setPeriodControlsHidden(true) }
             self.pushEvents()
@@ -1490,7 +1529,8 @@ final class ShiftCalendarView: NSView {
     private func pushTray() {
         let names = Dictionary(projects.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         lastTrayPayload = ShiftCalendarPayload.tray(tray, projectNames: names, theme: ThemeManager.shared.theme,
-                                                    collapsed: trayCollapsed, colouring: colouring)
+                                                    collapsed: trayCollapsed, colouring: colouring,
+                                                    projects: projects)
         guard isConfigured else { return }
         webView.call("setTray", payload: lastTrayPayload) { result in
             if case .failure(let error) = result {

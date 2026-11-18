@@ -367,7 +367,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
 
     private func buildControls() {
         sidebarButton.image = symbol("sidebar.left")
-        sidebarButton.imagePosition = .imageOnly
+        sidebarButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         sidebarButton.target = self
         sidebarButton.action = #selector(sidebarClicked)
         applySidebarButtonState()
@@ -386,7 +386,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         setHistory(canGoBack: false, canGoForward: false)
 
         recentsButton.image = symbol("clock.arrow.circlepath")
-        recentsButton.imagePosition = .imageOnly
+        recentsButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         recentsButton.target = self
         recentsButton.action = #selector(recentsClicked)
         recentsButton.toolTip = "Recents"
@@ -435,7 +435,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         primaryActionHost.setHuggingPriority(.required, for: .horizontal)
 
         bellButton.image = symbol("bell")
-        bellButton.imagePosition = .imageOnly
+        bellButton.imagePosition = .imageOnly  // HelmIconButton-exempt: a window toolbar item, which the system sizes
         bellButton.target = self
         bellButton.action = #selector(notificationsClicked)
         bellButton.toolTip = "Notifications"
@@ -1274,7 +1274,10 @@ extension WorkspaceToolbar: NSMenuDelegate {
                 continue
             }
             if let button = view as? NSButton {
-                let title = [button.title, (button as? HelmButton)?.menuFormTitle ?? "", button.accessibilityLabel() ?? "",
+                // An explicit menu title wins over the visible one: a button
+                // may show a short word on the toolbar ("Today", S12) and
+                // still name itself in full in a menu.
+                let title = [(button as? HelmButton)?.menuFormTitle ?? "", button.title, button.accessibilityLabel() ?? "",
                              button.toolTip ?? ""].first { !$0.isEmpty } ?? "Action"
                 let entry = closureItem(title) { [weak button] in button?.performClick(nil) }
                 entry.isEnabled = button.isEnabled

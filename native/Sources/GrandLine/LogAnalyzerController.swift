@@ -219,9 +219,18 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// Level column uses too: its ladder rates a refused connection High
     /// whatever level the line printed, so "Errors" and "Warnings" would
     /// disagree with the table beside them.
-    private lazy var errorsCard = HelmMetricCard(caption: "Critical or high", tint: .critical)
-    private lazy var warningsCard = HelmMetricCard(caption: "Warning", tint: .warn)
-    private lazy var patternsCountCard = HelmMetricCard(caption: "Patterns")
+    /// S14: the summary row is a `.boxed` `HelmKPIStrip`.
+    private lazy var metricsStrip: HelmKPIStrip = {
+        let strip = HelmKPIStrip(density: .boxed)
+        strip.configure(Self.metricItems(errors: nil, warnings: nil, patterns: nil))
+        return strip
+    }()
+
+    static func metricItems(errors: Int?, warnings: Int?, patterns: Int?) -> [HelmKPIStrip.Item] {
+        [.figure(errors.map(String.init), caption: "Critical or high", tint: .critical, signals: (errors ?? 0) > 0),
+         .figure(warnings.map(String.init), caption: "Warning", tint: .warn, signals: (warnings ?? 0) > 0),
+         .figure(patterns.map(String.init), caption: "Patterns")]
+    }
     private lazy var patternsTable: HelmDataTable = {
         let table = HelmDataTable(columns: [
             .init(id: "pattern", title: "Pattern", width: 300, minWidth: 180, flexible: true),
@@ -275,6 +284,10 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private let redactionListStack = NSStackView()
 
     private var tabs: HelmSegmentedTabs!
+    /// S16: the tabs sit in a `HelmFilterBar` scope slot, the row every list
+    /// page now shares. Logs has no pop-up, chip or search to fold, so the
+    /// bar never folds here; the tabs keep their own width.
+    private lazy var tabsBar = HelmFilterBar(scope: tabs)
     private let tabContainer = NSStackView()
     private var tabViews: [String: NSView] = [:]
 
@@ -474,7 +487,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         let actions = buildActionBar()
 
         for view in [importBadge, input, analyzingRow, detectionStrip, redaction,
-                     tabs as NSView, tabContainer, needed, storage, actions] {
+                     tabsBar as NSView, tabContainer, needed, storage, actions] {
             contentStack.addArrangedSubview(view)
         }
 
@@ -2255,7 +2268,7 @@ extension LogAnalyzerController {
         let hasAnalysis = investigation.analysis != nil
         let showInput = !hasAnalysis || inputForcedVisible
         inputCard.isHidden = !showInput
-        tabs.isHidden = !hasAnalysis
+        tabsBar.isHidden = !hasAnalysis
         tabContainer.isHidden = !hasAnalysis
         storageCard.isHidden = !hasAnalysis
         actionBar.isHidden = !hasAnalysis
@@ -2758,7 +2771,7 @@ extension LogAnalyzerController {
         for card in cards { card.applyTheme(theme) }
         if drawsSidebarLayout {
             patternsTable.applyTheme(theme)
-            for card in [errorsCard, warningsCard, patternsCountCard] { card.applyTheme(theme) }
+            metricsStrip.applyTheme(theme)
         }
         tabs.applyTheme(theme)
 
@@ -3030,7 +3043,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
 
         // The right column opens with the summary, the patterns and the
         // likely cause.
-        let metrics = HelmMetricRow([errorsCard, warningsCard, patternsCountCard])
+        let metrics = metricsStrip
         // The table's own card, under a header - one surface, as Keys' is.
         _ = patternsTable.card.setHeader(symbol: "square.stack.3d.up", tint: .neutral, title: "Patterns",
                                          subtitle: "Repeated lines, collapsed into one pattern each")
@@ -3091,9 +3104,8 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
             return
         }
         let counts = severityCountsForCurrentAnalysis(analysis)
-        errorsCard.configure(count: counts.errors)
-        warningsCard.configure(count: counts.warnings)
-        patternsCountCard.configure(text: "\(analysis.local.groups.count)", signals: false)
+        metricsStrip.configure(Self.metricItems(errors: counts.errors, warnings: counts.warnings,
+                                                patterns: analysis.local.groups.count), theme: theme)
         var rows = analysis.local.groups.map { group -> HelmDataTable.Row in
             var row = HelmDataTable.Row.record(group.pattern)
             row.cells = [
@@ -3144,7 +3156,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
 
 #if FM_SELFTESTS
 extension LogAnalyzerController {
-    var debugMetricCards: [HelmMetricCard] { [errorsCard, warningsCard, patternsCountCard] }
+    var debugMetricCards: [HelmKPIStrip.BoxedCell] { metricsStrip.debugCells }
     var debugPatternsTable: HelmDataTable { patternsTable }
     var debugAnalyzeButton: HelmButton { analyzeButton }
     var debugActionBarIsUnderTheLikelyCause: Bool { actionBar.superview === rootCauseBody }

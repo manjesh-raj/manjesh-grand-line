@@ -81,7 +81,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private var listContainer: NSView!
     /// The search row over the list, and the inspector's fixed width - kept so
     /// the sidebar layout can move the inspector out into the shell's pane.
-    private var filterRowView: NSStackView?
+    private var filterRowView: HelmFilterBar?
     private var inspectorWidthConstraint: NSLayoutConstraint?
 
     // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
@@ -292,23 +292,16 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
                                         target: self, action: #selector(clearClipboardNow))
         clearNowButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let filterRow = NSStackView(views: [searchField, clipboardPill, clearNowButton])
-        filterRow.orientation = .horizontal
-        filterRow.alignment = .centerY
-        filterRow.spacing = HelmMetrics.s3
-        // AGENTS.md gotcha #10: at the default `.gravityAreas` no hugging
-        // priority is honoured at all, so the search field would not take the
-        // slack and the pill would drift with sibling content.
-        filterRow.distribution = .fill
+        // S16: a `HelmFilterBar` - the search (which takes the slack) and the
+        // clipboard countdown trailing.
+        let filterRow = HelmFilterBar(search: searchField, trailing: [clipboardPill, clearNowButton])
+        filterRow.activeFilterCount = { [weak self] in (self?.query ?? "").isEmpty ? 0 : 1 }
         clipboardPill.setContentHuggingPriority(.required, for: .horizontal)
-        searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        filterRow.translatesAutoresizingMaskIntoConstraints = false
         // The countdown pill and its Clear-now button are one unit, shown and
         // hidden together - a "Clear now" button with no countdown beside it
         // would be offering to clear a clipboard this app did not write.
         clipboardPillGroup = [clipboardPill, clearNowButton]
-        clipboardPillGroup.forEach { $0.isHidden = true }
+        clipboardPillGroup.forEach { filterRow.setPageHidden($0, true) }
 
         wireInspector()
 
@@ -599,10 +592,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     private func renderClipboardCountdown(_ remaining: Int?) {
         guard let remaining else {
-            clipboardPillGroup.forEach { $0.isHidden = true }
+            clipboardPillGroup.forEach { filterRowView?.setPageHidden($0, true) }
             return
         }
-        clipboardPillGroup.forEach { $0.isHidden = false }
+        clipboardPillGroup.forEach { filterRowView?.setPageHidden($0, false) }
         clipboardPill.configure(text: "Clipboard clears in \(remaining)s", tint: .warn)
     }
 

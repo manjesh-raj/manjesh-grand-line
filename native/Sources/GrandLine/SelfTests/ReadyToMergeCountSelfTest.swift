@@ -150,7 +150,7 @@ enum ReadyToMergeCountSelfTest {
             fail("Review rendered no drill subtitle", &ok)
             return
         }
-        guard let tile = controller.debugStatTiles.first(where: { $0.caption == "ready to merge" }) else {
+        guard let tile = controller.debugStatTiles.first(where: { $0.caption == "Ready to merge" }) else {
             fail("Review has no \"ready to merge\" stat tile - tiles: \(controller.debugStatTiles)", &ok)
             return
         }
@@ -244,7 +244,7 @@ enum ReadyToMergeCountSelfTest {
                 fail("could not read a ready count out of the banner: \"\(banner)\"", &ok)
             }
 
-            if let tile = fleet.debugStatTiles.first(where: { $0.caption == "ready to merge" }) {
+            if let tile = fleet.debugStatTiles.first(where: { $0.caption == "Ready to merge" }) {
                 check(tile.value == "\(expectedReady)",
                       "Overview's tile says \(expectedReady) too (said \(tile.value))", &ok)
             } else {
@@ -342,9 +342,9 @@ enum ReadyToMergeCountSelfTest {
             fleet.view.layoutSubtreeIfNeeded()
 
             let tiles = fleet.debugStatTiles
-            check(!tiles.contains { $0.caption == "ready to merge" && $0.value == "0" },
+            check(!tiles.contains { $0.caption == "Ready to merge" && $0.value == "0" },
                   "REL-25: the interim tile must not say 0 ready to merge - tiles: \(tiles)", &ok)
-            if let tile = tiles.first(where: { $0.caption == "scanning PRs" }) {
+            if let tile = tiles.first(where: { $0.caption == "Scanning PRs" }) {
                 check(tile.value == "\u{2014}", "REL-25: the scanning tile shows a dash, got \(tile.value)", &ok)
             } else {
                 fail("REL-25: no scanning tile while the PR scan runs - tiles: \(tiles)", &ok)
@@ -356,7 +356,7 @@ enum ReadyToMergeCountSelfTest {
 
             // And the scan landing replaces it with the real number.
             fleet.debugRender(snapshot: snapshot, mergedPRs: fixture())
-            check(fleet.debugStatTiles.contains { $0.caption == "ready to merge" && $0.value == "\(expectedReady)" },
+            check(fleet.debugStatTiles.contains { $0.caption == "Ready to merge" && $0.value == "\(expectedReady)" },
                   "REL-25: the scan landing shows the real count - tiles: \(fleet.debugStatTiles)", &ok)
         }
     }

@@ -150,7 +150,9 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
         if !WhiteboardAssets.isAvailable { return "The Excalidraw bundle is missing" }
-        guard webView.isReady else { return "Starting the canvas…" }
+        // S18: the page's own line while the canvas loads, never a loading
+        // phrase and never "an empty board" before it can know.
+        guard webView.isReady else { return "Everything on this board stays on this machine" }
         if elementCount == 0 { return "An empty board \u{00B7} everything stays on this machine" }
         let noun = elementCount == 1 ? "1 element" : "\(elementCount) elements"
         // F15: once something has been captured onto this board, the thing
@@ -245,9 +247,8 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         // Whiteboard never starts a web content process at all, and a second
         // visit never discards the captain's board.
         if webView.activate() {
-            showOverlay(symbol: "scribble.variable",
-                        title: "Starting the canvas\u{2026}",
-                        body: "Excalidraw is loading from this machine. Nothing is fetched from the network.")
+            showLoading(island: .canvas,
+                        caption: "Loading Excalidraw from this machine \u{00B7} nothing is fetched from the network")
         } else {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No whiteboard bundle",
@@ -653,8 +654,50 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
     }
 
+    /// S18: the island's own shape while its bundle loads, rather than the
+    /// empty-state component, which means "nothing here".
+    private var loadingState: HelmSkeletonList?
+    /// The loader is fading out: the page is ready, the overlay is going.
+    private var overlayLeaving = false
+
+    private func showLoading(island: HelmSkeletonRow.Shape, caption: String) {
+        overlayState?.removeFromSuperview()
+        overlayState = nil
+        loadingState?.removeFromSuperview()
+        let state = HelmSkeletonList(island: island, caption: caption)
+        overlay.addSubview(state)
+        NSLayoutConstraint.activate([
+            state.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: HelmMetrics.s4),
+            state.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -HelmMetrics.s4),
+            state.topAnchor.constraint(equalTo: overlay.topAnchor, constant: HelmMetrics.s4),
+            state.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -HelmMetrics.s4),
+        ])
+        loadingState = state
+        overlay.isHidden = false
+        state.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugLoadingState: HelmSkeletonList? { overlay.isHidden ? nil : loadingState }
+    #endif
+
     private func hideOverlay() {
-        overlay.isHidden = true
+        // S18: the loader cross-fades out when the bridge says ready.
+        guard loadingState != nil, !overlay.isHidden else {
+            overlay.isHidden = true
+            onDrillSubtitleChanged?()
+            return
+        }
+        overlayLeaving = true
+        HelmMotion.fade(overlay, to: 0, duration: HelmMotion.stateDuration, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + HelmMotion.stateDuration) { [weak self] in
+            guard let self else { return }
+            self.overlayLeaving = false
+            self.overlay.isHidden = true
+            self.overlay.alphaValue = 1
+            self.loadingState?.removeFromSuperview()
+            self.loadingState = nil
+        }
         onDrillSubtitleChanged?()
     }
 
@@ -681,6 +724,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         // is behind it.
         overlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlayState?.applyTheme(theme)
+        loadingState?.applyTheme(theme)
         applyEmptyBoardTheme()
         pushTheme()
     }
@@ -758,7 +802,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     var debugWebView: WhiteboardWebView { webView }
     var debugCanvasCard: NSView { canvasCard }
-    var debugOverlayVisible: Bool { !overlay.isHidden }
+    var debugOverlayVisible: Bool { !overlay.isHidden && !overlayLeaving }
     /// R4-UX-07: the empty board's state, `nil` while hidden.
     var debugEmptyBoardState: HelmEmptyState? { emptyBoard.isHidden ? nil : emptyBoardState }
     var debugEmptyBoardView: NSView { emptyBoard }

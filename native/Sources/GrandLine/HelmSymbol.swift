@@ -85,6 +85,38 @@ enum HelmSymbol {
         return base.withSymbolConfiguration(config)
     }
 
+    /// S12 of the 2026-11-17 UI/UX proposals: one glyph per meaning.
+    ///
+    /// An icon-only control only works when its glyph means one thing. The
+    /// Notebook's "Today's note" and the window's light/dark toggle both drew
+    /// `sun.max`, 180pt apart on one toolbar. A role names the meaning, and
+    /// `name` is its one glyph. `HelmSymbolRoleSelfTest`'s check
+    /// (`UIUXProposalsSelfTest`) fails the run on a symbol bound to two roles.
+    ///
+    /// The table starts with the meanings that collided. Literal symbol
+    /// strings at other call sites move onto it as they are touched.
+    enum Role: String, CaseIterable {
+        /// The window's light/dark toggle while the light register shows.
+        case themeLight
+        /// The same toggle while the dark register shows.
+        case themeDark
+        /// A dated daily page: the Notebook's "Today's note" and its daily rows.
+        case dailyNote
+        /// The window's inspector pane.
+        case inspector
+
+        /// The table itself, as data, so a check can read it as a whole.
+        static let table: [(role: Role, name: String)] = [
+            (.themeLight, "sun.max"),
+            (.themeDark, "moon"),
+            (.dailyNote, "calendar.day.timeline.left"),
+            (.inspector, "sidebar.right"),
+        ]
+
+        /// This role's glyph.
+        var name: String { Self.table.first { $0.role == self }?.name ?? "questionmark" }
+    }
+
     /// Whether a rendered image came back hierarchical.
     ///
     /// A hierarchical image carries its own colours, so it is not a template -

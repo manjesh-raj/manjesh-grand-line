@@ -319,7 +319,7 @@ final class ShiftTaskCheckBadge: NSButton {
         super.init(frame: .zero)
         title = ""
         isBordered = false
-        imagePosition = .imageOnly
+        imagePosition = .imageOnly  // HelmIconButton-exempt: the list row check badge, a toggle sized with its row
         setButtonType(.momentaryChange)
         wantsLayer = true
         layer?.cornerRadius = diameter / 2
@@ -434,10 +434,12 @@ private final class ShiftTaskRowView: NSView {
             let done = task.subtasks.filter(\.done).count
             bits.append("\(done)/\(task.subtasks.count) subtasks")
         }
-        let tint = ShiftProjectPalette.tint(forProjectID: task.projectID)
+        // S13: the project's stored identity hue, as a literal.
+        let projectHex = ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: task.projectID),
+                                                 in: theme)
 
         row.configure(HelmAccentRow.Content(
-            tint: tint,
+            tint: .neutral,
             kicker: project?.name ?? "No project",
             title: task.title,
             meta: bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} "),
@@ -449,7 +451,8 @@ private final class ShiftTaskRowView: NSView {
             chipTint: pill?.tint,
             metaLead: due?.text,
             metaLeadTint: due?.tint,
-            titleStruck: task.status == .completed
+            titleStruck: task.status == .completed,
+            tintHex: projectHex
         ), theme: theme)
 
         // The checkbox takes the due state's colour (red late, amber today),

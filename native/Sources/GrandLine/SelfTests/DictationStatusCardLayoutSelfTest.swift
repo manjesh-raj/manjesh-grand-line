@@ -95,14 +95,18 @@ enum DictationStatusCardLayoutSelfTest {
     /// must actually use it, and the card must stay the height of its content.
     private static func checkTheSettledCardWrapsAtTheRowsRealWidth() -> Bool {
         var ok = true
-        for width in [1512.0, 1100.0] as [CGFloat] {
+        // 830: the page beside the window sidebar at a 1100pt window, where
+        // the Status card is half of a two-column row.
+        // The last case shrinks from the page's width at 1512 to its width at
+        // 1100, the way a window resize reaches it.
+        for (first, width) in [(700.0, 1512.0), (700.0, 1100.0), (1240.0, 830.0)] as [(CGFloat, CGFloat)] {
             autoreleasepool {
                 let controller = DictationController(store: DictationStore())
                 let window = OffScreenProbe.window(width: width, height: 900)
                 defer { window.contentView = nil; window.close() }
                 window.contentView = controller.view
 
-                controller.view.frame = NSRect(x: 0, y: 0, width: 700, height: 900)
+                controller.view.frame = NSRect(x: 0, y: 0, width: first, height: 900)
                 controller.debugSetStatus(.needsMicrophone)
                 controller.view.layoutSubtreeIfNeeded()
                 controller.viewDidLayout()
@@ -117,7 +121,7 @@ enum DictationStatusCardLayoutSelfTest {
                 let card = controller.debugStatusCardFrame
                 let label = controller.debugStatusDetailFrame
 
-                check(row > 400,
+                check(row > 300,
                       "@\(width): the fixture is vacuous unless the row really resolved wide, got \(row)pt", &ok)
                 check(column > DictationController.debugDetailMinimumWidth,
                       "@\(width): a settled row must give the column more than the floor, got \(column)pt", &ok)
@@ -131,6 +135,11 @@ enum DictationStatusCardLayoutSelfTest {
                       + "text (B10)", &ok)
                 check(label.height > 0 && label.height < card.height,
                       "@\(width): the label (\(label.height)pt) sits inside its card (\(card.height)pt)", &ok)
+                // S15: the sentence is wrapped, not cut off by its card.
+                check(label.height + 1 >= controller.debugStatusDetailNeededHeight,
+                      "@\(width): the detail needs \(controller.debugStatusDetailNeededHeight)pt and got \(label.height)pt", &ok)
+                check(controller.debugStatusDetailInsideCard,
+                      "@\(width): the detail sentence runs past the bottom of its card", &ok)
             }
         }
         return ok

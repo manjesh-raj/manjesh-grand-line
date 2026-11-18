@@ -95,9 +95,24 @@ final class FleetController: NSViewController {
     /// headline and a meta line - and the audit's whole point was that this
     /// page had its own private version of an idea the design system already
     /// owns.
-    private let bannerRow = HelmAccentRow(hover: false)
+    /// S17: the answer is a `HelmNotice`. Setup's prompt carries one action
+    /// that opens Setup, where the whole row used to be the link.
+    private lazy var bannerRow = HelmNotice()
+    private lazy var openSetupButton = HelmButton(title: "Open \(PlaceName.of(.bootstrap))", variant: .secondary,
+                                                  size: .small, target: self, action: #selector(openSetupTapped))
 
-    private let statsRow = NSStackView()
+    /// S14: the six figures are a `.boxed` `HelmKPIStrip`, without the icons
+    /// the old tiles carried (the caption says what each is). "ready to
+    /// merge" is the one cell that is a button, into Review.
+    private lazy var statsRow: HelmKPIStrip = {
+        let strip = HelmKPIStrip(density: .boxed)
+        strip.onActivate = { [weak self] index in
+            guard let self, self.statItems.indices.contains(index), self.statItems[index].opensReview else { return }
+            self.onNavigateToReview?()
+        }
+        return strip
+    }()
+    private var statItems: [StatTileItem] = []
 
     /// A plain section heading (round glyph + title + count chip), not a
     /// `HelmCard` wrapper. The prototype puts "In flight" rows straight on the
@@ -569,9 +584,6 @@ final class FleetController: NSViewController {
     var onDrillSubtitleChanged: (() -> Void)?
 
     private func buildStatsRow() {
-        statsRow.orientation = .horizontal
-        statsRow.distribution = .fillEqually
-        statsRow.spacing = HelmMetrics.s3
         statsRow.translatesAutoresizingMaskIntoConstraints = false
     }
 
@@ -641,33 +653,6 @@ final class FleetController: NSViewController {
     private let bannerSkeletonCard = HelmCard()
     private var tileSkeletonCards: [HelmCard] = []
     private let listSkeletonCard = HelmCard()
-
-    /// One `HelmStatTile` - the app's shared stat tile
-    /// (`HelmDesignSystem.swift`, audit §6.3 component 4). This page's own copy
-    /// was one of three (four, counting Shift's duplicate) differing in metric
-    /// size, padding, fill opacity and height for the same "one big number and
-    /// a caption" job; its click support is what the shared component adopted.
-    ///
-    /// `onClick` is a plain closure on the tile - no nested real control, so no
-    /// hit-testing hazard (matching `SettingsController`'s theme/session cards
-    /// and `ShiftProjectViews`' project cards, the same clickable-plain-view
-    /// pattern used throughout this app). fm/grandline-overview-drop-duplicate-
-    /// pr-list: this is how the "ready to merge" tile jumps straight to
-    /// `.review`'s full list, after removing this page's own duplicate
-    /// itemized copy of it.
-    private func statTile(icon: String, value: String, label: String, tint: HelmTint? = nil, onClick: (() -> Void)? = nil) -> NSView {
-        let tile = HelmStatTile(symbol: icon, value: value, caption: label, tint: tint)
-        if let onClick {
-            tile.onClick = onClick
-            tile.toolTip = "View in \(PlaceName.short(.review))"
-        }
-        return tile
-    }
-
-    /// The live tiles, kept in step with `statTileRows` by `rebuildStats`.
-    /// Each tile themes itself; this only exists so `applyTheme` can hand
-    /// every live tile the new theme.
-    private var statTiles: [HelmStatTile] = []
 
     /// The "In flight" section: a plain heading (round glyph + title + count
     /// chip) over the rows, exactly as the prototype's `h2.sect` renders it -
@@ -1053,18 +1038,18 @@ final class FleetController: NSViewController {
     private func renderBanner(needs: [FleetTask], working: [FleetTask],
                               ready: FleetDataSource.PRReadyReading, homeOk: Bool = true) {
         let answer = FleetGreeting.answer(tasks: needs + working, prs: ready, homeOk: homeOk)
-        let content = HelmAccentRow.Content(
+        bannerRow.configure(HelmNotice.Content(
             tint: answer.tint,
+            symbol: answer.badgeSymbol,
             kicker: answer.kicker,
             title: answer.title,
-            meta: answer.meta,
-            badgeSymbol: answer.badgeSymbol,
-            chipText: answer.isSetupPrompt ? "Open \(PlaceName.of(.bootstrap))" : nil)
-        bannerRow.configure(content, theme: theme)
-        // GL-31: only the not-configured banner is clickable, and it leads
+            body: answer.meta), theme: theme)
+        // GL-31: only the not-configured answer has an action, and it leads
         // straight into the Bootstrap stepper where firstmate home is set.
-        bannerRow.onClick = answer.isSetupPrompt ? { [weak self] in self?.onNavigateToSetup?() } : nil
+        bannerRow.setActions(answer.isSetupPrompt ? [openSetupButton] : [])
     }
+
+    @objc private func openSetupTapped() { onNavigateToSetup?() }
 
     /// The "ready to merge" tile for each state of the reading. GL-14: an em
     /// dash, never "0", whenever the number is not known - while the scan is
@@ -1073,13 +1058,13 @@ final class FleetController: NSViewController {
     private static func readyTile(_ ready: FleetDataSource.PRReadyReading) -> StatTileItem {
         switch ready {
         case .value(let count):
-            return StatTileItem(key: "ready", icon: "arrow.triangle.pull", value: "\(count)",
+            return StatTileItem(key: "ready", value: "\(count)",
                                 label: "ready to merge", tint: .accent, opensReview: true)
         case .scanning:
-            return StatTileItem(key: "ready", icon: "arrow.triangle.pull", value: "\u{2014}",
+            return StatTileItem(key: "ready", value: "\u{2014}",
                                 label: "scanning PRs", opensReview: true)
         case .failed:
-            return StatTileItem(key: "ready", icon: "wifi.exclamationmark", value: "\u{2014}",
+            return StatTileItem(key: "ready", value: "\u{2014}",
                                 label: "PRs unavailable", tint: .warn, opensReview: true)
         }
     }
@@ -1107,41 +1092,40 @@ final class FleetController: NSViewController {
         default: watcherTint = .neutral
         }
         let items: [StatTileItem] = [
-            StatTileItem(key: "working", icon: "clock", value: "\(working)", label: "working"),
+            StatTileItem(key: "working", value: "\(working)", label: "working"),
             Self.readyTile(ready),
-            StatTileItem(key: "queued", icon: "line.3.horizontal", value: "\(snapshot.queuedCount)", label: "queued"),
-            StatTileItem(key: "done", icon: "checkmark.circle", value: "\(snapshot.doneCount)", label: "done today", tint: .good),
-            StatTileItem(key: "projects", icon: "shippingbox", value: "\(snapshot.projectsCount)", label: "projects"),
-            StatTileItem(key: "watcher", icon: "waveform.path.ecg",
+            StatTileItem(key: "queued", value: "\(snapshot.queuedCount)", label: "queued"),
+            StatTileItem(key: "done", value: "\(snapshot.doneCount)", label: "done today", tint: .good),
+            StatTileItem(key: "projects", value: "\(snapshot.projectsCount)", label: "projects"),
+            StatTileItem(key: "watcher",
                          value: snapshot.watcher.status == "healthy" ? "OK" : "\u{2014}",
                          label: watcherLabel, tint: watcherTint),
         ]
-        // P2: the six tiles are built once and updated in place on every
-        // refresh, rather than torn down and rebuilt (`HelmKeyedRows`).
-        statTileRows.reconcile(items, key: \.key, make: { [weak self] item in
-            self?.statTile(icon: item.icon, value: item.value, label: item.label, tint: item.tint,
-                           onClick: item.opensReview ? { [weak self] in self?.onNavigateToReview?() } : nil)
-                ?? NSView()
-        }, update: { [weak self] view, item in
-            guard let self, let tile = view as? HelmStatTile else { return }
-            tile.value = item.value
-            tile.caption = item.label
-            tile.setSymbol(item.icon, theme: self.theme)
-            tile.setTint(item.tint, theme: self.theme)
-        }, tiesWidth: false)
-        statTiles = statTileRows.orderedRows.compactMap { $0 as? HelmStatTile }
+        // P2: the six cells are built once and updated in place on every
+        // refresh (`HelmKPIStrip` reuses its cells while the count holds).
+        statItems = items
+        statsRow.configure(items.map { item in
+            let known = item.value != "\u{2014}"
+            // S14's tint rule: colour only when the state is not the default.
+            let signals = known && item.value != "0" && item.tint != nil && item.tint != .neutral
+            // A boxed caption sits above its figure, so it reads as a heading:
+            // sentence case, like every other summary row.
+            let caption = item.label.prefix(1).uppercased() + item.label.dropFirst()
+            return HelmKPIStrip.Item(known ? .value(item.value) : .unread, caption: caption,
+                                     emphasis: signals ? .tinted(item.tint ?? .neutral) : .normal,
+                                     isAction: item.opensReview,
+                                     toolTip: item.opensReview ? "View in \(PlaceName.short(.review))" : nil)
+        }, theme: theme)
     }
 
     private struct StatTileItem {
         let key: String
-        let icon: String
         let value: String
         let label: String
         var tint: HelmTint? = nil
         var opensReview = false
     }
 
-    private lazy var statTileRows = HelmKeyedRows(stack: statsRow)
     private lazy var inFlightRows = HelmKeyedRows(stack: inFlightStack)
 
     private func rebuildTaskRows(into stack: NSStackView, tasks: [FleetTask], emptyTitle: String, emptyBody: String) {
@@ -1420,7 +1404,7 @@ final class FleetController: NSViewController {
         logFilters.applyTheme(theme)
         logList.applyTheme(theme)
 
-        for tile in statTiles { tile.applyTheme(theme) }
+        statsRow.applyTheme(theme)
         for empty in emptyStates { empty.applyTheme(theme) }
         // Each row owns its own tint-derived chrome; it only needs the new
         // theme handed to it.
@@ -1476,14 +1460,17 @@ final class FleetController: NSViewController {
 
     /// The answer banner's own body line, as rendered - this is where
     /// "N PRs ready to merge" is actually spoken to the captain.
-    var debugBannerMeta: String { bannerRow.debugMetaText }
+    var debugBannerMeta: String { bannerRow.debugBody }
+    var debugBannerNotice: HelmNotice { bannerRow }
 
     /// Every stat tile as rendered. See `ReviewController.debugStatTiles`.
-    var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
+    var debugStatTiles: [(value: String, caption: String)] {
+        statsRow.debugCells.map { ($0.debugValue, $0.debugCaption) }
+    }
 
     /// The live views themselves, for `KeyedRefreshSelfTest` - which asks
     /// whether a refresh kept the same objects rather than what they say.
-    var debugStatTileViews: [NSView] { statsRow.arrangedSubviews }
+    var debugStatTileViews: [NSView] { statsRow.debugCells }
     var debugInFlightRowViews: [NSView] { inFlightStack.arrangedSubviews }
     var debugNeedsRowViews: [NSView] { needsStack.arrangedSubviews }
     #endif

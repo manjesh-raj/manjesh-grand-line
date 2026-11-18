@@ -204,6 +204,13 @@ struct ShiftProject: Equatable {
     var startDate: String?  // "YYYY-MM-DD"
     var dueDate: String?    // "YYYY-MM-DD"
     var createdAt: String
+    /// S13 of the 2026-11-17 UI/UX proposals: the project's identity colour,
+    /// stored rather than derived. `ShiftStore.addProject` gives a new project
+    /// the first free hue of `ShiftProjectPalette.hues`, and the project sheet
+    /// can change it. `nil` on a record written before this field existed,
+    /// which keeps resolving through the hash fallback until it is edited
+    /// (GL-01: the YAML key is optional on read).
+    var hue: HelmDomainHue? = nil
 
     /// A blank project ready for `ShiftStore.addProject` (cockpit-fix-shift-
     /// new-project) - the New Project editor fills fields into this rather

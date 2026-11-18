@@ -52,7 +52,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let statusWord = HelmStatusPill(style: .dotWord)
     private let statusDetailLabel = NSTextField(wrappingLabelWithString: "")
     private var statusTextStack = NSStackView()
-    private let statusActionButton = HelmButton(title: "", variant: .primary)
+    private let statusActionButton = HelmButton(title: "", variant: .primary, size: .small)
     // fm/grandline-dictation-page-redesign: the trailing chip the reviewed
     // prototype's Status card-head shows ("On device") once every
     // permission is granted and no action button is needed - mutually
@@ -103,7 +103,15 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private var modelState: WhisperModelState = .notDownloaded
 
     private let vocabularyPanel = HelmCard()
-    private let vocabularyCountLabel = NSTextField(labelWithString: "")
+    /// S15: every card's header is `HelmSectionHeader(size: .card)` - a 26pt
+    /// tile, a title, a subtitle, the count in a badge and the card's one
+    /// action in the trailing slot.
+    private let statusHeader = HelmSectionHeader(size: .card)
+    private let shortcutHeader = HelmSectionHeader(size: .card)
+    private let cleanupHeader = HelmSectionHeader(size: .card)
+    private let localWhisperHeader = HelmSectionHeader(size: .card)
+    private let vocabularyHeader = HelmSectionHeader(size: .card)
+    private let historyHeader = HelmSectionHeader(size: .card)
     private let explainerLabel = NSTextField(wrappingLabelWithString: "")
     private var vocabularyColumn = NSStackView()
     /// §6.9's chips-in-a-well, and the headline instance of the audit's D2:
@@ -115,7 +123,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let vocabularyInput = HelmChipInput(placeholder: "Add a word or phrase, then press Return")
 
     private let historyPanel = HelmCard()
-    private let historyCountLabel = NSTextField(labelWithString: "")
     private let historyListView = DictationHistoryListView()
     private let historyListScroll = NSScrollView()
 
@@ -318,6 +325,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        // The rows live inside the scroll view's document, which this pass
+        // has not laid out yet: on a live resize (measured, 1512 -> 1100)
+        // they still held the old width here, the derived wrap widths stayed
+        // wide, and nothing called this again, so the Status and Cleanup
+        // sentences were cut off at their cards' bottoms. Settle the
+        // document first so the rows read their real widths.
+        scroll.documentView?.layoutSubtreeIfNeeded()
+        var changed = false
         for (stack, label) in [
             (statusTextStack, statusDetailLabel),
             (shortcutTextStack, shortcutDetailLabel),
@@ -329,8 +344,23 @@ final class DictationController: NSViewController, DaylightDrillActions {
             guard available > 0, abs(label.preferredMaxLayoutWidth - available) > 0.5 else { continue }
             label.preferredMaxLayoutWidth = available
             label.invalidateIntrinsicContentSize()
+            changed = true
+        }
+        // A new wrap width changes the label's height after the pass that
+        // measured it, so one follow-up pass settles the cards' heights. It
+        // converges because the widths are derived from the rows, which these
+        // labels do not decide (gotcha 22).
+        if changed, !relayoutScheduled {
+            relayoutScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.relayoutScheduled = false
+                self.view.needsLayout = true
+                self.view.layoutSubtreeIfNeeded()
+            }
         }
     }
+    private var relayoutScheduled = false
 
     /// How wide a text column's wrapping label may be, derived from the
     /// **row's** own resolved width minus its rigid siblings.
@@ -426,10 +456,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func buildStatusSection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Status")
-        sectionLabel.font = HelmType.sectionTitle()
-        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusPanel.setHeader(sectionLabel)
+        statusHeader.configure(leading: .tile(symbol: "mic.fill", tint: .accent), title: "Status",
+                               subline: "What dictation can do right now")
+        statusHeader.setActions([statusActionButton])
+        statusPanel.setHeader(statusHeader)
 
         statusWord.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -448,7 +478,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
         statusTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
         statusTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        statusActionButton.controlSize = .regular
         statusActionButton.target = self
         statusActionButton.action = #selector(statusActionTapped)
         statusActionButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -459,7 +488,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         statusChip.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusChip.isHidden = true
 
-        let row = NSStackView(views: [statusTextStack, statusChip, statusActionButton])
+        let row = NSStackView(views: [statusTextStack, statusChip])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = HelmMetrics.s3
@@ -478,13 +507,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func buildShortcutSection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Shortcut")
-        sectionLabel.font = HelmType.sectionTitle()
-        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutPanel.setHeader(sectionLabel)
-
-        let keyTile = IconTileView(size: 40, cornerRadius: 10)
-        keyTile.configure(symbol: "waveform", tint: .accent)
+        shortcutHeader.configure(leading: .tile(symbol: "keyboard", tint: .info), title: "Shortcut",
+                                 subline: "Hold it to talk, let go to paste")
+        shortcutPanel.setHeader(shortcutHeader)
 
         shortcutRecorder.onChange = { [weak self] newShortcut in
             self?.shortcutChanged(newShortcut)
@@ -518,7 +543,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         shortcutTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
         shortcutTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [keyTile, shortcutTextStack])
+        let row = NSStackView(views: [shortcutTextStack])
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = 14
@@ -530,13 +555,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func buildCleanupSection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Cleanup")
-        sectionLabel.font = HelmType.sectionTitle()
-        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        cleanupPanel.setHeader(sectionLabel)
-
-        let sparkleTile = IconTileView(size: 40, cornerRadius: 10)
-        sparkleTile.configure(symbol: "sparkles", tint: .violet)
+        cleanupHeader.configure(leading: .tile(symbol: "sparkles", tint: .violet), title: "Cleanup",
+                                subline: "An optional rewrite of each dictation before it is pasted")
+        cleanupPanel.setHeader(cleanupHeader)
 
         cleanupTitleLabel.stringValue = "Clean up my sentences"
         cleanupTitleLabel.font = HelmType.rowTitle()
@@ -571,7 +592,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         cleanupSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
         cleanupSwitch.translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView(views: [sparkleTile, cleanupTextStack, cleanupSwitch])
+        let row = NSStackView(views: [cleanupTextStack, cleanupSwitch])
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = 14
@@ -590,13 +611,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// (download progress/action) since this toggle has a real one-time
     /// setup step the Cleanup toggle doesn't.
     private func buildLocalWhisperSection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Local Whisper Engine")
-        sectionLabel.font = HelmType.sectionTitle()
-        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        localWhisperPanel.setHeader(sectionLabel)
-
-        let waveTile = IconTileView(size: 40, cornerRadius: 10)
-        waveTile.configure(symbol: "cpu", tint: .info)
+        localWhisperHeader.configure(leading: .tile(symbol: "cpu", tint: .info), title: "Local Whisper Engine",
+                                     subline: "Transcribes on this Mac, with no network once the model is here")
+        localWhisperHeader.setActions([modelActionButton])
+        localWhisperPanel.setHeader(localWhisperHeader)
 
         localWhisperTitleLabel.stringValue = "Use local Whisper engine"
         localWhisperTitleLabel.font = HelmType.rowTitle()
@@ -624,7 +642,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         localWhisperSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
         localWhisperSwitch.translatesAutoresizingMaskIntoConstraints = false
 
-        let toggleRow = NSStackView(views: [waveTile, localWhisperTextStack, localWhisperSwitch])
+        let toggleRow = NSStackView(views: [localWhisperTextStack, localWhisperSwitch])
         toggleRow.orientation = .horizontal
         toggleRow.alignment = .top
         toggleRow.spacing = 14
@@ -693,7 +711,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
         let modelSpacer = NSView()
         modelSpacer.translatesAutoresizingMaskIntoConstraints = false
 
-        let modelRow = NSStackView(views: [modelStatusLabel, modelReadyPill, modelSpacer, modelProgressBar, modelDeleteButton, modelActionButton])
+        // S15: the model's one action ("Download Model", "Cancel",
+        // "Re-download") is the card header's trailing control.
+        let modelRow = NSStackView(views: [modelStatusLabel, modelReadyPill, modelSpacer, modelProgressBar, modelDeleteButton])
         modelRow.orientation = .horizontal
         modelRow.alignment = .centerY
         modelRow.spacing = 10
@@ -718,14 +738,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func buildVocabularySection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Words I use often")
-        sectionLabel.font = HelmType.sectionTitle()
-        vocabularyCountLabel.font = HelmType.code()
-        let headerRow = NSStackView(views: [sectionLabel, vocabularyCountLabel])
-        headerRow.orientation = .horizontal
-        headerRow.spacing = 6
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        vocabularyPanel.setHeader(headerRow)
+        vocabularyHeader.configure(leading: .tile(symbol: "text.quote", tint: .good), title: "Words I use often",
+                                   subline: "A hint on your next recording")
+        vocabularyPanel.setHeader(vocabularyHeader)
 
         // Tightened to the reviewed prototype's terser card-head phrasing -
         // the per-engine nuance (Apple's per-phrase hint vs. Whisper's
@@ -775,14 +790,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func buildHistorySection() -> NSView {
-        let sectionLabel = NSTextField(labelWithString: "Recent Dictations")
-        sectionLabel.font = HelmType.sectionTitle()
-        historyCountLabel.font = HelmType.code()
-        let headerRow = NSStackView(views: [sectionLabel, historyCountLabel])
-        headerRow.orientation = .horizontal
-        headerRow.spacing = 6
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        historyPanel.setHeader(headerRow)
+        historyHeader.configure(leading: .tile(symbol: "clock.arrow.circlepath", tint: .neutral),
+                                title: "Recent Dictations", subline: "What you said lately, kept on this Mac")
+        historyPanel.setHeader(historyHeader)
 
         // GL-35: a single entry can be removed, not only "clear everything".
         historyListView.onDeleteEntry = { [weak self] entry in
@@ -838,15 +848,21 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
         switch status {
         case .needsMicrophone:
-            statusActionButton.title = "Request Microphone Access"
+            statusActionButton.title = "Request Access"
+            statusActionButton.toolTip = "Request Microphone Access"
+            statusActionButton.setAccessibilityLabel("Request Microphone Access")
             statusActionButton.isHidden = false
             statusChip.isHidden = true
         case .needsSpeechRecognition:
-            statusActionButton.title = "Request Speech Recognition Access"
+            statusActionButton.title = "Request Access"
+            statusActionButton.toolTip = "Request Speech Recognition Access"
+            statusActionButton.setAccessibilityLabel("Request Speech Recognition Access")
             statusActionButton.isHidden = false
             statusChip.isHidden = true
         case .needsAccessibility:
-            statusActionButton.title = "Request Accessibility Access"
+            statusActionButton.title = "Request Access"
+            statusActionButton.toolTip = "Request Accessibility Access"
+            statusActionButton.setAccessibilityLabel("Request Accessibility Access")
             statusActionButton.isHidden = false
             statusChip.isHidden = true
         case .copiedOnly:
@@ -854,7 +870,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
             // came back false, so re-requesting (or, per the detail copy
             // above, removing and re-adding the System Settings row) is the
             // same actionable next step either way.
-            statusActionButton.title = "Request Accessibility Access"
+            statusActionButton.title = "Request Access"
+            statusActionButton.toolTip = "Request Accessibility Access"
+            statusActionButton.setAccessibilityLabel("Request Accessibility Access")
             statusActionButton.isHidden = false
             statusChip.isHidden = true
         case .ready:
@@ -917,8 +935,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // own focus registration) - this call only keeps it right if it was
         // built between two theme changes.
         vocabularyInput.applyTheme(theme)
-        vocabularyCountLabel.textColor = HelmTheme.mutedInk(theme)
-        historyCountLabel.textColor = HelmTheme.mutedInk(theme)
+        for header in [statusHeader, shortcutHeader, cleanupHeader, localWhisperHeader, vocabularyHeader, historyHeader] {
+            header.applyTheme(theme)
+        }
         historyListView.applyTheme(theme)
         footnoteLabel.textColor = HelmTheme.mutedInk(theme)
     }
@@ -1008,7 +1027,8 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// setTokens path cannot loop back into a write.
     private func renderVocabulary() {
         let words = store.vocabulary
-        vocabularyCountLabel.stringValue = "\(words.count)"
+        vocabularyHeader.configure(leading: .tile(symbol: "text.quote", tint: .good), title: "Words I use often",
+                                   count: "\(words.count)", subline: "A hint on your next recording")
         vocabularyInput.setTokens(words)
         onDrillSubtitleChanged?()
     }
@@ -1041,7 +1061,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// Re-reads `store.history` (already newest-first from `DictationStore`)
     /// and reloads the table - see `renderVocabulary` for when this runs.
     private func renderHistory() {
-        historyCountLabel.stringValue = "\(store.history.count)"
+        historyHeader.configure(leading: .tile(symbol: "clock.arrow.circlepath", tint: .neutral),
+                                title: "Recent Dictations", count: "\(store.history.count)",
+                                subline: "What you said lately, kept on this Mac")
         historyListView.setEntries(store.history)
         onDrillSubtitleChanged?()
     }
@@ -1165,6 +1187,17 @@ final class DictationController: NSViewController, DaylightDrillActions {
     var debugStatusWordText: String { statusWord.label.stringValue }
     var debugStatusActionButton: HelmButton { statusActionButton }
     var debugStatusDetailFrame: NSRect { statusDetailLabel.frame }
+    /// The height the detail sentence needs at the width it was given, so a
+    /// suite can tell a wrapped sentence from a clipped one.
+    var debugStatusDetailNeededHeight: CGFloat {
+        ceil(statusDetailLabel.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: statusDetailLabel.frame.width,
+                                                               height: 10_000)).height ?? 0)
+    }
+    /// Whether the detail sentence's bottom is inside its card's bounds.
+    var debugStatusDetailInsideCard: Bool {
+        let inCard = statusDetailLabel.convert(statusDetailLabel.bounds, to: statusPanel)
+        return statusPanel.bounds.insetBy(dx: -0.5, dy: -0.5).contains(inCard)
+    }
     var debugStatusDetailMaxLayoutWidth: CGFloat { statusDetailLabel.preferredMaxLayoutWidth }
     var debugStatusRowWidth: CGFloat { (statusTextStack.superview as? NSStackView)?.bounds.width ?? -1 }
     var debugStatusStackWidth: CGFloat { statusTextStack.bounds.width }

@@ -399,31 +399,36 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // G4: the app's own bar, which already handles theme + tint - a stock
         // determinate `NSProgressIndicator` is the one control on this page
         // still drawing system chrome.
-        checkAllProgressBar.isHidden = true
+        setToolbarHidden(checkAllProgressBar, true)
         checkAllProgressBar.setContentHuggingPriority(.required, for: .horizontal)
         checkAllProgressBar.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
         checkAllProgressLabel.setScaledFont(ofSize: 11, weight: .medium)
-        checkAllProgressLabel.isHidden = true
+        setToolbarHidden(checkAllProgressLabel, true)
         checkAllProgressLabel.translatesAutoresizingMaskIntoConstraints = false
         for v: NSView in [checkAllProgressLabel, checkAllProgressBar] {
             v.setContentHuggingPriority(.required, for: .horizontal)
             v.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // S16: the row is a `HelmFilterBar`: the scope tabs, the search, and
+        // the Refresh pill (or its progress while a sweep runs) trailing.
+        toolbarBar.activeFilterCount = { [weak self] in
+            guard let self else { return 0 }
+            return self.searchField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : 1
+        }
+        toolbarBar.setPageHidden(checkAllProgressBar, true)
+        toolbarBar.setPageHidden(checkAllProgressLabel, true)
+        return toolbarBar
+    }
 
-        let row = NSStackView(views: [
-            filterTabs, searchField, spacer,
-            checkAllProgressLabel, checkAllProgressBar, checkAllPill,
-        ])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
+    private lazy var toolbarBar = HelmFilterBar(scope: filterTabs, search: searchField,
+                                                trailing: [checkAllProgressLabel, checkAllProgressBar, checkAllPill])
+
+    /// A trailing control's visibility, through the bar so a fold never shows
+    /// what the page has hidden.
+    private func setToolbarHidden(_ view: NSView, _ hidden: Bool) {
+        toolbarBar.setPageHidden(view, hidden)
     }
 
     // The Refresh pill is this page's explicit re-check affordance - it must
@@ -464,10 +469,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             }
         }
         isCheckingAll = true
-        checkAllPill.isHidden = true
+        setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = false
-        checkAllProgressBar.isHidden = false
-        checkAllProgressLabel.isHidden = false
+        setToolbarHidden(checkAllProgressBar, false)
+        setToolbarHidden(checkAllProgressLabel, false)
 
         let total = toCheck.count
         checkAllProgressBar.configure(fraction: 0)
@@ -489,10 +494,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private func finishCheckAll() {
         isCheckingAll = false
         // The sidebar layout's toolbar carries Check for updates instead.
-        checkAllPill.isHidden = drawsSidebarLayout
+        setToolbarHidden(checkAllPill, drawsSidebarLayout)
         checkForUpdatesButton.isEnabled = true
-        checkAllProgressBar.isHidden = true
-        checkAllProgressLabel.isHidden = true
+        setToolbarHidden(checkAllProgressBar, true)
+        setToolbarHidden(checkAllProgressLabel, true)
         // The oldest answer on the page, which is what "checked 2 h ago"
         // has to be true of.
         lastCheckedAt = rows.compactMap(\.checkedAt).min() ?? Date()
@@ -1222,7 +1227,7 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         guard let stack = pageStack else { return }
         statsRowView?.isHidden = true
         for card in cards { card.isHidden = true }
-        checkAllPill.isHidden = true
+        setToolbarHidden(checkAllPill, true)
         stack.insertArrangedSubview(setupSummary, at: 0)
         setupSummary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         toolsLastChecked.font = HelmType.caption()

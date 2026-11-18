@@ -107,44 +107,93 @@ enum ShiftBoardColumn: String, CaseIterable {
 
 // MARK: - Per-project colour
 
-/// A stable colour per project, for the card bars and the filter chips.
+/// A project's identity colour, for the card bars, the dots, the filter chips
+/// and the calendar's project categories.
 ///
-/// **There was no per-project colour to reuse.** `ShiftProjectCardView` tints
-/// itself from the project's *status*, which is a different idea - two "In
-/// Progress" projects share that colour by design, which is exactly what an
-/// identity marker must not do. `ShiftProject` carries no colour field, and
-/// adding one would mean a new persisted field, a migration story and a
-/// colour picker nobody asked for.
+/// **Version 2.0.0 (S13 of the 2026-11-17 UI/UX proposals).** Version 1 hashed
+/// the project id onto six *semantic* tints (accent, info, violet, good, warn,
+/// critical). With three projects two shared a hue 44% of the time, and a
+/// project could wear the overdue red or the warning amber, so a project tag
+/// beside "Overdue 2 days" read as a second alert. Measured in the scout's two
+/// tours: Daylight gave "Infra hardening" `BC4142`, which is also the `bad`
+/// token, and Dusk gave two of three projects the same amber.
 ///
-/// So the colour is derived from the project's own id, and two properties
-/// make that honest:
+/// Now:
 ///
-///   - **`HelmTint`, never a literal hex.** `SSHKeyType` shipped four fixed
-///     hexes picked against `helm-dark` and measurably washed out on Gruvbox
-///     Light the moment they landed on a real accent bar; it carries a
-///     `HelmTint` now for exactly this reason. A tint resolves against
-///     whichever of the fourteen palettes is active.
-///   - **A deterministic hash, never `String.hashValue`.** Swift seeds its
-///     hasher randomly per process, so `hashValue` would give a project a
-///     different colour on every launch and a different one on each machine.
-///     FNV-1a over the id's UTF-8 bytes is stable everywhere, forever.
+///   - **The identity set is the categorical ramp**, `HelmDomainHue`'s seven
+///     §2.2 hues read through `categoricalHex`. That set was already measured
+///     for separation as a set across all 26 palettes
+///     (`DaylightBarIconTileSelfTest.checkEveryPaletteKeepsTheHuesApart`),
+///     and none of its values is a theme's status token, so a project can
+///     never borrow `bad` or `warn`.
+///   - **The colour is stored on the project** (`ShiftProject.hue`).
+///     `ShiftStore.addProject` assigns the first hue no other project wears,
+///     and the project sheet can change it.
+///   - **The hash is the fallback** for a record written before the field
+///     existed. It is FNV-1a over the id's UTF-8 bytes, never
+///     `String.hashValue`, which Swift seeds per process.
+///
+/// Breaking against 1.x: `tint(forProjectID:)` and `tints` are gone, because a
+/// stored colour cannot be resolved from an id alone. Callers ask with the
+/// project (or with the id and the store's project list) and get a hex.
 enum ShiftProjectPalette {
 
-    /// Six hues, in a fixed order. `.neutral` is excluded deliberately: it is
-    /// `chromeInkHex`, i.e. full page ink, which is what a task with *no*
-    /// project falls back to - so keeping it out of the rotation is what lets
-    /// "no project" stay visually distinct from "some project".
-    static let tints: [HelmTint] = [.accent, .info, .violet, .good, .warn, .critical]
+    /// The identity hues, in the order new projects take them. `.slate` is
+    /// last: it is the quietest, and it must still read apart from a task
+    /// with no project, which takes page ink (`noProjectHex`).
+    static let hues: [HelmDomainHue] = [.blue, .teal, .violet, .rose, .amber, .green, .slate]
 
-    /// The tint for a project id, or `.neutral` for a task with no project.
-    ///
-    /// `.neutral` as a bar is the same choice Dictation's history rows already
-    /// ship (`HelmDomainHue(tint: .neutral)`) - a row that carries no identity
-    /// signal gets the ink tone rather than a semantic hue it would be lying
-    /// with.
-    static func tint(forProjectID id: String?) -> HelmTint {
-        guard let id, !id.isEmpty else { return .neutral }
-        return tints[Int(fnv1a(id) % UInt64(tints.count))]
+    /// The hue `project` wears: its stored one, else the hash fallback.
+    /// `nil` only for no project at all.
+    static func hue(for project: ShiftProject?) -> HelmDomainHue? {
+        guard let project else { return nil }
+        return project.hue ?? fallbackHue(forProjectID: project.id)
+    }
+
+    /// The hue for a record that names `projectID` and whose `project` the
+    /// caller already looked up: the project's hue when it was found, the
+    /// hash fallback for an id with no record, `nil` for no project.
+    static func hue(for project: ShiftProject?, projectID: String?) -> HelmDomainHue? {
+        if let project { return hue(for: project) }
+        guard let projectID, !projectID.isEmpty else { return nil }
+        return fallbackHue(forProjectID: projectID)
+    }
+
+    /// The hue for a project id, looked up in `projects`. An id with no record
+    /// there (a deleted project, a task from another machine) still resolves
+    /// through the hash so it keeps a stable colour. `nil` for no project.
+    static func hue(forProjectID id: String?, in projects: [ShiftProject]) -> HelmDomainHue? {
+        guard let id, !id.isEmpty else { return nil }
+        if let stored = projects.first(where: { $0.id == id })?.hue { return stored }
+        return fallbackHue(forProjectID: id)
+    }
+
+    /// The hash fallback for a project that has no stored hue.
+    static func fallbackHue(forProjectID id: String) -> HelmDomainHue {
+        hues[Int(fnv1a(id) % UInt64(hues.count))]
+    }
+
+    /// The hex a hue paints in `theme`: the categorical value for a project,
+    /// page ink for no project.
+    static func hex(for hue: HelmDomainHue?, in theme: HelmTheme) -> String {
+        hue?.categoricalHex ?? noProjectHex(in: theme)
+    }
+
+    /// Shorthand for `hex(for: hue(forProjectID:in:), in:)`.
+    static func hex(forProjectID id: String?, in projects: [ShiftProject], theme: HelmTheme) -> String {
+        hex(for: hue(forProjectID: id, in: projects), in: theme)
+    }
+
+    /// A task with no project: the ink tone, never an identity hue, so "no
+    /// project" stays visually distinct from "some project".
+    static func noProjectHex(in theme: HelmTheme) -> String { HelmTint.neutral.hex(in: theme) }
+
+    /// The first hue in `hues` that none of `projects` wears (stored or by
+    /// fallback). Once all seven are taken it cycles by count, so the eighth
+    /// project repeats the first hue rather than piling onto one.
+    static func firstFreeHue(among projects: [ShiftProject]) -> HelmDomainHue {
+        let taken = Set(projects.compactMap { hue(for: $0) })
+        return hues.first { !taken.contains($0) } ?? hues[projects.count % hues.count]
     }
 
     /// FNV-1a, 64-bit. Small, well-known, and - the only property that
@@ -298,7 +347,9 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         row.configure(HelmAccentRow.Content(
             // The bar carries **project identity**, the one thing the board's
             // colour codes - and the list's rows now say the same (UI-24).
-            tint: ShiftProjectPalette.tint(forProjectID: task.projectID),
+            // S13: the project's stored identity hue, a literal from the
+            // categorical ramp rather than a semantic slot.
+            tint: .neutral,
             kicker: project?.name ?? "No project",
             title: task.title,
             meta: bits.isEmpty ? nil : bits.joined(separator: " \u{00B7} "),
@@ -311,7 +362,9 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
             metaLead: lead?.text,
             metaLeadTint: lead?.tint,
             titleStruck: column == .done,
-            hint: "Drag to another lane, or right-click to move."
+            hint: "Drag to another lane, or right-click to move.",
+            tintHex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: task.projectID),
+                                             in: theme)
         ), theme: theme)
 
         let priorityText = task.priority.rawValue.capitalized
@@ -596,7 +649,7 @@ final class ShiftWorkspaceTaskCard: NSView {
     private let meta = NSStackView()
     private var tracking: NSTrackingArea?
     private var theme: HelmTheme = ThemeManager.shared.theme
-    private var projectTint: HelmTint = .neutral
+    private var projectHue: HelmDomainHue?
     private var dueTint: HelmTint?
     private var struck = false
 
@@ -683,7 +736,7 @@ final class ShiftWorkspaceTaskCard: NSView {
     func configure(task: ShiftTask, project: ShiftProject?, column: ShiftBoardColumn, theme: HelmTheme) {
         titleLabel.stringValue = task.title
         struck = column == .done
-        projectTint = ShiftProjectPalette.tint(forProjectID: task.projectID)
+        projectHue = ShiftProjectPalette.hue(for: project, projectID: task.projectID)
         projectLabel.stringValue = project?.name ?? "No project"
         var caption: ShiftTaskSignals.DueCaption?
         if column == .done {
@@ -717,7 +770,7 @@ final class ShiftWorkspaceTaskCard: NSView {
     func configure(followUp: ShiftFollowUp, project: ShiftProject?, theme: HelmTheme) {
         titleLabel.stringValue = followUp.title
         struck = false
-        projectTint = ShiftProjectPalette.tint(forProjectID: followUp.projectID)
+        projectHue = ShiftProjectPalette.hue(for: project, projectID: followUp.projectID)
         projectLabel.stringValue = project?.name ?? "No project"
         let caption = ShiftTaskSignals.dueCaption(date: followUp.followUpAt, time: followUp.followUpTime)
         dueTint = caption?.tint
@@ -760,7 +813,7 @@ final class ShiftWorkspaceTaskCard: NSView {
         subtasksLabel.textColor = muted
         dueIcon.contentTintColor = muted
         attachmentIcon.contentTintColor = muted
-        projectDot.layer?.backgroundColor = HelmTheme.nsColor(projectTint.hex(in: theme)).cgColor
+        projectDot.layer?.backgroundColor = HelmTheme.nsColor(ShiftProjectPalette.hex(for: projectHue, in: theme)).cgColor
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         if let dueTint {
             let tinted = HelmContrast.legibleTintedText(tintHex: dueTint.hex(in: theme), overAnyOf: [surface], theme: theme)
@@ -818,7 +871,8 @@ final class ShiftFollowUpLaneView: NSView {
 
     private let laneBackground = NSView()
     private let header = HelmSectionHeader(size: .lane)
-    private let headerAdd = HelmButton(title: "", variant: .quiet, size: .small, symbol: "plus")
+    /// S20: the lane's "+" is a 28pt `HelmIconButton` target.
+    private let headerAdd = HelmIconButton(symbol: "plus", label: "New task")
     private let cardsStack = NSStackView()
     private let moreLabel = NSTextField(labelWithString: "")
     private let emptyState = HelmEmptyState(symbol: "bell", body: "No follow-ups waiting", size: .quiet)
@@ -1052,6 +1106,7 @@ final class ShiftFollowUpLaneView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        headerAdd.applyTheme(theme)
         // The status lanes' own tint (`ShiftBoardColumnView.applyTheme`).
         laneBackground.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeInkHex)
             .withAlphaComponent(theme.mode == .dark ? 0.05 : 0.035).cgColor
@@ -1077,7 +1132,7 @@ final class ShiftFollowUpLaneView: NSView {
         guard cards.indices.contains(index) else { return false }
         return cards[index].host.performPrimaryAction()
     }
-    var debugAddButton: HelmButton { headerAdd }
+    var debugAddButton: HelmIconButton { headerAdd }
     /// S08: the lane's foot and whether its dashed outline shows.
     var debugAddRow: (button: HelmButton, outlined: Bool, inLane: Bool) {
         (addButton, !addOutline.isHidden, addHost.superview === cardsStack)
@@ -1219,7 +1274,8 @@ final class ShiftBoardColumnView: NSView {
     /// muted text beside it, and a quiet "+" on the trailing edge (UI-25).
     private let header = HelmSectionHeader(size: .lane)
     private let headerRule = NSView()
-    private let headerAdd = HelmButton(title: "", variant: .quiet, size: .small, symbol: "plus")
+    /// S20: the lane's "+" is a 28pt `HelmIconButton` target.
+    private let headerAdd = HelmIconButton(symbol: "plus", label: "New task")
     private let dropView = ShiftBoardDropView()
     /// UI-27: the drop target's dashed outline, shown with the wash.
     private let dropOutline = CAShapeLayer()
@@ -1650,6 +1706,7 @@ final class ShiftBoardColumnView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        headerAdd.applyTheme(theme)
         header.applyTheme(theme)
         headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
@@ -2146,16 +2203,16 @@ final class ShiftProjectFilterBar: NSView {
         }
         chips.removeAll()
 
-        addChip(id: nil, title: "All projects", tint: .neutral)
+        addChip(id: nil, title: "All projects", tintHex: nil)
         for project in projects {
             addChip(id: project.id,
                     title: project.name.isEmpty ? "Untitled project" : project.name,
-                    tint: ShiftProjectPalette.tint(forProjectID: project.id))
+                    tintHex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project), in: theme))
         }
         applyTheme(theme)
     }
 
-    private func addChip(id: String?, title: String, tint: HelmTint) {
+    private func addChip(id: String?, title: String, tintHex: String?) {
         let selected = id == selectedProjectID
         let button = HelmButton(title: title,
                                 variant: selected ? .primary : .secondary,
@@ -2167,7 +2224,7 @@ final class ShiftProjectFilterBar: NSView {
         // where `tint` colours the label and the glyph; a `.primary` chip is
         // already an accent fill saying "this filter is on", and `tint` is
         // ignored there by `HelmButton.palette`.
-        button.tint = selected ? nil : tint
+        button.tintHex = selected ? nil : tintHex
         button.identifier = NSUserInterfaceItemIdentifier(id ?? "")
         stack.addArrangedSubview(button)
         chips.append((id, button))
@@ -2187,9 +2244,9 @@ final class ShiftProjectFilterBar: NSView {
     func applyTheme(_ theme: HelmTheme) {
         for chip in chips {
             chip.button.variant = chip.id == selectedProjectID ? .primary : .secondary
-            chip.button.tint = chip.id == selectedProjectID
+            chip.button.tintHex = chip.id == selectedProjectID || chip.id == nil
                 ? nil
-                : ShiftProjectPalette.tint(forProjectID: chip.id)
+                : ShiftProjectPalette.hex(forProjectID: chip.id, in: projects, theme: theme)
         }
     }
 

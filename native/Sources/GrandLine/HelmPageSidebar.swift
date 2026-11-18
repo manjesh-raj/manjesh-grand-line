@@ -196,6 +196,10 @@ final class HelmPageSidebar: NSView {
     enum RowIndicator {
         case symbol(String)
         case dot(HelmTint)
+        /// A dot in an identity hue from the categorical ramp
+        /// (`HelmDomainHue.categoricalHex`), for a record that stores its own
+        /// colour - a Tasks project since S13. Same view as `.dot`.
+        case hueDot(HelmDomainHue)
         case tile(symbol: String, tint: HelmTint)
     }
 
@@ -471,7 +475,7 @@ final class HelmPageSidebar: NSView {
         var tile: IconTileView?
         switch spec.indicator {
         case .symbol: dot.isHidden = true
-        case .dot: icon.isHidden = true
+        case .dot, .hueDot: icon.isHidden = true
         case let .tile(symbolName, tint):
             dot.isHidden = true
             icon.isHidden = true
@@ -649,6 +653,7 @@ final class HelmPageSidebar: NSView {
         switch indicator {
         case .symbol(let name): return "symbol:\(name)"
         case .dot(let tint): return "dot:\(tint)"
+        case .hueDot(let hue): return "hueDot:\(hue.rawValue)"
         case .tile(let symbol, let tint): return "tile:\(symbol):\(tint)"
         }
     }
@@ -1085,6 +1090,8 @@ final class HelmPageSidebar: NSView {
             // meaning.
             if case let .dot(tint) = row.indicator {
                 row.dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+            } else if case let .hueDot(hue) = row.indicator {
+                row.dot.layer?.backgroundColor = HelmTheme.nsColor(hue.categoricalHex).cgColor
             }
             // A tile owns its own wash and its own contrast-corrected glyph,
             // so it is handed the theme and re-derives both - the same as any

@@ -1487,7 +1487,7 @@ final class NotificationRowView: HoverHighlightView {
 
         disclosure.isBordered = false
         disclosure.title = ""
-        disclosure.imagePosition = .imageOnly
+        disclosure.imagePosition = .imageOnly  // HelmIconButton-exempt: a disclosure chevron inside a triage card; the card is the target
         disclosure.target = self
         disclosure.action = #selector(disclosureClicked)
         disclosure.translatesAutoresizingMaskIntoConstraints = false

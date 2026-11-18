@@ -188,7 +188,7 @@ enum KeyedRefreshSelfTest {
         fleet.debugRender(snapshot: snapshot(second, queued: 6), mergedPRs: [])
         fleet.view.layoutSubtreeIfNeeded()
         check(fleet.debugStatTileViews.map(ObjectIdentifier.init) == tiles, "a refresh rebuilt the stat tiles", &ok)
-        check(fleet.debugStatTiles.contains { $0.value == "6" && $0.caption == "queued" },
+        check(fleet.debugStatTiles.contains { $0.value == "6" && $0.caption == "Queued" },
               "the queued tile does not show the refreshed count", &ok)
         let after = fleet.debugInFlightRowViews.map(ObjectIdentifier.init)
         check(after.count == 3, "after a third task started there are \(after.count) rows, expected 3", &ok)

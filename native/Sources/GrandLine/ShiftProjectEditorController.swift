@@ -27,6 +27,11 @@ final class ShiftProjectEditorController: NSViewController {
     /// (`ShiftController`) persists it via `ShiftStore.addProject`.
     var onSave: ((ShiftProject) -> Void)?
 
+    /// S13: the hue the new project will wear. The caller passes the store's
+    /// first free one, so leaving the row alone gives what `addProject` would.
+    var initialHue: HelmDomainHue = ShiftProjectPalette.hues[0]
+    private lazy var huePicker = ShiftProjectHuePicker(selected: initialHue)
+
     private let nameField = HelmTextField(placeholder: "What is this project?", style: .lead)
     private let statusCard = HelmFieldCard(label: "Status")
     private let startDateField = HelmTextField(placeholder: "YYYY-MM-DD")
@@ -49,6 +54,7 @@ final class ShiftProjectEditorController: NSViewController {
         }
         form.addRow(statusCard)
         form.addFieldColumns([("Start date", startDateField), ("Due date", dueDateField)])
+        form.addRow(form.labelledField("Colour", huePicker))
 
         form.addSection("Description")
         form.addRow(descriptionView)
@@ -79,6 +85,7 @@ final class ShiftProjectEditorController: NSViewController {
         project.name = nameText
         project.description = descriptionView.string
         project.status = selectedStatus
+        project.hue = huePicker.selectedHue
         let startDate = startDateField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         project.startDate = startDate.isEmpty ? nil : startDate
         let dueDate = dueDateField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)

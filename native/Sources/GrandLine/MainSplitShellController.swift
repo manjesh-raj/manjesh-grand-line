@@ -831,6 +831,9 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         inspectorWanted = shown
         inspectorPinnedOpen = shown
+        // S27: a page with no details shows the crew panel while the pane is
+        // open, and lets go of it when the pane closes.
+        if inspectorSource == nil { inspector.setContent(shown ? crewPanelContent() : nil) }
         let details = shown && inspectorSource?.inspectorContent != nil
         if shown {
             if details { contentItem.minimumThickness = Self.inspectorColumnMinimum }
@@ -928,7 +931,15 @@ final class MainSplitShellController: WorkspaceShellController {
         let wasOpen = !inspectorItem.isCollapsed
         let source = inspectorSource.map(ObjectIdentifier.init)
         let content = inspectorSource?.inspectorContent
-        inspector.setContent(content, emptyText: inspectorSource?.inspectorEmptyText)
+        // S27: a page with details shows them; a page that never fills the
+        // pane shows the crew panel (Operator) or its shortcuts (Personal)
+        // instead of "No details". Only the page's own details open the pane
+        // by themselves, below.
+        // Mounted only while the captain has the pane open: a collapsed pane
+        // holding the panel kept its constraints in the window's graph
+        // (gotcha (15)) for nothing anyone could see.
+        let crewPanel = inspectorSource == nil && inspectorPinnedOpen ? crewPanelContent() : nil
+        inspector.setContent(content ?? crewPanel, emptyText: inspectorSource?.inspectorEmptyText)
         // The captain's standing request (`inspectorPinnedOpen`) holds on
         // every page, so an inspector they opened stays open across a page
         // change, on the page's empty state where it fills nothing. R4-UX-05
@@ -1055,6 +1066,13 @@ final class MainSplitShellController: WorkspaceShellController {
         let tabs = currentModule.tabs
         guard tabs.count > 1, let current = currentTab, let index = tabs.firstIndex(of: current) else { return }
         open(tabs[(index + offset + tabs.count) % tabs.count])
+    }
+
+    override func selectModuleTab(atIndex index: Int) {
+        guard shownCalendar == nil, !showsDoorAsOwnPlace else { return }
+        let tabs = currentModule.tabs
+        guard tabs.count > 1, tabs.indices.contains(index) else { return }
+        open(tabs[index])
     }
 
     /// R2-UX-03: one ⌘K row per module in the sidebar, in its order, with
@@ -1477,6 +1495,29 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
         contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle)
+        // S27: the crew panel's context is the line just written.
+        if inspectorSource == nil, crewPanelLoaded { crewPanel.setContext(currentCrewContext) }
+    }
+
+    // MARK: S27 - the inspector's crew panel
+
+    private var crewPanelLoaded = false
+    private(set) lazy var crewPanel: WorkspaceInspectorCrewPanel = {
+        let panel = WorkspaceInspectorCrewPanel()
+        panel.onAsk = { [weak self] text, completion in self?.workspace.askCrewFromMenuBar(text, completion: completion) }
+        panel.onContinueInCrew = { [weak self] in self?.workspace.navigator.show(.strawHat) }
+        crewPanelLoaded = true
+        return panel
+    }()
+
+    private var currentCrewContext: WorkspaceInspectorCrewPanel.PageContext {
+        .init(module: currentModule, summary: pageSubtitle)
+    }
+
+    /// The crew panel as inspector content, holding the page on screen.
+    private func crewPanelContent() -> WorkspaceInspectorContent {
+        crewPanel.setContext(currentCrewContext)
+        return WorkspaceInspectorContent(title: crewPanel.paneTitle, view: crewPanel.view, fillsPane: true)
     }
 
     override func workspaceActionsMayHaveChanged() {

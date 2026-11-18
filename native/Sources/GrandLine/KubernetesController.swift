@@ -250,6 +250,11 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var feedStatusLabel: NSTextField!
     var retryFeedButton: HelmButton!
     var workArea: NSView!
+    /// S23: until a feed tab exists, the table the page will fill, in its
+    /// skeleton state, so the page has its shape and a bottom rather than one
+    /// card over an empty window.
+    var pendingTablePreview: HelmCard!
+    var pendingTableSubtitle: NSTextField!
     var pageTabs: HelmSegmentedTabs!
     var clusterContainer: NSView!
     var tailContainer: NSView!
@@ -357,7 +362,14 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         // Pinning the work area's own bottom to the container is what makes
         // the table genuinely fill the page: the card above it sizes to its
         // content, and everything left over is the table's.
-        for child in [sessionCard!, workArea!] { container.addSubview(child) }
+        buildPendingTablePreview()
+        for child in [sessionCard!, workArea!, pendingTablePreview!, scopeEmptyState!] { container.addSubview(child) }
+        NSLayoutConstraint.activate([
+            scopeEmptyState.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            scopeEmptyState.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            scopeEmptyState.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor,
+                                                   constant: -2 * HelmMetrics.pageGutter),
+        ])
         NSLayoutConstraint.activate([
             sessionCard.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
             sessionCard.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
@@ -367,7 +379,19 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             workArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
             workArea.topAnchor.constraint(equalTo: sessionCard.bottomAnchor, constant: HelmMetrics.s4),
             workArea.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s4),
+
+            pendingTablePreview.leadingAnchor.constraint(equalTo: workArea.leadingAnchor),
+            pendingTablePreview.trailingAnchor.constraint(equalTo: workArea.trailingAnchor),
+            pendingTablePreview.topAnchor.constraint(equalTo: workArea.topAnchor),
         ])
+        // A placeholder must never be a height floor on the window (gotcha
+        // (13)): below 500 it yields, and a short window clips the skeleton
+        // rather than growing to fit it. Measured: required, it grew a 760pt
+        // window to 790pt in MainSplitShellSelfTest.
+        let previewFits = pendingTablePreview.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor,
+                                                                      constant: -HelmMetrics.s4)
+        previewFits.priority = NSLayoutConstraint.Priority(490)
+        previewFits.isActive = true
 
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
@@ -414,6 +438,20 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             + "3. Come back here and pick that session. Nothing else holds a cluster credential."
     }
 
+    /// S23: the Pods table's header, naming the namespace, over skeleton rows.
+    func buildPendingTablePreview() {
+        pendingTablePreview = HelmCard()
+        pendingTablePreview.translatesAutoresizingMaskIntoConstraints = false
+        pendingTableSubtitle = NSTextField(labelWithString: "")
+        _ = pendingTablePreview.setHeader(symbol: "shippingbox", tint: .info,
+                                          titleLabel: NSTextField(labelWithString: "Pods"),
+                                          subtitleLabel: pendingTableSubtitle)
+        let rows = HelmSkeletonList(rows: 4)
+        pendingTablePreview.setBody(rows, insets: HelmCard.contentInsets)
+        pendingTablePreview.setAccessibilityLabel("Pods, appears once a feed tab is logged in")
+        pendingTablePreview.isHidden = true
+    }
+
     func buildSessionCard() {
         sessionCard = HelmCard()
         scopeTabsHost = NSView()
@@ -441,7 +479,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
         buildFeedSection()
 
-        let body = NSStackView(views: [scopeTabsHost, scopeEmptyState, feedSection])
+        // UXP-13 / S23: the no-session wall is the page's whole content, so it
+        // sits centred in the page (loadView places it), not at the top of the
+        // Session card, which hides while there is no session.
+        let body = NSStackView(views: [scopeTabsHost, feedSection])
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = HelmMetrics.s3
@@ -449,12 +490,13 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         _ = sessionCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
                                   tint: .info,
                                   title: "Session",
-                                  subtitle: "Which authenticated bastion session these commands run in, and which of its tabs this page types into. "
-                                      + "Typing into the feed tab yourself pauses automated commands until it goes quiet again.")
+                                  // S23: one line; the feed row below says the rest
+                                  // where it applies.
+                                  subtitle: "The bastion session these commands run in, and the tab this page types into. "
+                                      + "Typing into that tab yourself pauses automated commands.")
         sessionCard.setBody(body, insets: HelmCard.contentInsets)
         NSLayoutConstraint.activate([
             scopeTabsHost.leadingAnchor.constraint(equalTo: body.leadingAnchor),
-            scopeEmptyState.widthAnchor.constraint(equalTo: body.widthAnchor),
             feedSection.widthAnchor.constraint(equalTo: body.widthAnchor),
         ])
     }

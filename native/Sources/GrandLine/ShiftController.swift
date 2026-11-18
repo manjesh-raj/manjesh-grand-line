@@ -497,7 +497,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// (`adoptSidebarLayout`). The floating bar never sets it.
     private(set) var drawsSidebarLayout = false
     /// The page column's filters, as one row under the header.
-    let workspaceFilterRow = NSStackView()
+    /// S16: a `HelmFilterBar` - scope tabs, the project pop-up, the
+    /// Follow-ups jump, and the sort (Board, List) or Colour by (Calendar)
+    /// trailing. Below the width its slots need, all but the tabs fold into
+    /// "Filter · n".
+    private(set) lazy var workspaceFilterRow: HelmFilterBar = {
+        let bar = HelmFilterBar(scope: scopeFilter, popups: [projectPopup], chips: [followUpsJump],
+                                trailing: [sortPopup, colourControl])
+        bar.activeFilterCount = { [weak self] in self?.projectFilter == nil ? 0 : 1 }
+        return bar
+    }()
     private lazy var scopeFilter: HelmSegmentedTabs = {
         let tabs = HelmSegmentedTabs(items: ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                      selected: ShiftTaskScope.all.rawValue, size: .compact)
@@ -516,13 +525,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         return button
     }()
     private let projectPopup = HelmPopUpButton()
-    /// R4-UI-08: the project and sort pop-ups as one button, while the filter
-    /// row is too narrow for both (`fitFilterRow`). Its menu drives the two
-    /// pop-ups' own selection and handlers, so the choice has one path.
-    private lazy var filterMenuButton = HelmButton(title: "Filter", variant: .secondary, size: .small,
-                                                   symbol: "line.3.horizontal.decrease", target: self,
-                                                   action: #selector(filterMenuClicked))
-    private var filterRowCollapsed = false
     /// Whether the Follow-ups jump belongs in the row: not while Follow-ups
     /// is a lane on the board, which is on screen already (R4-UI-09).
     private var followUpsJumpWanted = true
@@ -561,15 +563,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         table.accessibilityName = "Follow-ups"
         return table
     }()
-    /// Weekly review's five figures, as the prototype's summary cards.
-    private lazy var reviewCards: [HelmMetricCard] = [
-        HelmMetricCard(caption: "Completed this week", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Focus time", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Overdue", tint: .critical, showsDetail: true),
-        HelmMetricCard(caption: "Follow-ups open", tint: nil, showsDetail: true),
-        HelmMetricCard(caption: "Coming up next week", tint: nil, showsDetail: true),
-    ]
-    private lazy var reviewCardsRow = HelmMetricRow(reviewCards)
+    /// Weekly review's five figures: a `.boxed` `HelmKPIStrip` (S14), each
+    /// with its detail line.
+    private lazy var reviewCardsRow = HelmKPIStrip(density: .boxed)
     /// Time on tasks beside Pushed back repeatedly.
     private let reviewLowerRow = NSStackView()
     /// The strip's "pushed back 2+ times" figure, which the five cards do not
@@ -2132,9 +2128,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugFollowUpsRowHidden: Bool { followUpsRow?.isHidden ?? true }
     var debugProjectsSectionHidden: Bool { projectsSectionView?.isHidden ?? true }
     var debugFollowUpsJumpHidden: Bool { followUpsJump.isHidden }
-    var debugFilterRowCollapsed: Bool { !filterMenuButton.isHidden }
-    var debugFilterRow: NSStackView { workspaceFilterRow }
-    var debugFilterMenuTitles: [String] { filterMenu().items.map(\.title) }
+    var debugFilterRowCollapsed: Bool { workspaceFilterRow.debugIsCollapsed }
+    var debugFilterRow: HelmFilterBar { workspaceFilterRow }
     var debugAgendaRowCount: Int { reviewAgendaList.superview == nil ? 0 : reviewAgendaList.rows.count }
     var debugAgendaPanelShown: Bool { reviewAgendaPanel.superview != nil && !reviewAgendaPanel.isHiddenOrHasHiddenAncestor }
     #endif
@@ -2285,6 +2280,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let detailNameField = HelmTextField()
     private let detailDescriptionField = HelmTextField()
     private let detailStatusPopup = HelmPopUpButton()
+    /// S13: the open project's stored identity colour.
+    private let detailHuePicker = ShiftProjectHuePicker(selected: ShiftProjectPalette.hues[0])
     private let detailStartDateField = HelmTextField(placeholder: "YYYY-MM-DD")
     private let detailDueDateField = HelmTextField(placeholder: "YYYY-MM-DD")
     private let detailSaveButton = HelmButton(title: "Save", variant: .primary, target: nil, action: nil)
@@ -2411,6 +2408,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             [gridLabel("Name"), detailNameField],
             [gridLabel("Description"), detailDescriptionField],
             [gridLabel("Status"), detailStatusPopup],
+            [gridLabel("Colour"), detailHuePicker],
             [gridLabel("Start date"), detailStartDateField],
             [gridLabel("Due date"), detailDueDateField],
         ])
@@ -2462,6 +2460,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             if let idx = ShiftProjectStatus.allCases.firstIndex(of: project.status) {
                 detailStatusPopup.selectItem(at: idx)
             }
+            detailHuePicker.select(ShiftProjectPalette.hue(for: project) ?? ShiftProjectPalette.hues[0])
         }
         applyDetailHeader(project)
         rebuildDetailTasks(project)
@@ -2525,6 +2524,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         project.startDate = detailStartDateField.stringValue.isEmpty ? nil : detailStartDateField.stringValue
         project.dueDate = detailDueDateField.stringValue.isEmpty ? nil : detailDueDateField.stringValue
+        project.hue = detailHuePicker.selectedHue
         store.updateProject(project)
         Toast.show(in: view, message: "Project saved")
         render()
@@ -2596,6 +2596,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// without navigating away and back, exactly like a new task/follow-up.
     private func presentProjectEditor() {
         let editor = ShiftProjectEditorController()
+        editor.initialHue = ShiftProjectPalette.firstFreeHue(among: store.projects)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             self.store.addProject(saved)
@@ -2721,7 +2722,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// subtitle and the sidebar. Kept as a probe so a suite can assert none
     /// came back.
     var debugStatTileCount: Int {
-        func walk(_ v: NSView) -> Int { (v is HelmStatTile ? 1 : 0) + v.subviews.reduce(0) { $0 + walk($1) } }
+        func walk(_ v: NSView) -> Int {
+            (v is HelmKPIStrip.BoxedCell ? 1 : 0) + v.subviews.reduce(0) { $0 + walk($1) }
+        }
         return walk(dashboardContainer)
     }
 
@@ -2870,7 +2873,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             projectPopup.contentTintColor = ink
             tasksTable.applyTheme(theme)
             followUpsTable.applyTheme(theme)
-            for card in reviewCards { card.applyTheme(theme) }
+            reviewCardsRow.applyTheme(theme)
         }
     }
 }
@@ -3081,38 +3084,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         for view in [sortPopup, colourControl] as [NSView] {
             view.removeFromSuperview()
         }
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        let spacerWidth = spacer.widthAnchor.constraint(equalToConstant: 0)
-        spacerWidth.priority = .defaultLow
-        spacerWidth.isActive = true
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        // R4-UI-08: the scope tabs sit at their own width, and the spacer -
-        // not the tabs - takes the row's slack (gotcha (10)). Both were at
-        // 250 and AppKit gave the slack to the tabs, measured at 1512
-        // stretching them from 487pt to 836pt of mostly empty strip. A real
-        // `width == 0` preference one step above the spacer's, since the tabs
-        // are a stack-backed view and a hugging priority is a no-op on one
-        // (gotcha (12)).
-        let tabsNarrow = scopeFilter.widthAnchor.constraint(equalToConstant: 0)
-        tabsNarrow.priority = HelmDaylightPriority.columnHug
-        tabsNarrow.isActive = true
-        filterMenuButton.toolTip = "Show one project's tasks, or change the sort"
-        filterMenuButton.setContentHuggingPriority(.required, for: .horizontal)
-        filterMenuButton.isHidden = true
-        for view in [scopeFilter, followUpsJump, projectPopup, filterMenuButton, spacer, sortPopup] as [NSView] {
-            workspaceFilterRow.addArrangedSubview(view)
-        }
-        // The calendar's Colour by, at the trailing end where the sort sits
-        // on Board and List (`fitFilterRow` shows one or the other).
-        workspaceFilterRow.addArrangedSubview(colourControl)
-        workspaceFilterRow.orientation = .horizontal
-        workspaceFilterRow.alignment = .centerY
-        workspaceFilterRow.spacing = HelmMetrics.s3
-        // Gotcha (10): `.fill`, so the spacer and not a control takes the slack.
-        workspaceFilterRow.distribution = .fill
-        workspaceFilterRow.translatesAutoresizingMaskIntoConstraints = false
-        workspaceFilterRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // S16: the bar owns the order, the spacing, the spacer and the
+        // scope tabs' own-width preference (R4-UI-08's gotcha (10)/(12) fix).
+        _ = workspaceFilterRow
     }
 
     /// The filter row's counts and selection, the project list, and the
@@ -3136,8 +3110,8 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
             for project in store.projects {
                 projectPopup.addItem(withTitle: project.name.isEmpty ? "Untitled project" : project.name)
                 projectPopup.lastItem?.representedObject = project.id
-                projectPopup.lastItem?.image = Self.projectDot(ShiftProjectPalette.tint(forProjectID: project.id),
-                                                              theme: theme)
+                projectPopup.lastItem?.image = Self.projectDot(
+                    ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project), in: theme))
             }
         }
         let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
@@ -3164,88 +3138,15 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         let available = contentStack.bounds.width
         guard drawsSidebarLayout, available > 0 else { return }
         let calendarShowing = tasksView == .calendar
-        let expanded: [NSView] = [scopeFilter, followUpsJump, projectPopup, sortPopup, colourControl]
-            .filter { view in
-                view === projectPopup || view === scopeFilter
-                    || (view === sortPopup && !calendarShowing)
-                    || (view === colourControl && calendarShowing)
-                    || (view === followUpsJump && followUpsJumpWanted)
-            }
-        let needed = expanded.reduce(0) { $0 + $1.fittingSize.width }
-            + workspaceFilterRow.spacing * CGFloat(max(0, expanded.count - 1))
-        let collapse = needed > available
-        filterRowCollapsed = collapse
-        // Only a real change is written: a visibility change schedules
-        // another layout pass, and this runs from `viewDidLayout`.
-        let wanted: [(NSView, Bool)] = [
-            (projectPopup, collapse),
-            (sortPopup, collapse || topLevelView != .dashboard || calendarShowing),
-            (filterMenuButton, !collapse),
-            (followUpsJump, collapse || !followUpsJumpWanted),
-            (colourControl, collapse || !calendarShowing || topLevelView != .dashboard),
-        ]
-        for (view, hidden) in wanted where view.isHidden != hidden { view.isHidden = hidden }
+        let bar = workspaceFilterRow
+        bar.setPageHidden(sortPopup, topLevelView != .dashboard || calendarShowing)
+        bar.setPageHidden(colourControl, !calendarShowing || topLevelView != .dashboard)
+        bar.setPageHidden(followUpsJump, !followUpsJumpWanted)
+        bar.fit(width: available)
     }
 
     private func refreshFilterMenuTitle() {
-        filterMenuButton.title = projectFilter == nil ? "Filter" : "Filter \u{2002}1"
-        filterMenuButton.setAccessibilityLabel(projectFilter == nil ? "Filter" : "Filter, one project")
-    }
-
-    /// The collapsed row's menu: Project and Sort by, each item ticked as its
-    /// pop-up is.
-    func filterMenu() -> NSMenu {
-        let menu = NSMenu()
-        func header(_ title: String) {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-        if followUpsJumpWanted {
-            menu.addItem(ShiftLaneMenuItem(title: followUpsJump.title.replacingOccurrences(of: "\u{2002}", with: " ")) {
-                [weak self] in self?.followUpsJumpClicked()
-            })
-            menu.addItem(.separator())
-        }
-        header("Project")
-        for index in 0..<projectPopup.numberOfItems {
-            guard let source = projectPopup.item(at: index) else { continue }
-            let item = ShiftLaneMenuItem(title: source.title) { [weak self] in
-                self?.projectPopup.selectItem(at: index)
-                self?.projectPopupChanged()
-            }
-            item.image = source.image
-            item.state = index == projectPopup.indexOfSelectedItem ? .on : .off
-            menu.addItem(item)
-        }
-        menu.addItem(.separator())
-        // The calendar is drawn by date, so its menu offers what its chips
-        // are coloured by instead of a sort.
-        if tasksView == .calendar {
-            header("Colour by")
-            for colouring in ShiftCalendarColouring.allCases {
-                let item = ShiftLaneMenuItem(title: colouring.title) { [weak self] in self?.setCalendarColouring(colouring) }
-                item.state = colouring == calendarColouring ? .on : .off
-                menu.addItem(item)
-            }
-            return menu
-        }
-        header("Sort by")
-        for index in 0..<sortPopup.numberOfItems {
-            guard let source = sortPopup.item(at: index) else { continue }
-            let item = ShiftLaneMenuItem(title: source.title) { [weak self] in
-                self?.sortPopup.selectItem(at: index)
-                self?.sortChanged()
-            }
-            item.state = index == sortPopup.indexOfSelectedItem ? .on : .off
-            menu.addItem(item)
-        }
-        return menu
-    }
-
-    @objc private func filterMenuClicked() {
-        filterMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: filterMenuButton.bounds.height + 4),
-                           in: filterMenuButton)
+        workspaceFilterRow.refreshFilterButtonTitle()
     }
 
     @objc fileprivate func projectPopupChanged() {
@@ -3259,9 +3160,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     }
 
     /// A project's dot for its popup item, in the hue its cards and lanes use.
-    private static func projectDot(_ tint: HelmTint, theme: HelmTheme) -> NSImage {
+    private static func projectDot(_ hex: String) -> NSImage {
         let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
-            HelmTheme.nsColor(tint.hex(in: theme)).setFill()
+            HelmTheme.nsColor(hex).setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
             return true
         }
@@ -3312,9 +3213,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         row.cells["task"] = .title(task.title, subtitle: subtitle, subtitleIsCode: false, symbol: nil,
                                    tint: .neutral, tintHex: nil)
         let project = task.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
-        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
-                                                     tint: ShiftProjectPalette.tint(forProjectID: task.projectID),
-                                                     theme: theme))
+        row.cells["project"] = .view(ShiftProjectTag(
+            name: project?.name ?? "No project",
+            hex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: task.projectID), in: theme),
+            theme: theme))
         row.cells["status"] = .muted(column.title)
         if let pill = ShiftTaskSignals.priorityPill(task.priority) {
             let chip = HelmStatusPill(style: .pill)
@@ -3412,9 +3314,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         row.cells["followUp"] = .title(item.title, subtitle: nil, subtitleIsCode: false, symbol: nil,
                                        tint: .neutral, tintHex: nil)
         let project = item.projectID.flatMap { pid in store.projects.first { $0.id == pid } }
-        row.cells["project"] = .view(ShiftProjectTag(name: project?.name ?? "No project",
-                                                     tint: ShiftProjectPalette.tint(forProjectID: item.projectID),
-                                                     theme: theme))
+        row.cells["project"] = .view(ShiftProjectTag(
+            name: project?.name ?? "No project",
+            hex: ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project, projectID: item.projectID), in: theme),
+            theme: theme))
         row.cells["status"] = .muted(isDone ? "Done" : "Pending")
         if let pill = ShiftTaskSignals.priorityPill(item.priority) {
             let chip = HelmStatusPill(style: .pill)
@@ -3564,44 +3467,44 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     fileprivate func renderWorkspaceReview(_ summary: ShiftWeeklySummary) {
         let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: Date())
             .map { store.weeklySummary(reference: $0).completedCount }
-        reviewCards[0].configure(count: summary.completedCount)
+        typealias Item = HelmKPIStrip.Item
+        var completedDetail: Item.Detail?
         if let lastWeek {
             let delta = summary.completedCount - lastWeek
             let text = delta == 0 ? "Same as last week" : "\(delta > 0 ? "+" : "\u{2212}")\(abs(delta)) vs last week"
-            reviewCards[0].setDetail(text, tint: delta > 0 ? .good : nil)
-        } else {
-            reviewCards[0].setDetail(nil)
+            completedDetail = .init(text: text, tint: delta > 0 ? .good : nil)
         }
         let focusDays = store.focusSecondsByDay(days: 7)
         let focusSeconds = focusDays.reduce(0) { $0 + $1.seconds }
         let focusTasks = store.focusTaskCount(days: 7)
-        reviewCards[1].configure(text: focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet",
-                                 signals: false)
-        reviewCards[1].setDetail(focusSeconds > 0
-            ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
-            : "Start a focus session from any task")
         let c = counts()
-        reviewCards[2].configure(count: c.overdue)
         let today = Calendar.current.startOfDay(for: Date())
         let overdueTasks = store.activeTasks.filter(matchesProjectFilter).filter { task in
             guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
             return due < today
         }.sorted(by: Self.byDueDateThenCreated)
-        reviewCards[2].setDetail(overdueTasks.first?.title ?? "Nothing late")
         let pending = store.followUps.filter { $0.status == .pending }
         let dueToday = pending.filter { fu in
             fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: Date()) }
                 ?? false
         }.count
-        reviewCards[3].configure(text: "\(pending.count)", signals: false)
-        reviewCards[3].setDetail(dueToday > 0 ? "\(dueToday) due today" : "None due today")
-        reviewCards[4].configure(text: "\(summary.upcomingCount)", signals: false)
-        reviewCards[4].setDetail("tasks and follow-ups due")
+        reviewCardsRow.configure([
+            .figure("\(summary.completedCount)", caption: "Completed this week", detail: completedDetail),
+            .figure(focusSeconds > 0 ? FocusTimerFormat.total(focusSeconds) : "None yet", caption: "Focus time",
+                    detail: .init(text: focusSeconds > 0
+                        ? "last 7 days \u{00B7} \(focusTasks) task\(focusTasks == 1 ? "" : "s") with a timer"
+                        : "Start a focus session from any task")),
+            .figure("\(c.overdue)", caption: "Overdue", tint: .critical, signals: c.overdue > 0,
+                    detail: .init(text: overdueTasks.first?.title ?? "Nothing late")),
+            .figure("\(pending.count)", caption: "Follow-ups open",
+                    detail: .init(text: dueToday > 0 ? "\(dueToday) due today" : "None due today")),
+            .figure("\(summary.upcomingCount)", caption: "Coming up next week",
+                    detail: .init(text: "tasks and follow-ups due")),
+        ], theme: theme)
         reviewPushedBackHeader.stringValue = "Pushed back repeatedly"
         reviewPushedBackCount.text = "\(summary.pushedBack.count)"
         reviewPushedBackCount.applyTheme(theme)
         renderReviewAgenda()
-        for card in reviewCards { card.applyTheme(theme) }
     }
 }
 
@@ -3613,12 +3516,12 @@ final class ShiftProjectTag: NSView {
     private let dot = NSView()
     private let label = NSTextField(labelWithString: "")
 
-    init(name: String, tint: HelmTint, theme: HelmTheme) {
+    init(name: String, hex: String, theme: HelmTheme) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         dot.wantsLayer = true
         dot.layer?.cornerRadius = Self.dotSide / 2
-        dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+        dot.layer?.backgroundColor = HelmTheme.nsColor(hex).cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = name
         label.font = HelmType.body()
@@ -3648,13 +3551,13 @@ final class ShiftProjectTag: NSView {
 
 #if FM_SELFTESTS
 extension ShiftController {
-    var debugWorkspaceFilterRow: NSStackView { workspaceFilterRow }
+    var debugWorkspaceFilterRow: HelmFilterBar { workspaceFilterRow }
     var debugScopeFilter: HelmSegmentedTabs { scopeFilter }
     var debugProjectPopup: HelmPopUpButton { projectPopup }
     var debugFollowUpsJump: HelmButton { followUpsJump }
     var debugTasksTable: HelmDataTable { tasksTable }
     var debugFollowUpsTable: HelmDataTable { followUpsTable }
-    var debugReviewCards: [HelmMetricCard] { reviewCards }
+    var debugReviewCards: [HelmKPIStrip.BoxedCell] { reviewCardsRow.debugCells }
     /// The Pushed back panel's count, when it is mounted and showing.
     var debugPushedBackCount: String? {
         reviewPushedBackCount.superview != nil && !reviewPushedBackCount.isHidden ? reviewPushedBackCount.text : nil
