@@ -1,8 +1,8 @@
 // Grand Line - native macOS app.
 //
-// The feel pass on Home (the Fable second-opinion review's Stage 1, cut to
-// the feasibility audit's items 1 to 3): the greeting, the briefing hero and
-// the KPI strip, checked where a check needs no window. The Home wiring (the
+// The feel pass (the Fable second-opinion review's Stage 1, cut to the
+// feasibility audit's six items): Home's greeting, briefing hero and KPI
+// strip, and the density switch, checked where a check needs no window. The Home wiring (the
 // hero replacing the briefing card, Customize bringing it back) is measured
 // in `MainSplitShellSelfTest`, which already mounts Home in a real window.
 //
@@ -34,6 +34,8 @@ enum FeelPassSelfTest {
             ("3 the four tiles and where they go", checkKPITiles),
             ("3 an unread figure is a dash, never a zero", checkKPIUnknowns),
             ("3 today's task figures", checkTaskCounts),
+            ("6 density is a factor on every row height", checkDensityRowHeights),
+            ("6 changing density re-fires the theme", checkDensityRefires),
         ]
         for (name, body) in cases {
             var ok = true
@@ -280,6 +282,46 @@ enum FeelPassSelfTest {
         let counts = HomeTaskCounts(tasks: tasks, followUps: [], now: now, calendar: calendar)
         check(counts.due == 2 && counts.overdue == 1 && counts.doneToday == 1,
               "the counts are due \(counts.due), overdue \(counts.overdue), done \(counts.doneToday); want 2, 1, 1", &ok)
+    }
+
+    // MARK: - Item 6
+
+    private static func checkDensityRowHeights(_ ok: inout Bool) {
+        let saved = AppSettings.shared.density
+        defer { AppSettings.shared.density = saved }
+        let scale = ChromeTextScale.shared.scale
+        AppSettings.shared.density = .comfortable
+        for base: CGFloat in [24, 28, 32, 36] {
+            check(HelmType.scaledRowHeight(base) == base * scale,
+                  "Comfortable moved a \(base)pt row to \(HelmType.scaledRowHeight(base))", &ok)
+        }
+        AppSettings.shared.density = .compact
+        check(HelmType.scaledRowHeight(36) == (30 * scale).rounded(),
+              "Compact draws a 36pt row at \(HelmType.scaledRowHeight(36)), want the prototype's 30", &ok)
+        check(HelmType.scaledRowHeight(32) < 32 * scale && HelmType.scaledRowHeight(32) == HelmType.scaledRowHeight(32).rounded(),
+              "Compact's 32pt row is \(HelmType.scaledRowHeight(32)) - not shorter, or not a whole point", &ok)
+        AppSettings.shared.set(densityRaw: "a-future-density")
+        check(AppSettings.shared.density == .comfortable, "an unknown stored density is not read as Comfortable", &ok)
+    }
+
+    private static func checkDensityRefires(_ ok: inout Bool) {
+        let saved = AppSettings.shared.density
+        defer { AppSettings.shared.density = saved }
+        AppSettings.shared.density = .comfortable
+        var fired = 0
+        var heights: [CGFloat] = []
+        let token = ThemeManager.shared.observe { _ in
+            fired += 1
+            heights.append(HelmType.scaledRowHeight(36))
+        }
+        defer { ThemeManager.shared.unobserve(token) }
+        let before = fired
+        AppSettings.shared.density = .compact
+        check(fired == before + 1, "changing density re-fired the theme \(fired - before) times, want once", &ok)
+        check(heights.last.map { $0 < 36 * ChromeTextScale.shared.scale } ?? false,
+              "an observer re-reading its row height on the re-fire still read Comfortable", &ok)
+        AppSettings.shared.density = .compact
+        check(fired == before + 1, "setting the same density again re-fired the theme", &ok)
     }
 }
 

@@ -280,9 +280,10 @@ final class ThemeManager {
     /// re-flowing reads as a glitch rather than a transition. See
     /// `ThemeTransition.swift`'s header.
     ///
-    /// The one other caller is a change to the display options (P7):
+    /// The other callers are a change to the display options (P7):
     /// Increase Contrast and Reduce Transparency move what
-    /// `HelmDisplayAccessibility` returns in the same way. Not to be used for
+    /// `HelmDisplayAccessibility` returns in the same way - and the feel
+    /// pass's density, which moves what `HelmType.scaledRowHeight` returns. Not to be used for
     /// anything else: a *theme* change goes through `setTheme`, and an
     /// observer that repaints on a no-op theme change is doing so because
     /// something genuinely font- or display-level moved underneath it.

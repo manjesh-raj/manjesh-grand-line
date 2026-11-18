@@ -415,8 +415,16 @@ enum HelmType {
     /// change already fires an app-wide theme re-fire - the same fan-out
     /// `ChromeTextScale`'s own header describes, rather than a second
     /// observation per list.
+    ///
+    /// The captain's density (1.2.0, `HelmDensity`) is the second factor:
+    /// Compact rows are the prototype's 30/36 of their Comfortable height,
+    /// rounded to a whole point so a row edge never lands between pixels.
+    /// Comfortable multiplies by exactly 1 and is never rounded, so every
+    /// height is what it was before density existed.
     static func scaledRowHeight(_ base: CGFloat) -> CGFloat {
-        base * ChromeTextScale.shared.scale
+        let height = base * ChromeTextScale.shared.scale
+        let factor = HelmDensity.current.rowFactor
+        return factor == 1 ? height : (height * factor).rounded()
     }
 
     static func scaled(_ points: CGFloat) -> CGFloat {

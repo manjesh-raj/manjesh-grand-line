@@ -79,7 +79,7 @@ enum MainSplitShellSelfTest {
                       checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
                       checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
-                      checkHomeFeelPass, checkToolbarTabsSlide,
+                      checkHomeFeelPass, checkToolbarTabsSlide, checkDensityReachesTheSidebar,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
                       checkEveryPageStartsAtOneHeight,
@@ -1104,6 +1104,28 @@ enum MainSplitShellSelfTest {
     /// no card is narrower than the canvas's minimum, and nothing overlaps.
     /// Home's own cards and the captain's own arrangement (from their
     /// screenshot: 12, 7 and 5 columns, then two halves) both.
+    /// The feel pass's item 6: switching density reaches rows already on
+    /// screen. The sidebar repaints a theme re-fire in place, so it has to
+    /// notice that its row heights moved, as it does for the text scale.
+    private static func checkDensityReachesTheSidebar(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                      _ ok: inout Bool) {
+        let saved = AppSettings.shared.density
+        defer {
+            AppSettings.shared.density = saved
+            settle(shell)
+        }
+        AppSettings.shared.density = .comfortable
+        settle(shell)
+        let comfortable = shell.sidebar.debugRowHeight(for: .module(.tasks)) ?? 0
+        AppSettings.shared.density = .compact
+        settle(shell)
+        let compact = shell.sidebar.debugRowHeight(for: .module(.tasks)) ?? 0
+        check(comfortable > 0 && compact > 0 && compact < comfortable,
+              "the sidebar's Tasks row is \(comfortable)pt Comfortable and \(compact)pt Compact", &ok)
+        check(abs(compact - HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight)) < 0.5,
+              "the Compact Tasks row is \(compact)pt, want \(HelmType.scaledRowHeight(WorkspaceSidebarMetrics.moduleRowHeight))", &ok)
+    }
+
     /// The feel pass's item 5: the toolbar's module tabs are the kit's
     /// sliding strip, and a click moves its thumb onto the tab it chose.
     private static func checkToolbarTabsSlide(_ shell: MainSplitShellController, _ window: NSWindow,

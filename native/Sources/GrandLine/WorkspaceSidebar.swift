@@ -192,6 +192,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// The chrome text scale the rows were built at. A change of it is the
     /// one theme re-fire that rebuilds them (R2-PERF-02).
     private var builtTextScale = ChromeTextScale.shared.scale
+    /// The density the rows were last built at: a change rebuilds them, as a
+    /// text-scale change does, because both move `HelmType.scaledRowHeight`.
+    private var builtDensity = HelmDensity.current
 
     // MARK: Build
 
@@ -649,11 +652,13 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         // scrolled back to the lit row - on every ⌘-toggle and every sunset
         // under Follow system. GL-24: a theme observer repaints.
         let scale = ChromeTextScale.shared.scale
-        guard scale != builtTextScale else {
+        let density = HelmDensity.current
+        guard scale != builtTextScale || density != builtDensity else {
             repaintRows(theme)
             return
         }
         builtTextScale = scale
+        builtDensity = density
         // GL-32: a text-scale change re-fires the theme too, and that one
         // does rebuild: the row heights and every font follow the scale, and
         // a cell sets its fonts and sizes once, when it is built.
@@ -738,6 +743,15 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     var debugHeader: WorkspaceSidebarHeader { header }
     /// The cell drawn for `entry`, scrolled into view first - the way the
     /// list draws a row the captain scrolls to.
+    /// The drawn height of `entry`'s row, or nil when it has none.
+    func debugRowHeight(for entry: WorkspaceSidebarEntry) -> CGFloat? {
+        guard let item = (0..<outlineView.numberOfRows).lazy
+            .compactMap({ self.outlineView.item(atRow: $0) as? WorkspaceSidebarItem })
+            .first(where: { $0.entry == entry }) else { return nil }
+        let row = outlineView.row(forItem: item)
+        return row >= 0 ? outlineView.rect(ofRow: row).height : nil
+    }
+
     func debugCell(for entry: WorkspaceSidebarEntry) -> NSView? {
         guard let row = (0..<outlineView.numberOfRows).first(where: {
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry

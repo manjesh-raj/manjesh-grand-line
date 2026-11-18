@@ -213,7 +213,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// for the page that happens to hold it.
         var searchKeywords: String {
             switch self {
-            case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show"
+            case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show density compact comfortable"
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell scrollback history rows memory"
             case .shortcuts: return "keyboard shortcut hotkey chord key binding rebind record conflict menu split pane tab dictation capture"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky clipboard history copy paste pasteboard"
@@ -479,6 +479,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Stage 3 of the modular-shell migration: which shell the window opens
     /// with (`AppSettings.workspaceLayout`).
     private var windowLayoutTabs: HelmSegmentedTabs!
+    /// The feel pass's Comfortable / Compact switch.
+    private(set) var densityTabs: HelmSegmentedTabs!
     private let appearanceContainer = LayoutReportingStack()
     /// Under the family grid: which register is showing, and what the
     /// terminal is painting in - the one line that says the two are related.
@@ -1454,13 +1456,28 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             description: WorkspaceLayout.choiceNote,
             control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
 
+        // The feel pass's density. It applies at once: the setter re-fires
+        // the theme, and every list re-reads its row height there.
+        densityTabs = HelmSegmentedTabs(
+            items: HelmDensity.allCases.map { .init(id: $0.rawValue, title: $0.title) },
+            selected: AppSettings.shared.density.rawValue, size: .compact)
+        densityTabs.setAccessibilityLabel("Density")
+        densityTabs.onSelect = { id in
+            guard let density = HelmDensity(rawValue: id) else { return }
+            AppSettings.shared.density = density
+        }
+        let densityRow = SettingsRow(
+            title: "Density",
+            description: "How tall the rows in lists, tables and the sidebar are. Compact fits more on screen.",
+            control: densityTabs)
+
         let familyAside = muted(NSTextField(labelWithString: "Each family has a light and a dark register"))
         familyAside.font = HelmType.caption()
         return [
             SettingsSection(group: SettingsGroup(rows: [modeRow])),
             SettingsSection(heading: "App theme", aside: familyAside,
                             group: SettingsGroup(custom: appearanceContainer)),
-            SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow])),
+            SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow, densityRow])),
             buildSidebarModulesSection(),
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
                 SettingsRow(title: "Interface text size",

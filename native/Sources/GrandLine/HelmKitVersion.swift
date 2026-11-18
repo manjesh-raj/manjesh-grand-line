@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "6.2.0"
+    static let version = "6.3.0"
 
     struct Component {
         let name: String
@@ -102,7 +102,9 @@ enum HelmKit {
         Component("HelmPopUpButton", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmResponsiveGrid", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmSegmentedTabs", "1.1.0", file: "HelmDesignSystem.swift"),
-        Component("HelmType", "1.1.0", file: "HelmDesignSystem.swift"),
+        Component("HelmType", "1.2.0", file: "HelmDesignSystem.swift"),
+        // HelmDensity.swift
+        Component("HelmDensity", "1.0.0", file: "HelmDensity.swift"),
         // HelmDrillHeader.swift
         Component("HelmDrillHeader", "1.0.0", file: "HelmDrillHeader.swift"),
         // HelmFocusVisibility.swift
@@ -249,6 +251,7 @@ enum HelmKit {
     /// One recorded digest per kit file.
     static let sourceDigests: [SourceDigest] = [
         SourceDigest(file: "HelmPageScaffold.swift", stamp: "HelmPageScaffold@1.0.0", sha256: "cb99965fc36bd64fa45b76f8321efa195f4b3e1e6539271ae776408206fb4134"),
+        SourceDigest(file: "HelmDensity.swift", stamp: "HelmDensity@1.0.0", sha256: "c725fb34b3438a1b7bd2ee9a3ba69a52d05b328e9a09b365bd4a468611d61983"),
         SourceDigest(file: "HelmHeroCard.swift", stamp: "HelmHeroCard@1.0.0", sha256: "3abb10ac2aa6c2f49fcf1f2a292176cbdf1624a83eb84855563e95d09a7c6548"),
         SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.0.1", sha256: "2bdb4a69dd6b6b98010799797ddf8f87ce9df79f61d256922d521c73d8abc880"),
         SourceDigest(file: "HelmChoiceCard.swift", stamp: "HelmChoiceCard@1.0.0", sha256: "61392738ce874320cc5c6e4b261921f969545e264122a1094f6be6eb6fdc676b"),

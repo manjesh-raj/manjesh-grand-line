@@ -70,6 +70,7 @@ final class AppSettings {
         static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
         static let homeTipsFirstShown = "fm.homeTips.firstShown"
         static let homeTipsDismissed = "fm.homeTips.dismissed"
+        static let density = "fm.density"
         static let dictationAccessibilityAsked = "fm.dictation.accessibilityAsked"
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
@@ -930,6 +931,25 @@ final class AppSettings {
     }
 
     static let hiddenModulesDidChange = Notification.Name("fm.hiddenModulesDidChange")
+
+    /// The feel pass's density (Settings, Appearance, Window): Comfortable
+    /// until the captain changes it, and for a stored value this build does
+    /// not know. Setting it re-fires the current theme, which is how every
+    /// list already re-reads `HelmType.scaledRowHeight` (`HelmDensity`).
+    var density: HelmDensity {
+        get { defaults.string(forKey: Keys.density).flatMap(HelmDensity.init(rawValue:)) ?? .comfortable }
+        set {
+            guard newValue != density else { return }
+            defaults.set(newValue.rawValue, forKey: Keys.density)
+            ThemeManager.shared.reapplyCurrentTheme()
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// Stores a raw density value, so a suite can prove an unknown one reads
+    /// as Comfortable.
+    func set(densityRaw: String) { defaults.set(densityRaw, forKey: Keys.density) }
+    #endif
 
     /// U-03: the sidebar's width as the captain last dragged it, in the
     /// sidebar layout. `nil` until they drag it; the shell clamps whatever it
