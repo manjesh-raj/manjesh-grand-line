@@ -194,6 +194,17 @@ final class HealthController: NSViewController, DaylightDrillActions, HelmSplitP
 
     #if FM_SELFTESTS
     var debugHealthCard: HealthCardView { healthCard }
+    /// The width rule has finished: the pane is open exactly when the split
+    /// wants it, and the column is drawn as a column there or a band over
+    /// the table otherwise. Both moves wait a run-loop turn
+    /// (`HelmSplitPage.evaluateWidth`), so a check reading the table's
+    /// columns waits for this first.
+    var debugHeroColumnIsArranged: Bool {
+        guard let split = splitPage else { return true }
+        let open = !split.isSidebarCollapsed
+        return open == split.sidebarIsWanted
+            && healthCard.heroColumn.arrangement == (open ? .column : .band)
+    }
     var debugScaffold: HelmPageScaffold? { scaffold }
     func debugRefresh() { refreshTapped() }
     var debugRefreshButton: HelmButton { refreshButton }
@@ -263,6 +274,14 @@ extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidi
         placeHeroColumn(asBand: false, in: split)
         split.collapsesBelowWidth = Self.heroCollapseWidth
         split.preferredSidebarWidth = paneWidth
+        // The width rule moves the column in the same turn as it collapses
+        // the pane, so the table has its full width on the very next layout:
+        // a second turn left a slow CI runner reading a table still 639pt
+        // wide, with Recent runs hidden (`ReviewTwoA11yPerfSelfTest`).
+        split.onNarrowChanged = { [weak self, weak split] _ in
+            guard let self, let split else { return }
+            self.placeHeroColumn(asBand: !split.sidebarIsWanted, in: split)
+        }
         split.onSidebarCollapseChanged = { [weak self, weak split] collapsed in
             // The collapse is reported from inside the split's own resize;
             // moving a view between panes waits a turn.
