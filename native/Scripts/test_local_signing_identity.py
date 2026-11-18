@@ -46,6 +46,16 @@ def x509(cert, *args):
     return openssl("x509", "-in", cert, "-noout", *args)
 
 
+def name(cert, which):
+    """The subject or issuer as a set of "KEY=value" parts.
+
+    OpenSSL versions print names differently ("O=X" here, "O = X" on CI's
+    runner), so ask for RFC 2253 and split it rather than match the text.
+    """
+    text = x509(cert, "-" + which, "-nameopt", "RFC2253").strip()
+    return {part.strip() for part in text.split("=", 1)[1].split(",")}
+
+
 def sha1(cert):
     return x509(cert, "-fingerprint", "-sha1").split("=", 1)[1].strip().replace(":", "").lower()
 
@@ -105,8 +115,8 @@ class CertificateRecipeTests(Fixture):
         # Discriminating power first: a leaf that signed itself would make
         # its root its own hash, which is the leaf-pinning this replaces.
         self.assertNotEqual(sha1(self.ca), sha1(self.leaf))
-        self.assertIn("CN=" + LEAF_NAME, x509(self.leaf, "-subject"))
-        self.assertIn("CN=" + CA_NAME, x509(self.leaf, "-issuer"))
+        self.assertIn("CN=" + LEAF_NAME, name(self.leaf, "subject"))
+        self.assertIn("CN=" + CA_NAME, name(self.leaf, "issuer"))
         result = subprocess.run(["openssl", "verify", "-CAfile", self.ca, self.leaf],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -128,8 +138,8 @@ class CertificateRecipeTests(Fixture):
         # codesign's own default requirement walks up the chain while the
         # Organization matches, so this also makes the default anchor on the
         # CA rather than on the leaf.
-        self.assertIn("O=" + ORGANIZATION, x509(self.leaf, "-subject"))
-        self.assertIn("O=" + ORGANIZATION, x509(self.ca, "-subject"))
+        self.assertIn("O=" + ORGANIZATION, name(self.leaf, "subject"))
+        self.assertIn("O=" + ORGANIZATION, name(self.ca, "subject"))
 
     def test_the_ca_outlives_the_machine(self):
         now = datetime.datetime.now(datetime.timezone.utc)
