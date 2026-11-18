@@ -183,7 +183,7 @@ enum HelmDataTableWheelSelfTest {
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
         controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
-        guard let page = root.subviews.compactMap({ $0 as? NSScrollView }).first,
+        guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first,
               let document = page.documentView else {
             return fail("Updates: no page scroll view", &ok)
         }
@@ -203,7 +203,7 @@ enum HelmDataTableWheelSelfTest {
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
         controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
-        guard let page = root.subviews.compactMap({ $0 as? NSScrollView }).first else {
+        guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first else {
             return fail("GitHubSync: no page scroll view", &ok)
         }
         check(controller.debugForksTable.sizesToFitRows, "GitHubSync: the forks table should size to its rows", &ok)

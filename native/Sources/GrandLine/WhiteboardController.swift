@@ -201,7 +201,8 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             canvasCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
             canvasCard.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
-            canvasCard.topAnchor.constraint(equalTo: root.topAnchor, constant: Self.cardInset),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(canvasCard, in: root),
             canvasCard.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.cardInset),
 
             webView.leadingAnchor.constraint(equalTo: canvasCard.leadingAnchor),

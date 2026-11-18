@@ -344,7 +344,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             filterRow.leadingAnchor.constraint(equalTo: pane.leadingAnchor,
                                                constant: column - HelmSplitPage.dividerThickness),
             filterRow.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -column),
-            filterRow.topAnchor.constraint(equalTo: pane.topAnchor, constant: HelmMetrics.s4),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(filterRow, in: pane),
 
             list.card.leadingAnchor.constraint(equalTo: filterRow.leadingAnchor),
             list.card.trailingAnchor.constraint(equalTo: filterRow.trailingAnchor),
@@ -353,7 +354,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             listMinimum,
 
             inspector.trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -gutter),
-            inspector.topAnchor.constraint(equalTo: pane.topAnchor, constant: HelmMetrics.s4),
+            HelmPageScaffold.pinFirstContent(inspector, in: pane),
             inspector.bottomAnchor.constraint(equalTo: pane.bottomAnchor, constant: -gutter),
             inspectorWidth,
         ])

@@ -219,39 +219,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         reposCard.setBody(reposBody, insets: HelmCard.contentInsets)
         cards.append(reposCard)
 
-        let stack = NSStackView(views: [reposCard])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: 14, bottomInset: 20)
+        scaffold.install(in: root)
+        for block in [reposCard] { scaffold.addContent(block) }
+        let stack = scaffold.stack
         pageStack = stack
         reposCardView = reposCard
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            reposCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scrollView = scroll
+        scrollView = scaffold.scrollView
 
         for row in rows { render(row) }
         applyTheme()

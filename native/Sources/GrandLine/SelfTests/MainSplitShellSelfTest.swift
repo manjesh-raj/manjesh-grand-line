@@ -81,6 +81,7 @@ enum MainSplitShellSelfTest {
                       checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
                       checkBackAndForward, checkTheCalendarButton, checkTheInspector,
                       checkTheInspectorIsTheSystemsItem, checkTheInspectorEmptyStateFollowsTheTheme,
+                      checkEveryPageStartsAtOneHeight,
                       checkTheToolbarIsCustomisable,
                       checkTheLockHidesTheToolbar, checkTheContentReachesTheFoot, checkTheFocusChipIsInTheToolbar,
                       checkTheFocusChipFitsTheNarrowToolbar, checkOnlyADividerDragIsAChosenWidth,
@@ -2293,6 +2294,73 @@ enum MainSplitShellSelfTest {
                   &ok)
         }
         if ok { print("  OK   S22: the inspector's empty state takes the theme's ink and muted ink after a switch") }
+    }
+
+
+    // MARK: S03 - one page frame
+
+    /// S03 of the 2026-11-17 UI/UX proposals. Measured before the change
+    /// (the proposals' pixel tool over the tour renders, and
+    /// `PageScaffoldProbe` in-process): the first content started at ten
+    /// heights across the pages, from 76pt (Connections, Commands) to 117pt
+    /// (Tasks, Calendar), because each page set its own top constant and the
+    /// header line hid on pages with no subtitle.
+    ///
+    /// Every destination now has the header line's slot under the toolbar,
+    /// `pageHeaderLine` tall whether it says anything or not, and its first
+    /// content at `pageContentTop` under the toolbar. The scan is the
+    /// proposals' own: the first row in the content column that is not page
+    /// ground. A page with nothing in the scan's reach (an empty or locked
+    /// state centred lower down) has no first content to place and is
+    /// skipped, and the check fails if too few pages were measured for it to
+    /// mean anything.
+    ///
+    /// The tolerance is the line plus 4pt, minus 1: a filter row's pills
+    /// and a card's antialiased border start a point or two inside the frame
+    /// that sits on the line. Schedules is the one page whose first block
+    /// draws nothing at its own top - a borderless number strip, whose
+    /// large figures' ascent starts its ink 9pt below the frame - so there
+    /// the strip's frame is what is checked.
+    private static func checkEveryPageStartsAtOneHeight(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                        _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        var measured = 0
+        var report: [String] = []
+        for destination in RailDestination.allCases {
+            shell.workspace.navigator.show(destination)
+            settle(shell)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            settle(shell)
+            guard let reading = PageScaffoldProbe.measure(shell) else {
+                fail("S03: \(destination.rawValue) could not be measured", &ok)
+                continue
+            }
+            let slot = shell.debugContentPaneHeader.frame.height
+            check(abs(slot - HelmMetrics.pageHeaderLine) < 0.5,
+                  "S03: \(destination.rawValue)'s header line is \(slot)pt tall, want \(HelmMetrics.pageHeaderLine)", &ok)
+            let line = reading.toolbarBottom + HelmMetrics.pageContentTop
+            if destination == .schedules {
+                let strip = shell.workspace.schedules.debugSummaryStrip
+                let top = window.frame.height - strip.convert(NSPoint(x: 0, y: strip.isFlipped ? 0 : strip.bounds.height), to: nil).y
+                check(strip.window != nil && abs(top - line) < 1,
+                      "S03: Schedules' number strip starts at \(top)pt, want the line at \(line)", &ok)
+                measured += 1
+                continue
+            }
+            guard let first = reading.firstContent else {
+                report.append("\(destination.rawValue) none")
+                continue
+            }
+            measured += 1
+            report.append("\(destination.rawValue) \(first)")
+            check(first >= line - 1 && first <= line + 4,
+                  "S03: \(destination.rawValue)'s first content starts at \(first)pt, want the line at \(line) (\(reading.line))",
+                  &ok)
+        }
+        // The fixture can fail: enough pages carried content in the scan's
+        // reach for a drifted page to be seen.
+        check(measured >= 20, "S03: only \(measured) pages had first content to measure (\(report))", &ok)
+        if ok { print("  OK   S03: \(measured) pages start their first content on one line under a fixed header line") }
     }
 
 }

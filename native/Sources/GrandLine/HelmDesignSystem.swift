@@ -69,6 +69,22 @@ enum HelmMetrics {
     /// destination's scroll clip view to its content column.
     static let pageGutter: CGFloat = 24
 
+    /// S03 (`HelmPageScaffold`): the page frame's two heights, both measured
+    /// from the bottom of the window toolbar.
+    ///
+    /// `pageHeaderLine` is the header line's slot: the page's subtitle, a
+    /// control on that line, or nothing - the slot keeps its height either
+    /// way, so nothing below it moves. `pageContentTop` is where every page's
+    /// first content starts: a filter row, a number strip, the first card,
+    /// a terminal's tab row. Under the 52pt window toolbar these put the
+    /// header text at 68pt and the first content at 96pt from the window's
+    /// top edge, the two lines the S03 proposal drew.
+    static let pageHeaderLine: CGFloat = 32
+    static let pageContentTop: CGFloat = 44
+    /// What a page leaves above its first content, from the top of its own
+    /// view: the part of `pageContentTop` the header line does not take.
+    static var pageContentInset: CGFloat { pageContentTop - pageHeaderLine }
+
     // The one icon-tile scale: three roles, not five sizes.
     /// Inline badge inside a dense row.
     static let tileSmall: CGFloat = 26

@@ -309,7 +309,8 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             chat.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.pageGutter),
             chat.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            chat.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(chat, in: root),
             chat.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s4),
         ])
 

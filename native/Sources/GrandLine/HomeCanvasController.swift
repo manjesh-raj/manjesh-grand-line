@@ -155,9 +155,17 @@ final class HomeCanvasController: NSViewController {
     ///
     /// The bar already reserves its own height above this page
     /// (`DaylightBarController.reservedTopHeight`), so this is only the gap
-    /// between that chrome and the hero - the pre-C1 value, which is what
-    /// "sits directly under the page chrome" means here.
-    static let contentTopMargin: CGFloat = HelmMetrics.s2
+    /// between that chrome and the first card. S03: the page frame's
+    /// first-content line, the same as every other page's - it was 8pt here
+    /// and 24pt on half the others.
+    static let contentTopMargin: CGFloat = HelmMetrics.pageContentInset
+    /// Below the last row. The hub sizes its rows to fill the viewport less
+    /// these two margins, so when S03 moved the top from 8pt to 12pt the
+    /// foot gave back the same 4pt: the rows' share of the viewport is what
+    /// it was, and at the shortest window a loading card's skeleton still
+    /// fits its row (`LayoutStabilitySelfTest`, 960x620, measured 4pt over
+    /// with the foot left at 24).
+    static let contentBottomMargin: CGFloat = HelmMetrics.s5 - (HelmMetrics.pageContentInset - HelmMetrics.s2)
 
     // MARK: Forwarded actions (never owned)
 
@@ -671,7 +679,7 @@ final class HomeCanvasController: NSViewController {
             // shorter than, while also being exactly its content's height, is
             // two required constraints in direct conflict.
             stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -HelmMetrics.s5),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -Self.contentBottomMargin),
 
             heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -2623,7 +2631,7 @@ final class HomeCanvasController: NSViewController {
     /// The height the hub's columns share: the viewport less the page's own
     /// top and bottom margins.
     private func gridContainerHeight() -> CGFloat {
-        let usable = scroll.contentView.bounds.height - Self.contentTopMargin - HelmMetrics.s5
+        let usable = scroll.contentView.bounds.height - Self.contentTopMargin - Self.contentBottomMargin
         return usable > 0 ? usable : 600
     }
 

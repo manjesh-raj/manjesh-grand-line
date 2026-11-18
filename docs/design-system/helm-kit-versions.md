@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.0.0 - S03: one page frame
+
+- `HelmPageScaffold` none → 1.0.0 (new): the page frame. A scrolling page hands it its blocks and keeps none of the mechanics: the scroll view, the flipped document pinned to the clip view (gotchas (4) and (9)), the 24pt gutter, the first-content line and an optional top slot that stays put while the content scrolls. A page that does not scroll reaches the same line through `HelmPageScaffold.pinFirstContent`.
+- `HelmMetrics` 1.0.0 → 1.1.0 (minor): `pageHeaderLine` (32), `pageContentTop` (44) and `pageContentInset` (12), measured from the toolbar's bottom. Under the 52pt toolbar they put the header text at 68pt and every page's first content at 96pt from the window's top.
+- `WorkspaceModuleHeader` 1.0.0 → 2.0.0 (major): the scaffold's header-line slot. It no longer hides when a page has no subtitle, nor on Connections and Console: the slot keeps its 32pt either way (required, so no page's height tie can grow it), and an empty line is not an accessibility element. `configure(title:subtitle:)` takes a `nil` title for a module that draws no line. It enters the table at this release.
+
+Thirteen pages moved onto the scaffold and dropped their private scroll setups and top constants: Health, Tools, Updates, Bootstrap, Automation, GitHub sync, Dictation, Review, Overview, Vault, Logs, Schedules and Commands. Home, Tasks and Calendar, Connections, Settings, Kubernetes, Runbooks, Postmortems, Crew, Whiteboard, Sticky Board, Notebook, Reading list, Docs and Secrets keep their own layouts (split panes, web islands, a board, a canvas) and take the line through the token or `pinFirstContent`. Console's session strip is that module's first content and sits on the line. The first content moved from ten heights between 76pt and 117pt to 96pt on every page (`MainSplitShellSelfTest.checkEveryPageStartsAtOneHeight`).
+
 ## 5.0.1 - S22: an empty state follows the theme
 
 - `HelmEmptyState` 1.0.0 → 1.0.1 (patch): the state observes the theme itself instead of painting it once at `init`. The inspector never passed a theme change on, so after Dusk to Daylight its "Nothing selected" kept Dusk's ink (E8E6DE) and muted ink on Daylight's light column, which read as a pale title. The label is not vibrant (`allowsVibrancy` false, plain Aqua appearance), so the system glass was not the cause.

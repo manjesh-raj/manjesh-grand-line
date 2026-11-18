@@ -204,8 +204,8 @@ final class DocsController: NSViewController, DaylightDrillActions {
         emptyStateContainer.translatesAutoresizingMaskIntoConstraints = false
         cardTopUnderToolbar = playbookCard.topAnchor.constraint(equalTo: pageToolbar.bottomAnchor,
                                                                 constant: Self.playbookCardInset)
-        cardTopAtRoot = playbookCard.topAnchor.constraint(equalTo: root.topAnchor,
-                                                          constant: Self.playbookCardInset)
+        // S03: the page frame's first-content line.
+        cardTopAtRoot = HelmPageScaffold.pinFirstContent(playbookCard, in: root)
         cardTopUnderToolbar?.isActive = true
 
         NSLayoutConstraint.activate([

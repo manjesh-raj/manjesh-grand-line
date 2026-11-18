@@ -15,6 +15,14 @@
 // Connections and Console, where the toolbar's crumb names the module and the
 // page itself starts at once (`WorkspaceModule.showsHeader`). Home and every
 // other module keep their subtitle, as the captain decided.
+//
+// S03 (2.0.0): this is `HelmPageScaffold`'s header-line slot, and the slot
+// keeps its height on every module. It used to hide when a page had no
+// subtitle and on Connections and Console, so those pages started 32pt
+// higher than the rest and switching pages made the content jump. Now the
+// line is `HelmMetrics.pageHeaderLine` tall whether it says anything or not,
+// and every page's first content starts at the same height under it. An
+// empty line draws nothing and is not an accessibility element.
 
 import AppKit
 
@@ -26,6 +34,7 @@ final class WorkspaceModuleHeader: NSView {
     private let accessoryHost = NSStackView()
     private(set) var accessory: NSView?
     private var themeToken: ThemeObservation?
+    private lazy var slotHeight = heightAnchor.constraint(equalToConstant: HelmMetrics.pageHeaderLine)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -46,11 +55,19 @@ final class WorkspaceModuleHeader: NSView {
         accessoryHost.translatesAutoresizingMaskIntoConstraints = false
         accessoryHost.setHuggingPriority(.required, for: .horizontal)
         addSubview(accessoryHost)
+        // The slot's own height, kept when the line is empty, and required:
+        // nothing a page asks of its own height may grow the line. With the
+        // exact height preferred at 490, and then at 750, a page's own
+        // height ties grew it to 590pt on Notebook and 319pt on Settings
+        // (measured), with the page body pushed down under it. The line
+        // sizes itself instead (`resizeSlot`): 32pt, or what its text or
+        // control needs at a larger text scale, never less.
         NSLayoutConstraint.activate([
-            subtitleLabel.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
+            slotHeight,
+            subtitleLabel.topAnchor.constraint(equalTo: topAnchor, constant: HelmPageScaffold.headerLineTextTop),
             subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.pageGutter),
             subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: accessoryHost.leadingAnchor, constant: -HelmMetrics.s3),
-            subtitleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s1),
+            subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -HelmMetrics.s1),
             // On the subtitle's line, and never taller than the header: a
             // control taller than the line grows the header rather than
             // spilling over the page under it.
@@ -83,16 +100,34 @@ final class WorkspaceModuleHeader: NSView {
             view.removeFromSuperview()
             accessoryHost.addArrangedSubview(view)
         }
+        resizeSlot()
     }
 
-    func configure(title: String, subtitle: String) {
-        titleLabel.stringValue = title
+    /// The module's name (kept for VoiceOver only) and the page's subtitle.
+    /// A `nil` title is a module that draws no header line (Connections,
+    /// Console): the slot stays, empty. Either way the line never hides.
+    func configure(title: String?, subtitle: String) {
+        let subtitle = title == nil ? "" : subtitle
+        titleLabel.stringValue = title ?? ""
         subtitleLabel.stringValue = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
-        isHidden = subtitle.isEmpty
-        setAccessibilityElement(true)
+        let says = !subtitle.isEmpty || accessory != nil
+        setAccessibilityElement(says)
         setAccessibilityRole(.group)
-        setAccessibilityLabel(subtitle.isEmpty ? title : "\(title), \(subtitle)")
+        setAccessibilityLabel(says ? (subtitle.isEmpty ? title : "\(title ?? ""), \(subtitle)") : nil)
+        resizeSlot()
+    }
+
+    /// `pageHeaderLine`, or taller when the line's text or control needs
+    /// it. Measured from what the line holds, never from its own frame.
+    private func resizeSlot() {
+        let line = ceil(subtitleLabel.intrinsicContentSize.height)
+        let text = HelmPageScaffold.headerLineTextTop + line + HelmMetrics.s1
+        // A control is centred on the text's line, so it needs half its
+        // height below that line's centre.
+        let control = accessory.map { ceil(HelmPageScaffold.headerLineTextTop + line / 2 + $0.fittingSize.height / 2) } ?? 0
+        let height = max(HelmMetrics.pageHeaderLine, text, control)
+        if slotHeight.constant != height { slotHeight.constant = height }
     }
 
     private func applyTheme(_ theme: HelmTheme) {
@@ -100,6 +135,7 @@ final class WorkspaceModuleHeader: NSView {
         subtitleLabel.font = HelmType.body()
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
+        resizeSlot()
     }
 
     #if FM_SELFTESTS
@@ -107,5 +143,7 @@ final class WorkspaceModuleHeader: NSView {
     /// R2-UX-05: whether the module's name is drawn here (it never is).
     var debugDrawsTitle: Bool { !titleLabel.isHidden }
     var debugSubtitle: String { subtitleLabel.isHidden ? "" : subtitleLabel.stringValue }
+    /// S03: whether the line says anything - a subtitle or a control.
+    var debugIsEmpty: Bool { subtitleLabel.isHidden && accessory == nil }
     #endif
 }

@@ -314,8 +314,9 @@ final class ReadingListController: NSViewController, DaylightDrillActions, HelmS
         addChild(split)
         root.addSubview(split.view)
         HelmSplitPage.pin(sidebar, in: split.sidebarPane, insets: HelmPageSidebar.bandInsets)
+        // S03: the grid starts at the page frame's first-content line.
         HelmSplitPage.pin(gridScroll, in: split.contentPane,
-                          insets: NSEdgeInsets(top: Self.gutter, left: Self.gutter - HelmSplitPage.dividerThickness,
+                          insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: Self.gutter - HelmSplitPage.dividerThickness,
                                                bottom: Self.gutter, right: Self.gutter))
         splitPage = split
 

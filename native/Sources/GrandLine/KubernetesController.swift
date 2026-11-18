@@ -373,7 +373,8 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         NSLayoutConstraint.activate([
             sessionCard.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
             sessionCard.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            sessionCard.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
+            // S03: the page frame's first-content line.
+            HelmPageScaffold.pinFirstContent(sessionCard, in: container),
 
             workArea.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
             workArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),

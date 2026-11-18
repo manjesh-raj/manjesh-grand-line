@@ -45,7 +45,9 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
     private let store: CommandLibraryStore
     private lazy var page = CommandLibraryPageView(store: store)
 
-    private let scroll = NSScrollView()
+    /// S03: the page frame - scroll, flipped document, gutter and the
+    /// first-content line.
+    private let scaffold = HelmPageScaffold()
     /// S04: the page-sidebar band behind the command column.
     private let band = HelmPageSidebar.Band()
 
@@ -111,44 +113,22 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
         // on the way out of Tasks would have quietly turned "a long category
         // scrolls" into "a long category is clipped".
         //
-        // `FlippedView`, not a plain `NSView`: an unflipped document view
-        // shorter than the viewport rests against the *bottom* of the clip
-        // view, leaving a blank gap above the content (AGENTS.md gotcha (9)).
-        // And the document's width is pinned to `scroll.contentView` (the
-        // clip view), never `scroll` itself - a non-overlay scroller reserves
-        // a real track that narrows the clip view without narrowing the
-        // scroll view (gotcha (4)).
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        page.view.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(page.view)
-        NSLayoutConstraint.activate([
-            page.view.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            page.view.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            page.view.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
-            page.view.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -HelmMetrics.s5),
-        ])
+        // `HelmPageScaffold` (S03) owns the rest: the flipped document
+        // (gotcha (9)), its width pinned to the clip view (gotcha (4)), the
+        // gutter and the first-content line.
+        scaffold.addContent(page.view)
 
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
         // S04: Settings' band behind the column - the page's full height from
         // its leading edge, a gutter either side of the column, edged by the
         // band's own hairline. Behind the scroll view, so the column's rows
         // scroll over it and the band stays put, as a region of the page.
         root.addSubview(band)
-        root.addSubview(scroll)
+        scaffold.install(in: root)
         NSLayoutConstraint.activate([
             band.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             band.topAnchor.constraint(equalTo: root.topAnchor),
             band.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             band.widthAnchor.constraint(equalToConstant: HelmPageSidebar.bandPaneWidth),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: root.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
         ThemeManager.shared.observe { [weak self, weak root] theme in

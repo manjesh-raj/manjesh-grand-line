@@ -203,38 +203,20 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         gridContainer.translatesAutoresizingMaskIntoConstraints = false
         rebuildGrid()
 
-        let stack = NSStackView(views: [gridContainer])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 14
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        gridContainer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // S03: the page frame - scroll, flipped document, gutter and the
+        // first-content line - is `HelmPageScaffold`'s.
+        let scaffold = HelmPageScaffold(spacing: 14, bottomInset: 20)
+        root.addSubview(scaffold)
+        NSLayoutConstraint.activate([
+            scaffold.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            scaffold.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scaffold.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scaffold.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+        for block in [gridContainer] { scaffold.addContent(block) }
+        let stack = scaffold.stack
         pageStack = stack
-
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-        ])
-
-        let scroll = NSScrollView()
-        scroll.documentView = content
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scrollView = scroll
+        scrollView = scaffold.scrollView
 
         // Rebuild the grid's column count whenever the window resizes - a
         // live resize (drag or `setContentSize`) doesn't reliably re-invoke
