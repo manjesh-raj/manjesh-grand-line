@@ -164,6 +164,10 @@ enum PageHeroColumnsViewSelfTest {
         let tableFrame = frame(of: card.debugServicesTable.card, in: page)
         check(abs(columnFrame.width - HelmHeroColumn.width) < 1, "H-4: the column is \(columnFrame.width)pt wide", &ok)
         // Nothing above the table: it starts on the column's own top line.
+        // The column only stays while the table keeps every column.
+        let runs = card.debugServicesTable.debugTable.column(withIdentifier: NSUserInterfaceItemIdentifier("runs"))
+        check(runs >= 0 && !card.debugServicesTable.debugTable.tableColumns[runs].isHidden,
+              "H-4: beside the column the table has lost Recent runs (\(tableFrame.width)pt)", &ok)
         check(abs(columnFrame.maxY - tableFrame.maxY) < 1.5,
               "H-4: the table's top (\(tableFrame.maxY)) is not the column's (\(columnFrame.maxY))", &ok)
         check(tableFrame.minX > columnFrame.maxX + HelmMetrics.s4 - 0.5,
@@ -245,6 +249,14 @@ enum PageHeroColumnsViewSelfTest {
             return
         }
         let column = health.debugHealthCard.heroColumn
+        // Between the old fixed 880 and the table's full width: the column
+        // goes, rather than Recent runs.
+        resize(window, width: 1277, shell)
+        settle(shell)
+        let servicesTable = health.debugHealthCard.debugServicesTable.debugTable
+        let runs = servicesTable.column(withIdentifier: NSUserInterfaceItemIdentifier("runs"))
+        check(split.isSidebarCollapsed && runs >= 0 && !servicesTable.tableColumns[runs].isHidden,
+              "H-4: at 1277 the column stayed (\(!split.isSidebarCollapsed)) or Recent runs hid", &ok)
         resize(window, width: 1000, shell)
         settle(shell)
         check(health.view.bounds.width < HealthController.heroCollapseWidth,

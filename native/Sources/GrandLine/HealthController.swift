@@ -231,9 +231,13 @@ extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidi
     }
 
     /// Below this page width the column gives way to the band: the column,
-    /// its gutters and the narrowest table worth reading (the service and
-    /// status columns, and Retry).
-    static let heroCollapseWidth: CGFloat = 880
+    /// the gutters either side of the table, and the table at the width that
+    /// still shows every column. The board accepted a narrower table that
+    /// truncates its descriptions sooner, not one that loses Recent runs -
+    /// measured, a fixed 880 left a 639pt table with no runs column at a
+    /// 1277pt window (`ReviewTwoA11yPerfSelfTest`).
+    static let heroCollapseWidth: CGFloat = HelmMetrics.pageGutter + HelmHeroColumn.width
+        + HelmSplitPage.dividerThickness + 2 * HelmMetrics.pageGutter + HealthCardView.allColumnsWidth
 
     /// H-4: the page becomes a split, with the hero column as its sidebar
     /// and the scrolling table as its content.

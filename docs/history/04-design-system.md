@@ -1180,6 +1180,10 @@ So the page tells the split its threshold: the column plus `HelmSplitPage.floorW
 `fittingSize` alone overstated Connections' filter row by about 320pt, because it honours every constraint above 50, including the search field's 460pt preference at 251.
 `floorWidth` adds a temporary width-zero constraint at 501, so only what can hold the window open counts.
 
+**Health's column stays only while the table keeps every column.**
+A fixed 880pt threshold left a 639pt table at a 1277pt window, below the 780pt where Recent runs hides, and CI's `ReviewTwoA11yPerfSelfTest` found no runs cells.
+The board accepted a narrower table that truncates its descriptions sooner, not one that loses a column, so the threshold is now the column plus the table's full-column width (1153pt), and below it the verdict is the band.
+
 **H3's Connect button steps aside beside the column**, whose Quick connect takes a typed user@host; Return in the filter row's field still connects.
 It has to step aside before the column reopens, or the reopening column meets the row's wider floor and the window grows by the button's width.
 `HelmSplitPage.onNarrowChanged` fires before the divider moves for exactly that.

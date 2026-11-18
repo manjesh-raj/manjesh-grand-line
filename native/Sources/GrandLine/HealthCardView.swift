@@ -92,7 +92,7 @@ final class HealthCardView: NSObject {
             .init(id: "service", title: "Service", width: 320, minWidth: 220, flexible: true),
             .init(id: "status", title: "Status", width: 150),
             .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600),
-            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: 780),
+            .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: HealthCardView.allColumnsWidth),
         ], actionsWidth: 110)
         table.sizesToFitRows = true
         // The prototype shows Retry on the failing row at rest.
@@ -100,6 +100,11 @@ final class HealthCardView: NSObject {
         table.accessibilityName = "Background services"
         return table
     }()
+
+    /// The narrowest the services table shows every column at: below it
+    /// Recent runs hides. The page keeps its hero column beside the table
+    /// only while the table has this much (`HealthController.heroCollapseWidth`).
+    static let allColumnsWidth: CGFloat = 780
 
     /// Build the sidebar layout's rendering and hand it to the page, which
     /// puts it where the card was. The card is not drawn in that layout.
