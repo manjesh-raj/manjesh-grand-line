@@ -15,9 +15,9 @@
 // can do it does the ink step toward black instead. The rule is asserted for
 // every theme the app ships (`FeelPassSelfTest`).
 //
-// **Every layer here is a standalone sublayer**, so each `colors`, `frame`
-// and `path` write goes through `HelmMotion.withoutActions`: a theme change
-// lands at once rather than cross-fading the hero, which is the implicit-
+// **Every layer here is a standalone sublayer**, so a `colors` write goes
+// through `HelmMotion.withoutImplicitAnimation` (the app's one gradient gate)
+// and a `frame` write through `HelmMotion.withoutActions`: the implicit-
 // animation trap `HelmMotion.swift`'s header records.
 //
 // **Not a button.** The hero's actions are real `HelmButton`s; the card
@@ -252,7 +252,10 @@ final class HelmHeroCard: NSView {
         let palette = Self.palette(for: theme)
         let ink = HelmContrast.color(palette.ink)
         let radius = HelmModuleCard.cornerRadius(for: theme)
-        HelmMotion.withoutActions {
+        // The app's one gradient gate, as at every other gradient site
+        // (`DaylightHardeningSelfTest` guards it): instant under Reduce
+        // Motion, and a theme change is the window's own crossfade anyway.
+        HelmMotion.withoutImplicitAnimation {
             layer?.cornerRadius = radius
             gradient.colors = [HelmContrast.color(palette.start).cgColor, HelmContrast.color(palette.end).cgColor]
             glow.colors = [ink.withAlphaComponent(Self.glowAlpha).cgColor, ink.withAlphaComponent(0).cgColor]

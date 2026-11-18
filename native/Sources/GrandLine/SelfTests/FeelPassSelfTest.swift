@@ -35,6 +35,7 @@ enum FeelPassSelfTest {
             ("3 the four tiles and where they go", checkKPITiles),
             ("3 an unread figure is a dash, never a zero", checkKPIUnknowns),
             ("3 today's task figures", checkTaskCounts),
+            ("5 the toolbar tabs are no wider than the control they replaced", checkToolbarTabsWidth),
             ("4 the search pill's words clear the text floor in every theme", checkSearchPillContrast),
             ("6 density is a factor on every row height", checkDensityRowHeights),
             ("6 changing density re-fires the theme", checkDensityRefires),
@@ -298,6 +299,39 @@ enum FeelPassSelfTest {
                   "\(theme.id): the pill's words measure \(String(format: "%.2f", worst)) on its fill", &ok)
         }
         check(pill.debugHoverFill != pill.debugRestFill, "the pill's hover fill is its resting fill", &ok)
+    }
+
+    // MARK: - Item 5
+
+    /// The toolbar has no slack at 1512pt with Larger text (CI measured two
+    /// modules' crumbs overflowing when the strip used the kit's own 12pt
+    /// pill inset), so the strip may be no wider than the `NSSegmentedControl`
+    /// it replaced, for every module's tabs at every text scale.
+    private static func checkToolbarTabsWidth(_ ok: inout Bool) {
+        let savedScale = ChromeTextScale.shared.scale
+        defer { ChromeTextScale.shared.setScale(savedScale) }
+        let sets = WorkspaceModule.allCases.map(\.children).filter { $0.count > 1 }
+        check(sets.count >= 3, "fixture: only \(sets.count) modules have tabs - the width check measures little", &ok)
+        for step in ChromeTextScale.steps {
+            ChromeTextScale.shared.setScale(step.scale)
+            for names in sets {
+                // Counts on every tab, the widest a label gets.
+                let labels = names.map { WorkspaceToolbar.tabLabel($0, count: 22) }
+                let strip = HelmSegmentedTabs(items: labels.enumerated().map { .init(id: "\($0.offset)", title: $0.element) },
+                                              selected: "0", size: .compact, pillInset: WorkspaceToolbar.tabPillInset,
+                                              labelSize: WorkspaceToolbar.tabLabelSize)
+                let segmented = NSSegmentedControl()
+                segmented.segmentCount = labels.count
+                for (index, label) in labels.enumerated() {
+                    segmented.setLabel(label, forSegment: index)
+                    segmented.setWidth(0, forSegment: index)
+                }
+                let mine = strip.fittingSize.width
+                let system = segmented.fittingSize.width
+                check(mine <= system + 1,
+                      "at \(step.title) text the tabs \(names) are \(mine)pt, wider than the \(system)pt system control", &ok)
+            }
+        }
     }
 
     // MARK: - Item 6

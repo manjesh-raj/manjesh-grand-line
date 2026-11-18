@@ -36,6 +36,11 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 6.5.0 - Feel pass: CI's two findings
+
+- `HelmSegmentedTabs` 1.1.0 → 1.2.0 (minor): two init options for a strip in system chrome. `pillInset` overrides the size's horizontal pill inset, and `labelSize` fixes the label's point size so it does not follow the chrome text scale. The window toolbar's tabs take 8pt and 11.5pt: the toolbar is system chrome that never followed the text scale, and at 1512pt with Larger text the wider strip pushed Crew's and Connections' crumbs into the overflow menu on CI (`WorkspaceToolbarSelfTest`). `FeelPassSelfTest` now holds the strip to the system control's width at every text scale.
+- `HelmHeroCard` 1.0.0 → 1.0.1 (patch): the gradient's colour writes go through `HelmMotion.withoutImplicitAnimation`, the app's one gradient gate, like every other gradient site (`DaylightHardeningSelfTest`).
+
 ## 6.4.0 - Feel pass item 4: the sidebar's search pill
 
 - `WorkspaceSidebar` none → 1.0.0 (new): a 28pt "Search or jump to" pill with the ⌘K keycap under the account header opens the same ⌘K palette as the toolbar's Search. Its words are corrected against its deeper hover fill, so they clear the text floor in every theme. It replaces stage 6's 1pt header rule as the divider between the header and Home, with 6pt above and below it. To keep the whole default list inside a 950pt window (R4-BUG-03), the group heading rows go from 24pt to 18pt (a 2pt foot under the 13pt heading), the captain's call. Headings take no Compact step, because 18pt is already the height their label needs.

@@ -182,6 +182,15 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
     /// The labels the strip was last built or retitled with, counts included.
     private var tabLabels: [String] = []
     private var tabThemeToken: ThemeObservation?
+    /// The tabs' pill inset: tighter than the kit's compact 12, so the strip
+    /// is no wider than the system segmented control it replaced and the
+    /// 1512pt toolbar at Larger text still fits without overflowing
+    /// (`WorkspaceToolbarSelfTest`).
+    static let tabPillInset: CGFloat = HelmMetrics.s2
+    /// The tabs' label size, fixed: the toolbar is system chrome, and the
+    /// segmented control the strip replaced never followed the chrome text
+    /// scale either. The kit's compact size at the Default scale.
+    static let tabLabelSize: CGFloat = 11.5
     private let pageActions = NSStackView()
     /// The page's primary action, after Search. A stack holding at most one
     /// view, so the toolbar item keeps one view while the page's button
@@ -792,7 +801,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             tabStrip?.removeFromSuperview()
             let strip = HelmSegmentedTabs(
                 items: labels.enumerated().map { .init(id: "\($0.offset)", title: $0.element) },
-                selected: selected.map { "\($0)" } ?? "", size: .compact)
+                selected: selected.map { "\($0)" } ?? "", size: .compact, pillInset: Self.tabPillInset,
+                labelSize: Self.tabLabelSize)
             strip.onSelect = { [weak self] id in
                 guard let self, let index = Int(id), self.tabNames.indices.contains(index) else { return }
                 self.onSelectTab?(index)
