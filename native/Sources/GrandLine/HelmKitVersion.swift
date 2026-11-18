@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "4.0.4"
+    static let version = "5.0.0"
 
     struct Component {
         let name: String
@@ -93,7 +93,7 @@ enum HelmKit {
         // HelmDesignSystem.swift
         Component("HelmAccentRow", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmButton", "1.1.0", file: "HelmDesignSystem.swift"),
-        Component("HelmCard", "1.1.0", file: "HelmDesignSystem.swift"),
+        Component("HelmCard", "2.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmCountBadge", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmEmptyState", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmFocusRing", "1.0.0", file: "HelmDesignSystem.swift"),
@@ -252,7 +252,7 @@ enum HelmKit {
         SourceDigest(file: "HelmDataTable.swift", stamp: "HelmDataTable@1.0.0,HelmDataTableActionsCell@1.0.0,HelmDataTableRowView@1.0.0,HelmDataTableRunDotsCell@1.0.0,HelmTagChip@1.0.0", sha256: "86d47ee1a1d1e68003ac63f882f31bd55a49fbc1a4348039729ffe907093b294"),
         SourceDigest(file: "HelmDateField.swift", stamp: "HelmDateField@1.0.0", sha256: "5f99cbfec49aa505d830385f27c038c793791c8f4f90be50896823841be934be"),
         SourceDigest(file: "HelmDaylight.swift", stamp: "HelmDomainHue@1.0.0", sha256: "4cf96b3b4987874ec79c91382329d21684cf1ce2ddc275809ad26690510f073e"),
-        SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.1.0,HelmCard@1.1.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.0,HelmFocusRing@1.0.0,HelmMetrics@1.0.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.0.0,HelmType@1.0.0", sha256: "786b6dbe7ac4b59135ef0cde1207f947bf2c1c74b5c0aa8131604fe2440079f7"),
+        SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.1.0,HelmCard@2.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.0,HelmFocusRing@1.0.0,HelmMetrics@1.0.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.0.0,HelmType@1.0.0", sha256: "fbdcf67f39978050eedc3a59e0498aa4904c32d27f11ed23a99cb7904428dcb1"),
         SourceDigest(file: "HelmDrillHeader.swift", stamp: "HelmDrillHeader@1.0.0", sha256: "73712c9e058defa127936a03d9b47618e039e031d7713652d471db2c1a29480b"),
         SourceDigest(file: "HelmFocusVisibility.swift", stamp: "HelmFocusVisibility@1.0.0", sha256: "de4eab8dd4eac530b4f2c41fe9a9da80ae8e1665b02c9a4424df5c8dd6f9872f"),
         SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.0.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.0.0,HelmFieldCard@1.0.0,HelmFieldCentering@1.0.0,HelmFormSheet@1.0.0,HelmSearchField@1.0.0,HelmSecureTextField@1.0.0,HelmTextField@1.0.0,HelmTextView@1.0.0,HelmToggle@1.0.0,HelmToggleRow@1.0.0", sha256: "fd963300a638f252103670c0759a6ec0949c589421a171f8d9311ae7b1a1b366"),
