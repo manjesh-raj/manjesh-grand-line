@@ -563,6 +563,7 @@ The eight categories and every row whose title is a literal. Rows built in a loo
 | `settings.row.Touch ID for sudo` | Settings row: Touch ID for sudo | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Vault settings live in the vault` | Settings row: Vault settings live in the vault | Settings > Security | Settings › Security (unchanged row) |  |
 | `settings.row.Window layout` | Settings row: Window layout | Settings > Appearance - the sidebar shell (the default) or the floating bar, applied the next time the app opens | Settings › Appearance (the switch between the two layouts: the sidebar is the default, the floating bar stays selectable, and a stored choice is kept) |  |
+| `settings.row.Density` | Settings row: Density | Settings > Appearance - Comfortable or Compact rows, applied at once (the feel pass, item 6) | Settings › Appearance (Compact takes every list, table and sidebar row to 30/36 of its height; Comfortable is the height they always had) |  |
 | `settings.row.Working directory` | Settings row: Working directory | Settings > Terminal | Settings › Terminal (unchanged row) |  |
 
 ## In-page tabs
@@ -1040,6 +1041,7 @@ Every preference key declared as an `fm.` constant.
 | `state.fm.todayCalendarRetired` | Saved preference `fm.todayCalendarRetired` | declared in TodayCalendarRetirement | System (one-time cleanup of the retired Today page's keys, unchanged) |  |
 | `state.fm.uiTextScale` | Saved preference `fm.uiTextScale` | declared in AppSettings | Settings › Appearance |  |
 | `state.fm.workspaceLayout` | Saved preference `fm.workspaceLayout` | declared in AppSettings | Settings › Appearance (Window layout; read once at launch, and a missing or unknown value is `WorkspaceLayout.standard`, the sidebar) |  |
+| `state.fm.density` | Saved preference `fm.density` | declared in AppSettings | Settings › Appearance (Density; a missing or unknown value is Comfortable, and a change re-fires the theme so every list re-reads its row height) |  |
 
 ## Shell chrome
 
@@ -1049,7 +1051,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac) | `DaylightBarController.swift` `NSTextField(labelWithString: "Grand Line")`; `WorkspaceSidebar.swift` `final class WorkspaceSidebarHeader` |
-| `chrome.sidebarHeaderRule` | A rule and room between the account header and Home | Not in the app | Sidebar (a 1pt rule with a gap either side under the workspace header - stage 6, the captain's call) | `WorkspaceSidebar.swift` `private let headerRule = NSView()` |
+| `chrome.sidebarHeaderRule` | A divider and room between the account header and Home | Not in the app | Sidebar (stage 6 drew a 1pt rule here; the feel pass replaced it with the search pill, which is the divider now, with 6pt either side - the captain's call) | `WorkspaceSidebar.swift` `private let searchPill = WorkspaceSidebarSearchPill()` |
 | `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; R2-UX-02 retired Home's spaces in the sidebar layout, so Home is its own arranged cards and Customize adds any other space's card; the floating bar keeps its pills) | `DaylightBarController.swift` `var onSelectSpace`; `MainSplitShellController.swift` `override func selectSpace(_ space: DaylightSpace)` |
 | `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `DaylightSpace.swift` `func isVisible(in space` |
 | `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `DaylightBarController.swift` `var onDrillBack`; `WorkspaceToolbar.swift` `@objc private func navigationClicked`; `NavigationHistory.swift` `struct NavigationHistory` |

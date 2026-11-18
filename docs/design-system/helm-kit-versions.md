@@ -42,19 +42,13 @@ A change that is not a kit component (a private list retired inside a page, for 
 
 ## 6.3.0 - Feel pass item 6: Comfortable and Compact density
 
-## 6.3.0 - Feel pass item 6: Comfortable and Compact density
-
 - `HelmDensity` none → 1.0.0 (new): Comfortable or Compact, stored as `AppSettings.density` and chosen in Settings, Appearance, Window. Compact's row factor is the prototype's 30/36.
 - `HelmType` 1.1.0 → 1.2.0 (minor): `scaledRowHeight` multiplies by the density's row factor after the text scale, rounding a Compact height to a whole point. Comfortable multiplies by exactly 1 and is not rounded, so every existing height is unchanged. A density change re-fires the current theme, which is where every list already re-reads its row height.
 
 ## 6.2.0 - Feel pass item 5: the toolbar tabs slide
 
-## 6.2.0 - Feel pass item 5: the toolbar tabs slide
-
 - `HelmSegmentedTabs` 1.0.0 → 1.1.0 (minor): `setToolTip(_:forID:)`, so a segment can explain itself on hover.
 - `WorkspaceToolbar` 1.1.1 → 1.2.0 (minor): the module tabs in the toolbar's centre are a `HelmSegmentedTabs` (compact) instead of an `NSSegmentedControl`, so the selection is the kit's thumb sliding from the old tab to the new one, as the page's own filter rows already do. The strip is rebuilt only when the tab names change, a count change retitles its pill, and the theme repaints it. Everything else in the toolbar stays a system control.
-
-## 6.1.0 - Feel pass items 1 to 3: the display title, the hero and its ring
 
 ## 6.1.0 - Feel pass items 1 to 3: the display title, the hero and its ring
 
