@@ -706,16 +706,20 @@ enum PagePolishUXPSelfTest {
               "UXP-16: the \"Words I use often\" field draws no placeholder", &ok)
 
         // UXP-08 on this page, in the state CI's runner is in: no speech
-        // permission and no model. The permission request is the one
-        // primary; the download steps down, and steps back up once the
-        // permission is there.
+        // permission and no model. The permission request is the page's one
+        // call to action - since Dic-1, Request Access on the amber split
+        // card's panel - so no filled button competes with it: the download
+        // steps down, and steps back up once the permission is there.
         dictation.debugSetModelState(.notDownloaded)
         dictation.debugSetStatus(.needsSpeechRecognition)
         dictation.view.layoutSubtreeIfNeeded()
         let primaries = visiblePrimaryButtons(in: dictation.view)
-        check(primaries.count == 1,
-              "UXP-08: Dictation shows \(primaries.count) primary buttons with a permission missing and no model: "
+        check(primaries.isEmpty,
+              "UXP-08: Dictation shows \(primaries.count) primary buttons beside the panel's Request Access: "
               + "\(primaries.map(\.title))", &ok)
+        check(dictation.debugHeroCard.panel.debugFootButtons.map(\.title) == ["Request Access"],
+              "UXP-08: with a permission missing the panel's pill is "
+              + "\(dictation.debugHeroCard.panel.debugFootButtons.map(\.title))", &ok)
         dictation.debugSetStatus(.ready)
         check(dictation.debugModelActionVariant == .primary,
               "UXP-08: with nothing else to ask for, Download Model should be the page's primary", &ok)

@@ -307,7 +307,15 @@ enum DaylightDrillPageSlice5SelfTest {
         for (name, page) in pages {
             let window = mount(page)
             defer { _ = window }
-            let heroes = labels(in: page.view, atLeast: heroFloor)
+            // A verdict on a hero gradient is not a page title. Dic-1 put
+            // Dictation's status on a `HelmHeroSplitCard` panel, in the hero
+            // language the captain picked on the page-redesign board, the
+            // same 22pt verdict Home's hero cards draw; what §6.4 removed is
+            // a second *title* over a plain page, and that is still checked
+            // everywhere off the gradient.
+            let heroes = labels(in: page.view, atLeast: heroFloor).filter { label in
+                sequence(first: label as NSView, next: { $0.superview }).allSatisfy { !($0 is HelmHeroColumn) }
+            }
             if !heroes.isEmpty {
                 print("  FAIL \(name) still renders \(heroes.count) hero-sized label(s): "
                       + heroes.map { "\"\($0.stringValue)\" @\(fmt($0.font?.pointSize ?? 0))" }

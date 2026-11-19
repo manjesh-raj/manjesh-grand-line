@@ -36,6 +36,15 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 7.1.0 - Dictation's split card (Dic-1)
+
+The captain's Dictation pick on the second page-redesign board: the status beside the controls on one split card.
+The split card's frame moves into the kit, since Automic Vault's S-1 card had drawn it as page code and Dictation is the second page to want it.
+
+- `HelmHeroSplitCard` none → 1.0.0 (new): the split card. A `HelmHeroColumn` panel at the leading edge (470pt by default, held under 500 so it is never a floor on the window) beside a `detail` view on the card's own surface that the page fills, the card as tall as the taller half. Below `stackedBelow` (900pt by default) the panel goes across the top and the detail sits under it. `onStackedChange` tells a page when it switches. Automic Vault's card is now built on it, with a `.band` panel, and draws exactly as it did.
+- `HelmHeroColumn` 1.1.0 → 1.2.0 (minor): `.panel`, the third layout and the split card's default. The words at the hero card's title size on the left with the foot's pills under them, and the hero's 86pt ring with its caption centred under it on the right, as `HelmModuleCard`'s wide `.heroSplit` panel draws it. Its body wraps to as many lines as it needs, and its pills keep their own width. `Ring.isDimmed` draws a ring in the quiet ink, for a reading that is absent rather than low.
+- `Dictation (page)` none → 1.0.0 (new): Dic-1. A split card replaces the Status, Shortcut, Cleanup and Local Whisper Engine cards. The panel carries the verdict, the engine and the library in a line, the local model as the ring (a tick when ready, the percentage while it downloads, dimmed when it is absent or the engine is off), and Re-check permissions as its pill. While a permission is missing the panel is the theme's amber and the pill is Request Access. The card's own half holds the shortcut recorder with its reset, Clean up my sentences, Use local Whisper engine and the model row with its action and its menu, as Settings rows. Words I use often and Recent Dictations sit side by side under it, one above the other on a narrow page. The footnote under the page is gone: the kicker says On device and the cleanup row says what it sends.
+
 ## 7.0.0 - Home's band and the sidebar's search go; Tasks T-4, Secrets S-3 and a Hosts hero card
 
 The captain's five changes in one release: Home loses the band between the briefing hero and the cards, the sidebar loses its search pill, Tasks and Secrets take their page-redesign picks (T-4 and S-3, with S-1's split card on Automic Vault), and Home's Hosts card becomes a hero card like Claude usage and Fleet.

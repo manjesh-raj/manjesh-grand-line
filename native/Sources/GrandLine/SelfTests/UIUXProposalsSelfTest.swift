@@ -287,7 +287,7 @@ enum UIUXProposalsSelfTest {
     // MARK: - S15
 
     /// A `.card` header is a 26pt tile, a title, a subtitle, a count badge
-    /// and the trailing action; Dictation's six cards use it; and no card is
+    /// and the trailing action; Dictation's cards use it; and no card is
     /// handed a bare label for a header any more.
     private static func checkOneCardHeaderRecipe(_ ok: inout Bool) {
         let header = HelmSectionHeader(size: .card)
@@ -313,8 +313,10 @@ enum UIUXProposalsSelfTest {
             return
         }
         let dictation = source("DictationController.swift")
-        check(dictation.components(separatedBy: "= HelmSectionHeader(size: .card)").count - 1 == 6,
-              "S15: Dictation's six cards each build a .card header", &ok)
+        // Dic-1 folded Status, Shortcut, Cleanup and the engine into the split
+        // card, so Words and Recent are the two cards left.
+        check(dictation.components(separatedBy: "= HelmSectionHeader(size: .card)").count - 1 == 2,
+              "S15: Dictation's two cards each build a .card header", &ok)
         // The guard: `setHeader(` handed a label, anywhere in the app.
         let pattern = try? NSRegularExpression(pattern: #"\.setHeader\(\w*[Ll]abel\)"#)
         func offenders(_ text: String) -> Int {

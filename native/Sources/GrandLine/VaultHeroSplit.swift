@@ -10,7 +10,9 @@
 // a launcher needs attention, the board's one second tone. On the right, on
 // the card's own surface, the verified launchers as rows with their state and
 // their own View Fix. Below a 900pt card the gradient sits across the top and
-// the rows under it.
+// the rows under it. The card's frame - the two halves, the stacking and the
+// surface - is the kit's `HelmHeroSplitCard` (7.1.0), which Dictation's Dic-1
+// fills too; this file fills it with the launchers.
 //
 // It replaces the page's attention banner and its Verified Launchers table in
 // this layout: both said what the card says now. Every action is the page's
@@ -106,22 +108,20 @@ struct VaultHeroWords: Equatable {
 
 final class VaultHeroSplitView: NSView {
 
-    /// The panel's width beside the rows: the Claude split card's wide one.
-    static let panelWidth: CGFloat = 470
     /// Below this card width the panel goes across the top.
-    static let stackedBelow: CGFloat = 900
-    static let cornerRadius: CGFloat = 14
+    static let stackedBelow: CGFloat = HelmHeroSplitCard.defaultStackedBelow
 
-    let panel = HelmHeroColumn()
-    private let native = NSView()
+    /// The frame: a band panel, so the card reads as it did before the kit
+    /// took it over.
+    private let card = HelmHeroSplitCard(arrangement: .band)
+    var panel: HelmHeroColumn { card.panel }
+    var isStacked: Bool { card.isStacked }
+    private var native: NSView { card.detail }
     private let headerLabel = NSTextField(labelWithString: "")
     private let sourceLabel = NSTextField(labelWithString: "from av doctor --json")
     private let rowsStack = NSStackView()
     private var rowViews: [VaultLauncherRowView] = []
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
-    private var sideBySide: [NSLayoutConstraint] = []
-    private var stacked: [NSLayoutConstraint] = []
-    private(set) var isStacked = false
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var themeToken: ThemeObservation?
     /// View Fix on the gradient: the one launcher's issue sheet.
@@ -132,14 +132,14 @@ final class VaultHeroSplitView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        // The panel's own rounding is the card's here, which clips it.
-        panel.layer?.cornerRadius = 0
-        panel.setArrangement(.band)
         panel.setAccessibilityLabel("Automic Vault summary")
-        native.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(panel)
-        addSubview(native)
+        addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.topAnchor.constraint(equalTo: topAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         headerLabel.lineBreakMode = .byTruncatingTail
         sourceLabel.font = HelmType.captionSmall()
@@ -179,37 +179,6 @@ final class VaultHeroSplitView: NSView {
             emptyLabel.trailingAnchor.constraint(equalTo: native.trailingAnchor, constant: -inset),
             emptyLabel.bottomAnchor.constraint(lessThanOrEqualTo: native.bottomAnchor, constant: -inset),
         ])
-
-        // Side by side: the panel a fixed width at the leading edge, the rows
-        // beside it, the card as tall as the taller half. A fixed width is
-        // under 500, so never a floor on the window (gotcha (13)).
-        let panelWidth = panel.widthAnchor.constraint(equalToConstant: Self.panelWidth)
-        panelWidth.priority = HelmDaylightPriority.contentTie
-        sideBySide = [
-            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            panel.topAnchor.constraint(equalTo: topAnchor),
-            panel.bottomAnchor.constraint(equalTo: bottomAnchor),
-            panelWidth,
-            native.leadingAnchor.constraint(equalTo: panel.trailingAnchor),
-            native.trailingAnchor.constraint(equalTo: trailingAnchor),
-            native.topAnchor.constraint(equalTo: topAnchor),
-            native.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(greaterThanOrEqualTo: panel.heightAnchor),
-        ]
-        stacked = [
-            panel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            panel.trailingAnchor.constraint(equalTo: trailingAnchor),
-            panel.topAnchor.constraint(equalTo: topAnchor),
-            native.leadingAnchor.constraint(equalTo: leadingAnchor),
-            native.trailingAnchor.constraint(equalTo: trailingAnchor),
-            native.topAnchor.constraint(equalTo: panel.bottomAnchor),
-            native.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ]
-        NSLayoutConstraint.activate(sideBySide)
-        // The rows' own height decides the native half's.
-        let hug = native.heightAnchor.constraint(equalToConstant: 0)
-        hug.priority = NSLayoutConstraint.Priority(240)
-        hug.isActive = true
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
     }
 
@@ -267,24 +236,12 @@ final class VaultHeroSplitView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: Self.cornerRadius,
-                                  daylightRadius: Self.cornerRadius)
-        layer?.masksToBounds = true
+        card.applyTheme(theme)
         headerLabel.attributedStringValue = NSAttributedString(
             string: headerLabel.stringValue, attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
         sourceLabel.textColor = HelmTheme.mutedInk(theme)
         emptyLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rowViews { row.applyTheme(theme) }
-    }
-
-    override func layout() {
-        super.layout()
-        let stack = bounds.width > 0 && bounds.width < Self.stackedBelow
-        guard stack != isStacked else { return }
-        isStacked = stack
-        NSLayoutConstraint.deactivate(stack ? sideBySide : stacked)
-        NSLayoutConstraint.activate(stack ? stacked : sideBySide)
-        needsLayout = true
     }
 
     #if FM_SELFTESTS

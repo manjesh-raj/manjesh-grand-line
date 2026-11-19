@@ -23,6 +23,18 @@
 // History/vocabulary are similarly re-read from `DictationStore` on every
 // appear and on every `DictationStore.observe` notification (a dictation
 // completed while this page happens to be open updates the list live).
+//
+// **Dic-1 (fm/grand-line-dictation-dic1).** The page-redesign board's split
+// card replaces the four control cards. The gradient half
+// (`HelmHeroSplitCard`'s panel) is the old Status card: the verdict, a line
+// about the engine and the library, the local model as the ring, and Request
+// Access or Re-check permissions as its pill - amber while a permission is
+// missing. The card's own half holds the four controls as `SettingsRow`s: the
+// shortcut recorder and its reset, Clean up my sentences, Use local Whisper
+// engine, and the model row with its action and its "⋯" menu. Words I use
+// often and Recent Dictations sit side by side under it, one above the other
+// on a narrow page. Every control and every action is the one the cards had;
+// only where they sit changed. The panel's words are `DictationHeroWords`.
 
 import AppKit
 
@@ -43,51 +55,30 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// UXP-08: the app's one labelled Refresh, not a bare glyph.
     private let refreshButton = HelmButton.refresh()
 
-    /// §7's "status/shortcut as two cards": the two low-content cards share
-    /// one row instead of each taking a full-width band, which is §3's
-    /// "low-density pages have no density plan" finding for this page.
-    private let statusShortcutRow = NSStackView()
+    /// Dic-1: the split card - the verdict on the gradient, the controls
+    /// beside it on the card's own surface.
+    private let heroCard = HelmHeroSplitCard()
+    /// "CONTROLS", over the rows on the card's own surface.
+    private let controlsTitle = NSTextField(labelWithString: "Controls")
+    private var controlRows: [SettingsRow] = []
+    private var controlRules: [NSView] = []
+    /// The panel's two pills. Request Access while a permission is missing
+    /// (the one the old Status card's button asked for), Re-check permissions
+    /// otherwise - the page's own Refresh.
+    private let statusActionButton = HelmButton(title: "Request Access", variant: .secondary, size: .small)
+    private let recheckButton = HelmButton(title: "Re-check permissions", variant: .secondary, size: .small,
+                                           symbol: "arrow.clockwise")
+    private var heroWords: DictationHeroWords?
 
-    private let statusPanel = HelmCard()
-    /// UI-53: the state as a dot and a word - a pill when it asks for an
-    /// action - rather than a 40pt tile and a card title beside the card's
-    /// own "Status" header.
-    private let statusWord = HelmStatusPill(style: .dotWord)
-    private let statusDetailLabel = NSTextField(wrappingLabelWithString: "")
-    private var statusTextStack = NSStackView()
-    private let statusActionButton = HelmButton(title: "", variant: .primary, size: .small)
-    // fm/grandline-dictation-page-redesign: the trailing chip the reviewed
-    // prototype's Status card-head shows ("On device") once every
-    // permission is granted and no action button is needed - mutually
-    // exclusive with `statusActionButton` (see `render()`).
-    /// UI-32: the kit's status pill. "On device" is this card's default, so
-    /// it is a dot and a word (UI-53).
-    private let statusChip = HelmStatusPill(style: .dotWord)
-
-    private let shortcutPanel = HelmCard()
     private let shortcutRecorder: KeyChordRecorderView
     private let shortcutResetButton = HelmButton(title: "", variant: .secondary)
-    private let shortcutDetailLabel = NSTextField(wrappingLabelWithString: "")
-    private var shortcutTextStack = NSStackView()
 
-    private let cleanupPanel = HelmCard()
     /// UI-53 / UI-61: the app's own toggle, never a stock `NSSwitch`.
     private let cleanupSwitch = HelmToggle()
-    private let cleanupTitleLabel = NSTextField(labelWithString: "")
-    private let cleanupDetailLabel = NSTextField(wrappingLabelWithString: "")
-    private var cleanupTextStack = NSStackView()
-
-    private let localWhisperPanel = HelmCard()
     private let localWhisperSwitch = HelmToggle()
-    private let localWhisperTitleLabel = NSTextField(labelWithString: "")
-    private let localWhisperDetailLabel = NSTextField(wrappingLabelWithString: "")
-    private var localWhisperTextStack = NSStackView()
-    private let modelStatusLabel = NSTextField(labelWithString: "")
-    // The reviewed prototype's "Model ready" chip - shown in place of
-    // `modelStatusLabel`'s plain text only for the terse `.ready` state (the
-    // one state the prototype actually depicts); every other state
-    // (downloading/failed/not-downloaded) keeps the existing plain label,
-    // since those messages are longer and dynamic, not a fixed short word.
+    private var modelRow: SettingsRow!
+    // "Ready" in a dot and a word, beside the model's action while the model
+    // is on disk.
     /// UI-32: the kit's status pill, which states its own width (no more
     /// B10 workaround on the label).
     private let modelReadyPill = HelmStatusPill(style: .dotWord)
@@ -105,14 +96,23 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let modelProgressBar = HelmProgressBar()
     private var modelState: WhisperModelState = .notDownloaded
 
+    /// Words I use often and Recent Dictations: side by side on a wide page,
+    /// one above the other on a narrow one. A plain view with two constraint
+    /// sets rather than a stack that flips its orientation: measured, a stack
+    /// flipped vertical and back left both cards stretched to the taller
+    /// one's height, the Words well a tall empty box.
+    private let libraryRow = NSView()
+    private var librarySideBySide: [NSLayoutConstraint] = []
+    private var libraryStacked: [NSLayoutConstraint] = []
+    private(set) var libraryIsStacked = false
+    /// Two columns need this much width each.
+    static let libraryColumnMinWidth: CGFloat = 400
+    static let libraryGap: CGFloat = HelmMetrics.s4
+
     private let vocabularyPanel = HelmCard()
     /// S15: every card's header is `HelmSectionHeader(size: .card)` - a 26pt
     /// tile, a title, a subtitle, the count in a badge and the card's one
     /// action in the trailing slot.
-    private let statusHeader = HelmSectionHeader(size: .card)
-    private let shortcutHeader = HelmSectionHeader(size: .card)
-    private let cleanupHeader = HelmSectionHeader(size: .card)
-    private let localWhisperHeader = HelmSectionHeader(size: .card)
     private let vocabularyHeader = HelmSectionHeader(size: .card)
     private let historyHeader = HelmSectionHeader(size: .card)
     private let explainerLabel = NSTextField(wrappingLabelWithString: "")
@@ -128,8 +128,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let historyPanel = HelmCard()
     private let historyListView = DictationHistoryListView()
     private let historyListScroll = NSScrollView()
-
-    private let footnoteLabel = NSTextField(wrappingLabelWithString: "")
 
     private var status: DictationStatus = DictationPermissions.currentStatus()
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -164,35 +162,21 @@ final class DictationController: NSViewController, DaylightDrillActions {
         view = root
 
         buildDrillActions()
-        _ = buildStatusSection()
-        _ = buildShortcutSection()
-        _ = buildCleanupSection()
-        _ = buildLocalWhisperSection()
+        buildHeroCard()
         _ = buildVocabularySection()
         _ = buildHistorySection()
-        buildFootnote()
-
-        // §7: status and shortcut share one row. `.fillEqually` so neither
-        // card can be pushed narrow by the other's content, and both cards'
-        // own text stacks already yield at stack level (see `viewDidLayout`),
-        // so the pair cannot become a window-width floor - AGENTS.md gotcha
-        // (13), asserted by this slice's own suite.
-        statusShortcutRow.orientation = .horizontal
-        statusShortcutRow.alignment = .top
-        statusShortcutRow.distribution = .fillEqually
-        statusShortcutRow.spacing = HelmMetrics.s4
-        statusShortcutRow.translatesAutoresizingMaskIntoConstraints = false
-        statusShortcutRow.setViews([statusPanel, shortcutPanel], in: .leading)
+        buildLibraryRow()
 
         scaffold.install(in: root)
-        for block in [statusShortcutRow, cleanupPanel, localWhisperPanel, vocabularyPanel, historyPanel,
-                      footnoteLabel] as [NSView] {
+        for block in [heroCard, libraryRow] as [NSView] {
             scaffold.addContent(block)
         }
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            // The panel's amber is the theme's own, so its tone is re-read.
+            if self?.heroWords != nil { self?.renderHero() }
             self?.applyTheme()
         }
 
@@ -240,52 +224,22 @@ final class DictationController: NSViewController, DaylightDrillActions {
         renderVocabulary()
     }
 
-    /// Keeps every card's wrapping description label sized to the row's
-    /// real, currently-rendered available width instead of the fixed
-    /// `preferredMaxLayoutWidth` constants each label starts with, which
-    /// stayed a hardcoded number regardless of how wide the card - and
-    /// therefore the row up to its trailing tile/switch/button - actually
-    /// resolved to.
+    /// Keeps every wrapping description sized to the width its row really
+    /// has, rather than a constant guessed at construction.
     ///
-    /// This is the fix for the captain-reported "text cramped to the first
-    /// half of the card, with a big empty gap before the toggle/button"
-    /// bug. It is the same class of defect `ToolRowLayout`'s own history
-    /// documents (`HelmUIComponents.swift`'s "status column jitters...
-    /// because textStack keeps its natural width") and AGENTS.md's AppKit
-    /// gotcha catalogue covers twice over:
+    /// The captain-reported "text cramped to the first half of the card, with
+    /// a big empty gap before the toggle" bug, and review bug B10's one word
+    /// per line, are both this: a wrapping label's intrinsic width comes from
+    /// its `preferredMaxLayoutWidth`, so it has to be fed a width it does not
+    /// itself decide (gotcha (22)). The control rows are `SettingsRow`s, whose
+    /// `relayoutDescription` derives it from the row's own resolved width
+    /// minus its control; the Words card's explainer is derived from its
+    /// column, which is tied to the card. The panel wraps its own words.
     ///
-    /// - Gotcha #10: each row here used to be left at the default
-    ///   `.gravityAreas` distribution, which lays every arranged view out
-    ///   at its own natural size and resolves leftover width by Auto
-    ///   Layout's own tie-breaking - never by any view's hugging priority.
-    ///   Every row-building method below now sets `distribution = .fill`.
-    /// - Gotcha #12: `setContentHuggingPriority`/
-    ///   `setContentCompressionResistancePriority` are no-ops on an
-    ///   `NSStackView` (it has no intrinsic content size for a
-    ///   content-priority API to constrain against) - each row's vertical
-    ///   title/description text stack used exactly that no-op call, so
-    ///   even with `.fill` distribution nothing told the row that the text
-    ///   stack, not the tile or the trailing control, should absorb the
-    ///   row's leftover width. `ToolRowLayout.columnHugging`'s stack-level
-    ///   `setHuggingPriority`/`setClippingResistancePriority` is the API
-    ///   that actually does this, and every text stack below now uses it.
-    ///
-    /// Those two fixes make each text stack's own `bounds.width` correctly
-    /// reflect the row's real leftover space - but a *wrapping* label's
-    /// intrinsic width still comes from its own `preferredMaxLayoutWidth`,
-    /// which those fixes don't touch. This is the other half:
-    /// `HelmEmptyState.layout()`'s already-established pattern (see its own
-    /// doc comment) of reading back a container's real resolved width on
-    /// every layout pass and feeding it to the wrapping label directly, so
-    /// the label always wraps at the row's actual available width - a
-    /// window resize included - rather than a hardcoded constant. The
-    /// `preferredMaxLayoutWidth` values set at construction time are only
-    /// the safe *initial* seed for the very first layout pass, before any
-    /// real width is known; every pass after that overwrites them here.
     /// A text column never wraps narrower than this, whatever the arithmetic
-    /// below says. `SettingsRow.relayoutDescription`'s own floor, and for the
-    /// same reason: a column narrow enough to break words mid-word is worse
-    /// than one that overflows its row slightly.
+    /// says - `SettingsRow.relayoutDescription`'s own floor, and for the same
+    /// reason: a column narrow enough to break words mid-word is worse than
+    /// one that overflows its row slightly.
     private static let detailMinimumWidth: CGFloat = 180
 
     override func viewDidLayout() {
@@ -293,23 +247,23 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // The rows live inside the scroll view's document, which this pass
         // has not laid out yet: on a live resize (measured, 1512 -> 1100)
         // they still held the old width here, the derived wrap widths stayed
-        // wide, and nothing called this again, so the Status and Cleanup
-        // sentences were cut off at their cards' bottoms. Settle the
-        // document first so the rows read their real widths.
+        // wide, and nothing called this again, so the sentences were cut off
+        // at their cards' bottoms. Settle the document first so the rows read
+        // their real widths.
         scroll.documentView?.layoutSubtreeIfNeeded()
-        var changed = false
-        for (stack, label) in [
-            (statusTextStack, statusDetailLabel),
-            (shortcutTextStack, shortcutDetailLabel),
-            (cleanupTextStack, cleanupDetailLabel),
-            (localWhisperTextStack, localWhisperDetailLabel),
-            (vocabularyColumn, explainerLabel),
-        ] {
-            let available = availableDetailWidth(for: stack)
-            guard available > 0, abs(label.preferredMaxLayoutWidth - available) > 0.5 else { continue }
-            label.preferredMaxLayoutWidth = available
-            label.invalidateIntrinsicContentSize()
-            changed = true
+        var changed = layoutLibraryRow()
+        for row in controlRows where row.bounds.width > 0 {
+            let before = row.descriptionLabel?.preferredMaxLayoutWidth
+            row.relayoutDescription(cardWidth: row.bounds.width)
+            if row.descriptionLabel?.preferredMaxLayoutWidth != before { changed = true }
+        }
+        if vocabularyColumn.bounds.width > 0 {
+            let available = max(Self.detailMinimumWidth, floor(vocabularyColumn.bounds.width))
+            if abs(explainerLabel.preferredMaxLayoutWidth - available) > 0.5 {
+                explainerLabel.preferredMaxLayoutWidth = available
+                explainerLabel.invalidateIntrinsicContentSize()
+                changed = true
+            }
         }
         // A new wrap width changes the label's height after the pass that
         // measured it, so one follow-up pass settles the cards' heights. It
@@ -327,36 +281,19 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
     private var relayoutScheduled = false
 
-    /// How wide a text column's wrapping label may be, derived from the
-    /// **row's** own resolved width minus its rigid siblings.
-    ///
-    /// **Review bug B10.** This used to read `stack.bounds.width` directly,
-    /// and that is circular: the stack has no intrinsic size of its own, so
-    /// its resolved width comes from the label's intrinsic width, which comes
-    /// from `preferredMaxLayoutWidth`. Feeding the result back in makes
-    /// whichever pass ran first with a small width permanent. Measured on
-    /// this branch with an env-gated probe: on a first render of the
-    /// microphone-permission state the text stack resolved to **25pt** while
-    /// `preferredMaxLayoutWidth` still read its 520 seed - which is the
-    /// captain-visible defect, one word per line with words broken mid-word
-    /// ("permis / sion", "microp / hone") and a Status card grown to 380pt.
-    ///
-    /// The row *is* a real width (it is tied to the card, which is tied to the
-    /// page), and the siblings beside the text column are all `.required`
-    /// hugging, so their fitting widths are what they will actually take.
-    /// That makes this the same non-circular derivation
-    /// `SettingsRow.relayoutDescription` does from its card's width.
-    private func availableDetailWidth(for stack: NSStackView) -> CGFloat {
-        guard let row = stack.superview as? NSStackView, row.bounds.width > 0 else {
-            // No row to measure yet (the very first pass): leave the
-            // construction-time seed alone rather than replacing it with a
-            // number derived from nothing.
-            return 0
-        }
-        let siblings = row.arrangedSubviews.filter { $0 !== stack && !$0.isHidden }
-        let rigid = siblings.reduce(CGFloat(0)) { $0 + ceil($1.fittingSize.width) }
-        let gaps = row.spacing * CGFloat(max(0, row.arrangedSubviews.filter { !$0.isHidden }.count - 1))
-        return max(Self.detailMinimumWidth, row.bounds.width - rigid - gaps)
+    /// Two columns when both cards get `libraryColumnMinWidth`, one above the
+    /// other otherwise. Returns whether it switched.
+    private func layoutLibraryRow() -> Bool {
+        let width = libraryRow.bounds.width
+        guard width > 0 else { return false }
+        let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.libraryColumnMinWidth,
+                                                 spacing: Self.libraryGap)
+        let stack = columns < 2
+        guard stack != libraryIsStacked else { return false }
+        libraryIsStacked = stack
+        NSLayoutConstraint.deactivate(stack ? librarySideBySide : libraryStacked)
+        NSLayoutConstraint.activate(stack ? libraryStacked : librarySideBySide)
+        return true
     }
 
     /// Re-reads real permission state and re-renders. Called on every page
@@ -420,286 +357,122 @@ final class DictationController: NSViewController, DaylightDrillActions {
         return parts.joined(separator: " \u{00B7} ")
     }
 
-    private func buildStatusSection() -> NSView {
-        statusHeader.configure(leading: .tile(symbol: "mic.fill", tint: .accent), title: "Status",
-                               subline: "What dictation can do right now")
-        statusHeader.setActions([statusActionButton])
-        statusPanel.setHeader(statusHeader)
-
-        statusWord.setContentHuggingPriority(.required, for: .horizontal)
-
-        statusDetailLabel.font = HelmType.caption()
-        statusDetailLabel.preferredMaxLayoutWidth = 520
-        statusDetailLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        statusTextStack = NSStackView(views: [statusWord, statusDetailLabel])
-        statusTextStack.orientation = .vertical
-        statusTextStack.alignment = .leading
-        statusTextStack.spacing = HelmMetrics.s1
-        statusTextStack.translatesAutoresizingMaskIntoConstraints = false
-        // Stack-level, not content-level - see `viewDidLayout`'s doc
-        // comment (AGENTS.md gotcha #12): this is what actually lets the
-        // text column absorb the row's leftover width.
-        statusTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        statusTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+    /// Dic-1's split card. The panel is filled by `renderHero`; the card's
+    /// own half is built once here - the four controls as `SettingsRow`s,
+    /// hairline-separated like a Settings group, under a "CONTROLS" kicker.
+    private func buildHeroCard() {
+        heroCard.panel.setAccessibilityLabel("Dictation status")
+        heroCard.onStackedChange = { [weak self] _ in self?.view.needsLayout = true }
 
         statusActionButton.target = self
         statusActionButton.action = #selector(statusActionTapped)
-        statusActionButton.setContentHuggingPriority(.required, for: .horizontal)
-        statusActionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusActionButton.translatesAutoresizingMaskIntoConstraints = false
-
-        statusChip.setContentHuggingPriority(.required, for: .horizontal)
-        statusChip.setContentCompressionResistancePriority(.required, for: .horizontal)
-        statusChip.isHidden = true
-
-        let row = NSStackView(views: [statusTextStack, statusChip])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = HelmMetrics.s3
-        // AGENTS.md gotcha #10: the default `.gravityAreas` distribution
-        // lays every arranged view out at its own natural size and
-        // resolves leftover width by Auto Layout's own tie-breaking, which
-        // is what left the text column confined to its own natural width
-        // with a large blank gap before the trailing chip/button instead of
-        // flowing to fill the row. `.fill` is what makes `statusTextStack`'s
-        // hugging priority matter at all.
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        statusPanel.setBody(row, insets: HelmCard.contentInsets)
-        return statusPanel
-    }
-
-    private func buildShortcutSection() -> NSView {
-        shortcutHeader.configure(leading: .tile(symbol: "keyboard", tint: .info), title: "Shortcut",
-                                 subline: "Hold it to talk, let go to paste")
-        shortcutPanel.setHeader(shortcutHeader)
+        recheckButton.target = self
+        recheckButton.action = #selector(refreshTapped)
+        recheckButton.toolTip = "Re-check Dictation permissions"
 
         shortcutRecorder.onChange = { [weak self] newShortcut in
             self?.shortcutChanged(newShortcut)
         }
-
         shortcutResetButton.title = "Reset to Right ⌥ Option"
         shortcutResetButton.controlSize = .small
         shortcutResetButton.target = self
         shortcutResetButton.action = #selector(resetShortcutTapped)
-        shortcutResetButton.translatesAutoresizingMaskIntoConstraints = false
-
-        shortcutDetailLabel.font = HelmType.caption()
-        // Tightened to match the reviewed prototype's terser card-head
-        // copy - the release-to-paste behavior is still covered by the
-        // page's own footnote and the live status card's own detail text.
-        shortcutDetailLabel.stringValue = "Click the field, then hold the key or combo you want."
-        shortcutDetailLabel.preferredMaxLayoutWidth = 460
-        shortcutDetailLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let recorderRow = NSStackView(views: [shortcutRecorder, shortcutResetButton])
-        recorderRow.orientation = .horizontal
-        recorderRow.alignment = .centerY
-        recorderRow.spacing = 8
-        recorderRow.translatesAutoresizingMaskIntoConstraints = false
-
-        shortcutTextStack = NSStackView(views: [recorderRow, shortcutDetailLabel])
-        shortcutTextStack.orientation = .vertical
-        shortcutTextStack.alignment = .leading
-        shortcutTextStack.spacing = 6
-        shortcutTextStack.translatesAutoresizingMaskIntoConstraints = false
-        shortcutTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        shortcutTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [shortcutTextStack])
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = 14
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        shortcutPanel.setBody(row, insets: HelmCard.contentInsets)
-        return shortcutPanel
-    }
-
-    private func buildCleanupSection() -> NSView {
-        cleanupHeader.configure(leading: .tile(symbol: "sparkles", tint: .violet), title: "Cleanup",
-                                subline: "An optional rewrite of each dictation before it is pasted")
-        cleanupPanel.setHeader(cleanupHeader)
-
-        cleanupTitleLabel.stringValue = "Clean up my sentences"
-        cleanupTitleLabel.font = HelmType.rowTitle()
-        cleanupTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // Tightened to the reviewed prototype's one-line phrasing - the
-        // network/fallback nuance is still covered by the page's footnote
-        // ("only the optional \"Clean up my sentences\" rewrite above needs
-        // network access").
-        cleanupDetailLabel.stringValue = "Rewrites each dictation into a well-formed sentence before pasting. "
-            + AITransparency.willSendToClaude("each transcript") + ", unless it looks like it holds a secret."
-        // This same pass also corrects a misheard word against "Words I use
-        // often" below, using the rest of the sentence for context - see
-        // `DictationCleanup.swift`'s header for why that rides on this toggle
-        // rather than a second one.
-        cleanupDetailLabel.toolTip = "Also checks the transcript against \"Words I use often\" below and fixes a likely misrecognition of one of those words, using the rest of the sentence as context."
-        cleanupDetailLabel.font = HelmType.caption()
-        cleanupDetailLabel.preferredMaxLayoutWidth = 460
-        cleanupDetailLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        cleanupTextStack = NSStackView(views: [cleanupTitleLabel, cleanupDetailLabel])
-        cleanupTextStack.orientation = .vertical
-        cleanupTextStack.alignment = .leading
-        cleanupTextStack.spacing = 3
-        cleanupTextStack.translatesAutoresizingMaskIntoConstraints = false
-        cleanupTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        cleanupTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        let shortcutControl = NSStackView(views: [shortcutRecorder, shortcutResetButton])
+        shortcutControl.orientation = .horizontal
+        shortcutControl.alignment = .centerY
+        shortcutControl.spacing = HelmMetrics.s2
 
         cleanupSwitch.target = self
         cleanupSwitch.action = #selector(cleanupToggled)
-        cleanupSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        cleanupSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
-        cleanupSwitch.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = NSStackView(views: [cleanupTextStack, cleanupSwitch])
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = 14
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        cleanupPanel.setBody(row, insets: HelmCard.contentInsets)
-        return cleanupPanel
-    }
-
-    /// fm/grandline-dictation-whisper-engine: an optional local Whisper
-    /// engine (vendored whisper.cpp, `large-v3-turbo` quantized model) as an
-    /// alternative to the Apple Speech framework path above - same
-    /// visual/interaction style as the Cleanup card immediately above it
-    /// (icon tile + title/detail text + a switch), plus a model-status row
-    /// (download progress/action) since this toggle has a real one-time
-    /// setup step the Cleanup toggle doesn't.
-    private func buildLocalWhisperSection() -> NSView {
-        localWhisperHeader.configure(leading: .tile(symbol: "cpu", tint: .info), title: "Local Whisper Engine",
-                                     subline: "Transcribes on this Mac, with no network once the model is here")
-        localWhisperHeader.setActions([modelActionButton])
-        localWhisperPanel.setHeader(localWhisperHeader)
-
-        localWhisperTitleLabel.stringValue = "Use local Whisper engine"
-        localWhisperTitleLabel.font = HelmType.rowTitle()
-        localWhisperTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // Tightened to the reviewed prototype's terser spec-line copy - the
-        // Apple Speech fallback is still covered by `modelStatusLabel`'s own
-        // dynamic states and the page's footnote.
-        localWhisperDetailLabel.stringValue = "whisper.cpp large-v3-turbo, Metal-accelerated, fully offline once downloaded."
-        localWhisperDetailLabel.font = HelmType.caption()
-        localWhisperDetailLabel.preferredMaxLayoutWidth = 460
-        localWhisperDetailLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        localWhisperTextStack = NSStackView(views: [localWhisperTitleLabel, localWhisperDetailLabel])
-        localWhisperTextStack.orientation = .vertical
-        localWhisperTextStack.alignment = .leading
-        localWhisperTextStack.spacing = 3
-        localWhisperTextStack.translatesAutoresizingMaskIntoConstraints = false
-        localWhisperTextStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        localWhisperTextStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-
         localWhisperSwitch.target = self
         localWhisperSwitch.action = #selector(localWhisperToggled)
-        localWhisperSwitch.setContentHuggingPriority(.required, for: .horizontal)
-        localWhisperSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
-        localWhisperSwitch.translatesAutoresizingMaskIntoConstraints = false
-
-        let toggleRow = NSStackView(views: [localWhisperTextStack, localWhisperSwitch])
-        toggleRow.orientation = .horizontal
-        toggleRow.alignment = .top
-        toggleRow.spacing = 14
-        toggleRow.distribution = .fill
-        toggleRow.translatesAutoresizingMaskIntoConstraints = false
-
-        modelStatusLabel.font = HelmType.caption()
-        modelStatusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        modelStatusLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // **The hugging has to be on the label, not on the pill** - review
-        // #3's B10.
-        //
-        // `modelReadyPill` is a plain `NSView` with no intrinsic content size,
-        // so the two calls below it are a documented no-op (gotcha (12)): a
-        // hugging priority only ever constrains a view against its *own*
-        // intrinsic size, and this one has none. Its real width is its label's
-        // plus `ToolRowLayout.pill`'s 9pt insets, so the label is the only
-        // place that can say "content-sized". Without it, `.fill` picked this
-        // chip as the row's flexible member and the "Model ready" pill
-        // rendered **1208pt wide** at a 1512pt window - measured.
-        //
-        // Deliberately here rather than inside `ToolRowLayout.pill`, which
-        // ~20 call sites share: making every chip in the app rigid was tried
-        // and measured to collapse this page's own card to 163pt, because at
-        // least one of those rows depends on its chip being the view that
-        // absorbs slack. One page's bug, fixed on that page.
-        modelReadyPill.setContentHuggingPriority(.required, for: .horizontal)
-        modelReadyPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelReadyPill.isHidden = true
 
         // G4: the app's own bar rather than the stock determinate one.
         modelProgressBar.isHidden = true
-        modelProgressBar.setContentHuggingPriority(.required, for: .horizontal)
-        modelProgressBar.widthAnchor.constraint(equalToConstant: 160).isActive = true
-
+        modelProgressBar.widthAnchor.constraint(equalToConstant: 120).isActive = true
+        modelReadyPill.isHidden = true
         modelActionButton.controlSize = .small
         modelActionButton.target = self
         modelActionButton.action = #selector(modelActionTapped)
-        modelActionButton.setContentHuggingPriority(.required, for: .horizontal)
-        modelActionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelActionButton.translatesAutoresizingMaskIntoConstraints = false
-
         modelDeleteButton.controlSize = .small
         modelDeleteButton.target = self
         modelDeleteButton.action = #selector(modelMoreTapped(_:))
         modelDeleteButton.toolTip = "More model actions"
         modelDeleteButton.setAccessibilityLabel("More model actions")
         modelDeleteButton.isHidden = true
-        modelDeleteButton.setContentHuggingPriority(.required, for: .horizontal)
-        modelDeleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modelDeleteButton.translatesAutoresizingMaskIntoConstraints = false
+        let modelControl = NSStackView(views: [modelProgressBar, modelReadyPill, modelActionButton, modelDeleteButton])
+        modelControl.orientation = .horizontal
+        modelControl.alignment = .centerY
+        modelControl.spacing = HelmMetrics.s2
 
-        // **The row needs a flexible member that is always present** - the
-        // other half of B10, and the reason the hugging fix above is safe.
-        //
-        // `modelStatusLabel` is the row's flexible member while it is visible,
-        // and `.ready` is exactly the state that hides it in favour of the
-        // chip. With the chip rigid and the label gone, a `.fill` row had
-        // nothing left to stretch, so it hugged its own content and - because
-        // this page's width is constraint-driven - took the whole page down to
-        // its fitting width with it (measured: 391pt at a 1512pt window). A
-        // bare `NSView` has no intrinsic content size, which makes it the
-        // stack's natural stretch target; that property is what had been
-        // accidentally falling to the chip.
-        let modelSpacer = NSView()
-        modelSpacer.translatesAutoresizingMaskIntoConstraints = false
+        let shortcutRow = SettingsRow(
+            title: "Shortcut",
+            description: "Hold it to talk, let go to paste. Click the field, then hold the key or combo you want.",
+            control: shortcutControl)
+        let cleanupRow = SettingsRow(
+            title: "Clean up my sentences",
+            description: "Rewrites each dictation into a well-formed sentence before pasting. "
+                + AITransparency.willSendToClaude("each transcript") + ", unless it looks like it holds a secret.",
+            control: cleanupSwitch)
+        // This same pass also corrects a misheard word against "Words I use
+        // often" below, using the rest of the sentence for context - see
+        // `DictationCleanup.swift`'s header for why that rides on this toggle
+        // rather than a second one.
+        cleanupRow.descriptionLabel?.toolTip = "Also checks the transcript against \"Words I use often\" below and fixes a likely misrecognition of one of those words, using the rest of the sentence as context."
+        let localWhisperRow = SettingsRow(
+            title: "Use local Whisper engine",
+            description: "whisper.cpp large-v3-turbo, Metal-accelerated, fully offline once downloaded.",
+            control: localWhisperSwitch)
+        // The model is the engine's, so its row sits under the toggle as a
+        // dependent one - indented, but never dimmed: the model downloads
+        // whether or not the engine is on, as it always has.
+        modelRow = SettingsRow(title: "Whisper model", description: "Model not downloaded",
+                               control: modelControl, isSubRow: true)
+        controlRows = [shortcutRow, cleanupRow, localWhisperRow, modelRow]
 
-        // S15: the model's one action ("Download Model", "Cancel",
-        // "Re-download") is the card header's trailing control.
-        let modelRow = NSStackView(views: [modelStatusLabel, modelReadyPill, modelSpacer, modelProgressBar, modelDeleteButton])
-        modelRow.orientation = .horizontal
-        modelRow.alignment = .centerY
-        modelRow.spacing = 10
-        // Same gotcha #10 fix as every other row on this page - without
-        // `.fill`, this row's button drifted with sibling content instead
-        // of sitting pinned at the row's trailing edge.
-        modelRow.distribution = .fill
-        modelRow.translatesAutoresizingMaskIntoConstraints = false
+        let rows = NSStackView()
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 0
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        for (index, row) in controlRows.enumerated() {
+            if index > 0 {
+                // A Settings group's hairline: inset to where the row's own
+                // label starts.
+                let rule = NSView()
+                rule.wantsLayer = true
+                rule.translatesAutoresizingMaskIntoConstraints = false
+                rows.addArrangedSubview(rule)
+                NSLayoutConstraint.activate([
+                    rule.heightAnchor.constraint(equalToConstant: 1),
+                    rule.leadingAnchor.constraint(equalTo: rows.leadingAnchor, constant: row.separatorInset
+                        + (row.isSubRow ? SettingsRow.Metrics.subIndent : 0)),
+                    rule.trailingAnchor.constraint(equalTo: rows.trailingAnchor,
+                                                   constant: -SettingsRow.Metrics.insetH),
+                ])
+                controlRules.append(rule)
+            }
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        }
 
-        let column = NSStackView(views: [toggleRow, modelRow])
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 12
-        column.translatesAutoresizingMaskIntoConstraints = false
+        controlsTitle.translatesAutoresizingMaskIntoConstraints = false
+        let detail = heroCard.detail
+        detail.addSubview(controlsTitle)
+        detail.addSubview(rows)
+        // The rows carry their own 14pt padding, so the stack sits that much
+        // outside the title's inset and the row labels line up under it.
+        let inset = HelmMetrics.s4
         NSLayoutConstraint.activate([
-            toggleRow.widthAnchor.constraint(equalTo: column.widthAnchor),
-            modelRow.widthAnchor.constraint(equalTo: column.widthAnchor),
+            controlsTitle.topAnchor.constraint(equalTo: detail.topAnchor, constant: inset),
+            controlsTitle.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: inset + HelmMetrics.s1),
+            rows.topAnchor.constraint(equalTo: controlsTitle.bottomAnchor, constant: HelmMetrics.s1),
+            rows.leadingAnchor.constraint(equalTo: detail.leadingAnchor,
+                                          constant: inset + HelmMetrics.s1 - SettingsRow.Metrics.insetH),
+            rows.trailingAnchor.constraint(equalTo: detail.trailingAnchor,
+                                           constant: -(inset + HelmMetrics.s1 - SettingsRow.Metrics.insetH)),
+            rows.bottomAnchor.constraint(equalTo: detail.bottomAnchor, constant: -HelmMetrics.s2),
         ])
-
-        localWhisperPanel.setBody(column, insets: HelmCard.contentInsets)
-        return localWhisperPanel
     }
 
     private func buildVocabularySection() -> NSView {
@@ -745,13 +518,18 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// that setting cannot drift apart.
     private static let tableRowGap: CGFloat = 2
 
-    /// The history list's own scroll height - three §6.5 row cards plus their
-    /// gaps. Re-derived on every theme re-fire (GL-32) rather than captured
-    /// once, since `rowHeight` follows the chrome text scale now.
+    /// The history list's own scroll height - four §6.5 row cards plus their
+    /// gaps, beside the Words card (Dic-1; it was three when the list had the
+    /// page's width to itself). Re-derived on every theme re-fire (GL-32)
+    /// rather than captured once, since `rowHeight` follows the chrome text
+    /// scale now.
     private var historyScrollHeight: NSLayoutConstraint!
 
+    static let historyVisibleRows = 4
+
     private static func historyScrollHeight() -> CGFloat {
-        DictationHistoryListView.rowHeight * 3 + tableRowGap * 3
+        let rows = CGFloat(historyVisibleRows)
+        return DictationHistoryListView.rowHeight * rows + tableRowGap * rows
     }
 
     private func buildHistorySection() -> NSView {
@@ -778,7 +556,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         historyListScroll.borderType = .noBorder
         historyListScroll.drawsBackground = false
         historyListScroll.translatesAutoresizingMaskIntoConstraints = false
-        // Sized so three §6.5 row cards are visible before scrolling. The 220
+        // Sized so whole §6.5 row cards are visible before scrolling. The 220
         // this replaces showed ~4.8 of the 46pt label rows the cards replaced;
         // keeping it would have shown 2.8 cards, i.e. a clipped third row that
         // reads as a rendering bug rather than as "scroll for more".
@@ -795,11 +573,43 @@ final class DictationController: NSViewController, DaylightDrillActions {
         return historyPanel
     }
 
-    private func buildFootnote() {
-        footnoteLabel.stringValue = "Recording, transcription, and pasting all happen on-device - only the optional \"Clean up my sentences\" rewrite above needs network access."
-        footnoteLabel.font = HelmType.caption()
-        footnoteLabel.preferredMaxLayoutWidth = 620
-        footnoteLabel.translatesAutoresizingMaskIntoConstraints = false
+    /// Words I use often beside Recent Dictations. Starts side by side;
+    /// `layoutLibraryRow` stacks them on a narrow page. Side by side the two
+    /// are equal widths, each its own height from the top, and the row as
+    /// tall as the taller. Every text column inside yields, so the pair is
+    /// never a window-width floor (gotcha (13)).
+    private func buildLibraryRow() {
+        libraryRow.translatesAutoresizingMaskIntoConstraints = false
+        let words = vocabularyPanel
+        let recent = historyPanel
+        for card in [words, recent] {
+            card.translatesAutoresizingMaskIntoConstraints = false
+            libraryRow.addSubview(card)
+        }
+        let gap = Self.libraryGap
+        NSLayoutConstraint.activate([
+            words.leadingAnchor.constraint(equalTo: libraryRow.leadingAnchor),
+            words.topAnchor.constraint(equalTo: libraryRow.topAnchor),
+            recent.trailingAnchor.constraint(equalTo: libraryRow.trailingAnchor),
+        ])
+        librarySideBySide = [
+            recent.topAnchor.constraint(equalTo: libraryRow.topAnchor),
+            recent.leadingAnchor.constraint(equalTo: words.trailingAnchor, constant: gap),
+            words.widthAnchor.constraint(equalTo: recent.widthAnchor),
+            libraryRow.bottomAnchor.constraint(greaterThanOrEqualTo: words.bottomAnchor),
+            libraryRow.bottomAnchor.constraint(greaterThanOrEqualTo: recent.bottomAnchor),
+        ]
+        // As short as the taller card allows, under every content priority.
+        let hug = libraryRow.heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(240)
+        librarySideBySide.append(hug)
+        libraryStacked = [
+            words.trailingAnchor.constraint(equalTo: libraryRow.trailingAnchor),
+            recent.leadingAnchor.constraint(equalTo: libraryRow.leadingAnchor),
+            recent.topAnchor.constraint(equalTo: words.bottomAnchor, constant: gap),
+            libraryRow.bottomAnchor.constraint(equalTo: recent.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(librarySideBySide)
     }
 
     // MARK: Rendering
@@ -808,50 +618,47 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // UXP-16: "Reset to Right ⌥ Option" only when there is something to
         // reset - it used to show while the chord already was the default.
         shortcutResetButton.isHidden = shortcutRecorder.shortcut == .dictationDefault
-        statusWord.setAccessibilityLabel("Dictation status: \(status.title)")
-        statusDetailLabel.stringValue = status.detail(shortcutDisplay: shortcutRecorder.shortcut.displayString)
-
-        switch status {
-        case .needsMicrophone:
-            statusActionButton.title = "Request Access"
-            statusActionButton.toolTip = "Request Microphone Access"
-            statusActionButton.setAccessibilityLabel("Request Microphone Access")
-            statusActionButton.isHidden = false
-            statusChip.isHidden = true
-        case .needsSpeechRecognition:
-            statusActionButton.title = "Request Access"
-            statusActionButton.toolTip = "Request Speech Recognition Access"
-            statusActionButton.setAccessibilityLabel("Request Speech Recognition Access")
-            statusActionButton.isHidden = false
-            statusChip.isHidden = true
-        case .needsAccessibility:
-            statusActionButton.title = "Request Access"
-            statusActionButton.toolTip = "Request Accessibility Access"
-            statusActionButton.setAccessibilityLabel("Request Accessibility Access")
-            statusActionButton.isHidden = false
-            statusChip.isHidden = true
-        case .copiedOnly:
-            // Same offer as `.needsAccessibility` - a real trust check just
-            // came back false, so re-requesting (or, per the detail copy
-            // above, removing and re-adding the System Settings row) is the
-            // same actionable next step either way.
-            statusActionButton.title = "Request Access"
-            statusActionButton.toolTip = "Request Accessibility Access"
-            statusActionButton.setAccessibilityLabel("Request Accessibility Access")
-            statusActionButton.isHidden = false
-            statusChip.isHidden = true
-        case .ready:
-            // The reviewed prototype's "On device" chip - shown only once
-            // ready, since `.cleaningUp` genuinely does reach the network
-            // (the claude CLI rewrite pass) and would make the claim false.
-            statusActionButton.isHidden = true
-            statusChip.isHidden = false
-        case .recording, .transcribing, .cleaningUp, .didNotCatchThat, .systemDictationDisabled:
-            statusActionButton.isHidden = true
-            statusChip.isHidden = true
-        }
+        renderHero()
         applyActionEmphasis()
         applyTheme()
+    }
+
+    /// The panel, from the page's whole state: the permission status, the
+    /// shortcut, the two toggles, the model and the two counts. Called
+    /// whenever any of them changes, and on a theme change for the amber.
+    private func renderHero() {
+        let words = DictationHeroWords.make(
+            status: status, shortcutDisplay: shortcutRecorder.shortcut.displayString,
+            localWhisperEnabled: localWhisperSwitch.isOn, cleanupEnabled: cleanupSwitch.isOn,
+            model: modelState, modelBytes: WhisperModelManager.shared.downloadedByteCount,
+            words: store.vocabulary.count, dictations: store.history.count)
+        heroWords = words
+        let foot: HelmButton
+        switch words.action {
+        case .requestAccess(let permission):
+            statusActionButton.toolTip = "Request \(permission) Access"
+            statusActionButton.setAccessibilityLabel("Request \(permission) Access")
+            statusActionButton.isHidden = false
+            foot = statusActionButton
+        case .recheck:
+            statusActionButton.isHidden = true
+            foot = recheckButton
+        }
+        heroCard.panel.configure(header: .init(symbol: "mic.fill", kicker: words.kicker, headline: words.headline,
+                                               body: words.body, ring: words.ring),
+                                 sections: [], foot: [foot], tone: heroTone(words.tone))
+    }
+
+    /// The board's one second tone: the theme's own amber while the captain
+    /// has to grant something, the accent otherwise.
+    private func heroTone(_ tone: DictationHeroWords.Tone) -> HelmModuleCard.HeroTone {
+        switch tone {
+        case .accent:
+            return HelmModuleCard.HeroTone(colour: .themeAccent)
+        case .amber:
+            let rgb = HelmContrast.components(HelmTheme.nsColor(theme.ansiHex[3]))
+            return HelmModuleCard.HeroTone(colour: .fixed(red: rgb.0, green: rgb.1, blue: rgb.2))
+        }
     }
 
     private func applyTheme() {
@@ -861,7 +668,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
                                     hue: RailDestination.dictation.domainHue)
 
         // GL-32 (audit §6.1): the history rows grow with the chrome text
-        // scale, so the box that shows three of them has to follow.
+        // scale, so the box that shows four of them has to follow.
         historyScrollHeight?.constant = Self.historyScrollHeight()
         // Bug fix (fm/grandline-dictation-global-hotkey-and-theme-fixes):
         // the root view had `wantsLayer = true` (`loadView`) but this method
@@ -874,47 +681,35 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // screenshot showed this as a mismatched brown/maroon color between
         // cards. Setting it here, matching every sibling page.
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        statusPanel.applyTheme(theme)
-        shortcutPanel.applyTheme(theme)
+        heroCard.applyTheme(theme)
+        controlsTitle.attributedStringValue = NSAttributedString(
+            string: "Controls".uppercased(), attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+        for row in controlRows { row.applyTheme(theme) }
+        for rule in controlRules { rule.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor }
         vocabularyPanel.applyTheme(theme)
         historyPanel.applyTheme(theme)
-        // A state that asks for an action is a pill; every other is a dot
-        // and a word (UI-43's rule).
-        statusWord.configure(text: status.title, tint: status.tint,
-                             style: statusActionButton.isHidden ? .dotWord : .pill, theme: theme)
         cleanupSwitch.applyTheme(theme)
         localWhisperSwitch.applyTheme(theme)
-        statusDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        statusChip.configure(text: "On device", tint: .good, theme: theme)
         shortcutRecorder.applyTheme(theme)
-        shortcutDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        cleanupPanel.applyTheme(theme)
-        cleanupTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        cleanupDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        localWhisperPanel.applyTheme(theme)
-        localWhisperTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        localWhisperDetailLabel.textColor = HelmTheme.mutedInk(theme)
-        modelStatusLabel.textColor = HelmTheme.mutedInk(theme)
-        modelReadyPill.configure(text: "Model ready", tint: .good, theme: theme)
+        modelReadyPill.configure(text: "Ready", tint: .good, theme: theme)
         // `HelmChipInput` carries its own `ThemeManager` observation (and its
         // own focus registration) - this call only keeps it right if it was
         // built between two theme changes.
         vocabularyInput.applyTheme(theme)
-        for header in [statusHeader, shortcutHeader, cleanupHeader, localWhisperHeader, vocabularyHeader, historyHeader] {
+        for header in [vocabularyHeader, historyHeader] {
             header.applyTheme(theme)
         }
         historyListView.applyTheme(theme)
-        footnoteLabel.textColor = HelmTheme.mutedInk(theme)
     }
 
     /// Renders the model download/status row from `modelState` - called
     /// immediately on `WhisperModelManager.observe` registration and on
     /// every subsequent state change while this page is visible.
     private func renderLocalWhisperSection() {
+        let detail: String
         switch modelState {
         case .notDownloaded:
-            modelStatusLabel.stringValue = "Model not downloaded (~547MB)"
-            modelStatusLabel.isHidden = false
+            detail = "Not downloaded yet, about 547 MB. Until it is, dictation uses Apple Speech."
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Download Model"
@@ -922,8 +717,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .downloading(let progress):
-            modelStatusLabel.stringValue = "Downloading… \(Int(progress * 100))%"
-            modelStatusLabel.isHidden = false
+            detail = "Downloading\u{2026} \(Int(progress * 100))%"
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = false
             modelProgressBar.configure(fraction: progress)
@@ -932,11 +726,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true
         case .ready:
-            // The reviewed prototype's "Model ready" chip - this is the one
-            // state it actually depicts, so it's the one state that gets
-            // the pill treatment; every other state keeps the existing
-            // plain (longer, dynamic) text.
-            modelStatusLabel.isHidden = true
+            let size = WhisperModelManager.shared.downloadedByteCount
+                .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+            detail = "large-v3-turbo" + (size.map { ", \($0) on this Mac." } ?? " on this Mac.")
             modelReadyPill.isHidden = false
             modelProgressBar.isHidden = true
             // UI-53: the model is already here, so re-fetching it is not the
@@ -946,8 +738,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = false
         case .failed(let message):
-            modelStatusLabel.stringValue = "Download failed: \(message)"
-            modelStatusLabel.isHidden = false
+            detail = "Download failed: \(message)"
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = true
             modelActionButton.title = "Retry Download"
@@ -957,6 +748,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
             // - so this follows the file, not the state's name.
             modelDeleteButton.isHidden = WhisperModelManager.shared.downloadedByteCount == nil
         }
+        modelRow.descriptionLabel?.stringValue = detail
+        modelRow.descriptionLabel?.toolTip = detail
+        view.needsLayout = true
+        renderHero()
         applyActionEmphasis()
         applyTheme()
     }
@@ -966,12 +761,15 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private var modelActionIsMain = false
 
     /// UXP-08: one primary on the page. A missing permission blocks
-    /// dictation outright, so while the status card asks for one, its button
-    /// is the primary and the model download steps down to secondary. Found
+    /// dictation outright, so while the panel asks for one, its Request Access
+    /// pill is the call to action and the model download steps down to
+    /// secondary. Found
     /// by CI's window-backed lane, on a runner with neither the permission
     /// nor the model: two filled buttons at once.
     private func applyActionEmphasis() {
-        let variant: HelmButton.Variant = modelActionIsMain && statusActionButton.isHidden ? .primary : .secondary
+        let permissionMissing: Bool
+        if case .requestAccess? = heroWords?.action { permissionMissing = true } else { permissionMissing = false }
+        let variant: HelmButton.Variant = modelActionIsMain && !permissionMissing ? .primary : .secondary
         if modelActionButton.variant != variant { modelActionButton.variant = variant }
         // R2-UX-04: in the sidebar layout the main action is the toolbar's,
         // and the card's own button steps out while the toolbar carries it.
@@ -995,6 +793,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         vocabularyHeader.configure(leading: .tile(symbol: "text.quote", tint: .good), title: "Words I use often",
                                    count: "\(words.count)", subline: "A hint on your next recording")
         vocabularyInput.setTokens(words)
+        renderHero()
         onDrillSubtitleChanged?()
     }
 
@@ -1030,6 +829,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
                                 title: "Recent Dictations", count: "\(store.history.count)",
                                 subline: "What you said lately, kept on this Mac")
         historyListView.setEntries(store.history)
+        renderHero()
         onDrillSubtitleChanged?()
     }
 
@@ -1062,12 +862,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
     @objc private func cleanupToggled() {
         AppSettings.shared.dictationCleanupEnabled = cleanupSwitch.isOn
+        renderHero()
     }
 
     @objc private func localWhisperToggled() {
         let enabled = localWhisperSwitch.isOn
         AppSettings.shared.dictationLocalWhisperEnabled = enabled
         onLocalWhisperEnabledChanged?(enabled)
+        renderHero()
     }
 
     /// The one download/cancel/retry button for the model row - its exact
@@ -1129,10 +931,6 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// suite drives the real well on the real page and checks the real store.
     var debugVocabularyInput: HelmChipInput { vocabularyInput }
     var debugHistoryList: DictationHistoryListView { historyListView }
-    var debugStatusShortcutRow: NSStackView { statusShortcutRow }
-    var debugCards: [HelmCard] {
-        [statusPanel, shortcutPanel, cleanupPanel, localWhisperPanel, vocabularyPanel, historyPanel]
-    }
     func debugSetStatus(_ status: DictationStatus) { setStatus(status) }
     /// UXP-08: put the model row into a state, as `WhisperModelManager`'s
     /// observation would.
@@ -1140,36 +938,36 @@ final class DictationController: NSViewController, DaylightDrillActions {
         modelState = state
         renderLocalWhisperSection()
     }
+    /// Set the two toggles for a render, without writing the preferences.
+    func debugSetToggles(cleanup: Bool, localWhisper: Bool) {
+        cleanupSwitch.isOn = cleanup
+        localWhisperSwitch.isOn = localWhisper
+        renderHero()
+    }
     var debugModelActionVariant: HelmButton.Variant { modelActionButton.variant }
     func debugRenderVocabulary() { renderVocabulary() }
     /// The chip's rendered frame - review #3's B10 is a *width*, and the
     /// property that was wrong (`setContentHuggingPriority` on a view with no
     /// intrinsic size) reads as correct from the outside.
     var debugModelReadyPillFrame: NSRect { modelReadyPill.frame }
-    /// Review bug B10: the Status card's own frame and the wrapping detail
-    /// label's resolved width, which are the two numbers the defect is about.
-    var debugStatusCardFrame: NSRect { statusPanel.frame }
-    var debugStatusWordText: String { statusWord.label.stringValue }
+    /// Dic-1: the split card, its words, and the rows on its own surface.
+    var debugHeroCard: HelmHeroSplitCard { heroCard }
+    var debugHeroWords: DictationHeroWords? { heroWords }
+    var debugControlRows: [SettingsRow] { controlRows }
+    var debugModelRow: SettingsRow { modelRow }
+    var debugLibraryRow: NSView { libraryRow }
+    var debugVocabularyCard: HelmCard { vocabularyPanel }
+    var debugHistoryCard: HelmCard { historyPanel }
     var debugStatusActionButton: HelmButton { statusActionButton }
-    var debugStatusDetailFrame: NSRect { statusDetailLabel.frame }
-    /// The height the detail sentence needs at the width it was given, so a
-    /// suite can tell a wrapped sentence from a clipped one.
-    var debugStatusDetailNeededHeight: CGFloat {
-        ceil(statusDetailLabel.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: statusDetailLabel.frame.width,
-                                                               height: 10_000)).height ?? 0)
-    }
-    /// Whether the detail sentence's bottom is inside its card's bounds.
-    var debugStatusDetailInsideCard: Bool {
-        let inCard = statusDetailLabel.convert(statusDetailLabel.bounds, to: statusPanel)
-        return statusPanel.bounds.insetBy(dx: -0.5, dy: -0.5).contains(inCard)
-    }
-    var debugStatusDetailMaxLayoutWidth: CGFloat { statusDetailLabel.preferredMaxLayoutWidth }
-    var debugStatusRowWidth: CGFloat { (statusTextStack.superview as? NSStackView)?.bounds.width ?? -1 }
-    var debugStatusStackWidth: CGFloat { statusTextStack.bounds.width }
-    var debugAvailableDetailWidth: CGFloat { availableDetailWidth(for: statusTextStack) }
-    var debugPageWidth: CGFloat { view.bounds.width }
-    /// The floor `availableDetailWidth` applies, so the suite asserts against
-    /// the real number rather than re-declaring it.
+    var debugRecheckButton: HelmButton { recheckButton }
+    var debugShortcutRecorder: KeyChordRecorderView { shortcutRecorder }
+    var debugCleanupSwitch: HelmToggle { cleanupSwitch }
+    var debugLocalWhisperSwitch: HelmToggle { localWhisperSwitch }
+    var debugModelActionButton: HelmButton { modelActionButton }
+    var debugModelDeleteButton: HelmButton { modelDeleteButton }
+    var debugModelProgressBar: HelmProgressBar { modelProgressBar }
+    /// The floor the description re-wrap applies, so the suite asserts
+    /// against the real number rather than re-declaring it.
     static var debugDetailMinimumWidth: CGFloat { detailMinimumWidth }
     #endif
 

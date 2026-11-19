@@ -183,3 +183,40 @@
   So Apple's `codesign` has not yet signed with the CA-issued identity on any machine. `setup`'s last step does exactly that with a scratch bundle and refuses to report success if the requirement does not hold.
   That `tccd` records the explicit requirement for a new grant, and keeps honouring it after the leaf is reissued, follows from it storing the designated requirement and evaluating it with the same check measured above, but it was not observed, because that needs a real grant.
   The Keychain prompts for saved SSH keys after the move were not observed either.
+
+- **`fm/grand-line-dictation-dic1` puts the Dictation page in the hero language: Dic-1 from the second page-redesign board, "Split card: status beside the controls".**
+  The captain picked it from `data/grand-line-page-redesign-mockups-2/` (Dic-1 of four).
+
+  **The change.**
+  The Status, Shortcut, Cleanup and Local Whisper Engine cards are one `HelmHeroSplitCard`.
+  The gradient panel says what the Status card said: the verdict ("Ready. Hold Right ⌥ anywhere to dictate."), a line naming the engine and counting the library, the local model as the ring (a tick when ready, the percentage while it downloads, dimmed when it is absent or the engine is off), and Re-check permissions as its pill.
+  While a permission is missing the panel is the theme's amber and the pill is Request Access, which runs the same `statusActionTapped` the card's button did.
+  The words are `DictationHeroWords`, pure, so every state is asserted headless in `DictationDataSelfTest`.
+  The card's own half holds the four controls as `SettingsRow`s: the recorder with Reset to Right ⌥ Option, Clean up my sentences, Use local Whisper engine, and the model row (indented under the engine, never dimmed) with its action and its "⋯" menu.
+  Words I use often and Recent Dictations sit side by side under it, one above the other below two 400pt columns, and Recent shows four rows where it showed three.
+  Every control and action is the one the cards had. UXP-08's rule holds: while a permission is missing the model's Download is not a primary, because the amber panel's pill is the page's call to action.
+
+  **A kit change.**
+  The report said Dic-1 needed nothing new, naming `HelmModuleCard.heroSplit`, but that body's detail half only draws a usage report, a skeleton or a note, and a module card is one click target with a header.
+  Automic Vault's S-1 card had already drawn the split frame as page code (`VaultHeroSplitView`), so rather than a second copy the frame moved into the kit as `HelmHeroSplitCard` (Helm 7.1.0) and Vault's card is built on it with its `.band` panel, unchanged.
+  `HelmHeroColumn` gained `.panel`, the mockup's panel: the words at the hero card's 22pt with the pills under them, and the 86pt ring with its caption under it on the right, as the module card's wide split panel draws it.
+  Its body has no line cap, because the copied-not-pasted guidance is several sentences and the panel says all of it.
+  `Ring.isDimmed` draws the absent model.
+
+  **Two defects the renders caught.**
+  A lone pill in the panel's foot stretched across the whole panel, because the foot row's hugging was set with the content-priority API, a no-op on a stack (gotcha (12)).
+  And the library row was first an `NSStackView` that flipped its orientation on a narrow page: after a narrow-then-wide resize both cards stayed at the taller one's height, the Words well a tall empty box.
+  It is now a plain view with two constraint sets, the same shape the split card uses.
+  Both are checks in `DictationStatusCardLayoutSelfTest` now, confirmed by injection: dropping both huggings fails "the pill is 282pt wide for 167pt of content", and an equal-height constraint fails "back at 1512 Words is 376pt beside Recent's 376pt".
+
+  **Dropped.**
+  The footnote under the page ("Recording, transcription, and pasting all happen on-device...") is gone, as in the mockup: the kicker says On device, and the cleanup row says what it sends to Claude.
+
+  **Verified.**
+  `DictationStatusCardLayoutSelfTest` (window-backed, already in `NEEDS_SESSION`) keeps the B10 checks against the new owners of the wrapping text and asserts the card in the real sidebar shell: the words, tone, ring and pill per state, the controls' wiring, the 1100 and 960 windows, and the empty states.
+  Injecting an always-accent tone fails it and `DictationDataSelfTest` by name.
+  `FM_DICTATION_RENDER_DIR` writes the renders: seven states, 1512 and 1100, Daylight and Dusk.
+  `DaylightDrillPageSlice5SelfTest`'s "no in-page hero titles" check now skips labels on a hero gradient: the verdict is the board's language, not a second page title, and the check still runs everywhere off the gradient.
+
+  **Not verified here.**
+  The page was not opened in the captain's running app, and no real permission was requested or granted. The permission states were driven through `debugSetStatus`.
