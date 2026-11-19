@@ -132,6 +132,10 @@ enum ReviewTourLab {
         /// through the same path its card's pills take. Give it a `wait`
         /// before the next `render`: the page is async.
         case calendarView(ShiftCalendarScale)
+        /// `calendar fold|open|next|previous`: the sidebar layout's Cal-8
+        /// heads, through their own buttons - the tray head's fold button,
+        /// and the month head's arrows.
+        case calendarHead(String)
         /// Put one top-bar square into a state a click or a pointer would:
         /// `bar hover <target>`, `bar press <target>`, or `bar rest` to put
         /// every square back. A target is a destination's raw value, or
@@ -449,6 +453,7 @@ enum ReviewTourLab {
             guard !argument.isEmpty else { return .failure(.missingArgument("renderwhen")) }
             return .success(.renderWhen(argument))
         case "calendar":
+            if ["fold", "open", "next", "previous"].contains(argument) { return .success(.calendarHead(argument)) }
             guard let scale = ShiftCalendarScale.allCases.first(where: { $0.title.lowercased() == argument }) else {
                 return .failure(.badArgument(argument))
             }
@@ -721,6 +726,20 @@ enum ReviewTourLab {
                 shell.workspace.shift.calendar.debugCalendarView.show(scale: scale)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("calendar \(scale.title.lowercased())")
+            case .calendarHead(let action):
+                let calendarView = shell.workspace.shift.calendar.debugCalendarView
+                guard let head = calendarView.debugHeroHead, let tray = calendarView.debugTrayHead else {
+                    log.append("calendar \(action) FAILED - the calendar draws no heads (sidebar layout only)")
+                    continue
+                }
+                switch action {
+                case "next": head.debugButtons.next.performClick(nil)
+                case "previous": head.debugButtons.previous.performClick(nil)
+                default:
+                    if tray.isCollapsed != (action == "fold") { tray.debugToggleButton?.performClick(nil) }
+                }
+                shell.view.layoutSubtreeIfNeeded()
+                log.append("calendar \(action)")
             case .barState(let state, let target):
                 guard let classic = shell as? AppShellController else {
                     log.append("bar \(state.rawValue) FAILED - there is no floating bar in the sidebar layout")
@@ -2085,6 +2104,18 @@ enum ReviewTourLab {
                                 width: visible.width / max(webView.bounds.width, 1) * image.size.width,
                                 height: visible.height / max(webView.bounds.height, 1) * image.size.height)
             image.draw(in: rect, from: source, operation: .sourceOver, fraction: 1)
+            // A native view drawn over the page - the Calendar's Cal-8
+            // heads - is a later sibling of the web view, and the snapshot
+            // just covered it, so it goes back on top.
+            let above = webView.superview?.subviews.drop { $0 !== webView }.dropFirst() ?? []
+            for view in above where !view.isHiddenOrHasHiddenAncestor && view.bounds.width > 0 {
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let r = view.convert(view.bounds, to: nil)
+                rep.draw(in: NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale,
+                                    height: r.height * scale),
+                         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+            }
         }
         NSGraphicsContext.restoreGraphicsState()
         guard let data = composite.representation(using: .png, properties: [:]) else { return false }

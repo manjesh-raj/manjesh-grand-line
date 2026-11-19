@@ -12,6 +12,8 @@
 //     buttons, the period's title, the view pills, the weekday row and the
 //     legend - is this file's, because Schedule-X's own header is a Today
 //     button, a view menu and a date field rather than the captain's design.
+//     In the sidebar layout that header and the tray's are native views
+//     over the page instead (Cal-8, `setHeads`), and the page makes room.
 //   - It does not own a single record. Every event (a task or a follow-up)
 //     arrives from the native side
 //     (`setEvents`), and a drop only *asks* the native side to move the task
@@ -444,6 +446,29 @@ function selectView(view) {
   // may not move the range and Schedule-X then reports nothing. The native
   // side still needs to hear which view is showing.
   postRange(controls.getRange())
+}
+
+// MARK: The native heads (Cal-8)
+//
+// In the sidebar layout the card's head and the tray's are native views drawn
+// over this page (`ShiftCalendarHeroHead`, `ShiftCalendarTrayHead`), fused to
+// the top of each. The native side says how tall each one is, and the page
+// leaves exactly that much of the card's and the tray's top to it, hides its
+// own header and weekday row, and squares the two cards' top corners
+// (`html.gl-hero` in task-calendar.css). The heads' arrows reach `step`
+// through the bridge, so they page the way the card's own arrows did.
+
+function cssPixels(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0 ? n + 'px' : '0px'
+}
+
+function setHeads(heads) {
+  const root = document.documentElement
+  const on = !!heads.on
+  root.classList.toggle('gl-hero', on)
+  root.style.setProperty('--gl-hero-card', on ? cssPixels(heads.card) : '0px')
+  root.style.setProperty('--gl-hero-tray', on ? cssPixels(heads.tray) : '0px')
 }
 
 function wireHeader() {
@@ -1067,6 +1092,9 @@ window.GrandLineTaskCalendar = {
     if (calendar) return { alreadyMounted: true }
     locale = payload.locale || 'en-US'
     firstDayOfWeek = payload.firstDayOfWeek || 1
+    // Which of the month grid's columns are the weekend
+    // (task-calendar.css's `data-first-day` rules).
+    document.documentElement.dataset.firstDay = String(firstDayOfWeek)
     if (payload.theme) applyTheme(payload.theme)
     mount(payload)
     return {}
@@ -1108,6 +1136,17 @@ window.GrandLineTaskCalendar = {
 
   showDate: guarded((payload) => {
     controls.setDate(Temporal.PlainDate.from(payload.date))
+  }),
+
+  // The native head's previous and next arrows: the card's own `step`.
+  step: guarded((payload) => {
+    step(payload.direction < 0 ? -1 : 1)
+  }),
+
+  // The native heads' heights, or `on: false` for the page's own header.
+  setHeads: guarded((payload) => {
+    setHeads(payload)
+    return { on: document.documentElement.classList.contains('gl-hero') }
   }),
 
   // Paused while the destination is hidden: the now-line's once-a-minute
@@ -1180,6 +1219,25 @@ window.GrandLineTaskCalendar = {
       quickAddDay: document.getElementById('gl-quick-add').dataset.day || null,
       quickAddFocused: document.activeElement === document.getElementById('gl-quick-add-input'),
       quickAddPills: Array.from(document.querySelectorAll('#gl-quick-add-pills .gl-quick-add-pill')).map((el) => el.textContent),
+      // The native heads (Cal-8), as the page laid itself out around them:
+      // the card's and the tray's rectangles, whether the page's own header
+      // and weekday row still draw, a week's day numbers, and each
+      // of that week's cell fills, so a caller can see the weekend shaded.
+      // The second week, which is always the month's own days.
+      hero: document.documentElement.classList.contains('gl-hero'),
+      headVisible: getComputedStyle(document.querySelector('.gl-head')).display !== 'none',
+      weekdaysVisible: visible('gl-weekdays'),
+      cardRect: rectOf(document.getElementById('gl-card')),
+      trayRect: visible('gl-tray') ? rectOf(document.getElementById('gl-tray')) : null,
+      trayHeadVisible: getComputedStyle(document.querySelector('.gl-tray-head')).display !== 'none',
+      trayToggleVisible: visible('gl-tray-toggle'),
+      cardTopRadius: getComputedStyle(document.getElementById('gl-card')).borderTopLeftRadius,
+      weekNumbers: Array.from((document.querySelectorAll('.sx__month-grid-week')[1] || { children: [] }).children).map(
+        (el) => rectOf(el.querySelector('.sx__month-grid-day__header-date')),
+      ),
+      weekFills: Array.from((document.querySelectorAll('.sx__month-grid-week')[1] || { children: [] }).children).map(
+        (el) => getComputedStyle(el, '::before').backgroundColor,
+      ),
     }
   }),
 }

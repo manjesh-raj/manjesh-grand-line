@@ -167,10 +167,13 @@ final class TaskCalendarController: NSViewController {
     var scale: ShiftCalendarScale { calendarView.scale }
     func show(scale: ShiftCalendarScale) { calendarView.show(scale: scale) }
     func showToday() { calendarView.showToday() }
-    /// The sidebar layout's toolbar carries Today and the periods.
+    /// The sidebar layout's toolbar carries Today and the periods, and its
+    /// card wears Cal-8's hero head in place of the page's own header, as
+    /// T-4's bands are the sidebar layout's too.
     func setPeriodControlsInToolbar(_ inToolbar: Bool) {
         _ = view
         calendarView.periodControlsInToolbar = inToolbar
+        calendarView.drawsHeroHead = inToolbar
     }
 
     /// The visible period's own count, or its stated absence (GL-14). The

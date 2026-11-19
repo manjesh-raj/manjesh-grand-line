@@ -956,3 +956,54 @@ Confirmed to catch a regression:
 | Injection | What failed |
 |---|---|
 | `tray` sends the old `empty` payload again | The payload check, and all four views in the view suite (Month, Week and Day drew the card, and all four dimmed the grid) |
+
+## Cal-8: the month card wears the hero (`fm/grand-line-calendar-cal8`)
+
+The captain's Calendar pick from the second page-redesign board (`data/grand-line-page-redesign-mockups-2/`).
+In the sidebar layout the calendar card's head is now a native hero band fused to the top of the card, and the Unscheduled panel's head is T-4's amber lane band.
+The floating bar's calendar keeps the page's own header, as T-4 is sidebar-only too.
+
+### What shipped
+
+- `ShiftCalendarHero.swift` holds three pieces.
+  `ShiftCalendarHeroWords` is pure and gives the kicker, the period's title, the figures (This week, Overdue, Follow-ups, Unscheduled) and the dated ring.
+  `ShiftCalendarHeroHead` is the band, built on `HelmHeroSurface` with T-4's palette rule, `HelmKPIStrip` and `HelmButton` in `heroInk`, a `HelmRingGauge`, and the weekday names in the month grid.
+  `ShiftCalendarTrayHead` wraps `ShiftLaneHeroBand` in amber, with its ghost button as the fold button, and folds to a 44pt amber cap with the count and the expand button.
+- The heads are native views over the `WKWebView`, not above it.
+  The tray's head is shorter than the card's, so both cards' tops cannot be one web view edge.
+  The page is told each head's height (`setHeads`) and leaves exactly that much of each card's top to it (`html.gl-hero` in `task-calendar.css`), with the top border and corners squared.
+- The head's arrows call the page's own `step` through the bridge, and Today is `showToday`, so they page the way the card's own arrows do.
+- The title is computed natively from the page's focused day and range, rather than read from the page's `#gl-title`.
+- The page's month grid shades the weekend columns (`--gl-cell-weekend`, by `data-first-day`) and rings today's cell, under `html.gl-hero` only.
+  A cell a drag is over keeps its highlight.
+- No kit file changed, so there is no Helm version bump.
+  `HelmHeroColumn .band`, which the board's build note named, lays its ring caption beside the ring and its foot under the words, and has no row for weekday names, so the head is a page view on the same surface, as T-4's band is.
+
+### Decisions and traps
+
+- **Pin the heads only while they are drawn.**
+  With the heads' constraints always active, a hidden calendar whose pins the shell had released stayed 1080pt wide, held by the figures' compression resistance, and the R4-BUG-01 check ("a hidden calendar should collapse below 700pt") failed.
+  `headPins` are deactivated whenever the heads are hidden (gotcha (15)).
+- **Heights on a whole point.** Each head's height is its rows' fitting height, ceiled, so the card starts exactly where the head ends at 1x and 2x.
+- **Schedule-X slides a month in, and an occluded page pauses the slide.**
+  An off-screen test window is occluded, the page suspends (`html.gl-suspended` pauses animations), and the grid then reads 8% of its width to the right of where it settles.
+  The weekday-alignment check turns the page's animations off before it measures.
+- **The tour lab drew over the heads.** `ReviewTourLab` pasted each web view's snapshot after drawing the window, which covered any native view above the web view.
+  It now redraws the web view's later siblings on top.
+  The `calendar` verb also takes `fold`, `open`, `next` and `previous`, through the heads' own buttons.
+
+### Verification
+
+- `FM_RUN_SHIFT_CALENDAR_TESTS`: the title for each view, This week counted with both ends of the week, Overdue and Follow-ups from the page's summary when one is handed over, the dated ring, and no ring when nothing is open.
+  The bundle check now requires the `step` and `setHeads` entries and the stylesheet's hero rules.
+- `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS`, new case `checkHeroHeads`: the page hides its own header, weekday row, tray head and fold button; each head shares its card's edges and meets it on a whole point in the month, week and folded states, read from the page's rectangles; the weekday names sit within 1pt of the day numbers; a weekend cell is filled apart from a weekday; Next, Previous and Today page the calendar; the fold button folds and opens the tray; and without the heads the page's own header is back.
+- Also run: `FM_RUN_WEB_ISLAND_OWNERSHIP_TESTS`, `FM_RUN_MAIN_SPLIT_SHELL_TESTS`, `FM_RUN_REVIEW_TOUR_LAB_TESTS`, `FM_RUN_PAGE_REDESIGNS_TESTS`, `FM_RUN_E2E_TESTING_POLICY_TESTS`, `FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS`, `FM_RUN_CONTRAST_TESTS` and the source-guard suites, plus `Scripts/check-web-bundles.sh` and `swift build -c release`.
+  No full local run, per the captain's standing preference. CI is the gate.
+- Tour lab renders of Month, Week, Day and Agenda, the folded tray, an empty month and a 1100pt window, in Daylight and Dusk.
+
+Confirmed to catch a regression:
+
+| Injection | What failed |
+|---|---|
+| The tray's gap 14 to 12 | The month, week and folded seam checks, and three weekday-alignment checks |
+| This week counted from after the week's first instant | "this week should count three open tasks and a follow-up, 3" |

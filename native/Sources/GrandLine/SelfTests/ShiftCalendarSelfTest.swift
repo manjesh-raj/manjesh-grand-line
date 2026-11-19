@@ -27,6 +27,9 @@
 //      on a time slot takes the slot's time, a chip dropped on the tray loses
 //      its date (and a repeating one is refused), and a day's quick add reads
 //      its text into a title, a day, a time and a rule.
+//   9. **Cal-8's heads** name the period on screen for each view, and count
+//      this week, the overdue work, the follow-ups, the undated tasks and the
+//      dated ring the way the caption does.
 //
 // The page itself - rendering, a real drag, the theme reaching the DOM - is
 // `ShiftCalendarViewSelfTest`, which needs a window and so runs in the other
@@ -65,6 +68,7 @@ enum ShiftCalendarSelfTest {
         checkCompletedMonths(check)
         checkTrayDropRules(check)
         checkQuickAdd(check)
+        checkHeroWords(check)
 
         print(ok ? "ShiftCalendarSelfTest: OK" : "ShiftCalendarSelfTest: FAILURES")
         return ok
@@ -205,7 +209,7 @@ enum ShiftCalendarSelfTest {
         check(js.contains(ShiftCalendarWebView.messageHandlerName),
               "the bundle never posts to \(ShiftCalendarWebView.messageHandlerName)")
         for entry in ["configure", "setEvents", "setTray", "setTheme", "setView", "showDate", "setQuickAddHint",
-                      "suspend", "resume", "state"] {
+                      "suspend", "resume", "state", "step", "setHeads"] {
             check(js.contains("\(entry):"), "the committed bundle has no `\(entry)` bridge entry - rebuild it")
         }
         for message in ["ready", "error", "range", "open", "add", "move", "complete", "schedule", "place", "unschedule",
@@ -249,6 +253,11 @@ enum ShiftCalendarSelfTest {
                     && !css.contains(".sx__event.gl-projected{cursor:pointer"),
                   "the stylesheet should hold only fixed events in place")
             check(css.contains(".sx__event.gl-skipped{"), "the stylesheet draws no skipped date")
+            // Cal-8: under the native heads the page hides its own header and
+            // leaves the heads' room at the top of each card.
+            check(css.contains("html.gl-hero .gl-head") && css.contains("var(--gl-hero-card")
+                    && css.contains("var(--gl-hero-tray") && css.contains("var(--gl-cell-weekend)"),
+                  "the stylesheet has no room for Cal-8's heads - rebuild it")
             for variable in ShiftCalendarPalette.requiredVariables where variable.hasPrefix("--gl-") {
                 guard variable != "--gl-accent-ink", variable != "--gl-now-line" else { continue }
                 check(css.contains("var(\(variable))"), "the stylesheet never reads \(variable)")
@@ -1025,6 +1034,79 @@ enum ShiftCalendarSelfTest {
         if case .refused = ShiftCalendarReschedule.unschedule(task: done) {} else {
             check(false, "a finished task dropped on the tray must be refused")
         }
+    }
+
+    // MARK: 9. Cal-8's heads
+
+    private static func checkHeroWords(_ check: (Bool, String) -> Void) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        calendar.firstWeekday = 1
+        let locale = Locale(identifier: "en_US")
+        // Thursday 19 November 2026, at local noon so no runner's time zone
+        // lands the fixture on a boundary.
+        guard let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 19, hour: 12)) else {
+            check(false, "could not build the fixture's day")
+            return
+        }
+        func title(_ scale: ShiftCalendarScale, _ focus: String?, _ range: (String, String)?) -> String {
+            ShiftCalendarHeroWords.title(scale: scale, focusedDay: focus,
+                                         range: range.map { (start: $0.0, end: $0.1) },
+                                         now: now, calendar: calendar, locale: locale)
+        }
+        // The month grid's range spans the weeks either side; the title is
+        // the focused day's month, never the range's first.
+        check(title(.month, "2026-12-03", ("2026-11-29", "2027-01-09")) == "December 2026",
+              "the month grid should name the focused month, \(title(.month, "2026-12-03", ("2026-11-29", "2027-01-09")))")
+        check(title(.agenda, nil, nil) == "November 2026", "the agenda should name today's month by default")
+        let week = title(.week, "2026-11-19", ("2026-11-15", "2026-11-21"))
+        check(week.contains("15") && week.contains("21") && week.contains("Nov") && week.contains("2026"),
+              "the week view should name its range, \(week)")
+        check(title(.day, "2026-11-19", nil) == "Thursday, November 19, 2026",
+              "the day view should name the day, \(title(.day, "2026-11-19", nil))")
+
+        func task(_ title: String, due: String?, status: ShiftTaskStatus = .todo) -> ShiftTask {
+            var task = ShiftTask.fresh()
+            task.title = title
+            task.dueDate = due
+            task.status = status
+            return task
+        }
+        // This week (Sun 15 - Sat 21), both ends included: three open tasks
+        // and a follow-up; the finished one and the one next week do not
+        // count.
+        let tasks = [task("Sun", due: "2026-11-15"), task("Tue", due: "2026-11-17"), task("Sat", due: "2026-11-21"),
+                     task("Done", due: "2026-11-18", status: .completed), task("Next week", due: "2026-11-23"),
+                     task("Undated A", due: nil), task("Undated B", due: nil)]
+        var followUp = ShiftFollowUp.fresh()
+        followUp.followUpAt = "2026-11-20"
+        let tray = ShiftCalendarModel.tray(tasks: tasks, followUps: [followUp], projects: [], today: "2026-11-19",
+                                           calendar: calendar)
+        let head = ShiftCalendarHeroWords.head(scale: .month, focusedDay: "2026-11-19", range: nil, tasks: tasks,
+                                               followUps: [followUp], tray: tray, summary: nil, now: now,
+                                               calendar: calendar, locale: locale)
+        check(head.figures.thisWeek == 4, "this week should count three open tasks and a follow-up, \(head.figures.thisWeek)")
+        check(head.figures.overdue == 2, "the Sunday and Tuesday tasks are overdue, \(head.figures.overdue)")
+        check(head.figures.followUps == 1 && head.figures.unscheduled == 2,
+              "one follow-up and two undated tasks, got \(head.figures)")
+        check(head.ring == ShiftCalendarHeroWords.Ring(dated: 4, open: 6),
+              "the ring should be 4 of the 6 open tasks dated, \(String(describing: head.ring))")
+        check(head.kicker.hasPrefix("Calendar \u{00B7} "), "the kicker should be the calendar's, \(head.kicker)")
+        // The page's counts win when they are handed over, as they do for
+        // the caption, so the head and the Board's band agree.
+        let summary = ShiftStore.Summary(open: 9, dueToday: 0, overdue: 4, followUps: 2, overdueFollowUps: 0)
+        let counted = ShiftCalendarHeroWords.head(scale: .month, focusedDay: nil, range: nil, tasks: tasks,
+                                                  followUps: [followUp], tray: tray, summary: summary, now: now,
+                                                  calendar: calendar, locale: locale)
+        check(counted.figures.overdue == 4 && counted.figures.followUps == 2,
+              "the page's summary should give Overdue and Follow-ups, \(counted.figures)")
+        // Nothing open is no ring at all, never an empty one (GL-14).
+        let empty = ShiftCalendarHeroWords.head(scale: .month, focusedDay: nil, range: nil, tasks: [], followUps: [],
+                                                tray: ShiftCalendarTray(), summary: nil, now: now,
+                                                calendar: calendar, locale: locale)
+        check(empty.ring == nil, "with nothing open the head should draw no ring")
+        check(ShiftCalendarHeroWords.trayDetail(unscheduled: 0) != ShiftCalendarHeroWords.trayDetail(unscheduled: 2),
+              "an empty tray's head should say every task has a date")
     }
 
     private static func checkQuickAdd(_ check: (Bool, String) -> Void) {

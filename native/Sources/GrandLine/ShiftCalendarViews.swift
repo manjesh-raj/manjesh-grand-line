@@ -1144,7 +1144,9 @@ enum ShiftCalendarQuickAdd {
 /// view (`ShiftController.drillHeaderSubtitle`). The page draws its own card
 /// (the captain's raised card, with its header, the Day, Week, Month and
 /// Agenda pills, the weekday row and the legend), so this view only hosts it
-/// and fills whatever its page gives it. The page is not loaded until the
+/// and fills whatever its page gives it - except in the sidebar layout, where
+/// the card's head and the tray's are Cal-8's native heads over the page
+/// (`ShiftCalendarHero.swift`). The page is not loaded until the
 /// view is first shown, so a session that never opens the calendar pays
 /// nothing for it.
 final class ShiftCalendarView: NSView {
@@ -1206,6 +1208,20 @@ final class ShiftCalendarView: NSView {
 
     private let host = NSView()
     private let webView = ShiftCalendarWebView()
+    /// Cal-8's heads, over the page's card and its tray
+    /// (`ShiftCalendarHero.swift`). Drawn only in the sidebar layout
+    /// (`drawsHeroHead`) and once the page is up to make room for them.
+    private let heroHead = ShiftCalendarHeroHead()
+    private let trayHead = ShiftCalendarTrayHead()
+    private var trayHeadWidth: NSLayoutConstraint!
+    /// The heads' pins to the page, active only while they are drawn: a
+    /// hidden view stays in the constraint graph (gotcha (15)), and the
+    /// heads' figures would otherwise hold a page whose own pins the shell
+    /// has released at their natural width rather than letting it collapse.
+    private var headPins: [NSLayoutConstraint] = []
+    /// What the page was last told about the heads, so it is told again only
+    /// when that changes.
+    private var sentHeads: [String: AnyHashable]?
     /// Built only when this machine has no bundle, which is never on a
     /// normal install.
     private var missingBundleState: HelmEmptyState?
@@ -1267,6 +1283,7 @@ final class ShiftCalendarView: NSView {
             webView.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
+        buildHeads()
 
         webView.onReady = { [weak self] in self?.pageDidBecomeReady() }
         webView.onPageError = { message in
@@ -1283,6 +1300,7 @@ final class ShiftCalendarView: NSView {
             self.visibleRange = (start, end)
             self.focusedDay = self.webView.focusedDay
             self.pushEvents()
+            self.refreshHeads()
             self.onPeriodChanged?()
         }
         webView.onViewSelected = { [weak self] view in self?.adoptSelectedView(view) }
@@ -1398,10 +1416,102 @@ final class ShiftCalendarView: NSView {
             }
             self.isConfigured = true
             self.hideLoading()
-            // A reloaded page starts with its own controls again.
+            // A reloaded page starts with its own controls again, and with
+            // its own header rather than room for the heads.
             if self.periodControlsInToolbar { self.webView.setPeriodControlsHidden(true) }
+            self.sentHeads = nil
             self.pushEvents()
             self.pushTray()
+            self.refreshHeads()
+        }
+    }
+
+    // MARK: The heads (Cal-8)
+
+    /// Over the page, so the heads draw on top of the room it leaves them.
+    /// The month card's head spans the card, from the page's own margin to
+    /// the gap before the tray; the tray's head is the tray's width at the
+    /// page's other margin. Both sit at the page's top margin, which is where
+    /// the two cards would otherwise start.
+    private func buildHeads() {
+        for head in [heroHead, trayHead] as [NSView] {
+            head.isHidden = true
+            host.addSubview(head)
+        }
+        let insets = TaskCalendarController.cardInsets
+        trayHeadWidth = trayHead.widthAnchor.constraint(equalToConstant: trayHead.trayWidth)
+        headPins = [
+            heroHead.topAnchor.constraint(equalTo: host.topAnchor, constant: insets.top),
+            heroHead.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: insets.left),
+            heroHead.trailingAnchor.constraint(equalTo: trayHead.leadingAnchor, constant: -ShiftCalendarTrayHead.gap),
+            trayHead.topAnchor.constraint(equalTo: host.topAnchor, constant: insets.top),
+            trayHead.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -insets.right),
+        ]
+        trayHeadWidth.isActive = true
+        heroHead.onPrevious = { [weak self] in self?.step(-1) }
+        heroHead.onNext = { [weak self] in self?.step(1) }
+        heroHead.onToday = { [weak self] in self?.showToday() }
+        heroHead.onHeightChange = { [weak self] in self?.pushHeads() }
+        trayHead.onToggle = { [weak self] in
+            guard let self else { return }
+            self.setTrayCollapsed(!self.trayCollapsed)
+        }
+        trayHead.onHeightChange = { [weak self] in self?.pushHeads() }
+    }
+
+    /// Cal-8's heads in place of the page's own header: the sidebar
+    /// layout's calendar, which is where T-4's bands are too.
+    var drawsHeroHead = false {
+        didSet {
+            guard drawsHeroHead != oldValue else { return }
+            refreshHeads()
+        }
+    }
+
+    /// Re-fills both heads from what this view holds - the period, the
+    /// records, the tray and the page's counts - and tells the page what
+    /// room to leave them.
+    private func refreshHeads(now: Date = Date()) {
+        let showing = drawsHeroHead && isConfigured
+        heroHead.isHidden = !showing
+        trayHead.isHidden = !showing
+        if headPins.first?.isActive != showing {
+            if showing { NSLayoutConstraint.activate(headPins) } else { NSLayoutConstraint.deactivate(headPins) }
+        }
+        heroHead.configure(ShiftCalendarHeroWords.head(scale: scale, focusedDay: focusedDay, range: visibleRange,
+                                                       tasks: tasks, followUps: followUps, tray: tray,
+                                                       summary: pageSummary, now: now),
+                           scale: scale)
+        trayHead.configure(count: tray.unscheduledCount, collapsed: trayCollapsed)
+        if trayHeadWidth.constant != trayHead.trayWidth { trayHeadWidth.constant = trayHead.trayWidth }
+        pushHeads()
+    }
+
+    /// The heads' heights, for the page to leave that much of each card's
+    /// top. Only on a change, and only to a page that is up.
+    private func pushHeads() {
+        guard isConfigured else { return }
+        let on = drawsHeroHead
+        let heads: [String: AnyHashable] = on
+            ? ["on": true, "card": Double(heroHead.headHeight), "tray": Double(trayHead.headHeight)]
+            : ["on": false]
+        guard heads != sentHeads else { return }
+        sentHeads = heads
+        webView.call("setHeads", payload: heads) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: setHeads failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
+    /// The head's previous and next arrows, through the page's own step, so
+    /// they page the way the card's own arrows do.
+    private func step(_ direction: Int) {
+        guard isConfigured else { return }
+        webView.call("step", payload: ["direction": direction]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: step failed: \(error.message, privacy: .public)")
+            }
         }
     }
 
@@ -1430,8 +1540,10 @@ final class ShiftCalendarView: NSView {
         }
         guard selected != scale else { return }
         scale = selected
-        // The caption names the period ("this week"), so it follows the view.
+        // The caption names the period ("this week"), so it follows the view,
+        // and so does the head's title.
         refreshCaption()
+        refreshHeads()
         onPeriodChanged?()
     }
 
@@ -1456,6 +1568,7 @@ final class ShiftCalendarView: NSView {
         guard scale != self.scale else { return }
         self.scale = scale
         refreshCaption()
+        refreshHeads()
         onPeriodChanged?()
         guard isConfigured else { return }
         requestedScale = scale
@@ -1499,6 +1612,7 @@ final class ShiftCalendarView: NSView {
         if projectsChanged, colouring == .project { pushPalette() }
         pushEvents()
         pushTray()
+        refreshHeads()
     }
 
     /// Colours chips by priority or by project. The page gets the calendars
@@ -1556,6 +1670,7 @@ final class ShiftCalendarView: NSView {
         trayCollapsed = collapsed
         AppDefaults.store.set(collapsed, forKey: Self.trayCollapsedDefaultsKey)
         pushTray()
+        refreshHeads()
     }
 
     /// Recomputes the visible period's entries, states them in the caption,
@@ -1682,5 +1797,7 @@ final class ShiftCalendarView: NSView {
     var debugShowsMissingBundle: Bool { missingBundleState != nil }
     var debugEventIDs: [String] { lastEventsPayload.compactMap { $0["id"] as? String } }
     var debugTrayPayload: [String: Any] { lastTrayPayload }
+    var debugHeroHead: ShiftCalendarHeroHead? { heroHead.isHidden ? nil : heroHead }
+    var debugTrayHead: ShiftCalendarTrayHead? { trayHead.isHidden ? nil : trayHead }
     #endif
 }
