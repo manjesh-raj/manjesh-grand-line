@@ -163,3 +163,25 @@ The snippet store is git-synced and restorable from a `.glbackup`, which is the 
 - **Verified** by `StartupSnippetGateSelfTest.checkAMultiLineSnippetIsNeverTyped`, which failed on all three multi-line fixtures before the change.
   Typing `snippet.command` again at the send site fails the source guard by name.
   Not verified: a live multi-line snippet against a real host.
+
+## The Keys tab follows the Hosts tab (`fm/grand-line-connections-keys-tab`)
+
+The captain found the Keys tab compact next to Hosts: 76pt cards three to a row, a fingerprint cut to twelve characters, and Grid / List stopping short of the cards' trailing edge.
+The hero column was already there, because it is the page's, but it went on describing hosts and live sessions while Keys showed.
+
+- **The cards are C-1's.** `keysGrid` is built like `hostsGrid`: `roomyCardHeight`, `roomyMinimumCardWidth` and at most two to a row.
+  A card's subtitle is the whole fingerprint in the code face, truncated in the middle like a host's address, and the key type moved to the third line's chip.
+  `shortFingerprint` went with the old subtitle.
+- **The column follows the showing tab.** `renderHeroColumn` hands over to `renderKeysHeroColumn` (`HostsController+KeysHero.swift`) on Keys, and `select(tab:)` re-renders it.
+  The words are the pure `KeysHeroWords`: Touch ID and the key count, the last-used key, unused keys, and a ring of keys some host signs in with.
+  Recent keys carries a Copy pill per key, and Add a key carries Generate and Import, which run K2's own presets.
+  The foot is the same Keys / Snippets / Groups strip on both tabs (`heroFootFigures`).
+- **Recent moves like it does on Hosts.** With the column away, the grid draws Recent and All keys.
+  `heroColumnVisibilityChanged` now re-renders the keys too.
+- **The toolbar row is the Hosts row's shape.** The search takes the Hosts search's width, Touch ID follows it, and the spacer pushes Grid / List to the trailing edge.
+  The switch needed the same 252 width hug the Hosts switch has: a segmented control's pills stretch, so without it the switch took the row's slack.
+- The Keys row is narrower than the Hosts filter row, so the column survives the inspector opening at 1512 on Keys and goes at 1100.
+  The window-backed check uses a narrow window for that reason.
+- No kit file changed, so there is no Helm bump.
+- **Verified** by `PageHeroColumnsViewSelfTest`'s three Keys cases and `PageHeroColumnsSelfTest.checkKeysWords`, with renders through `FM_PAGE_HERO_RENDER_DIR` (`keys-<theme>-keys|empty-<width>.png`).
+  Snippets and the Commands destination were looked at and left alone.

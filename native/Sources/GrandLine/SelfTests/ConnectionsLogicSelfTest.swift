@@ -80,11 +80,16 @@ enum ConnectionsLogicSelfTest {
     // MARK: K4
 
     private static func checkKeyWords(_ ok: inout Bool) {
-        let short = HostsController.shortFingerprint("SHA256:abcdefghijklmnopqrstuvwxyz0123456789")
-        check(short == "SHA256:abcdefghijkl\u{2026}", "K4: the short fingerprint is \(short)", &ok)
-        check(HostsController.shortFingerprint("SHA256:abc") == "SHA256:abc", "K4: a short hash gains an ellipsis", &ok)
         check(HostsController.lastUsedText(nil) == "Never used", "K4: a key never used reads \(HostsController.lastUsedText(nil))", &ok)
         let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        // Recent keys: only a key a host has connected with, newest first.
+        func key(_ label: String, usedAgo: TimeInterval?) -> SSHKey {
+            SSHKey(label: label, type: .ed25519, publicKey: "ssh-ed25519 AAAA \(label)", fingerprint: "SHA256:\(label)",
+                   lastUsedAt: usedAgo.map { now.addingTimeInterval(-$0) })
+        }
+        let recent = HostsController.recentKeys([key("old", usedAgo: 9000), key("never", usedAgo: nil),
+                                                 key("new", usedAgo: 60), key("mid", usedAgo: 600)], limit: 2)
+        check(recent.map(\.label) == ["new", "mid"], "Recent keys: read \(recent.map(\.label)), want new then mid", &ok)
         check(HostsController.lastUsedText(now.addingTimeInterval(-5), now: now) == "Used just now", "K4: a key used now reads otherwise", &ok)
     }
 

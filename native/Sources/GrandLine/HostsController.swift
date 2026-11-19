@@ -457,7 +457,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     lazy var hostsViewModeControl = makeViewModeControl()
     private(set) lazy var keysTable = Self.makeKeysTable()
     /// K1: the keys as cards, the same component as the hosts'.
-    private(set) lazy var keysGrid = HelmCardGrid()
+    /// C-1's roomy card, two to a row beside the hero column, like the hosts.
+    private(set) lazy var keysGrid = HelmCardGrid(cardHeight: HelmCardGrid.roomyCardHeight,
+                                                  minimumCardWidth: HelmCardGrid.roomyMinimumCardWidth,
+                                                  maximumColumns: 2)
     /// H2's switch on the Keys tab - the same stored choice.
     lazy var keysViewModeControl = makeViewModeControl()
     /// K3: key search, by name, type or fingerprint.
@@ -962,8 +965,12 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
             refreshDetailPanel()
             refreshExpansionPanel()
         }
-        // C-4: the column's room depends on the showing tab's top row.
-        if heroColumn != nil { refreshSplitColumn() }
+        // C-4: the column's room depends on the showing tab's top row, and
+        // its words follow the showing tab (Hosts or Keys).
+        if heroColumn != nil {
+            refreshSplitColumn()
+            renderHeroColumn()
+        }
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()

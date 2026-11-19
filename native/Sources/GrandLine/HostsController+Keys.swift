@@ -4,14 +4,24 @@
 // Termius-style plan), in the sidebar layout only.
 //
 // The Keys tab opens on one row - a search over the keys (K3), Touch ID's
-// reading as a chip (K6), and the same Grid / List switch as Hosts - over
-// the same `HelmCardGrid` the hosts use, with the table one click away.
+// reading as a chip (K6), and the same Grid / List switch as Hosts at the
+// row's trailing edge - over the same `HelmCardGrid` the hosts use, with the
+// table one click away.
+//
+// **The Keys tab is the Hosts tab's twin** (the captain's "keep the Keys tab
+// similar to Hosts"). Its cards are C-1's roomy 98pt card, two to a row
+// beside the hero column, and the column itself speaks for the keys while
+// this tab shows (`HostsController+KeysHero.swift`). Recent keys are the
+// column's job, and come back above All keys whenever the column is put
+// away, the way Recent hosts do.
 //
 // A key card says what the table's five columns said, in one glance (K4):
-// the type and a short fingerprint, how many hosts use it, a lock when its
-// passphrase is in the Keychain, a seal when it carries a certificate, and
-// when a host last connected with it (K5's `lastUsedAt`). Its icon buttons
-// copy the public key and edit the key.
+// its name, its whole fingerprint in the code face (cut in the middle, so
+// both ends survive), the type as a quiet chip, how many hosts use it, a
+// lock when its passphrase is in the Keychain, a seal when it carries a
+// certificate, and when a host last connected with it (K5's `lastUsedAt`).
+// Its icon buttons copy the public key and edit the key, in the action
+// column the host cards' bolt and pencil stand in.
 
 import AppKit
 
@@ -26,7 +36,9 @@ extension HostsController {
         let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
         collapsed.priority = .defaultLow
         collapsed.isActive = true
-        for view in [keySearchField, spacer, keysTouchID, keysViewModeControl] as [NSView] {
+        // The Hosts row's order: the search, the tab's own reading, then the
+        // spacer, so Grid / List sits at the trailing edge on both tabs.
+        for view in [keySearchField, keysTouchID, spacer, keysViewModeControl] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             keysTopRow.addArrangedSubview(view)
         }
@@ -39,7 +51,16 @@ extension HostsController {
             fixed.setContentHuggingPriority(.required, for: .horizontal)
             fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        let searchWidth = keySearchField.widthAnchor.constraint(equalToConstant: Self.keySearchWidth)
+        // A segmented control's pills stretch, and the two lines above are
+        // no-ops on a view with no intrinsic size (gotcha (12)): measured, the
+        // switch took the row's slack and stopped 250pt short of the cards'
+        // trailing edge. A real hug just above the spacer's collapse, the
+        // Hosts row's own.
+        let hug = keysViewModeControl.widthAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(252)
+        hug.isActive = true
+        // The Hosts search's width, so the two rows start alike.
+        let searchWidth = keySearchField.widthAnchor.constraint(equalToConstant: Self.sidebarSearchWidth)
         searchWidth.priority = HelmDaylightPriority.columnHug
         searchWidth.isActive = true
         keySearchField.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.sidebarSearchMinimumWidth).isActive = true
@@ -76,8 +97,6 @@ extension HostsController {
         }
     }
 
-    static let keySearchWidth: CGFloat = 340
-
     func applyKeysViewMode(list: Bool) {
         keysViewModeControl.select(list ? Self.listModeID : Self.gridModeID)
         keysGrid.isHidden = list
@@ -100,19 +119,22 @@ extension HostsController {
 
     // MARK: K1 and K4
 
-    /// `SHA256:` and the first twelve characters of the hash - enough to tell
-    /// two keys apart on a card. The whole fingerprint is in the tooltip,
-    /// the table and the inspector.
-    static func shortFingerprint(_ fingerprint: String) -> String {
-        guard let colon = fingerprint.firstIndex(of: ":") else { return String(fingerprint.prefix(16)) }
-        let hash = fingerprint[fingerprint.index(after: colon)...]
-        let short = hash.prefix(12)
-        return String(fingerprint[...colon]) + short + (hash.count > short.count ? "\u{2026}" : "")
-    }
-
+    /// The cards for the keys the search leaves: Recent keys while nothing
+    /// is searched and the hero column is put away, then the keys - the
+    /// Hosts grid's Recent and All hosts.
     func renderKeysGrid(_ keys: [SSHKey]) {
         guard drawsSidebarLayout else { return }
-        keysGrid.setSections([.init(title: nil, cards: keys.map(keyCard))])
+        let searching = !keySearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // While the hero column shows, Recent keys is its job.
+        let recent = searching || heroColumnShowing ? [] : Self.recentKeys(keyStore.keys)
+        var sections: [HelmCardGrid.Section] = []
+        if !recent.isEmpty {
+            var section = HelmCardGrid.Section(title: "Recent", cards: recent.map(keyCard))
+            section.singleRow = true
+            sections.append(section)
+        }
+        sections.append(.init(title: recent.isEmpty ? nil : "All keys", cards: keys.map(keyCard)))
+        keysGrid.setSections(sections)
         if keys.isEmpty, !keyStore.keys.isEmpty {
             keysGrid.setEmptyState(symbol: "line.3.horizontal.decrease.circle", title: "No matching keys",
                                    body: "Nothing matches the search. Clear it to see every saved key.", action: nil)
@@ -126,14 +148,26 @@ extension HostsController {
         }
     }
 
+    /// The keys a host connected with most recently, newest first. A key no
+    /// host has used since K5 began recording is never recent.
+    static func recentKeys(_ keys: [SSHKey], limit: Int = 8) -> [SSHKey] {
+        keys.filter { $0.lastUsedAt != nil }
+            .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
+            .prefix(limit).map { $0 }
+    }
+
     private func keyCard(_ key: SSHKey) -> HelmCardGrid.Card {
         let users = hostStore.hosts.filter { $0.keyID == key.id }
         let id = key.id.uuidString
         let edit: () -> Void = { [weak self] in self?.editKey(key) }
         var card = HelmCardGrid.Card(key: id, symbol: "key.fill", tint: key.type.tint, tintHex: nil,
-                                     title: key.label,
-                                     subtitle: "\(key.type.displayName) \u{00B7} \(Self.shortFingerprint(key.fingerprint))",
+                                     title: key.label, subtitle: key.fingerprint,
                                      accessibilityLabel: Self.accessibilityLabel(for: key, hostCount: users.count))
+        // The whole fingerprint, cut in the middle like a host's address: the
+        // `SHA256:` prefix says what it is, and the end is what a captain
+        // compares against `ssh-keygen -l`.
+        card.subtitleTruncation = .byTruncatingMiddle
+        card.chip = (key.type.displayName, "Type: " + key.type.displayName)
         var badges: [HelmCardGrid.Badge] = [
             .init(symbol: "server.rack", text: users.count == 1 ? "1 host" : "\(users.count) hosts",
                   toolTip: users.isEmpty ? "No host uses this key" : "Used by " + users.map(\.label).joined(separator: ", ")),

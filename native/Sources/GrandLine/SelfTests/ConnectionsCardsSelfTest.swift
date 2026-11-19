@@ -352,8 +352,10 @@ enum ConnectionsCardsSelfTest {
                 && abs(edgeCard.debugBadgeRowFrame.midY - labCard.debugBadgeRowFrame.midY) < 0.5,
               "flat grid: the chip moved the third line (chip \(chipLine), badges \(edgeCard.debugBadgeRowFrame.midY), "
                 + "lab-box's \(labCard.debugBadgeRowFrame.midY))", &ok)
-        // The keys' cards are unchanged: no chip.
-        check(hosts.keysGrid.sections.flatMap(\.cards).allSatisfy { $0.chip == nil }, "flat grid: a key card carries a chip", &ok)
+        // A key card's chip is its type, never a group.
+        check(hosts.keysGrid.sections.flatMap(\.cards).allSatisfy { card in
+                  shell.workspace.keyStore.keys.contains { $0.id.uuidString == card.key && card.chip?.text == $0.type.displayName }
+              }, "flat grid: a key card's chip is not its type", &ok)
 
         // A long group truncates inside the cap rather than taking the line.
         let long = Host(label: "long-group-host", address: "long.example.test", group: "Customer acceptance environment west")
@@ -1058,8 +1060,8 @@ enum ConnectionsCardsSelfTest {
             fail("K1: a key's card is missing", &ok)
             return
         }
-        check(opsCard.debugSubtitle.hasPrefix("Ed25519 \u{00B7} SHA256:") && opsCard.debugSubtitle.count < ops.fingerprint.count + 10,
-              "K4: the card's subtitle is \(opsCard.debugSubtitle)", &ok)
+        check(opsCard.debugSubtitle == ops.fingerprint && opsCard.debugChip == "Ed25519",
+              "K4: the card reads \(opsCard.debugSubtitle) with chip \(opsCard.debugChip ?? "none")", &ok)
         let opsUsers = shell.workspace.hostStore.hosts.filter { $0.keyID == ops.id }.count
         let opsBadges = opsCard.debugBadgeTexts
         check(opsBadges.contains { $0.hasPrefix("Used by") && $0.contains("edge-proxy-01") }, "K4: no hosts-using badge on ops (\(opsBadges))", &ok)
