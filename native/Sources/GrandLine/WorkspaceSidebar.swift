@@ -6,9 +6,9 @@
 //
 // It lists Home and the eighteen modules under the four groups the module
 // table assigns (Work, Observe, Workbench, Machine), and the live host
-// sessions as children of Console. A module's pages are its tabs in the window
-// toolbar, so every one of the 29 destinations is one click on its module and
-// one on its tab.
+// sessions as children of Connections, where a host is launched from. A
+// module's pages are its tabs in the window toolbar, so every one of the 29
+// destinations is one click on its module and one on its tab.
 //
 // **There are no pins here** (stage 6, the captain's call): a Pinned section
 // listed pages that already had a row and a tab, so it was the same map twice.
@@ -35,7 +35,7 @@ enum WorkspaceSidebarEntry: Equatable {
     case section(String)
     /// Home, or one of the eighteen modules.
     case module(WorkspaceModule)
-    /// A live host session, a child of Console.
+    /// A live host session, a child of Connections (`sessionsParent`).
     case session(hostID: UUID)
 }
 
@@ -56,13 +56,25 @@ enum WorkspaceSidebarModel {
         for group in WorkspaceGroup.allCases {
             let shown = modules(in: group, hidden: hidden)
             guard !shown.isEmpty else { continue }
+            let parent = sessionsParent(hidden: hidden)
             let rows = shown.map { module -> Node in
-                guard module == .console else { return Node(entry: .module(module)) }
-                return Node(entry: .module(.console), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
+                guard module == parent else { return Node(entry: .module(module)) }
+                return Node(entry: .module(module), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
             }
             roots.append(Node(entry: .section(group.title), children: rows))
         }
         return roots
+    }
+
+    /// The row the live sessions sit under: Connections, where a host is
+    /// launched from, so a session is listed beside the host it came from.
+    /// Every session in the registry is a saved host's SSH session; a local
+    /// shell has no row of its own. Console takes them only when the
+    /// captain's profile hides Connections, so a session keeps a row. With
+    /// both hidden there is none, which is what a hidden Console meant
+    /// before, and ⌃⌘1...9 still reach every session.
+    static func sessionsParent(hidden: Set<WorkspaceModule> = []) -> WorkspaceModule? {
+        [WorkspaceModule.connections, .console].first { !hidden.contains($0) }
     }
 
     /// The modules in `group`, in the module table's sidebar order.
@@ -109,7 +121,7 @@ extension WorkspaceModule {
 enum WorkspaceSidebarMetrics {
     /// Home and the modules.
     static let moduleRowHeight: CGFloat = 32
-    /// A live session under Console: one step down from a module.
+    /// A live session under Connections: one step down from a module.
     static let sessionRowHeight: CGFloat = 30
     /// A group heading, with the room above it that separates the groups.
     /// 34 until review #4: with Console holding one session the default list
@@ -290,7 +302,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     }
 
     /// What is showing changed. Lights its row, opening the section (and, for
-    /// a session, Console) it sits in. `pageTab` is the page's own tab, which
+    /// a session, Connections) it sits in. `pageTab` is the page's own tab, which
     /// lights the Calendar row on Tasks' Calendar view.
     func select(_ kind: RecentDestinationKind?, pageTab: String? = nil) {
         current = kind
@@ -307,6 +319,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// What the badges draw from (`WorkspaceSignals`).
     private var signals = WorkspaceSignals()
 
+    /// `module`'s badge. The live-session count goes on the row the sessions
+    /// are listed under.
+    private func badge(for module: WorkspaceModule) -> WorkspaceBadge? {
+        signals.badge(for: module, sessionsUnder: WorkspaceSidebarModel.sessionsParent(hidden: hidden))
+    }
+
     /// The signals changed: repaint each module row's badge in place.
     func setSignals(_ signals: WorkspaceSignals) {
         self.signals = signals
@@ -316,7 +334,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem, case .module(let module) = item.entry,
                   let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? WorkspaceSidebarPageCell
             else { continue }
-            cell.setBadge(signals.badge(for: module), theme: theme)
+            cell.setBadge(badge(for: module), theme: theme)
         }
     }
 
@@ -483,7 +501,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             return cell
         case .module(let module):
             let cell = WorkspaceSidebarPageCell()
-            cell.configure(symbol: module.symbol, title: module.title, badge: signals.badge(for: module), theme: theme)
+            cell.configure(symbol: module.symbol, title: module.title, badge: badge(for: module), theme: theme)
             cell.setLit(lit, theme: theme)
             // R2-UX-03: the row says its chord, as a menu item would.
             cell.toolTip = WorkspaceGoMenu.chordText(for: module, hidden: hidden).map { "\(module.title) (\($0))" }
@@ -591,7 +609,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             menu.addItem(menuItem("Open \(module.title)", symbol: module.symbol) { [weak self] in
                 self?.onSelectModule?(module)
             })
-            if module == .console {
+            if module == .console || module == .connections {
                 menu.addItem(menuItem("Connect to a Host\u{2026}", symbol: "plus.circle") { [weak self] in
                     self?.onConnectHost?()
                 })
@@ -680,7 +698,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             case .section(let title):
                 (cell as? WorkspaceSidebarSectionCell)?.configure(title: title, theme: theme)
             case .module(let module):
-                (cell as? WorkspaceSidebarPageCell)?.repaint(badge: signals.badge(for: module), lit: row == selected,
+                (cell as? WorkspaceSidebarPageCell)?.repaint(badge: badge(for: module), lit: row == selected,
                                                              theme: theme)
             case .session(let hostID):
                 guard let cell = cell as? WorkspaceSidebarSessionCell,
@@ -1226,7 +1244,7 @@ final class WorkspaceSidebarBadgeView: NSView {
     #endif
 }
 
-/// A live session under Console: a state dot, the host's label, and its
+/// A live session under Connections: a state dot, the host's label, and its
 /// ⌃⌘ shortcut.
 final class WorkspaceSidebarSessionCell: NSTableCellView {
     private let dot = NSView()

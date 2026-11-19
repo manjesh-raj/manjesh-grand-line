@@ -538,15 +538,19 @@ enum SidebarPolishSelfTest {
 
     private static func checkSessionsAndClaude(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                                _ ok: inout Bool) {
-        print("\n-- Console's count and Claude usage --")
+        print("\n-- Connections' count and Claude usage --")
+        // The count sits on the row the sessions are listed under, which is
+        // Connections - where a host is launched from - not Console.
         let live = UUID()
         shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
         settle(shell)
-        check(badge(.console, shell) == WorkspaceBadge(mark: .count("1"), tone: .neutral, description: "1 connected"),
-              "one live session drew \(String(describing: badge(.console, shell)))", &ok)
+        check(badge(.connections, shell) == WorkspaceBadge(mark: .count("1"), tone: .neutral, description: "1 connected"),
+              "one live session drew \(String(describing: badge(.connections, shell)))", &ok)
+        check(badge(.console, shell) == nil,
+              "Console still counts the session Connections lists: \(String(describing: badge(.console, shell)))", &ok)
         shell.workspace.hosts.sessions.unregister(hostID: live)
         settle(shell)
-        check(badge(.console, shell) == nil, "no live sessions left a count", &ok)
+        check(badge(.connections, shell) == nil, "no live sessions left a count", &ok)
 
         // The Fleet page's own closure, the one Home's card reads - Claude
         // usage's home now the strip is gone, and in the sidebar layout's

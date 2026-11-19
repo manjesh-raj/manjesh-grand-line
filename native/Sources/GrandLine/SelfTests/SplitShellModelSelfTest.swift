@@ -5,8 +5,8 @@
 //
 //   1. **The sidebar lists every module, once, and every route still lands.**
 //      `WorkspaceSidebarModel` over the module table: Home first, the
-//      captain's pins in their own order, then the four groups, with
-//      Console's live sessions as its children. Every one of the 29 routes
+//      captain's pins in their own order, then the four groups, with the
+//      live sessions as Connections' children. Every one of the 29 routes
 //      resolves to exactly one module, and to one of its tabs where the
 //      toolbar draws them - the deep-link sweep the review's step 4 asks for.
 //      A destination added without a module, or a tab with no real view
@@ -45,7 +45,7 @@ enum SplitShellModelSelfTest {
         var allOK = true
         for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
                       checkTheTabsAreTheRealViews, checkTheCalendarRow, checkSavedSidebarsGetTheCalendar,
-                      checkTheSidebarDrawsNoPins, checkSessionsAreConsoleChildren,
+                      checkTheSidebarDrawsNoPins, checkSessionsAreConnectionsChildren,
                       checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
                       checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
                       checkHomeCardFreeSizes, checkHomeCardSizeMigration, checkHomeCardGrid,
@@ -350,20 +350,30 @@ enum SplitShellModelSelfTest {
               "the floating bar's ⌘⇧D map can no longer pin a page - the pins were the floating bar's to keep", &ok)
     }
 
-    private static func checkSessionsAreConsoleChildren(_ ok: inout Bool) {
+    /// A launched host's session is listed under Connections, where the host
+    /// was launched from, not under Console (the captain's call). Console
+    /// takes them only when the profile hides Connections.
+    private static func checkSessionsAreConnectionsChildren(_ ok: inout Bool) {
         let first = HostSession(hostID: UUID(), label: "DEV Bastion", accentHex: nil, startedAt: Date(), state: .connected)
         let second = HostSession(hostID: UUID(), label: "PROD Web", accentHex: nil, startedAt: Date(), state: .restored)
-        let roots = WorkspaceSidebarModel.roots(sessions: [first, second])
-        let nodes = roots.flatMap { [$0] + $0.children }
-        let consoles = nodes.filter { $0.entry == .module(.console) }
-        check(consoles.count == 1, "Console appears \(consoles.count) times in the groups", &ok)
-        check(consoles.first?.children.map(\.entry) == [.session(hostID: first.hostID), .session(hostID: second.hostID)],
-              "the sessions are not Console's children, in the registry's order", &ok)
-        let others = nodes.filter {
-            if case .module(let module) = $0.entry { return module != .console }
-            return false
+        let expected: [WorkspaceSidebarEntry] = [.session(hostID: first.hostID), .session(hostID: second.hostID)]
+        func parents(hidden: Set<WorkspaceModule>) -> [WorkspaceModule: [WorkspaceSidebarEntry]] {
+            let nodes = WorkspaceSidebarModel.roots(sessions: [first, second], hidden: hidden).flatMap { [$0] + $0.children }
+            var found: [WorkspaceModule: [WorkspaceSidebarEntry]] = [:]
+            for node in nodes where !node.children.isEmpty {
+                if case .module(let module) = node.entry { found[module] = node.children.map(\.entry) }
+            }
+            return found
         }
-        check(others.allSatisfy { $0.children.isEmpty }, "a module other than Console has children", &ok)
+        let shown = parents(hidden: [])
+        check(shown == [.connections: expected],
+              "the sessions should be Connections' children alone, in the registry's order - found \(shown)", &ok)
+        let noConnections = parents(hidden: [.connections])
+        check(noConnections == [.console: expected],
+              "with Connections hidden the sessions should fall back to Console - found \(noConnections)", &ok)
+        check(parents(hidden: [.connections, .console]).isEmpty, "with both hidden a module still lists the sessions", &ok)
+        check(WorkspaceSidebarModel.roots(sessions: []).allSatisfy { $0.children.allSatisfy(\.children.isEmpty) },
+              "with no sessions a module row still has children", &ok)
     }
 
     // MARK: 2 - back and forward

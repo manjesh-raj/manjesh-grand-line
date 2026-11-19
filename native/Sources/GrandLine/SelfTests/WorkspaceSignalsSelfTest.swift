@@ -33,7 +33,7 @@ enum WorkspaceSignalsSelfTest {
     static func run() -> Bool {
         var ok = true
         for check in [checkFailingKeepsTheLastGoodValue, checkCrew, checkTasks, checkTasksCountByDay, checkVault,
-                      checkHealth, checkSetup, checkConsole, checkContrast,
+                      checkHealth, checkSetup, checkLiveSessions, checkContrast,
                       checkTheMonitorOnlyListens] {
             var caseOK = true
             check(&caseOK)
@@ -223,12 +223,20 @@ enum WorkspaceSignalsSelfTest {
         if ok { print("  OK   unknown, checking, one count, zero, failed") }
     }
 
-    private static func checkConsole(_ ok: inout Bool) {
-        print("\n-- Console: live sessions --")
-        check(WorkspaceSignals().badge(for: .console) == nil, "no sessions drew a badge", &ok)
-        check(signals { $0.liveSessions = 2 }.badge(for: .console) == WorkspaceBadge(mark: .count("2"), tone: .neutral, description: "2 connected"),
-              "two live sessions drew the wrong badge", &ok)
-        for module in WorkspaceModule.allCases where ![.crew, .tasks, .secrets, .health, .setup, .console].contains(module) {
+    /// The count sits on the row the sessions are listed under: Connections,
+    /// or Console when the captain's profile hides Connections.
+    private static func checkLiveSessions(_ ok: inout Bool) {
+        print("\n-- Connections: live sessions --")
+        let two = WorkspaceBadge(mark: .count("2"), tone: .neutral, description: "2 connected")
+        check(WorkspaceSignals().badge(for: .connections) == nil, "no sessions drew a badge", &ok)
+        check(signals { $0.liveSessions = 2 }.badge(for: .connections) == two,
+              "two live sessions drew the wrong badge on Connections", &ok)
+        check(signals { $0.liveSessions = 2 }.badge(for: .console) == nil,
+              "Console still counts the sessions Connections lists", &ok)
+        check(signals { $0.liveSessions = 2 }.badge(for: .console, sessionsUnder: .console) == two
+              && signals { $0.liveSessions = 2 }.badge(for: .connections, sessionsUnder: .console) == nil,
+              "with Connections hidden the count did not move to Console", &ok)
+        for module in WorkspaceModule.allCases where ![.crew, .tasks, .secrets, .health, .setup, .connections].contains(module) {
             let loud = signals {
                 $0.crew = .read(5, at: t0); $0.liveSessions = 3; $0.vault = .locked
                 $0.failingServices = [.init(title: "x", failures: 9, lastFailure: t0)]

@@ -15,7 +15,7 @@
 //      own column coming back (Notebook's Pages, ⌥⌘S on Settings) does too.
 //   3. **The sidebar is the map.** A module row opens the tab it showed last,
 //      it draws no pins and offers no Pin or Unpin (stage 6), sessions are
-//      Console's children, ⌘⇧D reveals it, and ⌥⌘S toggles the page's own
+//      Connections' children, ⌘⇧D reveals it, and ⌥⌘S toggles the page's own
 //      column where there is one and the sidebar everywhere else.
 //   4. **A module's tabs are its pages.** A tab shows its page; on the four
 //      pages whose own tabs are the module's, the toolbar drives the page,
@@ -694,6 +694,8 @@ enum MainSplitShellSelfTest {
         }
         check(shell.sidebar.debugContextMenuTitles(for: .module(.console)).contains("Connect to a Host\u{2026}"),
               "Console's menu lost Connect to a Host", &ok)
+        check(shell.sidebar.debugContextMenuTitles(for: .module(.connections)).contains("Connect to a Host\u{2026}"),
+              "Connections' menu, where the sessions now sit, has no Connect to a Host", &ok)
         check(AppSettings.shared.quickAccess == pins, "the sidebar layout changed the floating bar's pins", &ok)
         for id in shell.workspace.hosts.sessions.sessions.map(\.hostID) { shell.workspace.hosts.sessions.unregister(hostID: id) }
         settle(shell)
@@ -1993,8 +1995,8 @@ enum MainSplitShellSelfTest {
         check(knowledgeBody.minX.magnitude < 0.5, "under Knowledge the body starts \(knowledgeBody.minX)pt in", &ok)
 
         // The live sessions the strip counted are Console's: its session
-        // strip lists each one, connected or restored, and so does the
-        // sidebar under Console.
+        // strip lists each one, connected or restored, and the sidebar lists
+        // them under Connections, where they were launched from.
         let live = UUID()
         let restored = UUID()
         shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
@@ -2004,11 +2006,25 @@ enum MainSplitShellSelfTest {
         check(shell.debugSessionStripIsShown && shell.debugSessionStrip.debugPillHostIDs() == [live, restored],
               "Console's session strip lists \(shell.debugSessionStrip.debugPillHostIDs()), want both sessions", &ok)
         let entries = shell.sidebar.debugVisibleEntries
-        if let console = entries.firstIndex(of: .module(.console)) {
-            check(Array(entries.dropFirst(console + 1).prefix(2)) == [.session(hostID: live), .session(hostID: restored)],
-                  "the sessions are not listed under Console", &ok)
+        if let connections = entries.firstIndex(of: .module(.connections)),
+           let console = entries.firstIndex(of: .module(.console)) {
+            check(Array(entries.dropFirst(connections + 1).prefix(2)) == [.session(hostID: live), .session(hostID: restored)],
+                  "the sessions are not listed under Connections", &ok)
+            check(entries.dropFirst(console + 1).first.map { $0 != .session(hostID: live) && $0 != .session(hostID: restored) } ?? true,
+                  "the sessions are still listed under Console", &ok)
+            // A session row under Connections still hands its host to the
+            // shell's switch, which opens it on Console's page. These hosts
+            // have no page behind them, so the switch itself is recorded on
+            // the way through rather than watched.
+            let wired = shell.sidebar.onSelectSession
+            var picked: UUID?
+            shell.sidebar.onSelectSession = { id in picked = id; wired?(id) }
+            check(shell.sidebar.debugClick(.session(hostID: restored)), "the restored session's row could not be clicked", &ok)
+            settle(shell)
+            shell.sidebar.onSelectSession = wired
+            check(picked == restored, "clicking a session under Connections did not ask to switch to it", &ok)
         } else {
-            fail("Console is not in the sidebar", &ok)
+            fail("Connections or Console is not in the sidebar", &ok)
         }
         shell.workspace.hosts.sessions.unregister(hostID: live)
         shell.workspace.hosts.sessions.unregister(hostID: restored)
