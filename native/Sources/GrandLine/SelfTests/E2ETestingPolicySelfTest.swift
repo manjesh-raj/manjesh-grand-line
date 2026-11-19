@@ -1008,7 +1008,13 @@ enum E2ETestingPolicySelfTest {
     /// inspector opens without growing the window, are real layout decided
     /// by the sidebar shell in a window. The words, the palette sweep and the
     /// kit options are in the headless `PageHeroColumnsSelfTest`.
-    private static let windowBackedSuiteCeiling = 133
+    ///
+    /// 134 for `TasksSecretsHeroViewSelfTest`: where Tasks' slim band and
+    /// lane bands, Secrets' hero column and Automic Vault's split card sit,
+    /// and what their controls run, are real layout and dispatch decided by
+    /// the sidebar shell in a window. The words and the palette sweeps are in
+    /// the headless `TasksSecretsHeroSelfTest`.
+    private static let windowBackedSuiteCeiling = 134
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

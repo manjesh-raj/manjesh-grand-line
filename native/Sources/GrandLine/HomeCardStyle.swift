@@ -1,7 +1,9 @@
 // Grand Line - native macOS app.
 //
-// The style of Home's two hero cards: Claude usage (the split hero) and Fleet
-// (the full hero), the captain's picks on the widget-style board.
+// The style of Home's hero cards: Claude usage (the split hero) and Fleet
+// (the full hero), the captain's picks on the widget-style board, and Hosts
+// (the full hero with its recent hosts as rows, in the Connections hero
+// column's language), which the captain asked to match them.
 //
 // The captain asked for two things on both cards. A size they can choose
 // clearly - narrow, default and full width - and a colour they can choose
@@ -190,7 +192,7 @@ enum HomeCardSizeMode: CaseIterable {
 
 /// Which cards have a hero style, and the stored colour of each.
 enum HomeCardStyle {
-    static let modules: [DaylightModule] = [.claudeStatus, .fleet]
+    static let modules: [DaylightModule] = [.claudeStatus, .fleet, .hosts]
 
     static func color(for module: DaylightModule, settings: AppSettings = .shared) -> HomeCardColor {
         settings.homeCardColors[module.rawValue].flatMap(HomeCardColor.init(storedValue:)) ?? .accent

@@ -39,6 +39,12 @@
 //
 // Not interactive itself: the gradient takes no clicks (`HelmHeroSurface`),
 // and the only controls are the ones a page put on it.
+//
+// **1.1.0, for Secrets' column (S-3).** `HelmHeroNavRow` is a row the captain
+// picks - a page's navigation on the gradient, with the selected row a pill in
+// the ink - and `setRing(_:)` moves the header's ring in place, for a ring
+// that counts down (the vault's auto-lock) without rebuilding the column every
+// second.
 
 import AppKit
 
@@ -178,6 +184,24 @@ final class HelmHeroColumn: NSView {
         rebuild()
     }
 
+    /// 1.1.0: the header's ring, moved in place. A ring that comes or goes
+    /// changes the column's shape, so that rebuilds; a ring that only moves
+    /// re-fills the gauge and its caption.
+    func setRing(_ ring: Ring?) {
+        guard ring != header.ring else { return }
+        let reshapes = (ring == nil) != (header.ring == nil)
+            || (ring?.caption ?? "").isEmpty != (header.ring?.caption ?? "").isEmpty
+        header.ring = ring
+        guard !reshapes, let ring else {
+            rebuild()
+            return
+        }
+        ringGauge.configure(fraction: ring.fraction, text: ring.label)
+        ringGauge.setSpokenLabel(ring.spoken)
+        ringCaption.stringValue = ring.caption ?? ""
+        applyTheme(theme)
+    }
+
     func setArrangement(_ arrangement: Layout) {
         guard arrangement != self.arrangement else { return }
         self.arrangement = arrangement
@@ -200,6 +224,9 @@ final class HelmHeroColumn: NSView {
             kickerGlyph.centerYAnchor.constraint(equalTo: kickerTile.centerYAnchor),
         ])
         kickerLabel.lineBreakMode = .byTruncatingTail
+        // 1.1.0: one line, always - a long kicker in a band wrapped to two.
+        kickerLabel.maximumNumberOfLines = 1
+        kickerLabel.cell?.usesSingleLineMode = true
         kickerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         kickerLabel.setAccessibilityElement(false)
         for (label, lines) in [(headlineLabel, 3), (bodyLabel, 3), (ringCaption, 2)] {
@@ -342,6 +369,7 @@ final class HelmHeroColumn: NSView {
                 topStack.setCustomSpacing(HelmMetrics.s1 + 2, after: title)
                 for (index, view) in section.views.enumerated() {
                     (view as? HelmHeroRow)?.showsTopRule = index > 0
+                    (view as? HelmHeroNavRow)?.showsTopRule = index > 0
                     add(view, to: topStack)
                 }
             }
@@ -455,6 +483,15 @@ final class HelmHeroColumn: NSView {
         }
         for section in sections { for view in section.views { Self.applyInk(ink, to: view) } }
         for view in footViews { Self.applyInk(ink, to: view) }
+        // A selected nav row is a pill in the ink, so its words take the stop
+        // furthest from the ink: the deep one under white ink, the light one
+        // under a dark ink (a very pale colour).
+        let deep = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+            ? palette.start : palette.end
+        let pillWords = HelmContrast.color(darkInk ? palette.lighterStop : deep)
+        for section in sections {
+            for case let row as HelmHeroNavRow in section.views { row.applyInk(ink, selectedInk: pillWords) }
+        }
     }
 
     /// Hand the ink to the kit controls a page put on the gradient, and to
@@ -462,6 +499,8 @@ final class HelmHeroColumn: NSView {
     static func applyInk(_ ink: NSColor, to view: NSView) {
         switch view {
         case let row as HelmHeroRow:
+            row.applyInk(ink)
+        case let row as HelmHeroNavRow:
             row.applyInk(ink)
         case let button as HelmButton:
             button.heroInk = ink
@@ -489,6 +528,15 @@ final class HelmHeroColumn: NSView {
             label.preferredMaxLayoutWidth = width
             label.invalidateIntrinsicContentSize()
         }
+        // 1.1.0: a column a page narrows below `width` wraps its ring's
+        // caption at the room it really has beside the ring.
+        if arrangement == .column, header.ring != nil, bounds.width > 0 {
+            let caption = max(60, floor(bounds.width - insets.left - insets.right - Self.ringSide - HelmMetrics.s3))
+            if abs(ringCaption.preferredMaxLayoutWidth - caption) > 0.5 {
+                ringCaption.preferredMaxLayoutWidth = caption
+                ringCaption.invalidateIntrinsicContentSize()
+            }
+        }
     }
 
     #if FM_SELFTESTS
@@ -502,6 +550,7 @@ final class HelmHeroColumn: NSView {
     var debugRows: [HelmHeroRow] { sections.flatMap(\.views).compactMap { $0 as? HelmHeroRow } }
     var debugSectionTitles: [String] { sections.map(\.title) }
     var debugScroll: NSScrollView { scroll }
+    var debugFootButtons: [HelmButton] { footViews.compactMap { $0 as? HelmButton } }
     #endif
 }
 
@@ -661,5 +710,141 @@ final class HelmHeroRow: NSView {
         return nil
     }
     var debugFigureColor: NSColor? { figureLabel.textColor }
+    #endif
+}
+
+// MARK: - A row the captain picks
+
+/// 1.1.0: a navigation row on the gradient - Secrets' kinds and collections
+/// in its hero column (S-3). A glyph, a title and a count, all in the ink; the
+/// selected row is a pill in the ink with its words in the hero's own deep
+/// colour, the board's "white pill".
+///
+/// A `HoverHighlightView`, so it is a real button to VoiceOver and the
+/// keyboard, with the focus ring and Return and Space (GL-16). A press runs
+/// `onSelect` with the row's id; the page decides what is selected and says
+/// so with `isSelected`, so a selection is never the row's own guess.
+final class HelmHeroNavRow: HoverHighlightView {
+
+    static let height: CGFloat = 34
+    /// The ink's share of a row under the pointer.
+    static let hoverAlpha: CGFloat = 0.12
+    static let glyphSide: CGFloat = 16
+
+    let id: String
+    var onSelect: ((String) -> Void)?
+
+    var isSelected = false {
+        didSet {
+            guard isSelected != oldValue else { return }
+            paint()
+        }
+    }
+
+    var showsTopRule = false {
+        didSet { paint() }
+    }
+
+    private let rule = NSView()
+    private let glyph = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let countLabel = NSTextField(labelWithString: "")
+    private var ink: NSColor = .white
+    /// What the selected pill's words are drawn in: the hero's deeper stop,
+    /// so the pill reads as a cut-out of the gradient.
+    private var selectedInk: NSColor = .black
+
+    init(id: String, symbol: String, title: String) {
+        self.id = id
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        cornerRadius = 8
+        rule.wantsLayer = true
+        rule.translatesAutoresizingMaskIntoConstraints = false
+        glyph.image = HelmSymbol.image(symbol, pointSize: 12, weight: .semibold)
+        glyph.imageScaling = .scaleNone
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11.5), weight: .medium)
+        countLabel.alignment = .right
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        for label in [titleLabel, countLabel] { label.setAccessibilityElement(false) }
+        for view in [rule, glyph, titleLabel, countLabel] as [NSView] { addSubview(view) }
+        // The pill spans the column's content width plus its own inset
+        // either side, so its words line up with the section title's.
+        let inset = HelmMetrics.s2
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: HelmType.scaled(Self.height)),
+            rule.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            rule.topAnchor.constraint(equalTo: topAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+            glyph.widthAnchor.constraint(equalToConstant: Self.glyphSide),
+            titleLabel.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: HelmMetrics.s2),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: HelmMetrics.s2),
+            countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        onAccessibilityPress = { [weak self] in self?.pressed() }
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
+        accessibilityLabelOverride = title
+        paint()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    @objc private func clicked() { pressed() }
+
+    private func pressed() { onSelect?(id) }
+
+    /// The row's count, or none.
+    func setCount(_ text: String?) {
+        countLabel.stringValue = text ?? ""
+        countLabel.isHidden = (text ?? "").isEmpty
+        accessibilityValueOverride = text.map { "\($0)" }
+    }
+
+    /// The column's ink, and the deeper of its two stops for the selected
+    /// pill's words.
+    func applyInk(_ ink: NSColor, selectedInk: NSColor? = nil) {
+        self.ink = ink
+        if let selectedInk { self.selectedInk = selectedInk }
+        paint()
+    }
+
+    private func paint() {
+        rule.isHidden = !showsTopRule || isSelected
+        rule.layer?.backgroundColor = ink.withAlphaComponent(HelmHeroColumn.ruleAlpha).cgColor
+        if isSelected {
+            normalColor = ink
+            hoverColor = ink
+            titleLabel.textColor = selectedInk
+            countLabel.textColor = selectedInk.withAlphaComponent(0.8)
+            glyph.contentTintColor = selectedInk
+        } else {
+            normalColor = .clear
+            hoverColor = ink.withAlphaComponent(Self.hoverAlpha)
+            titleLabel.textColor = ink
+            countLabel.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
+            glyph.contentTintColor = ink
+        }
+        accessibilityValueOverride = [isSelected ? "selected" : nil, countLabel.isHidden ? nil : countLabel.stringValue]
+            .compactMap { $0 }.joined(separator: ", ")
+    }
+
+    #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
+    var debugCount: String { countLabel.isHidden ? "" : countLabel.stringValue }
+    var debugTitleColor: NSColor? { titleLabel.textColor }
+    var debugFill: NSColor { normalColor }
     #endif
 }

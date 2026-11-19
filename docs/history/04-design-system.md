@@ -1196,3 +1196,40 @@ It has to step aside before the column reopens, or the reopening column meets th
 - `ConnectionsCardsSelfTest`: H3 puts the column away before checking the Connect button; the flat grid allows two columns and checks that some row mixes groups; the R5-UI-06 truncation fixture is a host with a long address, because the two-wide card fits the demo bastion's whole; and H7 at 1512 checks that the column gave way to the inspector.
 
 **Not done.** The pages have no colour choice of their own; both columns are the theme's accent (Health's red while failing), the Home hero cards' default.
+
+## Helm 7.0.0 - Home's band and the sidebar's search go; Tasks T-4, Secrets S-3, a Hosts hero card
+
+Branch `fm/grand-line-home-tasks-secrets-hosts`.
+Five captain changes in one PR.
+
+**Home loses the band between the briefing hero and the cards** in the sidebar layout: the four KPI tiles (`HomeKPITiles`, deleted with their strip) and the Needs attention card with its Refresh and its closing note.
+The attention card stays on the floating bar's hub, where it is column 1 of the hand-placed dashboard, so `renderAttention` hides it only on Home's arranged cards.
+The hero, the cards and their figures already said each of those numbers.
+`MainSplitShellSelfTest` now checks the band is gone and that the first card sits one grid gap under the hero, so a hidden view that kept its height would fail it.
+
+**The sidebar's "Search or jump to" pill is removed.**
+The toolbar's Search and ⌘K are on every page, so the pill was a second way into the same palette.
+An 8pt gap (`WorkspaceSidebarController.headerGap`) separates the account header from Home, where the pill and its two 6pt gaps were.
+
+**Home's Hosts card is a hero card** (`.heroList`, `HelmModuleCard` 1.4.0): the live-session verdict, a ring of saved hosts online, and the three hosts connected last with Switch or Connect, in the Connections hero column's words.
+It joins `HomeCardStyle.modules`, so it takes the Claude and Fleet cards' palette menu (narrow, default, full width, a colour, Hide from Home) with no code of its own.
+Connect goes through Recents' reconnect (`Navigator.onReconnectHost`), which is the app's one `connectToHost`, so a connection from Home is recorded like any other.
+Its rows' second lines are 80% ink, so the card paints with the quiet-ink palette rather than the plain one; `HeroCardsViewSelfTest` asserts that palette for this card alone.
+
+**Tasks is T-4.**
+`ShiftTasksHeroBand` is the slim band over the filter row on Board and List (the calendar keeps the page's full height), and `ShiftLaneHeroBand` is each lane's header, both on `HelmHeroSurface` with the quiet-ink palette at 85%.
+The lane tones are the accent, a fixed slate (`#5B6B82`, since no palette slot is a neutral that reads as a colour), and the theme's own green and amber, so a palette's lanes wear its colours.
+The lane becomes a card (`HelmCard.applyCardSurface` at the lane's radius, clipping the band), where it was a 5% ink wash.
+The lanes' plain headers stay built and counted, hidden, so the floating bar and the suites that read a lane's count are unchanged.
+
+**Secrets is S-3.**
+The vault's split sidebar pane holds a `HelmHeroColumn` in the sidebar layout, with `HelmHeroNavRow`s (new) for Kinds and Collections.
+The auto-lock ring reads the page's own idle clock and moves every second on the 2FA ticker that already runs while the page shows, through `HelmHeroColumn.setRing(_:)`, which does not rebuild the column.
+At an 1100pt window a 300pt column left the table too narrow for its 2FA column and row controls, and the row menu was cut by the card's edge in the first render.
+So the column narrows toward 228pt on a narrow page (`fitHeroColumnWidth`) before the table gives anything up.
+
+**Automic Vault keeps S-1's split card** (`VaultHeroSplit.swift`): the launchers' verdict and a hardened ring on a gradient, amber while one needs attention, beside the launchers as rows with their own View Fix.
+It stands in for the attention banner and the Verified Launchers table in the sidebar layout; that table is still built and kept current, and `PageRedesignsSelfTest` checks it is no longer drawn.
+The Secrets and Recipe Backup cards stay full width under it, rather than side by side as the board drew them, because the Recipe card's two header buttons would squeeze its title at half width.
+
+**Not done.** The Tasks band and the Secrets column have no colour choice; both are the theme's accent, as the Health and Connections columns are.

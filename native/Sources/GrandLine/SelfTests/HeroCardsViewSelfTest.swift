@@ -1,8 +1,8 @@
 // Grand Line - native macOS app.
 //
-// Home's two hero cards (the widget-style board's picks: the Claude card's
-// split hero and the Fleet card's full hero), drawn by the real Home canvas
-// in a real probe window.
+// Home's hero cards (the widget-style board's picks: the Claude card's split
+// hero and the Fleet card's full hero, and the Hosts card's full hero with its
+// recent hosts as rows), drawn by the real Home canvas in a real probe window.
 //
 // Window-backed, because what it asserts is real layout: where the gradient
 // lands at each of the three sizes, that every word on it is painted in the
@@ -47,6 +47,8 @@ enum HeroCardsViewSelfTest {
             checkBothCardsOfferThePaletteAtEverySize,
             checkAnUnfinishedDragEndsWithCustomize,
             checkHideFromTheMenuAndBringItBack,
+            checkTheHostsCardListsItsHosts,
+            checkTheHostsPillsRunTheirVerbs,
             writeRenders,
         ]
         for check in checks {
@@ -110,21 +112,60 @@ enum HeroCardsViewSelfTest {
     /// reach past a split card's panel.
     static var plan = "team"
 
-    /// The real canvas, Home's arranged cards set to the two hero cards at
+    /// Five saved hosts, three of them connected to before (newest first:
+    /// bastion-stg, grafana, edge-proxy-01), in the suite's scratch store.
+    static let hostStore: HostStore = {
+        let store = HostStore()
+        guard store.hosts.isEmpty else { return store }
+        let hosts = [
+            Host(label: "edge-proxy-01", address: "edge-01.example.test", username: "ops", group: "Production"),
+            Host(label: "bastion-stg", address: "bastion.staging.example.test", port: 2222, username: "ops",
+                 group: "Staging"),
+            Host(label: "grafana", address: "grafana.example.test", username: "ops", group: "Observability"),
+            Host(label: "db-replica-eu", address: "192.0.2.41", username: "postgres", group: "Staging"),
+            Host(label: "lab-box", address: "lab.example.test"),
+        ]
+        for host in hosts { store.add(host) }
+        let now = Date()
+        for (label, minutes) in [("edge-proxy-01", 600.0), ("grafana", 180), ("bastion-stg", 50)] {
+            if let id = store.hosts.first(where: { $0.label == label })?.id {
+                store.recordConnection(id: id, at: now.addingTimeInterval(-minutes * 60))
+            }
+        }
+        return store
+    }()
+
+    /// The hosts with a live session in `state`: one in a normal state, two
+    /// in a warning, none otherwise.
+    static func liveHosts(_ state: State) -> [String] {
+        switch state {
+        case .normal: return ["bastion-stg"]
+        case .warn, .critical: return ["bastion-stg", "grafana"]
+        case .stale, .idle: return []
+        }
+    }
+
+    /// The real canvas, Home's arranged cards set to the three hero cards at
     /// `mode`, fed `state`, in a probe window.
     static func mountCanvas(_ mode: HomeCardSizeMode, state: State, theme: HelmTheme,
                             body: (HomeCanvasController, NSWindow) -> Void) {
         ThemeManager.shared.setTheme(theme)
         let canvas = HomeCanvasController(sources: .init(
-            shiftStore: ShiftStore(), hostStore: HostStore(), scheduleStore: ScheduleStore(),
+            shiftStore: ShiftStore(), hostStore: hostStore, scheduleStore: ScheduleStore(),
             logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(), notebookStore: NotebookStore(),
             readingListStore: ReadingListStore(), commandLibraryStore: CommandLibraryStore(),
             stickyBoardStore: StickyBoardStore()))
         let window = OffScreenProbe.window(width: windowWidth, height: 1100)
         window.contentView = canvas.view
-        canvas.cardLayout = HomeCardLayout(shown: [.claudeStatus, .fleet],
-                                           sizes: [.claudeStatus: mode.size, .fleet: mode.size])
+        let live = Set(hostStore.hosts.filter { liveHosts(state).contains($0.label) }.map(\.id))
+        canvas.connectedHostIDs = { live }
+        canvas.hostSession = { id in
+            live.contains(id) ? HostSession(hostID: id, label: "", accentHex: nil,
+                                            startedAt: Date().addingTimeInterval(-42 * 60), state: .connected) : nil
+        }
+        canvas.cardLayout = HomeCardLayout(shown: [.claudeStatus, .fleet, .hosts],
+                                           sizes: [.claudeStatus: mode.size, .fleet: mode.size, .hosts: mode.size])
         canvas.applyQuota(.success(quota(state)))
         if state == .stale { canvas.applyQuota(.failure("quota-axi timed out")) }
         canvas.applyFleet(snapshot: fleet(state), mergedPRs: [], prFetchFailure: nil)
@@ -154,6 +195,8 @@ enum HeroCardsViewSelfTest {
                       "\(mode): the Claude card's gradient is \(claude.debugHeroRegion ?? "absent"), expected \(region)", &ok)
                 check(fleet.debugHeroRegion == "card",
                       "\(mode): the Fleet card's gradient is \(fleet.debugHeroRegion ?? "absent"), expected the whole card", &ok)
+                check(canvas.cardForTests(.hosts)?.debugHeroRegion == "card",
+                      "\(mode): the Hosts card's gradient is \(canvas.cardForTests(.hosts)?.debugHeroRegion ?? "absent"), expected the whole card", &ok)
                 // The gradient's frame is the region: a split panel is its
                 // width and the card's height, a band ends under the panel.
                 if let surface = claude.debugHeroSurface {
@@ -235,10 +278,26 @@ enum HeroCardsViewSelfTest {
                                       "\(tag): the KPI strip's figures are not in the hero's ink", &ok)
                             }
                             // Stale dims the colour (GL-14); every other state
-                            // keeps the captain's colour.
-                            let fresh = HelmModuleCard.HeroTone(colour: .themeAccent).palette(in: theme)
-                            check((palette == fresh) == (state != .stale),
-                                  "\(tag): the colour is \(state == .stale ? "not dimmed" : "dimmed")", &ok)
+                            // keeps the captain's colour. The Hosts card's
+                            // stale reading is its hosts file, which these
+                            // states leave readable, and its second lines
+                            // take the quiet-ink palette.
+                            if module == .hosts {
+                                let fresh = HelmModuleCard.HeroTone(colour: .themeAccent)
+                                    .palette(in: theme, quietInk: Double(HelmHeroColumn.quietInkAlpha))
+                                check(palette == fresh, "\(tag): the Hosts card's colour is not the quiet-ink accent", &ok)
+                                for row in card.debugHeroListRows {
+                                    check(isPainted(row.titleLabel.textColor, ink),
+                                          "\(tag): row \"\(row.titleLabel.stringValue)\" is not in the hero's ink", &ok)
+                                    let frame = row.convert(row.bounds, to: card)
+                                    check(card.bounds.insetBy(dx: -0.5, dy: -0.5).contains(frame),
+                                          "\(tag): row \"\(row.titleLabel.stringValue)\" at \(frame) is outside the card", &ok)
+                                }
+                            } else {
+                                let fresh = HelmModuleCard.HeroTone(colour: .themeAccent).palette(in: theme)
+                                check((palette == fresh) == (state != .stale),
+                                      "\(tag): the colour is \(state == .stale ? "not dimmed" : "dimmed")", &ok)
+                            }
                         }
                         // A split card's report sits on the card's surface and
                         // keeps the theme's colours.
@@ -482,6 +541,84 @@ enum HeroCardsViewSelfTest {
         }
     }
 
+    /// The Hosts card lists the three hosts connected last, newest first, a
+    /// live one with Switch and the rest with Connect, under the session
+    /// verdict and the ring of hosts online - at every size.
+    private static func checkTheHostsCardListsItsHosts(_ ok: inout Bool) {
+        for mode in HomeCardSizeMode.allCases {
+            for state in [State.normal, .idle] {
+                mountCanvas(mode, state: state, theme: daylight) { canvas, _ in
+                    let tag = "\(mode) \(state)"
+                    guard let card = canvas.cardForTests(.hosts) else {
+                        fail("\(tag): the canvas drew no Hosts card", &ok)
+                        return
+                    }
+                    let rows = card.debugHeroListRows
+                    check(rows.map(\.titleLabel.stringValue) == ["bastion-stg", "grafana", "edge-proxy-01"],
+                          "\(tag): the rows are \(rows.map(\.titleLabel.stringValue))", &ok)
+                    let pills = rows.map { ($0.trailing as? HelmButton)?.title ?? "none" }
+                    let expected = state == .normal ? ["Switch", "", ""] : ["", "", ""]
+                    check(pills == expected, "\(tag): the pills read \(pills), want \(expected)", &ok)
+                    let words = card.debugHeroInkLabels.map(\.stringValue)
+                    let headline = state == .normal ? "1 live session, on bastion-stg." : "No live session."
+                    check(words.contains(headline), "\(tag): the hero says \(words), want \(headline)", &ok)
+                    let ring = card.debugHeroRings.first
+                    check(ring?.debugLabel == (state == .normal ? "1/5" : "0/5"),
+                          "\(tag): the ring reads \(ring?.debugLabel ?? "nothing")", &ok)
+                    check(card.debugHeroQuietLabels.first?.stringValue == "RECENT",
+                          "\(tag): the section is \(card.debugHeroQuietLabels.first?.stringValue ?? "untitled")", &ok)
+                    // Every row inside the card, and none over another.
+                    let frames = rows.map { $0.convert($0.bounds, to: card) }
+                    for (index, frame) in frames.enumerated() where index > 0 {
+                        check(frame.maxY <= frames[index - 1].minY + 0.5 || frame.minY >= frames[index - 1].maxY - 0.5,
+                              "\(tag): row \(index) overlaps the one above it", &ok)
+                    }
+                }
+            }
+        }
+    }
+
+    /// A pill runs its own verb with the row's host, and never also opens
+    /// the card (gotcha (20)).
+    private static func checkTheHostsPillsRunTheirVerbs(_ ok: inout Bool) {
+        mountCanvas(.standard, state: .normal, theme: daylight) { canvas, window in
+            var switched: [UUID] = []
+            var connected: [UUID] = []
+            var opened = 0
+            canvas.onSwitchToHostSession = { switched.append($0) }
+            canvas.onConnectHost = { connected.append($0) }
+            guard let card = canvas.cardForTests(.hosts) else {
+                fail("the canvas drew no Hosts card", &ok)
+                return
+            }
+            card.onOpen = { opened += 1 }
+            let rows = card.debugHeroListRows
+            guard rows.count == 3, let switchPill = rows[0].trailing as? HelmButton,
+                  let connectPill = rows[1].trailing as? HelmButton else {
+                fail("the Hosts card has \(rows.count) rows, want 3 with pills", &ok)
+                return
+            }
+            let bastion = hostStore.hosts.first { $0.label == "bastion-stg" }?.id
+            let grafana = hostStore.hosts.first { $0.label == "grafana" }?.id
+            switchPill.performClick(nil)
+            connectPill.performClick(nil)
+            check(switched == [bastion].compactMap { $0 }, "Switch ran for \(switched), want bastion-stg", &ok)
+            check(connected == [grafana].compactMap { $0 }, "Connect ran for \(connected), want grafana", &ok)
+            check(opened == 0, "a pill also opened the card", &ok)
+            // The card's own recognizer declines a click on a pill.
+            let point = connectPill.convert(NSPoint(x: connectPill.bounds.midX, y: connectPill.bounds.midY), to: nil)
+            if let recognizer = card.debugCardHitView.gestureRecognizers.first,
+               let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                             clickCount: 1, pressure: 1) {
+                check(!card.gestureRecognizer(recognizer, shouldAttemptToRecognizeWith: down),
+                      "a click on a Connect pill would also open the card", &ok)
+            } else {
+                fail("fixture: the card has no click recognizer to ask", &ok)
+            }
+        }
+    }
+
     private static func allViews(in root: NSView) -> [NSView] {
         [root] + root.subviews.flatMap { allViews(in: $0) }
     }
@@ -516,12 +653,12 @@ enum HeroCardsViewSelfTest {
                 let states: [State] = colourName == "accent" ? State.allCases : [.normal, .critical]
                 for state in states {
                     for mode in HomeCardSizeMode.allCases {
-                        HomeCardStyle.setColor(colour, for: .claudeStatus)
-                        HomeCardStyle.setColor(colour, for: .fleet)
+                        for module in HomeCardStyle.modules { HomeCardStyle.setColor(colour, for: module) }
                         mountCanvas(mode, state: state, theme: theme) { canvas, _ in
                             for module in HomeCardStyle.modules {
                                 guard let card = canvas.cardForTests(module) else { continue }
-                                let name = "\(module == .claudeStatus ? "claude" : "fleet")-\(theme.id)-\(colourName)-\(state.rawValue)-\(mode.columns)col.png"
+                                let prefix = module == .claudeStatus ? "claude" : module == .fleet ? "fleet" : "hosts"
+                                let name = "\(prefix)-\(theme.id)-\(colourName)-\(state.rawValue)-\(mode.columns)col.png"
                                 write(card, on: theme, to: folder.appendingPathComponent(name))
                             }
                         }

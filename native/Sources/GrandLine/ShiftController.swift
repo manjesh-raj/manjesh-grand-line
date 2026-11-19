@@ -496,6 +496,11 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Set once, the first time the sidebar shell shows this page
     /// (`adoptSidebarLayout`). The floating bar never sets it.
     private(set) var drawsSidebarLayout = false
+    /// T-4 on the page-redesign board: the page's hero as a slim band over
+    /// the filter row (`ShiftHeroBand.swift`). Board and List show it;
+    /// Calendar (which fills the page), Weekly review and a project's own
+    /// page do not.
+    private(set) lazy var heroBand = ShiftTasksHeroBand()
     /// The page column's filters, as one row under the header.
     /// S16: a `HelmFilterBar` - scope tabs, the project pop-up, the
     /// Follow-ups jump, and the sort (Board, List) or Colour by (Calendar)
@@ -2056,6 +2061,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             tasksLeftColumn?.isHidden = true
             tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
             workspaceFilterRow.isHidden = isProjectDetailFullPage || topLevelView != .dashboard
+            // The calendar fills the page under the filter row, so it keeps
+            // that height rather than giving it to the band.
+            heroBand.isHidden = workspaceFilterRow.isHidden || calendarShowing
             // R2-UX-07: an empty Tasks page was three empty states (the
             // board's lanes, Follow-ups and Projects) under a filter row of
             // zeros. With nothing at all it is one invitation instead. The
@@ -2065,7 +2073,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             let startHere = showsStartHere && !failed && !isProjectDetailFullPage && !calendarShowing
             startHereState.isHidden = !startHere
             if startHere {
-                for view in [boardSection, tasksTable.card, workspaceFilterRow] + startHereReplaces {
+                for view in [boardSection, tasksTable.card, workspaceFilterRow, heroBand] + startHereReplaces {
                     view.isHidden = true
                 }
             } else {
@@ -3023,6 +3031,9 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         buildWorkspaceFilterRow()
         contentStack.insertArrangedSubview(workspaceFilterRow, at: 0)
         workspaceFilterRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        // T-4: the page's hero as a slim band over the filter row.
+        contentStack.insertArrangedSubview(heroBand, at: 0)
+        heroBand.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         boardView.adoptWorkspaceStyle()
         if let index = dashboardContainer.arrangedSubviews.firstIndex(of: boardSection) {
             dashboardContainer.insertArrangedSubview(tasksTable.card, at: index + 1)
@@ -3071,6 +3082,19 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// New task, at the toolbar's far right after Search.
     var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }
 
+    /// T-4's slim band: the day's verdict and figures from the same counting
+    /// pass the subtitle and the filter row read, and the Done lane's own
+    /// seven-day window for the ring.
+    fileprivate func renderHeroBand() {
+        let summary = store.isInFailedLoadState ? nil : counts()
+        let done = boardTasks()[.done]?.count ?? 0
+        heroBand.configure(ShiftHeroWords.band(summary: summary, doneLastWeek: done))
+    }
+
+    #if FM_SELFTESTS
+    var debugHeroBand: ShiftTasksHeroBand? { drawsSidebarLayout && !heroBand.isHidden ? heroBand : nil }
+    #endif
+
     private func buildWorkspaceFilterRow() {
         projectPopup.controlSize = .small
         projectPopup.target = self
@@ -3092,6 +3116,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// The filter row's counts and selection, the project list, and the
     /// List tab's rows - from the same pass `render` just made.
     fileprivate func renderWorkspaceChrome() {
+        renderHeroBand()
         let c = counts()
         scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.all.title, count: c.open),
                              forID: ShiftTaskScope.all.rawValue)

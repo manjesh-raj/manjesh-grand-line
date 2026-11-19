@@ -32,11 +32,8 @@ enum FeelPassSelfTest {
             ("2 the hero paints its palette and its ring", checkHeroView),
             ("2 the ring takes a size", checkRingSize),
             ("2 the hero's words come from the briefing", checkHeroWords),
-            ("3 the four tiles and where they go", checkKPITiles),
-            ("3 an unread figure is a dash, never a zero", checkKPIUnknowns),
             ("3 today's task figures", checkTaskCounts),
             ("5 the toolbar tabs are no wider than the control they replaced", checkToolbarTabsWidth),
-            ("4 the search pill's words clear the text floor in every theme", checkSearchPillContrast),
             ("6 density is a factor on every row height", checkDensityRowHeights),
             ("6 changing density re-fires the theme", checkDensityRefires),
         ]
@@ -198,63 +195,6 @@ enum FeelPassSelfTest {
 
     // MARK: - Item 3
 
-    private static func healthSummary(healthy: Int, failing: Int) -> ServiceHealthSummary {
-        let services = Array(HealthService.allCases.prefix(healthy + failing))
-        let entries = services.enumerated().map { index, service in
-            ServiceHealthSummary.Entry(
-                service: service,
-                state: index < healthy
-                    ? ServiceHealthState(lastSuccess: Date())
-                    : ServiceHealthState(lastFailure: Date(), lastFailureDetail: "x",
-                                         consecutiveFailures: ServiceHealthRegistry.failureThreshold))
-        }
-        return ServiceHealthSummary(entries)
-    }
-
-    private static func checkKPITiles(_ ok: inout Bool) {
-        let counts = HomeTaskCounts(tasks: [], followUps: [])
-        let tiles = HomeKPITiles.tiles(
-            tasks: .init(counts: counts),
-            prs: .init(reading: .value(3), open: 22),
-            health: healthSummary(healthy: 6, failing: 1),
-            claude: .init(week: nil, failure: nil))
-        check(tiles.map(\.item.caption) == ["Tasks due today", "PRs ready to merge", "Services healthy", "Claude week"],
-              "the tiles are \(tiles.map(\.item.caption))", &ok)
-        check(tiles.map(\.opens) == [.shift, .review, .health, .console],
-              "the tiles open \(tiles.map(\.opens))", &ok)
-        check(tiles.allSatisfy(\.item.isAction), "a tile is not a button", &ok)
-        check(tiles[1].item.reading.text { $0 } == "3" && tiles[1].item.detail?.text == "of 22 open",
-              "the PR tile reads \(tiles[1].item.reading.text { $0 }) / \(tiles[1].item.detail?.text ?? "")", &ok)
-        check(tiles[2].item.reading.text { $0 } == "6 / 7" && tiles[2].item.detail?.text == "1 failing"
-                && tiles[2].item.detail?.tint == .critical,
-              "the services tile reads \(tiles[2].item.reading.text { $0 }) / \(tiles[2].item.detail?.text ?? "")", &ok)
-        // A profile that hides the crew drops both crew tiles.
-        let personal = HomeKPITiles.tiles(tasks: .init(counts: counts), prs: nil,
-                                          health: healthSummary(healthy: 2, failing: 0), claude: nil)
-        check(personal.map(\.opens) == [.shift, .health], "a Personal strip opens \(personal.map(\.opens))", &ok)
-    }
-
-    private static func checkKPIUnknowns(_ ok: inout Bool) {
-        let tiles = HomeKPITiles.tiles(
-            tasks: .init(counts: nil),
-            prs: .init(reading: .scanning, open: nil),
-            health: ServiceHealthSummary([]),
-            claude: .init(week: nil, failure: "quota-axi is not signed in"))
-        for tile in tiles {
-            check(!tile.item.reading.isKnown && tile.item.reading.text { $0 } != "0",
-                  "\(tile.item.caption) shows \(tile.item.reading.text { $0 }) for a figure nobody read", &ok)
-        }
-        if case .failed(let why) = tiles[3].item.reading {
-            check(why == "quota-axi is not signed in", "the Claude tile's reason is \(why)", &ok)
-        } else {
-            fail("the Claude tile does not carry its failure", &ok)
-        }
-        let failed = HomeKPITiles.tiles(tasks: nil, prs: .init(reading: .failed("gh timed out"), open: 4),
-                                        health: nil, claude: nil)
-        check(failed.first?.item.detail?.text == "Could not read the queue",
-              "a failed PR scan reads \(failed.first?.item.detail?.text ?? "nothing")", &ok)
-    }
-
     private static func checkTaskCounts(_ ok: inout Bool) {
         // Local noon, `Calendar.current` - AGENTS.md's rule for a day fixture.
         let calendar = Calendar.current
@@ -285,20 +225,6 @@ enum FeelPassSelfTest {
         let counts = HomeTaskCounts(tasks: tasks, followUps: [], now: now, calendar: calendar)
         check(counts.due == 2 && counts.overdue == 1 && counts.doneToday == 1,
               "the counts are due \(counts.due), overdue \(counts.overdue), done \(counts.doneToday); want 2, 1, 1", &ok)
-    }
-
-    // MARK: - Item 4
-
-    private static func checkSearchPillContrast(_ ok: inout Bool) {
-        let pill = WorkspaceSidebarSearchPill()
-        for theme in everyTheme {
-            pill.applyTheme(theme)
-            let label = pill.debugLabelColor ?? .clear
-            let worst = min(HelmContrast.ratio(label, pill.debugRestFill), HelmContrast.ratio(label, pill.debugHoverFill))
-            check(worst >= HelmContrast.textTarget - 0.01,
-                  "\(theme.id): the pill's words measure \(String(format: "%.2f", worst)) on its fill", &ok)
-        }
-        check(pill.debugHoverFill != pill.debugRestFill, "the pill's hover fill is its resting fill", &ok)
     }
 
     // MARK: - Item 5

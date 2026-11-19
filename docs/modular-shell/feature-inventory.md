@@ -155,7 +155,7 @@ One row per `DaylightModule`. Every card stays available in Home's configurable 
 | `home.focusTimer` | Focus timer card: the running session and when it ends, or today's focused minutes (R5-UX-07) | Command canvas | Home (a card in the configurable set; on by default for the Personal profile) |  |
 | `home.githubSync` | GitHub Sync card | Engineering canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.health` | Health card | Home canvas and the Operations canvas | Home (a card in the configurable set, on by default) |  |
-| `home.hosts` | Hosts card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
+| `home.hosts` | Hosts card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default; a hero card with the live-session verdict, the ring of hosts online and the three recent hosts with Switch or Connect, sized and coloured from its palette menu like Claude usage and Fleet) |  |
 | `home.kubernetes` | Kubernetes card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.logAnalyzer` | Log Analyzer card | Operations canvas | Home (a card in the configurable set, available in Customize, off by default) |  |
 | `home.mergeQueue` | Merge queue card | Home canvas and the Command canvas | Home (a card in the configurable set, on by default) |  |
@@ -806,6 +806,8 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.FleetMessageComposer` | FleetMessageComposer controls | `cancelTapped`, `sendTapped` | Crew › Needs you (the Needs your call list's composer) |  |
 | `action.FocusTimerViews` | FocusTimerViews controls | `extendTapped`, `finishTapped`, `pauseTapped` | Toolbar (the focus timer chip's ring popover - Pause, +5 min, Finish - opened from the window toolbar's chip; the floating bar's chip opens the same popover) |  |
 | `action.GitHubSyncController` | GitHubSyncController controls | `checkConfigRepoAgain`, `openConfigRepoSettings`, `refreshTapped`, `syncAllTapped`, `syncTapped` | Setup › GitHub sync (the paused-push card's Check again and Open on GitHub, sidebar layout only) |  |
+| `action.HelmHeroColumn` | HelmHeroColumn controls | `clicked` | Secrets › Secrets (S-3: the hero column's Kinds and Collections rows, a `HelmHeroNavRow` each; a shared component, it travels with each page that uses it) |  |
+| `action.VaultHeroSplit` | VaultHeroSplit controls | `fixTapped`, `panelFixTapped` | Secrets › Automic Vault (S-1's split card: View Fix on the gradient and on a launcher's row) |  |
 | `action.HealthController` | HealthController controls | `refreshTapped` | Health (the toolbar's Refresh, sidebar layout only) |  |
 | `action.HealthCardView` | HealthCardView controls | `copyDiagnostics`, `heroRetryTapped`, `openSchedulesTapped` | Health (H-4: the hero column's Retry and Diagnostics pills, beside the toolbar's Copy diagnostics and each row's Retry) |  |
 | `action.HelmDataTable` | HelmDataTable controls | `actionClicked`, `menuItemPicked`, `overflowClicked`, `primaryClicked` | Every module (the sidebar layout's one table: a row's headline action, its ⋯ and context menu, and the empty state's action) |  |
@@ -818,7 +820,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HelmNotice` | HelmNotice controls | `dismissTapped` | Home (the tips notice's Hide tips, S17) |  |
 | `action.HelmForm` | HelmForm controls | `choicePicked`, `clicked`, `closeSquareClicked`, `extraPicked`, `fallbackSwitchChanged`, `pillClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmKit` | HelmKit controls | `open`, `picked`, `pressed` | Every module (a shared component; it travels with each page that uses it) |  |
-| `action.HelmModuleCard` | HelmModuleCard controls | `PeekRowClick.fire`, `cardClicked`, `footerActionTapped`, `headerActionTapped`, `headerMenuTapped` | Every module (a shared component; it travels with each page that uses it) |  |
+| `action.HelmModuleCard` | HelmModuleCard controls | `PeekRowClick.fire`, `cardClicked`, `footerActionTapped`, `headerActionTapped`, `headerMenuTapped`, `heroListActionTapped` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmPageSidebar` | HelmPageSidebar controls | `emptyStateActionClicked`, `footerLinkClicked`, `rowClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmPlateCard` | HelmPlateCard controls | `deleteClicked`, `openClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmRevealableSecretField` | HelmRevealableSecretField controls | `toggleReveal` | Every module (a shared component; it travels with each page that uses it) |  |
@@ -1054,7 +1056,7 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac) | `DaylightBarController.swift` `NSTextField(labelWithString: "Grand Line")`; `WorkspaceSidebar.swift` `final class WorkspaceSidebarHeader` |
-| `chrome.sidebarHeaderRule` | A divider and room between the account header and Home | Not in the app | Sidebar (stage 6 drew a 1pt rule here; the feel pass replaced it with the search pill, which is the divider now, with 6pt either side - the captain's call) | `WorkspaceSidebar.swift` `private let searchPill = WorkspaceSidebarSearchPill()` |
+| `chrome.sidebarHeaderRule` | A divider and room between the account header and Home | Not in the app | Sidebar (stage 6 drew a 1pt rule here; the feel pass put a search pill here; since the captain's change the toolbar's Search and ⌘K, on every page, are the way in, and an 8pt gap separates the header from Home) | `WorkspaceSidebar.swift` `static let headerGap` |
 | `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; R2-UX-02 retired Home's spaces in the sidebar layout, so Home is its own arranged cards and Customize adds any other space's card; the floating bar keeps its pills) | `DaylightBarController.swift` `var onSelectSpace`; `MainSplitShellController.swift` `override func selectSpace(_ space: DaylightSpace)` |
 | `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `DaylightSpace.swift` `func isVisible(in space` |
 | `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `DaylightBarController.swift` `var onDrillBack`; `WorkspaceToolbar.swift` `@objc private func navigationClicked`; `NavigationHistory.swift` `struct NavigationHistory` |

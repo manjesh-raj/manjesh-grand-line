@@ -230,6 +230,7 @@ FM_RUN_CONTRAST_TESTS 11
 FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 11
 FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
 FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 12
+FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS 10
 "
 DEFAULT_SHARD_WEIGHT=3
 
@@ -380,6 +381,10 @@ NEEDS_SESSION=(
   # sits beside the table and the cards, the band on a narrow page, and the
   # column giving way to the inspector without growing the window.
   "FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
+  # T-4's band and lanes, S-3's hero column and S-1's split card on Automic
+  # Vault in a real sidebar shell: where each sits, what its controls run,
+  # and every word on the gradients in the ink.
+  "FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # Stage 7: the sidebar's size, Quick Connect, Setup and Tasks in a real
   # sidebar shell. Its models and source guards
   # (`FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS`) are deliberately NOT here.

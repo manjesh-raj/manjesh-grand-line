@@ -481,7 +481,11 @@ enum PageRedesignsSelfTest {
         check(waitUntil(timeout: 10) { !vault.debugIsReading }, "Automic Vault's own read never finished", &ok)
         check(vault.drawsSidebarLayout, "Automic Vault did not switch to the sidebar layout's presentation", &ok)
         let secrets = vault.debugSecretsTable
-        check(onScreen(secrets.card) && onScreen(vault.debugToolsTable.card), "Automic Vault's tables are not on screen", &ok)
+        // S-1: the launchers are the split card's rows; their table is kept
+        // current but not drawn.
+        check(onScreen(secrets.card) && onScreen(vault.debugHeroSplit),
+              "Automic Vault's secrets table or split card is not on screen", &ok)
+        check(!onScreen(vault.debugToolsTable.card), "the launchers' table still shows beside the split card", &ok)
         check(vault.debugSecretRows.allSatisfy { !onScreen($0) }, "the floating bar's secret rows still show", &ok)
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "STAGING_DB_PASSWORD")],
                           tools: [VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
