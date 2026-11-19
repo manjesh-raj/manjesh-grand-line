@@ -802,7 +802,7 @@ enum UIUXProposalsSelfTest {
     /// the theme itself now, so a state built under one register and shown
     /// under the other takes the new register's ink and muted ink with no
     /// help from its host. The window-backed half, in the real inspector,
-    /// is `MainSplitShellSelfTest.checkTheInspectorEmptyStateFollowsTheTheme`.
+    /// is `MainSplitShellPanesSelfTest.checkTheInspectorEmptyStateFollowsTheTheme`.
     private static func checkEmptyStateFollowsTheTheme(_ ok: inout Bool) {
         let saved = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(saved) }
@@ -832,7 +832,7 @@ enum UIUXProposalsSelfTest {
     /// keeps its slot when it says nothing, a scrolling page's first block
     /// lands on the line, and the pages that moved onto `HelmPageScaffold`
     /// keep no frame of their own. Where every page actually starts, in the
-    /// real shell, is `MainSplitShellSelfTest.checkEveryPageStartsAtOneHeight`.
+    /// real shell, is `MainSplitShellPanesSelfTest.checkEveryPageStartsAtOneHeight`.
     private static func checkOnePageFrame(_ ok: inout Bool) {
         check(HelmMetrics.pageContentTop - HelmMetrics.pageHeaderLine == HelmMetrics.pageContentInset
                 && HelmMetrics.pageContentInset > 0,

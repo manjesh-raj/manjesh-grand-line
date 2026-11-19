@@ -265,7 +265,7 @@ struct ModuleDescriptor {
     /// scroller's track itself). A page wider than its column grows the
     /// window (gotcha (13)), so this is the page's own measured minimum;
     /// below it plus the sidebar, the sidebar steps aside for this page only.
-    /// `MainSplitShellSelfTest` fails if a page outgrows its floor.
+    /// `MainSplitShellNavigationSelfTest` fails if a page outgrows its floor.
     var minimumContentWidth: CGFloat = ModuleTable.defaultMinimumContentWidth
 }
 

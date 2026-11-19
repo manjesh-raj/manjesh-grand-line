@@ -189,49 +189,66 @@ suite_timeout_for() {
 # The windowed job ran every window-backed suite in one job, about 21 minutes,
 # and it was the longest stretch of every CI run. CI now splits that selection
 # into shards that run side by side. A shard is chosen longest suite first,
-# onto whichever shard has the least so far (LPT), so the four suites that
-# take two to four minutes each do not land together.
+# onto whichever shard has the least so far (LPT), so the seven suites that
+# take two minutes or more each do not land together.
 #
-# The numbers are medians over 20 CI runs (2026-10-21 to 22), for the suites
+# The numbers are medians over 10 green CI runs (2026-11-19), for the suites
 # over ten seconds. Every other suite counts as DEFAULT_SHARD_WEIGHT, the
-# mean of the rest. They only decide which shard a suite runs in, never
+# mean of the rest. The two MAIN_SPLIT_SHELL halves had no runs of their own
+# yet: theirs are a CI replay's per-check times, scaled to the old suite's
+# 254s median. They only decide which shard a suite runs in, never
 # whether it runs: every selected suite lands in exactly one shard whatever
 # this table says, and CI's aggregate job checks the shards' lists against the
 # whole selection. A suite missing from here, or a number that has drifted,
 # costs balance and nothing else. Refresh from a CI run's "slowest:" tail.
 SHARD_WEIGHTS="
-FM_RUN_APP_SHELL_BODY_WIDTH_TESTS 245
-FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS 135
-FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS 102
-FM_RUN_DESTINATION_MOUNTING_TESTS 84
-FM_RUN_MAIN_SPLIT_SHELL_TESTS 48
-FM_RUN_REVIEW2_UX_TESTS 36
-FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 43
-FM_RUN_PAGE_POLISH_UXP_TESTS 35
-FM_RUN_SHIFT_TASKS_PAGE_TESTS 32
-FM_RUN_SPLIT_SIDEBAR_TESTS 32
-FM_RUN_STRAW_HAT_HANDOFF_TESTS 26
+FM_RUN_APP_SHELL_BODY_WIDTH_TESTS 337
+FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS 207
+FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS 147
+FM_RUN_MAIN_SPLIT_SHELL_NAVIGATION_TESTS 132
+FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS 127
+FM_RUN_DESTINATION_MOUNTING_TESTS 124
+FM_RUN_REVIEW2_UX_TESTS 122
+FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS 61
+FM_RUN_SHIFT_CALENDAR_VIEW_TESTS 55
+FM_RUN_HERO_CARDS_VIEW_TESTS 47
+FM_RUN_PAGE_POLISH_UXP_TESTS 42
+FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 42
+FM_RUN_SETTINGS_SIDEBAR_TESTS 42
+FM_RUN_SIDEBAR_REDESIGNS_TESTS 40
+FM_RUN_SPLIT_SIDEBAR_TESTS 36
+FM_RUN_SHIFT_TASKS_PAGE_TESTS 34
+FM_RUN_STRAW_HAT_HANDOFF_TESTS 33
+FM_RUN_WORKSPACE_TOOLBAR_TESTS 32
+FM_RUN_CONNECTIONS_CARDS_TESTS 28
+FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 26
 FM_RUN_PAGE_REDESIGNS_TESTS 24
-FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 22
-FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS 30
-FM_RUN_WINDOW_CHROME_FUSION_TESTS 22
+FM_RUN_WINDOW_CHROME_FUSION_TESTS 23
 FM_RUN_CODE_PREVIEW_VIEW_TESTS 22
-FM_RUN_DAYLIGHT_MODULE_TESTS 16
-FM_RUN_BAR_ACTIVE_STATE_TESTS 15
-FM_RUN_CODE_RUNNER_VIEW_TESTS 14
-FM_RUN_SIDEBAR_POLISH_TESTS 14
-FM_RUN_DRILL_HEADER_TITLE_TESTS 14
+FM_RUN_BAR_ACTIVE_STATE_TESTS 20
+FM_RUN_DAYLIGHT_MODULE_TESTS 19
+FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS 19
+FM_RUN_NOTIFICATION_BRIDGE_TESTS 19
+FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS 16
+FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 16
+FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS 16
+FM_RUN_DRILL_HEADER_TITLE_TESTS 15
+FM_RUN_CONTRAST_TESTS 14
+FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 14
+FM_RUN_RECENT_DESTINATIONS_TESTS 14
 FM_RUN_CANVAS_LISTS_CONTROLS_TESTS 13
-FM_RUN_SETTINGS_SIDEBAR_TESTS 13
-FM_RUN_LAYOUT_STABILITY_TESTS 13
-FM_RUN_RECENT_DESTINATIONS_TESTS 12
+FM_RUN_REVIEW2_A11Y_PERF_TESTS 13
+FM_RUN_CODE_RUNNER_VIEW_TESTS 13
+FM_RUN_STRAW_HAT_VIEW_TESTS 12
+FM_RUN_SIDEBAR_POLISH_TESTS 12
 FM_RUN_HOME_FIT_TESTS 12
-FM_RUN_CONTRAST_TESTS 11
-FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 11
+FM_RUN_SESSION_RESTORE_TESTS 12
+FM_RUN_SETTINGS_REDESIGN_TESTS 11
+FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS 11
+FM_RUN_TERMINAL_DISPLAY_GATING_TESTS 11
+FM_RUN_HOME_DASHBOARD_VIEW_TESTS 11
 FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
-FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 12
-FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS 10
-FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS 8
+FM_RUN_WHITEBOARD_VIEW_TESTS 10
 "
 DEFAULT_SHARD_WEIGHT=3
 
@@ -368,8 +385,10 @@ NEEDS_SESSION=(
   "FM_RUN_HOME_FIT_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   "FM_RUN_LAYOUT_STABILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # Stage 3 of the modular-shell migration: the sidebar shell in a real
-  # window - its toolbar, its split panes and their widths.
-  "FM_RUN_MAIN_SPLIT_SHELL_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
+  # window - its toolbar, its split panes and their widths. Two halves of
+  # one suite, split to stay inside SUITE_TIMEOUT on CI.
+  "FM_RUN_MAIN_SPLIT_SHELL_NAVIGATION_TESTS"  # session-not-window: builds its window via MainSplitShellHarness, through ReviewTourLab.makeOffScreenSplitShell()
+  "FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS"  # session-not-window: builds its window via MainSplitShellHarness, through ReviewTourLab.makeOffScreenSplitShell()
   "FM_RUN_WORKSPACE_TOOLBAR_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # The later page work: the redesigned pages in a real sidebar shell.
   "FM_RUN_PAGE_REDESIGNS_TESTS"  # session-not-window: builds its windows via ReviewTourLab.makeOffScreenSplitShell() and makeOffScreenShell()

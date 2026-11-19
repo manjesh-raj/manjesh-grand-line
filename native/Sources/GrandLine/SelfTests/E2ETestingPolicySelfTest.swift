@@ -987,8 +987,9 @@ enum E2ETestingPolicySelfTest {
     /// `NSToolbar` items AppKit puts in the overflow menu at a given window
     /// width, which only a real toolbar in a real window decides - no model
     /// can answer it. Review #4's other UI checks went into a headless suite
-    /// (`ReviewFourUISelfTest`) and into `MainSplitShellSelfTest`, which
-    /// already mounts the shell.
+    /// (`ReviewFourUISelfTest`) and into the sidebar shell's window-backed
+    /// suite (now `MainSplitShellNavigationSelfTest` and
+    /// `MainSplitShellPanesSelfTest`), which already mounts the shell.
     ///
     /// 131 after R5-PROC-03 of review #5 re-ran the audit and moved five
     /// suites that mounted a `ConsoleController` in a window but assert only
@@ -1021,7 +1022,14 @@ enum E2ETestingPolicySelfTest {
     /// still write, are real layout and dispatch decided by the sidebar shell
     /// in a window. The words, the tones and the panel's accessory are in the
     /// headless `SettingsSplitCardWordsSelfTest`.
-    private static let windowBackedSuiteCeiling = 135
+    ///
+    /// 136 for a split, not a new suite: `MainSplitShellSelfTest` became
+    /// `MainSplitShellNavigationSelfTest` and `MainSplitShellPanesSelfTest`
+    /// with the same checks between them, because it ran 1,573 checks in
+    /// 297.6s against the runner's 300s per-suite bound on CI. No check
+    /// joined the lane, and raising that bound was the alternative turned
+    /// down.
+    private static let windowBackedSuiteCeiling = 136
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

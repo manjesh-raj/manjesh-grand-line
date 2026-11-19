@@ -110,7 +110,8 @@ enum ReviewFiveUXSelfTest {
 
     /// The Calendar's own toolbar is its periods in the card's order, its row
     /// takes ⌘0, Tasks' Calendar tab still lands on it, and the Tasks page
-    /// hands it Today. The window-backed half is `MainSplitShellSelfTest`.
+    /// hands it Today. The window-backed half is
+    /// `MainSplitShellNavigationSelfTest`.
     private static func checkTheCalendarIsAPlace(_ ok: inout Bool) {
         check(ShiftCalendarScale.toolbarOrder == [.day, .week, .month, .agenda],
               "R5-UX-04: the Calendar's tabs are \(ShiftCalendarScale.toolbarOrder.map(\.title))", &ok)

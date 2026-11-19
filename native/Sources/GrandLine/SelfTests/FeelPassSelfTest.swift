@@ -5,7 +5,8 @@
 // strip, the sidebar's search pill and the density switch, checked where a
 // check needs no window. The Home wiring (the
 // hero replacing the briefing card, Customize bringing it back) is measured
-// in `MainSplitShellSelfTest`, which already mounts Home in a real window.
+// in `MainSplitShellNavigationSelfTest`, which already mounts Home in a real
+// window.
 //
 // Run with `FM_RUN_FEEL_PASS_TESTS=1 .build/debug/GrandLine`.
 //
