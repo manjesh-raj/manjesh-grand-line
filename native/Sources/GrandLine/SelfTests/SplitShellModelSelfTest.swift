@@ -28,7 +28,8 @@
 //      pane runs its body to its foot, and the focus timer's chip - the one
 //      control the strip carried - is the toolbar's.
 //
-// Pure logic: no window. `MainSplitShellSelfTest` is the window-backed half.
+// Pure logic: no window. `MainSplitShellNavigationSelfTest` and
+// `MainSplitShellPanesSelfTest` are the window-backed half.
 //
 // Run with:
 //   swift build && FM_RUN_SPLIT_SHELL_MODEL_TESTS=1 .build/debug/GrandLine; echo $?
@@ -888,7 +889,7 @@ enum SplitShellModelSelfTest {
               "the sidebar button no longer sits over the sidebar", &ok)
         // R2-ARCH-06: customisable, and still never autosaved by AppKit -
         // the toolbar saves its own items to `AppSettings`, which is
-        // `AppDefaults.store`. `MainSplitShellSelfTest
+        // `AppDefaults.store`. `MainSplitShellNavigationSelfTest
         // .checkTheToolbarIsCustomisable` drives the round trip.
         check(!toolbar.toolbar.autosavesConfiguration,
               "the toolbar autosaves its configuration, which writes UserDefaults.standard outside AppDefaults.store", &ok)
@@ -901,7 +902,7 @@ enum SplitShellModelSelfTest {
     /// The captain: "Yes have this removed everywhere". A source guard,
     /// because the strip could come back on one module only, which a
     /// behaviour check on a sample of modules would miss; the window-backed
-    /// half (`MainSplitShellSelfTest.checkTheContentReachesTheFoot`) measures
+    /// half (`MainSplitShellPanesSelfTest.checkTheContentReachesTheFoot`) measures
     /// every module.
     private static func checkTheLayoutDrawsNoStatusStrip(_ ok: inout Bool) {
         guard let files = SelfTestSources.appSourceFiles(), files.count > 100,

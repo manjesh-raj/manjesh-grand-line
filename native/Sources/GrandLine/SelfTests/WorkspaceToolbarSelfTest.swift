@@ -130,7 +130,7 @@ enum WorkspaceToolbarSelfTest {
         }
     }
 
-    /// The same rule `MainSplitShellSelfTest` applies on Notebook: an image
+    /// The same rule `MainSplitShellPanesSelfTest` applies on Notebook: an image
     /// item runs its own action, and a view item needs a submenu or a real
     /// target, because AppKit's synthesised form for a view item runs nothing.
     private static func runsFromTheOverflowMenu(_ item: NSToolbarItem) -> Bool {

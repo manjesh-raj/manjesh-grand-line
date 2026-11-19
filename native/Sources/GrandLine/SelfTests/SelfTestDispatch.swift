@@ -1095,8 +1095,14 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_SPLIT_SHELL_MODEL_TESTS"] == "1" {
             exit(SplitShellModelSelfTest.run() ? 0 : 1)
         }
-        if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_TESTS"] == "1" {
-            exit(MainSplitShellSelfTest.run() ? 0 : 1)
+        // Two halves of one shell, split to stay well inside the runner's
+        // per-suite bound on CI: how the captain gets around, and the frame
+        // around the page.
+        if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_NAVIGATION_TESTS"] == "1" {
+            exit(MainSplitShellNavigationSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS"] == "1" {
+            exit(MainSplitShellPanesSelfTest.run() ? 0 : 1)
         }
         // R4-UI-01: the window toolbar at the captain's 1512pt width, on every
         // module, at Default and Larger text.

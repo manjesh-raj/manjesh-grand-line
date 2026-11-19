@@ -81,7 +81,8 @@ final class MainSplitShellController: WorkspaceShellController {
     /// (`ModuleDescriptor.minimumContentWidth`, read on navigation through
     /// `contentMinimum(for:)`); below a page's floor plus the sidebar the
     /// sidebar steps aside for that page only, and comes back when a narrower
-    /// page shows. `MainSplitShellSelfTest` fails if a page outgrows its floor.
+    /// page shows. `MainSplitShellNavigationSelfTest` fails if a page outgrows
+    /// its floor.
     static let contentMinimumWithOverlayScrollers: CGFloat = 940
 
     /// `contentMinimumWithOverlayScrollers`, plus one scroller's track while
