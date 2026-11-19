@@ -722,6 +722,17 @@ extension HelmReading: Equatable where Value: Equatable {}
 ///
 /// Both share the unknown rule (a dash, "not read" for the reason, never 0)
 /// and the tint rule (colour only when the state is not the default).
+///
+/// **1.3.0: boxed tiles on a hero.** A `.boxed` strip given `heroInk` draws
+/// its cells as the board's inset hero tiles (Setup's Sup-1): the figure over
+/// its caption, both in the ink, on a translucent shade of the ink's opposite
+/// rather than on the card surface. A shade, as under `HelmButton`'s ghost
+/// pill, because it can only add contrast to ink the hero's palette already
+/// holds at the text floor. Unlike `.inline`, a tinted figure keeps its
+/// signal: a boxed tile can be a fact about another page (a diverged dotfiles
+/// repo on the Updates page), so the hero's own verdict cannot carry it. With
+/// `heroPalette` set it takes `HelmHeroSurface.signalColor`, which clears the
+/// non-text floor on both stops - the large-text floor a 26pt figure needs.
 final class HelmKPIStrip: NSView {
 
     enum Density: Equatable { case inline, boxed }
@@ -835,6 +846,21 @@ final class HelmKPIStrip: NSView {
     }
     static let heroQuietAlpha: CGFloat = 0.72
     static let heroRuleAlpha: CGFloat = 0.32
+
+    /// 1.3.0, `.boxed` only: the palette of the hero under the strip, so a
+    /// tinted tile figure can take `HelmHeroSurface.signalColor` on it.
+    /// Without one a tinted figure is ink, as on `.inline`.
+    var heroPalette: HelmHeroSurface.Palette? {
+        didSet { if heroPalette != oldValue { applyTheme(theme) } }
+    }
+    /// 1.3.0: a hero tile's height, its figure (a word figure - "Off", "In
+    /// sync" - is set smaller, as the board draws it), its caption's ink and
+    /// its shade's alpha.
+    static let heroTileHeight: CGFloat = 64
+    static let heroMetricSize: CGFloat = 26
+    static let heroWordMetricSize: CGFloat = 17
+    static let heroCaptionAlpha: CGFloat = 0.85
+    static let heroTileFillAlpha: CGFloat = 0.14
 
     /// 1.2.0: the `.inline` figure's size before the text scale. 19 on a
     /// card; Fleet's hero sets the prototype's 24.
@@ -988,10 +1014,29 @@ final class HelmKPIStrip: NSView {
         }
     }
 
+    /// 1.3.0: a hero tile's figure. Ink for a known figure, the ink at
+    /// `heroQuietAlpha` for a quiet or unknown one, and for a tinted one the
+    /// state hue lifted onto `palette` when there is one.
+    static func heroValueColor(_ item: Item, ink: NSColor, palette: HelmHeroSurface.Palette?,
+                               theme: HelmTheme) -> NSColor {
+        guard item.reading.isKnown else { return ink.withAlphaComponent(heroQuietAlpha) }
+        switch item.emphasis {
+        case .normal: return ink
+        case .quiet: return ink.withAlphaComponent(heroQuietAlpha)
+        case let .tinted(tint):
+            guard let palette else { return ink }
+            return HelmHeroSurface.signalColor(tintHex: tint.hex(in: theme), on: palette)
+        }
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         if density == .boxed {
-            for cell in cells { cell.applyTheme(theme) }
+            for cell in cells {
+                cell.heroInk = heroInk
+                cell.heroPalette = heroPalette
+                cell.applyTheme(theme)
+            }
             return
         }
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
@@ -1042,11 +1087,20 @@ final class HelmKPIStrip: NSView {
         private let valueLabel = NSTextField(labelWithString: "")
         private let detailLabel = NSTextField(labelWithString: "")
         private let detailPill = HelmStatusPill(style: .pill)
+        private let stack = NSStackView()
         private var item = Item(.unread, caption: "")
         private var theme: HelmTheme = ThemeManager.shared.theme
+        private let height: CGFloat
+        private var heightConstraint: NSLayoutConstraint?
         var onPress: (() -> Void)?
+        /// 1.3.0: the strip's `heroInk` and `heroPalette`, handed down.
+        var heroInk: NSColor? {
+            didSet { if heroInk != oldValue { arrange() } }
+        }
+        var heroPalette: HelmHeroSurface.Palette?
 
         init(height: CGFloat) {
+            self.height = height
             super.init(frame: .zero)
             translatesAutoresizingMaskIntoConstraints = false
             captionLabel.font = .systemFont(ofSize: HelmType.scaled(HelmKPIStrip.boxedCaptionSize), weight: .medium)
@@ -1056,7 +1110,7 @@ final class HelmKPIStrip: NSView {
                 label.lineBreakMode = .byTruncatingTail
                 label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             }
-            let stack = NSStackView(views: [captionLabel, valueLabel, detailLabel, detailPill])
+            stack.setViews([captionLabel, valueLabel, detailLabel, detailPill], in: .top)
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = HelmMetrics.s1
@@ -1067,12 +1121,14 @@ final class HelmKPIStrip: NSView {
             card.setBody(stack, insets: HelmCard.contentInsets)
             card.translatesAutoresizingMaskIntoConstraints = false
             addSubview(card)
+            let tall = heightAnchor.constraint(equalToConstant: height)
+            heightConstraint = tall
             NSLayoutConstraint.activate([
                 card.leadingAnchor.constraint(equalTo: leadingAnchor),
                 card.trailingAnchor.constraint(equalTo: trailingAnchor),
                 card.topAnchor.constraint(equalTo: topAnchor),
                 card.bottomAnchor.constraint(equalTo: bottomAnchor),
-                heightAnchor.constraint(equalToConstant: height),
+                tall,
             ])
             setAccessibilityElement(true)
             // GL-16: an action cell is keyboard-reachable and draws a real ring.
@@ -1104,8 +1160,10 @@ final class HelmKPIStrip: NSView {
             valueLabel.stringValue = item.reading.text { $0 }
             let detail = item.detail
             let pill = detail?.tint != nil
-            detailPill.isHidden = !pill
-            detailLabel.isHidden = detail == nil || pill
+            // A hero tile carries no detail line: it is one figure among the
+            // hero's, and its height is the board's.
+            detailPill.isHidden = !pill || heroInk != nil
+            detailLabel.isHidden = detail == nil || pill || heroInk != nil
             detailLabel.stringValue = pill ? "" : (detail?.text ?? "")
             var reason: String?
             if case let .failed(why) = item.reading { reason = why }
@@ -1133,13 +1191,36 @@ final class HelmKPIStrip: NSView {
             fitFigure()
         }
 
+        /// 1.3.0: the hero tile's insets, the board's 8pt by 10pt.
+        static let heroInsets = NSEdgeInsets(top: HelmMetrics.s2, left: HelmMetrics.rRow,
+                                             bottom: HelmMetrics.s2, right: HelmMetrics.rRow)
+
+        /// Whether the figure is a word ("Off", "In sync", a dash) rather
+        /// than a number, which a hero tile sets smaller.
+        private var figureIsWord: Bool {
+            !valueLabel.stringValue.contains { $0.isNumber }
+        }
+
+        /// The card's order and insets: caption over figure on the card
+        /// surface, figure over caption on a hero tile.
+        private func arrange() {
+            let hero = heroInk != nil
+            stack.setViews(hero ? [valueLabel, captionLabel, detailLabel, detailPill]
+                                : [captionLabel, valueLabel, detailLabel, detailPill], in: .top)
+            stack.spacing = hero ? 0 : HelmMetrics.s1
+            card.setBody(stack, insets: hero ? Self.heroInsets : HelmCard.contentInsets)
+            heightConstraint?.constant = hero ? HelmKPIStrip.heroTileHeight : height
+            configure(item)
+        }
+
         /// The figure steps down a point at a time until it fits its cell, so a
         /// long value ("0 / 13", "Paused") never truncates at a narrow width.
         private func fitFigure() {
-            let insets = HelmCard.contentInsets
+            let insets = heroInk == nil ? HelmCard.contentInsets : Self.heroInsets
             let room = floor(bounds.width - insets.left - insets.right)
             guard room > 0 else { return }
-            var size = HelmKPIStrip.boxedMetricSize
+            var size = heroInk == nil ? HelmKPIStrip.boxedMetricSize
+                : (figureIsWord ? HelmKPIStrip.heroWordMetricSize : HelmKPIStrip.heroMetricSize)
             var font = HelmType.metric(size)
             while size > HelmKPIStrip.boxedMinimumMetricSize,
                   (valueLabel.stringValue as NSString).size(withAttributes: [.font: font]).width > room {
@@ -1152,6 +1233,10 @@ final class HelmKPIStrip: NSView {
         func applyTheme(_ theme: HelmTheme) {
             self.theme = theme
             card.applyTheme(theme)
+            if let heroInk {
+                applyHero(heroInk)
+                return
+            }
             captionLabel.textColor = HelmTheme.mutedInk(theme)
             detailLabel.textColor = HelmTheme.mutedInk(theme)
             valueLabel.textColor = HelmKPIStrip.valueColor(item, over: HelmTheme.nsColor(theme.chromeBackgroundHex),
@@ -1161,7 +1246,26 @@ final class HelmKPIStrip: NSView {
             }
         }
 
+        /// 1.3.0: the tile on a hero. The card's surface, border and resting
+        /// shadow give way to the shade; the words take the ink.
+        private func applyHero(_ ink: NSColor) {
+            card.layer?.backgroundColor = HelmButton.heroShade(for: ink)
+                .withAlphaComponent(HelmKPIStrip.heroTileFillAlpha).cgColor
+            card.layer?.borderWidth = 0
+            card.layer?.shadowOpacity = 0
+            card.layer?.cornerRadius = HelmMetrics.rRow
+            captionLabel.textColor = ink.withAlphaComponent(HelmKPIStrip.heroCaptionAlpha)
+            valueLabel.textColor = HelmKPIStrip.heroValueColor(item, ink: ink, palette: heroPalette, theme: theme)
+        }
+
         #if FM_SELFTESTS
+        var debugIsHeroTile: Bool { heroInk != nil }
+        var debugCaptionColor: NSColor? { captionLabel.textColor }
+        var debugFillColor: CGColor? { card.layer?.backgroundColor }
+        var debugFigureIsAboveCaption: Bool {
+            (stack.arrangedSubviews.firstIndex(of: valueLabel) ?? 0)
+                < (stack.arrangedSubviews.firstIndex(of: captionLabel) ?? 0)
+        }
         var debugCaption: String { captionLabel.stringValue }
         var debugValue: String { valueLabel.stringValue }
         var debugValuePointSize: CGFloat { valueLabel.font?.pointSize ?? 0 }

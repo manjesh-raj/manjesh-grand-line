@@ -1412,3 +1412,44 @@ So a new or restored machine pushed everything under `home/` to origin seconds a
 - `DotfilesDriftRowSelfTest`'s "auto-sync healthy" case had been inheriting the old default.
   It now turns the switch on explicitly in its own suite domain.
 - **Verified** by `DotfilesAutoSyncSelfTest` case 8b: putting back the old `nil ? true` getter fails it by name, and switching off removes the Health row.
+
+## Setup as Sup-1: a full hero on all four sub-pages (Helm 7.2.0, `fm/grand-line-setup-sup1`)
+
+The captain picked Sup-1 for Setup on the second page-redesign board (`data/grand-line-page-redesign-mockups-2/`).
+In the sidebar layout, Updates, Setup steps, Automation and GitHub sync each opened with `SetupSummaryRow`, five boxed tiles on the card surface.
+Each now opens with `SetupHeroRow` instead, and `SetupSummaryRow` is gone.
+
+- The hero carries the kicker "Setup · This Mac", a verdict and a line that are the sub-page's own, the sub-page's actions as ghost pills, the same five figures as inset tiles, and an 86pt ring of the setup steps done.
+- The figures are still `SetupSummaryFeed`'s cards, so the five tiles agree on every sub-page and with the sidebar's Setup badge.
+  The feed now also hands out the steps reading (for the ring) and the config repo's last answer (for GitHub sync's verdict).
+- The words are `SetupHeroWords`, which is pure and asserted headless by `SetupHeroSelfTest`.
+  Each controller passes a closure that builds its words from the same readings plus its own facts: Updates' last check, Setup steps' failed steps and next undone step, Automation's switches, and the forks carrying commits of their own.
+- Each pill mirrors one of the page's own controls (`SetupHeroRow.Action.mirroring`): it shows that control's title, enabled state and tooltip, and a press runs that control's own target and action.
+  Updates has one pill, because Check for updates already is its refresh.
+  The pages call `render()` wherever they change one of those controls.
+- The gradient is the accent, amber while the sub-page's own subject needs attention, and red for a failed step, a diverged fork, every fork check failing or a paused push.
+  It dims only while the sub-page's own reading has not been taken, because that is when its verdict cannot be stated.
+  Another sub-page's unread figure is a dash on its tile with the reason as its tooltip.
+  This reads the board's "an unread figure dims the hero" for the sub-page's own figure: dimming every tab until all five readings arrive would grey out a verdict that is already true.
+- The tiles are the kit's new boxed hero style (`HelmKPIStrip` 1.3.0).
+  A tinted tile keeps its signal on the gradient (`HelmHeroSurface.signalColor`), unlike the inline hero strip, because a boxed tile can be about another sub-page.
+  `SetupHeroSelfTest` sweeps every theme in all three tones, plain and dimmed, for the captions and figures against the text floor and the quiet and signal figures against the large-text floor.
+- The board drew `HelmModuleCard .heroSummary` as the build.
+  It was not used: a module card is a canvas card with a click target, a header and Customize's strip, and `.heroSummary` has no pills or kicker.
+  The hero is page code on the kit's pieces (`HelmHeroSurface`, the boxed strip, `HelmRingGauge`, `HelmButton.heroInk`), the way Tasks' band and Automic Vault's split card are.
+
+### The width trap
+
+The first render at 1100pt cut the body to one line ("on this Ma...").
+The hero's height hug (`height == 0`) sat at `.defaultLow`, the same priority as the labels' horizontal compression, so Auto Layout narrowed the words to save a line.
+Two changes fix it: the hug is at `.fittingSizeCompression`, and in the stacked layouts the words column is tied to the room beside the ring at `HelmDaylightPriority.contentTie`.
+`SidebarRedesignsSelfTest.checkTheSetupHeroWidths` fails on the original shape by name (five cases at 1512 and 1100), and passes on the fix.
+
+### Verified
+
+- `FM_RUN_SETUP_HERO_TESTS` (new, headless) and `FM_RUN_SIDEBAR_REDESIGNS_TESTS` (window-backed, extended rather than adding a window-backed suite) pass.
+- Replacing Updates' mirrored pill with a pill that runs nothing fails "the Check for updates pill did not start the sweep it mirrors".
+- `FM_RUN_HELM_KIT_VERSION_TESTS` passes with the recorded `HelmKit.swift` digest.
+- Renders: `env FM_SETUP_HERO_RENDER_DIR=<dir> FM_RUN_SIDEBAR_REDESIGNS_TESTS=1 .build/debug/GrandLine` writes the four sub-pages at 1512pt and 1100pt in Daylight and Dusk, and GitHub sync behind, diverged, failed and not checked.
+
+Not verified: the composited window on the captain's display, since an off-screen render has no window chrome.

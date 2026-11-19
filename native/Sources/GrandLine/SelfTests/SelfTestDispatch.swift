@@ -1990,6 +1990,12 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS"] == "1" {
             exit(TasksSecretsHeroViewSelfTest.run() ? 0 : 1)
         }
+        // Setup's Sup-1 hero: each sub-page's verdict, the ring and the boxed
+        // hero tiles' recipe and contrast. Pure; where the hero sits on the
+        // four pages is `SidebarRedesignsSelfTest`'s. See `SetupHeroSelfTest`.
+        if ProcessInfo.processInfo.environment["FM_RUN_SETUP_HERO_TESTS"] == "1" {
+            exit(SetupHeroSelfTest.run() ? 0 : 1)
+        }
 
         // A real, captain-reported bug on Tasks' Board: the page would not
         // scroll with the pointer over a lane's cards - see

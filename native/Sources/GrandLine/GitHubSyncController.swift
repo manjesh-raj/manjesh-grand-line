@@ -109,7 +109,25 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var reposCardView: NSView?
-    private lazy var setupSummary = SetupSummaryRow()
+    /// Sup-1: Setup's hero, with this tab's verdict over the module's five
+    /// figures. Sync All and Refresh are its pills.
+    private lazy var setupSummary: SetupHeroRow = {
+        let hero = SetupHeroRow(page: .github) { [weak self] in
+            let rows = self?.rows ?? []
+            let own: [(name: String, count: Int)] = rows.compactMap { row in
+                switch row.status {
+                case let .ahead(count): return (row.repo.name, count)
+                case let .diverged(localOnly, _): return (row.repo.name, localOnly)
+                default: return nil
+                }
+            }
+            return SetupHeroWords.github(BackgroundSignalsPoller.shared.lastCounts,
+                                         configRepo: SetupSummaryFeed.shared.configRepo,
+                                         checkedAt: rows.compactMap(\.checkedAt).max(), ownCommits: own)
+        }
+        hero.setActions([.mirroring(syncAllButton), .mirroring(refreshButton)])
+        return hero
+    }()
     /// The forks, one row each: the fork, its upstream, how far behind it
     /// is, and when it was last read.
     private lazy var forksTable: HelmDataTable = {
@@ -439,6 +457,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         guard !isSyncingAll else { return }
         isSyncingAll = true
         syncAllButton.isEnabled = false
+        if drawsSidebarLayout { setupSummary.render() }
         let targets = rows.filter { $0.status.showsSyncButton }
         guard !targets.isEmpty else {
             isSyncingAll = false
@@ -507,6 +526,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         refreshPill.isHidden = true
         refreshProgressLabel.isHidden = false
         refreshButton.isEnabled = false
+        if drawsSidebarLayout { setupSummary.render() }
 
         let total = rows.count
         refreshProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
@@ -910,6 +930,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         } else {
             syncAllButton.toolTip = "Nothing is behind upstream right now."
         }
+        if drawsSidebarLayout { setupSummary.render() }
     }
 
     private func render(_ row: GitHubSyncRow) {
@@ -1079,7 +1100,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
 // MARK: - The sidebar layout (stage 7)
 
-// The prototype's GitHub sync: Setup's summary cards, a stated pause when the
+// The prototype's GitHub sync: Setup's hero (Sup-1), a stated pause when the
 // config repo is public (every push to it is refused until it is private
 // again, GL-22), and the forks as one table. Every row and toolbar action is
 // the method the floating bar's own buttons reach; a fork's detail and its
@@ -1169,6 +1190,7 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         guard drawsSidebarLayout, !isCheckingAll else { return }
         let checked = rows.compactMap(\.checkedAt).max()
         forksSubtitle.stringValue = checked.map { "checked \(Self.relative($0))" } ?? "not checked yet"
+        setupSummary.render()
     }
 
     fileprivate func renderForksTable() {
@@ -1343,7 +1365,7 @@ extension GitHubSyncController {
     var debugReposCardShown: Bool { !(reposCardView?.isHidden ?? true) }
     var debugIsCheckingAll: Bool { isCheckingAll }
     var debugForksTable: HelmDataTable { forksTable }
-    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugSetupSummary: SetupHeroRow { setupSummary }
     /// Mounted and not hidden: the floating bar never mounts the card at all.
     var debugPausedCardIsShown: Bool { pausedCard.superview != nil && !pausedCard.isHidden }
     var debugPausedTitle: String { pausedCard.debugTitle }

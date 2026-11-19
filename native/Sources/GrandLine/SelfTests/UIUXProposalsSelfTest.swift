@@ -384,7 +384,9 @@ enum UIUXProposalsSelfTest {
         check(offenders.isEmpty, "S14: no app source uses HelmStatTile or HelmMetricCard (\(offenders))", &ok)
         // Health left this list with H-4 of the page-redesign board: its
         // summary is the hero column's four buckets (`HealthHeroWords`).
-        for page in ["FleetController.swift", "ReviewController.swift", "SetupSummary.swift",
+        // Setup's five figures are still a boxed strip, as the hero tiles of
+        // Sup-1's hero (`SetupHeroRow`).
+        for page in ["FleetController.swift", "ReviewController.swift", "SetupHeroRow.swift",
                      "LogAnalyzerController.swift", "ShiftController.swift"] {
             check(source(page).contains("HelmKPIStrip(density: .boxed)"), "S14: \(page) draws its summary row boxed", &ok)
         }

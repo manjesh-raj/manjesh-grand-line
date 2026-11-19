@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 7.2.0 - Setup as Sup-1: a full hero with boxed tiles on all four sub-pages
+
+The captain's pick for Setup on the second page-redesign board: the five summary tiles on each of Setup's four sub-pages become one full hero with the sub-page's own verdict, the five figures as inset tiles, the setup-steps ring and the sub-page's actions as ghost pills.
+
+- `HelmKPIStrip` 1.2.0 → 1.3.0 (minor): `heroInk` now also styles a `.boxed` strip, as the board's inset hero tiles. Each cell puts its figure over its caption in the ink, on a translucent shade of the ink's opposite instead of the card surface, with no border or resting shadow, at a 64pt height. A word figure ("Off", "In sync") is set at 17pt and a number at 26pt, and both still step down to fit. A quiet or unknown figure takes the ink at 72%. A tinted figure keeps its signal through `HelmHeroSurface.signalColor`, given the new `heroPalette`, because a boxed tile can be a fact about another page. A hero tile draws no detail line. Without `heroInk` a boxed strip is unchanged.
+- `Setup (page)` none → 1.0.0 (new): Sup-1. In the sidebar layout, Updates, Setup steps, Automation and GitHub sync each open with `SetupHeroRow` in place of the five-tile summary row: the kicker "Setup · This Mac", a verdict and a line that are the sub-page's own, the sub-page's actions as ghost pills that mirror its own controls (Check for updates; Run full setup and Refresh; Run Automation and Refresh; Sync All and Refresh), the same five figures as hero tiles, and an 86pt ring of the setup steps done. The gradient is the accent, amber while the sub-page's own subject needs attention and red when something failed, diverged or is paused, and it dims while the sub-page's own reading has not been taken. At 1060pt and over everything sits in one row, narrower the tiles go under the words, and under 560pt the ring steps out. The floating bar's Setup pages are unchanged.
+- `GitHub sync (page)` 1.0.1 → 1.1.0 (minor): the page opens with Setup's hero, whose verdict states the forks (in sync, behind, diverged, partly read, not checked, or pushing paused) and names a fork carrying commits of its own.
+
 ## 7.1.0 - Dictation's split card (Dic-1)
 
 The captain's Dictation pick on the second page-redesign board: the status beside the controls on one split card.

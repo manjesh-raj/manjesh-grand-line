@@ -17,7 +17,7 @@
 //      its check, Follow-ups as the same table with the same ⋯ menu (Delete
 //      included) and an editor sheet with the task editor's Delete, the
 //      calendar's month card, and Weekly review's five cards.
-//   4. **Setup**: the summary row on all four tabs; Updates as one table of
+//   4. **Setup**: the Sup-1 hero on all four tabs; Updates as one table of
 //      tools grouped by source, with Update only where there is one and
 //      Check for updates at the far right; Setup steps as a list with Details
 //      and the current step's own action; Automation's switches; GitHub
@@ -87,7 +87,8 @@ enum SidebarRedesignsSelfTest {
                 settle(shell)
                 for check in [checkTheSidebar, checkHomeStaysInSight, checkSectionHeadingComesWithTheLitRow, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
                               checkTasksReview,
-                              checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow] {
+                              checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow,
+                              writeSetupRenders] {
                     var ok = true
                     check(shell, window, &ok)
                     allOK = allOK && ok
@@ -676,7 +677,7 @@ enum SidebarRedesignsSelfTest {
         }
         check(updates.debugDrawsSidebarLayout && !updates.debugCategoryCardsShown && !updates.debugStatsStripShown,
               "Updates still draws its category cards or its stat strip", &ok)
-        check(updates.debugSetupSummary.window != nil, "Updates has no summary row", &ok)
+        check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
         let rows = updates.debugToolsTable.debugRows
         let groups = rows.compactMap { row -> String? in
             if case .group(let name) = row.kind { return name }
@@ -833,7 +834,8 @@ enum SidebarRedesignsSelfTest {
         check(store.schedule(id: schedule.id)?.isEnabled == false, "the switch did not pause the schedule", &ok)
     }
 
-    /// The same five figures on all four tabs, from the same readings.
+    /// Sup-1: the same five figures on all four tabs, from the same
+    /// readings, under each tab's own verdict and pills.
     private static func checkTheSummaryRow(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
         var counts = BackgroundSignalsPoller.SignalCounts()
         counts.toolsTotal = 8
@@ -855,40 +857,214 @@ enum SidebarRedesignsSelfTest {
         ConfigRepoPrivacy.debugRecord(.publicRepo)
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         let want = ["6 / 8", "2", "4 / 5", "Synced", "Paused"]
-        let rows: [(String, SetupSummaryRow)] = [
+        let rows: [(String, SetupHeroRow)] = [
             ("Updates", shell.workspace.updates.debugSetupSummary),
             ("Setup steps", shell.workspace.bootstrap.debugSetupSummary),
             ("Automation", shell.workspace.automation.debugSetupSummary),
             ("GitHub sync", shell.workspace.githubSync.debugSetupSummary),
         ]
         for (name, row) in rows {
-            check(row.debugValues == want, "\(name)'s summary reads \(row.debugValues), want \(want)", &ok)
+            check(row.debugValues == want, "\(name)'s hero tiles read \(row.debugValues), want \(want)", &ok)
+            check(row.debugCards.allSatisfy { $0.debugIsHeroTile && $0.debugFigureIsAboveCaption },
+                  "\(name)'s tiles are not the hero's inset tiles", &ok)
+            check(row.debugKicker == "SETUP \u{00B7} THIS MAC", "\(name)'s kicker reads \(row.debugKicker)", &ok)
+            check(row.debugRing.debugLabel == "4/5", "\(name)'s ring reads \(row.debugRing.debugLabel)", &ok)
         }
-        // R2-BUG-05: both step tabs' subtitles state the reading the card
+        // Each tab's verdict is its own, from the readings its tiles show.
+        let verdicts = rows.map(\.1.debugHeadline)
+        check(verdicts[0] == "2 tools have an update.", "Updates' verdict reads \(verdicts[0])", &ok)
+        check(verdicts[1] == "4 of 5 setup steps are done.", "Setup steps' verdict reads \(verdicts[1])", &ok)
+        check(verdicts[3] == "Pushing to the config repo is paused.", "GitHub sync's verdict reads \(verdicts[3])", &ok)
+        check(Set(verdicts).count == verdicts.count, "two tabs share a verdict: \(verdicts)", &ok)
+        // The pills are each tab's own controls.
+        let pills = rows.map { $0.1.debugPills.map(\.title) }
+        check(pills == [["Check for updates"], ["Run full setup", "Refresh"], ["Run Automation", "Refresh"],
+                        ["Sync All", "Refresh"]], "the hero's pills read \(pills)", &ok)
+        // GL-14's tone: amber on a tab whose own subject needs attention (two
+        // updates), red on a paused push, the accent on a tab with neither.
+        let theme = ThemeManager.shared.theme
+        let tones = rows.map { SetupHeroRow.palette(for: $0.1.current, in: theme) }
+        check(rows[0].1.current.tone == .amber && rows[3].1.current.tone == .red && rows[1].1.current.tone == .accent,
+              "the tabs' tones are \(rows.map(\.1.current.tone))", &ok)
+        for ((name, row), palette) in zip(rows, tones) {
+            check(row.debugPalette == palette, "\(name)'s gradient is not its verdict's tone", &ok)
+        }
+        // R2-BUG-05: both step tabs' subtitles state the reading the tile
         // renders, whichever tab computed last.
         let subtitles = [shell.workspace.bootstrap.drillHeaderSubtitle, shell.workspace.automation.drillHeaderSubtitle]
         check(subtitles.allSatisfy { $0 == "4 of 5 steps done" },
-              "the Setup tabs' subtitles read \(subtitles) beside a \"4 / 5\" card", &ok)
+              "the Setup tabs' subtitles read \(subtitles) beside a \"4 / 5\" tile", &ok)
 
-        // R5-BUG-03: every tab's tiles follow a theme change, Setup steps'
+        // A pill runs the control it mirrors, and follows its state: Check for
+        // updates is disabled while its sweep runs, and so is its pill.
+        let updates = shell.workspace.updates
+        shell.workspace.navigator.show(.updates)
+        settle(shell)
+        if let pill = rows[0].1.debugPills.first {
+            pill.performClick(nil)
+            check(!updates.debugCheckForUpdatesButton.isEnabled && !pill.isEnabled,
+                  "the Check for updates pill did not start the sweep it mirrors", &ok)
+            _ = waitUntil(timeout: 10) { updates.debugCheckForUpdatesButton.isEnabled }
+            check(pill.isEnabled, "the pill stayed disabled after the sweep ended", &ok)
+        } else {
+            fail("Updates' hero has no pill", &ok)
+        }
+
+        // R5-BUG-03: every tab's hero follows a theme change, Setup steps'
         // included, and a later count change does not put the old theme back.
-        // The first tile is a plain figure, so it paints in the theme's ink.
-        let ink = { (theme: HelmTheme) in HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex)) }
-        check(!sameColour(ink(.dusk), ink(.daylight)), "Dusk and Daylight share an ink, so the theme check is vacuous", &ok)
+        // The gradient is the theme's accent, so it is the theme's palette.
+        let accentPalette = { (theme: HelmTheme) in
+            SetupHeroRow.palette(for: SetupHeroWords.Words(headline: "", body: "", tone: .accent, isDimmed: false),
+                                 in: theme)
+        }
+        check(accentPalette(.dusk) != accentPalette(.daylight),
+              "Dusk and Daylight share a hero palette, so the theme check is vacuous", &ok)
+        ConfigRepoPrivacy.debugRecord(.privateRepo)
         for theme in [HelmTheme.dusk, .daylight] {
             ThemeManager.shared.setTheme(theme)
             counts.toolsUpToDate = theme.id == HelmTheme.dusk.id ? 5 : 6
             BackgroundSignalsPoller.shared.debugSetCounts(counts)
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             for (name, row) in rows {
-                let painted = row.debugCards.first?.debugValueColor.map(HelmContrast.components)
-                check(painted.map { sameColour($0, ink(theme)) } == true,
-                      "\(name)'s summary tiles kept another theme's ink after switching to \(theme.id)", &ok)
+                check(row.debugPalette == SetupHeroRow.palette(for: row.current, in: theme),
+                      "\(name)'s hero kept another theme's gradient after switching to \(theme.id)", &ok)
             }
         }
         // R5-PROC-04: one set of source observers, one feed observer per row.
         check(SetupSummaryFeed.shared.debugObserverCount == rows.count,
               "the summary feed has \(SetupSummaryFeed.shared.debugObserverCount) observers for \(rows.count) rows", &ok)
+
+        checkTheSetupHeroWidths(shell, window, &ok)
+    }
+
+    /// The hero's three widths on a real page, and never a window floor
+    /// (gotcha (13)): wide in one row, then the tiles under the words, then
+    /// the ring steps out.
+    private static func checkTheSetupHeroWidths(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                _ ok: inout Bool) {
+        let github = shell.workspace.githubSync
+        shell.workspace.navigator.show(.githubSync)
+        let hero = github.debugSetupSummary
+        for width in [1512, 1100] as [CGFloat] {
+            resize(window, width: width, shell)
+            hero.layoutSubtreeIfNeeded()
+            check(abs(window.frame.width - width) < 0.5, "the Setup hero held the window at \(window.frame.width)pt", &ok)
+            let want: SetupHeroRow.Arrangement = hero.bounds.width >= SetupHeroRow.wideWidth ? .wide
+                : (hero.bounds.width >= SetupHeroRow.ringMinimumWidth ? .stacked : .narrow)
+            check(hero.arrangement == want, "a \(hero.bounds.width)pt hero is \(hero.arrangement), want \(want)", &ok)
+            let tiles = hero.debugTiles.convert(hero.debugTiles.bounds, to: hero)
+            let words = hero.debugWordsColumn.convert(hero.debugWordsColumn.bounds, to: hero)
+            check(hero.bounds.contains(tiles) && hero.bounds.contains(words),
+                  "at \(width)pt the hero's words or tiles are drawn outside it", &ok)
+            check(!tiles.intersects(words), "at \(width)pt the tiles overlap the words", &ok)
+            check(hero.debugCards.allSatisfy { $0.debugValueFits }, "at \(width)pt a tile's figure is cut off", &ok)
+            // Every tab's words wrap at the room they have rather than giving
+            // it up to save a line: a body narrower than both its one-line
+            // width and its wrap width has been squeezed, and truncates.
+            for row in [shell.workspace.updates.debugSetupSummary, shell.workspace.bootstrap.debugSetupSummary,
+                        shell.workspace.automation.debugSetupSummary, hero] {
+                row.layoutSubtreeIfNeeded()
+                for label in [row.debugHeadlineLabel, row.debugBodyLabel] where !label.isHidden && row.window != nil {
+                    let oneLine = ceil(label.attributedStringValue.size().width)
+                    let room = min(oneLine, label.preferredMaxLayoutWidth)
+                    check(label.frame.width >= room - 2,
+                          "at \(width)pt \"\(label.stringValue)\" is \(label.frame.width)pt wide with \(room)pt to wrap in", &ok)
+                }
+            }
+            if hero.debugRingShown {
+                let ring = hero.debugRingColumn.convert(hero.debugRingColumn.bounds, to: hero)
+                check(hero.bounds.contains(ring) && !ring.intersects(tiles) && !ring.intersects(words),
+                      "at \(width)pt the ring overlaps the words or the tiles", &ok)
+            }
+        }
+        check(hero.arrangement != .wide, "the 1100pt window's hero is still in one row, so the stacked case is vacuous", &ok)
+        resize(window, width: 1512, shell)
+    }
+
+    // MARK: Renders
+
+    /// With `FM_SETUP_HERO_RENDER_DIR`, one PNG per sub-page, theme and
+    /// window width, and the states a fork reading can be in on GitHub sync.
+    /// Every figure is the pages' own reading: the scratch setup steps, the
+    /// fixture's tool checks and fork rows set through the page, so a verdict
+    /// never disagrees with the table under it.
+    private static func writeSetupRenders(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        guard let dir = ProcessInfo.processInfo.environment["FM_SETUP_HERO_RENDER_DIR"], !dir.isEmpty else { return }
+        let folder = URL(fileURLWithPath: dir)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let savedTheme = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(savedTheme) }
+        ConfigRepoPrivacy.debugRecord(.privateRepo)
+        DotfilesAutoSync.shared.debugSetStatus(.off)
+        let github = shell.workspace.githubSync
+        func setForks(_ status: (Int) -> GitHubSyncStatus) {
+            for (index, repo) in GitHubSyncCatalog.repos.enumerated() {
+                let upstream = repo.manualUpstreamFullName ?? "kunchenguid/\(repo.name)"
+                let fork = status(index)
+                let detail: String
+                switch fork {
+                case let .ahead(own): detail = GitHubSyncStatus.detail(localOnly: own, upstreamAhead: 0, upstream: upstream)
+                case let .diverged(own, ahead):
+                    detail = GitHubSyncStatus.detail(localOnly: own, upstreamAhead: ahead, upstream: upstream)
+                case let .behind(count): detail = GitHubSyncStatus.detail(localOnly: 0, upstreamAhead: count, upstream: upstream)
+                case .checkFailed: detail = "no answer from gh"
+                default: detail = ""
+                }
+                github.debugApplyCheck(index: index, status: fork, upstream: upstream, detail: detail)
+            }
+        }
+        let vault = GitHubSyncCatalog.repos.firstIndex { $0.name == "automic-vault" }
+        // The board's Automation: fork sync daily at 11:10 AM, on.
+        let store = shell.workspace.scheduleStore
+        let forkSync = AutomationSchedule(action: .forkSync, cadence: .daily(hour: 11, minute: 10))
+        store.add(forkSync)
+        defer { store.delete(id: forkSync.id) }
+        let inSync: (Int) -> GitHubSyncStatus = { $0 == vault ? .ahead(6) : .inSync }
+        // Each page answers for itself once, so the tiles are its readings.
+        shell.workspace.navigator.show(.bootstrap)
+        settle(shell)
+        // The suite reset the steps' reading; the page's own Refresh, pressed
+        // through its pill, records them again.
+        let stepsHero = shell.workspace.bootstrap.debugSetupSummary
+        stepsHero.debugPills.last?.performClick(nil)
+        _ = waitUntil(timeout: 20) { stepsHero.debugPills.last?.isEnabled == true && !stepsHero.current.isDimmed }
+        shell.workspace.navigator.show(.updates)
+        settle(shell)
+        shell.workspace.updates.renderStats()
+        shell.workspace.navigator.show(.githubSync)
+        settle(shell)
+        _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
+        setForks(inSync)
+        let pages: [(String, RailDestination)] = [("updates", .updates), ("steps", .bootstrap),
+                                                  ("automation", .automation), ("github", .githubSync)]
+        func shoot(_ name: String) {
+            settle(shell)
+            TasksSecretsHeroViewSelfTest.write(shell.view, to: folder.appendingPathComponent("\(name).png"))
+        }
+        for theme in [HelmTheme.daylight, .dusk] {
+            ThemeManager.shared.setTheme(theme)
+            for width in [1512, 1100] as [CGFloat] {
+                resize(window, width: width, shell)
+                for (name, destination) in pages {
+                    shell.workspace.navigator.show(destination)
+                    shoot("setup-\(name)-\(theme.id)-\(Int(width))")
+                }
+            }
+            // The states a fork reading can be in, on GitHub sync.
+            resize(window, width: 1512, shell)
+            shell.workspace.navigator.show(.githubSync)
+            setForks { $0 < 2 ? .behind(3) : inSync($0) }
+            shoot("setup-github-behind-\(theme.id)")
+            setForks { $0 == 0 ? .diverged(localOnly: 2, upstreamAhead: 4) : inSync($0) }
+            shoot("setup-github-diverged-\(theme.id)")
+            setForks { _ in .checkFailed }
+            shoot("setup-github-failed-\(theme.id)")
+            setForks { _ in .unknown }
+            shoot("setup-github-unread-\(theme.id)")
+            setForks(inSync)
+        }
+        resize(window, width: 1512, shell)
+        print("SidebarRedesignsSelfTest: Setup renders written to \(dir)")
     }
 
     private static func sameColour(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Bool {

@@ -225,7 +225,15 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var runCardView: NSView?
-    private lazy var setupSummary = SetupSummaryRow()
+    /// Sup-1: Setup's hero, with this tab's verdict over the module's five
+    /// figures. Run Automation and Refresh are its pills.
+    private lazy var setupSummary: SetupHeroRow = {
+        let hero = SetupHeroRow(page: .automation) { [weak self] in
+            SetupHeroWords.automation(self?.heroAutomations ?? [])
+        }
+        hero.setActions([.mirroring(runButton), .mirroring(refreshButton)])
+        return hero
+    }()
     /// Holds the Automation card, which is rebuilt when the schedules change.
     private let automationHost = NSStackView()
     private var automationGroup: SettingsGroup?
@@ -993,6 +1001,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         guard !isRunning, !isRefreshing else { return }
         isRefreshing = true
         refreshButton.isEnabled = false
+        if drawsSidebarLayout { setupSummary.render() }
 
         // Both completions land on main (see each method's own
         // `DispatchQueue.main.async` hop), so this counter needs no lock.
@@ -1002,6 +1011,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             guard remaining == 0, let self else { return }
             self.isRefreshing = false
             self.refreshButton.isEnabled = true
+            if self.drawsSidebarLayout { self.setupSummary.render() }
             self.reportRefreshOutcome()
         }
         refreshDotfiles(completion: finish)
@@ -1082,6 +1092,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
         runButton.title = isRunning ? "Running\u{2026}" : "Run Automation"
         runButton.isEnabled = !isRunning
+        if drawsSidebarLayout { setupSummary.render() }
         progressSummaryLabel.stringValue = progressSummary
         progressSummaryLabel.textColor = HelmTheme.mutedInk(theme)
         applyTheme()
@@ -1122,7 +1133,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
 // MARK: - The sidebar layout (stage 7)
 
-// The prototype's Automation: Setup's summary cards, then what runs on this
+// The prototype's Automation: Setup's hero (Sup-1), then what runs on this
 // Mac without the captain - each with its switch. The reference's own rows
 // were mock-ups, so these are the real ones: every schedule the Schedules
 // page holds, the dotfiles auto-commit Setup steps' dotfiles card switches,
@@ -1185,9 +1196,10 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         let reconnect = HelmToggle()
         reconnect.isOn = AppSettings.shared.autoReconnect
         reconnect.setAccessibilityLabel("Reconnect dropped terminal sessions")
-        reconnect.onToggle = { [weak reconnect] in
+        reconnect.onToggle = { [weak self, weak reconnect] in
             guard let reconnect else { return }
             AppSettings.shared.autoReconnect = reconnect.isOn
+            self?.setupSummary.render()
         }
         rows.append(SettingsRow(title: "Reconnect dropped terminal sessions",
                                 description: "Console starts a session again when its process exits unexpectedly",
@@ -1205,7 +1217,19 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         group.widthAnchor.constraint(equalTo: automationHost.widthAnchor).isActive = true
         automationGroup = group
         group.applyTheme(theme)
+        setupSummary.render()
         view.needsLayout = true
+    }
+
+    /// What the Automation card switches, for the hero's verdict: the same
+    /// rows, read from the same schedules and settings.
+    fileprivate var heroAutomations: [SetupHeroWords.Automation] {
+        var automations = (scheduleStore?.schedules ?? []).map {
+            SetupHeroWords.Automation(name: $0.action.title, cadence: $0.cadence.displayString, isOn: $0.isEnabled)
+        }
+        automations.append(.init(name: "Dotfiles auto-commit", isOn: AppSettings.shared.dotfilesAutoCommitEnabled))
+        automations.append(.init(name: "Reconnecting dropped sessions", isOn: AppSettings.shared.autoReconnect))
+        return automations
     }
 
     @objc fileprivate func openSchedulesClicked() { onOpenSchedules?() }
@@ -1215,7 +1239,7 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
 extension AutomationController {
     var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     var debugRunCardShown: Bool { !(runCardView?.isHidden ?? true) }
-    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugAutomationRows: [SettingsRow] { automationGroup?.rows ?? [] }
     var debugRunButton: HelmButton { runButton }
 }
