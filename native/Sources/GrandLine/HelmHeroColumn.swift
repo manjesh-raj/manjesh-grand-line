@@ -45,12 +45,23 @@
 // the ink - and `setRing(_:)` moves the header's ring in place, for a ring
 // that counts down (the vault's auto-lock) without rebuilding the column every
 // second.
+//
+// **1.2.0, for Dictation's split card (Dic-1).** `.panel` is the third layout:
+// the gradient half of a `HelmHeroSplitCard`. The words at the hero card's
+// title size on the left with the foot under them, and the hero's 86pt ring
+// with its caption centred under it on the right - the same panel
+// `HelmModuleCard`'s wide `.heroSplit` draws, but holding the page's own
+// pills. Its body wraps to as many lines as it needs, because the panel is as
+// tall as its card anyway. A ring can also be `isDimmed`, for a reading that
+// is absent rather than low (a model not downloaded).
 
 import AppKit
 
 final class HelmHeroColumn: NSView {
 
-    enum Layout: Equatable { case column, band }
+    /// `.column` fills a page's column, `.band` goes across the top of a
+    /// narrow page, and `.panel` is the gradient half of a split card.
+    enum Layout: Equatable { case column, band, panel }
 
     /// A ring on the gradient, beside its caption.
     struct Ring: Equatable {
@@ -65,6 +76,9 @@ final class HelmHeroColumn: NSView {
         /// `.warn` and `.bad` paint the arc in that state's colour lifted to
         /// read on the gradient; `.ok` and `.idle` paint it in the ink.
         let state: HelmModuleRowState
+        /// 1.2.0: the whole ring at the quiet ink, for a reading that is
+        /// absent rather than low - a model not downloaded, an engine off.
+        var isDimmed: Bool = false
     }
 
     /// The column's own words, at its top.
@@ -93,6 +107,11 @@ final class HelmHeroColumn: NSView {
     static let bodySize: CGFloat = 12.5
     static let ringSide: CGFloat = 66
     static let bandRingSide: CGFloat = 54
+    /// 1.2.0: `.panel`'s insets, its ring (the hero card's) and the width its
+    /// caption wraps at under the ring.
+    static let panelInsets = NSEdgeInsets(top: 20, left: 22, bottom: 20, right: 22)
+    static let panelRingSide: CGFloat = HelmRingGauge.heroSide
+    static let panelRingCaptionWidth: CGFloat = 120
     static let sectionTitleSize: CGFloat = 10.5
     static let cornerRadius: CGFloat = 14
     /// The ink's alpha for a section title, a row's second line and a quiet
@@ -293,15 +312,18 @@ final class HelmHeroColumn: NSView {
         bandStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bandStack)
         let insets = Self.bandInsets
-        NSLayoutConstraint.activate([
-            bandStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.left),
-            bandStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right),
-            bandStack.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
-        ])
+        bandLeading = bandStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.left)
+        bandTrailing = bandStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right)
+        bandTop = bandStack.topAnchor.constraint(equalTo: topAnchor, constant: insets.top)
+        NSLayoutConstraint.activate([bandLeading, bandTrailing, bandTop])
         bandBottom = bandStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -insets.bottom)
     }
 
-    /// Active only in `.band`, where the band's height is its content's.
+    /// The band container's edges, re-inset for `.panel`.
+    private var bandLeading: NSLayoutConstraint!
+    private var bandTrailing: NSLayoutConstraint!
+    private var bandTop: NSLayoutConstraint!
+    /// Active in `.band` and `.panel`, where the height is the content's.
     private var bandBottom: NSLayoutConstraint!
 
     private static func clear(_ stack: NSStackView) {
@@ -325,19 +347,47 @@ final class HelmHeroColumn: NSView {
         bodyLabel.isHidden = (header.body ?? "").isEmpty
 
         let isBand = arrangement == .band
-        scroll.isHidden = isBand
-        bandStack.isHidden = !isBand
-        bandBottom.isActive = isBand
-        headlineLabel.font = .systemFont(ofSize: HelmType.scaled(isBand ? 17 : Self.headlineSize), weight: .bold)
-        bodyLabel.font = .systemFont(ofSize: HelmType.scaled(Self.bodySize))
+        let isPanel = arrangement == .panel
+        scroll.isHidden = isBand || isPanel
+        bandStack.isHidden = !(isBand || isPanel)
+        let insets = isPanel ? Self.panelInsets : Self.bandInsets
+        bandLeading.constant = insets.left
+        bandTrailing.constant = -insets.right
+        bandTop.constant = insets.top
+        bandBottom.constant = -insets.bottom
+        bandBottom.isActive = isBand || isPanel
+        let headlineSize = isPanel ? HelmHeroCard.titleSize : isBand ? 17 : Self.headlineSize
+        headlineLabel.font = .systemFont(ofSize: HelmType.scaled(headlineSize), weight: .bold)
+        bodyLabel.font = .systemFont(ofSize: HelmType.scaled(isPanel ? HelmHeroCard.bodySize : Self.bodySize))
         kickerLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
         headlineLabel.maximumNumberOfLines = isBand ? 2 : 3
-        bodyLabel.maximumNumberOfLines = isBand ? 2 : 3
+        // A panel is as tall as its card, so its body says all of itself.
+        bodyLabel.maximumNumberOfLines = isPanel ? 0 : isBand ? 2 : 3
 
         let kickerRow = Self.row([kickerTile, kickerLabel], spacing: HelmMetrics.s2)
         let ringRow = header.ring.map(makeRingRow)
 
-        if isBand {
+        if isPanel {
+            // The words with the foot under them on the left, the ring with
+            // its caption under it on the right, both from the top.
+            let words = Self.column([kickerRow, headlineLabel, bodyLabel], spacing: HelmMetrics.s1 + 2)
+            words.setCustomSpacing(HelmMetrics.s2 + 2, after: kickerRow)
+            var left: [NSView] = [words]
+            if !footViews.isEmpty {
+                // The pills keep their own width: a stack's hugging is the
+                // stack-level API (gotcha (12)), and without it the column's
+                // leading alignment stretched a lone pill across the panel.
+                let foot = Self.row(footViews, spacing: HelmMetrics.s2, alignment: .centerY)
+                foot.setHuggingPriority(.required, for: .horizontal)
+                for view in footViews { view.setContentHuggingPriority(.required, for: .horizontal) }
+                left.append(foot)
+            }
+            let leftColumn = Self.column(left, spacing: HelmMetrics.s4)
+            words.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
+            var top: [NSView] = [leftColumn]
+            if let ringRow { top.append(ringRow) }
+            add(Self.row(top, spacing: HelmMetrics.s5, alignment: .top), to: bandStack)
+        } else if isBand {
             // Words on the left, the ring on the right, the foot under both.
             let words = Self.column([kickerRow, headlineLabel, bodyLabel], spacing: HelmMetrics.s1 + 2)
             var top: [NSView] = [words]
@@ -388,18 +438,36 @@ final class HelmHeroColumn: NSView {
     }
 
     private func makeRingRow(_ ring: Ring) -> NSView {
-        let side = arrangement == .band ? Self.bandRingSide : Self.ringSide
+        let side: CGFloat
+        switch arrangement {
+        case .band: side = Self.bandRingSide
+        case .panel: side = Self.panelRingSide
+        case .column: side = Self.ringSide
+        }
         if ringGauge.diameter != side { ringGauge = HelmRingGauge(side: side) }
         ringGauge.configure(fraction: ring.fraction, text: ring.label)
         ringGauge.setSpokenLabel(ring.spoken)
         ringCaption.stringValue = ring.caption ?? ""
         ringCaption.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
         ringCaption.isHidden = (ring.caption ?? "").isEmpty
+        quietLabels.append(ringCaption)
+        inkLabels.removeAll { $0 === ringCaption }
+        if arrangement == .panel {
+            ringCaption.preferredMaxLayoutWidth = Self.panelRingCaptionWidth
+            ringCaption.alignment = .center
+            let column = NSStackView(views: [ringGauge, ringCaption])
+            column.orientation = .vertical
+            column.alignment = .centerX
+            column.spacing = HelmMetrics.s2
+            column.translatesAutoresizingMaskIntoConstraints = false
+            column.setHuggingPriority(.required, for: .horizontal)
+            column.setClippingResistancePriority(.required, for: .horizontal)
+            column.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.panelRingCaptionWidth).isActive = true
+            return column
+        }
         ringCaption.preferredMaxLayoutWidth = arrangement == .band ? 120 : Self.width - Self.insets.left
             - Self.insets.right - side - HelmMetrics.s3
         ringCaption.alignment = .left
-        quietLabels.append(ringCaption)
-        inkLabels.removeAll { $0 === ringCaption }
         return Self.row([ringGauge, ringCaption], spacing: HelmMetrics.s3, alignment: .centerY)
     }
 
@@ -476,9 +544,13 @@ final class HelmHeroColumn: NSView {
             case .bad: arc = HelmHeroSurface.signalColor(tintHex: theme.ansiHex[1], on: palette)
             case .ok, .idle: arc = ink
             }
-            ringGauge.trackColorOverride = ink.withAlphaComponent(0.25)
-            ringGauge.labelColorOverride = ink
-            ringGauge.valueColorOverride = arc
+            // 1.2.0: a dimmed ring is the quiet ink throughout - its label
+            // still clears the text floor, which is what the quiet palette
+            // was deepened for.
+            let quiet = ink.withAlphaComponent(Self.quietInkAlpha)
+            ringGauge.trackColorOverride = ink.withAlphaComponent(ring.isDimmed ? 0.16 : 0.25)
+            ringGauge.labelColorOverride = ring.isDimmed ? quiet : ink
+            ringGauge.valueColorOverride = ring.isDimmed ? quiet : arc
             ringGauge.applyTheme(theme, hue: .blue)
         }
         for section in sections { for view in section.views { Self.applyInk(ink, to: view) } }
@@ -518,10 +590,18 @@ final class HelmHeroColumn: NSView {
         // Gotcha (22): the headline and body wrap at a width these labels do
         // not decide - the column's own, less its insets, and in a band less
         // the ring's column.
-        let insets = arrangement == .band ? Self.bandInsets : Self.insets
+        let insets: NSEdgeInsets
+        switch arrangement {
+        case .band: insets = Self.bandInsets
+        case .panel: insets = Self.panelInsets
+        case .column: insets = Self.insets
+        }
         var width = bounds.width - insets.left - insets.right
         if arrangement == .band, header.ring != nil {
             width -= Self.bandRingSide + HelmMetrics.s3 + 120 + HelmMetrics.s5
+        }
+        if arrangement == .panel, header.ring != nil {
+            width -= max(Self.panelRingSide, Self.panelRingCaptionWidth) + HelmMetrics.s5
         }
         width = max(120, floor(width))
         for label in [headlineLabel, bodyLabel] where abs(label.preferredMaxLayoutWidth - width) > 0.5 {

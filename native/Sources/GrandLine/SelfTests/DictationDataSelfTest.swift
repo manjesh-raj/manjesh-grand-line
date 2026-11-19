@@ -99,7 +99,80 @@ enum DictationDataSelfTest {
             check(combo.displayString == "⇧⌘D", "⌘⇧D should display in the standard ⇧⌘ ordering", &ok)
         }
 
+        // 6. Dic-1: the split card's words, every state, headless. The
+        //    window-backed half is DictationStatusCardLayoutSelfTest.
+        checkHeroWords(&ok)
+
         return ok
+    }
+
+    private static func heroWords(_ status: DictationStatus, whisper: Bool = true, cleanup: Bool = true,
+                                   model: WhisperModelState = .ready, bytes: Int64? = nil, words: Int = 13,
+                                   dictations: Int = 414) -> DictationHeroWords {
+        DictationHeroWords.make(status: status, shortcutDisplay: "Right ⌥", localWhisperEnabled: whisper,
+                                cleanupEnabled: cleanup, model: model, modelBytes: bytes, words: words,
+                                dictations: dictations)
+    }
+
+    private static func checkHeroWords(_ ok: inout Bool) {
+        let ready = heroWords(.ready, bytes: 547_000_000)
+        check(ready.kicker == "Dictation · On device", "Dic-1: a ready kicker is \"\(ready.kicker)\"", &ok)
+        check(ready.headline == "Ready. Hold Right ⌥ anywhere to dictate.", "Dic-1: the verdict is \"\(ready.headline)\"", &ok)
+        check(ready.body == "Whisper large-v3-turbo on this Mac, cleanup on. 13 words in your vocabulary, 414 dictations kept here.",
+              "Dic-1: the body is \"\(ready.body)\"", &ok)
+        check(ready.tone == .accent && ready.action == .recheck, "Dic-1: a ready page is not the accent with Re-check", &ok)
+        check(ready.ring.label == "\u{2713}" && ready.ring.fraction == 1 && !ready.ring.isDimmed,
+              "Dic-1: a ready model's ring is \(ready.ring)", &ok)
+        check(ready.ring.caption?.hasPrefix("Model ready · ") == true, "Dic-1: the ring's caption is \(ready.ring.caption ?? "none")", &ok)
+        check(heroWords(.ready).ring.caption == "Model ready", "Dic-1: an unknown size is invented", &ok)
+
+        // The four permission states: amber, Request Access for the right
+        // permission, and never "On device".
+        let asks: [(DictationStatus, String)] = [(.needsMicrophone, "Microphone"),
+                                                 (.needsSpeechRecognition, "Speech Recognition"),
+                                                 (.needsAccessibility, "Accessibility"), (.copiedOnly, "Accessibility")]
+        for (status, permission) in asks {
+            let words = heroWords(status)
+            check(words.tone == .amber, "Dic-1: \(status) is not amber", &ok)
+            check(words.action == .requestAccess(permission: permission), "Dic-1: \(status) asks \(words.action)", &ok)
+            check(!words.kicker.hasSuffix("On device"), "Dic-1: \(status) claims \"\(words.kicker)\"", &ok)
+            check(words.body == status.detail(shortcutDisplay: "Right ⌥"),
+                  "Dic-1: \(status)'s body drops the status detail", &ok)
+        }
+        let off = heroWords(.systemDictationDisabled)
+        check(off.tone == .amber && off.action == .recheck, "Dic-1: macOS Dictation off is not amber with Re-check", &ok)
+        // Running states: the accent, no period after an ellipsis, and the
+        // network-reaching cleanup never says On device.
+        for status in [DictationStatus.recording, .transcribing, .cleaningUp] {
+            let words = heroWords(status)
+            check(words.tone == .accent && words.headline == status.title,
+                  "Dic-1: \(status)'s verdict is \"\(words.headline)\"", &ok)
+            check(!words.kicker.hasSuffix("On device"), "Dic-1: \(status) claims \"\(words.kicker)\"", &ok)
+        }
+        check(heroWords(.didNotCatchThat).headline == "Didn't catch that.", "Dic-1: a miss's verdict lacks its period", &ok)
+
+        // The ring follows the model; the engine line follows it too.
+        let downloading = heroWords(.ready, model: .downloading(progress: 0.42))
+        check(downloading.ring.label == "42%" && abs(downloading.ring.fraction - 0.42) < 0.001,
+              "Dic-1: a download's ring is \(downloading.ring)", &ok)
+        check(downloading.body.hasPrefix("Apple Speech until the Whisper model finishes downloading, cleanup on."),
+              "Dic-1: a download's body is \"\(downloading.body)\"", &ok)
+        let absent = heroWords(.ready, model: .notDownloaded)
+        check(absent.ring.isDimmed && absent.ring.fraction == 0 && absent.ring.label == "\u{2013}",
+              "Dic-1: an absent model's ring is \(absent.ring)", &ok)
+        let failed = heroWords(.ready, model: .failed("offline"))
+        check(failed.ring.state == .warn && failed.ring.label == "!", "Dic-1: a failed download's ring is \(failed.ring)", &ok)
+        let engineOff = heroWords(.ready, whisper: false, cleanup: false)
+        check(engineOff.ring.isDimmed && engineOff.ring.label == "Off" && engineOff.ring.caption == "Apple Speech",
+              "Dic-1: the engine off is \(engineOff.ring)", &ok)
+        check(engineOff.body.hasPrefix("Apple’s on-device Speech, cleanup off."), "Dic-1: the engine off says \"\(engineOff.body)\"", &ok)
+
+        // The library line: singulars and the empty library.
+        check(DictationHeroWords.libraryLine(words: 1, dictations: 1) == "1 word in your vocabulary, 1 dictation kept here.",
+              "Dic-1: singulars read \"\(DictationHeroWords.libraryLine(words: 1, dictations: 1))\"", &ok)
+        check(DictationHeroWords.libraryLine(words: 0, dictations: 0)
+                == "No words in your vocabulary yet, no dictations kept yet.",
+              "Dic-1: an empty library reads \"\(DictationHeroWords.libraryLine(words: 0, dictations: 0))\"", &ok)
     }
 
     /// `.command.rawValue | .shift.rawValue`, spelled out as a plain
