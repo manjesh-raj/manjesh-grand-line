@@ -1996,6 +1996,14 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_SETUP_HERO_TESTS"] == "1" {
             exit(SetupHeroSelfTest.run() ? 0 : 1)
         }
+        // Set-2: Settings' split cards. The words for every page and state
+        // headless, and the cards in a real sidebar shell.
+        if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_SPLIT_CARD_WORDS_TESTS"] == "1" {
+            exit(SettingsSplitCardWordsSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS"] == "1" {
+            exit(SettingsSplitCardsViewSelfTest.run() ? 0 : 1)
+        }
 
         // A real, captain-reported bug on Tasks' Board: the page would not
         // scroll with the pointer over a lane's cards - see

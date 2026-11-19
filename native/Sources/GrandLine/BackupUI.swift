@@ -82,6 +82,7 @@ enum BackupUI {
             // who wants to hand this file to another account can chmod it -
             // that is a deliberate act, which is the right way round.
             SensitiveFile.restrict(url)
+            recordExport(bytes: data.count, destination: url.lastPathComponent)
             reportExported(bundle, to: url.path, file: url, in: viewController.view)
         } catch {
             presentError(error, in: viewController)
@@ -98,7 +99,9 @@ enum BackupUI {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try GitHubBackupSource.export(bundle)
+                let bytes = (try? GrandLineBackupFile.encode(bundle))?.count
                 DispatchQueue.main.async {
+                    if let bytes { recordExport(bytes: bytes, destination: GitHubBackupSource.destinationLabel) }
                     reportExported(bundle, to: GitHubBackupSource.destinationLabel, file: nil, in: viewController.view)
                 }
             } catch {
@@ -118,6 +121,12 @@ enum BackupUI {
 
     static func exportedMessage(_ bundle: GrandLineBackup) -> String {
         "Backup exported: \(bundle.hosts.count) host(s), \(bundle.snippets.count) snippet(s)"
+    }
+
+    /// Set-2: what Settings › Backup & Restore's split card says about the
+    /// last export. Written only after the bundle really landed.
+    static func recordExport(bytes: Int, destination: String, at date: Date = Date()) {
+        AppSettings.shared.lastBackupExport = BackupExportRecord(date: date, bytes: bytes, destination: destination)
     }
 
     static func reportExported(_ bundle: GrandLineBackup, to location: String, file: URL?, in view: NSView?) {
@@ -514,4 +523,12 @@ enum BackupUI {
     private static func presentError(_ error: Error, in viewController: NSViewController) {
         HelmConfirm.problem(title: "Couldn't complete that", body: error.localizedDescription)
     }
+}
+
+/// One export from this Mac: when, how many bytes, and the file name or the
+/// GitHub destination it went to (`AppSettings.lastBackupExport`).
+struct BackupExportRecord: Codable, Equatable {
+    let date: Date
+    let bytes: Int
+    let destination: String
 }

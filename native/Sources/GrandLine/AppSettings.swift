@@ -39,6 +39,7 @@ final class AppSettings {
         static let dictationLocalWhisperEnabled = "fm.dictationLocalWhisperEnabled"
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
         static let morningBriefingRecord = "fm.morningBriefingRecord"
+        static let lastBackupExport = "fm.lastBackupExport"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
         static let didSeedManualChecksSchedule = "fm.didSeedManualChecksSchedule"
         static let terminalShortcuts = "fm.terminalShortcuts"
@@ -795,6 +796,27 @@ final class AppSettings {
     }
 
     static let appLockPreferenceDidChange = Notification.Name("fm.appLockPreferenceDidChange")
+
+    /// Set-2: the most recent backup exported from this Mac - when, how big
+    /// and where it went - for Settings › Backup & Restore's split card.
+    /// `nil` until the first export, which the card says in words rather
+    /// than as a zero (GL-14). Nothing restores it; it describes this Mac.
+    var lastBackupExport: BackupExportRecord? {
+        get {
+            guard let data = defaults.data(forKey: Keys.lastBackupExport) else { return nil }
+            return try? JSONDecoder().decode(BackupExportRecord.self, from: data)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Keys.lastBackupExport)
+            } else {
+                defaults.removeObject(forKey: Keys.lastBackupExport)
+            }
+            NotificationCenter.default.post(name: AppSettings.backupExportDidChange, object: self)
+        }
+    }
+
+    static let backupExportDidChange = Notification.Name("fm.backupExportDidChange")
 
     /// R2-UX-08: how long the Mac may sit idle, and how long one unlocked
     /// session may run, before the lock screen comes back. Nil is the
