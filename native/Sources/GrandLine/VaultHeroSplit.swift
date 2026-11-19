@@ -301,6 +301,8 @@ final class VaultHeroSplitView: NSView {
 final class VaultLauncherRowView: NSView {
 
     static let height: CGFloat = 52
+    /// The state dot, a circle.
+    static let dotSide: CGFloat = 7
 
     let tool: VaultTool
     var onFix: (() -> Void)?
@@ -339,11 +341,11 @@ final class VaultLauncherRowView: NSView {
         let words = NSStackView(views: [nameLabel, detailLabel])
         words.orientation = .vertical
         words.alignment = .leading
-        words.spacing = 1
+        words.spacing = HelmMetrics.s0
         words.setClippingResistancePriority(.defaultLow, for: .horizontal)
         words.setHuggingPriority(.defaultLow, for: .horizontal)
         dot.wantsLayer = true
-        dot.layer?.cornerRadius = 3.5
+        dot.layer?.cornerRadius = Self.dotSide / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
         stateLabel.stringValue = isHardened ? "Hardened" : tool.status.label
         stateLabel.font = HelmType.chip()
@@ -375,8 +377,8 @@ final class VaultLauncherRowView: NSView {
             rule.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
             rule.topAnchor.constraint(equalTo: topAnchor),
             rule.heightAnchor.constraint(equalToConstant: 1),
-            dot.widthAnchor.constraint(equalToConstant: 7),
-            dot.heightAnchor.constraint(equalToConstant: 7),
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),

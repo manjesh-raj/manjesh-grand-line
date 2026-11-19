@@ -362,7 +362,7 @@ final class ShiftLaneHeroBand: NSView {
         let words = NSStackView(views: [titleLabel, detailLabel])
         words.orientation = .vertical
         words.alignment = .leading
-        words.spacing = 1
+        words.spacing = HelmMetrics.s0
         words.setClippingResistancePriority(.defaultLow, for: .horizontal)
         words.setHuggingPriority(.defaultLow, for: .horizontal)
         var views: [NSView] = [countLabel, words]
