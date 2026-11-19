@@ -1136,3 +1136,88 @@ html[data-view='list'] .gl-empty {
   margin-inline-start: auto;
   white-space: nowrap;
 }
+
+/* MARK: The native heads (Cal-8)
+ *
+ * In the sidebar layout the card's head and the tray's are native views over
+ * this page, each fused to the top of its card (`ShiftCalendarHeroHead`,
+ * `ShiftCalendarTrayHead`). The bridge's `setHeads` sets `html.gl-hero` and
+ * how tall each head is, and the page leaves exactly that much of each card's
+ * top to it: the card starts under its head with its top edge and corners
+ * squared, so the two read as one surface. The page's own header and weekday
+ * row step aside, because the head carries the period, its arrows and the
+ * weekday names. Below the head the grid is quiet: the weekend columns are
+ * shaded and today's cell is ringed in the accent, around the filled pill
+ * its number already is. */
+
+html.gl-hero .gl-head,
+html.gl-hero .gl-weekdays {
+  display: none;
+}
+
+html.gl-hero .gl-card {
+  height: auto;
+  margin-top: var(--gl-hero-card, 0px);
+  padding-top: 8px;
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+html.gl-hero .gl-tray {
+  height: auto;
+  margin-top: var(--gl-hero-tray, 0px);
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* The head carries the title, the count and the fold button, and its own
+ * words say what the tray is for. Folded, the strip keeps its vertical
+ * title under the head's cap. */
+html.gl-hero .gl-tray:not(.is-collapsed) .gl-tray-head,
+html.gl-hero .gl-tray-hint,
+html.gl-hero .gl-tray-toggle,
+html.gl-hero .gl-tray-count {
+  display: none;
+}
+
+html.gl-hero .gl-tray:not(.is-collapsed) .gl-tray-list {
+  padding-top: 4px;
+}
+
+/* A weekend cell sits a step back from a weekday's, darker in both
+ * registers: a light cell needs only a touch of black to read as set back,
+ * and a dark one a deeper step to show at all. */
+html {
+  --gl-cell-weekend: color-mix(in srgb, var(--gl-cell) 95%, #000);
+}
+
+html[data-theme='dark'] {
+  --gl-cell-weekend: color-mix(in srgb, var(--gl-cell) 72%, #000);
+}
+
+/* The weekend, by which columns the captain's first weekday puts it in
+ * (`data-first-day` is Schedule-X's numbering, Monday = 1). Days outside the
+ * month keep their own quieter fill, and a day a drag is over keeps its
+ * highlight. */
+html.gl-hero[data-first-day='1'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(6)::before,
+html.gl-hero[data-first-day='1'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(7)::before,
+html.gl-hero[data-first-day='2'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(5)::before,
+html.gl-hero[data-first-day='2'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(6)::before,
+html.gl-hero[data-first-day='3'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(4)::before,
+html.gl-hero[data-first-day='3'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(5)::before,
+html.gl-hero[data-first-day='4'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(3)::before,
+html.gl-hero[data-first-day='4'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(4)::before,
+html.gl-hero[data-first-day='5'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(2)::before,
+html.gl-hero[data-first-day='5'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(3)::before,
+html.gl-hero[data-first-day='6'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(1)::before,
+html.gl-hero[data-first-day='6'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(2)::before,
+html.gl-hero[data-first-day='7'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(7)::before,
+html.gl-hero[data-first-day='7'] .sx__month-grid-day:not(.is-leading-or-trailing):not(.sx__month-grid-day--dragover):nth-child(1)::before {
+  background: var(--gl-cell-weekend);
+}
+
+html.gl-hero .sx__month-grid-day:not(.sx__month-grid-day--dragover):has(.sx__is-today)::before {
+  box-shadow: var(--gl-shadow-cell), inset 0 0 0 1.5px color-mix(in srgb, var(--sx-color-primary) 55%, transparent);
+}

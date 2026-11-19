@@ -62,6 +62,13 @@
 //     which skips it and leaves a "Skipped" marker; a click on the marker
 //     offers it back; and a projection dragged through "This and following"
 //     ends the live rule and starts a new series on the drop.
+//   - **Cal-8's heads** (the sidebar layout): the page hides its own header
+//     and leaves each head's height at the top of its card, so the head and
+//     the card share both edges and meet on a whole point, read from the
+//     page's own rectangles in the month, week and folded states; the
+//     weekday names stand over the grid's day numbers; the weekend is
+//     shaded; the head's arrows and Today page the calendar; the head's fold
+//     button folds the tray; and without the heads the page's header is back.
 //
 // The rule maths, the payload, the palette's contrast and the bundle's
 // integrity are `ShiftCalendarSelfTest`, in CI's blocking lane.
@@ -475,8 +482,199 @@ enum ShiftCalendarViewSelfTest {
         withScratchStore { store in checkWhenPanelUndo(store: store, check: check) }
         withScratchStore { store in checkDragAndQuickAdd(store: store, check: check) }
         withScratchStore { store in checkExceptions(store: store, check: check) }
+        withScratchStore { store in checkHeroHeads(store: store, check: check) }
 
         return report(failures)
+    }
+
+    // MARK: Cal-8's heads
+
+    /// The sidebar layout's calendar: the native heads over the page. Every
+    /// geometry check reads the page's own rectangles back, so the seam
+    /// between a head and its card is measured rather than assumed.
+    private static func checkHeroHeads(store: ShiftStore, check: (Bool, String) -> Void) {
+        let defaults = AppDefaults.store
+        let foldBefore = defaults.object(forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+        defer {
+            if let foldBefore { defaults.set(foldBefore, forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+            else { defaults.removeObject(forKey: ShiftCalendarView.trayCollapsedDefaultsKey) }
+        }
+        defaults.set(false, forKey: ShiftCalendarView.trayCollapsedDefaultsKey)
+
+        let todayDay = ShiftDateFormatting.components(from: Date()).0
+        seed(store, title: "Renew wildcard TLS", due: todayDay, time: nil, rule: nil, priority: .high)
+        seed(store, title: "Review the on-call runbook", due: nil, time: nil, rule: nil)
+        seed(store, title: "Audit IAM keys", due: nil, time: nil, rule: nil)
+
+        let (controller, window) = mount(store: store)
+        defer { window.orderOut(nil) }
+        let view = controller.debugCalendarView
+        let web = view.debugWebView
+        controller.setPeriodControlsInToolbar(true)
+        controller.view.isHidden = false
+        controller.view.layoutSubtreeIfNeeded()
+        guard waitFor(timeout: 30, until: { web.isReady && view.debugIsConfigured }) else {
+            check(false, "the heads case's page never reported ready and configured")
+            return
+        }
+        _ = waitFor(timeout: 5) {
+            state(web)["hero"] as? Bool == true && (state(web)["weekNumbers"] as? [Any] ?? []).count == 7
+        }
+        guard let head = view.debugHeroHead, let trayHead = view.debugTrayHead else {
+            check(false, "the sidebar layout's calendar should draw both heads")
+            return
+        }
+
+        // A head's rectangle in the page's own coordinates: CSS pixels from
+        // the web view's top left.
+        func pageRect(_ head: NSView) -> NSRect {
+            let r = web.convert(head.bounds, from: head)
+            return NSRect(x: r.minX, y: web.isFlipped ? r.minY : web.bounds.height - r.maxY,
+                          width: r.width, height: r.height)
+        }
+        func rect(_ value: Any?) -> NSRect? {
+            guard let d = value as? [String: Any], let x = (d["x"] as? NSNumber)?.doubleValue,
+                  let y = (d["y"] as? NSNumber)?.doubleValue, let w = (d["width"] as? NSNumber)?.doubleValue,
+                  let h = (d["height"] as? NSNumber)?.doubleValue else { return nil }
+            return NSRect(x: x, y: y, width: w, height: h)
+        }
+        func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) <= 0.5 }
+        // Each head sits exactly on its card: the same left and right
+        // edges, and the card starting where the head ends.
+        func checkSeams(_ label: String) {
+            controller.view.layoutSubtreeIfNeeded()
+            let page = state(web)
+            let headRect = pageRect(head)
+            let trayHeadRect = pageRect(trayHead)
+            guard let card = rect(page["cardRect"]), let tray = rect(page["trayRect"]) else {
+                check(false, "\(label): the page did not report its card and tray")
+                return
+            }
+            check(near(headRect.minX, card.minX) && near(headRect.maxX, card.maxX) && near(headRect.maxY, card.minY),
+                  "\(label): the head \(headRect) should sit on the card \(card)")
+            check(near(trayHeadRect.minX, tray.minX) && near(trayHeadRect.maxX, tray.maxX)
+                    && near(trayHeadRect.maxY, tray.minY),
+                  "\(label): the tray's head \(trayHeadRect) should sit on the tray \(tray)")
+            check(headRect.minY == headRect.minY.rounded() && headRect.maxY == headRect.maxY.rounded(),
+                  "\(label): the seam should be on a whole point, the head is \(headRect)")
+        }
+
+        // MARK: The page steps aside
+
+        var page = state(web)
+        check(page["headVisible"] as? Bool == false && page["weekdaysVisible"] as? Bool == false,
+              "under the heads the page should hide its own header and weekday row")
+        check(page["trayHeadVisible"] as? Bool == false && page["trayToggleVisible"] as? Bool == false,
+              "under the tray's head the page should hide its own head and fold button")
+        check(page["cardTopRadius"] as? String == "0px",
+              "the card's top corners should be squared, got \(page["cardTopRadius"] ?? "nil")")
+        checkSeams("month")
+
+        // MARK: The words
+
+        let expected = ShiftCalendarHeroWords.title(scale: .month, focusedDay: todayDay, range: nil)
+        check(head.debugTitle == expected, "the head should name the month, \"\(head.debugTitle)\"")
+        check(head.debugKicker.hasPrefix("CALENDAR \u{00B7} "), "the kicker should be the calendar's, \(head.debugKicker)")
+        check(trayHead.debugBand.debugCount == "2", "the tray's head should count 2, \(trayHead.debugBand.debugCount)")
+
+        // MARK: The weekday names stand over the grid's own columns
+
+        // Schedule-X slides a month in, and an off-screen window is an
+        // occluded one, where the page suspends and the slide stays paused
+        // at its first frame (`html.gl-suspended`). The numbers are read
+        // with the slide ended, where the captain sees them.
+        _ = js(web, "(function(){var s=document.createElement('style');"
+               + "s.textContent='*{animation:none !important;transition:none !important}';"
+               + "document.head.appendChild(s);return true})()")
+        func settledNumbers() -> [NSRect] {
+            (state(web)["weekNumbers"] as? [Any] ?? []).compactMap(rect)
+        }
+        var numbers: [NSRect] = []
+        _ = waitFor(timeout: 3) {
+            let first = settledNumbers()
+            drain(turns: 10)
+            numbers = settledNumbers()
+            return numbers.count == 7 && first.count == 7 && near(first[0].minX, numbers[0].minX)
+        }
+        if let row = head.debugWeekdayRow, numbers.count == 7, row.labels.count == 7 {
+            let headX = pageRect(head).minX
+            for (index, label) in row.labels.enumerated() {
+                let x = headX + row.convert(label.frame, to: head).minX
+                check(abs(x - numbers[index].minX) <= 1,
+                      "weekday \(index) sits at \(x), its column's day number at \(numbers[index].minX)")
+            }
+        } else {
+            check(false, "the month grid should draw seven weekday names over seven days, "
+                  + "\(head.debugWeekdayRow?.labels.count ?? 0) over \(numbers.count)")
+        }
+
+        // MARK: The weekend is shaded
+
+        let fills = page["weekFills"] as? [String] ?? []
+        let firstDay = ShiftCalendarPayload.scheduleXFirstDayOfWeek(.current)
+        let saturday = (6 - firstDay + 7) % 7
+        let wednesday = (3 - firstDay + 7) % 7
+        check(fills.count == 7 && fills[saturday] != fills[wednesday],
+              "a weekend cell should be shaded apart from a weekday, got \(fills)")
+
+        // MARK: The arrows and Today page the calendar
+
+        let buttons = head.debugButtons
+        buttons.next.performClick(nil)
+        _ = waitFor(timeout: 5) { head.debugTitle != expected }
+        check(head.debugTitle != expected && state(web)["date"] as? String != todayDay,
+              "Next should page to another month, the head says \(head.debugTitle)")
+        buttons.today.performClick(nil)
+        _ = waitFor(timeout: 5) { head.debugTitle == expected }
+        check(head.debugTitle == expected, "Today should come back to this month, \(head.debugTitle)")
+        buttons.previous.performClick(nil)
+        _ = waitFor(timeout: 5) { head.debugTitle != expected }
+        check(head.debugTitle != expected, "Previous should page to another month")
+        buttons.today.performClick(nil)
+        _ = waitFor(timeout: 5) { head.debugTitle == expected }
+
+        // MARK: Another view, its own title, the same seam
+
+        view.show(scale: .week)
+        _ = waitFor(timeout: 5) { state(web)["view"] as? String == "week" }
+        _ = waitFor(timeout: 2) { head.debugWeekdayRow == nil }
+        check(head.debugWeekdayRow == nil, "the week view draws its own date axis, so the head has no weekday row")
+        check(head.debugTitle != expected, "the week view's head should name the week, \(head.debugTitle)")
+        _ = waitFor(timeout: 3) {
+            guard let card = rect(state(web)["cardRect"]) else { return false }
+            return near(pageRect(head).maxY, card.minY)
+        }
+        checkSeams("week")
+        view.show(scale: .month)
+        _ = waitFor(timeout: 5) { state(web)["view"] as? String == "month-grid" }
+
+        // MARK: The fold button is the head's
+
+        if let fold = trayHead.debugToggleButton {
+            fold.performClick(nil)
+        }
+        _ = waitFor(timeout: 5) { state(web)["trayCollapsed"] as? Bool == true }
+        check(view.trayCollapsed && state(web)["trayCollapsed"] as? Bool == true,
+              "the head's fold button should fold the tray on both sides")
+        check(trayHead.debugCapCount == "2", "the folded cap should still count 2, \(trayHead.debugCapCount)")
+        _ = waitFor(timeout: 3) {
+            guard let tray = rect(state(web)["trayRect"]) else { return false }
+            return near(pageRect(trayHead).maxY, tray.minY) && near(tray.width, ShiftCalendarTrayHead.collapsedWidth)
+        }
+        checkSeams("folded")
+        trayHead.debugToggleButton?.performClick(nil)
+        _ = waitFor(timeout: 5) { state(web)["trayCollapsed"] as? Bool == false }
+        check(!view.trayCollapsed, "the cap's button should open the tray again")
+
+        // MARK: The floating bar's calendar keeps the page's own header
+
+        controller.setPeriodControlsInToolbar(false)
+        _ = waitFor(timeout: 5) { state(web)["hero"] as? Bool == false }
+        page = state(web)
+        check(page["hero"] as? Bool == false && page["headVisible"] as? Bool == true
+                && view.debugHeroHead == nil && view.debugTrayHead == nil,
+              "without the heads the page should draw its own header again")
+        _ = waitFor(timeout: 3) { web.debugPendingCallCount == 0 }
     }
 
     // MARK: The Unscheduled tray
