@@ -695,7 +695,7 @@ enum PageRedesignsSelfTest {
 
     /// With `FM_DEVOPS_HUB_RENDER_DIR` set, one PNG of the whole window per
     /// state, in Daylight and Dusk. `FM_DEVOPS_HUB_RENDER_SITE` serves a real
-    /// site (the captain's own course clone) for the running state instead of
+    /// site (a real course clone) for the running state instead of
     /// the fixture; it is read, never written. The states a real run passes
     /// through too fast to capture are drawn through `debugShowHero(phase:)`,
     /// with the sidebar's row told the same state.

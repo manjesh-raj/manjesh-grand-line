@@ -312,7 +312,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// or going) keeps them collapsed. In memory only: like the window's own
     /// sidebar width, it is not worth a preference.
     private var collapsedSections: Set<String> = []
-    /// Modules whose children the captain folded away (DevOps Hub's projects),
+    /// Modules whose children were folded away by hand (DevOps Hub's projects),
     /// kept across a rebuild the same way.
     private var collapsedModules: Set<WorkspaceModule> = []
     /// What the workspace last said is showing, so a rebuild can light the
@@ -519,7 +519,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         if !isFirstBuild { restoreScroll(to: origin) }
     }
 
-    /// Opens every section the captain has not collapsed, and inside them
+    /// Opens every section not collapsed by hand, and inside them
     /// every module row except the ones they folded.
     private func expandSections() {
         for item in roots where item.isSection {
@@ -759,7 +759,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         guard let item = notification.userInfo?["NSObject"] as? WorkspaceSidebarItem else { return }
         switch item.entry {
         case .section(let title): collapsedSections.insert(title)
-        // A rebuild's own collapse of a folded module is not the captain's.
+        // A rebuild's own collapse of a folded module is not a fold by hand.
         case .module(let module) where !isApplyingSelection: collapsedModules.insert(module)
         default: break
         }

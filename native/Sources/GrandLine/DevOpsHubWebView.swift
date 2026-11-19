@@ -137,7 +137,7 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
         guard let url = navigationAction.request.url else { return decisionHandler(.cancel) }
         if url.absoluteString == "about:blank" { return decisionHandler(.allow) }
         if let origin, Self.isSameSite(url, origin: origin) { return decisionHandler(.allow) }
-        // Only a link the captain followed in the page itself leaves for the
+        // Only a link followed by hand in the page itself leaves for the
         // browser; a script's own redirect or a frame's load does not.
         if navigationAction.targetFrame?.isMainFrame ?? true, navigationAction.navigationType == .linkActivated {
             WebNavigationPolicy.openExternally(url, from: "DevOps Hub")

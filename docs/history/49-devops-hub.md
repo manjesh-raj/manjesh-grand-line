@@ -11,7 +11,7 @@ The scout `grand-line-devops-hub` drew three page layouts on a Lavish board (`da
 - B, a hero column beside it.
 - C, a slim strip over a full-size site, with a centred hero card whenever there is no site to show.
 
-The captain confirmed the recommended answers:
+The recommended answers were confirmed:
 
 - Layout C.
 - A server built into Grand Line rather than `python3 -m http.server`.
@@ -49,7 +49,7 @@ With `python3 -m http.server` already listening on all interfaces, binding 127.0
 
 - **A vertical `NSStackView` does not stretch its arranged views.** The page first set `alignment = .width` on its hero column, and the hero rendered 268pt wide, centred, inside a 720pt column. Both cards are pinned to the column's width now.
 - **Storage belongs to the address.** The course keeps its progress in `localStorage`, which WebKit keys by origin, port included. The port is therefore fixed rather than "the next free one", and each project gets its own persistent `WKWebsiteDataStore` (by identifier on macOS 14 and later, the default store on 13). Every other web view in the app stays `.nonPersistent()`.
-- **A test process must not serve the captain's clone.** `FirstmateHome` resolves the real home in a self-test process, so the default folder resolves under the process's scratch root instead whenever `ExternalToolGuard.isActive`.
+- **A test process must not serve the real clone.** `FirstmateHome` resolves the real home in a self-test process, so the default folder resolves under the process's scratch root instead whenever `ExternalToolGuard.isActive`.
 - **The content pane keeps a 32pt slot above a headerless page.** The running strip sits at the page's top edge with no inset of its own, which puts it where other headerless pages start.
 
 ## Not done

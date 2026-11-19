@@ -15,7 +15,7 @@
 //   3. **The store** keeps a newer build's keys (`passthrough`), reads an
 //      older file's missing fields as their defaults (GL-01), seeds
 //      devops-atlas, and resolves the default folder to scratch in a test
-//      process, never the captain's clone.
+//      process, never the real clone.
 //   4. **Preflight** says missing, no index.html, or ready with the count.
 //   5. **The runner**: every transition, a Stop that beats a slow start, the
 //      last run it records, and the port holder named from `lsof`.
@@ -491,7 +491,7 @@ enum DevOpsHubModelSelfTest {
                 if let stored { settings.hiddenModules = stored }
                 settings.settleDevOpsHubAdded()
                 result = settings.hiddenModules
-                // Once only: a later show is the captain's, and a second
+                // Once only: a later show is deliberate, and a second
                 // settle does not take it back.
                 var shown = result
                 shown.remove(.devopsHub)

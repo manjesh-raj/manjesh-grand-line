@@ -29,7 +29,7 @@ struct LocalProject: Equatable {
     var id: String
     var name: String
     var kind: Kind
-    /// The folder to serve, as the captain set it. `nil` means the default,
+    /// The folder to serve, as set in Project settings. `nil` means the default,
     /// `<firstmate home>/projects/<id>`, re-resolved on every read so the
     /// project follows a moved firstmate home.
     var folderOverride: String?
@@ -59,8 +59,8 @@ struct LocalProject: Equatable {
     }
 
     static func defaultFolder(for id: String) -> URL {
-        // A self-test or tour process resolves the captain's firstmate home
-        // like the app does, so it would serve their real clone. It gets a
+        // A self-test or tour process resolves the real firstmate home
+        // like the app does, so it would serve the real clone. It gets a
         // folder under its own scratch root instead (`ProcessMode`).
         if ExternalToolGuard.isActive {
             return AppPaths.dataRoot().appendingPathComponent("projects", isDirectory: true)
@@ -69,7 +69,7 @@ struct LocalProject: Equatable {
         return FirstmateHome.projects.appendingPathComponent(id, isDirectory: true)
     }
 
-    /// The folder as the captain reads it: under the home folder as `~`.
+    /// The folder as it reads on screen: under the home folder as `~`.
     var displayFolder: String {
         Self.abbreviate(folder.path)
     }

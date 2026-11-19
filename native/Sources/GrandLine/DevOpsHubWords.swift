@@ -77,7 +77,7 @@ struct DevOpsHubWords: Equatable {
         case project(LocalProjectState)
         /// Serving, and the site is loading into the page (0...1).
         case loading(Double)
-        /// Serving, and the captain asked not to show it here on its own.
+        /// Serving, and set not to show it here on its own.
         case runningNotShown
     }
 

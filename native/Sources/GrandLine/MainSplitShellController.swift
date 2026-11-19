@@ -559,7 +559,7 @@ final class MainSplitShellController: WorkspaceShellController {
     // MARK: DevOps Hub
 
     /// The projects under DevOps Hub: a row's click opens its page, its menu
-    /// drives its server from wherever the captain is, and every change of
+    /// drives its server from whichever page is showing, and every change of
     /// state repaints the rows. The page is not built for any of this: the
     /// registry holds the state (GL-37).
     private func wireLocalProjects() {

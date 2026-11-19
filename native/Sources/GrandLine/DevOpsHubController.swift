@@ -2,7 +2,7 @@
 //
 // DevOps Hub's page: one local project, with a Start button while it is
 // stopped and its site in a web view while it runs. Layout C on the design
-// board (`data/grand-line-devops-hub/`), the captain's pick:
+// board (`data/grand-line-devops-hub/`), the confirmed design:
 //
 //   - **Running**, the hero shrinks to a 44pt strip in the gradient: a state
 //     dot, the address as a copy button, the uptime and files served, and
@@ -56,7 +56,7 @@ final class DevOpsHubController: NSViewController {
     private var loadedOrigin: [String: URL] = [:]
     private var finished: Set<String> = []
     private var progress: [String: Double] = [:]
-    /// Projects whose site the captain asked to see with "Show It Here"
+    /// Projects whose site was asked for with "Show It Here"
     /// while "Show the site when it's ready" is off.
     private var shownOnRequest: Set<String> = []
     private var preflight: [String: LocalProjectPreflight.Outcome] = [:]
