@@ -80,7 +80,7 @@ enum ShellSplitSelfTest {
     private static let shellFiles: [(file: String, chrome: [String])] = [
         ("AppShellController.swift", ["let bar = DaylightBarController()", "func reassertBodyContainerWidthTie(",
                                       "func applyDrillHeader(", "func updateKeyViewLoop()"]),
-        ("MainSplitShellController.swift", ["NSSplitViewItem(sidebarWithViewController:", "func fitPanesToWindow()",
+        ("MainSplitShellController.swift", ["sidebarItem = NSSplitViewItem(viewController: sidebar)", "func fitPanesToWindow()",
                                             "override func workspaceDidShow("]),
         ("WorkspaceShellController.swift", ["self.workspace = Workspace(", "func paintGroundAndFollowTextScale()"]),
     ]

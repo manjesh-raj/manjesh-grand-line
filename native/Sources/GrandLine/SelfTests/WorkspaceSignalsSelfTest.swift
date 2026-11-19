@@ -10,9 +10,11 @@
 //      dash for a first read in flight, the value for a read, the last good
 //      value and its time for a failed read, and no badge for a real zero.
 //   3. **Tasks due** counts by day, the way compact mode does.
-//   4. **Contrast**: an attention pill's digits on its fill, and every
-//      attention or alarm mark on the sidebar, clear the text floor in all
-//      palettes.
+//   4. **Contrast** on Sb-4's gradient, in every palette: the ink, the
+//      quiet ink and an attention pill's digits clear the text floor on both
+//      stops, every attention or alarm mark and the live-session dot clear
+//      the non-text floor, and the lit row's pill does the same for its own
+//      words and marks.
 //   5. **Source guards**: the monitor starts no timer, pass or subprocess,
 //      takes no one's single closure, and only the sidebar layout builds one;
 //      the Fleet page keeps Needs you's bookkeeping in both layouts.
@@ -248,32 +250,57 @@ enum WorkspaceSignalsSelfTest {
 
     // MARK: 4
 
+    /// Sb-4: the sidebar is the hero's gradient, so every word and mark is
+    /// measured against both of its stops, and on the lit row's pill against
+    /// the pill. Words clear the text floor; a dot or a glyph, which is a
+    /// mark rather than a word, clears the non-text floor.
     private static func checkContrast(_ ok: inout Bool) {
-        print("\n-- every mark clears the text floor, in every palette --")
+        print("\n-- every word and mark clears its floor on the gradient, in every palette --")
         var failures: [String] = []
-        for theme in HelmTheme.allThemes {
-            let panel = HelmTheme.sidePanelFill(theme)
-            for tone in [WorkspaceBadge.Tone.attention, .alarm] {
-                let fill = WorkspaceSidebarBadgeView.pillFill(for: tone, theme: theme)
-                let digits = HelmContrast.legibleOn(fill: fill, preferring: WorkspaceSidebarBadgeView.hue(tone, theme))
-                let pill = HelmContrast.ratio(digits, fill)
-                if pill < HelmContrast.textTarget { failures.append("\(theme.id) \(tone) pill \(String(format: "%.2f", pill))") }
-                let mark = HelmContrast.ratio(WorkspaceSidebarBadgeView.ink(for: tone, over: panel, theme: theme), panel)
-                if mark < HelmContrast.textTarget {
-                    failures.append("\(theme.id) \(tone) mark on the sidebar \(String(format: "%.2f", mark))")
+        func note(_ theme: HelmTheme, _ what: String, _ ratio: Double, _ floor: Double) {
+            if ratio < floor { failures.append("\(theme.id) \(what) \(String(format: "%.2f", ratio))") }
+        }
+        let themes = HelmTheme.appThemes + HelmTheme.allThemes
+        for theme in themes {
+            let ink = WorkspaceSidebarInk.of(theme)
+            let stops = [ink.palette.start, ink.palette.end].map { HelmContrast.color($0) }
+            for stop in stops {
+                note(theme, "ink", HelmContrast.ratio(ink.ink, stop), HelmContrast.textTarget)
+                let quiet = stop.blended(withFraction: HelmHeroColumn.quietInkAlpha, of: ink.ink) ?? stop
+                note(theme, "quiet ink", HelmContrast.ratio(quiet, stop), HelmContrast.textTarget)
+                let pill = stop.blended(withFraction: HelmHeroColumn.NavInk.countPillAlpha,
+                                        of: HelmButton.heroShade(for: ink.ink)) ?? stop
+                note(theme, "count pill", HelmContrast.ratio(ink.ink, pill), HelmContrast.textTarget)
+                for tone in [WorkspaceBadge.Tone.attention, .alarm] {
+                    note(theme, "\(tone) mark", HelmContrast.ratio(WorkspaceSidebarBadgeView.ink(for: tone, theme: theme), stop),
+                         HelmContrast.nonTextTarget)
                 }
+                let good = ink.signal(tintHex: HelmTint.good.hex(in: theme), selected: false)
+                note(theme, "live session dot", HelmContrast.ratio(good, stop), HelmContrast.nonTextTarget)
+            }
+            note(theme, "lit row's words", HelmContrast.ratio(ink.selectedInk, ink.ink), HelmContrast.textTarget)
+            let litPill = ink.ink.blended(withFraction: HelmHeroColumn.NavInk.selectedCountPillAlpha, of: ink.selectedInk)
+                ?? ink.ink
+            note(theme, "count pill on the lit row", HelmContrast.ratio(ink.selectedInk, litPill), HelmContrast.textTarget)
+            for tone in [WorkspaceBadge.Tone.attention, .alarm] {
+                note(theme, "\(tone) mark on the lit row",
+                     HelmContrast.ratio(WorkspaceSidebarBadgeView.ink(for: tone, theme: theme, onPill: true), ink.ink),
+                     HelmContrast.nonTextTarget)
             }
         }
-        check(failures.isEmpty, "a badge mark is below the text floor: \(failures)", &ok)
-        // The fixture can fail: the raw warn hue on its own pill does not
-        // clear the floor in every palette, which is why the digits are
-        // corrected at all.
-        let raw = HelmTheme.allThemes.contains { theme in
-            let fill = WorkspaceSidebarBadgeView.pillFill(for: .attention, theme: theme)
-            return HelmContrast.ratio(WorkspaceSidebarBadgeView.hue(.attention, theme), fill) < HelmContrast.textTarget
+        check(failures.isEmpty, "a sidebar word or mark is below its floor: \(failures)", &ok)
+        // The fixture can fail: the raw warn hue does not clear the
+        // gradient's non-text floor in every palette, which is why a mark is
+        // lifted at all.
+        let raw = themes.contains { theme in
+            let ink = WorkspaceSidebarInk.of(theme)
+            let hue = HelmTheme.nsColor(HelmTint.warn.hex(in: theme))
+            return [ink.palette.start, ink.palette.end].contains {
+                HelmContrast.ratio(hue, HelmContrast.color($0)) < HelmContrast.nonTextTarget
+            }
         }
-        check(raw, "the raw warn hue clears its pill in every palette, so this check cannot tell a correction from none", &ok)
-        if ok { print("  OK   \(HelmTheme.allThemes.count) palettes, attention and alarm, pill and marks") }
+        check(raw, "the raw warn hue clears the gradient in every palette, so this check cannot tell a lift from none", &ok)
+        if ok { print("  OK   \(themes.count) palettes: ink, quiet ink, the count pill, the marks and the lit row") }
     }
 
     // MARK: 5

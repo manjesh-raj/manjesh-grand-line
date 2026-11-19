@@ -421,9 +421,14 @@ enum ReviewTwoA11yPerfSelfTest {
         check(rowView.debugHovering, "a theme change dropped the hover", &ok)
         check(rowView.debugFill.debugFill.map { NSColor(cgColor: $0) == WorkspaceSidebarRowView.hover(daylight) } == true,
               "the hovered row's fill is not Daylight's hover", &ok)
-        check(cell.debugLabelColor == HelmTheme.nsColor(daylight.chromeInkHex),
-              "the hovered row's title kept Dusk's ink", &ok)
-        check(cell.debugIconTint == HelmTheme.nsColor(daylight.accentHex), "the hovered row's icon kept Dusk's accent", &ok)
+        // Sb-4: a row's words and glyph are the gradient's ink, which is
+        // white in both themes, so the lit row's words - the hero's deep
+        // colour, which is each theme's own - carry the repaint check.
+        let ink = WorkspaceSidebarInk.of(daylight).ink
+        check(cell.debugLabelColor == ink, "the hovered row's title is not Daylight's hero ink", &ok)
+        check(cell.debugIconTint == ink, "the hovered row's icon is not Daylight's hero ink", &ok)
+        check(WorkspaceSidebarRowView.litInk(daylight) != WorkspaceSidebarRowView.litInk(dusk),
+              "fixture: Daylight's and Dusk's lit ink are the same, so the repaint check cannot fail", &ok)
         if let lit = shell.sidebar.debugCell(for: .module(.home)) as? WorkspaceSidebarPageCell {
             check(lit.debugLabelColor == WorkspaceSidebarRowView.litInk(daylight),
                   "the lit row's title is not Daylight's lit ink", &ok)
