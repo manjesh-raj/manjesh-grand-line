@@ -258,3 +258,31 @@ It was not attempted here.
 The brief made it a final separate PR, only once the earlier work was merged and the split built green.
 The first thing such a split meets is GL-27: the suites reach `internal` members throughout, and `FM_SELFTESTS` is a compilation condition on one target.
 So a split needs either `package` access (Swift 5.9+) on what the suites touch, or per-target suite files.
+
+## The sidebar shell's suite, split in two (2026-11-19)
+
+`FM_RUN_MAIN_SPLIT_SHELL_TESTS` ran 1,573 checks in 297.6s on CI's window-backed shard 2, against the runner's 300s per-suite bound (`SUITE_TIMEOUT`).
+Earlier runs had recorded it as a timeout, or as flaky for the same reason, and it grows whenever a page is added.
+Splitting it was chosen over raising the bound, which would have taken the backstop away from every other suite.
+
+- `FM_RUN_MAIN_SPLIT_SHELL_NAVIGATION_TESTS` (`MainSplitShellNavigationSelfTest`) is how the captain gets around.
+  It covers the routes, the window keeping its size, the sidebar, the tabs, the toolbar, Back and Forward, the calendar button, Console and Home's cards.
+- `FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS` (`MainSplitShellPanesSelfTest`) is the frame around the page.
+  It covers the inspector, the page's first content, the lock, the content reaching the foot, the focus chip, the sidebar's width, toasts, the account menu, and Notebook's and Tasks' fit.
+- `MainSplitShellHarness` holds the one setup both use, so each half mounts its own shell from the same state.
+
+The seam follows the old file's own numbered areas, and the balance is by CI time rather than by count.
+A CI replay that timed every check put the old suite at 275.6s, with the navigation half at about 137s (1,102 checks) and the panes half at about 132s (468 checks).
+`checkNoPageGrowsTheWindow` alone is 64s of the navigation half.
+The halves together run the same 33 checks, each once, with every check's body unchanged.
+
+Two things came with it:
+
+- `windowBackedSuiteCeiling` went from 135 to 136, for a split rather than a new suite.
+- `SHARD_WEIGHTS` was refreshed from the medians of 10 green CI runs.
+  It had the suite at 48s against a measured median of 254s, and `FM_RUN_REVIEW2_UX_TESTS` at 36s against 122s.
+  Against those medians, main's table put the three shards at about 682s, 817s and 846s of suite time.
+  The refreshed table puts them at about 781s, 788s and 780s.
+
+One local trap, measured while timing the checks: a single check took 904s in one local run and 3.3s in the next, on a machine with a load average of 21.
+A local per-check time from a loaded or sleeping machine is not a measurement, so the split used CI's.

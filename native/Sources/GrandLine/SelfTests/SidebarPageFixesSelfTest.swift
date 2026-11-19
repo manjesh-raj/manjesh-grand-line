@@ -22,8 +22,8 @@
 //   4. **The floating bar is unchanged** on all three pages.
 //
 // The sidebar's own items (Pinned, the account menu, the header rule, no
-// status strip under any module) are `MainSplitShellSelfTest`'s and
-// `SplitShellModelSelfTest`'s.
+// status strip under any module) are `MainSplitShellNavigationSelfTest`'s,
+// `MainSplitShellPanesSelfTest`'s and `SplitShellModelSelfTest`'s.
 //
 // It never runs `claude -p`, `av`, a git sync or a real check: the Log
 // Analyzer's fixture is rendered through `debugRender`, ⌘↵ is sent with

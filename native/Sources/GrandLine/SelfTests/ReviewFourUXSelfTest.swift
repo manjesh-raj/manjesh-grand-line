@@ -19,10 +19,10 @@
 // `NotificationBridgePanelSelfTest` and `GrandLineNotificationCenterSelfTest`,
 // R4-UX-05's inspector half (a disabled button on a page with no details)
 // was reversed at the captain's request: the button now opens the inspector
-// on every page, which is `MainSplitShellSelfTest.checkTheInspectorOpensOnEveryPage`,
+// on every page, which is `MainSplitShellPanesSelfTest.checkTheInspectorOpensOnEveryPage`,
 // R4-UX-07's Whiteboard overlay is `WhiteboardViewSelfTest`, and R4-UX-08's
 // schedule Stop is `ScheduleRunnerSelfTest`. R4-UX-09 and R4-UX-10 shipped
-// with R4-UI-09 and are `MainSplitShellSelfTest.checkTasksBoardAndFilterRow`.
+// with R4-UI-09 and are `MainSplitShellPanesSelfTest.checkTasksBoardAndFilterRow`.
 //
 // Pure logic: no window. The menus are built without installing them, and
 // every view here is laid out on its own.

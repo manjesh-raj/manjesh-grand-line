@@ -602,7 +602,8 @@ final class HomeCardCustomizeStrip: NSView {
         // The card's header row holds the strip in place of the card's own
         // status and action (`HelmModuleCard.setHeaderAccessory`). At 31pt it
         // stays inside that 32pt row, so the card does not change height while
-        // it is being arranged - `MainSplitShellSelfTest` measures both.
+        // it is being arranged - `MainSplitShellNavigationSelfTest` measures
+        // both.
         row.edgeInsets = NSEdgeInsets(top: HelmMetrics.s1 + 1, left: HelmMetrics.s1, bottom: HelmMetrics.s1 + 1,
                                       right: HelmMetrics.s1)
         row.translatesAutoresizingMaskIntoConstraints = false

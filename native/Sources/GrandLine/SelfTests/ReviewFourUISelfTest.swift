@@ -15,7 +15,7 @@
 // `ReadingListViewSelfTest`, R2-UI-12's Code invitation is
 // `CodePreviewViewSelfTest`, and the Tasks page's half of R4-UI-08 and
 // R4-UI-09 (the Follow-ups lane, the Filter button, the Weekly review's
-// agenda) is `MainSplitShellSelfTest.checkTasksBoardAndFilterRow`, which
+// agenda) is `MainSplitShellPanesSelfTest.checkTasksBoardAndFilterRow`, which
 // has the shell they need.
 //
 // Pure logic: no window. Every view here is laid out on its own, and the

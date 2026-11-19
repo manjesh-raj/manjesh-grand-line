@@ -78,9 +78,9 @@ class SummaryTests(unittest.TestCase):
         return data
 
     def test_a_flaky_suite_is_named_and_the_run_still_says_it_failed(self):
-        data = self.build([("FM_RUN_MAIN_SPLIT_SHELL_TESTS", "flaky", 60000, 10), ("FM_RUN_A_TESTS", "pass", 1000, 2)])
+        data = self.build([("FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS", "flaky", 60000, 10), ("FM_RUN_A_TESTS", "pass", 1000, 2)])
         text = history.summary(data, "windowed-shard-2")
-        self.assertIn("`FM_RUN_MAIN_SPLIT_SHELL_TESTS`", text)
+        self.assertIn("`FM_RUN_MAIN_SPLIT_SHELL_PANES_TESTS`", text)
         self.assertIn("the run still fails", text)
         self.assertNotIn("`FM_RUN_A_TESTS`", text)
 
