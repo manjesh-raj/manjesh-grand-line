@@ -1991,6 +1991,13 @@ enum SelfTestDispatch {
             exit(TasksSecretsHeroViewSelfTest.run() ? 0 : 1)
         }
 
+        // A real, captain-reported bug on Tasks' Board: the page would not
+        // scroll with the pointer over a lane's cards - see
+        // TasksPageWheelSelfTest.swift's header for the root cause.
+        if ProcessInfo.processInfo.environment["FM_RUN_TASKS_PAGE_WHEEL_TESTS"] == "1" {
+            exit(TasksPageWheelSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
         // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {

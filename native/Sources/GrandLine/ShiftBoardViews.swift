@@ -1295,7 +1295,11 @@ final class ShiftBoardColumnView: NSView {
     private let dropView = ShiftBoardDropView()
     /// UI-27: the drop target's dashed outline, shown with the wash.
     private let dropOutline = CAShapeLayer()
-    private let scroll = NSScrollView()
+    /// Nested in the page's scroll view, which does the scrolling once the
+    /// sidebar layout grows the lane to its cards. A plain `NSScrollView`
+    /// kept every wheel event over the cards even then, so the page stopped
+    /// scrolling under the pointer (`TasksPageWheelSelfTest`).
+    private let scroll = HelmNestedScrollView()
     private let cardsStack = NSStackView()
     private let overflowLabel = NSTextField(labelWithString: "")
     /// UXP-18: "3 more below" when the lane scrolls inside its card.

@@ -1658,3 +1658,20 @@ Renders of both layouts, Daylight and Dusk, at 1512 and 1100 found, and this PR 
 - Schedule-X's "+N more" link renders "+ {{n}} events" in a crowded month cell. It is inside the vendored bundle, which this task was not to rebuild.
 - `AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` fails locally for nord-snow on `main` and on this branch alike (macOS 26 at 2x).
 - `FM_RUN_SHIFT_CALENDAR_VIEW_TESTS` failed 2 of 13 local runs while other heavy processes ran, and passed 8 of 8 alone; `main` passed 5 of 5. Its path is unchanged unless the toolbar owns the period controls.
+
+## Live sessions are listed under Connections (`fm/grand-line-connection-sidebar-tasks-scroll`)
+
+The sidebar listed a launched host's session under Console, with Console's row carrying the count.
+The captain's call: the session belongs under Connections, where the host was launched from.
+Console's session strip is unchanged, and picking a session row still opens it on Console's page.
+
+- `WorkspaceSidebarModel.sessionsParent(hidden:)` is the one answer to "which row lists the sessions".
+  It is Connections, or Console when the captain's profile hides Connections, so a session keeps a row.
+  With both hidden there is none, which is what a hidden Console already meant.
+- The live-session count follows it (`WorkspaceSignals.badge(for:sessionsUnder:)`), so Console has no count while Connections lists the sessions.
+- Every entry in `HostSessionRegistry` is a saved host's SSH session, so nothing is left under Console.
+  A local shell has never had a sidebar row.
+- Connections' context menu gains Connect to a Host, which Console's keeps.
+- ⌃⌘1-9, ⌘] and ⌘[ read the registry and are untouched.
+
+`SplitShellModelSelfTest`, `WorkspaceSignalsSelfTest`, `SidebarPolishSelfTest` and `MainSplitShellSelfTest` assert the placement, the fallback, the badge and the click.

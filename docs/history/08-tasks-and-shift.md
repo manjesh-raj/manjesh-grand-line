@@ -205,3 +205,24 @@ Below about 836pt of board, four lanes are each under the 200pt a card's one met
 That is decided from the content column's own frame change, because the page's `viewDidLayout` reads the column's width from before a resize.
 The floating bar's Tasks is unchanged.
 The rest of review #4's UI pass is in [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md).
+
+## The board scrolls under the pointer (`fm/grand-line-connection-sidebar-tasks-scroll`)
+
+The captain reported that on Board, with the pointer over a lane or its cards, the page would not scroll.
+Backlog held 13 tasks and the last of them sat below the window's foot.
+The page scrolled over the gaps between the lanes and stopped the moment the pointer crossed into one.
+
+The cause is the trap `HelmNestedScrollView` exists for.
+The sidebar layout grows each lane to its cards and lets the page scroll, but the cards still live in the lane's own `NSScrollView`.
+AppKit has no scroll chaining, so that plain scroll view kept every wheel event even with nothing to scroll.
+The lane's scroll view is a `HelmNestedScrollView` now.
+It hands the wheel to the page while the cards fit, and keeps it when a lane really scrolls (the floating bar's capped lanes).
+
+List's My Tasks and Follow-ups panels and a project's task list had the same plain scroll view, so they take the same component.
+In the sidebar layout the List tab is a `HelmDataTable`, which already forwarded, so List was not broken there.
+Weekly review has no nested scroll view, and Calendar is a web view that fills the page and scrolls itself.
+
+`TasksPageWheelSelfTest` (`FM_RUN_TASKS_PAGE_WHEEL_TESTS`) mounts the real page headless with 13 Backlog cards.
+It samples a grid over Board, List and Weekly review, and delivers a real wheel event wherever the pointer sits in a nested scroll view with nothing to scroll.
+With the lane's scroll view put back to a plain `NSScrollView`, it fails Board with 45 of those points keeping the wheel.
+It is headless on purpose: `E2ETestingPolicySelfTest` caps the window-backed suites, and hit-testing plus the responder chain need no window server.

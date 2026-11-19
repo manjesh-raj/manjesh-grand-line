@@ -15,7 +15,7 @@
 // | Poneglyph's lock    | the vault store's lock state and its file's state        | Secrets' badge  |
 // | A failing service   | `ServiceHealthRegistry`, the Health page's own source    | Health's dot    |
 // | Setup's updates     | `BackgroundSignalsPoller.lastCounts`                     | Setup's badge   |
-// | Live sessions       | the session registry (unchanged)                         | Console's badge |
+// | Live sessions       | the session registry (unchanged)                         | Connections' badge |
 //
 // The layout also drew a status strip under every page, with readouts of its
 // own for Claude usage and Tasks sync. The captain had the strip removed from
@@ -143,19 +143,26 @@ extension WorkspaceSignals {
     /// The dash a count shows while its first read is in flight.
     static let scanningMark = "\u{2013}"
 
-    /// The badge on `module`'s row, or nil for none.
-    func badge(for module: WorkspaceModule, now: Date = Date()) -> WorkspaceBadge? {
+    /// The badge on `module`'s row, or nil for none. The live-session count
+    /// goes on `sessionsUnder`, the row the sidebar lists the sessions under
+    /// (`WorkspaceSidebarModel.sessionsParent`): Connections, or Console
+    /// when Connections is hidden.
+    func badge(for module: WorkspaceModule, sessionsUnder: WorkspaceModule? = .connections,
+               now: Date = Date()) -> WorkspaceBadge? {
+        if module == sessionsUnder { return sessionsBadge }
         switch module {
         case .crew: return crewBadge(now: now)
         case .tasks: return tasksBadge(now: now)
         case .secrets: return vaultBadge
         case .health: return healthBadge(now: now)
         case .setup: return setupBadge(now: now)
-        case .console:
-            guard liveSessions > 0 else { return nil }
-            return WorkspaceBadge(mark: .count("\(liveSessions)"), tone: .neutral, description: "\(liveSessions) connected")
         default: return nil
         }
+    }
+
+    private var sessionsBadge: WorkspaceBadge? {
+        guard liveSessions > 0 else { return nil }
+        return WorkspaceBadge(mark: .count("\(liveSessions)"), tone: .neutral, description: "\(liveSessions) connected")
     }
 
     private func crewBadge(now: Date) -> WorkspaceBadge? {

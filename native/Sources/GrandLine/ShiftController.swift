@@ -41,13 +41,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// scratch on every render).
 
     private let taskListView = ShiftTaskListView()
-    private let taskListScroll = NSScrollView()
+    /// This, `followUpScroll` and `detailTaskListScroll` sit inside the
+    /// page's own scroll view, so each hands the wheel to the page while its
+    /// rows all fit (`HelmNestedScrollView`, `TasksPageWheelSelfTest`).
+    private let taskListScroll = HelmNestedScrollView()
     private let tasksHeader = NSTextField(labelWithString: "")
     private let tasksCountBadge = NSTextField(labelWithString: "")
     private let taskPanel = HelmCard()
 
     private let followUpListView = ShiftFollowUpListView()
-    private let followUpScroll = NSScrollView()
+    private let followUpScroll = HelmNestedScrollView()
     private let followUpsHeader = NSTextField(labelWithString: "")
     private let followUpsCountBadge = NSTextField(labelWithString: "")
     let followUpPanel = HelmCard()
@@ -2298,7 +2301,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     private let detailTasksHeader = NSTextField(labelWithString: "Tasks")
     private let detailTasksCountBadge = NSTextField(labelWithString: "")
     private let detailTaskListView = ShiftProjectTaskListView()
-    private let detailTaskListScroll = NSScrollView()
+    private let detailTaskListScroll = HelmNestedScrollView()
 
     private var lastDetailProjectID: String?
     /// The project the detail page currently shows - kept separate from
