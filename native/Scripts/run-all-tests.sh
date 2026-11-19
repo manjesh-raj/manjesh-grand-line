@@ -231,6 +231,7 @@ FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 11
 FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
 FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 12
 FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS 10
+FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS 8
 "
 DEFAULT_SHARD_WEIGHT=3
 
@@ -385,6 +386,9 @@ NEEDS_SESSION=(
   # Vault in a real sidebar shell: where each sits, what its controls run,
   # and every word on the gradients in the ink.
   "FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
+  # Set-2: Settings' split cards in a real sidebar shell - where each sits,
+  # side by side or stacked, and what the controls on it still write.
+  "FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenSplitShell()
   # Stage 7: the sidebar's size, Quick Connect, Setup and Tasks in a real
   # sidebar shell. Its models and source guards
   # (`FM_RUN_SIDEBAR_REDESIGNS_MODEL_TESTS`) are deliberately NOT here.

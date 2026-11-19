@@ -36,6 +36,13 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 7.2.0 - Settings' split cards (Set-2)
+
+The captain's Settings pick on the second page-redesign board: every Settings page opens with a split card, built on 7.1.0's `HelmHeroSplitCard`.
+
+- `HelmHeroColumn` 1.2.0 → 1.3.0 (minor): `Accessory`, a page's own view in a `.panel`'s ring slot with its caption centred under it in the quiet ink, passed to `configure(header:sections:foot:tone:accessory:)`. A ring wins when both are set, and `.band` and `.column` draw none. Settings › Appearance puts its theme family's preview there. A `.panel` now only bounds its content at the bottom and hugs it, so on a card taller than its words the pills stay under the words rather than sinking to the card's foot, and a stacked card's panel is its content's height.
+- `Settings (page)` none → 1.0.0 (new): Set-2. In the sidebar layout each of the nine pages opens with a split card. The panel, in the theme's accent, says what the page has set now ("Dusk is showing.", "Locks after 15 minutes idle. Touch ID for sudo is on.", "Last export 12 Nov, 1.8 MB."), amber while the page needs the captain (capture without Accessibility, a shortcut clash) and dimmed where the reading is absent (App Intents on a copy that publishes none). The card's own half holds the page's main rows, moved out of their sections rather than copied: Appearance, Window layout, Density and Profile on Appearance, with a preview of the theme family and Match macOS as the pill. A section left empty goes, and its foot follows the card. The column is allowed 900pt, and below 840pt the card stacks. The floating bar's Settings keeps its hero and its 680pt column.
+
 ## 7.1.0 - Dictation's split card (Dic-1)
 
 The captain's Dictation pick on the second page-redesign board: the status beside the controls on one split card.

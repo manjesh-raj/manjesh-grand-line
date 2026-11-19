@@ -1412,3 +1412,57 @@ So a new or restored machine pushed everything under `home/` to origin seconds a
 - `DotfilesDriftRowSelfTest`'s "auto-sync healthy" case had been inheriting the old default.
   It now turns the switch on explicitly in its own suite domain.
 - **Verified** by `DotfilesAutoSyncSelfTest` case 8b: putting back the old `nil ? true` getter fails it by name, and switching off removes the Health row.
+
+## Settings' split cards, Set-2 (`fm/grand-line-settings-set2`)
+
+The captain's Settings pick on the second page-redesign board was Set-2, "Split card at the top of the page".
+The settings list stays as it is.
+In the sidebar layout each of the nine pages opens with a `HelmHeroSplitCard` (7.1.0, Dictation's Dic-1), and the floating bar keeps its hero header and its 680pt column.
+
+### What the card is
+
+- The panel says what the page has set now.
+  The words are pure (`SettingsHeroWords` in `SettingsHeroSplit.swift`), one maker per page.
+  Appearance's headline is the page's existing "Dusk is showing." line, with the family's two registers drawn as a preview tile where a ring would go (`HelmHeroColumn` 1.3.0's `Accessory`).
+- The card's own half holds the page's main rows.
+  They are the same `SettingsRow` instances, moved out of their sections by `buildSplitCards()` when the page adopts the sidebar layout, so every action, dependency and refresh stays wired.
+  A section left with no rows goes, and its foot follows the card as a note.
+- The rows per page: Appearance (Appearance, Window layout, Density, Profile), Terminal (Connection and Text), Shortcuts (the search field and the filter, from the bar over the list), Capture (all three), Menu Bar (compact mode and the icons), Briefings (the switch), App Intents (the actions), Security (the lock and the vault's pointer), Backup (the inventory, under a "What's in a backup" title).
+- Pills are buttons the page already had, except two: Match macOS on Appearance and Open Overview on Briefings.
+  Capture's Restore Default, Shortcuts' Restore All Defaults and Backup's Export and Import moved onto their panels.
+- One colour: the theme's accent, so Appearance's panel is the theme that is showing.
+  Amber when the page needs the captain (capture without Accessibility, a shortcut clash), and dimmed where the reading is absent (App Intents on a copy that publishes none, GL-14).
+  The prototype toned each panel by its page's hue; the shipped hero cards use the accent and one second tone, and the report's own note on Set-3 called the accent the quieter call for nine pages.
+- The column is allowed 900pt in the sidebar layout (`splitPageMaxWidth`), the prototype's width.
+  The card sits beside its rows from 840pt and stacks below that.
+  App Intents is one column there, since its second column is under the card.
+
+### Two things that were not there before
+
+- `AppSettings.lastBackupExport` records when the last export from this Mac happened, its size and where it went, written by `BackupUI.recordExport` after the bundle really landed.
+  Backup's panel reads it, and says "No backup exported from this Mac yet." before the first one.
+- Card rows show two lines of their description, with the whole of it in the hover text, the prototype's one-line descriptions with room for a second.
+
+### Kit traps found on the way
+
+- `HelmHeroColumn`'s `.panel` trailing column hugs its views at the required priority, which pins every view to the caption's 120pt width.
+  A ring draws centred in whatever it is given, so Dictation never saw it.
+  A preview tile stretched to 120pt with its two halves drawn at 38pt each, so the accessory sits in a host view.
+- `.panel` pinned its content to the bottom with an equality, so on a card taller than its words (Backup's inventory) the pills sank to the foot of the card.
+  It bounds the content now and hugs it at 245, which also gives a stacked card's panel a height of its own.
+
+### Verified
+
+`SettingsSplitCardWordsSelfTest` (headless) asserts every page's words and states, the tones on every app theme, the accessory, and the export record's round trip.
+`SettingsSplitCardsViewSelfTest` (window-backed, ceiling 135) asserts in a real sidebar shell that every page opens with its card holding its own rows, that no row the floating bar draws became unreachable, the side-by-side and stacked layouts at 1512 and 1100 without growing the window, that a control on a card still writes its setting and the panel follows, the pills, Shortcuts' search from the card, Backup's record, and the ink.
+`FM_SETTINGS_SPLIT_RENDER_DIR` writes the PR's renders.
+
+Injected and watched fail, then restored:
+
+- Leaving the moved rows in their groups fails "is on the card and in a section" on every page, and Appearance's section list.
+- Dropping the accessory's host fails "the preview is 120.0 wide, want 76.0".
+- Putting `.panel`'s bottom equality back without the hug fails "the pills sit 329.0pt under the words" on Backup.
+  It only shows after a resize and a theme change, which is why the check takes that route first.
+- Dropping Density's own refresh of the card fails nothing, and correctly: the density setter re-fires the theme, which refreshes every card.
+
+Not verified: the composited window on the captain's display.

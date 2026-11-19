@@ -1014,7 +1014,14 @@ enum E2ETestingPolicySelfTest {
     /// and what their controls run, are real layout and dispatch decided by
     /// the sidebar shell in a window. The words and the palette sweeps are in
     /// the headless `TasksSecretsHeroSelfTest`.
-    private static let windowBackedSuiteCeiling = 134
+    ///
+    /// 135 for `SettingsSplitCardsViewSelfTest`: where each Settings page's
+    /// split card sits, side by side on a wide page and stacked on a narrow
+    /// one without growing the window, and what the rows and pills on it
+    /// still write, are real layout and dispatch decided by the sidebar shell
+    /// in a window. The words, the tones and the panel's accessory are in the
+    /// headless `SettingsSplitCardWordsSelfTest`.
+    private static let windowBackedSuiteCeiling = 135
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

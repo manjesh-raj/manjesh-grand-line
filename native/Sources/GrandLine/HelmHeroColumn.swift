@@ -54,6 +54,10 @@
 // pills. Its body wraps to as many lines as it needs, because the panel is as
 // tall as its card anyway. A ring can also be `isDimmed`, for a reading that
 // is absent rather than low (a model not downloaded).
+//
+// **1.3.0, for Settings' split cards (Set-2).** A `.panel` can hold a page's
+// own view in the ring's place (`Accessory`): Appearance's preview of the
+// theme that is showing, with the theme's name under it in the quiet ink.
 
 import AppKit
 
@@ -88,6 +92,17 @@ final class HelmHeroColumn: NSView {
         var headline: String
         var body: String?
         var ring: Ring?
+    }
+
+    /// 1.3.0: a page's own view in the ring's place on a `.panel`, with a
+    /// caption under it in the quiet ink. The page paints the view and the
+    /// column lays it out. A ring wins when both are set, and `.band` and
+    /// `.column` draw no accessory.
+    struct Accessory {
+        let view: NSView
+        let caption: String?
+        /// What VoiceOver reads for the view.
+        let spoken: String
     }
 
     /// A titled run of rows (or any views) on the gradient.
@@ -134,6 +149,7 @@ final class HelmHeroColumn: NSView {
     private(set) var header = Header(symbol: "circle", kicker: "", headline: "", body: nil, ring: nil)
     private(set) var sections: [Section] = []
     private(set) var footViews: [NSView] = []
+    private(set) var accessory: Accessory?
     private(set) var tone = HelmModuleCard.HeroTone(colour: .themeAccent)
     private var theme: HelmTheme = ThemeManager.shared.theme
     private(set) var ink: NSColor = .white
@@ -155,6 +171,7 @@ final class HelmHeroColumn: NSView {
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
     private var ringGauge = HelmRingGauge(side: HelmHeroColumn.ringSide)
     private let ringCaption = NSTextField(wrappingLabelWithString: "")
+    private let accessoryCaption = NSTextField(wrappingLabelWithString: "")
     /// Labels painted in the ink at full strength, and at `quietInkAlpha`.
     private var inkLabels: [NSTextField] = []
     private var quietLabels: [NSTextField] = []
@@ -195,11 +212,13 @@ final class HelmHeroColumn: NSView {
 
     /// The column's words, its sections and its foot, in one call - a page
     /// re-renders the whole column from its state, the way every hero does.
-    func configure(header: Header, sections: [Section], foot: [NSView], tone: HelmModuleCard.HeroTone) {
+    func configure(header: Header, sections: [Section], foot: [NSView], tone: HelmModuleCard.HeroTone,
+                   accessory: Accessory? = nil) {
         self.header = header
         self.sections = sections
         self.footViews = foot
         self.tone = tone
+        self.accessory = accessory
         rebuild()
     }
 
@@ -248,7 +267,7 @@ final class HelmHeroColumn: NSView {
         kickerLabel.cell?.usesSingleLineMode = true
         kickerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         kickerLabel.setAccessibilityElement(false)
-        for (label, lines) in [(headlineLabel, 3), (bodyLabel, 3), (ringCaption, 2)] {
+        for (label, lines) in [(headlineLabel, 3), (bodyLabel, 3), (ringCaption, 2), (accessoryCaption, 2)] {
             label.isSelectable = false
             label.maximumNumberOfLines = lines
             label.lineBreakMode = .byWordWrapping
@@ -258,6 +277,7 @@ final class HelmHeroColumn: NSView {
             label.translatesAutoresizingMaskIntoConstraints = false
         }
         ringCaption.setAccessibilityElement(false)
+        accessoryCaption.setAccessibilityElement(false)
     }
 
     private func buildColumnContainer() {
@@ -317,6 +337,13 @@ final class HelmHeroColumn: NSView {
         bandTop = bandStack.topAnchor.constraint(equalTo: topAnchor, constant: insets.top)
         NSLayoutConstraint.activate([bandLeading, bandTrailing, bandTop])
         bandBottom = bandStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -insets.bottom)
+        panelBottom = bandStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor,
+                                                        constant: -Self.panelInsets.bottom)
+        // Where nothing else decides the panel's height (a stacked split
+        // card), it is its content's. Under the stack defaults, so a card
+        // that pins the panel to its own height wins.
+        panelHug = heightAnchor.constraint(equalToConstant: 0)
+        panelHug.priority = NSLayoutConstraint.Priority(245)
     }
 
     /// The band container's edges, re-inset for `.panel`.
@@ -325,6 +352,12 @@ final class HelmHeroColumn: NSView {
     private var bandTop: NSLayoutConstraint!
     /// Active in `.band` and `.panel`, where the height is the content's.
     private var bandBottom: NSLayoutConstraint!
+    /// 1.3.0: `.panel`'s bottom, which only bounds the content. A panel is
+    /// as tall as its card, and an equality stretched the words' column so
+    /// the pills sank to the foot of a tall card; now they stay under the
+    /// words and the gradient takes the rest.
+    private var panelBottom: NSLayoutConstraint!
+    private var panelHug: NSLayoutConstraint!
 
     private static func clear(_ stack: NSStackView) {
         for view in stack.arrangedSubviews {
@@ -355,7 +388,9 @@ final class HelmHeroColumn: NSView {
         bandTrailing.constant = -insets.right
         bandTop.constant = insets.top
         bandBottom.constant = -insets.bottom
-        bandBottom.isActive = isBand || isPanel
+        bandBottom.isActive = isBand
+        panelBottom.isActive = isPanel
+        panelHug.isActive = isPanel
         let headlineSize = isPanel ? HelmHeroCard.titleSize : isBand ? 17 : Self.headlineSize
         headlineLabel.font = .systemFont(ofSize: HelmType.scaled(headlineSize), weight: .bold)
         bodyLabel.font = .systemFont(ofSize: HelmType.scaled(isPanel ? HelmHeroCard.bodySize : Self.bodySize))
@@ -385,7 +420,7 @@ final class HelmHeroColumn: NSView {
             let leftColumn = Self.column(left, spacing: HelmMetrics.s4)
             words.widthAnchor.constraint(equalTo: leftColumn.widthAnchor).isActive = true
             var top: [NSView] = [leftColumn]
-            if let ringRow { top.append(ringRow) }
+            if let trailing = ringRow ?? accessory.map(makeAccessoryColumn) { top.append(trailing) }
             add(Self.row(top, spacing: HelmMetrics.s5, alignment: .top), to: bandStack)
         } else if isBand {
             // Words on the left, the ring on the right, the foot under both.
@@ -455,20 +490,54 @@ final class HelmHeroColumn: NSView {
         if arrangement == .panel {
             ringCaption.preferredMaxLayoutWidth = Self.panelRingCaptionWidth
             ringCaption.alignment = .center
-            let column = NSStackView(views: [ringGauge, ringCaption])
-            column.orientation = .vertical
-            column.alignment = .centerX
-            column.spacing = HelmMetrics.s2
-            column.translatesAutoresizingMaskIntoConstraints = false
-            column.setHuggingPriority(.required, for: .horizontal)
-            column.setClippingResistancePriority(.required, for: .horizontal)
-            column.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.panelRingCaptionWidth).isActive = true
-            return column
+            return Self.panelTrailingColumn([ringGauge, ringCaption])
         }
         ringCaption.preferredMaxLayoutWidth = arrangement == .band ? 120 : Self.width - Self.insets.left
             - Self.insets.right - side - HelmMetrics.s3
         ringCaption.alignment = .left
         return Self.row([ringGauge, ringCaption], spacing: HelmMetrics.s3, alignment: .centerY)
+    }
+
+    /// 1.3.0: the accessory and its caption, where a `.panel` puts its ring.
+    private func makeAccessoryColumn(_ accessory: Accessory) -> NSView {
+        accessory.view.translatesAutoresizingMaskIntoConstraints = false
+        accessory.view.setAccessibilityElement(true)
+        accessory.view.setAccessibilityRole(.image)
+        accessory.view.setAccessibilityLabel(accessory.spoken)
+        accessoryCaption.stringValue = accessory.caption ?? ""
+        accessoryCaption.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+        accessoryCaption.isHidden = (accessory.caption ?? "").isEmpty
+        accessoryCaption.preferredMaxLayoutWidth = Self.panelRingCaptionWidth
+        accessoryCaption.alignment = .center
+        quietLabels.append(accessoryCaption)
+        // The column hugs its views at the required priority, which pins
+        // every one of them to the caption's width. A ring draws centred in
+        // whatever it is given; a page's view keeps its own size, so it sits
+        // centred in a host that takes the column's width instead.
+        let host = NSView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(accessory.view)
+        NSLayoutConstraint.activate([
+            accessory.view.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            accessory.view.topAnchor.constraint(equalTo: host.topAnchor),
+            accessory.view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            accessory.view.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor),
+        ])
+        return Self.panelTrailingColumn([host, accessoryCaption])
+    }
+
+    /// A `.panel`'s trailing column: a ring or an accessory, with its caption
+    /// centred under it, never narrower than the caption's width.
+    private static func panelTrailingColumn(_ views: [NSView]) -> NSStackView {
+        let column = NSStackView(views: views)
+        column.orientation = .vertical
+        column.alignment = .centerX
+        column.spacing = HelmMetrics.s2
+        column.translatesAutoresizingMaskIntoConstraints = false
+        column.setHuggingPriority(.required, for: .horizontal)
+        column.setClippingResistancePriority(.required, for: .horizontal)
+        column.widthAnchor.constraint(greaterThanOrEqualToConstant: panelRingCaptionWidth).isActive = true
+        return column
     }
 
     private func makeSectionTitle(_ section: Section) -> NSView {
@@ -600,7 +669,7 @@ final class HelmHeroColumn: NSView {
         if arrangement == .band, header.ring != nil {
             width -= Self.bandRingSide + HelmMetrics.s3 + 120 + HelmMetrics.s5
         }
-        if arrangement == .panel, header.ring != nil {
+        if arrangement == .panel, header.ring != nil || accessory != nil {
             width -= max(Self.panelRingSide, Self.panelRingCaptionWidth) + HelmMetrics.s5
         }
         width = max(120, floor(width))
@@ -631,6 +700,10 @@ final class HelmHeroColumn: NSView {
     var debugSectionTitles: [String] { sections.map(\.title) }
     var debugScroll: NSScrollView { scroll }
     var debugFootButtons: [HelmButton] { footViews.compactMap { $0 as? HelmButton } }
+    /// 1.3.0: the accessory's caption as drawn, or nil when none is drawn.
+    var debugAccessoryCaption: NSTextField? {
+        arrangement == .panel && header.ring == nil && accessory != nil ? accessoryCaption : nil
+    }
     #endif
 }
 

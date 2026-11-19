@@ -245,6 +245,90 @@ final class SettingsRow: NSView {
     }
 }
 
+// MARK: - Row list
+
+/// Rows and the hairlines between them, with no surface of their own.
+///
+/// A `SettingsGroup` puts one in a `HelmCard`. The native half of a Settings
+/// split card (Set-2, `SettingsHeroSplit.swift`) is already a card, so it
+/// holds one bare - the same separators, insets and dimming either way.
+final class SettingsRowList: NSView {
+
+    private(set) var rows: [SettingsRow] = []
+    private var separators: [NSView] = []
+    private let stack = NSStackView()
+
+    init(rows: [SettingsRow]) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setRows(rows)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Lay `rows` out, re-parenting each one, with a fresh hairline above
+    /// every row but the first.
+    func setRows(_ rows: [SettingsRow]) {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        separators = []
+        self.rows = rows
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                // `.row + .row::before` - a hairline at the top of every row
+                // but the first, inset to where that row's own label starts.
+                let line = NSView()
+                line.wantsLayer = true
+                line.translatesAutoresizingMaskIntoConstraints = false
+                line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                stack.addArrangedSubview(line)
+                NSLayoutConstraint.activate([
+                    line.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: row.separatorInset),
+                    line.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+                ])
+                separators.append(line)
+            }
+            // A `SettingsRow` carries its own padding.
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// Take `taken` out of the list, closing the hairlines up behind them.
+    func removeRows(_ taken: [SettingsRow]) {
+        setRows(rows.filter { row in !taken.contains { $0 === row } })
+    }
+
+    func relayoutDescriptions(cardWidth: CGFloat) {
+        for row in rows { row.relayoutDescription(cardWidth: cardWidth) }
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        for row in rows { row.applyTheme(theme) }
+        // The same lighter-than-the-outline hairline `HelmCard` draws under
+        // its own header, so a group's internal rules and its header rule are
+        // the same line.
+        let hair = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.hairRow)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)
+        for line in separators { line.layer?.backgroundColor = hair.cgColor }
+    }
+}
+
 // MARK: - Group
 
 /// The reference's `.group`: one card holding rows, hairline-separated, with
@@ -258,44 +342,14 @@ final class SettingsRow: NSView {
 final class SettingsGroup: NSView {
 
     let card = HelmCard()
-    private(set) var rows: [SettingsRow] = []
-    private var separators: [(view: NSView, inset: NSLayoutConstraint)] = []
-    private let stack = NSStackView()
+    private let list: SettingsRowList
+    var rows: [SettingsRow] { list.rows }
 
     init(rows: [SettingsRow]) {
+        list = SettingsRowList(rows: rows)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        self.rows = rows
-
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        for (index, row) in rows.enumerated() {
-            if index > 0 {
-                // `.row + .row::before` - a hairline at the top of every row
-                // but the first, inset to where that row's own label starts.
-                let line = NSView()
-                line.wantsLayer = true
-                line.translatesAutoresizingMaskIntoConstraints = false
-                line.heightAnchor.constraint(equalToConstant: 1).isActive = true
-                stack.addArrangedSubview(line)
-                let inset = line.leadingAnchor.constraint(
-                    equalTo: stack.leadingAnchor,
-                    constant: row.separatorInset)
-                NSLayoutConstraint.activate([
-                    inset,
-                    line.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
-                ])
-                separators.append((line, inset))
-            }
-            // A `SettingsRow` carries the group's padding itself.
-            stack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        card.setBody(stack, insets: NSEdgeInsets())
+        card.setBody(list, insets: NSEdgeInsets())
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
         NSLayoutConstraint.activate([
@@ -315,20 +369,19 @@ final class SettingsGroup: NSView {
         card.setBody(view, insets: insets)
     }
 
+    /// Set-2: rows a page moved to its split card leave this group, and the
+    /// hairlines close up behind them.
+    func removeRows(_ taken: [SettingsRow]) {
+        list.removeRows(taken)
+    }
+
     func relayoutDescriptions(cardWidth: CGFloat) {
-        for row in rows { row.relayoutDescription(cardWidth: cardWidth) }
+        list.relayoutDescriptions(cardWidth: cardWidth)
     }
 
     func applyTheme(_ theme: HelmTheme) {
         card.applyTheme(theme)
-        for row in rows { row.applyTheme(theme) }
-        // The same lighter-than-the-outline hairline `HelmCard` draws under
-        // its own header, so a group's internal rules and its header rule are
-        // the same line.
-        let hair = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.hairRow)
-            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)
-        for (line, _) in separators { line.layer?.backgroundColor = hair.cgColor }
+        list.applyTheme(theme)
     }
 }
 

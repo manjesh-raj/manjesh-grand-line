@@ -50,6 +50,12 @@ final class SettingsShortcutsPage: NSObject {
     private var resetButtons: [ObjectIdentifier: ConfigurableShortcut] = [:]
     private let listStack = NSStackView()
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
+    /// The search field, the filter and Restore All Defaults, over the list.
+    private var bar: NSStackView!
+
+    /// Called after every `reload()`, once the rows are read again - what
+    /// Settings' split card counts (Set-2).
+    var onReload: (() -> Void)?
 
     private(set) var rows: [ShortcutRow] = []
     private(set) var filter: ShortcutsTable.Filter = .all
@@ -86,7 +92,7 @@ final class SettingsShortcutsPage: NSObject {
         restoreAllButton.action = #selector(restoreAllDefaults)
         restoreAllButton.setContentHuggingPriority(.required, for: .horizontal)
         restoreAllButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let bar = NSStackView(views: [searchField, filterTabs, restoreAllButton])
+        bar = NSStackView(views: [searchField, filterTabs, restoreAllButton])
         bar.orientation = .horizontal
         bar.distribution = .fill
         bar.alignment = .centerY
@@ -116,6 +122,17 @@ final class SettingsShortcutsPage: NSObject {
     func reload() {
         rows = ShortcutsTable.rows(mainMenu: mainMenu(), settings: settings)
         rebuildList()
+        onReload?()
+    }
+
+    /// Set-2: in the sidebar layout Settings' split card holds the search
+    /// field, the filter and Restore All Defaults, so the bar leaves the page
+    /// and its three controls are handed over as they are - the same
+    /// instances, still wired to this page.
+    func takeBarControls() -> (search: HelmSearchField, filter: HelmSegmentedTabs, restoreAll: HelmButton) {
+        view.removeArrangedSubview(bar)
+        bar.removeFromSuperview()
+        return (searchField, filterTabs, restoreAllButton)
     }
 
     /// The rows the current search and filter leave, grouped under their

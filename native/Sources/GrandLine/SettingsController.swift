@@ -238,6 +238,17 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         var contentMaxWidth: CGFloat { isWide ? 980 : 680 }
     }
 
+    /// Set-2: in the sidebar layout every page opens with a split card, whose
+    /// panel (400pt) and rows sit side by side from 840pt, so the column is
+    /// allowed the prototype's width. A cap, never a floor (gotcha (13)): on a
+    /// narrower window the card stacks. One column on every page, App Intents
+    /// included, since its second column is under the card now.
+    static let splitPageMaxWidth: CGFloat = 900
+
+    private func maxWidth(_ category: Category) -> CGFloat {
+        drawsSidebarLayout ? Self.splitPageMaxWidth : category.contentMaxWidth
+    }
+
     /// One assembled page: what gets mounted, plus the pieces the controller
     /// has to reach afterwards (re-theme them, re-wrap their descriptions).
     private struct Page {
@@ -250,15 +261,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// card on it is themed, re-wrapped and counted like any other page's.
         private let liveSections: (() -> [SettingsSection])?
         var sections: [SettingsSection] { liveSections?() ?? builtSections }
+        /// Set-2: the page's split card, in the sidebar layout only.
+        let split: SettingsHeroSplitView?
 
         init(category: Category, container: NSView, hero: SettingsHero, sections: [SettingsSection],
-             liveSections: (() -> [SettingsSection])? = nil,
+             liveSections: (() -> [SettingsSection])? = nil, split: SettingsHeroSplitView? = nil,
              sideBySide: [NSLayoutConstraint] = [], stacked: [NSLayoutConstraint] = [], isSideBySide: Bool? = nil) {
             self.category = category
             self.container = container
             self.hero = hero
             self.builtSections = sections
             self.liveSections = liveSections
+            self.split = split
             self.sideBySide = sideBySide
             self.stacked = stacked
             self.isSideBySide = isSideBySide
@@ -561,6 +575,25 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private let backupContentsStack = NSStackView()
     private var backupSummaryRow: SettingsRow?
+    /// Set-2: Backup's two buttons, which are its split card's pills in the
+    /// sidebar layout.
+    private var backupExportButton: HelmButton?
+    private var backupImportButton: HelmButton?
+
+    /// Set-2: Appearance's Profile row, which its split card holds.
+    private var profileRow: SettingsRow?
+    /// Set-2: what each page's split card takes from the page as built.
+    private var splitPlans: [Category: SplitPlan] = [:]
+    /// Set-2: the two pills the panels add. Every other pill is a button the
+    /// page already had.
+    private lazy var matchMacOSPill = HelmButton(title: "Match macOS", variant: .secondary, size: .small,
+                                                 symbol: "circle.lefthalf.filled",
+                                                 target: self, action: #selector(matchMacOSTapped))
+    private lazy var openOverviewPill = HelmButton(title: "Open \(PlaceName.of(.overview))", variant: .secondary,
+                                                   size: .small, symbol: "arrow.right",
+                                                   target: self, action: #selector(openOverviewTapped))
+    /// Set-2: Shortcuts' Restore All Defaults, once its bar has handed it over.
+    private var shortcutsRestoreAll: HelmButton?
 
     private let securityStackHost = NSStackView()
     private var sudoRowHost: SettingsRow?
@@ -643,6 +676,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             self.keywordHighlighting.applyTerminalScheme(scheme)
             self.terminalColors.refresh()
             self.refreshAppearanceNote()
+            self.refreshSplitCard(.terminal)
         }
 
         buildSidebarColumn()
@@ -681,7 +715,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // and the one equality that could grow the column sits below
         // `NSLayoutPriorityWindowSizeStayPut` (500).
         pageWidthCap = pageContainer.widthAnchor
-            .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
+            .constraint(lessThanOrEqualToConstant: maxWidth(selectedCategory))
         NSLayoutConstraint.activate(HelmSplitPage.alignCappedColumn(pageContainer, in: content,
                                                                     alignment: Self.contentAlignment) + [
             // S03: the page frame's first-content line (the scroll view
@@ -821,7 +855,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // shape as the content column, so the header cannot drift off the
         // column it heads.
         toolbarWidthCap = toolbar.widthAnchor
-            .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
+            .constraint(lessThanOrEqualToConstant: maxWidth(selectedCategory))
         toolbarWidthCap.isActive = true
         // S05: the header's anchor and margins, the column's own.
         NSLayoutConstraint.activate(HelmSplitPage.alignCappedColumn(toolbar, in: scroll.contentView,
@@ -848,6 +882,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         NotificationCenter.default.addObserver(self,
                                               selector: #selector(containerWidthMayHaveChanged),
                                               name: NSWindow.didResizeNotification,
+                                              object: nil)
+        // Set-2: Backup's panel says when the last export happened.
+        NotificationCenter.default.addObserver(self,
+                                              selector: #selector(backupExportDidChange),
+                                              name: AppSettings.backupExportDidChange,
                                               object: nil)
 
         refreshFromSettings()
@@ -1117,8 +1156,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         pageContainer.addArrangedSubview(page.container)
         page.container.widthAnchor.constraint(equalTo: pageContainer.widthAnchor).isActive = true
-        pageWidthCap.constant = category.contentMaxWidth
-        toolbarWidthCap.constant = category.contentMaxWidth
+        pageWidthCap.constant = maxWidth(category)
+        toolbarWidthCap.constant = maxWidth(category)
         // A cap that moved changes what the descriptions have to wrap
         // against, and the staleness check below would otherwise skip the
         // re-wrap because the *container* width did not move.
@@ -1153,12 +1192,13 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// then pay", and it is also what stops the re-wrap (which changes the
     /// subtree, and so schedules another layout pass) from looping.
     private func pageWidthMayHaveChanged() {
-        let width = min(contentColumnWidth(), selectedCategory.contentMaxWidth)
+        let width = min(contentColumnWidth(), maxWidth(selectedCategory))
         guard width > 0, abs(width - lastPageWidth) > 0.5 else { return }
         lastPageWidth = width
         guard let page = pages[selectedCategory] else { return }
         applyWideLayout(to: page, width: width)
         page.hero.relayoutDescription(pageWidth: width)
+        page.split?.relayout(cardWidth: width)
         // A wide page that is still two columns gives each section only about
         // 60% of the page; collapsed, it gives them all of it.
         let twoColumns = page.isSideBySide != nil && width >= Self.wideColumnBreakpoint
@@ -1169,7 +1209,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         // rebuilt as data arrives), so `section.relayoutDescriptions` cannot
         // see them. Without this they are the only wrapping labels on the
         // page with no `preferredMaxLayoutWidth` at all.
-        for row in backupRows { row.relayoutDescription(cardWidth: sectionWidth) }
+        // In the sidebar layout Backup's rows are its split card's.
+        let backupWidth = page.split != nil && selectedCategory == .backup
+            ? SettingsHeroSplitView.rowListWidth(cardWidth: width) : sectionWidth
+        for row in backupRows { row.relayoutDescription(cardWidth: backupWidth) }
         sudoRowHost?.relayoutDescription(cardWidth: sectionWidth)
         if selectedCategory == .shortcuts { shortcutsPage.relayoutDescriptions(cardWidth: sectionWidth) }
     }
@@ -1450,6 +1493,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             guard let layout = WorkspaceLayout(rawValue: id) else { return }
             AppSettings.shared.workspaceLayout = layout
             self?.refreshRelaunchButtons()
+            self?.refreshSplitCard(.appearance)
         }
         let layoutRow = SettingsRow(
             title: "Window layout",
@@ -1462,9 +1506,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             items: HelmDensity.allCases.map { .init(id: $0.rawValue, title: $0.title) },
             selected: AppSettings.shared.density.rawValue, size: .compact)
         densityTabs.setAccessibilityLabel("Density")
-        densityTabs.onSelect = { id in
+        densityTabs.onSelect = { [weak self] id in
             guard let density = HelmDensity(rawValue: id) else { return }
             AppSettings.shared.density = density
+            self?.refreshSplitCard(.appearance)
         }
         let densityRow = SettingsRow(
             title: "Density",
@@ -1473,12 +1518,15 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         let familyAside = muted(NSTextField(labelWithString: "Each family has a light and a dark register"))
         familyAside.font = HelmType.caption()
+        let sidebarSection = buildSidebarModulesSection()
+        // Set-2: the four most-changed choices are the split card's.
+        splitPlans[.appearance] = SplitPlan(rows: [modeRow, layoutRow, densityRow] + [profileRow].compactMap { $0 })
         return [
             SettingsSection(group: SettingsGroup(rows: [modeRow])),
             SettingsSection(heading: "App theme", aside: familyAside,
                             group: SettingsGroup(custom: appearanceContainer)),
             SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow, densityRow])),
-            buildSidebarModulesSection(),
+            sidebarSection,
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
                 SettingsRow(title: "Interface text size",
                             description: "Scales the app's own labels, captions and titles. Pages that set their fonts once pick this up after a relaunch.",
@@ -1514,6 +1562,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             description: "Personal shows the modules anyone can use, with Notebook and Reading list as their own rows. "
                 + "Operator adds the crew, hosts, the console and the operations modules, with Knowledge's tabs and Runbooks in Observe.",
             control: profileTabs)
+        self.profileRow = profileRow
         var rows = [profileRow]
         moduleSwitches = WorkspaceSidebarModel.listedModules().filter(\.canBeHidden).map { module in
             let toggle = HelmToggle()
@@ -1543,6 +1592,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let hidden = AppSettings.shared.hiddenModules
         for (module, toggle) in moduleSwitches { toggle.isOn = !hidden.contains(module) }
         profileTabs?.select(Self.profileID(for: hidden))
+        refreshSplitCard(.appearance)
     }
 
     /// The width one theme card will not go below.
@@ -1602,11 +1652,16 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// is doing.
     private func refreshAppearanceNote() {
         let app = ThemeManager.shared.theme
+        appearanceNote.stringValue = "\(app.name) is showing. Terminal: \(terminalPaintNote)."
+        refreshSplitCard(.appearance)
+    }
+
+    /// What the terminal paints in, as the note and Appearance's panel say it.
+    private var terminalPaintNote: String {
         let scheme = ThemeManager.shared.terminalScheme
-        let terminal = ThemeManager.shared.terminalColors.mode == .matchApp
+        return ThemeManager.shared.terminalColors.mode == .matchApp
             ? "matches the app (\(scheme.name))"
             : "\(scheme.name), chosen on the Terminal page"
-        appearanceNote.stringValue = "\(app.name) is showing. Terminal: \(terminal)."
     }
 
     private var currentAppearanceMode: AppearanceMode {
@@ -1638,6 +1693,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             if register.id != ThemeManager.shared.theme.id { ThemeManager.shared.setTheme(register) }
         }
         appearanceModeTabs?.select(currentAppearanceMode.rawValue)
+        refreshSplitCard(.appearance)
     }
 
     // MARK: - Terminal
@@ -1689,24 +1745,25 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         // The theme split: the terminal's own colours lead the page, since
         // they are the setting someone opening Terminal is likeliest to want.
+        let cwdRow = SettingsRow(title: "Working directory",
+                                 description: "Where new Shell and Firstmate tabs start.",
+                                 control: cwdControls)
+        let reconnectRow = SettingsRow(title: "Reconnect automatically",
+                                       description: "If a tab's connection drops, restore it silently rather than waiting for \u{2318}R.",
+                                       control: autoReconnectSwitch)
+        let fontRow = SettingsRow(title: "Default font size",
+                                  description: "Also adjustable live in any tab with \u{2318}+ and \u{2318}\u{2212}.",
+                                  control: presetRow)
+        let notifyRow = SettingsRow(title: "Notify when the crew needs you",
+                                    description: "Surface a desktop notification the moment a crewmate is waiting on your decision.",
+                                    control: notifySwitch)
+        // Set-2: Connection and Text are the split card's.
+        splitPlans[.terminal] = SplitPlan(rows: [cwdRow, reconnectRow, fontRow, notifyRow])
+
         var sections: [SettingsSection] = terminalColors.sections()
         sections += [
-            SettingsSection(heading: "Connection", group: SettingsGroup(rows: [
-                SettingsRow(title: "Working directory",
-                            description: "Where new Shell and Firstmate tabs start.",
-                            control: cwdControls),
-                SettingsRow(title: "Reconnect automatically",
-                            description: "If a tab's connection drops, restore it silently rather than waiting for \u{2318}R.",
-                            control: autoReconnectSwitch),
-            ])),
-            SettingsSection(heading: "Text", group: SettingsGroup(rows: [
-                SettingsRow(title: "Default font size",
-                            description: "Also adjustable live in any tab with \u{2318}+ and \u{2318}\u{2212}.",
-                            control: presetRow),
-                SettingsRow(title: "Notify when the crew needs you",
-                            description: "Surface a desktop notification the moment a crewmate is waiting on your decision.",
-                            control: notifySwitch),
-            ])),
+            SettingsSection(heading: "Connection", group: SettingsGroup(rows: [cwdRow, reconnectRow])),
+            SettingsSection(heading: "Text", group: SettingsGroup(rows: [fontRow, notifyRow])),
             SettingsSection(heading: "History", group: SettingsGroup(rows: [
                 scrollback,
                 SettingsRow(title: "Trim tabs left in the background",
@@ -1764,6 +1821,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         TerminalScrollback.shared.setRows(target)
         showScrollback(target)
+        refreshSplitCard(.terminal)
     }
 
     /// Put `rows` in the field and its cost in the note under it.
@@ -1783,6 +1841,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private func trimBackgroundToggled() {
         TerminalScrollback.shared.setTrimsBackgroundTabs(trimBackgroundSwitch.isOn)
+        refreshSplitCard(.terminal)
     }
 
     @objc private func chooseShellCwd() {
@@ -1797,6 +1856,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         guard panel.runModal() == .OK, let url = panel.url else { return }
         shellCwdField.stringValue = url.path
         AppSettings.shared.defaultShellCwd = url.path
+        refreshSplitCard(.terminal)
     }
 
     /// T7: Settings > Terminal's link to the page that records its chords.
@@ -1846,26 +1906,29 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         clipboardHistorySwitch.onToggle = { [weak self] in self?.clipboardHistoryToggled() }
 
+        let recorderRow = SettingsRow(title: "Open the capture panel",
+                                      description: "Works from any app once Accessibility is granted, and from Grand Line itself either way. The Shift menu\u{2019}s Capture item follows whatever you record here.",
+                                      control: recorder)
+        let accessibilityRow = SettingsRow(title: "Accessibility permission",
+                                           description: "macOS only delivers keystrokes from other apps to a trusted Accessibility client. Without it the chord still works while Grand Line is frontmost, which is why a missing grant reads as \u{201C}it only sometimes works\u{201D} rather than as an error.",
+                                           control: trustColumn)
+        let clipboardRow = SettingsRow(title: "Keep a clipboard history",
+                                       description: "Remembers the last 200 things you copy in any app, encrypted on this Mac, and brings them back with \u{21E7}\u{2318}V from the Edit menu. Anything copied from \(PlaceName.of(.poneglyph)) is never recorded.",
+                                       control: clipboardHistorySwitch)
+        // Set-2: all three rows are the split card's, and Restore Default is
+        // its pill.
+        splitPlans[.capture] = SplitPlan(rows: [recorderRow, accessibilityRow, clipboardRow])
+
         refreshCaptureControls()
 
         return [
-            SettingsSection(heading: "Shortcut", aside: reset, group: SettingsGroup(rows: [
-                SettingsRow(title: "Open the capture panel",
-                            description: "Works from any app once Accessibility is granted, and from Grand Line itself either way. The Shift menu\u{2019}s Capture item follows whatever you record here.",
-                            control: recorder),
-            ]), foot: "Click the shortcut, then press the new keys. Esc cancels."),
+            SettingsSection(heading: "Shortcut", aside: reset, group: SettingsGroup(rows: [recorderRow]),
+                            foot: "Click the shortcut, then press the new keys. Esc cancels."),
 
-            SettingsSection(heading: "System-wide access", group: SettingsGroup(rows: [
-                SettingsRow(title: "Accessibility permission",
-                            description: "macOS only delivers keystrokes from other apps to a trusted Accessibility client. Without it the chord still works while Grand Line is frontmost, which is why a missing grant reads as \u{201C}it only sometimes works\u{201D} rather than as an error.",
-                            control: trustColumn),
-            ]), foot: "Granting it while Grand Line is already running is enough - the monitors are reinstalled the next time you switch back to this app. No relaunch needed."),
+            SettingsSection(heading: "System-wide access", group: SettingsGroup(rows: [accessibilityRow]),
+                            foot: "Granting it while Grand Line is already running is enough - the monitors are reinstalled the next time you switch back to this app. No relaunch needed."),
 
-            SettingsSection(heading: "Clipboard history", group: SettingsGroup(rows: [
-                SettingsRow(title: "Keep a clipboard history",
-                            description: "Remembers the last 200 things you copy in any app, encrypted on this Mac, and brings them back with \u{21E7}\u{2318}V from the Edit menu. Anything copied from \(PlaceName.of(.poneglyph)) is never recorded.",
-                            control: clipboardHistorySwitch),
-            ]), foot: "Off by default. While it is off nothing watches or reads the clipboard, and \u{21E7}\u{2318}V is not in the Edit menu. A history recorded before it was turned off stays encrypted on disk and comes back when you turn it on again."),
+            SettingsSection(heading: "Clipboard history", group: SettingsGroup(rows: [clipboardRow]), foot: "Off by default. While it is off nothing watches or reads the clipboard, and \u{21E7}\u{2318}V is not in the Edit menu. A history recorded before it was turned off stays encrypted on disk and comes back when you turn it on again."),
         ]
     }
 
@@ -1884,6 +1947,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let trusted = quickCaptureAccessibilityTrusted?() ?? AXIsProcessTrusted()
         captureAccessibilityStatus?.stringValue = trusted ? "Granted" : "Not granted"
         captureAccessibilityButton?.isHidden = trusted
+        refreshSplitCard(.capture)
     }
 
     private func quickCaptureShortcutChanged(_ chord: KeyChord) {
@@ -1912,6 +1976,23 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             toggle.onToggle = { [weak self] in self?.compactModeToggled() }
         }
 
+        let separateRow = SettingsRow(title: "Separate icons for Tasks, the vault and the crew",
+                                      description: "Off by default: Grand Line keeps one menu-bar icon, and those three are its Today, Vault and Crew tabs. Turn this on for one icon each, the way it used to be. Compact mode always uses the single icon - with the window hidden it is the only surface there is.",
+                                      control: separateMenuBarItemsSwitch)
+        let compactRow = SettingsRow(title: "Live in the menu bar",
+                                     description: "The main window stays closed. Tasks, notes, the vault and the crew are all reachable from the status item, which also takes a capture line.",
+                                     control: compactModeSwitch)
+        let dockRow = register(SettingsRow(
+            title: "Hide the Dock icon",
+            description: "Runs as a menu-bar accessory (`LSUIElement`), applied immediately with no relaunch and reversed the moment compact mode goes off - so this can never leave you with no way back to the window.",
+            control: compactDockSwitch, isSubRow: true), dependingOn: .compactMode)
+        let badgeRow = register(SettingsRow(
+            title: "Show the overdue count on the icon",
+            description: "Off by default - a permanent red number is a bad neighbour in a menu bar. The count is one click away either way.",
+            control: compactBadgeSwitch, isSubRow: true), dependingOn: .compactMode)
+        // Set-2: the icons and compact mode are the split card's.
+        splitPlans[.menuBar] = SplitPlan(rows: [compactRow, dockRow, badgeRow, separateRow])
+
         return [
             // **UX issue X2.** Four features each owned a status item, and
             // the merged one existed only inside compact mode - so the menu
@@ -1919,25 +2000,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             // accepted a windowless one. The merge is the default now, and
             // this is the row the review asked for: "a Settings row to
             // re-add individual icons for anyone who wants them back".
-            SettingsSection(heading: "Menu bar", group: SettingsGroup(rows: [
-                SettingsRow(title: "Separate icons for Tasks, the vault and the crew",
-                            description: "Off by default: Grand Line keeps one menu-bar icon, and those three are its Today, Vault and Crew tabs. Turn this on for one icon each, the way it used to be. Compact mode always uses the single icon - with the window hidden it is the only surface there is.",
-                            control: separateMenuBarItemsSwitch),
-            ]), foot: "Whichever you pick, the same popovers do the work - the vault's countdown rings and the crew's reply states are one implementation, hosted in both places."),
+            SettingsSection(heading: "Menu bar", group: SettingsGroup(rows: [separateRow]), foot: "Whichever you pick, the same popovers do the work - the vault's countdown rings and the crew's reply states are one implementation, hosted in both places."),
 
-            SettingsSection(heading: "Compact mode", group: SettingsGroup(rows: [
-                SettingsRow(title: "Live in the menu bar",
-                            description: "The main window stays closed. Tasks, notes, the vault and the crew are all reachable from the status item, which also takes a capture line.",
-                            control: compactModeSwitch),
-                register(SettingsRow(
-                    title: "Hide the Dock icon",
-                    description: "Runs as a menu-bar accessory (`LSUIElement`), applied immediately with no relaunch and reversed the moment compact mode goes off - so this can never leave you with no way back to the window.",
-                    control: compactDockSwitch, isSubRow: true), dependingOn: .compactMode),
-                register(SettingsRow(
-                    title: "Show the overdue count on the icon",
-                    description: "Off by default - a permanent red number is a bad neighbour in a menu bar. The count is one click away either way.",
-                    control: compactBadgeSwitch, isSubRow: true), dependingOn: .compactMode),
-            ]), foot: "Compact mode does not disable anything. The app lock, the dictation hotkey, Schedules and every background poller keep running in either mode."),
+            SettingsSection(heading: "Compact mode", group: SettingsGroup(rows: [compactRow, dockRow, badgeRow]), foot: "Compact mode does not disable anything. The app lock, the dictation hotkey, Schedules and every background poller keep running in either mode."),
 
             // The reference's "Global shortcut" section. It is a *stated*
             // chord rather than a recorder, because this one really is fixed:
@@ -1969,6 +2034,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         AppSettings.shared.compactModeBadgesOverdueCount = compactBadgeSwitch.isOn
         AppSettings.shared.menuBarSeparateItems = separateMenuBarItemsSwitch.isOn
         syncDependentRows()
+        refreshSplitCard(.menuBar)
         // One callback for all three rather than three: everything that
         // follows is `CompactModeController.refresh()`, which re-reads all of
         // them and is idempotent.
@@ -1980,18 +2046,20 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private func buildBriefingsSections() -> [SettingsSection] {
         morningBriefingSwitch.onToggle = { [weak self] in self?.morningBriefingToggled() }
 
+        let briefingRow = SettingsRow(title: "Show a morning briefing",
+                                      description: "On the first visit to \(PlaceName.of(.overview)) each day, one short generated paragraph over your fleet, PR queue, due tasks and drift - each clause linking to the page it came from.",
+                                      control: morningBriefingSwitch)
+        splitPlans[.briefings] = SplitPlan(rows: [briefingRow])
+
         return [
-            SettingsSection(heading: "Morning briefing", group: SettingsGroup(rows: [
-                SettingsRow(title: "Show a morning briefing",
-                            description: "On the first visit to \(PlaceName.of(.overview)) each day, one short generated paragraph over your fleet, PR queue, due tasks and drift - each clause linking to the page it came from.",
-                            control: morningBriefingSwitch),
-            ]), foot: "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all."),
+            SettingsSection(heading: "Morning briefing", group: SettingsGroup(rows: [briefingRow]), foot: "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all."),
         ]
     }
 
     @objc private func morningBriefingToggled() {
         AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.isOn
         syncDependentRows()
+        refreshSplitCard(.briefings)
     }
 
     // MARK: - App Intents & Shortcuts (F21)
@@ -2041,6 +2109,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         let openShortcuts = HelmButton(title: "Open Shortcuts", variant: .secondary,
                                        target: self, action: #selector(openShortcutsApp))
+        // Set-2: the actions are the split card's, and its panel says whether
+        // this copy publishes them, so the section's registration foot is
+        // not repeated under the card.
+        splitPlans[.intents] = SplitPlan(rows: rows, keepsFeet: false)
 
         return [
             SettingsSection(heading: "Actions exposed to the system", aside: intentCountLabel,
@@ -2075,15 +2147,22 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// while this copy publishes none would be "unknown rendered as
     /// available".
     static func intentRegistrationStatusText() -> String {
-        guard let resources = Bundle.main.resourceURL,
-              Bundle.main.bundleIdentifier != nil else {
+        switch intentRegistration() {
+        case .unbundled:
             return "This copy is running unbundled (swift build / swift run), so nothing is registered with Shortcuts. The packaged app is what publishes these."
-        }
-        let metadata = resources.appendingPathComponent("Metadata.appintents")
-        if FileManager.default.fileExists(atPath: metadata.path) {
+        case .registered:
             return "Registered with the system - these appear in Shortcuts, Spotlight and Siri."
+        case .noMetadata:
+            return "Not registered on this copy: the app bundle carries no Metadata.appintents. native/build_native_app.sh writes it only when Xcode's appintentsmetadataprocessor is present - rebuild the app on a Mac with Xcode installed to publish them."
         }
-        return "Not registered on this copy: the app bundle carries no Metadata.appintents. native/build_native_app.sh writes it only when Xcode's appintentsmetadataprocessor is present - rebuild the app on a Mac with Xcode installed to publish them."
+    }
+
+    /// The check behind `intentRegistrationStatusText`, which Set-2's panel
+    /// also reads.
+    static func intentRegistration() -> SettingsHeroWords.IntentRegistration {
+        guard let resources = Bundle.main.resourceURL, Bundle.main.bundleIdentifier != nil else { return .unbundled }
+        let metadata = resources.appendingPathComponent("Metadata.appintents")
+        return FileManager.default.fileExists(atPath: metadata.path) ? .registered : .noMetadata
     }
 
     // MARK: - Security
@@ -2133,6 +2212,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                         description: "Auto-lock, the clipboard-clear delay and Touch ID unlock are stored encrypted inside the vault file itself, so they are changed from \(PlaceName.of(.poneglyph)) after it is unlocked - never from here.",
                         control: openVault),
         ]
+        // Set-2: the lock and the vault's pointer are the split card's.
+        splitPlans[.security] = SplitPlan(rows: lockRows + vaultRows)
 
         return [
             SettingsSection(heading: "App lock", group: SettingsGroup(rows: lockRows),
@@ -2318,6 +2399,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         securityStackHost.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: securityStackHost.widthAnchor).isActive = true
         sudoRowHost = row
+        refreshSplitCard(.security)
         applyTheme()
     }
 
@@ -2504,12 +2586,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         backupContentsStack.translatesAutoresizingMaskIntoConstraints = false
 
         let contentsGroup = SettingsGroup(custom: backupContentsStack, insets: NSEdgeInsets())
+        backupExportButton = exportButton
+        backupImportButton = importButton
 
-        return [
+        let sections = [
             SettingsSection(group: SettingsGroup(rows: [summary])),
             SettingsSection(heading: "What's in a backup", group: contentsGroup,
                             foot: "Private SSH key material never leaves the Keychain; only the metadata that points to it is exported. A restore is a merge with a preview, never a silent overwrite - nothing on this Mac is deleted by one."),
         ]
+        // Set-2: the inventory is the split card's half, Export and Import
+        // are its pills, and "Currently saved" is its panel.
+        splitPlans[.backup] = SplitPlan(detail: (backupContentsStack, "What's in a backup"), dropSections: sections)
+        return sections
     }
 
     private func refreshBackupStatus() {
@@ -2520,6 +2608,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             + "and everything listed below."
         rebuildBackupContents()
         measureBackupContents()
+        refreshSplitCard(.backup)
     }
 
     /// Walks the store roots for a file count and a size, off the main
@@ -2662,6 +2751,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         return formatter.string(fromByteCount: Int64(bytes))
     }
 
+    @objc private func backupExportDidChange() {
+        refreshSplitCard(.backup)
+    }
+
     @objc private func exportBackupClicked() {
         BackupUI.exportFlow(from: self, hostStore: hostStore, keyStore: keyStore,
                             snippetStore: snippetStore, dictationStore: dictationStore)
@@ -2672,6 +2765,168 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                             snippetStore: snippetStore, dictationStore: dictationStore) { [weak self] in
             self?.refreshFromSettings()
         }
+    }
+
+    // MARK: - Split cards (Set-2)
+
+    /// What one page's split card takes from the page as it was built.
+    ///
+    /// The rows are the page's own: they leave their sections and the card
+    /// holds them, with their actions, their dimming and their place in
+    /// `refreshFromSettings`. A section left with no rows leaves the page, and
+    /// its foot follows the card as a note unless the panel says it.
+    private struct SplitPlan {
+        var rows: [SettingsRow] = []
+        /// A view of the page's own in the card's half instead of rows,
+        /// under a small title - Backup's inventory.
+        var detail: (view: NSView, title: String)?
+        /// Sections that leave the page whatever rows they hold.
+        var dropSections: [SettingsSection] = []
+        var keepsFeet = true
+    }
+
+    /// Give every page its split card, once, when the sidebar layout first
+    /// shows this page. Every page and control was built by `loadView`, so
+    /// this moves them; it builds no second copy of anything.
+    private func buildSplitCards() {
+        // Shortcuts' card holds the bar that sat over its list.
+        let bar = shortcutsPage.takeBarControls()
+        // A field in a row's control column keeps its own width, so it is
+        // given one (a small fixed width, nowhere near a window floor).
+        bar.search.widthAnchor.constraint(equalToConstant: Self.shortcutsSearchWidth).isActive = true
+        splitPlans[.shortcuts] = SplitPlan(rows: [
+            SettingsRow(title: "Find a shortcut", description: "By what it does, where it works or its keys.",
+                        control: bar.search),
+            SettingsRow(title: "Show", description: "Every shortcut, the ones you changed, or the ones that clash.",
+                        control: bar.filter),
+        ])
+        shortcutsRestoreAll = bar.restoreAll
+        shortcutsPage.onReload = { [weak self] in self?.refreshSplitCard(.shortcuts) }
+
+        for category in Category.allCases {
+            guard let page = pages[category] else { continue }
+            let plan = splitPlans[category] ?? SplitPlan()
+            var notes: [String] = []
+            var kept: [SettingsSection] = []
+            for section in category == .shortcuts ? [] : page.sections {
+                let taken = section.group.rows.filter { row in plan.rows.contains { $0 === row } }
+                if !taken.isEmpty { section.group.removeRows(taken) }
+                section.removeFromSuperview()
+                let leaves = plan.dropSections.contains { $0 === section }
+                    || (!taken.isEmpty && section.group.rows.isEmpty)
+                guard leaves else {
+                    kept.append(section)
+                    continue
+                }
+                if plan.keepsFeet, let foot = section.footLabel?.stringValue, !foot.isEmpty { notes.append(foot) }
+            }
+            let kicker = SettingsHeroWords.kicker(category.title)
+            let split = plan.detail.map {
+                SettingsHeroSplitView(symbol: category.symbol, kicker: kicker, detail: $0.view, title: $0.title,
+                                      notes: notes)
+            } ?? SettingsHeroSplitView(symbol: category.symbol, kicker: kicker, rows: plan.rows, notes: notes)
+            page.container.removeFromSuperview()
+            if category == .shortcuts {
+                shortcutsPage.view.removeFromSuperview()
+                pages[category] = Page(category: category,
+                                       container: Self.singleColumn(views: [split, shortcutsPage.view]),
+                                       hero: page.hero, sections: [],
+                                       liveSections: { [weak self] in self?.shortcutsPage.sections ?? [] },
+                                       split: split)
+            } else {
+                pages[category] = Page(category: category, container: Self.singleColumn(views: [split] + kept),
+                                       hero: page.hero, sections: kept, split: split)
+            }
+        }
+        mountedCategory = nil
+        mountPage(selectedCategory)
+        refreshSplitCards()
+    }
+
+    /// The search field's width on Shortcuts' card.
+    static let shortcutsSearchWidth: CGFloat = 240
+
+    private func refreshSplitCards() {
+        guard drawsSidebarLayout else { return }
+        for category in Category.allCases { refreshSplitCard(category) }
+    }
+
+    /// Put `category`'s words on its panel, from what the page holds now.
+    private func refreshSplitCard(_ category: Category) {
+        guard let split = pages[category]?.split else { return }
+        let settings = AppSettings.shared
+        switch category {
+        case .appearance:
+            let current = ThemeManager.shared.theme
+            let words = SettingsHeroWords.appearance(
+                themeName: current.name, isDark: current.mode == .dark, followsSystem: settings.followSystemAppearance,
+                layout: settings.workspaceLayout, layoutTakesEffectLater: settings.workspaceLayout != PlaceName.layout,
+                density: settings.density, profile: WorkspaceProfile.matching(settings.hiddenModules),
+                terminal: terminalPaintNote)
+            split.configure(words, pills: settings.followSystemAppearance ? [] : [matchMacOSPill],
+                            preview: themePreview(current), theme: theme)
+        case .terminal:
+            let cwd = settings.defaultShellCwd.map { ($0 as NSString).abbreviatingWithTildeInPath }
+            split.configure(SettingsHeroWords.terminal(
+                scheme: ThemeManager.shared.terminalScheme.name, fontSize: Int(settings.fontSize),
+                scrollbackRows: TerminalScrollback.shared.rows, workingDirectory: cwd,
+                reconnects: settings.autoReconnect, trimsBackground: TerminalScrollback.shared.trimsBackgroundTabs,
+                backgroundRows: ConsoleController.backgroundScrollbackLines), pills: [], theme: theme)
+        case .shortcuts:
+            let rows = shortcutsPage.rows
+            split.configure(SettingsHeroWords.shortcuts(total: rows.count, changed: rows.filter(\.isChanged).count,
+                                                        conflicts: rows.filter { !$0.conflicts.isEmpty }.count),
+                            pills: [shortcutsRestoreAll].compactMap { $0 }, theme: theme)
+        case .capture:
+            split.configure(SettingsHeroWords.capture(
+                chord: settings.quickCaptureShortcut.displayString,
+                accessibilityGranted: quickCaptureAccessibilityTrusted?() ?? AXIsProcessTrusted(),
+                clipboardHistory: settings.clipboardHistoryEnabled),
+                            pills: [resetCaptureShortcutButton].compactMap { $0 }, theme: theme)
+        case .menuBar:
+            split.configure(SettingsHeroWords.menuBar(
+                compactMode: settings.compactModeEnabled, hidesDockIcon: settings.compactModeHidesDockIcon,
+                separateIcons: settings.menuBarSeparateItems, globalChord: CompactModeHotkey.displayChord),
+                            pills: [], theme: theme)
+        case .briefings:
+            split.configure(SettingsHeroWords.briefings(enabled: settings.morningBriefingEnabled,
+                                                        place: PlaceName.of(.overview)),
+                            pills: [openOverviewPill], theme: theme)
+        case .intents:
+            split.configure(SettingsHeroWords.intents(titles: GrandLineIntentCatalog.entries.map(\.title),
+                                                      registration: Self.intentRegistration(),
+                                                      statusText: Self.intentRegistrationStatusText()),
+                            pills: [], theme: theme)
+        case .security:
+            let (idle, session) = AppLockController.configuredThresholds()
+            split.configure(SettingsHeroWords.security(
+                lockEnabled: settings.appLockEnabled != false, idle: Self.durationText(idle),
+                session: Self.durationText(session), sudo: sudoTouchIDStatus, vaultPlace: PlaceName.of(.poneglyph)),
+                            pills: [], theme: theme)
+        case .backup:
+            split.configure(SettingsHeroWords.backup(lastExport: settings.lastBackupExport,
+                                                     hosts: hostStore.hosts.count,
+                                                     snippets: snippetStore.snippets.count),
+                            pills: [backupExportButton, backupImportButton].compactMap { $0 }, theme: theme)
+        }
+    }
+
+    /// Appearance's preview: the showing family's two registers.
+    private func themePreview(_ current: HelmTheme) -> SettingsThemePreviewTile.Content? {
+        guard let family = current.app?.family else { return nil }
+        let light = family.register(.light), dark = family.register(.dark)
+        return SettingsThemePreviewTile.Content(
+            light: light, dark: dark, showingDark: current.mode == .dark,
+            caption: SettingsThemeCard.pairCaption(light: light.name, dark: dark.name),
+            spoken: "\(family.title): \(current.name) is showing")
+    }
+
+    @objc private func matchMacOSTapped() {
+        appearanceModeChosen(.auto)
+    }
+
+    @objc private func openOverviewTapped() {
+        onNavigate?(.overview)
     }
 
     // MARK: - Small shared pieces
@@ -2751,6 +3006,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         } else if sender === lockSessionPopUp {
             AppSettings.shared.appLockSessionSeconds = seconds
         }
+        refreshSplitCard(.security)
     }
 
     private func makeRelaunchButton() -> HelmButton {
@@ -2835,6 +3091,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             } else {
                 appLockSwitch.isOn = true
             }
+            refreshSplitCard(.security)
         }
     }
 
@@ -2854,6 +3111,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             return
         }
         AppSettings.shared.appLockEnabled = true
+        refreshSplitCard(.security)
         Feedback.report("The app lock is on.", kind: .done, persistence: .transient, in: view)
     }
 
@@ -2863,6 +3121,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     @objc private func autoReconnectToggled() {
         AppSettings.shared.autoReconnect = autoReconnectSwitch.isOn
+        refreshSplitCard(.terminal)
     }
 
     @objc private func notifyToggled() {
@@ -2887,6 +3146,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
+            refreshSplitCard(.terminal)
         case scrollbackField:
             commitScrollbackField()
         default:
@@ -2929,6 +3189,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         rebuildAppearanceGrid()
         rebuildSecuritySection()
         refreshBackupStatus()
+        refreshSplitCards()
         refreshToolbar()
         applyTheme()
     }
@@ -2940,6 +3201,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private func repaintForTheme() {
         guard isViewLoaded else { return }
         rebuildAppearanceGrid()
+        // Set-2: the panels' colour is the theme's (amber is the theme's own
+        // amber), and Appearance's says which theme is showing. Words from
+        // what is already held - nothing is fetched.
+        refreshSplitCards()
         applyTheme()
     }
 
@@ -2966,6 +3231,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         for page in pages.values {
             page.hero.applyTheme(theme)
+            page.split?.applyTheme(theme)
             for section in page.sections { section.applyTheme(theme) }
         }
         for row in backupRows { row.applyTheme(theme) }
@@ -3080,6 +3346,18 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// unreachable" is asserted against.
     var debugRows: [SettingsRow] {
         debugSections.flatMap { $0.group.rows } + backupRows
+            + Category.allCases.flatMap { pages[$0]?.split?.list?.rows ?? [] }
+    }
+    func debugRefreshFromSettings() { refreshFromSettings() }
+    /// Set-2: a page's split card, in the sidebar layout.
+    func debugSplitCard(_ category: Category) -> SettingsHeroSplitView? { pages[category]?.split }
+    var debugMatchMacOSPill: HelmButton { matchMacOSPill }
+    var debugOpenOverviewPill: HelmButton { openOverviewPill }
+    var debugBackupButtons: (export: HelmButton?, import: HelmButton?) { (backupExportButton, backupImportButton) }
+    var debugResetCaptureShortcutButton: HelmButton? { resetCaptureShortcutButton }
+    /// The mounted page's own view, in the order the column stacks it.
+    var debugMountedPageViews: [NSView] {
+        (pages[selectedCategory]?.container as? NSStackView)?.arrangedSubviews ?? []
     }
     /// How many pages actually reached the detail pane's view tree - one,
     /// always, and the other seven deliberately detached (gotcha (15)).
@@ -3234,9 +3512,12 @@ final class LayoutReportingStack: NSStackView {
 extension SettingsController: SidebarLayoutAdopting {
     func adoptSidebarLayout() {
         guard !drawsSidebarLayout else { return }
+        // Set-2's split cards are made from the pages `loadView` built.
+        _ = view
         drawsSidebarLayout = true
         for page in pages.values { page.hero.isHidden = true }
-        if isViewLoaded { applyHeaderRow() }
+        buildSplitCards()
+        applyHeaderRow()
         onDrillSubtitleChanged?()
     }
 }
