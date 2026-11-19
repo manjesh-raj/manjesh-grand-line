@@ -1675,3 +1675,50 @@ Console's session strip is unchanged, and picking a session row still opens it o
 - ⌃⌘1-9, ⌘] and ⌘[ read the registry and are untouched.
 
 `SplitShellModelSelfTest`, `WorkspaceSignalsSelfTest`, `SidebarPolishSelfTest` and `MainSplitShellSelfTest` assert the placement, the fallback, the badge and the click.
+
+## The whole sidebar as a hero column, Sb-4 (`fm/grand-line-sidebar-sb4`)
+
+The captain picked Sb-4 on the sidebar board (`data/grand-line-sidebar-mockups/`), without the board's strip of three figures at the foot of the pane.
+The sidebar is now the hero column that Secrets (S-3) and Settings already wear: the gradient in the theme's accent, the account header and every row in its ink, the lit row a pill in the ink.
+
+### The route
+
+The board offered two routes.
+One kept the `NSOutlineView` and painted a `HelmHeroSurface` under it.
+The other rebuilt the sidebar on `HelmHeroColumn` and gave the column its own disclosure and nested rows.
+This shipped the first, because the outline view is what gives the sidebar its group disclosure, arrow-key navigation with the settle delay, Return, context menus, the VoiceOver tree, the focus ring hook and every `debug*` seam the suites drive.
+The column is a flat stack of `HoverHighlightView` rows and would have needed all of those written again.
+
+- `HelmHeroColumn.NavInk` (Helm 8.0.0, `HelmHeroColumn` 1.4.0) carries a nav row's colours as values, so the outline's cells paint from the same recipe the column hands its `HelmHeroNavRow`s.
+- `MainSplitShellController` gives the sidebar a plain `NSSplitViewItem` rather than `sidebarWithViewController:`, so the system stops drawing its sidebar material.
+  The gradient runs edge to edge under the title bar, and the traffic lights sit on it.
+  `sidebarInset` measures 0 for this item, and the width, collapse and tracking separator code is unchanged.
+- The collapsed state is unchanged: the pane hides completely, with no rail.
+
+### What the renders and suites found
+
+- **A source list restyles a group row's `textField`.**
+  The section title came out in the system's grey over the quiet ink.
+  The title is no longer the cell's `textField`.
+- **A selected source-list row gets an `NSVisualEffectView`** for the system's selection material, even with `drawSelection` overridden.
+  The row view hides it as it is added, so nothing the system blends sits on the gradient.
+- **A group row's cell spans the whole row, and a module row's cell stops 16pt short.**
+  The group counts sat 16pt right of the row badges until the controller passed the measured gap to the section cell.
+- **A row view built after the last theme change had a colourless rule.**
+  After a profile change no row showed its rule, because the rule took its colour only with the fill, and a new row view is not hovered or lit before it draws.
+  The rule is painted whenever it is shown, and the suite reads its colour rather than only whether it is hidden.
+  A first guess (rows numbered before the groups open) survived an injected revert, which is what showed it was not the cause.
+- **The board's count pill failed contrast.**
+  A 22% wash of the white ink under white digits measured 3.5:1 on Dusk, because the palette holds white at the text floor.
+  The pill is a shade of the ink's opposite instead, the ghost pill's own lesson (`HelmButton.heroShade`).
+- **Running the Sb-4 checks before Setup's cases in `SidebarRedesignsSelfTest` made those cases read stale.**
+  The theme sweep and the renders run last in that suite.
+
+### Left as it was
+
+- The rows keep stage 7's Large size (15pt names, 16pt symbols, 32pt rows), the captain's earlier call, at a medium weight.
+  The board drew Sb-4 at 13.5pt semibold.
+- The disclosure chevron and the scroller are the system's, in the gradient's appearance (`NavInk.appearance`).
+  Context menus keep the theme's own appearance, since they float over the page.
+- The window toolbar's sidebar button over the pane is the system's own glass item and was not restyled.
+  No off-screen render can show glass, so how it reads on the gradient in the packaged app is the captain's check.
