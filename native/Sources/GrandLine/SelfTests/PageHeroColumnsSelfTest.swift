@@ -9,6 +9,9 @@
 //     ring, its four buckets and which pills the foot offers, worst first.
 //   - `ConnectionsHeroWords`: an unreadable hosts file, no hosts, no live
 //     session, one and several, and the keys clause.
+//   - `KeysHeroWords` (the same column on the Keys tab): an unreadable keys
+//     file, no keys, Touch ID or not, the last-used key, unused keys, and
+//     the in-use ring.
 //   - The column's palette, swept over every theme's accent and red and
 //     every Home preset: the ink clears the text floor on the bare stops and
 //     on a ghost pill's and the field's shade, and the 80% ink of a second
@@ -35,6 +38,7 @@ enum PageHeroColumnsSelfTest {
         let checks: [(inout Bool) -> Void] = [
             checkHealthWords,
             checkConnectionsWords,
+            checkKeysWords,
             checkTheColumnPaletteClearsTheFloor,
             checkTheGridColumnCap,
             checkTheFloorWidth,
@@ -154,6 +158,39 @@ enum PageHeroColumnsSelfTest {
               "Connections: three live sessions read \"\(three.headline)\" / \"\(three.body)\"", &ok)
         check(ConnectionsHeroWords.duration(since: now.addingTimeInterval(-7300), now: now) == "2 hours",
               "Connections: a two-hour session reads \(ConnectionsHeroWords.duration(since: now.addingTimeInterval(-7300), now: now))", &ok)
+    }
+
+    // MARK: Keys
+
+    private static func checkKeysWords(_ ok: inout Bool) {
+        typealias Key = KeysHeroWords.Key
+        func words(readable: Bool = true, keys: [Key], hostsWithAKey: Int = 6, biometry: Bool = true) -> KeysHeroWords {
+            KeysHeroWords.make(keysReadable: readable, keys: keys, hostsWithAKey: hostsWithAKey,
+                               biometryAvailable: biometry, now: now)
+        }
+        let ops = Key(label: "ops-ed25519", hostCount: 5, lastUsedAt: now.addingTimeInterval(-3 * 3600))
+        let ci = Key(label: "ci-deploy", hostCount: 1, lastUsedAt: nil)
+        let spare = Key(label: "spare-rsa", hostCount: 0, lastUsedAt: nil)
+        let unreadable = words(readable: false, keys: [ops])
+        check(unreadable.isDimmed && unreadable.ring == nil && unreadable.headline == "Saved keys could not be read.",
+              "Keys: an unreadable keys file reads \"\(unreadable.headline)\", dimmed \(unreadable.isDimmed) (GL-14)", &ok)
+        let empty = words(keys: [])
+        check(empty.headline == "No saved keys yet." && empty.ring == nil && !empty.isDimmed,
+              "Keys: no keys reads \"\(empty.headline)\" with ring \(String(describing: empty.ring))", &ok)
+        let ready = words(keys: [ops, ci])
+        check(ready.headline == "Touch ID ready, 2 keys." && ready.body == "ops-ed25519 was used 3 hours ago.",
+              "Keys: two keys read \"\(ready.headline)\" / \"\(ready.body)\"", &ok)
+        check(ready.ring?.inUse == 2 && ready.ring?.total == 2 && ready.ringCaption == "keys in use\n6 hosts sign in with one",
+              "Keys: the ring is \(String(describing: ready.ring)), captioned \(ready.ringCaption)", &ok)
+        let noBiometry = words(keys: [ci, spare], hostsWithAKey: 1, biometry: false)
+        check(noBiometry.headline == "2 keys in the Keychain."
+                && noBiometry.body == "No host has connected with a key yet. 1 key is not used by any host.",
+              "Keys: no biometry reads \"\(noBiometry.headline)\" / \"\(noBiometry.body)\"", &ok)
+        check(noBiometry.ring?.inUse == 1 && noBiometry.ringCaption.hasSuffix("1 host signs in with one"),
+              "Keys: one key in use reads \(String(describing: noBiometry.ring)) / \(noBiometry.ringCaption)", &ok)
+        let lone = words(keys: [spare], hostsWithAKey: 0, biometry: false)
+        check(lone.headline == "1 key in the Keychain." && lone.body.hasSuffix(" No host uses it yet."),
+              "Keys: one unused key reads \"\(lone.headline)\" / \"\(lone.body)\"", &ok)
     }
 
     // MARK: The palette

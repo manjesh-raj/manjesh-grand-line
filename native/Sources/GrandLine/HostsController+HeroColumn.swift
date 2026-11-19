@@ -18,6 +18,9 @@
 // filter row's find-or-connect field (H3) is unchanged: it still finds, and
 // Return still connects; the column's field only connects.
 //
+// On the Keys tab the same column speaks for the keys instead
+// (`HostsController+KeysHero.swift`): it follows the showing tab.
+//
 // Every action the column runs is the page's own - `connect`,
 // `onSwitchToSession`, `quickConnectTarget` - so nothing here can connect
 // differently from a card, a row or the filter row's field.
@@ -200,6 +203,7 @@ extension HostsController {
     func heroColumnVisibilityChanged() {
         refreshContentLeading()
         applyHostFilter(searchField.stringValue)
+        reloadKeysForSearch()
         refreshFindOrConnectButton()
     }
 
@@ -209,6 +213,10 @@ extension HostsController {
     /// every reload that can change what it says.
     func renderHeroColumn() {
         guard let column = heroColumn else { return }
+        if activeTab == .keys {
+            renderKeysHeroColumn(column)
+            return
+        }
         let hosts = hostStore.hosts
         let readable = hostStore.loadStatus == .clean
         let live = hosts.compactMap { host -> ConnectionsHeroWords.LiveSession? in
@@ -252,7 +260,19 @@ extension HostsController {
             recentRows = [HelmHeroRow(leading: .symbol("clock"), title: "Nothing yet",
                                       subtitle: "The hosts you connect to show here.")]
         }
-        let groups = Set(hosts.compactMap { normalizedGroup($0) }).count
+        column.configure(
+            header: header,
+            sections: [
+                .init(title: "Recent", trailing: recent.isEmpty ? nil : "\(recent.count)", views: recentRows),
+                .init(title: "Quick connect", trailing: nil, views: [heroQuickConnectField]),
+            ],
+            foot: [heroFootFigures()],
+            tone: HelmModuleCard.HeroTone(colour: .themeAccent, isDimmed: words.isDimmed))
+    }
+
+    /// The column's foot on every tab: the Keys, Snippets and Groups figures.
+    func heroFootFigures() -> HelmKPIStrip {
+        let groups = Set(hostStore.hosts.compactMap { normalizedGroup($0) }).count
         let figures = HelmKPIStrip(density: .inline)
         figures.figureSize = 20
         figures.configure([
@@ -261,14 +281,7 @@ extension HostsController {
             .count(groups, caption: groups == 1 ? "Group" : "Groups"),
         ])
         figures.setAccessibilityLabel("Keys, snippets and groups")
-        column.configure(
-            header: header,
-            sections: [
-                .init(title: "Recent", trailing: recent.isEmpty ? nil : "\(recent.count)", views: recentRows),
-                .init(title: "Quick connect", trailing: nil, views: [heroQuickConnectField]),
-            ],
-            foot: [figures],
-            tone: HelmModuleCard.HeroTone(colour: .themeAccent, isDimmed: words.isDimmed))
+        return figures
     }
 
     @objc func heroRecentTapped(_ sender: NSButton) {

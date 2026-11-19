@@ -16,6 +16,12 @@
 //     Connect otherwise) and leaves the grid, and comes back to the grid when
 //     the column is put away; Quick connect's Return connects; and no line of
 //     a card runs under its action column.
+//   - The Keys tab is the Hosts tab's twin: the same column speaks for the
+//     keys (Touch ID, the in-use ring, Recent keys with a Copy pill, Generate
+//     and Import), the key cards are the host cards' size and run two to a
+//     row, a fingerprint stops before the action column, the toolbar's Grid /
+//     List ends where the cards do, and Recent keys moves into the grid when
+//     the column is put away.
 //   - Every word and control on either column is in the hero's ink.
 //
 // The words themselves - every verdict, the ring, the buckets, the pills -
@@ -60,7 +66,8 @@ enum PageHeroColumnsViewSelfTest {
             let checks: [(MainSplitShellController, NSWindow, inout Bool) -> Void] = [
                 checkHealthColumn, checkHealthTone, checkHealthRetry, checkHealthBand,
                 checkConnectionsColumn, checkConnectionsRecent, checkConnectionsQuickConnect,
-                checkConnectionsCards, checkConnectionsCollapse, writeRenders,
+                checkConnectionsCards, checkConnectionsCollapse, checkKeysColumn, checkKeysCards,
+                checkKeysCollapse, writeRenders,
             ]
             for check in checks {
                 var ok = true
@@ -425,6 +432,171 @@ enum PageHeroColumnsViewSelfTest {
         check(!split.isSidebarCollapsed, "C-4: Toggle Sidebar did not bring the column back", &ok)
     }
 
+    // MARK: The Keys tab
+
+    @discardableResult
+    static func showKeys(_ shell: MainSplitShellController) -> HostsController {
+        let hosts = showHosts(shell)
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        return hosts
+    }
+
+    private static func checkKeysColumn(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showKeys(shell)
+        defer { hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        let keyStore = shell.workspace.keyStore
+        guard let column = hosts.heroColumn, let split = hosts.splitPage,
+              let ops = keyStore.keys.first(where: { $0.label == "ops-ed25519" }) else {
+            fail("Keys: no hero column, or the demo keys are missing", &ok)
+            return
+        }
+        check(hosts.heroColumnShowing && column.superview === split.sidebarPane,
+              "Keys: the hero column is not showing beside the key cards", &ok)
+        check(column.debugKicker == "Keys" && column.debugSectionTitles == ["Recent keys", "Add a key"],
+              "Keys: the column reads \(column.debugKicker) with \(column.debugSectionTitles)", &ok)
+        let expected = KeysHeroWords.make(
+            keysReadable: true,
+            keys: keyStore.keys.map { key in
+                .init(label: key.label, hostCount: shell.workspace.hostStore.hosts.filter { $0.keyID == key.id }.count,
+                      lastUsedAt: key.lastUsedAt)
+            },
+            hostsWithAKey: shell.workspace.hostStore.hosts.filter { $0.keyID != nil }.count,
+            biometryAvailable: CredentialVaultKeyStore.biometryAvailable)
+        check(column.debugHeadline == expected.headline && column.debugRing != nil,
+              "Keys: the headline reads \(column.debugHeadline), want \(expected.headline)", &ok)
+
+        // Recent keys: the key a host just connected with, with a Copy pill
+        // in the hero's ink, and no Recent row in the grid beside it.
+        keyStore.recordUse(id: ops.id)
+        settle(shell)
+        let rows = column.debugRows.filter { $0.trailing != nil }
+        check(rows.map(\.titleLabel.stringValue) == ["ops-ed25519"], "Keys: Recent keys reads \(rows.map(\.titleLabel.stringValue))", &ok)
+        let copy = rows.first?.trailing as? HelmButton
+        check(copy?.toolTip == "Copy ops-ed25519's public key" && copy.map { isInk($0.heroInk, column.ink) } == true,
+              "Keys: the Recent key's pill is \(copy?.toolTip ?? "missing"), or not in the hero's ink", &ok)
+        check(!hosts.keysGrid.debugSectionTitles.contains("Recent"),
+              "Keys: the grid draws a Recent row beside the column (\(hosts.keysGrid.debugSectionTitles))", &ok)
+
+        // Generate runs K2's own Generate: a new key's form, in generate mode.
+        func buttons(in view: NSView) -> [HelmButton] {
+            (view as? HelmButton).map { [$0] } ?? view.subviews.flatMap(buttons)
+        }
+        let addPills = buttons(in: column).filter { ["Generate", "Import"].contains($0.title) }
+        check(addPills.map(\.title) == ["Generate", "Import"] && addPills.allSatisfy { isInk($0.heroInk, column.ink) },
+              "Keys: Add a key's pills are \(addPills.map(\.title)), or not in the hero's ink", &ok)
+        addPills.first?.performClick(nil)
+        settle(shell)
+        check(hosts.keyPanelKey == HostsController.newKeyPanelKey && hosts.keyPanel?.debugMode == "generate",
+              "Keys: Generate opened \(hosts.keyPanel?.debugMode ?? "no form")", &ok)
+        hosts.keyPanel?.debugFooterButtons.first?.performClick(nil)
+        settle(shell)
+        check(hosts.keyPanel == nil, "Keys: Cancel left the new key's form open", &ok)
+
+        // The column follows the tab: back on Hosts it speaks for the hosts.
+        hosts.selectModuleTab(named: "Hosts")
+        settle(shell)
+        check(column.debugKicker == "Connections" && column.debugSectionTitles == ["Recent", "Quick connect"],
+              "Keys: back on Hosts the column reads \(column.debugKicker) with \(column.debugSectionTitles)", &ok)
+    }
+
+    private static func checkKeysCards(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showKeys(shell)
+        defer { hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        let grid = hosts.keysGrid
+        let keyStore = shell.workspace.keyStore
+        // A key whose name and fingerprint cannot fit, so the overlap check
+        // can see a line that runs under the buttons.
+        let long = SSHKey(label: "github-actions-production-deploy-rsa-4096-2026", type: .rsa,
+                          publicKey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABFixtureOnly long@example.test",
+                          fingerprint: "SHA256:Fx7q2ZpLm9WcR4tYvB8nK3sD6hJ1aE5oUiQ0gXyTzNw")
+        keyStore.add(long)
+        settle(shell)
+        defer {
+            var keys = keyStore.keys
+            keys.removeAll { $0.id == long.id }
+            keyStore.debugReplaceAll(keys)
+            settle(shell)
+        }
+        check(abs(grid.cardHeight - hosts.hostsGrid.cardHeight) < 0.5 && grid.columnCount == 2,
+              "Keys: the key cards are \(grid.cardHeight)pt, \(grid.columnCount) to a row (hosts: \(hosts.hostsGrid.cardHeight)pt)", &ok)
+        guard let column = hosts.heroColumn, let first = grid.debugPlaced.first,
+              let card = grid.debugCardView(key: long.id.uuidString) else {
+            fail("Keys: no column or no key cards", &ok)
+            return
+        }
+        let page = hosts.view
+        check(frame(of: grid, in: page).minX > frame(of: column, in: page).maxX + HelmMetrics.s4 - 0.5,
+              "Keys: the key cards do not start past the column", &ok)
+        check(abs(first.frame.width - (hosts.hostsGrid.debugPlaced.first?.frame.width ?? 0)) < 0.5,
+              "Keys: a key card is \(first.frame.width)pt wide, a host card \(hosts.hostsGrid.debugPlaced.first?.frame.width ?? 0)pt", &ok)
+        // The whole fingerprint in the code face, cut in the middle, and
+        // the type as the chip.
+        card.layoutSubtreeIfNeeded()
+        let label = card.debugSubtitleLabel
+        check(card.debugSubtitle == long.fingerprint && label.lineBreakMode == .byTruncatingMiddle
+                && label.font == HelmType.code() && card.debugChip == long.type.displayName,
+              "Keys: the card reads \(card.debugSubtitle) with chip \(card.debugChip ?? "none")", &ok)
+        check(label.frame.width < label.attributedStringValue.size().width,
+              "fixture: the long fingerprint fits its card, so the overlap check measures nothing", &ok)
+        var overlaps: [String] = []
+        for entry in grid.debugPlaced {
+            guard let view = grid.debugCardView(key: entry.key) else { continue }
+            view.layoutSubtreeIfNeeded()
+            let actionsLeft = view.debugActionButtons.map { view.convert($0.bounds, from: $0).minX }.min() ?? view.bounds.maxX
+            let line = view.debugSubtitleLabel
+            let right = view.convert(line.bounds, from: line).maxX
+            if right > actionsLeft + 0.5 { overlaps.append("\(view.debugTitle): \(right) > \(actionsLeft)") }
+        }
+        check(overlaps.isEmpty, "Keys: a card's fingerprint runs under its icon buttons: \(overlaps)", &ok)
+        let frames = card.debugActionButtons.map { card.convert($0.bounds, from: $0) }
+        check(frames.count == 2 && abs(frames[0].midX - frames[1].midX) < 0.5 && abs(frames[0].midY - frames[1].midY) > 20,
+              "Keys: copy and edit are not stacked in a column (\(frames))", &ok)
+        // The toolbar row is the Hosts row's shape: the switch ends where
+        // the cards do, and Touch ID follows the search.
+        let switchFrame = frame(of: hosts.keysViewModeControl, in: page)
+        let gridFrame = frame(of: grid, in: page)
+        let hostsSwitch = frame(of: hosts.hostsViewModeControl, in: page)
+        check(abs(switchFrame.maxX - hostsSwitch.maxX) < 1 && abs(switchFrame.width - hostsSwitch.width) < 1,
+              "Keys: Grid / List ends at \(switchFrame.maxX) (\(switchFrame.width)pt), the Hosts one at \(hostsSwitch.maxX) (\(hostsSwitch.width)pt); cards end at \(gridFrame.maxX)", &ok)
+        check(frame(of: hosts.keysTouchID, in: page).minX > frame(of: hosts.keySearchField, in: page).maxX,
+              "Keys: Touch ID does not follow the search", &ok)
+    }
+
+    private static func checkKeysCollapse(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showKeys(shell)
+        defer { hosts.selectModuleTab(named: "Hosts"); settle(shell) }
+        guard let split = hosts.splitPage else { return }
+        let keyStore = shell.workspace.keyStore
+        if let ci = keyStore.keys.first(where: { $0.label == "ci-deploy" }) { keyStore.recordUse(id: ci.id) }
+        // The Keys row is narrower than the Hosts filter row, so the column
+        // stays beside the inspector at 1512; a narrow window puts it away.
+        resize(window, width: 1100, shell)
+        check(hosts.view.bounds.width < split.collapsesBelowWidth ?? 0,
+              "fixture: at 1100 the page is \(hosts.view.bounds.width)pt, not narrower than the column needs", &ok)
+        check(split.isSidebarCollapsed && !hosts.heroColumnShowing, "Keys: a narrow page keeps the column open", &ok)
+        check(hosts.keysGrid.debugSectionTitles == ["Recent", "All keys"],
+              "Keys: with the column away the grid reads \(hosts.keysGrid.debugSectionTitles)", &ok)
+        check(abs(window.frame.width - 1100) < 0.5, "Keys: the narrow page grew the window to \(window.frame.width)", &ok)
+        resize(window, width: 1512, shell)
+        check(!split.isSidebarCollapsed && hosts.heroColumnShowing && hosts.keysGrid.debugSectionTitles.isEmpty,
+              "Keys: widening the page left the grid reading \(hosts.keysGrid.debugSectionTitles)", &ok)
+        // Searching hides Recent, as on Hosts.
+        split.toggleSidebar(nil)
+        settle(shell)
+        hosts.keySearchField.stringValue = "ci-"
+        hosts.keySearchField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        settle(shell)
+        check(hosts.keysGrid.debugSectionTitles.isEmpty, "Keys: a search still draws Recent (\(hosts.keysGrid.debugSectionTitles))", &ok)
+        hosts.keySearchField.stringValue = ""
+        hosts.keySearchField.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        split.toggleSidebar(nil)
+        settle(shell)
+    }
+
     // MARK: Renders
 
     private static func writeRenders(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -462,6 +634,17 @@ enum PageHeroColumnsViewSelfTest {
                     settle(shell)
                     write(hosts.view, to: folder.appendingPathComponent("connections-\(theme.id)-\(state)-\(Int(width)).png"))
                 }
+                // Keys: with keys, and with none. At 1100 the column is put
+                // away, which is the narrow render.
+                hosts.liveSession = nil
+                showKeys(shell)
+                write(hosts.view, to: folder.appendingPathComponent("keys-\(theme.id)-keys-\(Int(width)).png"))
+                let savedKeys = shell.workspace.keyStore.keys
+                shell.workspace.keyStore.debugReplaceAll([])
+                settle(shell)
+                write(hosts.view, to: folder.appendingPathComponent("keys-\(theme.id)-empty-\(Int(width)).png"))
+                shell.workspace.keyStore.debugReplaceAll(savedKeys)
+                hosts.selectModuleTab(named: "Hosts")
             }
         }
         ThemeManager.shared.setTheme(daylight)
