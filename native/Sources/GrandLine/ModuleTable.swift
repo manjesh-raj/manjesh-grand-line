@@ -78,6 +78,8 @@ enum WorkspaceModule: String, CaseIterable {
     case notebook
     case readingList
     case secrets
+    /// Local projects served on this Mac, one sidebar child each.
+    case devopsHub
     case kubernetes
     case logs
     /// R5-UX-05: Runbooks and Postmortems, moved out of Knowledge to sit with
@@ -654,6 +656,17 @@ enum ModuleTable {
                          slot: .settings, subtitle: "Connection, appearance, terminal, security and backup",
                          mountsEagerly: false, space: .engineering, homeCards: [.settings],
                          newAction: .task, module: .settings, child: nil),
+        // Its symbol:
+        //   A box of projects, distinct from Connections' rack of servers.
+        // Its hue:
+        //   Operations' teal, the space it sits in beside Logs and Kubernetes.
+        // Its line:
+        //   What the page does for every project it will hold, not only the
+        //   first one (devops-atlas).
+        ModuleDescriptor(route: .devopsHub, title: "DevOps Hub", symbol: "shippingbox", hue: .teal,
+                         slot: .devopsHub, subtitle: "Local projects, served on this Mac and shown here",
+                         mountsEagerly: false, space: .operations, homeCards: [],
+                         newAction: .task, module: .devopsHub, child: nil),
     ]
 
     /// The row for `route`. Every case has exactly one, which
@@ -739,6 +752,11 @@ enum ModuleTable {
         WorkspaceModuleDescriptor(module: .readingList, title: "Reading list", group: .work, children: []),
         WorkspaceModuleDescriptor(module: .secrets, title: "Secrets", group: .work,
                                   children: ["Secrets", "Automic Vault"], symbol: "key.fill"),
+        // Its children are the projects, which are data rather than named
+        // pages, so it draws no toolbar tabs. The strip and the hero name the
+        // page, so the content column opens without the module's header.
+        WorkspaceModuleDescriptor(module: .devopsHub, title: "DevOps Hub", group: .work, children: [],
+                                  showsHeader: false),
         WorkspaceModuleDescriptor(module: .kubernetes, title: "Kubernetes", group: .observe,
                                   children: ["Cluster", "Log Tail"], pageTabHost: .kubernetes),
         WorkspaceModuleDescriptor(module: .logs, title: "Logs", group: .observe, children: []),

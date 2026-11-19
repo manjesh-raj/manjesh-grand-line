@@ -63,8 +63,8 @@ enum SplitShellModelSelfTest {
 
     private static func checkEveryModuleIsListedOnce(_ ok: inout Bool) {
         let listed = WorkspaceSidebarModel.listedModules()
-        check(listed.count == 22 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
-              "the sidebar lists \(listed.map(\.rawValue)), want Home and the twenty-one modules once each", &ok)
+        check(listed.count == 23 && Set(listed) == Set(WorkspaceModule.allCases) && Set(listed).count == listed.count,
+              "the sidebar lists \(listed.map(\.rawValue)), want Home and the twenty-two modules once each", &ok)
 
         // The same set as the rows the outline view gets, read off the tree.
         let roots = WorkspaceSidebarModel.roots(sessions: [])
@@ -124,7 +124,8 @@ enum SplitShellModelSelfTest {
         check(sections == WorkspaceGroup.allCases.map(\.title),
               "the sections are \(sections), want the four groups in order", &ok)
         let expected: [WorkspaceGroup: [WorkspaceModule]] = [
-            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets,
+                    .devopsHub],
             .observe: [.kubernetes, .logs, .runbooks, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
@@ -177,8 +178,11 @@ enum SplitShellModelSelfTest {
         // other module keeps its title and subtitle. Tasks' Calendar view
         // draws Tasks' title with the calendar's caption under it. The feel
         // pass drops Home's too: its own greeting is the title and the day.
+        // DevOps Hub's strip and hero name its page, as a host page's own
+        // chrome does.
         let headless = WorkspaceModule.allCases.filter { !$0.showsHeader }
-        check(headless == [.home, .connections, .console], "the modules without a header are \(headless.map(\.rawValue))", &ok)
+        check(headless == [.home, .connections, .console, .devopsHub],
+              "the modules without a header are \(headless.map(\.rawValue))", &ok)
     }
 
     /// Stage 6, the captain's call: the sidebar lists no pins. A Pinned

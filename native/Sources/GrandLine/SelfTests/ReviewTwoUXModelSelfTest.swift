@@ -370,6 +370,15 @@ enum ReviewTwoUXModelSelfTest {
         check(digitChords.map(\.0) == Array(numbered.prefix(9))
                 && digitChords.map(\.1) == Array(1...9),
               "the Operator chords are \(operatorChords.map { "\($0.0.rawValue)=\($0.1)" })", &ok)
+        // DevOps Hub arrived after the chords were learned and takes none,
+        // so the modules under it keep theirs.
+        let operatorHidden = WorkspaceProfile.operator.hiddenModules
+        let hubChord = WorkspaceGoMenu.chord(for: .devopsHub, hidden: operatorHidden)
+        let kubernetesChord = WorkspaceGoMenu.chord(for: .kubernetes, hidden: operatorHidden)
+        let logsChord = WorkspaceGoMenu.chord(for: .logs, hidden: operatorHidden)
+        check(hubChord == nil && kubernetesChord == 8 && logsChord == 9,
+              "DevOps Hub moved a learned chord: it has \(String(describing: hubChord)), Kubernetes "
+                + "\(String(describing: kubernetesChord)), Logs \(String(describing: logsChord))", &ok)
         // R4-UX-01: ⌘0 is the Calendar's, and nobody else's.
         check(operatorChords.filter { $0.1 == 0 }.map(\.0) == [.calendar],
               "\u{2318}0 belongs to \(operatorChords.filter { $0.1 == 0 }.map(\.0.rawValue)), want the Calendar alone", &ok)
@@ -391,13 +400,16 @@ enum ReviewTwoUXModelSelfTest {
             return
         }
         let rows = sidebar.items.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
-        // Counted by hand, skipping the one row the count does not number
-        // (the Calendar, `WorkspaceGoMenu.unnumbered`), so Crew is still ⌘3.
-        // The Calendar carries ⌘0 instead (R4-UX-01).
+        // Counted by hand, skipping the rows the count does not number
+        // (the Calendar and DevOps Hub, `WorkspaceGoMenu.unnumbered`), so
+        // Crew is still ⌘3 and Kubernetes still ⌘8. The Calendar carries ⌘0
+        // instead (R4-UX-01), and DevOps Hub carries nothing.
         var number = 1
         for row in rows {
-            let skipped = row.representedObject as? String == WorkspaceModule.calendar.rawValue
-            let want = skipped ? "0" : number <= 9 ? "\(number)" : ""
+            let isCalendar = row.representedObject as? String == WorkspaceModule.calendar.rawValue
+            let isHub = row.representedObject as? String == WorkspaceModule.devopsHub.rawValue
+            let skipped = isCalendar || isHub
+            let want = isCalendar ? "0" : isHub ? "" : number <= 9 ? "\(number)" : ""
             if !skipped { number += 1 }
             check(row.keyEquivalent == want && (want.isEmpty || row.keyEquivalentModifierMask == [.command]),
                   "the Go menu's \(row.title) row carries \"\(row.keyEquivalent)\", want \u{2318}\(want)", &ok)

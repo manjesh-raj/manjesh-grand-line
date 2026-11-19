@@ -203,6 +203,7 @@ extension SecretBoundariesSelfTest {
         "AppComposition.swift showManualChecks": "MANUAL-CHECKS.md beside this build's sources",
         "SettingsController.swift openAccessibilitySettings": "a fixed System Settings pane",
         "ShiftController.swift openFailedFile": "the app's own store file that failed to read",
+        "DevOpsHubController.swift openFilesAndFoldersSettings": "a fixed System Settings pane",
     ]
 
     static func checkEveryDataDerivedOpenIsSchemeChecked(_ sources: ProductionSources, _ ok: inout Bool) {

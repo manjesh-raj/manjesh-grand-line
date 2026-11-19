@@ -126,13 +126,21 @@ enum MainSplitShellNavigationSelfTest {
             // (R5-UX-05: an Operator's Notebook lights Knowledge).
             let row = ModuleTable.litModule(for: destination, pageTab: shell.debugCurrentTab?.name,
                                             hidden: AppSettings.shared.hiddenModules)
-            check(shell.sidebar.debugSelectedEntry == .module(row),
+            // DevOps Hub's page lights the project it shows, as a host page
+            // lights its session (`WorkspaceSidebarController.item(for:)`).
+            let shownProject = LocalProjectRegistry.shared.lastShownProjectID
+            let litEntry: WorkspaceSidebarEntry = destination == .devopsHub && shownProject != nil
+                ? .project(id: shownProject!) : .module(row)
+            check(shell.sidebar.debugSelectedEntry == litEntry,
                   "\(destination.rawValue) did not light \(row.title)'s row (lit: \(String(describing: shell.sidebar.debugSelectedEntry)))", &ok)
             check(shell.currentModule == module && window.title == module.title,
                   "the window is titled \"\(window.title)\" on \(destination.rawValue), want \"\(module.title)\"", &ok)
             // R5-BUG-05: the crumb and the header name the lit row, which is
             // the Calendar on the Calendar door's route.
-            check(shell.toolbar.debugCrumb.hasSuffix(row.title) && window.titleVisibility == .hidden,
+            // DevOps Hub's crumb names the project, as a host page's names its host.
+            let crumbEnd = destination == .devopsHub ? (shownProject.flatMap(LocalProjectRegistry.shared.project)?.name ?? row.title)
+                : row.title
+            check(shell.toolbar.debugCrumb.hasSuffix(crumbEnd) && window.titleVisibility == .hidden,
                   "the crumb reads \"\(shell.toolbar.debugCrumb)\" on \(destination.rawValue), want \(row.title)", &ok)
             // The big title, with the page's live subtitle under it - except
             // on Connections and Console, where the captain dropped it.

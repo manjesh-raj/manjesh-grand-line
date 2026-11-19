@@ -824,6 +824,27 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
             Action(title: "All Destinations\u{2026}", meta: "App", keywords: ["map", "pages", "everything", "navigate"],
                    run: { [weak shell] in shell?.onShowAllDestinations?() }),
         ])
+        // DevOps Hub: drive a project's server by name. Each row carries the
+        // DevOps Hub destination, so a profile that hides the row hides these.
+        let workspace = shell.workspace
+        for project in LocalProjectRegistry.shared.projects {
+            let id = project.id
+            actions.append(contentsOf: [
+                Action(title: "Start \(project.name)", meta: "DevOps Hub",
+                       keywords: ["run", "serve", "local", "devops", "hub"], destination: .devopsHub,
+                       run: { [weak workspace] in
+                           workspace?.devopsHub.show(projectID: id)
+                           workspace?.navigator.show(.devopsHub)
+                           LocalProjectRegistry.shared.start(id)
+                       }),
+                Action(title: "Stop \(project.name)", meta: "DevOps Hub",
+                       keywords: ["server", "local", "devops", "hub"], destination: .devopsHub,
+                       run: { LocalProjectRegistry.shared.stop(id) }),
+                Action(title: "Open \(project.name) in Browser", meta: "DevOps Hub",
+                       keywords: ["safari", "chrome", "local", "devops", "hub"], destination: .devopsHub,
+                       run: { WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub") }),
+            ])
+        }
         var provider = UnifiedSearchActionProvider(actions: actions)
         provider.isHidden = { [weak shell] destination in shell?.hidesPage(destination) ?? false }
         provider.moduleActions = { [weak shell] in shell?.paletteModuleActions() ?? [] }

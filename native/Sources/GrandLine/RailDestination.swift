@@ -231,6 +231,10 @@ enum RailDestination: String, CaseIterable {
     /// second concept.
     case homeCanvas
     case overview, strawHat, console, hosts, shift, calendar, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+    /// DevOps Hub: a local project served on this Mac and shown in a web
+    /// view (`DevOpsHubController`). One route for every project; which one
+    /// shows is the page's own state, as a host page's host is.
+    case devopsHub
 
     /// R2-ARCH-03: read from `ModuleTable.rows`, the one place a destination's
     /// identity is written down. Why each destination has the glyph it has is
@@ -302,7 +306,7 @@ enum RailDestination: String, CaseIterable {
         case .githubSync: return GithubSyncIcon.image
         case .settings: return SettingsAppIcon.image
         case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook,
-             .readingList, .calendar:
+             .readingList, .calendar, .devopsHub:
             return nil
         }
     }
@@ -354,7 +358,7 @@ enum RailDestination: String, CaseIterable {
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
         case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .calendar, .review, .logAnalyzer, .kubernetes,
-             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems, .settings, .devopsHub: return .accent
         }
     }
 
@@ -373,7 +377,9 @@ enum RailDestination: String, CaseIterable {
              // since Phase 2 removed the rail - see this enum's own note.
              .strawHat,
              .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems,
-             .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
+             .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings,
+             // Opened to study or to try something, not read every morning.
+             .devopsHub: return false
         }
     }
 }

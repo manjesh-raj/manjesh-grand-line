@@ -121,7 +121,11 @@ enum WorkspaceGoMenu {
     /// chords were learned, between Tasks (⌘2) and Crew (⌘3); numbering it
     /// in sidebar order would have moved Crew and every module below it down
     /// one, and taken ⌘9 away from Logs.
-    static let unnumbered: Set<WorkspaceModule> = [.calendar]
+    ///
+    /// DevOps Hub arrived the same way, at the end of Work, and takes no
+    /// number for the same reason: numbered, it would take Kubernetes' ⌘8
+    /// and Logs' ⌘9.
+    static let unnumbered: Set<WorkspaceModule> = [.calendar, .devopsHub]
 
     /// R4-UX-01 of the fourth full review: the module that takes ⌘0, the
     /// digit after ⌘9. The Calendar used to be reachable only by a click or

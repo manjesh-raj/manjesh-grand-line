@@ -126,7 +126,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .homeCanvas, .overview, .strawHat, .console, .review, .logAnalyzer,
              .kubernetes, .tools, .whiteboard, .vault, .dictation, .health,
              .docs, .postmortems, .updates, .bootstrap, .automation,
-             .githubSync, .settings:
+             .githubSync, .settings, .devopsHub:
             return .task
         }
     }

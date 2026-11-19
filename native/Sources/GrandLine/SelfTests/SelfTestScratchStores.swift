@@ -31,7 +31,7 @@ enum SelfTestScratchStores {
         ("FM_DOCS_DIR", "docs"), ("FM_DOCS_RUNBOOKS_DIR", "runbooks"), ("FM_COMMAND_LIBRARY_DIR", "commands"),
         ("FM_LOG_ANALYZER_DIR", "investigations"), ("FM_FLEET_LOG_DIR", "fleet-log"), ("FM_INCIDENTS_DIR", "incidents"),
         ("FM_CREDENTIAL_VAULT_DIR", "grand-line-vault"), ("FM_NOTEBOOK_DIR", "notebook"),
-        ("FM_READING_LIST_DIR", "reading-list"),
+        ("FM_READING_LIST_DIR", "reading-list"), ("FM_LOCAL_PROJECTS_FILE", "local-projects.json"),
     ]
 
     /// Whether each store the caller points at exists, and when it last

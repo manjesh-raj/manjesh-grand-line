@@ -70,6 +70,7 @@ final class AppSettings {
         static let workspaceProfile = "fm.workspaceProfile"
         static let hiddenModules = "fm.hiddenModules"
         static let knowledgeSplitSettled = "fm.hiddenModules.knowledgeSplit"
+        static let devopsHubSettled = "fm.hiddenModules.devopsHub"
         static let homeTipsFirstShown = "fm.homeTips.firstShown"
         static let homeTipsDismissed = "fm.homeTips.dismissed"
         static let density = "fm.density"
@@ -865,6 +866,7 @@ final class AppSettings {
         if appLockEnabled == nil, !existing { appLockEnabled = false }
         // Before the profile below writes a set of this build's shape.
         settleKnowledgeSplit()
+        settleDevOpsHubAdded()
         if workspaceProfile == nil { setProfile(existing ? .operator : .personal) }
         // R5-UX-03: the week of Home tips starts at the first launch that
         // has them. A self-test or tour process never runs this, so its
@@ -921,6 +923,23 @@ final class AppSettings {
         } else {
             hidden.formUnion([.notebook, .readingList])
         }
+        hiddenModules = hidden
+    }
+
+    /// DevOps Hub joined the sidebar after hidden sets were stored. A stored
+    /// set names no `.devopsHub`, so read as it stands it would list the new
+    /// row in every sidebar, and a Personal set would no longer match its
+    /// profile (`WorkspaceProfile.matching`) and read as Custom. Settled once:
+    /// a Personal install hides it, as the profile does, and an Operator or
+    /// Custom one shows it. A set never stored is the profile's own, which
+    /// already has the new shape.
+    func settleDevOpsHubAdded() {
+        guard !defaults.bool(forKey: Keys.devopsHubSettled) else { return }
+        defaults.set(true, forKey: Keys.devopsHubSettled)
+        guard let stored = defaults.stringArray(forKey: Keys.hiddenModules) else { return }
+        var hidden = Set(stored.compactMap(WorkspaceModule.init(rawValue:)))
+        guard workspaceProfile == .personal else { return }
+        hidden.insert(.devopsHub)
         hiddenModules = hidden
     }
 

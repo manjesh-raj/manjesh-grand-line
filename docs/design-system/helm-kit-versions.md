@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 8.1.0 - DevOps Hub, a local project served and shown in Grand Line
+
+The design confirmed on the DevOps Hub board (`data/grand-line-devops-hub/`): a DevOps Hub row in Work with its local projects nested under it, and layout C for a project's page.
+No kit file changed. It is a minor release because the page is a new surface and the sidebar gained a row kind.
+
+- `WorkspaceSidebar` 3.0.0 → 3.1.0 (minor): DevOps Hub's projects are its children in the sidebar, drawn by the session row's own cell: a state dot (the ink at half strength while stopped, amber while starting, the good hue while serving, red when a start failed, a steady amber when the folder is missing), the name, and the port while it serves. The DevOps Hub row's badge is a red or amber dot for a failure or a missing folder, otherwise a quiet count of the projects serving, and nothing while all are stopped. A project row's menu starts, stops, restarts, opens in the browser, copies the address, opens Project Settings and shows the folder in Finder. A module row folded by hand stays folded across a rebuild. A module row with children no longer pushes its level's cells right by the disclosure's width: the chevron sits in the leading gutter, so a live session or a project never narrows the module names. DevOps Hub takes no ⌘ number, so Kubernetes keeps ⌘8 and Logs ⌘9.
+- `DevOps Hub (page)` none → 1.0.0 (new): layout C. Whenever there is no site to show (not started, starting, failed, folder not found) the page is a centred `HelmHeroColumn` in `.panel` over a dimmed preview of the site's own share image, with a checks card under it that says what Start checks or checked. The panel is the accent, red when a start failed and amber when the folder is missing, with a ring while the site loads. Running, the hero is a 44pt strip on `HelmHeroSurface`: a state dot, the address as a copy button, the uptime and files served, and Reload, Open in Browser, Restart and Stop as the kit's ghost pills. The site fills the rest of the page in a web view.
+
 ## 8.0.0 - The whole sidebar as a hero column (Sb-4)
 
 The captain's Sb-4 pick on the sidebar board: the app's own sidebar becomes the hero column Secrets (S-3) and Settings already wear.

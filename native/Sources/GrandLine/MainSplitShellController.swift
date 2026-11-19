@@ -235,6 +235,8 @@ final class MainSplitShellController: WorkspaceShellController {
     private var scrollerStyleObserver: NSObjectProtocol?
     private var dayChangeObserver: NSObjectProtocol?
     private var hiddenModulesObserver: NSObjectProtocol?
+    /// DevOps Hub's projects changing state (a start, a stop, a failure).
+    private var localProjectsObserver: NSObjectProtocol?
 
     override var namesThePageInTheTitleBar: Bool { true }
     override var clipboardHistoryController: ClipboardHistoryController? { clipboardHistory }
@@ -353,6 +355,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if let scrollerStyleObserver { NotificationCenter.default.removeObserver(scrollerStyleObserver) }
         if let dayChangeObserver { NotificationCenter.default.removeObserver(dayChangeObserver) }
         if let hiddenModulesObserver { NotificationCenter.default.removeObserver(hiddenModulesObserver) }
+        if let localProjectsObserver { NotificationCenter.default.removeObserver(localProjectsObserver) }
         if let focusTimerToken { workspace.focusTimer.unobserve(focusTimerToken) }
     }
 
@@ -551,6 +554,56 @@ final class MainSplitShellController: WorkspaceShellController {
         // sidebar module, and ⌘, and the app menu still reach it.
         sidebar.onLogOut = { [weak self] in self?.requestLogout() }
         sidebar.reload(sessions: workspace.hosts.sessions)
+        wireLocalProjects()
+    }
+
+    // MARK: DevOps Hub
+
+    /// The projects under DevOps Hub: a row's click opens its page, its menu
+    /// drives its server from whichever page is showing, and every change of
+    /// state repaints the rows. The page is not built for any of this: the
+    /// registry holds the state (GL-37).
+    private func wireLocalProjects() {
+        sidebar.onSelectProject = { [weak self] id in self?.openProject(id) }
+        sidebar.onProjectAction = { [weak self] id, action in self?.performProjectAction(action, on: id) }
+        localProjectsObserver = NotificationCenter.default.addObserver(
+            forName: LocalProjectRegistry.didChange, object: LocalProjectRegistry.shared, queue: .main
+        ) { [weak self] _ in self?.reloadLocalProjects() }
+        reloadLocalProjects()
+    }
+
+    private func reloadLocalProjects() {
+        let registry = LocalProjectRegistry.shared
+        let rows = registry.projects.map {
+            WorkspaceSidebarProject(id: $0.id, name: $0.name, state: registry.state(of: $0.id), port: $0.port)
+        }
+        sidebar.reload(projects: rows, shownProjectID: registry.lastShownProjectID)
+    }
+
+    private func openProject(_ id: String) {
+        workspace.devopsHub.show(projectID: id)
+        workspace.navigator.show(.devopsHub)
+        reloadLocalProjects()
+        refreshModuleChrome()
+    }
+
+    private func performProjectAction(_ action: WorkspaceSidebarProjectAction, on id: String) {
+        let registry = LocalProjectRegistry.shared
+        guard let project = registry.project(id) else { return }
+        switch action {
+        case .start: registry.start(id)
+        case .stop: registry.stop(id)
+        case .restart: registry.restart(id)
+        case .openInBrowser: WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
+        case .copyAddress:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
+        case .settings:
+            openProject(id)
+            workspace.devopsHub.presentSettings()
+        case .showInFinder: DevOpsHubController.showInFinder(project.folder)
+        case .separator: break
+        }
     }
 
     // MARK: The window
@@ -1237,6 +1290,11 @@ final class MainSplitShellController: WorkspaceShellController {
         let lit = litModule
         if showingHostPage {
             toolbar.setCrumb(group: module.title, module: hostPageLabel)
+        } else if module == .devopsHub, let project = LocalProjectRegistry.shared.lastShownProjectID
+            .flatMap(LocalProjectRegistry.shared.project) {
+            // A project is DevOps Hub's place the way a host is Console's:
+            // the crumb names the module and the project.
+            toolbar.setCrumb(group: module.title, module: project.name)
         } else {
             toolbar.setCrumb(group: lit.group?.title, module: lit.title)
         }
