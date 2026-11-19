@@ -1047,6 +1047,12 @@ final class Workspace {
             // no process between them.
             return Set(self.hosts.hostConsoles.filter { $0.value.hasLiveSession }.keys)
         }
+        // The Hosts hero card's rows: how long a session has been open, and
+        // the two verbs its pills run - the session switcher's own switch,
+        // and Recents' reconnect, which is the app's one `connectToHost`.
+        homeCanvas.hostSession = { [weak self] id in self?.hosts.sessions.session(for: id) }
+        homeCanvas.onSwitchToHostSession = { [weak self] id in self?.hosts.switchToSession(hostID: id) }
+        homeCanvas.onConnectHost = { [weak self] id in _ = self?.navigator.onReconnectHost?(id) }
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
         // vault's card reads this rather than constructing a store of its own
         // (`DaylightModuleSelfTest.checkCanvasConstructsNoStores` bans that,

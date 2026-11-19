@@ -320,6 +320,12 @@ enum ReviewTwoA11yPerfSelfTest {
         // wraps inside the card and leaves Refresh on it, rather than running
         // past the card and out of the window (found in the Larger renders).
         let canvas = shell.debugHomeCanvas
+        // The attention card lives on the hub's own page (no arranged
+        // cards): the sidebar layout's Home no longer draws it under the
+        // briefing hero, by the captain's call (Helm 7.0.0).
+        let arranged = canvas.cardLayout
+        canvas.cardLayout = nil
+        defer { canvas.cardLayout = arranged }
         var summary = ReviewTourLab.demoAttentionSummary(count: 4)
         summary.headline = "Two things are late, and point Grand Line at your firstmate home, and Claude is near "
             + "its spend cap, and two more are due today."
@@ -512,6 +518,11 @@ enum ReviewTwoA11yPerfSelfTest {
         print("\n-- R2-PERF-06: a health tick with nothing new does not recompose the attention card --")
         let canvas = shell.debugHomeCanvas
         let registry = ServiceHealthRegistry.shared
+        // The hub's own page, which still draws the attention card (see
+        // `checkTheSidebarFitsAtLarger`).
+        let arranged = canvas.cardLayout
+        canvas.cardLayout = nil
+        defer { canvas.cardLayout = arranged }
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
         // One tick to settle whatever the earlier cases left, then the one

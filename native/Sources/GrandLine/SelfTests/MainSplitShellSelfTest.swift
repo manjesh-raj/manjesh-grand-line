@@ -1190,16 +1190,24 @@ enum MainSplitShellSelfTest {
         }
         check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
         check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
-        let tiles = canvas.debugKPIStrip?.debugCells ?? []
-        check(tiles.map(\.debugCaption) == ["Tasks due today", "PRs ready to merge", "Services healthy", "Claude week"],
-              "Home's strip is \(tiles.map(\.debugCaption))", &ok)
-        check(canvas.debugKPIDestinations == [.shift, .review, .health, .console],
-              "Home's tiles open \(canvas.debugKPIDestinations)", &ok)
-        // Top to bottom: greeting, hero, strip.
-        if let strip = canvas.debugKPIStrip {
-            let heroTop = hero.convert(hero.bounds, to: nil).maxY
-            let stripTop = strip.convert(strip.bounds, to: nil).maxY
-            check(heroTop > stripTop, "the strip sits above the hero", &ok)
+        // The captain removed the band between the hero and the cards: no
+        // KPI tiles and no Needs attention card on Home's arranged space.
+        check(canvas.attentionCardHiddenForTests, "Home still draws the Needs attention card under the hero", &ok)
+        func findsCaption(_ view: NSView, _ words: String) -> Bool {
+            if !view.isHidden, let label = view as? NSTextField, label.stringValue == words { return true }
+            return view.subviews.contains { !$0.isHidden && findsCaption($0, words) }
+        }
+        for caption in ["Tasks due today", "PRs ready to merge", "Services healthy"] {
+            check(!findsCaption(canvas.view, caption), "Home still draws the \"\(caption)\" tile", &ok)
+        }
+        // The cards start right under the hero: one grid gap, no hole.
+        if let first = canvas.moduleCardsForTests.first {
+            let heroBottom = hero.convert(hero.bounds, to: nil).minY
+            let cardTop = first.convert(first.bounds, to: nil).maxY
+            check(abs(heroBottom - cardTop - HomeCanvasController.gridSpacing) < 1.5,
+                  "the first card sits \(heroBottom - cardTop)pt under the hero, want \(HomeCanvasController.gridSpacing)", &ok)
+        } else {
+            fail("Home's arranged space drew no cards", &ok)
         }
         canvas.setCustomizing(true)
         settle(shell)
@@ -2276,32 +2284,25 @@ enum MainSplitShellSelfTest {
         check(shell.sidebar.debugClick(.module(.settings)), "the Settings row cannot be clicked", &ok)
         settle(shell)
         check(shell.debugCurrentDestination == .settings, "the Settings row did not open Settings", &ok)
-        // The search pill, with room either side, between the header and
-        // Home - the divider since the feel pass dropped stage 6's rule.
+        // The captain removed the feel pass's search pill: the toolbar's
+        // Search is on every page. The list starts a plain gap under the
+        // header, and nothing in the sidebar is a second way into ⌘K.
         let root = shell.sidebar.view
         root.layoutSubtreeIfNeeded()
         let header = shell.sidebar.debugHeader.convert(shell.sidebar.debugHeader.bounds, to: root)
-        let pill = shell.sidebar.debugSearchPill.convert(shell.sidebar.debugSearchPill.bounds, to: root)
-        // The list's top, which is where Home sits until the list scrolls.
         guard let list = shell.sidebar.outlineView.enclosingScrollView else {
             fail("the sidebar list has no scroll view", &ok)
             return
         }
         let listFrame = list.convert(list.bounds, to: root)
-        let gapAbove = root.isFlipped ? pill.minY - header.maxY : header.minY - pill.maxY
-        let gapBelow = root.isFlipped ? listFrame.minY - pill.maxY : pill.minY - listFrame.maxY
-        check(abs(pill.height - WorkspaceSidebarSearchPill.height) < 0.5 && pill.width > header.width * 0.8,
-              "the search pill is \(pill.size), want a \(WorkspaceSidebarSearchPill.height)pt pill across the sidebar", &ok)
-        check(gapAbove >= WorkspaceSidebarController.pillGap - 0.5 && gapBelow >= WorkspaceSidebarController.pillGap - 0.5,
-              "the pill sits \(gapAbove)pt under the header and \(gapBelow)pt over Home, want at least \(WorkspaceSidebarController.pillGap) each", &ok)
-        // It opens the same palette the toolbar's Search does.
-        var searched = false
-        let previousSearch = shell.sidebar.onSearch
-        shell.sidebar.onSearch = { searched = true }
-        _ = shell.sidebar.debugSearchPill.performPrimaryAction()
-        shell.sidebar.onSearch = previousSearch
-        check(searched, "the search pill's press reaches nothing", &ok)
-        check(previousSearch != nil, "the shell never wired the search pill to the palette", &ok)
+        let gap = root.isFlipped ? listFrame.minY - header.maxY : header.minY - listFrame.maxY
+        check(abs(gap - WorkspaceSidebarController.headerGap) < 0.5,
+              "the list sits \(gap)pt under the header, want \(WorkspaceSidebarController.headerGap)", &ok)
+        func findsSearchWords(_ view: NSView) -> Bool {
+            if let label = view as? NSTextField, label.stringValue.lowercased().contains("search") { return true }
+            return view.subviews.contains(where: findsSearchWords)
+        }
+        check(!findsSearchWords(root), "the sidebar still draws a search field", &ok)
         // Log Out goes through the one confirmation, then the app delegate.
         var loggedOut = false
         let previous = shell.onLogoutRequested

@@ -196,6 +196,14 @@ final class HomeCanvasController: NSViewController {
     var consoleTabsProvider: (() -> [HelmModulePeekRow])?
     /// Which saved hosts have a live dedicated page, for the Hosts module.
     var connectedHostIDs: (() -> Set<UUID>)?
+    /// The Hosts hero card's live sessions, for how long each has been open.
+    /// A closure for `connectedHostIDs`' reason: this page never holds the
+    /// session registry.
+    var hostSession: ((UUID) -> HostSession?)?
+    /// The Hosts hero card's pills: Switch to a live session, or connect to a
+    /// saved host through the app's one `connectToHost` path.
+    var onSwitchToHostSession: ((UUID) -> Void)?
+    var onConnectHost: ((UUID) -> Void)?
     /// The credential vault's state for its module card, as a closure for
     /// `connectedHostIDs`' own reason: this page must never construct a
     /// `CredentialVaultStore` (whose `init` reaches the production git sync -
@@ -330,10 +338,16 @@ final class HomeCanvasController: NSViewController {
     // audit's items 1 to 3: the prototype's Home, drawn natively, on Home's
     // own space in the sidebar layout. Top to bottom: a greeting as the page
     // title with a one-line summary, the Morning briefing as a gradient hero
-    // with the services ring inside it, a strip of four KPI tiles, then the
-    // attention card and the captain's cards as before. The floating bar's
-    // hand-placed hub is left exactly as it is (`showsArrangedCards` is
+    // with the services ring inside it, then the captain's cards. The floating
+    // bar's hand-placed hub is left exactly as it is (`showsArrangedCards` is
     // false there).
+    //
+    // The band the feel pass drew between the hero and the cards - four KPI
+    // tiles (tasks due today, PRs ready to merge, services healthy, Claude's
+    // week) and the Needs attention card with its Refresh - is gone from this
+    // page: the captain removed it. The hero and the cards below already carry
+    // each of those figures, so the band repeated them. The attention card
+    // stays on the floating bar's hub, where it is column 1.
     //
     // Rule 1 holds: every figure here is one this page already reads for a
     // card (the injected `ShiftStore`, the pushed fleet and quota, the health
@@ -344,9 +358,6 @@ final class HomeCanvasController: NSViewController {
     private let greetingSummary = NSTextField(labelWithString: "")
     private let greetingHeader = NSStackView()
     private let briefingHero = HelmHeroCard()
-    private let kpiStrip = HelmKPIStrip(density: .boxed)
-    /// Where each KPI tile goes when pressed, in the strip's order.
-    private var kpiDestinations: [RailDestination] = []
     /// The content's top edge: S03's first-content line, lifted by the
     /// greeting's own ink inset while the greeting is the first thing drawn
     /// (`greetingInkInset`).
@@ -645,7 +656,6 @@ final class HomeCanvasController: NSViewController {
         buildFeelPass()
         stack.addArrangedSubview(greetingHeader)
         stack.addArrangedSubview(briefingHero)
-        stack.addArrangedSubview(kpiStrip)
         stack.addArrangedSubview(heroCard)
         stack.addArrangedSubview(attentionCard)
         stack.addArrangedSubview(tipRow)
@@ -727,7 +737,6 @@ final class HomeCanvasController: NSViewController {
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             greetingHeader.widthAnchor.constraint(equalTo: stack.widthAnchor),
             briefingHero.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            kpiStrip.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         tipRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let top = stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin)
@@ -1016,18 +1025,12 @@ final class HomeCanvasController: NSViewController {
         greetingHeader.setClippingResistancePriority(.defaultLow, for: .horizontal)
         greetingHeader.isHidden = true
         briefingHero.isHidden = true
-        kpiStrip.isHidden = true
-        kpiStrip.onActivate = { [weak self] index in
-            guard let self, self.kpiDestinations.indices.contains(index) else { return }
-            self.onOpenDestination?(self.kpiDestinations[index])
-        }
     }
 
-    /// The greeting, the hero and the strip, on Home's arranged space only.
+    /// The greeting and the hero, on Home's arranged space only.
     private func renderFeelPass(now: Date = Date()) {
         let on = showsArrangedCards
         greetingHeader.isHidden = !on
-        kpiStrip.isHidden = !on
         briefingHero.isHidden = !briefingIsHero
         stackTop?.constant = Self.contentTopMargin - (on ? Self.greetingInkInset : 0)
         guard on else { return }
@@ -1052,7 +1055,6 @@ final class HomeCanvasController: NSViewController {
         greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
 
         if briefingIsHero { renderBriefingHero(fleetNeedsYou: facts.fleetNeedsYou != nil, healthShown: healthShown) }
-        renderKPIs(counts: counts)
     }
 
     private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool) {
@@ -1096,27 +1098,10 @@ final class HomeCanvasController: NSViewController {
     }
     @objc private func heroOpenHealth() { onOpenDestination?(.health) }
 
-    /// The four tiles, the feasibility audit's own: tasks due today, PRs
-    /// ready to merge, services healthy and Claude's week. A profile that
-    /// hides the crew or Health loses those tiles rather than reporting on a
-    /// module the sidebar does not show, and the strip carries what is left.
-    private func renderKPIs(counts: HomeTaskCounts?) {
-        let tiles = HomeKPITiles.tiles(
-            tasks: hiddenModules.contains(.tasks) ? nil : .init(counts: counts),
-            prs: hiddenModules.contains(.crew) ? nil : .init(reading: prReading, open: (mergedPRs ?? lastGoodPRs)?.count),
-            health: hiddenModules.contains(.health) ? nil : healthSummary,
-            claude: hiddenModules.contains(.crew) ? nil : .init(week: quotaSnapshot?.weekly, failure: quotaFailure))
-        kpiDestinations = tiles.map(\.opens)
-        kpiStrip.isHidden = tiles.isEmpty
-        kpiStrip.configure(tiles.map(\.item))
-    }
-
     #if FM_SELFTESTS
     var debugGreetingTitle: String { greetingHeader.isHidden ? "" : greetingTitle.stringValue }
     var debugGreetingSummary: String { greetingHeader.isHidden ? "" : greetingSummary.stringValue }
     var debugBriefingHero: HelmHeroCard? { briefingHero.isHidden ? nil : briefingHero }
-    var debugKPIStrip: HelmKPIStrip? { kpiStrip.isHidden ? nil : kpiStrip }
-    var debugKPIDestinations: [RailDestination] { kpiDestinations }
     #endif
 
     // MARK: R5-UX-03 - Things you can do
@@ -1321,8 +1306,10 @@ final class HomeCanvasController: NSViewController {
     /// digest instead of filtering `activeTasks` here.
     private func renderAttention() {
         // Only the hub itself. The other spaces are filters over the module
-        // grid and have no day of their own to report on.
-        guard space == .overview else {
+        // grid and have no day of their own to report on. Home's arranged
+        // cards (the sidebar layout) do not draw it either: the captain
+        // removed the band between the briefing hero and the cards.
+        guard space == .overview, !showsArrangedCards else {
             attentionCard.isHidden = true
             return
         }
@@ -2966,7 +2953,6 @@ final class HomeCanvasController: NSViewController {
             attributes: HelmType.displayTitleAttributes(color: HelmTheme.nsColor(theme.chromeInkHex)))
         greetingSummary.font = .systemFont(ofSize: HelmType.scaled(Self.greetingSummarySize))
         greetingSummary.textColor = HelmTheme.mutedInk(theme)
-        kpiStrip.applyTheme(theme)
         // Plain `body()` on every space now. The step up to `sectionTitle()`
         // belonged to the hub's hero band, whose detail line carried real
         // numbers; the four spaces that still draw this row only name
@@ -3047,7 +3033,7 @@ final class HomeCanvasController: NSViewController {
         case .mergeQueue: fillMergeQueue(&content)
         case .console: fillConsole(&content)
         case .health: fillHealth(&content)
-        case .hosts: fillHosts(&content)
+        case .hosts: fillHosts(&content, placement: placement)
         case .updates: fillUpdates(&content)
         case .bootstrap: fillBootstrap(&content)
         case .automation: fillAutomation(&content)
@@ -4279,11 +4265,17 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
-    private func fillHosts(_ content: inout HelmModuleCard.Content) {
+    private func fillHosts(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
         // `fm/grandline-rail-icons-batch2`: the captain's own hosts
         // artwork, replacing the plain `server.rack` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.hosts` case.
         content.artwork = HostsIcon.image
+        // The captain's hero, wherever the card is a shelf card - the Claude
+        // and Fleet cards' rule. The floating bar's fitted hub keeps its rows.
+        if case let .shelf(width) = placement {
+            fillHostsHero(&content, width: width)
+            return
+        }
         let hosts = sources.hostStore.hosts
         let connected = connectedHostIDs?() ?? []
         content.subtitle = "\(hosts.count) saved"
@@ -4298,6 +4290,100 @@ final class HomeCanvasController: NSViewController {
                               value: connected.contains(host.id) ? "live" : "idle")
         }
         content.setBoundedPeekRows(Array(rows), total: hosts.count)
+    }
+
+    // MARK: The Hosts hero card
+
+    /// What the Hosts hero says. `static` and pure, so a suite can assert
+    /// every state from fabricated hosts.
+    struct HostsHero: Equatable {
+        let headline: String
+        let body: String
+        let ring: HelmModuleCard.HeroRing?
+        /// "Recent", or "Saved hosts" before anything has been connected to.
+        let sectionTitle: String
+        /// The rows' hosts, in order.
+        let hostIDs: [UUID]
+        /// GL-14: the hosts file could not be read, so the colour dims.
+        let isStale: Bool
+    }
+
+    /// How many hosts the card lists.
+    static let hostsHeroRowLimit = 3
+
+    static func hostsHero(hosts: [Host], readable: Bool, live: [UUID: Date],
+                          now: Date = Date()) -> HostsHero {
+        guard readable else {
+            return HostsHero(headline: "Saved hosts could not be read.",
+                             body: "Your hosts file is still on disk. Open \(PlaceName.of(.hosts)) to see why.",
+                             ring: nil, sectionTitle: "Recent", hostIDs: [], isStale: true)
+        }
+        let liveHosts = hosts.filter { live[$0.id] != nil }
+            .sorted { (live[$0.id] ?? now) < (live[$1.id] ?? now) }
+        let recent = HostsController.recentHosts(hosts, limit: hostsHeroRowLimit)
+        let headline: String
+        let body: String
+        if liveHosts.count == 1, let host = liveHosts.first {
+            headline = "1 live session, on \(host.label)."
+            body = "Open for \(ConnectionsHeroWords.duration(since: live[host.id] ?? now, now: now))."
+        } else if liveHosts.count > 1 {
+            headline = "\(liveHosts.count) live sessions."
+            let names = liveHosts.prefix(2).map(\.label)
+            body = liveHosts.count > 2
+                ? "\(names.joined(separator: ", ")) and \(liveHosts.count - 2) more."
+                : "\(names.joined(separator: " and "))."
+        } else if hosts.isEmpty {
+            headline = "No saved hosts yet."
+            body = "Add a host in \(PlaceName.of(.hosts)) and it connects from here in a click."
+        } else if let last = recent.first, let at = last.lastConnectedAt {
+            headline = "No live session."
+            body = "Last connected to \(last.label) \(HostsController.relativeText(at, now: now))."
+        } else {
+            headline = "No live session."
+            body = "Pick a host to connect."
+        }
+        // Recent first; before anything has been connected to, the saved
+        // hosts in their own order, so the card is never a list of nothing.
+        let shown = recent.isEmpty ? Array(hosts.prefix(hostsHeroRowLimit)) : recent
+        let ring = hosts.isEmpty ? nil : HelmModuleCard.HeroRing(
+            fraction: Double(liveHosts.count) / Double(hosts.count), label: "\(liveHosts.count)/\(hosts.count)",
+            caption: "hosts online", spoken: "\(liveHosts.count) of \(hosts.count) saved hosts online", state: .ok)
+        return HostsHero(headline: headline, body: body, ring: ring,
+                         sectionTitle: recent.isEmpty ? "Saved hosts" : "Recent",
+                         hostIDs: shown.map(\.id), isStale: false)
+    }
+
+    /// The Hosts card as the full hero with its rows: the session verdict,
+    /// the ring of hosts online, and the three hosts connected last, each
+    /// with Switch (a live session) or Connect.
+    private func fillHostsHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
+        let hosts = sources.hostStore.hosts
+        let connected = connectedHostIDs?() ?? []
+        var live: [UUID: Date] = [:]
+        for id in connected { live[id] = hostSession?(id)?.startedAt ?? Date() }
+        let hero = Self.hostsHero(hosts: hosts, readable: sources.hostStore.loadStatus == .clean, live: live)
+        content.subtitle = "\(hosts.count) saved"
+        if !connected.isEmpty { content.chip = .ok("\(connected.count) live") }
+        let byID = Dictionary(hosts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let rows: [HelmModuleCard.HeroListRow] = hero.hostIDs.compactMap { id in
+            guard let host = byID[id] else { return nil }
+            if connected.contains(id) {
+                return HelmModuleCard.HeroListRow(
+                    symbol: host.iconSymbol, title: host.label, subtitle: host.subtitle, subtitleIsCode: true,
+                    actionTitle: "Switch", actionTooltip: "Switch to \(host.label)'s session",
+                    handler: { [weak self] in self?.onSwitchToHostSession?(id) })
+            }
+            return HelmModuleCard.HeroListRow(
+                symbol: host.iconSymbol, title: host.label, subtitle: host.subtitle, subtitleIsCode: true,
+                actionTitle: nil, actionSymbol: "bolt.fill", actionTooltip: "Connect to \(host.label)",
+                handler: { [weak self] in self?.onConnectHost?(id) })
+        }
+        content.body = .heroList(HelmModuleCard.HeroList(
+            headline: hero.headline, body: hero.body, ring: hero.ring, sectionTitle: hero.sectionTitle,
+            rows: rows, emptyText: hosts.isEmpty ? "Nothing saved yet" : "Nothing connected yet",
+            layout: HelmModuleCard.HeroLayout(cardWidth: width)))
+        content.hero = heroTone(for: .hosts, dimmed: hero.isStale)
+        content.headerMenu = styleMenu(for: .hosts)
     }
 
     // MARK: The four Setup sub-pages

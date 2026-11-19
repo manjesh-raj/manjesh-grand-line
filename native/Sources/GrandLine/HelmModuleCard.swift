@@ -421,6 +421,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// report, or above it when the card is narrow. Home's Claude usage
         /// card (the captain's "split hero"). Set `Content.hero` with it.
         case heroSplit(HeroSplit)
+        /// 1.4.0: the full hero with a titled list of rows on the gradient,
+        /// each with its own pill - Home's Hosts card, in the Connections
+        /// hero column's language (`HelmHeroRow`). Set `Content.hero` with it.
+        case heroList(HeroList)
     }
 
     // MARK: The hero (1.3.0)
@@ -463,6 +467,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
             let accent = accent(in: theme)
             return HelmHeroSurface.palette(accent: isDimmed ? HelmHeroSurface.dimmed(accent) : accent)
+        }
+
+        /// 1.4.0: the palette for a hero whose second lines are the ink at
+        /// `quietInk` alpha (`HelmHeroSurface.palette(accent:quietInk:)`).
+        func palette(in theme: HelmTheme, quietInk: Double) -> HelmHeroSurface.Palette {
+            let accent = accent(in: theme)
+            return HelmHeroSurface.palette(accent: isDimmed ? HelmHeroSurface.dimmed(accent) : accent,
+                                           quietInk: quietInk)
         }
     }
 
@@ -545,6 +557,42 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             case .standard: return cardWidth - standardPanelWidth
             case .wide: return cardWidth - widePanelWidth
             }
+        }
+    }
+
+    /// 1.4.0: `.heroList`'s payload. The words and ring of `.heroSummary`, and
+    /// in place of its figures a titled run of `HelmHeroRow`s.
+    struct HeroList {
+        let headline: String
+        let body: String?
+        let ring: HeroRing?
+        /// The rows' small-caps title ("Recent").
+        let sectionTitle: String
+        let rows: [HeroListRow]
+        /// What the list says when it has no rows.
+        let emptyText: String
+        let layout: HeroLayout
+    }
+
+    /// One row of `.heroList`: a glyph tile, a title, a quiet second line and
+    /// a ghost pill that runs `handler`. The pill is a real control inside the
+    /// card, so its click never also opens the card (gotcha (20)).
+    struct HeroListRow: CustomStringConvertible {
+        let symbol: String
+        let title: String
+        let subtitle: String?
+        var subtitleIsCode = false
+        /// The pill's words, or `nil` for a glyph-only pill (`actionSymbol`).
+        let actionTitle: String?
+        var actionSymbol: String? = nil
+        /// The pill's hover text, and what VoiceOver reads for it.
+        let actionTooltip: String
+        let handler: () -> Void
+
+        /// Everything but the handler, for `Content.layoutSignature`.
+        var description: String {
+            [symbol, title, subtitle ?? "-", "\(subtitleIsCode)", actionTitle ?? "-", actionSymbol ?? "-",
+             actionTooltip].joined(separator: "|")
         }
     }
 
@@ -910,6 +958,11 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// A narrow split card's panel: the band runs from the card's top to
     /// this view's bottom, plus the panel's inset.
     private var heroPanelAnchor: NSView?
+    /// `.heroList`'s rows, its quiet section title, and each pill's handler
+    /// by the pill's tag.
+    private var heroListRows: [HelmHeroRow] = []
+    private var heroQuietLabels: [NSTextField] = []
+    private var heroListHandlers: [() -> Void] = []
 
     /// `Content.footer`'s strip, built once with the rest of the chrome and
     /// hidden when the content carries none - the same arrangement as
@@ -1548,6 +1601,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         heroRings.removeAll()
         heroWraps.removeAll()
         heroPanelAnchor = nil
+        heroListRows.removeAll()
+        heroQuietLabels.removeAll()
+        heroListHandlers.removeAll()
 
         let content: NSView
         switch body {
@@ -1578,6 +1634,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             content = buildHeroSummary(summary)
         case let .heroSplit(split):
             content = buildHeroSplit(split)
+        case let .heroList(list):
+            content = buildHeroList(list)
         }
 
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -2410,7 +2468,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private var heroRegion: HeroRegion? {
         guard content?.hero != nil, let body = content?.body else { return nil }
         switch body {
-        case .heroSummary:
+        case .heroSummary, .heroList:
             return .card
         case let .heroSplit(split):
             switch split.layout {
@@ -2707,6 +2765,102 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         return heroRow([panel, column], alignment: .top, spacing: Self.horizontalInset * 2)
     }
 
+    /// `.heroList`: the full hero with rows. Narrow stacks the headline beside
+    /// a small ring, the body, then the rows. Standard puts the words beside
+    /// the 86pt ring and the rows under both. Wide lays the words, the rows and
+    /// the ring out side by side.
+    private func buildHeroList(_ list: HeroList) -> NSView {
+        let title = NSTextField(labelWithString: list.sectionTitle.uppercased())
+        title.font = .systemFont(ofSize: HelmType.scaled(HelmHeroColumn.sectionTitleSize), weight: .semibold)
+        title.setAccessibilityRole(.staticText)
+        title.setAccessibilityLabel(list.sectionTitle)
+        heroQuietLabels.append(title)
+        var listViews: [NSView] = [title]
+        if list.rows.isEmpty {
+            let empty = HelmHeroRow(leading: .symbol("clock"), title: list.emptyText, subtitle: nil)
+            heroListRows.append(empty)
+            listViews.append(empty)
+        }
+        for (index, row) in list.rows.enumerated() {
+            let pill = HelmButton(title: row.actionTitle ?? "", variant: .secondary, size: .small,
+                                  symbol: row.actionTitle == nil ? row.actionSymbol : nil,
+                                  target: self, action: #selector(heroListActionTapped(_:)))
+            pill.tag = index
+            pill.toolTip = row.actionTooltip
+            pill.setAccessibilityLabel(row.actionTooltip)
+            heroListHandlers.append(row.handler)
+            let view = HelmHeroRow(leading: .symbol(row.symbol), title: row.title, subtitle: row.subtitle,
+                                   subtitleIsCode: row.subtitleIsCode, subtitleTruncation: .byTruncatingMiddle,
+                                   trailing: pill)
+            view.showsTopRule = index > 0
+            heroListRows.append(view)
+            listViews.append(view)
+        }
+        let rows = verticalStack(listViews, spacing: 0)
+        rows.setCustomSpacing(HelmMetrics.s1 + 2, after: title)
+        for view in listViews where view !== title {
+            view.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
+        }
+
+        switch list.layout {
+        case .narrow:
+            let ringSide: CGFloat = 60
+            let headline = heroLabel(list.headline, size: 20, weight: .bold, maxLines: 2) {
+                $0 - (list.ring == nil ? 0 : ringSide + HelmMetrics.s3)
+            }
+            var top: [NSView] = [headline]
+            if let ring = list.ring { top.append(heroRingView(ring, side: ringSide, caption: .none)) }
+            var stacked: [NSView] = [heroRow(top, alignment: .centerY, spacing: HelmMetrics.s3)]
+            if let body = list.body, !body.isEmpty {
+                stacked.append(heroLabel(body, size: 12.5, maxLines: 3) { $0 })
+            }
+            stacked.append(rows)
+            let stack = verticalStack(stacked, spacing: HelmMetrics.s2 + 2)
+            stack.setCustomSpacing(HelmMetrics.s4, after: stacked[stacked.count - 2])
+            rows.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            return stack
+
+        case .standard:
+            let ringColumn = list.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
+                                                         captionWidth: 130) }
+            let reserved = ringColumn == nil ? 0 : 130 + HelmMetrics.s4
+            var words: [NSView] = [heroLabel(list.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                             maxLines: 2) { $0 - reserved }]
+            if let body = list.body, !body.isEmpty {
+                words.append(heroLabel(body, size: HelmHeroCard.bodySize, maxLines: 3) { $0 - reserved })
+            }
+            let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
+            let top = heroRow([text] + [ringColumn].compactMap { $0 }, alignment: .top, spacing: HelmMetrics.s4)
+            let stack = verticalStack([top, rows], spacing: HelmMetrics.s4)
+            rows.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            return stack
+
+        case .wide:
+            let ringColumn = list.ring.map { heroRingView($0, side: HelmRingGauge.heroSide, caption: .below,
+                                                         captionWidth: 150) }
+            let textWidth: CGFloat = 380
+            var words: [NSView] = [heroLabel(list.headline, size: HelmHeroCard.titleSize, weight: .bold,
+                                             maxLines: 2) { min(textWidth, $0) }]
+            if let body = list.body, !body.isEmpty {
+                words.append(heroLabel(body, size: HelmHeroCard.bodySize, maxLines: 3) { min(textWidth, $0) })
+            }
+            let text = verticalStack(words, spacing: HelmMetrics.s1 + 2)
+            let cap = text.widthAnchor.constraint(equalToConstant: textWidth)
+            cap.priority = HelmDaylightPriority.contentTie
+            cap.isActive = true
+            // The rows take what the words and the ring leave.
+            rows.setHuggingPriority(.defaultLow, for: .horizontal)
+            let row = heroRow([text, rows] + [ringColumn].compactMap { $0 }, alignment: .top,
+                              spacing: HelmMetrics.s6)
+            return verticalStack([row], spacing: 0)
+        }
+    }
+
+    @objc private func heroListActionTapped(_ sender: NSButton) {
+        guard heroListHandlers.indices.contains(sender.tag) else { return }
+        heroListHandlers[sender.tag]()
+    }
+
     @objc private func headerMenuTapped() {
         guard let menu = headerMenuProvider?() else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: menuButton.bounds.height + HelmMetrics.s1), in: menuButton)
@@ -2793,6 +2947,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     var debugHeroInkLabels: [NSTextField] { heroInkLabels }
     var debugHeroRings: [HelmRingGauge] { heroRings.map(\.gauge) }
     var debugHeroPanelAnchor: NSView? { heroPanelAnchor }
+    /// 1.4.0: `.heroList`'s rows, and its section title.
+    var debugHeroListRows: [HelmHeroRow] { heroListRows }
+    var debugHeroQuietLabels: [NSTextField] { heroQuietLabels }
     var debugTitleLabel: NSTextField { titleLabel }
     var debugSubtitleLabel: NSTextField { subtitleLabel }
     var debugChipLabel: NSTextField { chipLabel }
@@ -3025,7 +3182,14 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             kpiStrip?.heroInk = nil
             return
         }
-        let palette = tone.palette(in: theme)
+        // `.heroList`'s second lines are the ink at the column's quiet alpha,
+        // so it takes the palette deepened for that (`HelmHeroColumn`'s rule).
+        let palette: HelmHeroSurface.Palette
+        if case .heroList? = content?.body {
+            palette = tone.palette(in: theme, quietInk: Double(HelmHeroColumn.quietInkAlpha))
+        } else {
+            palette = tone.palette(in: theme)
+        }
         heroSurface.apply(palette)
         let ink = HelmContrast.color(palette.ink)
 
@@ -3056,6 +3220,8 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             gauge.applyTheme(theme, hue: content?.hue ?? .blue)
         }
         if case .heroSummary? = content?.body { kpiStrip?.heroInk = ink }
+        for label in heroQuietLabels { label.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha) }
+        for row in heroListRows { HelmHeroColumn.applyInk(ink, to: row) }
     }
 
     /// The one place `.usageReport` turns a `HelmModuleRowState` into **text**
@@ -3723,6 +3889,8 @@ final class HelmRingGauge: NSView {
     #if FM_SELFTESTS
     /// S11: the arc's painted colour, after `applyTheme`.
     var debugArcColor: CGColor? { value.strokeColor }
+    /// The centre label as drawn.
+    var debugLabel: String { label.stringValue }
     #endif
 }
 

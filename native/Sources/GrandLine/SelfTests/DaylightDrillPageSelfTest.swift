@@ -99,7 +99,9 @@ enum DaylightDrillPageSelfTest {
            !label.stringValue.isEmpty, !label.isHidden {
             found.append(label)
         }
-        for sub in view.subviews { found += labels(in: sub, atLeast: points) }
+        // A hidden subtree draws nothing: the floating bar's Follow-ups lane
+        // keeps the sidebar layout's T-4 band built, inside its hidden card.
+        for sub in view.subviews where !sub.isHidden { found += labels(in: sub, atLeast: points) }
         return found
     }
 

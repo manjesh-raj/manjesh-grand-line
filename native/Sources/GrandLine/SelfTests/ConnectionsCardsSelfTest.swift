@@ -532,6 +532,16 @@ enum ConnectionsCardsSelfTest {
             grid.select(key: first.id.uuidString)
             shell.setInspectorShown(true)
             settle(shell)
+            // The inspector slides open and the hero column's width rule
+            // answers a run-loop turn or more later; a busy CI runner needs
+            // more than `settle`'s three turns (measured on PR 610's shard 3,
+            // the same timing ReviewTwoA11yPerfSelfTest waits out for Health).
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline, WorkspaceMotion.debugPaneMotionsInFlight > 0
+                    || (width == 1512 && hosts.splitPage?.isSidebarCollapsed != true) {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            settle(shell)
             checkGeometry("at \(width), inspector open")
             check(!shell.debugInspectorIsCollapsed, "H7 at \(width): the inspector did not open", &ok)
             // The grid follows the column it is given. At 1512 opening the

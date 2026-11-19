@@ -163,18 +163,15 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     var onEndSession: ((UUID) -> Void)?
     var onConnectHost: (() -> Void)?
     var onLogOut: (() -> Void)?
-    /// The search pill: the ⌘K palette, the same one the toolbar's Search
-    /// opens (the feel pass's item 4).
-    var onSearch: (() -> Void)?
 
     let outlineView = WorkspaceSidebarOutlineView()
     private let scrollView = NSScrollView()
+    /// The account header. The feel pass's "Search or jump to" pill sat
+    /// under it until the captain removed it: the toolbar's Search (and ⌘K)
+    /// is on every page, so the sidebar's copy of it was a second entry
+    /// point to the same palette. A plain gap now separates the header from
+    /// Home (`headerGap`).
     private let header = WorkspaceSidebarHeader()
-    /// The feel pass's item 4: "Search or jump to", under the account
-    /// header, the prototype's sidebar search pill. It is also the divider
-    /// between the header and Home: stage 6's 1pt rule did that job, and the
-    /// captain dropped it for the pill rather than draw both.
-    private let searchPill = WorkspaceSidebarSearchPill()
     private let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("workspace.sidebar.column"))
 
     private var roots: [WorkspaceSidebarItem] = []
@@ -213,9 +210,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         header.translatesAutoresizingMaskIntoConstraints = false
         header.onClick = { [weak self] in self?.showAccountMenu() }
         root.addSubview(header)
-        searchPill.translatesAutoresizingMaskIntoConstraints = false
-        searchPill.onClick = { [weak self] in self?.onSearch?() }
-        root.addSubview(searchPill)
 
         column.resizingMask = .autoresizingMask
         outlineView.addTableColumn(column)
@@ -253,12 +247,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s2),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s2),
 
-            // The pill sits between two equal gaps under the header, inset
-            // like the rows' own wash so its edges line up with the list's.
-            searchPill.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.pillGap),
-            searchPill.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: HelmMetrics.s3),
-            searchPill.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s3),
-            scrollView.topAnchor.constraint(equalTo: searchPill.bottomAnchor, constant: Self.pillGap),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: Self.headerGap),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -279,8 +268,8 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         rebuild()
     }
 
-    /// The space above and below the search pill.
-    static let pillGap: CGFloat = HelmMetrics.s1 + 2
+    /// The space between the account header and the list's first row.
+    static let headerGap: CGFloat = HelmMetrics.s2
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
@@ -650,7 +639,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     private func applyTheme(_ theme: HelmTheme) {
         header.applyTheme(theme)
-        searchPill.applyTheme(theme)
         guard isViewLoaded else { return }
         // R2-PERF-02: a theme change repaints the rows it can see, in place,
         // the way `setSignals` repaints a badge. It used to reload the list -
@@ -747,7 +735,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         return true
     }
     var debugHeader: WorkspaceSidebarHeader { header }
-    var debugSearchPill: WorkspaceSidebarSearchPill { searchPill }
     /// The cell drawn for `entry`, scrolled into view first - the way the
     /// list draws a row the captain scrolls to.
     /// The drawn height of `entry`'s row, or nil when it has none.
@@ -1382,85 +1369,5 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     #if FM_SELFTESTS
     var debugTitle: String { title.stringValue }
     var debugSubtitle: String { subtitle.stringValue }
-    #endif
-}
-
-/// The sidebar's search pill (the feel pass's item 4): a magnifier, "Search
-/// or jump to" and the ⌘K keycap, on a quiet fill that deepens under the
-/// pointer. A press opens the ⌘K palette - the same entry point the
-/// toolbar's Search and the menu item reach, so there is still one search.
-///
-/// A `HoverHighlightView`, so it is a real button to VoiceOver and the
-/// keyboard (GL-16) and takes the app's eased hover fill.
-final class WorkspaceSidebarSearchPill: HoverHighlightView {
-    static let height: CGFloat = 28
-    static let placeholder = "Search or jump to"
-    /// The page ink's share of the resting fill; the hover takes
-    /// `WorkspaceSidebarHeader.hoverAlpha` on top.
-    static let restAlpha: CGFloat = 0.06
-    /// The prototype's 13pt placeholder. A field's text, not a row's, so the
-    /// sidebar's Large row sizes do not apply to it.
-    static let textSize: CGFloat = 13
-
-    private let glyph = NSImageView()
-    private let label = NSTextField(labelWithString: WorkspaceSidebarSearchPill.placeholder)
-    private let keys = HelmKeyHint(keys: [HelmKeyHint.command, "K"])
-    var onClick: (() -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        cornerRadius = HelmMetrics.rControl
-        pressScale = HelmButton.pressScale
-        accessibilityLabelOverride = "Search"
-        toolTip = "Search and commands (\u{2318}K)"
-        glyph.image = HelmSymbol.image("magnifyingglass", pointSize: HelmType.scaled(Self.textSize), weight: .regular)
-        label.font = .systemFont(ofSize: HelmType.scaled(Self.textSize))
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for view in [glyph, label, keys] as [NSView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-        }
-        glyph.setContentHuggingPriority(.required, for: .horizontal)
-        keys.setContentHuggingPriority(.required, for: .horizontal)
-        keys.setContentCompressionResistancePriority(.required, for: .horizontal)
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: Self.height),
-            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2 + 2),
-            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: HelmMetrics.s2),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            keys.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s2),
-            keys.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
-            keys.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    @objc private func clicked() { onClick?() }
-
-    func applyTheme(_ theme: HelmTheme) {
-        let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
-        let panel = HelmContrast.components(HelmTheme.sidePanelFill(theme))
-        // Flattened over the panel, so the text's contrast below is measured
-        // against what is really drawn.
-        let rest = HelmContrast.color(HelmContrast.mix(ink, panel, Double(Self.restAlpha)))
-        let hover = HelmContrast.color(HelmContrast.mix(ink, panel, Double(Self.restAlpha + WorkspaceSidebarHeader.hoverAlpha)))
-        normalColor = rest
-        hoverColor = hover
-        // Legible over the deeper of the two fills, so hovering never takes
-        // the words under the floor.
-        let muted = HelmContrast.legible(HelmTheme.mutedInk(theme), over: hover)
-        label.textColor = muted
-        glyph.contentTintColor = muted
-        keys.applyTheme(theme)
-    }
-
-    #if FM_SELFTESTS
-    var debugLabelColor: NSColor? { label.textColor }
-    var debugRestFill: NSColor { normalColor }
-    var debugHoverFill: NSColor { hoverColor }
     #endif
 }

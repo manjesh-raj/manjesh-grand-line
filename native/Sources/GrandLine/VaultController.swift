@@ -154,6 +154,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
         .init(id: "launcher", title: "Launcher", width: 260, minWidth: 180, flexible: true),
         .init(id: "status", title: "Status", width: 170),
     ], actionsWidth: 172)
+    /// S-1 on the page-redesign board, which the captain kept for this tab:
+    /// the launchers' verdict on a gradient beside the launchers themselves
+    /// (`VaultHeroSplit.swift`). In the sidebar layout it stands in for the
+    /// attention banner and the Verified Launchers table.
+    private lazy var heroSplit = VaultHeroSplitView()
     private var isLoadingSnapshot = false
     private var isRecheckingTool = false
     var hasLoadedOnce = false
@@ -827,6 +832,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
         if drawsSidebarLayout {
             secretsTable.applyTheme(theme)
             toolsTable.applyTheme(theme)
+            // The amber tone is the theme's own, so the card is re-filled.
+            renderHeroSplit()
         }
         recipePanel.applyTheme(theme)
         // Re-derive from the *current* theme, not whatever theme was active
@@ -911,6 +918,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
     var debugToolsTable: HelmDataTable { toolsTable }
+    var debugHeroSplit: VaultHeroSplitView? { drawsSidebarLayout ? heroSplit : nil }
     #endif
 }
 
@@ -1342,9 +1350,15 @@ extension VaultController: SidebarLayoutAdopting {
             panel.removeFromSuperview()
             table.sizesToFitRows = true
             table.card.translatesAutoresizingMaskIntoConstraints = false
+            // S-1: the launchers are the split card's rows, so their table
+            // is built and kept current but not drawn.
+            guard table !== toolsTable else { continue }
             contentStack.insertArrangedSubview(table.card, at: index)
             table.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         }
+        // S-1's split card, first on the page, where the banner was.
+        contentStack.insertArrangedSubview(heroSplit, at: 0)
+        heroSplit.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         secretsTable.accessibilityName = "Secrets"
         toolsTable.accessibilityName = "Verified launchers"
         // The same headers, holding the same badges and button.
@@ -1364,6 +1378,18 @@ extension VaultController: SidebarLayoutAdopting {
     private func renderTables() {
         secretsTable.setRows(secretTableRows())
         toolsTable.setRows(toolTableRows())
+        renderHeroSplit()
+    }
+
+    /// S-1: the card for the read as it stands. The banner it replaces
+    /// stays down in this layout.
+    fileprivate func renderHeroSplit() {
+        guard drawsSidebarLayout else { return }
+        attentionBanner.isHidden = true
+        let words = VaultHeroWords.make(secrets: secrets, tools: tools, hasLoadedOnce: hasLoadedOnce,
+                                        notInstalled: installStatus == .notInstalled, refusedHere: readWasRefusedHere)
+        heroSplit.configure(words, tools: tools, fix: { [weak self] tool in self?.presentIssueSheet(for: tool) },
+                            theme: theme)
     }
 
     /// B1's three states, as the table's own empty row: still reading, could

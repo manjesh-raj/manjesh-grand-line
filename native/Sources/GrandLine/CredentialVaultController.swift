@@ -99,6 +99,16 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// The live 2FA cells on the table, by credential id, which the ticker
     /// updates in place rather than reloading the table every second.
     private var totpCells: [String: CredentialTOTPCell] = [:]
+    /// S-3 on the page-redesign board: in the sidebar layout the Kinds and
+    /// Collections column is a `HelmHeroColumn` in the split's sidebar pane,
+    /// with the vault's state and the auto-lock ring at its top, the same
+    /// rows in the hero's ink and Lock now at its foot. Built once by
+    /// `adoptHeroColumn`; the plain `sidebar` stays for the floating bar.
+    private(set) var heroColumn: HelmHeroColumn?
+    /// The column's rows, by `CredentialVaultSidebar.rowID(for:)`.
+    private var heroRows: [String: HelmHeroNavRow] = [:]
+    private lazy var heroLockButton = HelmButton(title: "Lock now", variant: .secondary, size: .small,
+                                                 symbol: "lock.fill", target: self, action: #selector(lockTapped))
     var onInspectorContentChanged: (() -> Void)?
     var onShowInspector: (() -> Void)?
     /// The credential the inspector is showing, if any. Survives a re-render
@@ -398,6 +408,11 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     // MARK: Appearance
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        if drawsSidebarLayout { fitHeroColumnWidth() }
+    }
+
     override func viewDidAppear() {
         super.viewDidAppear()
         noteInteraction()
@@ -432,7 +447,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         totpObservation = TOTPTicker.shared.observe { [weak self] in
             guard let self, self.store.isUnlocked else { return }
             self.list.tickTOTP(now: TOTPTicker.shared.now)
-            if self.drawsSidebarLayout { self.tickTableTOTP() }
+            if self.drawsSidebarLayout {
+                self.tickTableTOTP()
+                self.heroColumn?.setRing(self.heroAutoLockRing())
+            }
         }
     }
 
@@ -480,6 +498,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private func renderSidebar() {
         sidebar.setCounts(matching: store.credentials.filter { $0.matches(query) })
         sidebar.select(collectionFilter)
+        if drawsSidebarLayout { renderHeroColumn() }
     }
 
     /// Show whatever is selected, or the panel's own empty state.
@@ -1473,9 +1492,158 @@ extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSo
         credentialTable.onReorder = { [weak self] dragged, before in
             self?.reorderCredential(id: dragged, before: before)
         }
+        adoptHeroColumn()
         applyTheme(ThemeManager.shared.theme)
         render()
     }
+
+    // MARK: S-3 - the hero column
+
+    /// Put the hero column in the split's sidebar pane in place of the plain
+    /// column, at the board's 300pt. The pane yields to the table rather than
+    /// growing the window (`HelmSplitPage` 1.2.0, the Connections column's
+    /// own pin).
+    private func adoptHeroColumn() {
+        guard heroColumn == nil, let split = splitPage else { return }
+        let column = HelmHeroColumn()
+        column.setAccessibilityLabel("Secrets summary")
+        heroColumn = column
+        sidebar.isHidden = true
+        HelmSplitPage.pin(column, in: split.sidebarPane,
+                          insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: HelmMetrics.pageGutter,
+                                               bottom: HelmMetrics.pageGutter, right: 0),
+                          yieldsWidth: true)
+        split.sidebarItem.minimumThickness = HelmSplitPage.yieldingMinimumThickness
+        fitHeroColumnWidth()
+        for selection in CredentialVaultSidebar.allSelections {
+            let id = CredentialVaultSidebar.rowID(for: selection)
+            let row = HelmHeroNavRow(id: id, symbol: Self.heroSymbol(for: selection),
+                                     title: Self.heroTitle(for: selection))
+            row.onSelect = { [weak self] _ in self?.heroRowSelected(selection) }
+            heroRows[id] = row
+        }
+        heroLockButton.toolTip = "Lock the vault now"
+    }
+
+    /// The narrowest the credential table is drawn before its 2FA and row
+    /// controls would run past its card: the name's floor, the 2FA column,
+    /// the row actions and the card's own insets.
+    static let heroTableFloor: CGFloat = 200 + 150 + 136 + 48
+    /// The narrowest the column gets on a narrow page, before the table
+    /// does.
+    static let heroColumnMinimum: CGFloat = 228
+
+    /// The board's 300pt column on a page with room for it, narrowed toward
+    /// `heroColumnMinimum` on a page without, so the table keeps its 2FA
+    /// codes and row controls (an 1100pt window measured the row menu cut by
+    /// the card's edge beside a 300pt column).
+    private func fitHeroColumnWidth() {
+        guard let split = splitPage, heroColumn != nil else { return }
+        let page = view.bounds.width
+        guard page > 0 else { return }
+        let room = page - HelmMetrics.pageGutter * 2 - HelmMetrics.s5 - Self.heroTableFloor
+        let column = min(HelmHeroColumn.width, max(Self.heroColumnMinimum, floor(room)))
+        let pane = HelmMetrics.pageGutter + column
+        guard abs((split.preferredSidebarWidth ?? 0) - pane) > 0.5 else { return }
+        split.sidebarItem.maximumThickness = pane
+        split.preferredSidebarWidth = pane
+    }
+
+    private static func heroTitle(for selection: CredentialVaultSidebar.Selection) -> String {
+        switch selection {
+        case .all: return "All credentials"
+        case .kind(let kind): return kind.pluralTitle
+        case .twoFactor: return "2FA codes"
+        case .category(let category): return category.title
+        }
+    }
+
+    private static func heroSymbol(for selection: CredentialVaultSidebar.Selection) -> String {
+        switch selection {
+        case .all: return "square.grid.2x2.fill"
+        case .kind(let kind): return kind.symbol
+        case .twoFactor: return "clock.fill"
+        case .category(let category): return category.symbol
+        }
+    }
+
+    /// A row's press: the plain column's own selection path.
+    private func heroRowSelected(_ selection: CredentialVaultSidebar.Selection) {
+        collectionFilter = selection
+        noteInteraction()
+        render()
+        list.scrollToTop()
+    }
+
+    /// The words at the column's top, from the store. `static` and pure, so
+    /// the suite can assert them without a vault.
+    static func heroHeadline(count: Int, twoFactor: Int) -> String {
+        guard count > 0 else { return "No credentials yet." }
+        let noun = count == 1 ? "1 credential" : "\(count) credentials"
+        return twoFactor > 0 ? "\(noun), \(twoFactor) with live 2FA." : "\(noun)."
+    }
+
+    /// The backup's state in a few words, the drill subtitle's own reading.
+    private var heroSyncWords: String {
+        guard let sync = store.gitSync else { return "local only" }
+        switch sync.status {
+        case .synced: return "backed up"
+        case .localChanges, .syncing: return "backing up\u{2026}"
+        case .failed: return "backup failed"
+        }
+    }
+
+    /// The auto-lock countdown, from the same idle clock `checkAutoLock`
+    /// reads, or `nil` with auto-lock off.
+    func heroAutoLockRing(now: Date = Date()) -> HelmHeroColumn.Ring? {
+        let total = store.settings.autoLockSeconds
+        guard total > 0 else { return nil }
+        let left = max(0, Double(total) - now.timeIntervalSince(lastInteraction))
+        let seconds = Int(left.rounded(.up))
+        let label = String(format: "%d:%02d", seconds / 60, seconds % 60)
+        return HelmHeroColumn.Ring(fraction: left / Double(total), label: label,
+                                   caption: "until auto-lock\n\(heroSyncWords.prefix(1).uppercased() + heroSyncWords.dropFirst())",
+                                   spoken: "Locks in \(seconds / 60) minutes \(seconds % 60) seconds",
+                                   state: .ok)
+    }
+
+    /// Fill the column: the header, the two sections with the search-scoped
+    /// counts the plain column shows, and Lock now.
+    private func renderHeroColumn() {
+        guard let column = heroColumn else { return }
+        let matching = store.credentials.filter { $0.matches(query) }
+        let twoFactor = store.credentials.filter { $0.totp != nil }.count
+        let ring = heroAutoLockRing()
+        let header = HelmHeroColumn.Header(
+            symbol: "key.fill", kicker: "Secrets \u{00B7} Unlocked",
+            headline: Self.heroHeadline(count: store.credentials.count, twoFactor: twoFactor),
+            body: ring == nil ? "Auto-lock is off. The vault is \(heroSyncWords)." : nil, ring: ring)
+        func rows(_ selections: [CredentialVaultSidebar.Selection]) -> [NSView] {
+            selections.compactMap { selection in
+                let row = heroRows[CredentialVaultSidebar.rowID(for: selection)]
+                row?.setCount("\(matching.filter(selection.includes).count)")
+                row?.isSelected = selection == collectionFilter
+                return row
+            }
+        }
+        let kinds: [CredentialVaultSidebar.Selection] = [.all, .kind(.login), .twoFactor, .kind(.secureNote)]
+        column.configure(header: header,
+                         sections: [
+                            .init(title: "Kinds", trailing: nil, views: rows(kinds)),
+                            .init(title: "Collections", trailing: nil,
+                                  views: rows(CredentialCategory.allCases.map { .category($0) })),
+                         ],
+                         foot: [heroLockButton],
+                         tone: HelmModuleCard.HeroTone(colour: .themeAccent))
+    }
+
+    #if FM_SELFTESTS
+    var debugHeroRows: [HelmHeroNavRow] {
+        CredentialVaultSidebar.allSelections.compactMap { heroRows[CredentialVaultSidebar.rowID(for: $0)] }
+    }
+    var debugHeroLockButton: HelmButton { heroLockButton }
+    var debugCollectionFilter: CredentialVaultSidebar.Selection { collectionFilter }
+    #endif
 
     var inspectorContent: WorkspaceInspectorContent? {
         guard drawsSidebarLayout, store.isUnlocked, selectedID != nil, let credential = inspector.credential else {

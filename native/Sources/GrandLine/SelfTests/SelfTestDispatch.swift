@@ -1980,6 +1980,17 @@ enum SelfTestDispatch {
             exit(PageHeroColumnsViewSelfTest.run() ? 0 : 1)
         }
 
+        // Tasks' slim band and toned lanes (T-4), Secrets' hero column (S-3)
+        // and Automic Vault's split card (S-1). The words need no window; the
+        // pages' layout in a real shell does. See `TasksSecretsHeroSelfTest`
+        // and `TasksSecretsHeroViewSelfTest`.
+        if ProcessInfo.processInfo.environment["FM_RUN_TASKS_SECRETS_HERO_TESTS"] == "1" {
+            exit(TasksSecretsHeroSelfTest.run() ? 0 : 1)
+        }
+        if ProcessInfo.processInfo.environment["FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS"] == "1" {
+            exit(TasksSecretsHeroViewSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
         // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {
