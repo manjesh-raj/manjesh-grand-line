@@ -413,7 +413,22 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var fullSetupCardView: NSView?
-    private lazy var setupSummary = SetupSummaryRow()
+    /// Sup-1: Setup's hero, with this tab's verdict over the module's five
+    /// figures. Run full setup and Refresh (re-check every step) are its
+    /// pills.
+    private lazy var setupSummary: SetupHeroRow = {
+        let hero = SetupHeroRow(page: .steps) { [weak self] in
+            SetupHeroWords.steps(self?.heroProgress ?? SetupStepsReading.shared.progress,
+                                 nextStep: self?.nextUndoneStep?.title)
+        }
+        hero.setActions([
+            .mirroring(runFullSetupButton),
+            SetupHeroRow.Action(title: { "Refresh" }, isEnabled: { [weak self] in self?.isRefreshingAll == false },
+                                toolTip: { "Re-check every setup step" },
+                                run: { [weak self] in self?.refreshAllTapped() }),
+        ])
+        return hero
+    }()
     /// Each step's Details link, which shows and hides its own controls.
     private var detailsButtons: [SetupStepKind: HelmButton] = [:]
     /// The current step's own next action, at the trailing end of its title
@@ -752,6 +767,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         isRefreshingAll = true
         refreshPill.isHidden = true
         refreshBusyLabel.isHidden = false
+        if drawsSidebarLayout { setupSummary.render() }
 
         refreshFromSettings()
         refreshDotfiles { [weak self] in
@@ -761,6 +777,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
                 self.isRefreshingAll = false
                 self.refreshPill.isHidden = false
                 self.refreshBusyLabel.isHidden = true
+                if self.drawsSidebarLayout { self.setupSummary.render() }
                 // Also re-reads the two live steps and ends in
                 // `refreshStepperVisuals()`, so the step pills, the stepper
                 // dots and the drill header's own line all land on one
@@ -987,12 +1004,23 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         if isRunningFullSetup { return fullSetupSubtitle }
         // R2-BUG-05: the module's reading, the one the summary strip's
         // "Setup steps" card renders, never this page's alone.
-        let verdicts = SetupStepsReading.shared.verdicts
+        return heroProgress.summary
+    }
+
+    /// The module's reading with this page's own failed steps - the one the
+    /// header's line and the hero's verdict both state.
+    fileprivate var heroProgress: SetupPipelineProgress {
         let failed = setupSteps.filter {
             if case .failed = $0.status { return true }
             return false
         }.count
-        return SetupPipelineProgress.of(verdicts, failedSteps: failed).summary
+        return SetupPipelineProgress.of(SetupStepsReading.shared.verdicts, failedSteps: failed)
+    }
+
+    /// The first step, in order, whose own check says it is not done.
+    fileprivate var nextUndoneStep: SetupStepKind? {
+        let verdicts = SetupStepsReading.shared.verdicts
+        return SetupStepKind.shown.first { (verdicts[$0] ?? nil) == false }
     }
 
     var onDrillSubtitleChanged: (() -> Void)?
@@ -1022,6 +1050,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         syncSetupStepsWithLiveState()
         runFullSetupButton.title = isRunningFullSetup ? "Running\u{2026}" : "Run full setup"
         runFullSetupButton.isEnabled = !isRunningFullSetup
+        if drawsSidebarLayout { setupSummary.render() }
         fullSetupSubtitleLabel.stringValue = fullSetupSubtitle
         fullSetupSubtitleLabel.textColor = HelmTheme.mutedInk(theme)
 
@@ -3063,7 +3092,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
 // MARK: - The sidebar layout (stage 7)
 
-// The prototype's Setup steps: Setup's summary cards, then the steps as a
+// The prototype's Setup steps: Setup's hero (Sup-1), then the steps as a
 // list - a mark for each (a check when done, its number otherwise, the
 // current one in the accent), a line about it, and the current step's own
 // next action at its trailing edge. Each step's controls - the path field,
@@ -3169,7 +3198,7 @@ extension BootstrapController: SidebarLayoutAdopting, WorkspacePrimaryActionProv
 extension BootstrapController {
     var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     var debugFullSetupCardShown: Bool { !(fullSetupCardView?.isHidden ?? true) }
-    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugRunFullSetupButton: HelmButton { runFullSetupButton }
     func debugDetailsButton(_ kind: SetupStepKind) -> HelmButton? { detailsButtons[kind] }
     func debugStepActionButton(_ kind: SetupStepKind) -> HelmButton? { stepActionButtons[kind] }

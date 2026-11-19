@@ -21,11 +21,11 @@
 // **Unknown is never zero (GL-14).** A figure whose reading has not been taken
 // this session is a dash, and the card's tooltip says why.
 //
-// Three parts: `SetupSummary` is the pure model (asserted headless by
-// `SidebarRedesignsModelSelfTest`), `SetupSummaryFeed` observes the readings
-// once for every page, and `SetupSummaryRow` is the view each of the four
-// pages shows in the sidebar layout. The floating bar's pages draw no summary
-// row.
+// Two parts here: `SetupSummary` is the pure model (asserted headless by
+// `SidebarRedesignsModelSelfTest`), and `SetupSummaryFeed` observes the
+// readings once for every page. The view is `SetupHeroRow` (Sup-1), the hero
+// each of the four pages opens with in the sidebar layout, whose tiles are
+// these five figures. The floating bar's pages draw no summary.
 
 import AppKit
 
@@ -41,6 +41,9 @@ enum SetupSummary {
         let signals: Bool
         /// Why the figure is a dash, for its tooltip.
         let unknownReason: String?
+        /// The figure only says a feature is not in use ("Off", "Not set
+        /// up"), so the hero draws it quiet.
+        var isIdle = false
     }
 
     static let captions = ["Tools up to date", "Updates", "Setup steps", "Dotfiles", "GitHub sync"]
@@ -98,8 +101,11 @@ enum SetupSummary {
             return Card(caption: caption, text: "Local changes", tint: .warn, signals: true, unknownReason: nil)
         case .diverged: return Card(caption: caption, text: "Diverged", tint: .critical, signals: true, unknownReason: nil)
         case .failed: return Card(caption: caption, text: "Failed", tint: .critical, signals: true, unknownReason: nil)
-        case .off: return Card(caption: caption, text: "Off", tint: nil, signals: false, unknownReason: nil)
-        case .noRepo: return Card(caption: caption, text: "Not set up", tint: nil, signals: false, unknownReason: nil)
+        case .off:
+            return Card(caption: caption, text: "Off", tint: nil, signals: false, unknownReason: nil, isIdle: true)
+        case .noRepo:
+            return Card(caption: caption, text: "Not set up", tint: nil, signals: false, unknownReason: nil,
+                        isIdle: true)
         }
     }
 
@@ -179,7 +185,7 @@ enum SetupSummary {
     }
 }
 
-/// The five cards' one reading, which every `SetupSummaryRow` shows.
+/// The five cards' one reading, which every `SetupHeroRow` shows.
 ///
 /// R5-PROC-04: each of the four Setup pages used to build a row that
 /// registered its own observer on every source, so one counts change ran four
@@ -190,8 +196,11 @@ final class SetupSummaryFeed {
     static let shared = SetupSummaryFeed()
 
     private(set) var cards: [SetupSummary.Card] = []
+    /// The setup steps the cards were derived from, for the hero's ring.
+    private(set) var steps = SetupPipelineProgress.of([:])
+    /// The config repo's last answer, for GitHub sync's verdict.
+    private(set) var configRepo: ConfigRepoPrivacy.Reading?
     private var dotfiles: DotfilesAutoSync.Status?
-    private var configRepo: ConfigRepoPrivacy.Reading?
     private var observers: [UUID: () -> Void] = [:]
 
     private init() {
@@ -221,76 +230,13 @@ final class SetupSummaryFeed {
 
     /// Re-read the three readings and tell every row.
     private func refresh() {
-        cards = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts,
-                                   steps: SetupStepsReading.shared.progress, dotfiles: dotfiles,
+        steps = SetupStepsReading.shared.progress
+        cards = SetupSummary.cards(counts: BackgroundSignalsPoller.shared.lastCounts, steps: steps, dotfiles: dotfiles,
                                    configRepo: configRepo)
         for fn in observers.values { fn() }
     }
 
     #if FM_SELFTESTS
     var debugObserverCount: Int { observers.count }
-    #endif
-}
-
-/// The five cards, drawn from `SetupSummaryFeed`. One per Setup page in the
-/// sidebar layout, and each only repaints (GL-24).
-///
-/// R5-BUG-03: the row follows the theme by itself. It used to wait for its
-/// page to forward the theme, Setup steps' page never did, and the row then
-/// re-applied the theme it was mounted with on every count change - five
-/// dark tiles on a Daylight page.
-final class SetupSummaryRow: NSView {
-    /// S14: the row is a `.boxed` `HelmKPIStrip`.
-    private let strip = HelmKPIStrip(density: .boxed)
-    private let feed: SetupSummaryFeed
-    private var feedToken: UUID?
-    private var themeToken: ThemeObservation?
-    private var theme: HelmTheme = ThemeManager.shared.theme
-    private(set) var shown: [SetupSummary.Card] = []
-
-    init(feed: SetupSummaryFeed = .shared) {
-        self.feed = feed
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        let row = strip
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        setAccessibilityElement(false)
-        feedToken = feed.observe { [weak self] in self?.render() }
-        render()
-        // After `render`, so the first synchronous firing paints cards that
-        // already hold their figures (ThemeManager's checklist, item 4).
-        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    deinit {
-        if let feedToken { feed.unobserve(feedToken) }
-        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
-    }
-
-    /// Repaint the cards from the feed's figures.
-    private func render() {
-        shown = feed.cards
-        strip.configure(zip(SetupSummary.captions, shown).map { caption, figure in
-            .figure(figure.text, caption: caption, tint: figure.tint, signals: figure.signals,
-                    unknownReason: figure.unknownReason)
-        }, theme: theme)
-    }
-
-    private func applyTheme(_ theme: HelmTheme) {
-        self.theme = theme
-        strip.applyTheme(theme)
-    }
-
-    #if FM_SELFTESTS
-    var debugValues: [String] { strip.debugCells.map(\.debugValue) }
-    var debugCards: [HelmKPIStrip.BoxedCell] { strip.debugCells }
     #endif
 }

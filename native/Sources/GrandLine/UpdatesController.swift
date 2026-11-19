@@ -167,8 +167,15 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var statsRowView: NSView?
-    /// Setup's five summary cards, shared with the module's other tabs.
-    private lazy var setupSummary = SetupSummaryRow()
+    /// Sup-1: Setup's hero, with this tab's verdict over the module's five
+    /// figures. Check for updates is its pill.
+    private lazy var setupSummary: SetupHeroRow = {
+        let hero = SetupHeroRow(page: .updates) { [weak self] in
+            SetupHeroWords.updates(BackgroundSignalsPoller.shared.lastCounts, checkedAt: self?.lastCheckedAt)
+        }
+        hero.setActions([.mirroring(checkForUpdatesButton)])
+        return hero
+    }()
     /// Every tool in one table, grouped by where it comes from - the
     /// prototype's one table card, with the real groups.
     private lazy var toolsTable: HelmDataTable = {
@@ -437,6 +444,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         isCheckingAll = true
         setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = false
+        if drawsSidebarLayout { setupSummary.render() }
         setToolbarHidden(checkAllProgressBar, false)
         setToolbarHidden(checkAllProgressLabel, false)
 
@@ -542,6 +550,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // one place the header's line has to be re-read from.
         onDrillSubtitleChanged?()
         publishToolUpdateSignal()
+        // After the publish, so the hero's verdict reads the counts its tiles
+        // were just given.
+        if drawsSidebarLayout { setupSummary.render() }
         let summary = self.summary
         // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
         // while 13 checks are still running is a confident claim about an
@@ -1176,7 +1187,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
 // MARK: - The sidebar layout (stage 7)
 
-// The prototype's Updates: Setup's summary cards, the filter row, and every
+// The prototype's Updates: Setup's hero (Sup-1), the filter row, and every
 // tool in one table - name, installed version, the available version or "Up
 // to date", where it comes from, and the row's own action where there is one.
 // The rows are the page's own `UpdateRow`s and every action is the method the
@@ -1402,7 +1413,7 @@ extension UpdatesController {
     var debugCategoryCardsShown: Bool { cards.contains { !$0.isHidden } }
     var debugStatsStripShown: Bool { !(statsRowView?.isHidden ?? true) }
     var debugToolsTable: HelmDataTable { toolsTable }
-    var debugSetupSummary: SetupSummaryRow { setupSummary }
+    var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugCheckForUpdatesButton: HelmButton { checkForUpdatesButton }
     var debugToolsLastChecked: String { toolsLastChecked.stringValue }
     /// The filter row's two controls, driven through their own paths.
