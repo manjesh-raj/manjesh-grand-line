@@ -15,7 +15,8 @@
 // ## What crosses the bridge
 //
 // Native to page: `configure` once, then `setEvents`, `setTray`, `setTheme`,
-// `setView`, `showDate`, `setQuickAddHint`, `suspend`/`resume`, and `state`
+// `setView`, `showDate`, `step` (Cal-8's head arrows), `setHeads` (room for
+// Cal-8's native heads), `setQuickAddHint`, `suspend`/`resume`, and `state`
 // (read back from the page's DOM, for a self-test). Page to native: `ready`,
 // `error`, `range` (the visible period changed), `open` (an event or a tray
 // row was clicked), `add` (a day or a time slot was double-clicked), `move`

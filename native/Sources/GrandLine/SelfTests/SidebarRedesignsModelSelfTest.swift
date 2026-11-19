@@ -378,11 +378,11 @@ enum SidebarRedesignsModelSelfTest {
             fail("could not read the Setup pages' sources - the guard would pass vacuously", &ok)
             return
         }
-        // Each of the four shows the summary row first, and keeps its own
+        // Each of the four opens on the Setup hero (Sup-1), and keeps its own
         // main action as the toolbar's primary one.
         for (name, text, primary) in [("Updates", updates, "checkForUpdatesButton"), ("GitHub sync", github, "syncAllButton"),
                                       ("Setup steps", bootstrap, "runFullSetupButton"), ("Automation", automation, "runButton")] {
-            check(text.contains("insertArrangedSubview(setupSummary, at: 0)"), "\(name) does not open on the summary row", &ok)
+            check(text.contains("insertArrangedSubview(setupSummary, at: 0)"), "\(name) does not open on the Setup hero", &ok)
             check(text.contains("var workspacePrimaryAction: NSView? { drawsSidebarLayout ? \(primary) : nil }"),
                   "\(name)'s primary action is no longer `\(primary)`", &ok)
         }

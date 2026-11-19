@@ -232,6 +232,10 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     private var rows: [Row] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var hoveredRow = -1
+    /// 1.0.1: where the pointer last was over the table, in window
+    /// coordinates, or `nil` once it left. `setRows` finds the hovered row
+    /// under it again, because a refresh does not move the pointer.
+    private var pointerInWindow: NSPoint?
     /// Set while `setRows` puts the selection back on the same record, so
     /// that is not reported as the captain choosing it - a page that
     /// re-renders on selection would otherwise loop.
@@ -363,6 +367,10 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
         } else if table.selectedRow >= 0 {
             table.deselectAll(nil)
         }
+        // A page that re-renders while the pointer rests on a row (a store's
+        // background reload) keeps that row's hover and its revealed actions,
+        // rather than hiding them until the pointer moves again.
+        hoveredRow = rowUnderPointer()
         refreshRowStates()
     }
 
@@ -502,18 +510,19 @@ final class HelmDataTable: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     // MARK: Hover, selection and actions
 
     private func pointerMoved(to point: NSPoint?) {
-        let row: Int
-        if let point {
-            let local = table.convert(point, from: nil)
-            row = table.row(at: local)
-        } else {
-            row = -1
-        }
+        pointerInWindow = point
+        let row = rowUnderPointer()
         guard row != hoveredRow else { return }
         let previous = hoveredRow
         hoveredRow = row
         refreshRowState(previous)
         refreshRowState(row)
+    }
+
+    /// The row under the pointer's last position, or -1.
+    private func rowUnderPointer() -> Int {
+        guard let pointerInWindow, table.window != nil else { return -1 }
+        return table.row(at: table.convert(pointerInWindow, from: nil))
     }
 
     private func refreshRowStates() {
