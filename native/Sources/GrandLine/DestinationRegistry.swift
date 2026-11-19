@@ -128,6 +128,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// `fm/grandline-separate-setup-destinations`; they shared a single
     /// `setup` slot before that.
     case updates, bootstrap, automation, githubSync
+    case devopsHub
 }
 
 extension RailDestination {
@@ -184,6 +185,7 @@ extension RailDestination {
         // titled "Setup" with a setup-pipeline tab strip above it.
         case .poneglyph: return .poneglyph
         case .settings: return .settings
+        case .devopsHub: return .devopsHub
         }
     }
 

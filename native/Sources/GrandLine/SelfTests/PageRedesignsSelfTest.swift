@@ -64,7 +64,7 @@ enum PageRedesignsSelfTest {
                 ReviewTourLab.seedDemoKnowledge(shell.workspace)
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
-                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou] {
+                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkDevOpsHub] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok
@@ -590,6 +590,167 @@ enum PageRedesignsSelfTest {
     }
 
     // MARK: 4 - Crew › Needs you
+
+    // MARK: DevOps Hub
+
+    /// DevOps Hub in a real sidebar shell: its row and its project's row, a
+    /// real click that opens the page, a real Start through the hero's own
+    /// button that serves a scratch site over loopback into the page's web
+    /// view, the strip's Stop, and the busy-port and missing-folder heroes.
+    private static func checkDevOpsHub(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                       _ ok: inout Bool) {
+        print("\n-- DevOps Hub: the sidebar rows, the page's states, a real start and stop --")
+        _ = NSApplication.shared
+        resize(window, width: 1512, shell)
+        let registry = LocalProjectRegistry.shared
+        check(registry.debugStoreURL.path.hasPrefix(scratch.path),
+              "the shared registry reads \(registry.debugStoreURL.path), not the suite's own store", &ok)
+        let (site, _) = DevOpsHubModelSelfTest.makeSite()
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = site.path
+        project.port = DevOpsHubModelSelfTest.freePort()
+        LocalProjectStore.save([project], at: registry.debugStoreURL)
+        registry.debugReload()
+        defer { registry.stopAll(reason: .stopped) }
+        let id = project.id
+        let row = WorkspaceSidebarEntry.project(id: id)
+        settle(shell)
+
+        // The rows: DevOps Hub after Secrets, the project under it.
+        let entries = shell.sidebar.debugVisibleEntries
+        guard let hub = entries.firstIndex(of: .module(.devopsHub)), hub > 0, hub + 1 < entries.count else {
+            fail("the sidebar has no DevOps Hub row: \(entries)", &ok)
+            return
+        }
+        check(entries[hub - 1] == .module(.secrets) && entries[hub + 1] == row,
+              "DevOps Hub's neighbours are \(entries[hub - 1]) and \(entries[hub + 1])", &ok)
+
+        // A real click on the project row opens its page and lights the row.
+        check(shell.sidebar.debugClick(row), "the project row could not be clicked", &ok)
+        settle(shell)
+        let page = shell.workspace.devopsHub
+        check(page.isViewLoaded && page.view.window === window && !page.view.isHiddenOrHasHiddenAncestor,
+              "a click on the project row did not show its page", &ok)
+        check(shell.sidebar.debugSelectedEntry == row, "the lit row is \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
+        check(shell.toolbar.debugCrumb.contains("devops-atlas"), "the crumb reads \(shell.toolbar.debugCrumb)", &ok)
+        check(page.debugHero.debugHeadline == "devops-atlas is ready to start"
+                && page.debugHeroButtons.map(\.title) == ["Start", "Project Settings\u{2026}", "Show in Finder"],
+              "not started shows \(page.debugHero.debugHeadline) / \(page.debugHeroButtons.map(\.title))", &ok)
+        _ = waitUntil(timeout: 3) { page.debugCheckTitles.first == "Folder found" }
+        check(page.debugCheckTitles.first == "Folder found", "the checks read \(page.debugCheckTitles)", &ok)
+        page.view.layoutSubtreeIfNeeded()
+        let heroWidth = page.debugHero.frame.width
+        check(heroWidth > 400 && heroWidth <= DevOpsHubController.columnWidth + 0.5,
+              "the hero card is \(heroWidth)pt wide, want at most \(DevOpsHubController.columnWidth)", &ok)
+
+        // A real Start, through the hero's own button.
+        guard let start = page.debugHeroButtons.first(where: { $0.title == "Start" }) else {
+            fail("there is no Start button", &ok)
+            return
+        }
+        start.performClick(nil)
+        let running = waitUntil(timeout: 5) { registry.state(of: id).isRunning }
+        check(running, "Start did not run the server: \(registry.state(of: id))", &ok)
+        let shown = waitUntil(timeout: 15) { page.debugShowsSite }
+        check(shown, "the site did not load into the page (\(page.words?.headline ?? "no hero"))", &ok)
+        check(page.debugWebView?.webView.url?.port == Int(project.port), "the web view is on \(String(describing: page.debugWebView?.webView.url))", &ok)
+        check(page.debugStrip.debugAddress == "127.0.0.1:\(project.port)" && page.debugStrip.debugLine.hasPrefix("up "),
+              "the strip reads \(page.debugStrip.debugAddress) / \(page.debugStrip.debugLine)", &ok)
+        settle(shell)
+        if let cell = shell.sidebar.debugCell(for: row) as? WorkspaceSidebarSessionCell {
+            check(cell.debugShortcut == ":\(project.port)", "the project row says \(cell.debugShortcut) while running", &ok)
+        } else {
+            fail("the project row has no cell", &ok)
+        }
+
+        // The strip's Stop, through its own button.
+        page.debugStrip.debugButton(.stop).performClick(nil)
+        settle(shell)
+        check(registry.state(of: id) == .notStarted && !page.debugShowsSite
+                && page.debugHero.debugHeadline == "devops-atlas is ready to start",
+              "Stop left \(registry.state(of: id)) with the site \(page.debugShowsSite ? "showing" : "gone")", &ok)
+        let reuse = LocalStaticServer(root: site, port: project.port)
+        check(DevOpsHubModelSelfTest.outcome(DevOpsHubModelSelfTest.start(reuse)) == "ready",
+              "the port was not free after Stop", &ok)
+
+        // A busy port: the blocker above still holds it.
+        page.debugHeroButtons.first { $0.title == "Start" }?.performClick(nil)
+        _ = waitUntil(timeout: 5) { registry.state(of: id) != .starting }
+        check(page.words?.headline == "Port \(project.port) is already in use" && page.words?.tone == .red,
+              "a busy port shows \(page.words?.headline ?? "-")", &ok)
+        reuse.stop()
+
+        writeDevOpsHubRenders(shell, window, page, project: project)
+
+        // A folder that is not there: the amber hero, with no port touched.
+        var gone = project
+        gone.folderOverride = site.appendingPathComponent("gone").path
+        registry.update(gone)
+        page.debugHeroButtons.first { $0.title == "Start" }?.performClick(nil)
+        settle(shell)
+        check(page.words?.tone == .amber && page.words?.headline == "Can\u{2019}t find the devops-atlas folder"
+                && page.debugHeroButtons.map(\.title).first == "Choose Folder\u{2026}",
+              "a missing folder shows \(page.words?.headline ?? "-")", &ok)
+    }
+
+    /// With `FM_DEVOPS_HUB_RENDER_DIR` set, one PNG of the whole window per
+    /// state, in Daylight and Dusk. `FM_DEVOPS_HUB_RENDER_SITE` serves a real
+    /// site (the captain's own course clone) for the running state instead of
+    /// the fixture; it is read, never written. The states a real run passes
+    /// through too fast to capture are drawn through `debugShowHero(phase:)`,
+    /// with the sidebar's row told the same state.
+    private static func writeDevOpsHubRenders(_ shell: MainSplitShellController, _ window: NSWindow,
+                                              _ page: DevOpsHubController, project: LocalProject) {
+        let env = ProcessInfo.processInfo.environment
+        guard let dir = env["FM_DEVOPS_HUB_RENDER_DIR"], !dir.isEmpty else { return }
+        let folder = URL(fileURLWithPath: dir)
+        let registry = LocalProjectRegistry.shared
+        var shown = project
+        if let site = env["FM_DEVOPS_HUB_RENDER_SITE"], !site.isEmpty { shown.folderOverride = site }
+        registry.update(shown)
+        let id = shown.id
+        func sidebar(_ state: LocalProjectState) {
+            shell.sidebar.reload(projects: [WorkspaceSidebarProject(id: id, name: shown.name, state: state,
+                                                                    port: shown.port)], shownProjectID: id)
+        }
+        let since = Date().addingTimeInterval(-12 * 60)
+        let states: [(String, LocalProjectState, DevOpsHubWords.Phase?)] = [
+            ("1-not-started", .notStarted, .project(.notStarted)),
+            ("2-starting", .starting, .loading(0.62)),
+            ("3-running", .running(since: since), nil),
+            ("4-port-in-use", .failed(.portInUse(holder: "python3 (pid 48211)")),
+             .project(.failed(.portInUse(holder: "python3 (pid 48211)")))),
+            ("5-cant-read-folder", .failed(.notReadable("Operation not permitted")),
+             .project(.failed(.notReadable("Operation not permitted")))),
+            ("6-folder-not-found", .folderNotFound(noIndex: false), .project(.folderNotFound(noIndex: false))),
+        ]
+        for theme in [TasksSecretsHeroViewSelfTest.daylight, TasksSecretsHeroViewSelfTest.dusk] {
+            ThemeManager.shared.setTheme(theme)
+            resize(window, width: 1512, shell)
+            for (name, state, phase) in states {
+                if let phase {
+                    registry.stop(id)
+                    settle(shell)
+                    _ = waitUntil(timeout: 3) { page.debugBackdrop.image != nil }
+                    page.debugShowHero(phase: phase)
+                    sidebar(state)
+                } else {
+                    registry.start(id)
+                    _ = waitUntil(timeout: 15) { page.debugShowsSite }
+                    // The site's own animation settles before the snapshot.
+                    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+                }
+                settle(shell)
+                ReviewTourLab.writeSplitShellPNG(shell, window: window,
+                                                 to: folder.appendingPathComponent("devops-hub-\(name)-\(theme.id).png"))
+            }
+            registry.stop(id)
+        }
+        ThemeManager.shared.setTheme(TasksSecretsHeroViewSelfTest.daylight)
+        registry.update(project)
+        settle(shell)
+        print("PageRedesignsSelfTest: DevOps Hub renders written to \(dir)")
+    }
 
     private static func checkNeedsYou(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                       _ ok: inout Bool) {

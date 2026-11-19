@@ -10,7 +10,8 @@
 //   - Personal shows Home, Tasks, Calendar, Notebook, Reading list, Secrets,
 //     Tools, Whiteboard, Sticky Board, Code, Dictation and Settings.
 //   - Operator shows everything else: Knowledge with Notebook, Docs and
-//     Reading list as its tabs, and Runbooks in Observe. An install from
+//     Reading list as its tabs, Runbooks in Observe, and DevOps Hub, which
+//     serves local developer projects. An install from
 //     before profiles existed is Operator, so nothing it had disappears.
 //
 // R5-UX-05: Knowledge was five products in one tab bar, three of them for an
@@ -48,7 +49,7 @@ enum WorkspaceProfile: String, CaseIterable {
             return "Tasks, a calendar, notes, sticky notes, saved links and secrets. "
                 + "No firstmate home, terminal or machine setup needed."
         case .operator:
-            return "Everything in Personal, plus the crew, hosts, the console, logs, health, schedules "
+            return "Everything in Personal, plus the crew, hosts, the console, logs, health, schedules, local projects "
                 + "and machine setup for a firstmate fleet."
         }
     }
@@ -57,7 +58,7 @@ enum WorkspaceProfile: String, CaseIterable {
     var hiddenModules: Set<WorkspaceModule> {
         switch self {
         case .personal:
-            return [.crew, .connections, .console, .knowledge, .kubernetes, .logs, .runbooks, .health,
+            return [.crew, .connections, .console, .knowledge, .devopsHub, .kubernetes, .logs, .runbooks, .health,
                     .schedules, .setup]
         case .operator: return [.notebook, .readingList]
         }

@@ -1028,6 +1028,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 TodayCalendarRetirement.runIfNeeded()
             }
         }
+        // DevOps Hub: the projects marked "Start when Grand Line opens", now
+        // that the window is up (GL-12). Off by default, so this is nothing
+        // on most launches.
+        LocalProjectRegistry.shared.startLaunchProjects()
     }
 
     /// Review #3's UX13: the first-run welcome sheet.
@@ -1339,6 +1343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // exactly the case `crashReportsSinceLastLaunch()` then explains.
         DiagnosticsLog.shared.lifecycle("lifecycle", "quitting")
         console.shutdown()
+        // DevOps Hub's servers are in-process and close with it; this only
+        // records each run for the page's "Last run" line.
+        LocalProjectRegistry.shared.stopAll(reason: .quit)
         appShell.workspace.hosts.shutdownAllHostConsoles()
         // Findings 3.3/4.6: the Sticky Board's text/title writes are debounced
         // now, so quitting is one of the three points anything still queued

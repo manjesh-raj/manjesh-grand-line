@@ -322,6 +322,12 @@ enum SelfTestDispatch {
             if (ProcessInfo.processInfo.environment["FM_SESSION_RESTORE_FILE"] ?? "").isEmpty {
                 setenv("FM_SESSION_RESTORE_FILE", scratchRoot.appendingPathComponent("session-restore.json").path, 1)
             }
+            // DevOps Hub's projects file: `LocalProjectRegistry.shared` reads it
+            // from a bare constructor, which any suite that mounts the sidebar
+            // shell reaches, and a start or a stop writes it.
+            if (ProcessInfo.processInfo.environment["FM_LOCAL_PROJECTS_FILE"] ?? "").isEmpty {
+                setenv("FM_LOCAL_PROJECTS_FILE", scratchRoot.appendingPathComponent("local-projects.json").path, 1)
+            }
             // F1's notebook (`fm/grandline-feature-f1-notebook`), for exactly the
             // reason the Docs-runbooks entry above spells out: `NotebookStore()` is
             // reachable from a bare, no-argument production constructor, and with no
@@ -1132,6 +1138,12 @@ enum SelfTestDispatch {
         // sidebar shell.
         if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_SIGNALS_TESTS"] == "1" {
             exit(WorkspaceSignalsSelfTest.run() ? 0 : 1)
+        }
+        // DevOps Hub as pure logic: the server's rules (and once over a real
+        // loopback listener), the store, the runner, the words, the sidebar's
+        // marks and badge, and the profile settle. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_DEVOPS_HUB_MODEL_TESTS"] == "1" {
+            exit(DevOpsHubModelSelfTest.run() ? 0 : 1)
         }
         if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_POLISH_TESTS"] == "1" {
             exit(SidebarPolishSelfTest.run() ? 0 : 1)

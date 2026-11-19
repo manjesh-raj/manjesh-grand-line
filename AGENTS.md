@@ -1485,6 +1485,7 @@ can correct an earlier one - and several do.
 | [`46-review-bugs-b1-b14.md`](docs/history/46-review-bugs-b1-b14.md) | `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths |
 | [`47-appkit-gotchas.md`](docs/history/47-appkit-gotchas.md) | Any of the 22 gotchas above - the probe, the numbers and the wrong fixes tried first |
 | [`48-test-hermeticity.md`](docs/history/48-test-hermeticity.md) | The `UserDefaults` leak between suites: five incidents, the mitigations, and the per-process suite domain that replaced them |
+| [`49-devops-hub.md`](docs/history/49-devops-hub.md) | DevOps Hub: the in-process loopback server, the project registry and store, the devops-atlas page and its web view |
 
 ## Maintaining this file
 

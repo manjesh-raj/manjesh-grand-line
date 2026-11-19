@@ -554,8 +554,8 @@ enum SidebarRedesignsSelfTest {
 
     // MARK: 1b - Home stays in sight (R4-BUG-03)
 
-    /// With Console holding one session the default sidebar is 25 rows (24
-    /// until R5-UX-05 put Runbooks in Observe), a few
+    /// With Console holding one session the default sidebar is 27 rows (24
+    /// until R5-UX-05 put Runbooks in Observe, 25 until DevOps Hub), a few
     /// points taller than its clip view in a 950pt window. Selecting a bottom
     /// row then scrolled the whole column up by the overflow and left Home
     /// half under the header, on every page whose module sits low in the
@@ -576,25 +576,32 @@ enum SidebarRedesignsSelfTest {
             fail("the sidebar's outline is not in a scroll view", &ok)
             return
         }
-        check(outline.numberOfRows == 25, "the default sidebar with one session should be 25 rows, got \(outline.numberOfRows)", &ok)
+        // DevOps Hub and its one project made it 27, and 62pt taller: at
+        // 950pt the list now overflows by about a row and a bit, so the
+        // whole-list sweep runs where the default set fits again.
+        check(outline.numberOfRows == 27, "the default sidebar with one session should be 27 rows, got \(outline.numberOfRows)", &ok)
+        var fits = window.frame
+        fits.size.height = Self.defaultSetFitsHeight
+        window.setFrame(fits, display: false)
+        settle(shell)
         func homeInSight() -> Bool { clip.bounds.minY <= outline.rect(ofRow: 0).minY + 0.5 }
         let overflow = outline.frame.height - clip.bounds.height
         for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
             shell.workspace.navigator.show(module.primaryRoute)
             settle(shell)
-            check(homeInSight(), "at 950pt on \(module.title) Home is clipped: the list is scrolled to "
+            check(homeInSight(), "at \(Int(Self.defaultSetFitsHeight))pt on \(module.title) Home is clipped: the list is scrolled to "
                   + "\(clip.bounds.minY) of a \(outline.frame.height)pt list in a \(clip.bounds.height)pt clip view", &ok)
             if let row = (0..<outline.numberOfRows).first(where: {
                 (outline.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == .module(module)
             }) {
                 let lit = outline.rect(ofRow: row)
                 check(lit.maxY - clip.bounds.maxY < lit.height / 2,
-                      "at 950pt \(module.title)'s lit row is more than half below the fold", &ok)
+                      "at \(Int(Self.defaultSetFitsHeight))pt \(module.title)'s lit row is more than half below the fold", &ok)
             }
         }
-        // The whole default set fits the window the captain runs in, so the
-        // list does not scroll at all there.
-        check(overflow <= 0.5, "at 950pt the default sidebar overflows its clip view by \(overflow)pt", &ok)
+        // The whole default set fits a window this tall, so the list does
+        // not scroll at all there.
+        check(overflow <= 0.5, "at \(Int(Self.defaultSetFitsHeight))pt the default sidebar overflows its clip view by \(overflow)pt", &ok)
 
         // A window a little shorter, so the list overflows by less than one
         // row (10pt): the bottom row is still lit and mostly in sight, and
@@ -1447,6 +1454,10 @@ enum SidebarRedesignsSelfTest {
         shell.debugClickTab(index)
         settle(shell)
     }
+
+    /// The window height the Operator sidebar with one live session fits in
+    /// whole. It was 950 until DevOps Hub's two rows arrived.
+    static let defaultSetFitsHeight: CGFloat = 1000
 
     private static func resize(_ window: NSWindow, width: CGFloat, _ shell: WorkspaceShellController) {
         var frame = window.frame

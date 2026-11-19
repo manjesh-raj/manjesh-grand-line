@@ -137,16 +137,17 @@ enum ModuleTableSelfTest {
         }
     }
 
-    /// Twenty-two sidebar items: Home on its own, then nine Work, five
+    /// Twenty-three sidebar items: Home on its own, then ten Work, five
     /// Observe, five Workbench and two Machine - the prototype's Version 2
     /// sidebar, the Calendar row the captain's later mockup puts after Tasks,
-    /// and R5-UX-05's split of Knowledge (the Notebook and Reading list door
-    /// rows, and Runbooks in Observe). Typed out so a change to the plan is a
+    /// R5-UX-05's split of Knowledge (the Notebook and Reading list door
+    /// rows, and Runbooks in Observe), and DevOps Hub at the end of Work. Typed out so a change to the plan is a
     /// deliberate edit here too. A profile lists a subset of them.
     private static func checkWorkspaceShape(_ ok: inout Bool) {
         let expected: [WorkspaceGroup?: [WorkspaceModule]] = [
             nil: [.home],
-            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets],
+            .work: [.tasks, .calendar, .crew, .connections, .console, .knowledge, .notebook, .readingList, .secrets,
+                    .devopsHub],
             .observe: [.kubernetes, .logs, .runbooks, .health, .schedules],
             .workbench: [.tools, .whiteboard, .stickyBoard, .code, .dictation],
             .machine: [.setup, .settings],
@@ -155,7 +156,7 @@ enum ModuleTableSelfTest {
             let actual = WorkspaceModule.allCases.filter { $0.group == group }
             check(actual == modules, "group \(group?.title ?? "none") holds \(actual) but the plan is \(modules)", &ok)
         }
-        check(WorkspaceModule.allCases.count == 22, "the sidebar has \(WorkspaceModule.allCases.count) items, not 22", &ok)
+        check(WorkspaceModule.allCases.count == 23, "the sidebar has \(WorkspaceModule.allCases.count) items, not 23", &ok)
         // A door row has no page of its own: it is reached by the route it
         // is a door to (the Calendar row, Tasks › Calendar).
         for module in WorkspaceModule.allCases {
@@ -210,6 +211,7 @@ enum ModuleTableSelfTest {
         (.githubSync, "GitHub Sync", "arrow.2.squarepath", .amber, "Pull upstream into each of your personal forks", .engineering, .setup, "GitHub sync"),
         (.poneglyph, "Poneglyph", "doc.text.image", .amber, "Your credentials, encrypted and one click from the clipboard", .stores, .secrets, "Secrets"),
         (.settings, "Settings", "gearshape", .slate, "Connection, appearance, terminal, security and backup", .engineering, .settings, nil),
+        (.devopsHub, "DevOps Hub", "shippingbox", .teal, "Local projects, served on this Mac and shown here", .operations, .devopsHub, nil),
     ]
 
     private static func checkNoDestinationWasRenamedOrMoved(_ ok: inout Bool) {
@@ -244,6 +246,7 @@ enum ModuleTableSelfTest {
         (.notebook, "Notebook", .work, [], "book.and.wrench", nil, true),
         (.readingList, "Reading list", .work, [], "bookmark.fill", nil, true),
         (.secrets, "Secrets", .work, ["Secrets", "Automic Vault"], "key.fill", nil, true),
+        (.devopsHub, "DevOps Hub", .work, [], "shippingbox", nil, false),
         (.kubernetes, "Kubernetes", .observe, ["Cluster", "Log Tail"], "cube.transparent", .kubernetes, true),
         (.logs, "Logs", .observe, [], "text.magnifyingglass", nil, true),
         (.runbooks, "Runbooks", .observe, ["Runbooks", "Postmortems"], "list.bullet.rectangle", nil, true),

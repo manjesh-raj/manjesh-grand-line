@@ -16,6 +16,7 @@
 // | A failing service   | `ServiceHealthRegistry`, the Health page's own source    | Health's dot    |
 // | Setup's updates     | `BackgroundSignalsPoller.lastCounts`                     | Setup's badge   |
 // | Live sessions       | the session registry (unchanged)                         | Connections' badge |
+// | Local projects      | `LocalProjectRegistry`, through the sidebar's own copy   | DevOps Hub's badge |
 //
 // The layout also drew a status strip under every page, with readouts of its
 // own for Claude usage and Tasks sync. The captain had the strip removed from
@@ -158,6 +159,34 @@ extension WorkspaceSignals {
         case .setup: return setupBadge(now: now)
         default: return nil
         }
+    }
+
+    /// DevOps Hub's badge, from its projects' states. A failed start wins
+    /// (a red dot, so a folded group still says it), then a missing folder
+    /// (an amber dot), then the number serving, then a start in flight (the
+    /// scanning dash). Everything stopped draws nothing: a real zero is no
+    /// badge. The projects come from `LocalProjectRegistry`, which the shell
+    /// already observes, so nothing here reads or polls.
+    static func devopsHubBadge(_ projects: [WorkspaceSidebarProject]) -> WorkspaceBadge? {
+        let failed = projects.filter { $0.mark == .failed }
+        if !failed.isEmpty {
+            let names = failed.map(\.name).joined(separator: ", ")
+            return WorkspaceBadge(mark: .dot, tone: .alarm, description: "\(names) failed to start")
+        }
+        let missing = projects.filter { $0.mark == .attention }
+        if !missing.isEmpty {
+            let names = missing.map(\.name).joined(separator: ", ")
+            return WorkspaceBadge(mark: .dot, tone: .attention, description: "\(names): folder not found")
+        }
+        let running = projects.filter { $0.mark == .live }.count
+        if running > 0 {
+            return WorkspaceBadge(mark: .count("\(running)"), tone: .neutral,
+                                  description: running == 1 ? "1 project running" : "\(running) projects running")
+        }
+        if projects.contains(where: { $0.mark == .starting }) {
+            return WorkspaceBadge(mark: .count(scanningMark), tone: .neutral, description: "Starting")
+        }
+        return nil
     }
 
     private var sessionsBadge: WorkspaceBadge? {

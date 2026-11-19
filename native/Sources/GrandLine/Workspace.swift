@@ -604,6 +604,11 @@ final class Workspace {
         return built(.githubSync, githubSync)
     }()
 
+    /// DevOps Hub's page, over the app's one project registry, which lives
+    /// outside the page so the sidebar can draw a project that was never
+    /// opened (GL-37).
+    private(set) lazy var devopsHub: DevOpsHubController = built(.devopsHub, DevOpsHubController(registry: .shared))
+
 
     /// Fix 1: builds a fresh, host-scoped `ConsoleController` (its own ssh
     /// tab(s) only, no Firstmate host's own Shell tab - see
@@ -894,6 +899,7 @@ final class Workspace {
         mounter.register(DestinationSlot(id: .githubSync, title: RailDestination.githubSync.title, mountsEagerly: false, makeController: { [self] in self.githubSync }))
         mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.title, mountsEagerly: false, makeController: { [self] in self.poneglyph }))
         mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.title, mountsEagerly: false, makeController: { [self] in self.settings }))
+        mounter.register(DestinationSlot(id: .devopsHub, title: RailDestination.devopsHub.title, mountsEagerly: false, makeController: { [self] in self.devopsHub }))
     }
 
     /// The registry observation the chrome renders the session strip from.

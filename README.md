@@ -197,6 +197,9 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SSH_CONFIG_FILE` | The OpenSSH client config Connections › Hosts' Import from SSH Config reads (read-only; `~/.ssh/config` by default) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
 | `FM_SESSION_RESTORE_FILE` | `session-restore.json` (which destination, host pages and tabs were open at quit) |
+| `FM_DEVOPS_HUB_RENDER_DIR` | Debug builds only: `FM_RUN_PAGE_REDESIGNS_TESTS` writes a PNG of the window per DevOps Hub state, in Daylight and Dusk, to this folder |
+| `FM_DEVOPS_HUB_RENDER_SITE` | Debug builds only: with `FM_DEVOPS_HUB_RENDER_DIR`, the folder the running state serves instead of the suite's fixture (read, never written) |
+| `FM_LOCAL_PROJECTS_FILE` | `local-projects.json` (DevOps Hub's projects: each one's folder, port, start options and last run) |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
 | `FM_MANUAL_CHECKS_FILE` | The manual-check register the weekly "Manual checks due" schedule reads (R5-PROC-06). Defaults to `<firstmate home>/projects/grand-line/native/MANUAL-CHECKS.md`. Read-only |
 | `FM_SCHEDULE_HISTORY_DIR` | The Schedules page's 7-day run history (`schedule-history/runs.jsonl`) |
