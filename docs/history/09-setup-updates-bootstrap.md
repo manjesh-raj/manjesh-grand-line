@@ -1445,6 +1445,11 @@ The hero's height hug (`height == 0`) sat at `.defaultLow`, the same priority as
 Two changes fix it: the hug is at `.fittingSizeCompression`, and in the stacked layouts the words column is tied to the room beside the ring at `HelmDaylightPriority.contentTie`.
 `SidebarRedesignsSelfTest.checkTheSetupHeroWidths` fails on the original shape by name (five cases at 1512 and 1100), and passes on the fix.
 
+### Two CI findings
+
+- `ReviewUIUXSelfTest`'s U7/X4 guard failed: the ring's VoiceOver label spelled its own "setup steps done". It reads `SetupPipelineProgress.summary` now, the module's one progress sentence.
+- `SidebarRedesignsSelfTest`'s follow-up hover check failed on window-backed shard 1, while main passed it. `HelmDataTable.setRows` dropped the hovered row, and Tasks' store reloads in the background, so on the slower runner a re-render landed between the synthetic hover and the check. The same thing happens to a real pointer resting on a row. The table (1.0.1) now keeps the pointer's last position and finds the row under it again after `setRows`. The suite re-renders after the hover and checks the ⋯ is still there, and that check fails by name on the old table.
+
 ### Verified
 
 - `FM_RUN_SETUP_HERO_TESTS` (new, headless) and `FM_RUN_SIDEBAR_REDESIGNS_TESTS` (window-backed, extended rather than adding a window-backed suite) pass.

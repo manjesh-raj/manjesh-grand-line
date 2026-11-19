@@ -561,6 +561,13 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
         check(table.debugActionsCell(key: mine.id)?.debugRevealed == true,
               "hovering a follow-up shows no \u{22EF} for its actions", &ok)
+        // A re-render under a pointer that has not moved (the store's
+        // background reload) keeps the row's hover. CI's slower runner landed
+        // that reload between the hover and the check above.
+        tasks.render()
+        settle(shell)
+        check(table.debugActionsCell(key: mine.id)?.debugRevealed == true,
+              "a re-render hid the hovered follow-up's \u{22EF}", &ok)
         table.debugHover(key: nil)
 
         // Delete asks first (GL-06), and Cancel keeps it.

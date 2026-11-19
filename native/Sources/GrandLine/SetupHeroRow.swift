@@ -248,6 +248,9 @@ enum SetupHeroWords {
 
     /// The setup steps done, as the ring draws them. A step still being
     /// checked makes the label a dash (GL-14), as the tile's figure is.
+    /// VoiceOver reads the module's one progress sentence
+    /// (`SetupPipelineProgress.summary`, review U7/X4), never a second
+    /// spelling of it.
     static func ring(_ progress: SetupPipelineProgress) -> Ring {
         guard progress.total > 0, progress.checking == 0 else {
             return Ring(fraction: 0, label: HelmReading<String>.dash,
@@ -255,7 +258,7 @@ enum SetupHeroWords {
         }
         return Ring(fraction: Double(progress.done) / Double(progress.total),
                     label: "\(progress.done)/\(progress.total)",
-                    spoken: "\(progress.done) of \(progress.total) setup steps done", failed: progress.failed > 0)
+                    spoken: "Setup steps, \(progress.summary)", failed: progress.failed > 0)
     }
 
     /// The tiles, from the summary's cards. A word figure that only says a

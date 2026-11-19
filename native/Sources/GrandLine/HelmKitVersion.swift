@@ -81,7 +81,7 @@ enum HelmKit {
         Component("HelmConfirm", "1.0.0", file: "HelmConfirm.swift"),
         Component("HelmConfirmView", "1.0.0", file: "HelmConfirm.swift"),
         // HelmDataTable.swift
-        Component("HelmDataTable", "1.0.0", file: "HelmDataTable.swift"),
+        Component("HelmDataTable", "1.0.1", file: "HelmDataTable.swift"),
         Component("HelmDataTableActionsCell", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRowView", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRunDotsCell", "1.0.0", file: "HelmDataTable.swift"),
@@ -281,7 +281,7 @@ enum HelmKit {
         SourceDigest(file: "HelmBarPanel.swift", stamp: "HelmBarPanel@1.0.0,HelmBarPanelWindow@1.0.0", sha256: "6811b25ea2dc491014342b855ce2b8eefcbd29118920f1007fafcbaf74d7c5e9"),
         SourceDigest(file: "HelmCardGrid.swift", stamp: "HelmCardGrid@1.1.0,HelmGridCardView@1.2.0", sha256: "7907a592d392344b7308af02e90f691df9c4567662e3377b919959abde2e9262"),
         SourceDigest(file: "HelmConfirm.swift", stamp: "HelmConfirm@1.0.0,HelmConfirmView@1.0.0", sha256: "f963808036b62ebe6d2ee5c85bc522c8c55cae7d927417525faacb79d8f389e0"),
-        SourceDigest(file: "HelmDataTable.swift", stamp: "HelmDataTable@1.0.0,HelmDataTableActionsCell@1.0.0,HelmDataTableRowView@1.0.0,HelmDataTableRunDotsCell@1.0.0,HelmTagChip@1.0.0", sha256: "86d47ee1a1d1e68003ac63f882f31bd55a49fbc1a4348039729ffe907093b294"),
+        SourceDigest(file: "HelmDataTable.swift", stamp: "HelmDataTable@1.0.1,HelmDataTableActionsCell@1.0.0,HelmDataTableRowView@1.0.0,HelmDataTableRunDotsCell@1.0.0,HelmTagChip@1.0.0", sha256: "0ffd6a2ceb8f457a59eab4679fff56483f85b19c3da72e11dbe26cbcb46ac48d"),
         SourceDigest(file: "HelmDateField.swift", stamp: "HelmDateField@1.0.0", sha256: "5f99cbfec49aa505d830385f27c038c793791c8f4f90be50896823841be934be"),
         SourceDigest(file: "HelmDaylight.swift", stamp: "HelmDomainHue@1.0.0", sha256: "4cf96b3b4987874ec79c91382329d21684cf1ce2ddc275809ad26690510f073e"),
         SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.2.0,HelmCard@2.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.1,HelmFocusRing@1.0.0,HelmMetrics@1.1.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.2.0,HelmType@1.2.0", sha256: "7622940a2f1e8796fd8d8b4b2b96df344d08918970207a6f9441264ae7572c7e"),
