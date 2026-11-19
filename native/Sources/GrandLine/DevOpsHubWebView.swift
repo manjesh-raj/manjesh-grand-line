@@ -104,15 +104,24 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     /// Load the site at `origin` from its start page.
     func load(origin: URL) {
         self.origin = origin
-        webView.load(URLRequest(url: origin))
+        open(origin)
     }
 
     func reload() {
         if webView.url == nil, let origin {
-            webView.load(URLRequest(url: origin))
+            open(origin)
         } else {
             webView.reload()
         }
+    }
+
+    /// The one place this view loads a URL. WebKit fetches in its own
+    /// process, where no `URLProtocol` can see it, so the network gate is
+    /// asked first (R2-SEC-01). It lets loopback through, which is all this
+    /// view ever loads.
+    private func open(_ url: URL) {
+        guard NetworkGate.allowsOutOfProcessLoad(url) else { return }
+        webView.load(URLRequest(url: url))
     }
 
     /// The server stopped: drop the page so nothing stale is left behind it.
@@ -151,7 +160,7 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = navigationAction.request.url {
             if let origin, Self.isSameSite(url, origin: origin) {
-                webView.load(URLRequest(url: url))
+                open(url)
             } else {
                 WebNavigationPolicy.openExternally(url, from: "DevOps Hub")
             }
@@ -172,6 +181,6 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     /// `CodePreviewWebView` does.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         AppLog.ui.error("DevOps Hub site's web content process ended; reloading")
-        if let origin { webView.load(URLRequest(url: origin)) }
+        if let origin { open(origin) }
     }
 }

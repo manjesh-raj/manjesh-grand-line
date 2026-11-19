@@ -249,9 +249,13 @@ final class DevOpsHubController: NSViewController {
 
     private func startUptimeTimer() {
         uptimeTimer?.invalidate()
-        uptimeTimer = Timer.scheduledTimer(withTimeInterval: Self.uptimeInterval, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.uptimeInterval, repeats: true) { [weak self] _ in
             self?.renderStrip()
         }
+        // A minute's reading can land seconds late; the tolerance lets the
+        // system batch the wake-up (audit 3.4).
+        timer.tolerance = Self.uptimeInterval / 6
+        uptimeTimer = timer
     }
 
     static let uptimeInterval: TimeInterval = 60
@@ -523,10 +527,7 @@ final class DevOpsHubController: NSViewController {
         case .showInFinder:
             Self.showInFinder(project.folder)
         case .openPrivacySettings:
-            guard !ExternalToolGuard.isActive,
-                  let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
-            else { return }
-            NSWorkspace.shared.open(url)
+            Self.openFilesAndFoldersSettings()
         case .copyCloneCommand:
             guard let command = project.cloneCommand else { return }
             NSPasteboard.general.clearContents()
@@ -560,13 +561,23 @@ final class DevOpsHubController: NSViewController {
         webViews[project.id]?.reload()
     }
 
+    /// The folder in Finder, or the nearest folder above it that exists.
     static func showInFinder(_ folder: URL) {
         guard !ExternalToolGuard.isActive else { return }
-        if FileManager.default.fileExists(atPath: folder.path) {
-            NSWorkspace.shared.activateFileViewerSelecting([folder])
-        } else {
-            NSWorkspace.shared.open(folder.deletingLastPathComponent())
+        var target = folder
+        while !FileManager.default.fileExists(atPath: target.path), target.pathComponents.count > 1 {
+            target.deleteLastPathComponent()
         }
+        NSWorkspace.shared.activateFileViewerSelecting([target])
+    }
+
+    /// Opens the exact pane a refused folder needs, a fixed System Settings
+    /// URL rather than anything from data.
+    static func openFilesAndFoldersSettings() {
+        guard !ExternalToolGuard.isActive,
+              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
+        else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// The Project settings sheet, over this page.
@@ -783,7 +794,6 @@ final class DevOpsHubCheckRow: NSView {
     let titleLabel = NSTextField(labelWithString: "")
     let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let markView = NSImageView()
-    private let spinner = NSProgressIndicator()
     private let rule = NSView()
     private let check: DevOpsHubWords.Check
 
@@ -800,12 +810,6 @@ final class DevOpsHubCheckRow: NSView {
             ? .monospacedSystemFont(ofSize: HelmType.scaled(11.5), weight: .regular) : HelmType.caption()
         markView.translatesAutoresizingMaskIntoConstraints = false
         markView.image = HelmSymbol.image(Self.symbol(for: check.mark), pointSize: HelmType.scaled(15), weight: .semibold)
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        if check.mark == .working, !HelmMotion.isReduced { spinner.startAnimation(nil) }
-        markView.isHidden = check.mark == .working && !HelmMotion.isReduced
         rule.wantsLayer = true
         rule.translatesAutoresizingMaskIntoConstraints = false
         rule.isHidden = !showsTopRule
@@ -814,7 +818,7 @@ final class DevOpsHubCheckRow: NSView {
         text.alignment = .leading
         text.spacing = 2
         text.translatesAutoresizingMaskIntoConstraints = false
-        for view in [rule, markView, spinner, text] { addSubview(view) }
+        for view in [rule, markView, text] { addSubview(view) }
         NSLayoutConstraint.activate([
             rule.leadingAnchor.constraint(equalTo: leadingAnchor),
             rule.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -823,8 +827,6 @@ final class DevOpsHubCheckRow: NSView {
             markView.leadingAnchor.constraint(equalTo: leadingAnchor),
             markView.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2 + 1),
             markView.widthAnchor.constraint(equalToConstant: 18),
-            spinner.centerXAnchor.constraint(equalTo: markView.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: markView.centerYAnchor),
             text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.markColumn),
             text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             text.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
@@ -854,7 +856,9 @@ final class DevOpsHubCheckRow: NSView {
         case .done: tint = .good
         case .failed: tint = .critical
         case .attention: tint = .warn
-        case .pending, .working, .info: tint = .neutral
+        // The step in flight takes the accent, so it reads as the live one.
+        case .working: tint = .accent
+        case .pending, .info: tint = .neutral
         }
         markView.contentTintColor = tint == .neutral ? HelmTheme.mutedInk(theme)
             : HelmContrast.legibleOn(fill: HelmTheme.nsColor(theme.chromeBackgroundHex),

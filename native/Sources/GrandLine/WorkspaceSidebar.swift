@@ -74,7 +74,8 @@ struct WorkspaceSidebarProject: Equatable {
         /// Not started: the ink at half strength, as a session that has not
         /// started is.
         case idle
-        /// Starting: amber, pulsing where motion is allowed.
+        /// Starting: amber. The hub's badge shows the scanning dash beside it,
+        /// which is what tells it from a missing folder.
         case starting
         /// Serving: the good hue.
         case live
@@ -1092,6 +1093,44 @@ final class WorkspaceSidebarOutlineView: NSOutlineView {
         return resigned
     }
 
+    // MARK: Cells keep their place beside a disclosure
+
+    /// Where a cell under a section heading starts, past its level's indent.
+    /// It is AppKit's own leading for a level with nothing to disclose
+    /// (16pt for a module row, measured).
+    static let cellLeading: CGFloat = 4
+
+    /// When any row at a level can be expanded (DevOps Hub with its
+    /// projects, Connections with a live session), `NSOutlineView` moves every
+    /// cell at that level right by the disclosure's width - 9pt, measured - so
+    /// every module name loses 9pt, and the longer ones truncate at the
+    /// Larger text size. The cells keep their place instead, and the chevron
+    /// sits in the leading gutter just before its own row's cell.
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        guard let leading = steadyCellLeading(row: row), frame.minX > leading else { return frame }
+        frame.size.width += frame.minX - leading
+        frame.origin.x = leading
+        return frame
+    }
+
+    override func frameOfOutlineCell(atRow row: Int) -> NSRect {
+        var frame = super.frameOfOutlineCell(atRow: row)
+        guard !frame.isEmpty, let leading = steadyCellLeading(row: row) else { return frame }
+        frame.origin.x = max(0, leading - frame.width)
+        return frame
+    }
+
+    /// The steady leading for `row`, or nil for a section heading or a row at
+    /// the top level, which keep AppKit's own frames.
+    private func steadyCellLeading(row: Int) -> CGFloat? {
+        guard row >= 0, row < numberOfRows, let item = item(atRow: row) as? WorkspaceSidebarItem,
+              !item.isSection else { return nil }
+        let level = self.level(forRow: row)
+        guard level >= 1 else { return nil }
+        return CGFloat(level) * indentationPerLevel + Self.cellLeading
+    }
+
     /// R2-PERF-03: true while a key event is being handled, so the
     /// controller can tell a selection the arrow keys made from a click.
     private(set) var isHandlingKeyDown = false
@@ -1665,29 +1704,9 @@ final class WorkspaceSidebarSessionCell: NSTableCellView {
         case .starting, .attention: colour = ink.signal(tintHex: HelmTint.warn.hex(in: theme), selected: lit)
         }
         dot.layer?.backgroundColor = colour.cgColor
-        setPulsing(mark == .starting)
     }
 
     static let idleDotAlpha: CGFloat = 0.5
-    static let pulseKey = "workspace.sidebar.dot.pulse"
-
-    /// A starting project's dot breathes, and holds still under Reduce
-    /// Motion (GL-16), where the amber alone says it.
-    private func setPulsing(_ pulsing: Bool) {
-        guard let layer = dot.layer else { return }
-        guard pulsing, !HelmMotion.isReduced else {
-            layer.removeAnimation(forKey: Self.pulseKey)
-            return
-        }
-        guard layer.animation(forKey: Self.pulseKey) == nil else { return }
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1
-        pulse.toValue = 0.35
-        pulse.duration = 0.6
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        layer.add(pulse, forKey: Self.pulseKey)
-    }
 
     func configure(project: WorkspaceSidebarProject, theme: HelmTheme) {
         mark = project.mark
@@ -1712,7 +1731,6 @@ final class WorkspaceSidebarSessionCell: NSTableCellView {
     var debugShortcut: String { shortcut.stringValue }
     var debugLabelColor: NSColor? { label.textColor }
     var debugDotColor: NSColor? { dot.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
-    var debugIsPulsing: Bool { dot.layer?.animation(forKey: Self.pulseKey) != nil }
     #endif
 }
 
