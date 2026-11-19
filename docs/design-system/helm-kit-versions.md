@@ -36,6 +36,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 8.0.0 - The whole sidebar as a hero column (Sb-4)
+
+The captain's Sb-4 pick on the sidebar board: the app's own sidebar becomes the hero column Secrets (S-3) and Settings already wear.
+It is a major release because the sidebar stops drawing the system's sidebar material.
+
+- `HelmHeroColumn` 1.3.0 → 1.4.0 (minor): `NavInk`, a navigation row's colours on the gradient as values, from `navInk(for:in:)`. It carries the ink, the quiet ink, the rule, the hover, the selected pill's words, the appearance controls on the gradient take, a count's pill and a state mark lifted to read on the gradient or on the selected pill. It is for a list that draws its own rows, which the sidebar's `NSOutlineView` does. The column takes its nav rows' pill words from it, so `HelmHeroNavRow` paints exactly as before. A count's pill is a shade of the ink's opposite rather than the board's 22% wash of the ink, which put white digits at 3.5:1 on Dusk.
+- `WorkspaceSidebar` 2.0.0 → 3.0.0 (major): Sb-4. The pane is the hero's gradient in the theme's accent, edge to edge and under the title bar, on a plain split item rather than the system's sidebar item, so it no longer draws the sidebar material (Liquid Glass on macOS 26). The account header sits in the ink with a translucent glyph tile. Group titles are small caps in the quiet ink with the group's row count, which steps aside for the disclosure chevron under the pointer. Rows keep the Large size, in the ink at a medium weight, with a hairline in the ink between two rows. The lit row is a pill in the ink with its words in the hero's deep colour, and the keyboard ring is drawn inside the pill in that colour. Badges are in the ink: a quiet count, a pill for a count that wants the captain, and dots and glyphs in their state hue lifted for the gradient. Live sessions still nest under Connections with their dots and ⌃⌘ chords. Context menus keep the theme's own appearance. It is still the `NSOutlineView` it was, so disclosure, keyboard navigation, context menus, VoiceOver and the collapsed state are unchanged. There is no strip of figures at the foot.
+
 ## 7.3.0 - Settings' split cards (Set-2)
 
 The Settings pick on the second page-redesign board: every Settings page opens with a split card, built on 7.1.0's `HelmHeroSplitCard`.

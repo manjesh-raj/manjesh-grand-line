@@ -5,7 +5,13 @@
 //
 //   1. **The sidebar** draws every module at the Large source-list size, and
 //      every name and badge fits the column with nothing truncated, in Dusk
-//      and Daylight; the whole list fits a 950pt window.
+//      and Daylight; the whole list fits a 950pt window. Since Sb-4 it is a
+//      hero column (1d): a plain split pane with no system material, the
+//      gradient edge to edge under the title bar, every word in its ink in
+//      every app theme, the lit row a pill with the focus ring inside it,
+//      group titles with their counts, rules between rows, the nested
+//      sessions, and collapse - with renders beside Home and Tasks when
+//      `FM_SIDEBAR_HERO_RENDER_DIR` is set.
 //   2. **Quick Connect** on Console is its caption and two icons: Hosts opens
 //      Connections' quick-connect field, Console focuses Console's session and
 //      opens one only when there is none (the captain's Option B), and the
@@ -85,10 +91,15 @@ enum SidebarRedesignsSelfTest {
                 resize(window, width: 1512, shell)
                 ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
                 settle(shell)
-                for check in [checkTheSidebar, checkHomeStaysInSight, checkSectionHeadingComesWithTheLitRow, checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
+                for check in [checkTheSidebar, checkHomeStaysInSight, checkSectionHeadingComesWithTheLitRow,
+                              checkQuickConnect, checkTasksBoard, checkTasksList, checkTasksFollowUps,
                               checkTasksReview,
                               checkUpdates, checkGitHubSync, checkSetupSteps, checkAutomation, checkTheSummaryRow,
-                              writeSetupRenders] {
+                              writeSetupRenders,
+                              // Last: the theme sweep and the profile renders
+                              // leave Setup's seeded readings stale for the
+                              // Setup cases above (measured).
+                              checkTheHeroColumn, writeSidebarRenders] {
                     var ok = true
                     check(shell, window, &ok)
                     allOK = allOK && ok
@@ -251,6 +262,294 @@ enum SidebarRedesignsSelfTest {
         let lit = outline.rect(ofRow: outline.selectedRow)
         check(lit.minY >= clip.bounds.minY - 0.5 && lit.maxY <= clip.bounds.maxY + 0.5,
               "R5-UI-09: Knowledge's own row is not fully in sight", &ok)
+    }
+
+    // MARK: 1d - Sb-4: the whole sidebar is a hero column
+
+    private static func checkTheHeroColumn(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let registry = shell.workspace.hosts.sessions
+        let session = UUID()
+        registry.register(hostID: session, label: "DEV Bastion", accentHex: nil, state: .connected)
+        defer {
+            registry.unregister(hostID: session)
+            shell.workspace.navigator.show(.homeCanvas)
+            ThemeManager.shared.setTheme(HelmTheme.dusk)
+            settle(shell)
+        }
+        shell.workspace.navigator.show(.shift)
+        settle(shell)
+        let sidebar = shell.sidebar
+        let root = sidebar.view
+
+        // The pane: a plain split item, and no system material anywhere
+        // between the window and the rows - the material is what Sb-4
+        // replaces.
+        check(shell.debugSidebarItemBehavior == .default,
+              "Sb-4: the sidebar is still the system's sidebar item (behavior \(shell.debugSidebarItemBehavior.rawValue))", &ok)
+        func effectViews(in view: NSView) -> [NSView] {
+            (view is NSVisualEffectView && !view.isHiddenOrHasHiddenAncestor ? [view] : [])
+                + view.subviews.flatMap(effectViews)
+        }
+        let above = sequence(first: root.superview, next: { $0?.superview }).compactMap { $0 }
+            .filter { $0 is NSVisualEffectView }
+        check(above.isEmpty && effectViews(in: root).isEmpty,
+              "Sb-4: the sidebar still sits in or holds system material (\(above.count) above, "
+                  + "\(effectViews(in: root).map { v in sequence(first: v, next: { $0.superview }).prefix(6).map { "\(type(of: $0))(\(Int($0.frame.width))x\(Int($0.frame.height)) state \(($0 as? NSVisualEffectView)?.material.rawValue ?? -1))" }.joined(separator: "<") }) inside)", &ok)
+        // The gradient covers the whole pane, from the window's top edge -
+        // the traffic lights sit on it - to its foot.
+        let surface = sidebar.debugSurface
+        let paneInWindow = root.convert(root.bounds, to: nil)
+        let contentHeight = window.contentView?.bounds.height ?? 0
+        check(surface.frame == root.bounds && root.bounds.height > 0,
+              "Sb-4: the gradient \(surface.frame) does not fill the pane \(root.bounds)", &ok)
+        check(abs(paneInWindow.maxY - contentHeight) < 0.5 && root.safeAreaInsets.top > 0,
+              "Sb-4: the pane does not run under the title bar (top \(paneInWindow.maxY) of \(contentHeight), "
+                  + "safe area \(root.safeAreaInsets.top))", &ok)
+
+        // Every word in the ink, in every app theme: what is painted, read
+        // off the cells, against the recipe.
+        for theme in HelmTheme.appThemes {
+            ThemeManager.shared.setTheme(theme)
+            settle(shell)
+            let ink = WorkspaceSidebarInk.of(theme)
+            let tag = "[\(theme.id)]"
+            check(surface.palette == ink.palette, "\(tag) the gradient is not the hero palette on the accent", &ok)
+            check(root.appearance?.name == ink.appearance?.name,
+                  "\(tag) the pane's controls are not in the gradient's appearance", &ok)
+            check(same(sidebar.debugHeader.debugTitleColor, ink.ink),
+                  "\(tag) the account header's name is not in the ink", &ok)
+            if let home = sidebar.debugCell(for: .module(.home)) as? WorkspaceSidebarPageCell {
+                check(same(home.debugLabelColor, ink.ink) && same(home.debugIconTint, ink.ink),
+                      "\(tag) Home's words and glyph are not in the ink", &ok)
+            } else {
+                fail("\(tag) no Home row", &ok)
+            }
+            if let lit = sidebar.debugCell(for: .module(.tasks)) as? WorkspaceSidebarPageCell,
+               let row = sidebar.debugRowView(for: .module(.tasks)) {
+                check(same(lit.debugLabelColor, ink.selectedInk) && same(lit.debugIconTint, ink.selectedInk),
+                      "\(tag) the lit row's words are not the pill's", &ok)
+                check(same(row.debugFill.debugFill.flatMap { NSColor(cgColor: $0) }, ink.ink),
+                      "\(tag) the lit row is not a pill in the ink", &ok)
+            } else {
+                fail("\(tag) Tasks is not lit", &ok)
+            }
+            if let work = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell {
+                check(same(work.debugTitleColor, ink.quiet), "\(tag) the Work title is not the quiet ink", &ok)
+            }
+            if let dot = (sidebar.debugCell(for: .session(hostID: session)) as? WorkspaceSidebarSessionCell)?.debugDotColor {
+                check(same(dot, ink.signal(tintHex: HelmTint.good.hex(in: theme), selected: false)),
+                      "\(tag) the live session's dot is not the good hue lifted for the gradient", &ok)
+            }
+        }
+        ThemeManager.shared.setTheme(HelmTheme.dusk)
+        settle(shell)
+        let ink = WorkspaceSidebarInk.of(HelmTheme.dusk)
+
+        // Group titles carry their row counts; the session nests under
+        // Connections with its chord.
+        let outline = sidebar.outlineView
+        if let work = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell {
+            let rows = WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules).count
+            check(work.debugTitle == "WORK" && work.debugCount == "\(rows)",
+                  "Sb-4: the Work title reads \"\(work.debugTitle)\" \(work.debugCount ?? "-"), want WORK \(rows)", &ok)
+            // The disclosure chevron takes the trailing edge under the
+            // pointer, so the count steps aside for it.
+            if let row = sidebar.debugRowView(for: .section("Work")) {
+                row.mouseEntered(with: NSEvent())
+                check(work.debugCount == nil, "Sb-4: the Work count stays under the disclosure chevron", &ok)
+                row.mouseExited(with: NSEvent())
+                check(work.debugCount != nil, "Sb-4: the Work count did not come back", &ok)
+            }
+        } else {
+            fail("Sb-4: no Work title", &ok)
+        }
+        let entries = sidebar.debugVisibleEntries
+        if let connections = entries.firstIndex(of: .module(.connections)) {
+            check(entries.indices.contains(connections + 1) && entries[connections + 1] == .session(hostID: session),
+                  "Sb-4: the live session is not nested under Connections", &ok)
+        }
+        if let cell = sidebar.debugCell(for: .session(hostID: session)) as? WorkspaceSidebarSessionCell {
+            check(cell.debugShortcut.hasPrefix("\u{2303}\u{2318}"), "Sb-4: the session lost its chord", &ok)
+        }
+
+        // The rules: none under a title, none beside the lit pill, one
+        // between two plain rows - drawn, so in the ink's rule colour too.
+        func rule(_ entry: WorkspaceSidebarEntry) -> Bool? {
+            _ = sidebar.debugCell(for: entry)
+            return sidebar.debugRowView(for: entry).map { row in
+                guard !row.debugRule.isHidden else { return false }
+                return same(row.debugRule.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
+                            WorkspaceSidebarInk.of(ThemeManager.shared.theme).rule)
+            }
+        }
+        let work = WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules)
+        if work.count >= 4, let litIndex = work.firstIndex(of: .tasks) {
+            check(rule(.module(work[0])) == false, "Sb-4: the first row under Work draws a rule under the title", &ok)
+            check(rule(.module(.tasks)) == false || litIndex == 0, "Sb-4: the lit pill draws a rule", &ok)
+            if work.indices.contains(litIndex + 1) {
+                check(rule(.module(work[litIndex + 1])) == false, "Sb-4: the row under the lit pill draws a rule", &ok)
+            }
+            let plain = work.indices.first { $0 > 0 && $0 != litIndex && $0 != litIndex + 1 }
+            if let plain {
+                check(rule(.module(work[plain])) == true, "Sb-4: \(work[plain].title) has no rule above it", &ok)
+            }
+        }
+
+        // A profile change rebuilds the rows, and the rules come with them.
+        // The rebuild makes new row views that are never hovered or lit
+        // before they draw, which is how the first renders came out with
+        // colourless rules.
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        let savedHidden = AppSettings.shared.hiddenModules
+        AppSettings.shared.hiddenModules = WorkspaceProfile.personal.hiddenModules
+        settle(shell)
+        let personal = WorkspaceSidebarModel.modules(in: .work, hidden: AppSettings.shared.hiddenModules)
+        if personal.count >= 2 {
+            check(rule(.module(personal[1])) == true,
+                  "Sb-4: after a profile change \(personal[1].title) lost its rule", &ok)
+        } else {
+            fail("Sb-4: fixture: the Personal Work group has fewer than two rows", &ok)
+        }
+        AppSettings.shared.hiddenModules = savedHidden
+        shell.workspace.navigator.show(.shift)
+        settle(shell)
+
+        // A group's count lines up with the rows' badges.
+        if let title = sidebar.debugCell(for: .section("Work")) as? WorkspaceSidebarSectionCell,
+           let tasks = sidebar.debugCell(for: .module(.tasks)) as? WorkspaceSidebarPageCell, !tasks.badgeView.isHidden {
+            let count = title.debugCountLabel.convert(title.debugCountLabel.bounds, to: outline)
+            let badge = tasks.badgeView.convert(tasks.badgeView.bounds, to: outline)
+            check(abs(count.maxX - badge.maxX) < 1,
+                  "Sb-4: the Work count ends at \(count.maxX) and Tasks' badge at \(badge.maxX)", &ok)
+        } else {
+            fail("Sb-4: fixture: no Work title or no badge on Tasks to line the count up with", &ok)
+        }
+
+        // The focus ring on the pill: inside it, in the pill's words colour.
+        HelmFocusVisibility.overrideForTests = true
+        defer { HelmFocusVisibility.overrideForTests = nil }
+        window.makeFirstResponder(outline)
+        settle(shell)
+        if let row = sidebar.debugRowView(for: .module(.tasks)) {
+            check(row.showsFocusRing && same(row.debugFill.layer?.borderColor.flatMap { NSColor(cgColor: $0) },
+                                             ink.selectedInk),
+                  "Sb-4: the keyboard ring on the lit pill is not in the pill's words colour", &ok)
+            check(HelmContrast.ratio(ink.selectedInk, ink.ink) >= HelmContrast.nonTextTarget,
+                  "Sb-4: the ring does not clear the non-text floor on the pill", &ok)
+        }
+        window.makeFirstResponder(nil)
+
+        // Collapse keeps the title and its count, and the menus stay in the
+        // theme's own mode rather than the gradient's.
+        let before = outline.numberOfRows
+        sidebar.debugSetSection("Observe", expanded: false)
+        settle(shell)
+        check(outline.numberOfRows < before && sidebar.debugVisibleEntries.contains(.section("Observe")),
+              "Sb-4: collapsing Observe did not fold its rows", &ok)
+        if let observe = sidebar.debugCell(for: .section("Observe")) as? WorkspaceSidebarSectionCell {
+            check(observe.debugCount != nil, "Sb-4: a collapsed group lost its count", &ok)
+        }
+        sidebar.debugSetSection("Observe", expanded: true)
+        settle(shell)
+        check(outline.numberOfRows == before, "Sb-4: Observe did not open again", &ok)
+        if let menu = outline.menu {
+            sidebar.menuNeedsUpdate(menu)
+            check(menu.appearance?.name == .darkAqua, "Sb-4: the context menu is not in Dusk's own mode", &ok)
+        }
+    }
+
+    /// Whether `color` is `expected`, components and alpha.
+    private static func same(_ color: NSColor?, _ expected: NSColor) -> Bool {
+        guard let a = color?.usingColorSpace(.sRGB), let b = expected.usingColorSpace(.sRGB) else { return false }
+        return abs(a.redComponent - b.redComponent) < 0.01 && abs(a.greenComponent - b.greenComponent) < 0.01
+            && abs(a.blueComponent - b.blueComponent) < 0.01 && abs(a.alphaComponent - b.alphaComponent) < 0.02
+    }
+
+    /// The PR's renders: the whole window beside Home and Tasks, in Daylight
+    /// and Dusk, in the Operator and Personal profiles, with a nested session,
+    /// collapsed groups, the keyboard ring, Compact, and a short window whose
+    /// list scrolls; and the sidebar alone in every app theme.
+    private static func writeSidebarRenders(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        guard let dir = ProcessInfo.processInfo.environment["FM_SIDEBAR_HERO_RENDER_DIR"], !dir.isEmpty else { return }
+        let folder = URL(fileURLWithPath: dir)
+        let savedHidden = AppSettings.shared.hiddenModules
+        let savedDensity = AppSettings.shared.density
+        let savedLayout = AppSettings.shared.homeCardLayout
+        let registry = shell.workspace.hosts.sessions
+        let live = UUID(), restored = UUID()
+        registry.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
+        registry.register(hostID: restored, label: "prod-db-1", accentHex: nil, state: .restored)
+        defer {
+            registry.unregister(hostID: live)
+            registry.unregister(hostID: restored)
+            AppSettings.shared.hiddenModules = savedHidden
+            AppSettings.shared.density = savedDensity
+            AppSettings.shared.homeCardLayout = savedLayout
+            ThemeManager.shared.setTheme(HelmTheme.dusk)
+            var frame = window.frame
+            frame.size = NSSize(width: 1512, height: 950)
+            window.setFrame(frame, display: false)
+            shell.workspace.navigator.show(.homeCanvas)
+            settle(shell)
+        }
+        ReviewTourLab.seedDemoBriefing()
+        let canvas = shell.debugHomeCanvas
+        func shoot(_ name: String) {
+            settle(shell)
+            if !ReviewTourLab.writeSplitShellPNG(shell, window: window, to: folder.appendingPathComponent("\(name).png")) {
+                fail("Sb-4: the \(name) render was not written", &ok)
+            }
+        }
+        func show(_ route: RailDestination) {
+            shell.workspace.navigator.show(route)
+            if route == .homeCanvas {
+                ReviewTourLab.seedDemoHome(canvas)
+                canvas.debugRenderNow()
+            }
+            settle(shell)
+        }
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            ThemeManager.shared.setTheme(theme)
+            for profile in [WorkspaceProfile.operator, .personal] {
+                AppSettings.shared.hiddenModules = profile.hiddenModules
+                for (route, page) in [(RailDestination.homeCanvas, "home"), (.shift, "tasks")] {
+                    show(route)
+                    shoot("\(page)-\(profile.rawValue)-\(theme.id)")
+                }
+            }
+            AppSettings.shared.hiddenModules = WorkspaceProfile.operator.hiddenModules
+            show(.shift)
+            shell.sidebar.debugSetSection("Observe", expanded: false)
+            shell.sidebar.debugSetSection("Workbench", expanded: false)
+            shoot("tasks-collapsed-\(theme.id)")
+            shell.sidebar.debugSetSection("Observe", expanded: true)
+            shell.sidebar.debugSetSection("Workbench", expanded: true)
+            HelmFocusVisibility.overrideForTests = true
+            window.makeFirstResponder(shell.sidebar.outlineView)
+            shoot("tasks-keyboard-ring-\(theme.id)")
+            window.makeFirstResponder(nil)
+            HelmFocusVisibility.overrideForTests = nil
+            AppSettings.shared.density = .compact
+            shoot("tasks-compact-\(theme.id)")
+            AppSettings.shared.density = savedDensity
+            var frame = window.frame
+            frame.size = NSSize(width: 1280, height: 700)
+            window.setFrame(frame, display: false)
+            show(.settings)
+            shoot("settings-short-window-\(theme.id)")
+            frame.size = NSSize(width: 1512, height: 950)
+            window.setFrame(frame, display: false)
+        }
+        // The sidebar alone, in every app theme, beside Tasks.
+        show(.shift)
+        for theme in HelmTheme.appThemes {
+            ThemeManager.shared.setTheme(theme)
+            settle(shell)
+            ReviewTourLab.writePNG(of: shell.sidebar.view, to: folder.appendingPathComponent("sidebar-\(theme.id).png"))
+        }
+        print("SidebarRedesignsSelfTest: Sb-4 renders written to \(dir)")
     }
 
     // MARK: 1b - Home stays in sight (R4-BUG-03)

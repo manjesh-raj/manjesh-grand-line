@@ -362,7 +362,15 @@ final class MainSplitShellController: WorkspaceShellController {
         splitView.onPlacingDivider = { [weak self] placing in self?.placingDividerDidChange(placing) }
         splitController.splitView = splitView
 
-        sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        // Sb-4: a plain item, not `sidebarWithViewController:`. The sidebar
+        // paints the hero's gradient edge to edge, under the title bar, and a
+        // sidebar item would draw the system's sidebar material over the
+        // window's edge instead (Liquid Glass on macOS 26, floated in from
+        // the window by `sidebarInset`, which is 0 for this item). Collapse,
+        // the width range and the toolbar's tracking separator are the
+        // split view's and work on any item.
+        sidebarItem = NSSplitViewItem(viewController: sidebar)
+        sidebarItem.titlebarSeparatorStyle = .none
         // Opens at the prototype's width; `viewDidLayout` relaxes the range
         // once the split view has a real size.
         sidebarItem.minimumThickness = sidebarThickness
@@ -1553,6 +1561,7 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugContentPaneHeader: WorkspaceModuleHeader { contentPane.header }
     var debugBodyContainer: NSView { workspace.content.bodyContainer }
     var debugSidebarIsCollapsed: Bool { sidebarItem.isCollapsed }
+    var debugSidebarItemBehavior: NSSplitViewItem.Behavior { sidebarItem.behavior }
     var debugInspectorIsCollapsed: Bool { inspectorItem.isCollapsed }
     var debugColumnMinimum: CGFloat { contentItem.minimumThickness }
     /// R2-UX-10: the narrowest window, in points of content width, that keeps

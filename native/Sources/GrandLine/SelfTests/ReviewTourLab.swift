@@ -1970,18 +1970,18 @@ enum ReviewTourLab {
     /// toolbar, the title and the traffic lights are in it), with the
     /// sidebar's own content drawn over its pane.
     ///
-    /// Several renders because of one limit: macOS 26 draws the sidebar and
-    /// the toolbar's capsules as Liquid Glass, which the window server
-    /// composites, so `cacheDisplay` of the frame captures a placeholder
-    /// there - an empty white panel where the sidebar's rows should be, and
-    /// opaque white capsules over the toolbar's buttons (measured; it is what
-    /// a Dusk render showed). So the sidebar's own view, which renders
-    /// correctly on its own, is drawn over its panel on
-    /// `HelmTheme.sidePanelFill`, and each toolbar capsule is repainted as a
+    /// Several renders because of one limit: macOS 26 draws the toolbar's
+    /// capsules as Liquid Glass, which the window server composites, so
+    /// `cacheDisplay` of the frame captures a placeholder there - opaque
+    /// white capsules over the toolbar's buttons (measured; it is what a
+    /// Dusk render showed). So each toolbar capsule is repainted as a
     /// translucent tint of the window's ground with its items redrawn on top
-    /// (in a dark render; a light one's capsules already read as glass).
-    /// Both stand-ins are approximations of glass no off-screen render can
-    /// show; everything else in the image is the frame's real render.
+    /// (in a dark render; a light one's capsules already read as glass), an
+    /// approximation of glass no off-screen render can show. The sidebar was
+    /// glass too until Sb-4, and came out as an empty white panel; it paints
+    /// its own gradient now, and its own view is still drawn over its pane
+    /// with the traffic lights and the sidebar button put back on top.
+    /// Everything else in the image is the frame's real render.
     @discardableResult
     static func writeSplitShellPNG(_ shell: MainSplitShellController, window: NSWindow, to url: URL) -> Bool {
         guard let frameView = window.contentView?.superview else { return false }
@@ -2035,15 +2035,9 @@ enum ReviewTourLab {
                 return NSRect(x: r.minX * scale, y: r.minY * scale, width: r.width * scale, height: r.height * scale)
             }
             let rect = pixels(sidebarView)
-            let theme = ThemeManager.shared.theme
-            // The sidebar's pane, under the floating panel: the window's
-            // ground, as on screen around a macOS 26 sidebar.
-            if let pane = shell.debugSidebarPane {
-                HelmTheme.nsColor(theme.backgroundHex).setFill()
-                pixels(pane).fill()
-            }
-            HelmTheme.sidePanelFill(theme).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: HelmMetrics.rCard * scale, yRadius: HelmMetrics.rCard * scale).fill()
+            // Sb-4: the sidebar paints its own gradient edge to edge on a
+            // plain split item, so there is no glass panel to stand in for
+            // any more - its own render goes straight over the frame's.
             // `.sourceOver`, explicitly: a bitmap rep's plain `draw(in:)`
             // copies, so the sidebar's transparent background would replace
             // the fill under it rather than show it.

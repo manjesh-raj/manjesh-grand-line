@@ -58,6 +58,14 @@
 // **1.3.0, for Settings' split cards (Set-2).** A `.panel` can hold a page's
 // own view in the ring's place (`Accessory`): Appearance's preview of the
 // theme that is showing, with the theme's name under it in the quiet ink.
+//
+// **1.4.0, for the app's own sidebar (Sb-4).** `NavInk` is a navigation row's
+// colours on the gradient as values - the ink, the quiet ink, the rule, the
+// hover, the selected pill and its words, a count's pill and a state mark -
+// for a list that draws its own rows. The sidebar is an `NSOutlineView` for
+// its disclosure, keyboard navigation, context menus and VoiceOver tree, so it
+// cannot hold `HelmHeroNavRow`s; it paints its cells from the same values the
+// column hands its nav rows, so there is still one recipe.
 
 import AppKit
 
@@ -624,15 +632,81 @@ final class HelmHeroColumn: NSView {
         }
         for section in sections { for view in section.views { Self.applyInk(ink, to: view) } }
         for view in footViews { Self.applyInk(ink, to: view) }
-        // A selected nav row is a pill in the ink, so its words take the stop
-        // furthest from the ink: the deep one under white ink, the light one
-        // under a dark ink (a very pale colour).
-        let deep = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
-            ? palette.start : palette.end
-        let pillWords = HelmContrast.color(darkInk ? palette.lighterStop : deep)
+        let pillWords = NavInk(palette: palette).selectedInk
         for section in sections {
             for case let row as HelmHeroNavRow in section.views { row.applyInk(ink, selectedInk: pillWords) }
         }
+    }
+
+    // MARK: Navigation ink
+
+    /// 1.4.0: a navigation row's colours on the gradient, for a list that
+    /// draws its own rows (see the file header). `HelmHeroNavRow` takes the
+    /// same ink, quiet ink, rule, hover and pill words from the column.
+    struct NavInk {
+        let palette: HelmHeroSurface.Palette
+        /// Words and glyphs, and the selected row's pill.
+        let ink: NSColor
+        /// The selected pill's words: the stop furthest from the ink - the
+        /// deep one under white ink, the light one under a dark ink (a very
+        /// pale colour) - so the pill reads as a cut-out of the gradient.
+        let selectedInk: NSColor
+        /// A very pale colour's hero takes dark ink, and its controls the
+        /// light appearance.
+        let isDarkInk: Bool
+
+        init(palette: HelmHeroSurface.Palette) {
+            self.palette = palette
+            ink = HelmContrast.color(palette.ink)
+            isDarkInk = HelmContrast.relativeLuminance(palette.ink) < 0.5
+            let deep = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+                ? palette.start : palette.end
+            selectedInk = HelmContrast.color(isDarkInk ? palette.lighterStop : deep)
+        }
+
+        /// A second line, a section title, a quiet count.
+        var quiet: NSColor { ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha) }
+        /// The hairline between two rows.
+        var rule: NSColor { ink.withAlphaComponent(HelmHeroColumn.ruleAlpha) }
+        /// A row under the pointer.
+        var hover: NSColor { ink.withAlphaComponent(HelmHeroNavRow.hoverAlpha) }
+        /// What controls on the gradient resolve system colours in: a
+        /// disclosure chevron, a scroller, a field editor.
+        var appearance: NSAppearance? { NSAppearance(named: isDarkInk ? .aqua : .darkAqua) }
+
+        /// A count that needs attention, as a pill. On the gradient it is a
+        /// shade of the ink's opposite (`HelmButton.heroShade`) at
+        /// `countPillAlpha`, and on the selected pill the pill words at a
+        /// lower share. Its digits are the row's own ink. The board drew the
+        /// ink itself at 22%, but the palette holds white at the text floor,
+        /// so a wash of white under white digits measured 3.5:1 on Dusk; a
+        /// shade can only add contrast (the ghost pill's own lesson).
+        func countPill(selected: Bool) -> NSColor {
+            selected ? selectedInk.withAlphaComponent(Self.selectedCountPillAlpha)
+                : HelmButton.heroShade(for: ink).withAlphaComponent(Self.countPillAlpha)
+        }
+        static let countPillAlpha: CGFloat = 0.22
+        static let selectedCountPillAlpha: CGFloat = 0.14
+
+        /// A state hue as a mark - a dot, a glyph - that still reads as that
+        /// hue and clears the non-text floor where it sits. On the gradient
+        /// that is `HelmHeroSurface.signalColor`; on the selected pill the hue
+        /// steps toward the pill's words until it clears the pill.
+        func signal(tintHex: String, selected: Bool) -> NSColor {
+            guard selected else { return HelmHeroSurface.signalColor(tintHex: tintHex, on: palette) }
+            let hue = HelmTheme.nsColor(tintHex).usingColorSpace(.sRGB) ?? HelmTheme.nsColor(tintHex)
+            if HelmContrast.ratio(hue, ink) >= HelmContrast.nonTextTarget { return hue }
+            for step in stride(from: 0.1, through: 1.0, by: 0.1) {
+                guard let blended = hue.blended(withFraction: CGFloat(step), of: selectedInk) else { break }
+                if HelmContrast.ratio(blended, ink) >= HelmContrast.nonTextTarget { return blended }
+            }
+            return selectedInk
+        }
+    }
+
+    /// The column's navigation ink for `tone` in `theme`.
+    static func navInk(for tone: HelmModuleCard.HeroTone, in theme: HelmTheme) -> NavInk {
+        NavInk(palette: palette(for: tone, in: theme))
     }
 
     /// Hand the ink to the kit controls a page put on the gradient, and to
