@@ -1135,6 +1135,11 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_LOGIC_TESTS"] == "1" {
             exit(ConnectionsLogicSelfTest.run() ? 0 : 1)
         }
+        // Host-1 and Key-1 of the Console / Add Host / Add Key board: the forms'
+        // pure half (the ~/.ssh scan, inline validation, the raised well).
+        if ProcessInfo.processInfo.environment["FM_RUN_CONNECTION_FORMS_TESTS"] == "1" {
+            exit(ConnectionFormsSelfTest.run() ? 0 : 1)
+        }
         if ProcessInfo.processInfo.environment["FM_RUN_CONNECTIONS_CARDS_TESTS"] == "1" {
             exit(ConnectionsCardsSelfTest.run() ? 0 : 1)
         }

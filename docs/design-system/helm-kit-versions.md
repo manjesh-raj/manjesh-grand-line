@@ -36,6 +36,25 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 9.2.0 - Console, Add Host and Add Key in the hero language
+
+The picks from the Console / Add Host / Add Key board (`data/grand-line-console-addhost-mockups/`): the S1 hero style, Con-1, Host-1 and Key-1.
+Console opens on a hero band for its session, and its terminal is a padded card on every page.
+The host and key forms in the inspector open on a hero that previews the record, put each section on a card with raised wells, and report every validation problem inline.
+It is a minor release: every kit change is an opt-in option, a new parameter or a fix, and nothing is removed.
+
+- `HelmField` 1.0.0 → 1.1.0 (minor): `Surface`, with `.inset` (every form's well, unchanged) and `.raised`, the card's own colour with a hairline stepped 28% toward ink, lifted 5% in a dark register. `fill`, `border`, `ink`, `mutedInk` and `applySunken` take a surface. On the Lavender palette the inset well is `side` on a lavender panel and had no visible edge; the faintest raised edge across the 26 app themes measures 1.89:1 against its fill.
+- `HelmFieldCentering` 1.0.0 → 1.1.0 (minor): field text sits `horizontalInset` (6pt) in from the well's edge on top of the cell's own 2pt, in every form. It started 2pt from the border before.
+- `HelmTextField` 1.0.0 → 1.1.0 (minor): `wellSurface`, and `showsIssue`, which gives the well the critical hue's border until the form clears it.
+- `HelmSecureTextField` 1.0.0 → 1.1.0 (minor): `wellSurface`.
+- `HelmTextView` 1.0.0 → 1.1.0 (minor): `wellSurface`, and the well is a plain wrapper view around the scroll view. AppKit reset the edge set on the `NSScrollView`'s own layer, so every multi-line well drew no box in a real window.
+- `HelmFieldCard` 1.0.0 → 1.1.0 (minor): `wellSurface`.
+- `HelmToggleRow` 1.0.0 → 1.1.0 (minor): `wellSurface`.
+- `HelmFormSheet` 1.0.0 → 1.1.0 (minor): `sectionStyle: .cards` puts each section and its rows on a card, `wellSurface` paints every field the form holds with one recipe, and `endSection()` and `adoptWells(in:)` go with them. The defaults draw exactly what the six editors drew before.
+- `HelmInputSurface` 1.0.0 → 1.1.0 (minor): `fill(_:focused:surface:)` and `apply(...surface:)`.
+- `Connections (page)` 1.0.0 → 1.1.0 (minor): Host-1 and Key-1. The host form opens on `RecordPreviewHeader`, the host's card on the hero updated as it is typed, with the name as the first Connection field, Environment as a segmented track and the SSH key as a list (`HostKeyPicker`) with each key's type, host count and Touch ID. Validation runs the same rules but shows every problem under its field and in the footer, with no beep and no modal. The key form asks first how the key is added (`KeyPathChoices`): generate, import, or a key pair already in ~/.ssh (`SSHKeyDirectoryScan`), which reads only `.pub` files until one is picked. Its public key preview takes its card's width; it was laid out zero points wide.
+- `Console (page)` none → 1.0.0 (new): Con-1. Every Console page opens with `ConsoleSessionBand`: this Mac's shells with the tab and live-session counts and the current shell's name and folder, or a host page's environment, state, address and key, and a chip per live session with switch and end, plus Connect. It replaces the sidebar layout's SESSIONS strip; the floating bar keeps its strip. The shared console has the host page's margin and the terminal is a card on every page in every palette.
+
 ## 9.1.0 - Six colour palettes as app theme families
 
 Six two-colour palettes join the seven app theme families, each with a light and a dark register, from the colour-options board (`data/grand-line-color-options/`).

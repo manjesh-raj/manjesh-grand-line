@@ -519,6 +519,7 @@ extension ConsoleController {
     }
 
     func styleChips() {
+        refreshSessionBand()
         let accent = HelmTheme.nsColor(theme.accentHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         // `mutedInk` under Daylight, where that token is contrast-corrected
@@ -608,6 +609,12 @@ extension ConsoleController: SidebarLayoutAdopting {
         guard !drawsSidebarLayout else { return }
         _ = view
         drawsSidebarLayout = true
+        // Con-1: the band takes the strip's place above the tabs. This runs
+        // when the shell adopts the page, before a terminal has history.
+        sessionBand.isHidden = false
+        plainTabBarTop?.isActive = false
+        bandTabBarTop?.isActive = true
+        refreshSessionBand()
         collapseTabBarIfEmpty()
     }
 }

@@ -298,8 +298,10 @@ enum DaylightDrillPageSlice2SelfTest {
         let afterFrame = host.debugCurrentTerminalFrame()
         let afterVisible = host.debugTerminalCardVisible()
 
-        if beforeVisible {
-            print("  FAIL the terminal card is drawn with no pane open off Daylight")
+        // Con-1 (Console / Add Host / Add Key board): the terminal is a card
+        // in every palette now, not only where Daylight's paper needs one.
+        if !beforeVisible {
+            print("  FAIL the terminal card is not drawn off Daylight with no pane open")
             ok = false
         }
         if !afterVisible {
@@ -324,24 +326,24 @@ enum DaylightDrillPageSlice2SelfTest {
             ok = false
         }
 
-        // The shared Firstmate console has no margin by design, so it must
-        // never show the card in any palette.
+        // Con-1 gave the shared Firstmate console the host page's margin, so
+        // its terminal is a padded card too rather than running flush.
         let shared = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                        isFirstmateConsole: true)
         let sharedWindow = OffScreenProbe.window(width: 1200, height: 820)
         sharedWindow.contentViewController = shared
         defer { _ = sharedWindow }
         shared.view.layoutSubtreeIfNeeded()
-        if shared.terminalInset != 0 {
-            print("  FAIL the shared Firstmate console has a non-zero terminal inset (\(fmt(shared.terminalInset)))")
+        if shared.terminalInset != host.terminalInset {
+            print("  FAIL the shared console's terminal inset is \(fmt(shared.terminalInset)), a host page's \(fmt(host.terminalInset))")
             ok = false
         }
-        if shared.debugTerminalCardVisible() {
-            print("  FAIL the shared Firstmate console draws a terminal card under Daylight")
+        if !shared.debugTerminalCardVisible() {
+            print("  FAIL the shared Firstmate console draws no terminal card")
             ok = false
         }
-        print("  OK - host page: hidden off Daylight, drawn on it, terminal frame \(beforeFrame) unchanged; "
-              + "shared console never carded")
+        print("  OK - host page: carded off Daylight and on it, terminal frame \(beforeFrame) unchanged; "
+              + "shared console carded with the same inset")
     }
 
     // MARK: 4. A host row's gradient tile is the captain's own colour (§7)

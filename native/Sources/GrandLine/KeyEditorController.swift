@@ -39,6 +39,16 @@
 // nothing has changed, then Cancel and Save Key (C1); a new key's form
 // offers generate, import a file and paste, with Cancel and Save Key. Return
 // saves and Esc cancels. The floating bar keeps the sheet.
+//
+// **Key-1 of the Console / Add Host / Add Key board** (Helm 9.2.0) gave the
+// panel the same language as the host form: a hero previewing the key's card
+// (`RecordPreviewHeader`), sections as cards with raised wells, and the first
+// question being how the key is added - Generate, Import, or a key pair
+// already in ~/.ssh (`KeyPathChoices`, `SSHKeyDirectoryScan`). The third way
+// is new; it lists `.pub` files and reads the private file only when one is
+// picked, through the same verification Import has always used. A Keychain
+// and Touch ID card says plainly where the private key lives. The sheet keeps
+// its order, on the same cards.
 
 import AppKit
 
@@ -102,8 +112,9 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Shared fields
 
-    private lazy var labelField = HelmTextField(
-        placeholder: presentation == .panel ? "Name this key" : "Label (e.g. Prod bastion key)", style: .lead)
+    private lazy var labelField = presentation == .panel
+        ? HelmTextField(placeholder: "e.g. Prod bastion key")
+        : HelmTextField(placeholder: "Label (e.g. Prod bastion key)", style: .lead)
     /// The form's sections, added before or after the mode controls by
     /// `loadView` (see there).
     private var pendingSections: (() -> Void)?
@@ -111,7 +122,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     private let certificateView = HelmTextView(height: 60, monospaced: true)
     private let publicKeyView = HelmTextView(height: 56, monospaced: true)
     private let fingerprintField = HelmTextField(placeholder: "")
-    private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let statusLabel = KeyStatusLabel(wrappingLabelWithString: "")
     private var form: HelmFormSheet!
     private var saveButton: HelmButton!
     /// The edit-mode "Used by N hosts" line under the hero - `addLeadHint`
@@ -161,6 +172,54 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// T1: the two subprocess-backed actions and their busy state.
     private weak var generateButton: HelmButton?
     private weak var verifyButton: HelmButton?
+    private weak var existingUseButton: HelmButton?
+
+    // MARK: Key-1 (panel)
+
+    /// How the key is being added. The sheet's segmented pair still drives it
+    /// there; the panel's `choices` drive it here and add `.existing`.
+    private var mode: KeyPathChoices.Path = .generate
+    private let choices = KeyPathChoices()
+    private lazy var preview = RecordPreviewHeader(tileSize: 40)
+    private var publicKeyBox: NSView?
+    private let existingPanel = NSView()
+    private let existingPicker = HostKeyPicker()
+    private let existingPassphraseField = HelmSecureTextField(placeholder: "If encrypted")
+    private let existingEmptyLabel = NSTextField(wrappingLabelWithString: "")
+    private let existingFolderLabel = NSTextField(labelWithString: "")
+    /// The pairs the last scan listed, by the picker row's id.
+    private var existingPairs: [UUID: LocalKeyPair] = [:]
+    private let footerHint: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = HelmType.caption()
+        label.maximumNumberOfLines = 2
+        label.isHidden = true
+        return label
+    }()
+    private lazy var panelFooterColumn: NSStackView = {
+        let column = NSStackView(views: [footerHint, panelFooter])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = HelmMetrics.s2
+        panelFooter.translatesAutoresizingMaskIntoConstraints = false
+        panelFooter.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        return column
+    }()
+
+    static let keychainExplanation = "The private key is stored only in the macOS Keychain, on this Mac only, "
+        + "never synced to iCloud. Touch ID or your Mac password unlocks it when a host connects with it. "
+        + "Hosts refer to this key by its id, so no host file ever contains key material."
+
+    /// Where the "From ~/.ssh" path looks (`SSHKeyDirectoryScan.defaultDirectory`).
+    static var sshDirectory: URL {
+        #if FM_SELFTESTS
+        if let debugSSHDirectory { return debugSSHDirectory }
+        #endif
+        return SSHKeyDirectoryScan.defaultDirectory()
+    }
+    #if FM_SELFTESTS
+    static var debugSSHDirectory: URL?
+    #endif
     private var workInFlight = 0
     private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.hosts.domainHue)
 
@@ -201,7 +260,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         let form = HelmFormSheet(title: editing == nil ? "New Key" : "Edit Key",
                                  maxContentWidth: panel ? Self.panelContentWidth : HelmFormSheet.width,
                                  domainHue: RailDestination.hosts.domainHue,
-                                 chrome: panel ? .panel : .sheet)
+                                 chrome: panel ? .panel : .sheet,
+                                 sectionStyle: .cards, wellSurface: .raised)
         self.form = form
         view = form
         form.onApplyTheme = { [weak self] theme in
@@ -215,11 +275,21 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             if let hint = self.usedByHostsHintLabel {
                 hint.attributedStringValue = self.usedByHostsHint(color: HelmTheme.mutedInk(theme))
             }
+            self.existingEmptyLabel.textColor = HelmTheme.mutedInk(theme)
+            self.existingFolderLabel.textColor = HelmTheme.mutedInk(theme)
+            self.refreshPanelFooter()
         }
+        if panel { buildPanelForm(form) } else { buildSheetForm(form) }
+        statusLabel.isHidden = statusLabel.stringValue.isEmpty
+        updateSaveEnabled()
+        applyPresetMode()
+        form.refreshTheme()
+        form.sizeToFitContent()
+    }
 
-        // MARK: Hero - icon tile + editable label (+ a real "Used by N hosts"
-        // subtitle in edit mode; no "Added today", `SSHKey` has no timestamp)
-
+    /// The floating bar's sheet: the order it has always had - a hero row,
+    /// the result sections, then the mode controls - now on cards.
+    private func buildSheetForm(_ form: HelmFormSheet) {
         heroIconTile.configure(symbol: "key.fill", tint: .warn, pointSize: 18)
         labelField.stringValue = editing?.label ?? ""
         let heroRow = NSStackView(views: [heroIconTile, labelField])
@@ -232,49 +302,66 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             let label = form.addLeadHint(usedByHostsHint(color: HelmTheme.mutedInk(ThemeManager.shared.theme)))
             usedByHostsHintLabel = label
         }
-
         let stack: NSStackView
         if let key = editing {
             stack = buildEditLayout(for: key)
         } else {
             stack = buildCreateLayout()
         }
-        // The sheet has always listed its sections before the mode controls;
-        // the panel puts what the captain does first (K8: generate, import
-        // or paste) above what it produces.
-        if panel {
-            form.addRow(stack)
-            pendingSections?()
+        pendingSections?()
+        pendingSections = nil
+        form.endSection()
+        form.addRow(stack)
+        let footer = form.setFooter(target: self,
+                                    confirmTitle: "Save Key",
+                                    confirm: #selector(save),
+                                    cancel: #selector(cancel),
+                                    delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteKey)),
+                                    hint: "Stored securely in macOS Keychain")
+        saveButton = footer.confirm
+        form.setSubtitle("Private key material never leaves the Keychain.")
+    }
+
+    /// Key-1's side panel: the key's card on a hero, how it is being added,
+    /// its details, what it produces, and where it lives.
+    private func buildPanelForm(_ form: HelmFormSheet) {
+        form.setPanelHeader(preview)
+        labelField.stringValue = editing?.label ?? ""
+        var number = 0
+        func next() -> String {
+            number += 1
+            return String(format: "%02d", number)
+        }
+        let stack: NSStackView
+        if let key = editing {
+            stack = buildEditLayout(for: key)
         } else {
-            pendingSections?()
-            form.addRow(stack)
+            stack = buildCreateLayout()
+            modeSwitch.isHidden = true
+            choices.onSelect = { [weak self] path in self?.setMode(path) }
+            typeSwitch.onSelect = { [weak self] _ in self?.refreshPreview() }
+            form.addSection("How do you want to add it?", number: next())
+            form.addRow(choices)
         }
         pendingSections = nil
-
-        if panel {
-            labelField.delegate = self
-            passphraseField.delegate = self
-            NotificationCenter.default.addObserver(self, selector: #selector(certificateChanged),
-                                                   name: NSText.didChangeNotification, object: certificateView.textView)
-            if editing != nil, !panelHosts.isEmpty { buildHostLinks() }
-            form.setPanelFooter(panelFooter)
-            saveButton = panelSaveButton
-            refreshPanelFooter()
-        } else {
-            let footer = form.setFooter(target: self,
-                                        confirmTitle: "Save Key",
-                                        confirm: #selector(save),
-                                        cancel: #selector(cancel),
-                                        delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteKey)),
-                                        hint: "Stored securely in macOS Keychain")
-            saveButton = footer.confirm
-            form.setSubtitle("Private key material never leaves the Keychain.")
-        }
-        updateSaveEnabled()
-
-        applyPresetMode()
-        form.refreshTheme()
-        form.sizeToFitContent()
+        form.addSection("Details", number: next())
+        form.addField("Name", labelField)
+        form.addRow(stack)
+        form.addSection("Public key", number: next())
+        if let publicKeyBox { form.addRow(publicKeyBox) }
+        form.addField("Fingerprint", buildFingerprintRow())
+        form.addField("Certificate (optional)", certificateView)
+        form.addSection("Keychain and Touch ID", number: next())
+        form.addInfoCard(symbol: "lock.fill", text: Self.keychainExplanation)
+        labelField.delegate = self
+        passphraseField.delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(certificateChanged),
+                                               name: NSText.didChangeNotification, object: certificateView.textView)
+        if editing != nil, !panelHosts.isEmpty { buildHostLinks() }
+        form.setPanelFooter(panelFooterColumn)
+        saveButton = panelSaveButton
+        refreshPreview()
+        refreshPanelFooter()
     }
 
     override func viewDidAppear() {
@@ -298,13 +385,19 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         guard editing == nil, let preset else { return }
         switch preset {
         case .generate(let type):
-            modeSwitch.select("generate")
             typeSwitch.select(type.rawValue)
+            setMode(.generate)
         case .importFile, .paste:
-            modeSwitch.select("import")
+            setMode(.importKey)
         case .certificate:
             return
         }
+    }
+
+    private func setMode(_ path: KeyPathChoices.Path) {
+        mode = path
+        if path != .existing { modeSwitch.select(path.rawValue) }
+        choices.select(path)
         modeChanged()
     }
 
@@ -321,22 +414,25 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Create layout (Generate / Import)
 
     private func buildCreateLayout() -> NSStackView {
-        modeSwitch.onSelect = { [weak self] _ in self?.modeChanged() }
+        modeSwitch.onSelect = { [weak self] id in self?.setMode(KeyPathChoices.Path(rawValue: id) ?? .generate) }
 
         buildGeneratePanel()
         buildImportPanel()
+        buildExistingPanel()
         importPanel.isHidden = true
+        existingPanel.isHidden = true
 
         certificateView.string = ""
 
         let publicKeyBox = buildPublicKeyPreview()
+        self.publicKeyBox = publicKeyBox
 
         statusLabel.font = HelmType.caption()
         setStatusTone(.critical)
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [
-            modeSwitch, generatePanel, importPanel, statusLabel,
+            modeSwitch, generatePanel, importPanel, existingPanel, statusLabel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -345,6 +441,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         NSLayoutConstraint.activate([
             generatePanel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             importPanel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            existingPanel.widthAnchor.constraint(equalTo: stack.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         stack.setCustomSpacing(HelmMetrics.s2, after: modeSwitch)
@@ -460,6 +557,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
         publicKeyView.string = key.publicKey
         let publicKeyBox = buildPublicKeyPreview()
+        self.publicKeyBox = publicKeyBox
         fingerprintField.stringValue = key.fingerprint
         pendingPublicKeyLine = key.publicKey
         pendingFingerprint = key.fingerprint
@@ -524,6 +622,11 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         stack.spacing = HelmMetrics.s1
         stack.translatesAutoresizingMaskIntoConstraints = false
         footer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        // Key-1: the preview takes the stack's full width. Without this the
+        // `.leading` stack sized the text view to its intrinsic width - none -
+        // so the well drew no box at all and the public key band read as
+        // empty space with a Copy button floating under it.
+        publicKeyView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return stack
     }
 
@@ -551,10 +654,13 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Actions - Generate
 
     private func modeChanged() {
-        let importing = modeSwitch.selected == "import"
-        generatePanel.isHidden = importing
-        importPanel.isHidden = !importing
+        generatePanel.isHidden = mode != .generate
+        importPanel.isHidden = mode != .importKey
+        existingPanel.isHidden = mode != .existing
+        if mode == .existing { reloadExistingPairs() }
         statusLabel.stringValue = ""
+        refreshPreview()
+        updateSaveEnabled()
         form.sizeToFitContent()
     }
 
@@ -567,7 +673,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// path never did.
     @objc private func generateKey() {
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else { flag(labelField); return }
+        guard !label.isEmpty else { flagName(); return }
         let type = SSHKeyType(rawValue: typeSwitch.selected) ?? .ed25519
         let passphrase = generatePassphraseField.stringValue
         beginWork(statusText: "Generating a \(type.displayName) key\u{2026}")
@@ -587,6 +693,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
                     self.fingerprintField.stringValue = generated.fingerprint
                     self.statusLabel.stringValue = ""
                     self.fieldsChanged()
+                    self.refreshPreview()
                 case .failure(let error):
                     self.setStatusTone(.critical)
                     self.statusLabel.stringValue = error.localizedDescription
@@ -605,6 +712,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         workInFlight += 1
         generateButton?.isEnabled = false
         verifyButton?.isEnabled = false
+        existingUseButton?.isEnabled = false
         spinner.isHidden = false
         spinner.startAnimation()
         setStatusTone(.neutral)
@@ -617,6 +725,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         guard workInFlight == 0 else { return }
         generateButton?.isEnabled = true
         verifyButton?.isEnabled = true
+        updateExistingButton()
         spinner.stopAnimation()
         spinner.isHidden = true
     }
@@ -649,11 +758,17 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// off main, for the same reason.
     @objc private func verifyImport() {
         let text = importTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let data = text.data(using: .utf8) else {
+        guard !text.isEmpty else {
             statusLabel.stringValue = "Paste a private key, or drop/import a key file."
             return
         }
-        let passphrase = importPassphraseField.stringValue
+        verify(text: text, passphrase: importPassphraseField.stringValue)
+    }
+
+    /// Check a private key with `ssh-keygen -y` off the main thread, and hold
+    /// it for Save if it is good. Import and "From ~/.ssh" both end here.
+    private func verify(text: String, passphrase: String) {
+        guard let data = text.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8) else { return }
         beginWork(statusText: "Verifying\u{2026}")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try SSHKeyGenerator.inspect(privateKey: data, passphrase: passphrase) }
@@ -678,13 +793,183 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
                     self.statusLabel.stringValue = error.localizedDescription
                 }
                 self.updateSaveEnabled()
+                self.refreshPreview()
             }
         }
     }
 
+    // MARK: From ~/.ssh (Key-1)
+
+    private func buildExistingPanel() {
+        existingPicker.showsActions = false
+        existingPicker.setAccessibilityLabel("Key pairs in ~/.ssh")
+        existingPicker.onSelect = { [weak self] _ in
+            self?.statusLabel.stringValue = ""
+            self?.updateExistingButton()
+        }
+        existingFolderLabel.font = HelmType.code()
+        existingFolderLabel.lineBreakMode = .byTruncatingMiddle
+        existingEmptyLabel.font = HelmType.caption()
+        existingEmptyLabel.isHidden = true
+        let use = HelmButton(title: "Use This Key", variant: .primary, target: self, action: #selector(useExistingKey))
+        existingUseButton = use
+        let passphraseRow = NSStackView(views: [form.labelledField("Passphrase", existingPassphraseField), use])
+        passphraseRow.orientation = .horizontal
+        passphraseRow.alignment = .bottom
+        passphraseRow.spacing = HelmMetrics.s3 - 2
+        passphraseRow.translatesAutoresizingMaskIntoConstraints = false
+        use.setContentHuggingPriority(.required, for: .horizontal)
+        let note = NSTextField(wrappingLabelWithString:
+            "Grand Line copies the private key into the Keychain. The file in ~/.ssh is left as it is.")
+        note.font = HelmType.caption()
+        mutedLabels.add(note)
+        let stack = NSStackView(views: [existingFolderLabel, existingPicker, existingEmptyLabel, passphraseRow, note])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        existingPanel.translatesAutoresizingMaskIntoConstraints = false
+        existingPanel.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: existingPanel.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: existingPanel.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: existingPanel.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: existingPanel.bottomAnchor),
+            existingFolderLabel.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+            existingPicker.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            existingEmptyLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            passphraseRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            note.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        existingEmptyLabel.preferredMaxLayoutWidth = Self.panelContentWidth - 2 * HelmFormSheet.sectionCardPadding
+        note.preferredMaxLayoutWidth = existingEmptyLabel.preferredMaxLayoutWidth
+    }
+
+    /// List the folder again. Only `.pub` files are read here.
+    private func reloadExistingPairs() {
+        let directory = Self.sshDirectory
+        existingFolderLabel.stringValue = (directory.path as NSString).abbreviatingWithTildeInPath
+        let pairs = SSHKeyDirectoryScan.scan(directory)
+        existingPairs = [:]
+        let options: [HostKeyPicker.Option] = (pairs ?? []).map { pair in
+            let id = UUID()
+            existingPairs[id] = pair
+            return .init(id: id, title: pair.name, detail: "\(pair.typeName) \u{00B7} \(Self.shortFingerprint(pair.fingerprint))",
+                         touchID: false)
+        }
+        existingPicker.setOptions(options, selected: nil)
+        if pairs == nil {
+            existingEmptyLabel.stringValue = "This folder could not be read. Import the key file instead."
+        } else {
+            existingEmptyLabel.stringValue = "No key pairs here. A pair is a private key with its .pub file beside it."
+        }
+        existingEmptyLabel.isHidden = !options.isEmpty
+        existingPicker.isHidden = options.isEmpty
+        updateExistingButton()
+    }
+
+    static func shortFingerprint(_ fingerprint: String) -> String {
+        guard fingerprint.count > 22 else { return fingerprint }
+        return String(fingerprint.prefix(14)) + "\u{2026}" + String(fingerprint.suffix(4))
+    }
+
+    private func updateExistingButton() {
+        existingUseButton?.isEnabled = existingPicker.selectedID != nil && workInFlight == 0
+    }
+
+    /// Read the picked pair's private file - the first and only time it is
+    /// read - and verify it the way Import does.
+    @objc private func useExistingKey() {
+        guard let id = existingPicker.selectedID, let pair = existingPairs[id] else {
+            setStatusTone(.critical)
+            statusLabel.stringValue = "Pick a key pair first."
+            return
+        }
+        guard let data = try? Data(contentsOf: pair.privateKeyURL), let text = String(data: data, encoding: .utf8) else {
+            setStatusTone(.critical)
+            statusLabel.stringValue = "Couldn\u{2019}t read \(pair.name) as text."
+            return
+        }
+        if labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            labelField.stringValue = pair.name
+        }
+        verify(text: text, passphrase: existingPassphraseField.stringValue)
+    }
+
+    /// Key-1's hero: the key's card from what the form holds now.
+    private func refreshPreview() {
+        guard presentation == .panel, isViewLoaded else { return }
+        let theme = ThemeManager.shared.theme
+        preview.tile.configure(symbol: "key.fill", tint: .warn, pointSize: HelmType.scaled(17))
+        preview.tile.applyTheme(theme)
+        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let type: SSHKeyType?
+        if let editing {
+            type = editing.type
+        } else if pendingPrivateKey != nil {
+            type = pendingType
+        } else {
+            type = mode == .generate ? SSHKeyType(rawValue: typeSwitch.selected) : nil
+        }
+        let waiting = mode == .generate ? "Fingerprint appears after generating" : "Fingerprint appears after verifying"
+        let kicker: String
+        if editing != nil {
+            kicker = "SSH key"
+        } else {
+            kicker = pendingPrivateKey == nil ? "New key \u{00B7} not saved yet" : "New key \u{00B7} ready to save"
+        }
+        let hosts = usedByHostCount == 1 ? "Used by 1 host" : "Used by \(usedByHostCount) hosts"
+        preview.update(.init(kicker: kicker,
+                             title: label,
+                             titlePlaceholder: "Name this key",
+                             subtitle: pendingFingerprint ?? editing?.fingerprint ?? waiting,
+                             badge: type?.displayName,
+                             badgeTint: .info,
+                             facts: [HostsKeychainCard.biometryPhrase(CredentialVaultKeyStore.biometryAvailable,
+                                                                      capitalized: true), hosts]))
+    }
+
+    /// The footer's line: what Save is waiting for, or what Return does.
+    private func refreshFooterHint() {
+        guard presentation == .panel else { return }
+        let text: String
+        if workInFlight > 0 {
+            text = "Working on the key\u{2026}"
+        } else if editing == nil && pendingPrivateKey == nil {
+            switch mode {
+            case .generate: text = "Generate a key to save it."
+            case .importKey: text = "Verify the key to save it."
+            case .existing: text = "Pick a key pair and use it to save it."
+            }
+        } else if isDirty || editing == nil {
+            text = "Return saves \u{00B7} Esc cancels"
+        } else {
+            text = ""
+        }
+        footerHint.preferredMaxLayoutWidth = Self.panelContentWidth
+        footerHint.stringValue = text
+        footerHint.isHidden = text.isEmpty
+        footerHint.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+    }
+
+    /// The name is missing: say so beside the field, not with a beep.
+    private func flagName() {
+        labelField.showsIssue = true
+        setStatusTone(.critical)
+        statusLabel.stringValue = "Name the key first. The name goes into the key\u{2019}s comment."
+        view.window?.makeFirstResponder(labelField)
+    }
+
     #if FM_SELFTESTS
     /// K2: what the create form is showing, read off the real switches.
-    var debugMode: String { modeSwitch.selected }
+    var debugMode: String { mode.rawValue }
+    var debugChoices: KeyPathChoices { choices }
+    var debugExistingPicker: HostKeyPicker { existingPicker }
+    var debugExistingEmptyText: String? { existingEmptyLabel.isHidden ? nil : existingEmptyLabel.stringValue }
+    var debugPreview: RecordPreviewHeader { preview }
+    var debugFooterHint: String? { footerHint.isHidden ? nil : footerHint.stringValue }
+    var debugPublicKeyView: HelmTextView { publicKeyView }
+    var debugKeyForm: HelmFormSheet { form }
     var debugType: String { typeSwitch.selected }
     #endif
 
@@ -704,11 +989,12 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     private func updateSaveEnabled() {
         saveButton?.isEnabled = editing != nil || pendingPrivateKey != nil
+        refreshFooterHint()
     }
 
     @objc private func save() {
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else { flag(labelField); return }
+        guard !label.isEmpty else { flagName(); return }
 
         if let editing {
             var key = editing
@@ -791,6 +1077,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     /// Save Key once something has, and always for a new key.
     func refreshPanelFooter() {
         guard presentation == .panel else { return }
+        refreshFooterHint()
         panelFooter.arrangedSubviews.forEach { panelFooter.removeArrangedSubview($0); $0.removeFromSuperview() }
         panelFooter.orientation = .horizontal
         panelFooter.alignment = .centerY
@@ -812,6 +1099,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     /// Re-decide whether the form differs from what it opened with.
     private func fieldsChanged() {
+        if !labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { labelField.showsIssue = false }
+        refreshPreview()
         guard presentation == .panel else { return }
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let cert = certificateView.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -849,7 +1138,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     @discardableResult
     func savePanel() -> Bool {
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !label.isEmpty else { flag(labelField); return false }
+        guard !label.isEmpty else { flagName(); return false }
         guard editing != nil || pendingPrivateKey != nil else {
             setStatusTone(.critical)
             statusLabel.stringValue = "Generate, import or paste a key before saving."
@@ -965,13 +1254,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     private func applyStatusTone(_ theme: HelmTheme) {
         statusLabel.textColor = HelmContrast.legibleTintedText(tintHex: statusTone.hex(in: theme),
-                                                               over: HelmTheme.nsColor(theme.backgroundHex),
+                                                               over: HelmTheme.nsColor(theme.chromeBackgroundHex),
                                                                theme: theme)
-    }
-
-    private func flag(_ field: NSTextField) {
-        view.window?.makeFirstResponder(field)
-        NSSound.beep()
     }
 }
 
@@ -998,7 +1282,8 @@ final class KeyDropZone: NSView {
     /// about the active palette (audit §5.3). `chromeLineHex` is this app's
     /// own hairline/border token.
     func applyTheme(_ theme: HelmTheme) {
-        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+        layer?.backgroundColor = HelmField.fill(theme, surface: .raised).cgColor
+        layer?.borderColor = HelmField.border(theme, surface: .raised).cgColor
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1012,5 +1297,13 @@ final class KeyDropZone: NSView {
               let url = urls.first else { return false }
         onDropFile?(url)
         return true
+    }
+}
+
+/// The key form's status line, which takes no room while it says nothing - an
+/// empty wrapping label in the Details card left a blank band under Generate.
+final class KeyStatusLabel: NSTextField {
+    override var stringValue: String {
+        didSet { isHidden = stringValue.isEmpty }
     }
 }

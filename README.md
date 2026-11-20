@@ -199,6 +199,8 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_SESSION_RESTORE_FILE` | `session-restore.json` (which destination, host pages and tabs were open at quit) |
 | `FM_DEVOPS_HUB_RENDER_DIR` | Debug builds only: `FM_RUN_PAGE_REDESIGNS_TESTS` writes a PNG of the window per DevOps Hub state (the project cards, a project's course, and the narrowest window), in Daylight and Dusk, to this folder |
 | `FM_DEVOPS_HUB_RENDER_SITE` | Debug builds only: with `FM_DEVOPS_HUB_RENDER_DIR`, the folder the running states serve instead of the suite's fixture (read, never written) |
+| `FM_CONNECTION_FORMS_RENDER_DIR` | Debug builds only: `FM_RUN_PAGE_REDESIGNS_TESTS` writes a PNG of the window per Console state (local shells, a live session, a narrow window) and per host and key form state (empty, filled, with errors, saving; generate, import, ~/.ssh, ready to save), in Daylight, Dusk and Lavender, to this folder |
+| `FM_SSH_DIR` | The folder the key form's "From ~/.ssh" path lists (`SSHKeyDirectoryScan.defaultDirectory`). Defaults to `~/.ssh`, or `ssh` under `FM_SCRATCH_ROOT` when that is set, so a probe or a suite never lists the real folder's key names. Only `.pub` files are read until a pair is picked |
 | `FM_LOCAL_PROJECTS_FILE` | `local-projects.json` (DevOps Hub's projects: each one's folder, port, start options and last run) |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
 | `FM_MANUAL_CHECKS_FILE` | The manual-check register the weekly "Manual checks due" schedule reads (R5-PROC-06). Defaults to `<firstmate home>/projects/grand-line/native/MANUAL-CHECKS.md`. Read-only |

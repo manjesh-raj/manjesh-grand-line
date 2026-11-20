@@ -269,10 +269,6 @@ final class MainSplitShellController: WorkspaceShellController {
         }
         clipboardHistory.anchor = toolbar.clipboardAnchor
         notificationCenter.onBadgeCountChanged = { [weak self] count in self?.toolbar.setNotificationCount(count) }
-        // Console's session strip: the floating bar's own, with its verbs.
-        contentPane.sessionStrip.onSelect = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
-        contentPane.sessionStrip.onClose = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
-        contentPane.sessionStrip.onAddRequested = { [weak self] in self?.workspace.navigator.show(.hosts) }
 
         // Home's own space shows the captain's arranged cards in this layout
         // only, set before Home's first render (it mounts eagerly). The
@@ -1360,7 +1356,6 @@ final class MainSplitShellController: WorkspaceShellController {
         let hidden = AppSettings.shared.hiddenModules
         toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
         contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: pageSubtitle)
-        contentPane.setSessionStripVisible(module == .console && !workspace.hosts.sessions.isEmpty)
         // The lit row follows the showing tab too: Tasks' Calendar view is
         // the Calendar row's (`ModuleTable.sidebarModule(for:pageTab:)`).
         sidebar.select(workspace.navigator.currentDestinationKind, pageTab: currentTab?.name)
@@ -1609,8 +1604,8 @@ final class MainSplitShellController: WorkspaceShellController {
         // Console's new count.
         signalsMonitor.sessionsDidChange(registry.sessions)
         sidebar.reload(sessions: registry)
-        contentPane.sessionStrip.render(registry)
-        contentPane.setSessionStripVisible(currentModule == .console && !registry.sessions.isEmpty)
+        // Con-1: Console's session bands carry the sessions in this layout.
+        workspace.hosts.refreshSessionBands()
         workspace.refreshShowingHostsLiveSessionState()
     }
 
@@ -1659,8 +1654,6 @@ final class MainSplitShellController: WorkspaceShellController {
     var debugHeader: (title: String, subtitle: String)? {
         contentPane.header.debugIsEmpty ? nil : (contentPane.header.debugTitle, contentPane.header.debugSubtitle)
     }
-    var debugSessionStripIsShown: Bool { !contentPane.sessionStrip.isHidden }
-    var debugSessionStrip: SessionStripView { contentPane.sessionStrip }
     /// The content pane's own views, front to back - what the guard against
     /// a strip under the body counts.
     var debugContentPaneSubviews: [NSView] { contentPane.view.subviews }
@@ -1689,12 +1682,9 @@ final class MainSplitShellController: WorkspaceShellController {
 final class WorkspaceContentPaneController: NSViewController {
     private let body: NSView
     let header = WorkspaceModuleHeader()
-    /// The floating bar's session strip, on Console only: one chip per live
-    /// session, the same view and the same three verbs.
-    let sessionStrip = SessionStripView()
-    /// The header line, always shown, and the strip, in layout only while
-    /// it shows - a stack that detaches its hidden views, so the strip needs
-    /// no height constraint fighting its own content to collapse.
+    /// The header line. Console's live sessions are its page's session band
+    /// now (Con-1), so the line is all this stack holds; it stays a stack so
+    /// the page's own first content keeps the same top on every module.
     private let topStack = NSStackView()
     private var themeToken: ThemeObservation?
 
@@ -1714,16 +1704,9 @@ final class WorkspaceContentPaneController: NSViewController {
         topStack.spacing = 0
         topStack.detachesHiddenViews = true
         topStack.translatesAutoresizingMaskIntoConstraints = false
-        for view in [header, sessionStrip] as [NSView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            topStack.addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: topStack.widthAnchor).isActive = true
-        }
-        sessionStrip.isHidden = true
-        sessionStrip.heightAnchor.constraint(equalToConstant: SessionStripView.height).isActive = true
-        // The strip is Console's first content, so it starts where every
-        // other page's first content does.
-        topStack.setCustomSpacing(HelmMetrics.pageContentInset, after: header)
+        header.translatesAutoresizingMaskIntoConstraints = false
+        topStack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: topStack.widthAnchor).isActive = true
         // Exactly as tall as what it holds. A stack's own hugging is low, so
         // a page's height tie stretched it and pushed the body down under an
         // empty band (measured: Notebook's body at 645pt in a 950pt window).
@@ -1772,10 +1755,6 @@ final class WorkspaceContentPaneController: NSViewController {
         header.setAccessory(accessory)
     }
 
-    func setSessionStripVisible(_ visible: Bool) {
-        _ = view
-        sessionStrip.isHidden = !visible
-    }
 
 }
 

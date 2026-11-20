@@ -472,16 +472,18 @@ enum MainSplitShellPanesSelfTest {
         check(knowledgeBody.minX.magnitude < 0.5, "under Knowledge the body starts \(knowledgeBody.minX)pt in", &ok)
 
         // The live sessions the strip counted are Console's: its session
-        // strip lists each one, connected or restored, and the sidebar lists
-        // them under Connections, where they were launched from.
+        // band (Con-1) has a chip for each one, connected or restored, and
+        // the sidebar lists them under Connections, where they were launched
+        // from.
         let live = UUID()
         let restored = UUID()
         shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: nil, state: .connected)
         shell.workspace.hosts.sessions.register(hostID: restored, label: "PROD Web", accentHex: nil, state: .restored)
         shell.workspace.navigator.show(.console)
         settle(shell)
-        check(shell.debugSessionStripIsShown && shell.debugSessionStrip.debugPillHostIDs() == [live, restored],
-              "Console's session strip lists \(shell.debugSessionStrip.debugPillHostIDs()), want both sessions", &ok)
+        let band = shell.workspace.console.sessionBand
+        check(!band.isHiddenOrHasHiddenAncestor && band.debugChipHostIDs() == [live, restored],
+              "Console's session band lists \(band.debugChipHostIDs()), want both sessions", &ok)
         let entries = shell.sidebar.debugVisibleEntries
         if let connections = entries.firstIndex(of: .module(.connections)),
            let console = entries.firstIndex(of: .module(.console)) {
@@ -506,7 +508,8 @@ enum MainSplitShellPanesSelfTest {
         shell.workspace.hosts.sessions.unregister(hostID: live)
         shell.workspace.hosts.sessions.unregister(hostID: restored)
         settle(shell)
-        check(!shell.debugSessionStripIsShown, "Console's session strip stayed with no sessions", &ok)
+        check(shell.workspace.console.sessionBand.debugChipHostIDs().isEmpty,
+              "Console's session band kept a chip with no sessions", &ok)
     }
 
     private static func checkTheFocusChipIsInTheToolbar(_ shell: MainSplitShellController, _ window: NSWindow,

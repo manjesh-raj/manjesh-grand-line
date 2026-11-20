@@ -25,6 +25,7 @@ final class HostSessionCoordinator {
     init(workspace: Workspace, makeHostConsole: @escaping () -> ConsoleController) {
         self.workspace = workspace
         self.makeHostConsole = makeHostConsole
+        workspace.console.sessionRouter = self
     }
 
     private var navigator: Navigator { workspace.navigator }
@@ -175,6 +176,7 @@ final class HostSessionCoordinator {
             controller = existing
         } else {
             controller = makeHostConsole()
+            controller.sessionRouter = self
             hostConsoles[host.id] = controller
             mountHostPage(controller)
             // The cross-bridge collision guard's third direction (full-app
@@ -188,6 +190,7 @@ final class HostSessionCoordinator {
                 self?.workspace.isKubernetesFeedBridgeBusy(onTab: tabID) ?? false
             }
         }
+        controller.sessionHost = host
         controller.connectSSHIfNeeded(
             label: host.label, args: args, accentHex: host.accentHex,
             keyID: host.keyID, startupSnippetID: host.startupSnippetID,
@@ -579,5 +582,24 @@ final class HostSessionCoordinator {
     /// destination that happened to be visible.
     func shutdownAllHostConsoles() {
         for controller in hostConsoles.values { controller.shutdown() }
+    }
+}
+
+// MARK: - Con-1: Console's session band
+
+extension HostSessionCoordinator: ConsoleSessionBandRouting {
+    var bandSessions: HostSessionRegistry { sessions }
+
+    func bandSwitch(toSession hostID: UUID) { switchToSession(hostID: hostID) }
+
+    func bandEndSession(_ hostID: UUID) { confirmEndSession(hostID: hostID) }
+
+    func bandShowThisMac() { navigator.show(.console) }
+
+    func bandConnect() { navigator.show(.hosts) }
+
+    /// Every Console page of this workspace re-reads the registry.
+    func refreshSessionBands() {
+        forEachConsole { $0.refreshSessionBand() }
     }
 }

@@ -145,7 +145,8 @@ extension HostsController {
     private func buildHostPanel(for host: Host?) -> HostEditorController {
         let others = hostStore.hosts.filter { $0.id != host?.id }.map(\.label)
         let panel = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets,
-                                         existingLabels: Set(others + ["Firstmate"]), presentation: .panel)
+                                         existingLabels: Set(others + ["Firstmate"]),
+                                         keyUsage: Self.keyUsage(hostStore.hosts), presentation: .panel)
         let id = host?.id
         panel.storedHost = { [weak self] in id.flatMap { self?.hostStore.host(id: $0) } }
         panel.onSave = { [weak self] saved in self?.hostPanelSaved(saved) }
@@ -161,6 +162,14 @@ extension HostsController {
 
     /// The footer's own action, its menu and the header's live state - the
     /// page's, so the panel runs what a card runs.
+    /// How many saved hosts sign in with each key - the key picker's
+    /// "used by N hosts".
+    static func keyUsage(_ hosts: [Host]) -> [UUID: Int] {
+        hosts.reduce(into: [:]) { counts, host in
+            if let id = host.keyID { counts[id, default: 0] += 1 }
+        }
+    }
+
     private func configurePanelActions(_ panel: HostEditorController, for host: Host) {
         let session = liveSession?(host.id)
         if session != nil {
@@ -261,3 +270,17 @@ extension HostsController {
         }
     }
 }
+
+#if FM_SELFTESTS
+extension HostsController {
+    /// Drop any open host or key form, as Cancel would, so a check can open
+    /// the next one on a clean inspector.
+    func debugCloseFormPanels() {
+        hostPanel = nil
+        hostPanelKey = nil
+        keyPanel = nil
+        keyPanelKey = nil
+        refreshDetailPanel()
+    }
+}
+#endif

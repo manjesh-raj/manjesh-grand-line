@@ -76,6 +76,22 @@
 //     open) is taken from the stored record rather than from the form.
 //
 // The floating bar keeps the window, unchanged (`presentation: .window`).
+//
+// **Host-1 of the Console / Add Host / Add Key board** (Helm 9.2.0) redrew the
+// form in the hero language of the pages around it, in both presentations:
+//
+//   - Each section is a card (`HelmFormSheet.SectionStyle.cards`) and every
+//     field is a raised well - white with a clear edge - instead of a tint on
+//     a tint (on the Lavender palette the old wells had no visible edge).
+//   - In the panel, the header is the host's own card on a hero
+//     (`RecordPreviewHeader`), updated on every change, and the name is the
+//     first field of Connection rather than a big lead field.
+//   - The SSH key is a list of real choices (`HostKeyPicker`): the system
+//     agent, each saved key with its type, its host count and Touch ID, and
+//     New Key and Import beside them.
+//   - Validation runs exactly the rules it always ran, but reports every
+//     problem at once, under its own field and in the footer, instead of a
+//     beep and one modal alert at a time.
 
 import AppKit
 
@@ -161,12 +177,18 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Fields
 
-    private let labelField = HelmTextField(placeholder: "Name this host", style: .lead)
+    /// The window's big lead field, or the panel's first Connection field.
+    private lazy var labelField = presentation == .panel
+        ? HelmTextField(placeholder: "Defaults to the address")
+        : HelmTextField(placeholder: "Name this host", style: .lead)
     private let addressField = HelmTextField(placeholder: "hostname or IP")
     private let portField = HelmTextField(placeholder: "22")
     private let usernameField = HelmTextField(placeholder: "Username")
-    private let keyIconTile = IconTileView(size: 30, cornerRadius: HelmMetrics.rChip)
-    private lazy var keyCard = HelmFieldCard(label: "SSH Key", accessory: keyIconTile)
+    private let keyPicker = HostKeyPicker()
+    /// How many saved hosts use each key, for the picker's detail line, or
+    /// `nil` when the caller does not know (the line then names the type
+    /// alone, rather than claiming a key no host uses).
+    private let keyUsage: [UUID: Int]?
     private let environmentPicker = HostEnvironmentPicker()
     private let groupField = HelmTextField(placeholder: "e.g. Production")
     private let tagInputField = HelmTextField(placeholder: "Add a tag, press Enter\u{2026}")
@@ -213,8 +235,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Init
 
     init(host: Host?, keyStore: SSHKeyStore, snippets: [Snippet], existingLabels: Set<String> = [],
-         presentation: Presentation = .window) {
+         keyUsage: [UUID: Int]? = nil, presentation: Presentation = .window) {
         self.presentation = presentation
+        self.keyUsage = keyUsage
         self.editing = host
         self.keyStore = keyStore
         self.snippets = snippets
@@ -240,7 +263,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
                                  scrolls: true,
                                  maxContentWidth: panel ? Self.panelContentWidth : Self.maxContentWidth,
                                  domainHue: RailDestination.hosts.domainHue,
-                                 chrome: panel ? .panel : .sheet)
+                                 chrome: panel ? .panel : .sheet,
+                                 sectionStyle: .cards, wellSurface: .raised)
         self.form = form
         form.autoresizingMask = [.width, .height]
         form.setFrameSize(NSSize(width: panel ? WorkspaceInspectorController.width : 640, height: 780))
@@ -254,7 +278,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             self?.styleIconButtons()
             self?.styleColorButtons()
             self?.environmentPicker.applyTheme(theme)
-            self?.keyIconTile.applyTheme(theme)
+            self?.refreshPanelFooter()
+            self?.refreshIssueLabels(theme)
             self?.tagsChipsFlow.subviews.compactMap { $0 as? VocabularyChipView }.forEach { $0.applyTheme(theme) }
             self?.applyPanelTheme(theme)
         }
@@ -265,15 +290,22 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         }
 
         labelField.stringValue = editing?.label ?? ""
-        form.addLead(labelField)
+        if !panel { form.addLead(issueWrapped(labelField, .label)) }
 
         form.addSection("Connection", number: "01")
+        if panel { form.addField("Name", issueWrapped(labelField, .label)) }
         addressField.stringValue = editing?.address ?? ""
-        form.addField("Address", addressField)
+        form.addField("Address", issueWrapped(addressField, .address))
         portField.stringValue = editing.map { String($0.port) } ?? "22"
         portField.formatter = intFormatter()
         usernameField.stringValue = editing?.username ?? ""
-        form.addFieldColumns([("Port", portField), ("Username", usernameField)])
+        form.addFieldColumns([("Port", issueWrapped(portField, .port)),
+                              ("Username", issueWrapped(usernameField, .username))])
+        // The wrapped fields are not the form's own rows, so they take the
+        // sheet's hue here. The window's lead name field has no well.
+        for field in [labelField, addressField, portField, usernameField, jumpViaField] where field !== labelField || panel {
+            field.domainHue = RailDestination.hosts.domainHue
+        }
         environmentPicker.onSelect = { [weak self] title in
             self?.groupField.stringValue = title
             self?.fieldsChanged()
@@ -282,11 +314,13 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         form.addField("Environment", environmentPicker)
 
         form.addSection("Authentication", number: "02")
-        keyIconTile.configure(symbol: "key.fill", tint: .warn, pointSize: 13)
         buildKeyChooser()
-        form.addRow(keyCard)
-        form.addInfoCard(text: "The private key is resolved from the macOS Keychain when connecting. "
-            + "Grand Line never stores the private key material inside the host configuration.")
+        keyPicker.onNewKey = { [weak self] in self?.presentNewKeySheet(preset: nil) }
+        keyPicker.onImport = { [weak self] in self?.presentNewKeySheet(preset: .importFile) }
+        form.addRow(keyPicker)
+        form.addInfoCard(symbol: "lock.fill",
+                         text: "The private key stays in the macOS Keychain. This host stores only the key\u{2019}s id, "
+                             + "never key material. Touch ID or your Mac password unlocks it when you connect.")
 
         form.addSection("Appearance", number: "03")
         form.addRow(form.labelledField("Icon", buildIconPicker()))
@@ -321,13 +355,13 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         form.addRow(kubeContextBadgeRow)
         advancedRows = [agentForwardRow, blockViewRow, kubeContextBadgeRow]
         jumpViaField.stringValue = editing?.jumpVia ?? ""
-        advancedRows.append(form.addField("Jump via", jumpViaField))
+        advancedRows.append(form.addField("Jump via", issueWrapped(jumpViaField, .jumpVia)))
         if panel {
             // Inline, rather than a second pop-up.
             let inline = PortForwardInlineEditor(rules: portForwards)
             inline.onChange = { [weak self] in self?.fieldsChanged() }
             inlineForwards = inline
-            advancedRows.append(form.addField("Port forwarding", inline))
+            advancedRows.append(form.addField("Port forwarding", issueWrapped(inline, .forwards)))
         } else {
             portForwardingButton.target = self
             portForwardingButton.action = #selector(editPortForwarding)
@@ -350,7 +384,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         if panel {
             // Advanced starts open only when the host uses something in it.
             setAdvancedShown(editing.map(Self.usesAdvanced) ?? false)
-            form.setPanelFooter(panelFooter)
+            form.setPanelFooter(panelFooterColumn)
         } else {
             form.setFooter(target: self,
                            confirmTitle: editing == nil ? "Create Host" : "Save Changes",
@@ -387,17 +421,22 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// spliced into the same card - `selectedID` picks up where
     /// `editing?.keyID` otherwise would.
     private func buildKeyChooser(selecting selectedID: UUID? = nil) {
-        let ids: [UUID?] = [nil] + keyStore.keys.map { $0.id }
-        let titles = ["None (use system ssh agent)"] + keyStore.keys.map { "\($0.label) (\($0.type.displayName))" }
+        let touchID = CredentialVaultKeyStore.biometryAvailable
+        var options = [HostKeyPicker.Option(id: nil, title: "System ssh agent",
+                                            detail: "No saved key. ssh asks the agent.", touchID: false)]
+        for key in keyStore.keys {
+            var detail = key.type.displayName
+            if let keyUsage {
+                let count = keyUsage[key.id] ?? 0
+                detail += count == 1 ? " \u{00B7} used by 1 host" : " \u{00B7} used by \(count) hosts"
+            }
+            options.append(.init(id: key.id, title: key.label, detail: detail, touchID: touchID))
+        }
         let target = selectedID ?? selectedKeyID
-        let index = target.flatMap { ids.firstIndex(of: $0) } ?? 0
-        selectedKeyID = ids.indices.contains(index) ? ids[index] : nil
-        keyCard.configureChoices(titles,
-                                 selectedIndex: index,
-                                 extra: [HelmFieldCard.ExtraItem(title: "+ New Key\u{2026}") { [weak self] in
-                                     self?.presentNewKeySheet()
-                                 }]) { [weak self] chosen in
-            self?.selectedKeyID = ids.indices.contains(chosen) ? ids[chosen] : nil
+        selectedKeyID = options.contains { $0.id == target } ? target : nil
+        keyPicker.setOptions(options, selected: selectedKeyID)
+        keyPicker.onSelect = { [weak self] chosen in
+            self?.selectedKeyID = chosen
             self?.fieldsChanged()
         }
     }
@@ -408,8 +447,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// On cancel (or a Keychain failure) the previous selection is left alone -
     /// unlike the old popup, picking "+ New Key…" from a menu never moves the
     /// card's own selection in the first place, so there is nothing to revert.
-    private func presentNewKeySheet() {
+    private func presentNewKeySheet(preset: KeyEditorController.Preset?) {
         let editor = KeyEditorController(key: nil)
+        editor.preset = preset
         editor.onSave = { [weak self] newKey, privateKeyData, passphrase in
             guard let self else { return }
             do {
@@ -742,72 +782,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// `base`. `nil` (after telling the captain why) when a field is not one
     /// `ssh` could use.
     private func validatedHost() -> Host? {
-        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !address.isEmpty else {
-            flag(addressField)
-            return nil
-        }
-        guard let port = Int(portField.stringValue), (1...65535).contains(port) else {
-            flag(portField)
-            warn(title: "Invalid port", body: "Port must be a whole number between 1 and 65535.")
-            return nil
-        }
-        // GL-08: a leading dash makes `ssh` read the value as an option, not a
-        // host - `-oProxyCommand=<cmd>` runs `<cmd>` locally on Connect. The
-        // `--` terminator in `Host.sshArguments` already neutralises this at
-        // the argv level, but refusing to *save* one keeps a host record that
-        // was never meant to work out of the store entirely, and gives the
-        // captain a real explanation rather than a mysteriously failing host.
-        if Host.hasUnsafeLeadingDash(address) {
-            flag(addressField)
-            warn(title: "Address can't start with \u{201C}-\u{201D}",
-                 body: "`ssh` would read it as a command-line option instead of a hostname. "
-                     + "If you meant a hostname, remove the leading dash.")
-            return nil
-        }
-        if Host.hasUnsafeLeadingDash(usernameField.stringValue) {
-            flag(usernameField)
-            warn(title: "Username can't start with \u{201C}-\u{201D}",
-                 body: "`ssh` would read it as a command-line option instead of a login name.")
-            return nil
-        }
-        if Host.hasUnsafeLeadingDash(jumpViaField.stringValue) {
-            flag(jumpViaField)
-            warn(title: "Jump host can't start with \u{201C}-\u{201D}",
-                 body: "`ssh` would read it as a command-line option instead of a jump destination.")
-            return nil
-        }
-        let resolvedLabel = label.isEmpty ? address : label
-        if existingLabels.contains(resolvedLabel) {
-            flag(labelField)
-            warn(title: "Duplicate label", body: "Another saved host already uses the label \u{201C}\(resolvedLabel)\u{201D}. Quick-connect can't tell them apart - pick a unique label.")
-            return nil
-        }
-        // The inline forwards are checked with the rules sheet's own words.
-        if let inlineForwards {
-            for rule in inlineForwards.rules {
-                guard (1...65535).contains(rule.listenPort) else {
-                    warn(title: "Invalid listen port", body: "Listen port must be a whole number between 1 and 65535.")
-                    return nil
-                }
-                if rule.kind != .dynamic {
-                    guard (1...65535).contains(rule.destPort) else {
-                        warn(title: "Invalid destination port", body: "Destination port must be a whole number between 1 and 65535.")
-                        return nil
-                    }
-                    guard !rule.destHost.isEmpty else {
-                        warn(title: "Missing destination host", body: "Local and Remote forwarding rules need a destination host.")
-                        return nil
-                    }
-                    if Host.hasUnsafeLeadingDash(rule.destHost) {
-                        warn(title: "Destination can't start with \u{201C}-\u{201D}",
-                             body: "`ssh` would read it as a command-line option.")
-                        return nil
-                    }
-                }
-            }
-        }
+        let issues = validationIssues()
+        showIssues(issues, focus: true)
+        guard issues.isEmpty else { return nil }
         return assembledHost(base: storedHost?() ?? editing)
     }
 
@@ -867,9 +844,28 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         b.setAccessibilityLabel("Show advanced settings")
         return b
     }()
-    private let panelTile = IconTileView(size: 34, cornerRadius: 9)
-    private let panelKicker = NSTextField(labelWithString: "")
-    private let panelSubtitle = NSTextField(labelWithString: "")
+    private lazy var preview = RecordPreviewHeader(tileSize: 40, extraViews: [panelStatusPill, panelTestPill])
+    /// Host-1's inline validation: one line under each field that can fail,
+    /// what is showing now, and the footer's hint.
+    fileprivate(set) var issueLabels: [IssueField: NSTextField] = [:]
+    fileprivate(set) var shownIssues: [Issue] = []
+    fileprivate(set) var isSaving = false
+    fileprivate let footerHint: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = HelmType.caption()
+        label.maximumNumberOfLines = 2
+        label.isHidden = true
+        return label
+    }()
+    private lazy var panelFooterColumn: NSStackView = {
+        let column = NSStackView(views: [footerHint, panelFooter])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = HelmMetrics.s2
+        panelFooter.translatesAutoresizingMaskIntoConstraints = false
+        panelFooter.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        return column
+    }()
     private let panelStatusPill = HelmStatusPill(style: .dotWord)
     /// R4-UX-04: what the last Test found, under the live state.
     private let panelTestPill = HelmStatusPill(style: .dotWord)
@@ -903,36 +899,36 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     }
 
     private func buildPanelHeader() -> NSView {
-        panelKicker.lineBreakMode = .byTruncatingTail
-        panelSubtitle.lineBreakMode = .byTruncatingTail
-        panelSubtitle.font = HelmType.code()
-        let text = NSStackView(views: [panelKicker, panelSubtitle, panelStatusPill, panelTestPill])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = HelmMetrics.s0
-        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [panelTile, text])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = HelmMetrics.s3
-        panelTile.setContentHuggingPriority(.required, for: .horizontal)
         refreshPanelHeader()
-        return row
+        return preview
     }
 
+    /// Host-1: the host's card as the Connections page will draw it, from
+    /// what the form holds right now.
     private func refreshPanelHeader() {
         guard presentation == .panel else { return }
         let theme = ThemeManager.shared.theme
-        panelTile.configure(symbol: selectedIcon, tint: .accent, pointSize: HelmType.scaled(14))
-        panelTile.overrideFill(hex: selectedAccent)
-        panelTile.applyTheme(theme)
-        let kicker = editing == nil ? "New host" : (editing.map(HostsController.roleKicker) ?? "SSH")
-        panelKicker.attributedStringValue = NSAttributedString(
-            string: kicker.uppercased(), attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+        preview.tile.configure(symbol: selectedIcon, tint: .accent, pointSize: HelmType.scaled(16))
+        preview.tile.overrideFill(hex: selectedAccent)
+        preview.tile.applyTheme(theme)
         let draft = assembledHost()
-        panelSubtitle.stringValue = draft.address.isEmpty ? "Not saved yet" : draft.subtitle
-        panelSubtitle.textColor = HelmTheme.mutedInk(theme)
-        panelSubtitle.toolTip = panelSubtitle.stringValue
+        let kicker: String
+        if let editing {
+            kicker = HostsController.roleKicker(for: editing)
+        } else {
+            kicker = isSaving ? "Creating\u{2026}" : "New host \u{00B7} not saved yet"
+        }
+        let environment = HostEnvironmentPicker.environment(for: draft.group)
+        var facts = [selectedKeyID.flatMap { id in keyStore.keys.first { $0.id == id }?.label } ?? "ssh agent"]
+        if let group = draft.group, environment == nil { facts.append(group) }
+        facts += draft.tags.map { "#" + $0 }
+        preview.update(.init(kicker: kicker,
+                             title: draft.label,
+                             titlePlaceholder: "Name this host",
+                             subtitle: draft.address.isEmpty ? "hostname or IP" : draft.subtitle,
+                             badge: environment?.title,
+                             badgeTint: environment?.tint ?? .info,
+                             facts: facts))
         if let status = panelStatus {
             panelStatusPill.isHidden = false
             panelStatusPill.configure(text: status.text, tint: status.tint, theme: theme)
@@ -952,7 +948,6 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         }
     }
 
-    /// R4-UX-04: a Test is under way.
     func showConnectionTestRunning() {
         panelTestRunning = true
         panelTestButton.isEnabled = false
@@ -981,6 +976,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// what it opened with.
     private func fieldsChanged() {
         guard isViewLoaded, let baseline else { return }
+        if !shownIssues.isEmpty { showIssues(validationIssues(), focus: false) }
         let dirty = assembledHost() != baseline
         refreshPanelHeader()
         guard dirty != isDirty else { return }
@@ -998,8 +994,12 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         panelFooter.spacing = HelmMetrics.s2
         panelFooter.alignment = .centerY
         let editingChanges = isDirty || editing == nil
+        refreshFooterHint(editingChanges: editingChanges)
+        panelSaveButton.isEnabled = !isSaving
+        panelCancelButton.isEnabled = !isSaving
         if editingChanges {
-            panelSaveButton.title = editing == nil ? "Create Host" : "Save Changes"
+            panelSaveButton.title = isSaving ? (editing == nil ? "Creating\u{2026}" : "Saving\u{2026}")
+                : (editing == nil ? "Create Host" : "Save Changes")
             panelFooter.distribution = .fillEqually
             panelFooter.addArrangedSubview(panelCancelButton)
             panelFooter.addArrangedSubview(panelSaveButton)
@@ -1058,7 +1058,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     @discardableResult
     func savePanel() -> Bool {
         guard let host = validatedHost() else { return false }
+        setSaving(true)
         onSave?(host)
+        setSaving(false)
         editing = host
         baseline = assembledHost()
         isDirty = false
@@ -1106,7 +1108,17 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     var debugAdvancedToggle: HelmButton { advancedToggle }
     var debugInlineForwards: PortForwardInlineEditor? { inlineForwards }
     var debugPanelMenuTitles: [String] { makePanelMenu().items.map(\.title) }
-    var debugPanelSubtitle: String { panelSubtitle.stringValue }
+    var debugPanelSubtitle: String { preview.debugSubtitleText }
+    var debugPreview: RecordPreviewHeader { preview }
+    var debugKeyPicker: HostKeyPicker { keyPicker }
+    var debugIssues: [Issue] { shownIssues }
+    func debugIssueText(_ field: IssueField) -> String? {
+        guard let label = issueLabels[field], !label.isHidden else { return nil }
+        return label.stringValue
+    }
+    var debugFooterHint: String? { footerHint.isHidden ? nil : footerHint.stringValue }
+    func debugSetSaving(_ saving: Bool) { setSaving(saving) }
+    var debugJumpViaField: HelmTextField { jumpViaField }
     var debugTestButton: HelmButton { panelTestButton }
     var debugTestPill: HelmStatusPill { panelTestPill }
     /// Type into a field as the captain would: the text, then the delegate's
@@ -1123,19 +1135,6 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     }
     #endif
 
-    /// Briefly flash a required field's focus ring when it is empty.
-    private func flag(_ field: NSTextField) {
-        view.window?.makeFirstResponder(field)
-        NSSound.beep()
-    }
-
-    /// A blocking validation warning at Save time (Finding 5, cockpit-audit-core).
-    /// Still blocking after G3: `save()` returns early right after this, and
-    /// the captain has to have seen why.
-    private func warn(title: String, body: String) {
-        HelmConfirm.problem(title: title, body: body)
-    }
-
     /// cockpit-native-host-form-fixes, Fix 2: this editor is presented as its
     /// own top-level window (`AppDelegate.presentHostEditor`), not via
     /// `presentAsSheet`/`presentAsModalWindow` from a parent view controller
@@ -1149,6 +1148,148 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// Add/Edit call to set a fresh `contentViewController` on it.
     private func closeEditor() {
         view.window?.close()
+    }
+}
+
+// MARK: - Inline validation (Host-1)
+
+extension HostEditorController {
+    /// Which field a validation problem belongs to.
+    enum IssueField: Hashable {
+        case label, address, port, username, jumpVia, forwards
+    }
+
+    /// One problem that keeps the form from saving. The rules are the ones
+    /// Save always ran (an address, a port in range, no leading dash where
+    /// `ssh` would read an option, a unique name, complete forwarding
+    /// rules); Host-1 reports all of them at once, inline.
+    struct Issue: Equatable {
+        let field: IssueField
+        let message: String
+    }
+
+    func validationIssues() -> [Issue] {
+        var issues: [Issue] = []
+        let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dash = "\u{201C}-\u{201D}"
+        if address.isEmpty {
+            issues.append(.init(field: .address, message: "Add an address: the hostname or IP ssh connects to."))
+        } else if Host.hasUnsafeLeadingDash(address) {
+            issues.append(.init(field: .address,
+                                message: "Can\u{2019}t start with \(dash). ssh would read it as an option, not a hostname."))
+        }
+        if !(Int(portField.stringValue).map { (1...65535).contains($0) } ?? false) {
+            issues.append(.init(field: .port, message: "A whole number from 1 to 65535."))
+        }
+        if Host.hasUnsafeLeadingDash(usernameField.stringValue) {
+            issues.append(.init(field: .username,
+                                message: "Can\u{2019}t start with \(dash). ssh would read it as an option, not a login name."))
+        }
+        if Host.hasUnsafeLeadingDash(jumpViaField.stringValue) {
+            issues.append(.init(field: .jumpVia,
+                                message: "Can\u{2019}t start with \(dash). ssh would read it as an option, not a jump host."))
+        }
+        let resolvedLabel = label.isEmpty ? address : label
+        if !resolvedLabel.isEmpty, existingLabels.contains(resolvedLabel) {
+            issues.append(.init(field: .label,
+                                message: "Another saved host is called \u{201C}\(resolvedLabel)\u{201D}. Quick connect can\u{2019}t tell them apart, so pick a unique name."))
+        }
+        if let forwards = forwardingIssue() { issues.append(.init(field: .forwards, message: forwards)) }
+        return issues
+    }
+
+    private func forwardingIssue() -> String? {
+        guard let inlineForwards else { return nil }
+        for rule in inlineForwards.rules {
+            guard (1...65535).contains(rule.listenPort) else {
+                return "Listen port must be a whole number from 1 to 65535."
+            }
+            guard rule.kind != .dynamic else { continue }
+            guard (1...65535).contains(rule.destPort) else {
+                return "Destination port must be a whole number from 1 to 65535."
+            }
+            guard !rule.destHost.isEmpty else { return "Local and remote rules need a destination host." }
+            if Host.hasUnsafeLeadingDash(rule.destHost) {
+                return "A destination can\u{2019}t start with \u{201C}-\u{201D}. ssh would read it as an option."
+            }
+        }
+        return nil
+    }
+
+    /// A field with its own issue line under it, hidden until Save finds
+    /// something wrong with that field.
+    func issueWrapped(_ control: NSView, _ field: IssueField) -> NSView {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = HelmType.caption()
+        label.maximumNumberOfLines = 3
+        label.isHidden = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        issueLabels[field] = label
+        control.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [control, label])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        label.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    func showIssues(_ issues: [Issue], focus: Bool) {
+        shownIssues = issues
+        let byField = Dictionary(issues.map { ($0.field, $0.message) }, uniquingKeysWith: { first, _ in first })
+        for (field, label) in issueLabels {
+            label.stringValue = byField[field] ?? ""
+            label.isHidden = byField[field] == nil
+        }
+        let fields: [IssueField: HelmTextField] = [.label: labelField, .address: addressField, .port: portField,
+                                                   .username: usernameField, .jumpVia: jumpViaField]
+        for (field, control) in fields { control.showsIssue = byField[field] != nil }
+        if issues.contains(where: { $0.field == .jumpVia || $0.field == .forwards }) { setAdvancedShown(true) }
+        refreshIssueLabels(ThemeManager.shared.theme)
+        refreshPanelFooter()
+        guard focus, let first = issues.first, let control = fields[first.field] else { return }
+        view.window?.makeFirstResponder(control)
+    }
+
+    func refreshIssueLabels(_ theme: HelmTheme) {
+        let critical = HelmContrast.legible(HelmTheme.nsColor(HelmTint.critical.hex(in: theme)),
+                                            over: HelmTheme.nsColor(theme.chromeBackgroundHex))
+        issueLabels.values.forEach { $0.textColor = critical }
+        if !shownIssues.isEmpty { footerHint.textColor = critical }
+    }
+
+    /// The footer's one line: what is missing, what Return does, or why
+    /// Save will not go through.
+    func refreshFooterHint(editingChanges: Bool) {
+        let theme = ThemeManager.shared.theme
+        footerHint.preferredMaxLayoutWidth = Self.panelContentWidth
+        let address = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        footerHint.textColor = HelmTheme.mutedInk(theme)
+        if !shownIssues.isEmpty {
+            let count = Set(shownIssues.map(\.field)).count
+            footerHint.stringValue = count == 1 ? "1 field to fix before this host can be saved"
+                : "\(count) fields to fix before this host can be saved"
+            refreshIssueLabels(theme)
+        } else if isSaving {
+            footerHint.stringValue = "Saving to the hosts file\u{2026}"
+        } else if editing == nil && address.isEmpty {
+            footerHint.stringValue = "Add an address to create this host. The name defaults to the address."
+        } else if editingChanges {
+            footerHint.stringValue = editing == nil ? "Return creates this host \u{00B7} Esc cancels"
+                : "Return saves \u{00B7} Esc cancels"
+        } else {
+            footerHint.stringValue = ""
+        }
+        footerHint.isHidden = footerHint.stringValue.isEmpty
+    }
+
+    func setSaving(_ saving: Bool) {
+        isSaving = saving
+        refreshPanelFooter()
+        refreshPanelHeader()
     }
 }
 
@@ -1180,6 +1321,18 @@ final class HostEnvironmentPicker: NSView {
     /// Fires with the clicked pill's title (`"DEV"`/`"UAT"`/`"PROD"`).
     var onSelect: ((String) -> Void)?
 
+    /// Host-1 draws the row as one segmented track: the pills sit inside a
+    /// raised well, and the chosen one is a tinted segment.
+    private let track = NSView()
+    static let trackInset: CGFloat = 2
+
+    /// The environment a group names, if it is one of the three, for a
+    /// badge elsewhere (the panel's preview).
+    static func environment(for group: String?) -> (title: String, tint: HelmTint)? {
+        guard let group else { return nil }
+        return options.first { $0.title.caseInsensitiveCompare(group) == .orderedSame }.map { ($0.title, $0.tint) }
+    }
+
     private(set) var selectedTitle: String?
 
     init() {
@@ -1189,7 +1342,7 @@ final class HostEnvironmentPicker: NSView {
         var containers: [NSView] = []
         for option in Self.options {
             let container = HoverHighlightView()
-            container.cornerRadius = HelmField.cornerRadius
+            container.cornerRadius = HelmField.cornerRadius - Self.trackInset
             container.identifier = NSUserInterfaceItemIdentifier(option.title)
 
             let dot = NSView()
@@ -1212,7 +1365,7 @@ final class HostEnvironmentPicker: NSView {
                 row.centerYAnchor.constraint(equalTo: container.centerYAnchor),
                 dot.widthAnchor.constraint(equalToConstant: 6),
                 dot.heightAnchor.constraint(equalToConstant: 6),
-                container.heightAnchor.constraint(equalToConstant: HelmField.controlHeight),
+                container.heightAnchor.constraint(equalToConstant: HelmField.controlHeight - Self.trackInset * 2),
             ])
             container.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(pillClicked(_:))))
             pills.append((container, dot, label, option))
@@ -1222,14 +1375,22 @@ final class HostEnvironmentPicker: NSView {
         let row = NSStackView(views: containers)
         row.orientation = .horizontal
         row.distribution = .fillEqually
-        row.spacing = HelmMetrics.s1 + 2
+        row.spacing = Self.trackInset
         row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        track.wantsLayer = true
+        track.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(track)
+        track.addSubview(row)
+        let inset = Self.trackInset
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            track.leadingAnchor.constraint(equalTo: leadingAnchor),
+            track.trailingAnchor.constraint(equalTo: trailingAnchor),
+            track.topAnchor.constraint(equalTo: topAnchor),
+            track.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: track.leadingAnchor, constant: inset),
+            row.trailingAnchor.constraint(equalTo: track.trailingAnchor, constant: -inset),
+            row.topAnchor.constraint(equalTo: track.topAnchor, constant: inset),
+            row.bottomAnchor.constraint(equalTo: track.bottomAnchor, constant: -inset),
         ])
 
         applyTheme(ThemeManager.shared.theme)
@@ -1252,6 +1413,10 @@ final class HostEnvironmentPicker: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        track.layer?.cornerRadius = HelmField.cornerRadius
+        track.layer?.backgroundColor = HelmField.fill(theme, surface: .raised).cgColor
+        track.layer?.borderWidth = 1
+        track.layer?.borderColor = HelmField.border(theme, surface: .raised).cgColor
         for (container, dot, label, option) in pills {
             let hue = HelmTheme.nsColor(option.tint.hex(in: theme))
             dot.layer?.backgroundColor = hue.cgColor
@@ -1265,12 +1430,11 @@ final class HostEnvironmentPicker: NSView {
                 container.layer?.borderColor = hue.withAlphaComponent(0.55).cgColor
                 label.textColor = resolved.foreground
             } else {
-                let fill = HelmField.fill(theme)
-                container.normalColor = fill
-                container.hoverColor = fill.hoverShifted(by: 0.10, forMode: theme.mode)
-                container.layer?.borderWidth = 1
-                container.layer?.borderColor = HelmField.border(theme).cgColor
-                label.textColor = HelmField.mutedInk(theme)
+                let fill = HelmField.fill(theme, surface: .raised)
+                container.normalColor = .clear
+                container.hoverColor = fill.hoverShifted(by: 0.08, forMode: theme.mode)
+                container.layer?.borderWidth = 0
+                label.textColor = HelmField.mutedInk(theme, surface: .raised)
             }
         }
     }

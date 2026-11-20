@@ -178,6 +178,50 @@ enum HelmField {
         HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: fill(theme))
     }
 
+    /// Which recipe a well is painted with (Helm 9.2.0).
+    ///
+    /// `.inset` is every form's well: the sunken fill above. `.raised` is a
+    /// well a form opts into through `HelmFormSheet.wellSurface`, for a form
+    /// whose sections are cards: the card's own colour with a hairline
+    /// stepped toward ink, so the field is white on a white card and its edge
+    /// is the border rather than a tint. On the Lavender palette the inset
+    /// well is `side` (#D9E2F6) on a lavender panel, and the field had no
+    /// visible edge at all, which is what the raised well exists to fix.
+    /// Focus keeps one fill either way (`HelmInputSurface.fill`).
+    enum Surface: Equatable {
+        case inset
+        case raised
+    }
+
+    /// How far a raised well's hairline steps from `chromeLineHex` toward ink.
+    static let raisedBorderStep: CGFloat = 0.28
+    /// How far a raised well lifts from the card toward ink in a dark
+    /// register, where a well the card's exact colour would read as a hole.
+    static let raisedDarkLift: CGFloat = 0.05
+
+    static func fill(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        guard surface == .raised else { return fill(theme) }
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        guard theme.mode == .dark else { return card }
+        return card.blended(withFraction: raisedDarkLift, of: HelmTheme.nsColor(theme.chromeInkHex)) ?? card
+    }
+
+    static func border(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        guard surface == .raised else { return border(theme) }
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        return HelmDisplayAccessibility.strengthenedEdge(line.blended(withFraction: raisedBorderStep, of: ink) ?? line,
+                                                         theme: theme)
+    }
+
+    static func ink(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: fill(theme, surface: surface))
+    }
+
+    static func mutedInk(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        HelmContrast.legible(HelmTheme.mutedInk(theme), over: fill(theme, surface: surface))
+    }
+
     /// The same correction for muted text sitting on a field - a placeholder, a
     /// field card's own label, a toggle row's subtitle.
     static func mutedInk(_ theme: HelmTheme) -> NSColor {
@@ -202,9 +246,9 @@ enum HelmField {
     /// is re-applied here, not only at `makeSunken` time, because it is now
     /// theme-dependent: a captain switching into Daylight has to see wells
     /// round to 14 without the view tree being rebuilt.
-    static func applySunken(to view: NSView, theme: HelmTheme, isRow: Bool = false) {
-        view.layer?.backgroundColor = fill(theme).cgColor
-        view.layer?.borderColor = border(theme).cgColor
+    static func applySunken(to view: NSView, theme: HelmTheme, isRow: Bool = false, surface: Surface = .inset) {
+        view.layer?.backgroundColor = fill(theme, surface: surface).cgColor
+        view.layer?.borderColor = border(theme, surface: surface).cgColor
         view.layer?.cornerRadius = isRow ? rowCornerRadius(for: theme) : cornerRadius(for: theme)
     }
 
@@ -272,12 +316,24 @@ enum HelmFieldCentering {
     /// The centred drawing rect for `bounds`, or `bounds` unchanged when the
     /// text already fills it (a multi-line or oversized field).
     static func centred(_ bounds: NSRect, in cell: NSTextFieldCell) -> NSRect {
-        let natural = cell.cellSize(forBounds: bounds).height
-        guard natural > 0, natural < bounds.height else { return bounds }
-        var rect = bounds
-        rect.origin.y += ((bounds.height - natural) / 2).rounded()
+        var rect = inset(bounds)
+        let natural = cell.cellSize(forBounds: rect).height
+        guard natural > 0, natural < rect.height else { return rect }
+        rect.origin.y += ((rect.height - natural) / 2).rounded()
         rect.size.height = natural
         return rect
+    }
+
+    /// The text's distance from a well's leading and trailing edge, on top
+    /// of the cell's own 2pt (Helm 9.2.0). Without it the text and the
+    /// placeholder started 2pt from the border, which read as a cramped field
+    /// in every form - measured in the New Host panel, where "hostname or IP"
+    /// touched the well's left edge.
+    static let horizontalInset: CGFloat = 6
+
+    static func inset(_ bounds: NSRect) -> NSRect {
+        guard bounds.width > horizontalInset * 4 else { return bounds }
+        return bounds.insetBy(dx: horizontalInset, dy: 0)
     }
 
     /// Installs the right centring cell on `field`, preserving the properties
@@ -373,6 +429,14 @@ private final class SunkenFieldTheming {
     var placeholder: String = "" {
         didSet { applyPlaceholder(ThemeManager.shared.theme) }
     }
+    var surface: HelmField.Surface = .inset {
+        didSet { if surface != oldValue { apply(lastTheme) } }
+    }
+    /// The field holds a value Save refused (Helm 9.2.0): the border takes
+    /// the critical hue, focused or not, until the form clears it.
+    var showsIssue = false {
+        didSet { if showsIssue != oldValue { apply(lastTheme) } }
+    }
 
     init(_ field: NSTextField) {
         self.field = field
@@ -399,7 +463,7 @@ private final class SunkenFieldTheming {
         guard let field else { return }
         lastTheme = theme
         HelmInputSurface.apply(chrome: field, shadowHost: glowHost, theme: theme,
-                               focused: isFocused, hue: domainHue, animated: animated)
+                               focused: isFocused, hue: domainHue, surface: surface, animated: animated)
         // Both, deliberately. With `drawsBackground = true` the *cell* paints
         // `backgroundColor` over the layer's own fill, and its default is the
         // system `.textBackgroundColor` - so setting only the layer (which is
@@ -414,8 +478,12 @@ private final class SunkenFieldTheming {
         // state too. Painting the resting fill here while the layer flipped to
         // `card` is what rendered a focused field as two boxes - see that
         // method's own note.
-        field.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused)
-        field.textColor = HelmField.ink(theme)
+        field.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused, surface: surface)
+        field.textColor = HelmField.ink(theme, surface: surface)
+        if showsIssue {
+            field.layer?.borderWidth = HelmInputSurface.focusBorderWidth
+            field.layer?.borderColor = HelmTheme.nsColor(HelmTint.critical.hex(in: theme)).cgColor
+        }
         applyPlaceholder(theme)
     }
 
@@ -424,7 +492,7 @@ private final class SunkenFieldTheming {
         field.placeholderAttributedString = NSAttributedString(
             string: placeholder,
             attributes: [.font: field.font ?? HelmType.body(),
-                         .foregroundColor: HelmField.mutedInk(theme)]
+                         .foregroundColor: HelmField.mutedInk(theme, surface: surface)]
         )
     }
 }
@@ -452,8 +520,20 @@ final class HelmTextField: NSTextField {
     /// §6.9: the domain hue this field's focus ring takes. Forwards to the
     /// shared `SunkenFieldTheming`, which is where the focus treatment lives.
     var domainHue: HelmDomainHue? {
-        get { theming.domainHue }
-        set { theming.domainHue = newValue }
+        get { theming?.domainHue }
+        set { theming?.domainHue = newValue }
+    }
+    /// Which well recipe this field paints (`HelmField.Surface`). A `.lead`
+    /// field has no well, so it ignores this.
+    var wellSurface: HelmField.Surface {
+        get { theming?.surface ?? .inset }
+        set { theming?.surface = newValue }
+    }
+    /// Whether the field shows the invalid-value border (Helm 9.2.0). A
+    /// `.lead` field has no well to colour.
+    var showsIssue: Bool {
+        get { theming?.showsIssue ?? false }
+        set { theming?.showsIssue = newValue }
     }
     private let style: Style
     private var leadObservation: ThemeObservation?
@@ -540,6 +620,11 @@ final class HelmSecureTextField: NSSecureTextField {
         set { theming.glowHost = newValue }
     }
 
+    var wellSurface: HelmField.Surface {
+        get { theming.surface }
+        set { theming.surface = newValue }
+    }
+
     init(placeholder: String = "") {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -574,6 +659,12 @@ final class HelmSecureTextField: NSSecureTextField {
 final class HelmTextView: NSView {
     let textView = NSTextView()
     private let scroll = NSScrollView()
+    /// The well itself: a plain layer-backed view around the scroll view.
+    /// Helm 9.2.0 moved the chrome here from the `NSScrollView`, whose layer
+    /// AppKit manages - the edge set on it read back as 0pt in a real window,
+    /// so every multi-line well in the app drew no box (measured on the New
+    /// Key panel's public key and certificate wells).
+    private let well = NSView()
     private var observation: ThemeObservation?
     private var focus: HelmFocusRegistration?
     private var isFocused = false
@@ -585,6 +676,10 @@ final class HelmTextView: NSView {
         didSet { if domainHue != oldValue { applyTheme(lastTheme) } }
     }
 
+    var wellSurface: HelmField.Surface = .inset {
+        didSet { if wellSurface != oldValue { applyTheme(lastTheme) } }
+    }
+
     var string: String {
         get { textView.string }
         set { textView.string = newValue }
@@ -592,7 +687,7 @@ final class HelmTextView: NSView {
 
     /// The view carrying this field's sunken chrome - the scroll view, not
     /// this container.
-    var chromeView: NSView { scroll }
+    var chromeView: NSView { well }
 
     init(height: CGFloat, monospaced: Bool = false) {
         super.init(frame: .zero)
@@ -619,14 +714,23 @@ final class HelmTextView: NSView {
         scroll.borderType = .noBorder
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        HelmField.makeSunken(scroll)
+        well.translatesAutoresizingMaskIntoConstraints = false
+        HelmField.makeSunken(well)
 
-        addSubview(scroll)
+        addSubview(well)
+        well.addSubview(scroll)
+        // The scroll view sits one hairline in, so the text view's own
+        // background never paints over the well's edge.
+        let edge = HelmField.hairlineBorderWidth
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            well.leadingAnchor.constraint(equalTo: leadingAnchor),
+            well.trailingAnchor.constraint(equalTo: trailingAnchor),
+            well.topAnchor.constraint(equalTo: topAnchor),
+            well.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: edge),
+            scroll.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -edge),
+            scroll.topAnchor.constraint(equalTo: well.topAnchor, constant: edge),
+            scroll.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -edge),
             heightAnchor.constraint(equalToConstant: height),
         ])
 
@@ -672,13 +776,13 @@ final class HelmTextView: NSView {
 
     func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
-        HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue, animated: animated)
-        let ink = HelmField.ink(theme)
+        HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
+                               focused: isFocused, hue: domainHue, surface: wellSurface, animated: animated)
+        let ink = HelmField.ink(theme, surface: wellSurface)
         // The same pairing `SunkenFieldTheming` makes, and for the same
         // reason: the scroll view carries the layer fill and the text view
         // paints its own background over it, so both read one definition.
-        textView.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused)
+        textView.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused, surface: wellSurface)
         textView.textColor = ink
         textView.insertionPointColor = ink
         HelmSelection.apply(to: textView, theme: theme)
@@ -1302,6 +1406,11 @@ final class HelmFieldCard: NSView {
     /// that opens something other than a menu.
     var onClick: (() -> Void)?
 
+    /// Which well recipe the card paints (`HelmField.Surface`, Helm 9.2.0).
+    var wellSurface: HelmField.Surface = .inset {
+        didSet { if wellSurface != oldValue { applyTheme(ThemeManager.shared.theme) } }
+    }
+
     private var optionTitles: [String] = []
     private var extras: [ExtraItem] = []
     private var onSelect: ((Int) -> Void)?
@@ -1472,20 +1581,20 @@ final class HelmFieldCard: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
-        let fill = HelmField.fill(theme)
+        let fill = HelmField.fill(theme, surface: wellSurface)
         card.normalColor = fill
         // A disabled card takes no hover shift: it is not clickable, and a
         // well that lights up under the pointer says otherwise.
         card.hoverColor = isEnabled ? fill.hoverShifted(by: 0.10, forMode: theme.mode) : fill
         card.layer?.borderWidth = 1
-        card.layer?.borderColor = HelmField.border(theme).cgColor
+        card.layer?.borderColor = HelmField.border(theme, surface: wellSurface).cgColor
         // §6.9's choice well: the same well as a single-line field, so the
         // radius resolves through the same helper rather than staying pinned
         // to the pre-Daylight row radius.
         card.cornerRadius = HelmField.rowCornerRadius(for: theme)
-        fieldLabelView.textColor = HelmField.mutedInk(theme)
-        valueLabel.textColor = HelmField.ink(theme)
-        chevron.contentTintColor = HelmField.mutedInk(theme)
+        fieldLabelView.textColor = HelmField.mutedInk(theme, surface: wellSurface)
+        valueLabel.textColor = HelmField.ink(theme, surface: wellSurface)
+        chevron.contentTintColor = HelmField.mutedInk(theme, surface: wellSurface)
     }
 }
 
@@ -1520,6 +1629,11 @@ final class HelmToggleRow: NSView {
     private let trailing: NSView?
 
     var onToggle: (() -> Void)?
+
+    /// Which well recipe the row paints (`HelmField.Surface`, Helm 9.2.0).
+    var wellSurface: HelmField.Surface = .inset {
+        didSet { if wellSurface != oldValue { applyTheme(ThemeManager.shared.theme) } }
+    }
 
     var isOn: Bool {
         get { toggle.isOn }
@@ -1629,9 +1743,9 @@ final class HelmToggleRow: NSView {
     var chromeView: NSView { self }
 
     func applyTheme(_ theme: HelmTheme) {
-        HelmField.applySunken(to: self, theme: theme, isRow: true)
-        titleLabel.textColor = HelmField.ink(theme)
-        subtitleLabel?.textColor = HelmField.mutedInk(theme)
+        HelmField.applySunken(to: self, theme: theme, isRow: true, surface: wellSurface)
+        titleLabel.textColor = HelmField.ink(theme, surface: wellSurface)
+        subtitleLabel?.textColor = HelmField.mutedInk(theme, surface: wellSurface)
         // E5: the row's own toggle is a `HelmToggle` now, and it paints
         // itself - so this row has to hand it the theme, exactly the way
         // `SchedulesCardView` already does for its per-schedule toggle.
@@ -1670,6 +1784,28 @@ final class HelmFormSheet: NSView {
     }
 
     let chrome: Chrome
+
+    /// How a section is drawn (Helm 9.2.0). `.kickers` is the original
+    /// scaffold: a numbered kicker over rows on the sheet's own ground.
+    /// `.cards` puts each section - its kicker and every row added after it -
+    /// on a card of its own, the hero language the Connections forms use.
+    /// The rows themselves are built exactly the same way in both.
+    enum SectionStyle {
+        case kickers
+        case cards
+    }
+
+    let sectionStyle: SectionStyle
+
+    /// The well recipe every field in the form paints (`HelmField.Surface`).
+    /// `.raised` is what a carded form wants, so a field reads as a white
+    /// well with an edge on a white card rather than a tint on a tint.
+    let wellSurface: HelmField.Surface
+
+    /// A section card's inner padding.
+    static let sectionCardPadding: CGFloat = HelmMetrics.s3
+    /// A section card's corner radius on every palette.
+    static let sectionCardRadius: CGFloat = 14
 
     /// The one editor width. The six sheets measured 180 / 261 / 302 / 357 /
     /// 520 / 640 before this (audit §4.7); none of that spread encoded a
@@ -1793,8 +1929,11 @@ final class HelmFormSheet: NSView {
     private var fieldHues: [(HelmDomainHue) -> Void] = []
 
     init(title: String, scrolls: Bool = false, maxContentWidth: CGFloat = HelmFormSheet.width,
-         domainHue: HelmDomainHue = .rose, chrome: Chrome = .sheet) {
+         domainHue: HelmDomainHue = .rose, chrome: Chrome = .sheet,
+         sectionStyle: SectionStyle = .kickers, wellSurface: HelmField.Surface = .inset) {
         self.chrome = chrome
+        self.sectionStyle = sectionStyle
+        self.wellSurface = wellSurface
         self.scrolls = scrolls || chrome == .panel
         self.maxContentWidth = maxContentWidth
         self.domainHue = domainHue
@@ -2096,6 +2235,7 @@ final class HelmFormSheet: NSView {
     /// out of layout entirely, so nothing is left behind.
     @discardableResult
     func addSection(_ title: String, number: String? = nil, actions: [NSView] = []) -> NSView {
+        if sectionStyle == .cards { openSectionCard() }
         let label = NSTextField(labelWithString: "")
         label.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
             .font: HelmType.kicker(),
@@ -2117,7 +2257,7 @@ final class HelmFormSheet: NSView {
 
         guard !actions.isEmpty else {
             appendFullWidth(head)
-            contentStack.setCustomSpacing(HelmMetrics.s2, after: head)
+            targetStack.setCustomSpacing(HelmMetrics.s2, after: head)
             return head
         }
         let spacer = NSView()
@@ -2136,9 +2276,70 @@ final class HelmFormSheet: NSView {
         row.spacing = HelmMetrics.s2
         row.translatesAutoresizingMaskIntoConstraints = false
         appendFullWidth(row)
-        contentStack.setCustomSpacing(HelmMetrics.s2, after: row)
+        targetStack.setCustomSpacing(HelmMetrics.s2, after: row)
         return row
     }
+
+    /// The section card rows are going into, or `nil` before the first
+    /// section (and always in `.kickers`).
+    private var currentSection: NSStackView?
+    /// Every section card, re-painted on a theme change.
+    private var sectionCards: [NSView] = []
+    /// Where the next row goes: the open section card, or the form itself.
+    private var targetStack: NSStackView { currentSection ?? contentStack }
+
+    private func openSectionCard() {
+        let card = NSView()
+        card.wantsLayer = true
+        card.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = contentStack.spacing
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        let pad = Self.sectionCardPadding
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: pad),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -pad),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: pad),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -pad),
+        ])
+        currentSection = nil
+        appendFullWidth(card)
+        sectionCards.append(card)
+        currentSection = stack
+    }
+
+    /// Close the open section card, so the next row lands on the form's own
+    /// ground. A no-op in `.kickers`.
+    func endSection() {
+        currentSection = nil
+    }
+
+    /// Point every field under `root` at this form's well recipe. Run for
+    /// the whole form on each theme pass; a controller that adds rows after
+    /// `loadView` (a rebuilt list) calls it for what it added.
+    func adoptWells(in root: NSView) {
+        guard wellSurface != .inset else { return }
+        Self.setWellSurface(wellSurface, under: root)
+    }
+
+    private static func setWellSurface(_ surface: HelmField.Surface, under view: NSView) {
+        switch view {
+        case let field as HelmTextField: field.wellSurface = surface
+        case let field as HelmSecureTextField: field.wellSurface = surface
+        case let field as HelmTextView: field.wellSurface = surface
+        case let card as HelmFieldCard: card.wellSurface = surface
+        case let row as HelmToggleRow: row.wellSurface = surface
+        default: break
+        }
+        view.subviews.forEach { setWellSurface(surface, under: $0) }
+    }
+
+    #if FM_SELFTESTS
+    var debugSectionCards: [NSView] { sectionCards }
+    #endif
 
     /// The mockup's `.fnum` - a small rounded square carrying the section
     /// number, tinted with the theme's own accent (re-derived on every theme
@@ -2291,8 +2492,8 @@ final class HelmFormSheet: NSView {
 
     /// Set explicit spacing after the row most recently added.
     func setSpacingAfterLastRow(_ spacing: CGFloat) {
-        guard let last = contentStack.arrangedSubviews.last else { return }
-        contentStack.setCustomSpacing(spacing, after: last)
+        guard let last = targetStack.arrangedSubviews.last else { return }
+        targetStack.setCustomSpacing(spacing, after: last)
     }
 
     /// The scaffold's own label-over-control wrapper, exposed so a caller can
@@ -2324,8 +2525,9 @@ final class HelmFormSheet: NSView {
     /// its own content and the form would go ragged.
     private func appendFullWidth(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        let stack = targetStack
+        stack.addArrangedSubview(view)
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     /// Collects the two components that do not theme themselves, so the sheet's
@@ -2619,6 +2821,11 @@ final class HelmFormSheet: NSView {
             .withAlphaComponent(HelmCard.dividerAlpha).cgColor
         let muted = HelmTheme.mutedInk(theme)
         mutedLabels.forEach { $0.textColor = muted }
+        sectionCards.forEach {
+            HelmCard.applyCardSurface(to: $0, theme: theme, cornerRadius: Self.sectionCardRadius,
+                                      daylightRadius: Self.sectionCardRadius)
+        }
+        for root in [contentStack, footerContainer, panelHeaderSlot] { adoptWells(in: root) }
         fieldCards.forEach { $0.applyTheme(theme) }
         toggleRows.forEach { $0.applyTheme(theme) }
         let accent = HelmTheme.nsColor(theme.accentHex)

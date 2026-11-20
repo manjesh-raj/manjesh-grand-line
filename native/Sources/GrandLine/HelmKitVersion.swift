@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "9.1.0"
+    static let version = "9.2.0"
 
     struct Component {
         let name: String
@@ -114,16 +114,16 @@ enum HelmKit {
         Component("HelmCenteredTextFieldCell", "1.0.0", file: "HelmForm.swift"),
         Component("HelmChipInput", "1.0.0", file: "HelmForm.swift"),
         Component("HelmDotAccessory", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmField", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmFieldCard", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmFieldCentering", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmFormSheet", "1.0.0", file: "HelmForm.swift"),
+        Component("HelmField", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmFieldCard", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmFieldCentering", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmFormSheet", "1.1.0", file: "HelmForm.swift"),
         Component("HelmSearchField", "1.1.0", file: "HelmForm.swift"),
-        Component("HelmSecureTextField", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmTextField", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmTextView", "1.0.0", file: "HelmForm.swift"),
+        Component("HelmSecureTextField", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmTextField", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmTextView", "1.1.0", file: "HelmForm.swift"),
         Component("HelmToggle", "1.0.0", file: "HelmForm.swift"),
-        Component("HelmToggleRow", "1.0.0", file: "HelmForm.swift"),
+        Component("HelmToggleRow", "1.1.0", file: "HelmForm.swift"),
         // HelmGradientTile.swift
         Component("HelmGradientTile", "1.0.0", file: "HelmGradientTile.swift"),
         // HelmHeroCard.swift
@@ -139,7 +139,7 @@ enum HelmKit {
         // HelmInput.swift
         Component("HelmFocusRegistration", "1.0.0", file: "HelmInput.swift"),
         Component("HelmFocusSensing", "1.0.0", file: "HelmInput.swift"),
-        Component("HelmInputSurface", "1.0.0", file: "HelmInput.swift"),
+        Component("HelmInputSurface", "1.1.0", file: "HelmInput.swift"),
         Component("HelmSelection", "1.0.0", file: "HelmInput.swift"),
         // HelmKeyHint.swift
         Component("HelmKeyHint", "1.0.0", file: "HelmKeyHint.swift"),
@@ -243,7 +243,8 @@ enum HelmKit {
         Component("Home Claude card", "1.1.0", file: "HomeCanvasController.swift"),
         Component("Home Fleet card", "1.1.0", file: "HomeCanvasController.swift"),
         Component("Health (page)", "1.0.0", file: "HealthController.swift"),
-        Component("Connections (page)", "1.0.0", file: "HostsController.swift"),
+        Component("Connections (page)", "1.1.0", file: "HostsController.swift"),
+        Component("Console (page)", "1.0.0", file: "ConsoleController.swift"),
         Component("Secrets (page)", "1.0.0", file: "CredentialVaultController.swift"),
         Component("Automic Vault (page)", "1.0.0", file: "VaultController.swift"),
         Component("Dictation (page)", "1.0.0", file: "DictationController.swift"),
@@ -289,9 +290,9 @@ enum HelmKit {
         SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.2.0,HelmCard@2.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.1,HelmFocusRing@1.0.0,HelmMetrics@1.1.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.0.0,HelmSegmentedTabs@1.2.0,HelmType@1.2.0", sha256: "7622940a2f1e8796fd8d8b4b2b96df344d08918970207a6f9441264ae7572c7e"),
         SourceDigest(file: "HelmDrillHeader.swift", stamp: "HelmDrillHeader@1.0.0", sha256: "73712c9e058defa127936a03d9b47618e039e031d7713652d471db2c1a29480b"),
         SourceDigest(file: "HelmFocusVisibility.swift", stamp: "HelmFocusVisibility@1.0.0", sha256: "de4eab8dd4eac530b4f2c41fe9a9da80ae8e1665b02c9a4424df5c8dd6f9872f"),
-        SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.0.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.0.0,HelmFieldCard@1.0.0,HelmFieldCentering@1.0.0,HelmFormSheet@1.0.0,HelmSearchField@1.1.0,HelmSecureTextField@1.0.0,HelmTextField@1.0.0,HelmTextView@1.0.0,HelmToggle@1.0.0,HelmToggleRow@1.0.0", sha256: "19bc915b944b0d5b47de7de982ad48afab5bda5bd294ed7274960e2188c2a5d2"),
+        SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.0.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.1.0,HelmFieldCard@1.1.0,HelmFieldCentering@1.1.0,HelmFormSheet@1.1.0,HelmSearchField@1.1.0,HelmSecureTextField@1.1.0,HelmTextField@1.1.0,HelmTextView@1.1.0,HelmToggle@1.0.0,HelmToggleRow@1.1.0", sha256: "513c47f9cf7ed565ff282e7988acb2f1db755b5bd94c7bb6e4476920ef1b00be"),
         SourceDigest(file: "HelmGradientTile.swift", stamp: "HelmGradientTile@1.0.0", sha256: "b2ec10777e795afde1a07241b6f9991c3fe12616c1b293e63e45dc22bc65f517"),
-        SourceDigest(file: "HelmInput.swift", stamp: "HelmFocusRegistration@1.0.0,HelmFocusSensing@1.0.0,HelmInputSurface@1.0.0,HelmSelection@1.0.0", sha256: "97a99026d76c07e5e4d2a8514a53c657c5d97d5f4c8b980d68a6c4931aa1ce20"),
+        SourceDigest(file: "HelmInput.swift", stamp: "HelmFocusRegistration@1.0.0,HelmFocusSensing@1.0.0,HelmInputSurface@1.1.0,HelmSelection@1.0.0", sha256: "39f76e31d3286edf13c4d77858af85de2227ae3025f651f0c9f5ee9af7f77a5e"),
         SourceDigest(file: "HelmKeyHint.swift", stamp: "HelmKeyHint@1.0.0", sha256: "fc81e10be20a16c5bc8fa0074639fbbbe4b9abc73f82cadb6e647c75c703b854"),
         SourceDigest(file: "HelmKeyedRows.swift", stamp: "HelmKeyedRows@1.0.0", sha256: "ee6de57defc5a7b90e58a48918aea4d7eea383521f54782b6cc39600feced94c"),
         SourceDigest(file: "HelmKit.swift", stamp: "HelmFlatList@1.0.0,HelmKPIStrip@1.3.0,HelmKeyboardListView@1.0.0,HelmListNavigation@1.0.0,HelmOverflowMenu@1.0.0,HelmReading@1.0.0,HelmRelativeTime@1.0.0,HelmSectionHeader@1.1.0,HelmStatusPill@1.0.0", sha256: "3a73b18de3d729a144c3dacedd8f3e85451ae0126210518fbcb191a2a70854c7"),
