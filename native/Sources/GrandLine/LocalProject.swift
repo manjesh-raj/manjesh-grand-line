@@ -94,6 +94,23 @@ struct LocalProject: Equatable {
         return "git clone https://github.com/manjesh-raj/devops-atlas.git \(shellQuoted(displayFolder))"
     }
 
+    /// A stable id from a name: lower case, letters and digits, runs of
+    /// anything else as one dash. "Runbook Site" is `runbook-site`.
+    static func slug(_ name: String) -> String {
+        var out = ""
+        var pendingDash = false
+        for scalar in name.lowercased().unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar), scalar.isASCII {
+                if pendingDash, !out.isEmpty { out.append("-") }
+                pendingDash = false
+                out.unicodeScalars.append(scalar)
+            } else {
+                pendingDash = true
+            }
+        }
+        return out.isEmpty ? "project" : out
+    }
+
     private func shellQuoted(_ path: String) -> String {
         path.contains(" ") ? "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'" : path
     }
@@ -216,6 +233,11 @@ enum LocalProjectStore {
     /// The projects on disk, or the seeded devops-atlas when there is no
     /// file. A file that is there but unreadable also reads as the seed for
     /// this session, and `save` refuses to replace it (GL-01).
+    ///
+    /// A file that holds an empty list reads as empty: the last project was
+    /// removed on purpose, and GL-21's rule is that "nothing there" and
+    /// "nothing chosen" are different states, so the seed never comes back
+    /// over a removal.
     static func load(at url: URL = storeURL()) -> [LocalProject] {
         var status = StoreLoadFailure.LoadStatus.clean
         let decoder = JSONDecoder()
@@ -225,7 +247,7 @@ enum LocalProjectStore {
         lock.lock()
         lastLoadStatus[url.path] = status
         lock.unlock()
-        guard let decoded, !decoded.projects.isEmpty else { return [LocalProject.devopsAtlas] }
+        guard let decoded else { return [LocalProject.devopsAtlas] }
         // An id written twice keeps its first record.
         var seen = Set<String>()
         return decoded.projects.filter { seen.insert($0.id).inserted }

@@ -1,78 +1,60 @@
 // Grand Line - native macOS app.
 //
-// DevOps Hub's page: one local project, with a Start button while it is
-// stopped and its site in a web view while it runs. Layout C on the design
-// board (`data/grand-line-devops-hub/`), the confirmed design:
+// DevOps Hub's page: the project cards (`DevOpsHubCardsController`) and one
+// project's own view (`DevOpsHubProjectController`), with the page switching
+// between them. The second DevOps Hub board's picks
+// (`data/grand-line-devops-hub-page/`):
 //
-//   - **Running**, the hero shrinks to a 44pt strip in the gradient: a state
-//     dot, the address as a copy button, the uptime and files served, and
-//     Reload, Open in Browser, Restart and Stop. The site gets every other
-//     point, because it is a full app with columns of its own.
-//   - **Anything else** (not started, starting, failed, folder not found)
-//     is a centred hero card (`HelmHeroColumn` in `.panel`) over a dimmed
-//     preview of the site, with a checks card under it that says what Start
-//     checks, or checked.
+//   - The DevOps Hub row opens the cards. The projects are not rows in the
+//     sidebar any more, so there is one destination and one row, and the row
+//     is lit whichever view shows.
+//   - Open shows a project inside this page rather than as a pushed view of
+//     its own. The project view is the page PR 619 shipped, with a Projects
+//     button back to the cards.
+//   - The page keeps what it shows for the session only. Coming back from
+//     another page finds it as it was left. A click on the DevOps Hub row
+//     while it shows a project goes back to the cards, and a relaunch opens
+//     the cards. The two views are places of their own in the window's history
+//     (`WorkspaceHistoryPlace`), so Back steps from a project to the cards.
 //
-// The state is not the page's: `LocalProjectRegistry` holds it, so the
-// sidebar's dot and menu and a launch-time start work while this page has
-// never been mounted (GL-37 mounts it lazily). The page draws the registry
-// and adds the one thing only it knows, whether the site has loaded into its
-// web view. The words are `DevOpsHubWords`, pure and asserted headless.
-//
-// The strip is page code on `HelmHeroSurface`, with the kit's own ghost pills
-// (`HelmButton.heroInk`). It moves into the kit only if a second page wants
-// a strip.
+// Every action a card, a table row, the column, the project view or ⌘K runs
+// is here, over the one registry (`LocalProjectRegistry`), so none of them can
+// do a thing differently. The state is still the registry's: this page mounts
+// lazily (GL-37) and the sidebar's badge needs none of it.
 
 import AppKit
 
-final class DevOpsHubController: NSViewController {
+final class DevOpsHubController: NSViewController, HelmSplitPageHosting, WorkspaceHistoryPlace {
 
-    /// The project shown changed (the shell relights the sidebar).
-    var onShownProjectChanged: (() -> Void)?
+    enum Mode: Equatable {
+        case cards
+        case project(String)
+    }
+
+    /// The page moved between the cards and a project (the shell renames the
+    /// crumb).
+    var onModeChanged: (() -> Void)?
+    var onHistoryPlaceChanged: (() -> Void)?
 
     private let registry: LocalProjectRegistry
-    private(set) var projectID: String?
-
-    // The hero half.
-    private let heroStage = NSView()
-    private let backdrop = NSImageView()
-    private let backdropWash = NSView()
-    private let heroScroll = NSScrollView()
-    private let heroDocument = FlippedView()
-    private let heroColumn = NSStackView()
-    private let hero = HelmHeroColumn()
-    private let checksCard = HelmCard()
-    private let checksHeader = HelmSectionHeader(size: .card)
-    private let checksRows = NSStackView()
-    private var checkDetailLabels: [NSTextField] = []
-
-    // The running half.
-    private let courseStage = NSView()
-    private let strip = DevOpsHubStrip()
-    private var webViews: [String: DevOpsHubWebView] = [:]
-    private var webContainer = NSView()
-
-    /// What the web view has done for each project's current run.
-    private var loadedOrigin: [String: URL] = [:]
-    private var finished: Set<String> = []
-    private var progress: [String: Double] = [:]
-    /// Projects whose site was asked for with "Show It Here"
-    /// while "Show the site when it's ready" is off.
-    private var shownOnRequest: Set<String> = []
-    private var preflight: [String: LocalProjectPreflight.Outcome] = [:]
-    private var preflightInFlight: Set<String> = []
-    /// The folder each project's preflight read, so a new folder (from the
-    /// settings sheet, Choose Folder or the sidebar menu) is read again.
-    private var preflightFolder: [String: URL] = [:]
-
+    let cards: DevOpsHubCardsController
+    let projectView: DevOpsHubProjectController
+    private(set) var mode: Mode = .cards
+    /// Projects started from this page whose site should open here once it
+    /// serves ("Show the site when it's ready").
+    private var opensWhenRunning: Set<String> = []
     private var registryObserver: NSObjectProtocol?
-    private var themeToken: ThemeObservation?
-    private var uptimeTimer: Timer?
-    private(set) var words: DevOpsHubWords?
+    /// Each view's pins to the page. A hidden view's are inactive, so its
+    /// subtree has no required path to the window (gotcha (15)): the strip
+    /// of a project shown earlier must not hold the window open while the
+    /// cards show.
+    private var cardsPins: [NSLayoutConstraint] = []
+    private var projectPins: [NSLayoutConstraint] = []
 
     init(registry: LocalProjectRegistry = .shared) {
         self.registry = registry
-        projectID = registry.lastShownProjectID
+        cards = DevOpsHubCardsController(registry: registry)
+        projectView = DevOpsHubProjectController(registry: registry)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -80,789 +62,208 @@ final class DevOpsHubController: NSViewController {
 
     deinit {
         if let registryObserver { NotificationCenter.default.removeObserver(registryObserver) }
-        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
-        uptimeTimer?.invalidate()
     }
-
-    var project: LocalProject? { projectID.flatMap(registry.project) }
 
     // MARK: Build
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 960, height: 700))
-        root.wantsLayer = true
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
         view = root
-        buildHeroStage(in: root)
-        buildCourseStage(in: root)
+        for child in [cards, projectView] as [NSViewController] {
+            addChild(child)
+            child.view.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(child.view)
+            let pins = [
+                child.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                child.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                child.view.topAnchor.constraint(equalTo: root.topAnchor),
+                child.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            ]
+            if child === cards { cardsPins = pins } else { projectPins = pins }
+        }
+        cards.handlers = DevOpsHubCardsController.Handlers(
+            open: { [weak self] id in self?.showProject(id) },
+            primary: { [weak self] id, primary in self?.perform(primary, on: id) },
+            action: { [weak self] id, action in self?.perform(action, on: id) },
+            edit: { [weak self] id in self?.presentSettings(projectID: id) },
+            add: { [weak self] in self?.presentAddProject() })
+        projectView.onBack = { [weak self] in self?.showCards() }
+        projectView.onEditSettings = { [weak self] id in self?.presentSettings(projectID: id) }
         registryObserver = NotificationCenter.default.addObserver(
             forName: LocalProjectRegistry.didChange, object: registry, queue: .main
-        ) { [weak self] _ in self?.render() }
-        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
-        render()
+        ) { [weak self] _ in self?.registryChanged() }
+        applyMode()
     }
 
-    static let pageInset: CGFloat = HelmMetrics.s5
-    static let columnWidth: CGFloat = 720
+    // MARK: Which view shows
 
-    private func buildHeroStage(in root: NSView) {
-        heroStage.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(heroStage)
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-        backdrop.imageScaling = .scaleProportionallyUpOrDown
-        backdrop.imageAlignment = .alignTopLeft
-        backdrop.wantsLayer = true
-        backdrop.layer?.masksToBounds = true
-        backdrop.layer?.cornerRadius = HelmHeroColumn.cornerRadius
-        backdropWash.translatesAutoresizingMaskIntoConstraints = false
-        backdropWash.wantsLayer = true
-        backdropWash.layer?.cornerRadius = HelmHeroColumn.cornerRadius
-        for view in [backdrop, backdropWash] { heroStage.addSubview(view) }
-
-        heroScroll.translatesAutoresizingMaskIntoConstraints = false
-        heroScroll.drawsBackground = false
-        heroScroll.hasVerticalScroller = true
-        heroScroll.autohidesScrollers = true
-        heroDocument.translatesAutoresizingMaskIntoConstraints = false
-        heroScroll.documentView = heroDocument
-        heroStage.addSubview(heroScroll)
-
-        hero.setArrangement(.panel)
-        checksCard.setHeader(checksHeader)
-        checksRows.orientation = .vertical
-        checksRows.alignment = .leading
-        checksRows.spacing = 0
-        checksCard.setBody(checksRows, insets: NSEdgeInsets(top: HelmMetrics.s1, left: HelmMetrics.s4,
-                                                             bottom: HelmMetrics.s3, right: HelmMetrics.s4))
-        heroColumn.orientation = .vertical
-        heroColumn.alignment = .leading
-        heroColumn.spacing = HelmMetrics.s4
-        heroColumn.translatesAutoresizingMaskIntoConstraints = false
-        heroColumn.addArrangedSubview(hero)
-        heroColumn.addArrangedSubview(checksCard)
-        heroDocument.addSubview(heroColumn)
-        // Both cards span the column. A vertical stack's alignment centres a
-        // view at its own fitting width otherwise, and the hero's fitting
-        // width is its pills'.
-        for card in [hero, checksCard] as [NSView] {
-            card.widthAnchor.constraint(equalTo: heroColumn.widthAnchor).isActive = true
-        }
-
-        let inset = Self.pageInset
-        let clip = heroScroll.contentView
-        // Gotcha (13): the column's width preference sits under 500, so it can
-        // never hold the window open; the `<=` cap and the side insets do the
-        // rest.
-        let preferredWidth = heroColumn.widthAnchor.constraint(equalToConstant: Self.columnWidth)
-        preferredWidth.priority = NSLayoutConstraint.Priority(480)
-        let centreY = heroColumn.centerYAnchor.constraint(equalTo: heroDocument.centerYAnchor)
-        centreY.priority = .defaultLow
-        NSLayoutConstraint.activate([
-            heroStage.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            heroStage.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            heroStage.topAnchor.constraint(equalTo: root.topAnchor),
-            heroStage.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-
-            backdrop.leadingAnchor.constraint(equalTo: heroStage.leadingAnchor, constant: inset),
-            backdrop.trailingAnchor.constraint(equalTo: heroStage.trailingAnchor, constant: -inset),
-            backdrop.topAnchor.constraint(equalTo: heroStage.topAnchor),
-            backdrop.bottomAnchor.constraint(equalTo: heroStage.bottomAnchor, constant: -inset),
-            backdropWash.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
-            backdropWash.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
-            backdropWash.topAnchor.constraint(equalTo: backdrop.topAnchor),
-            backdropWash.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
-
-            heroScroll.leadingAnchor.constraint(equalTo: backdrop.leadingAnchor),
-            heroScroll.trailingAnchor.constraint(equalTo: backdrop.trailingAnchor),
-            heroScroll.topAnchor.constraint(equalTo: backdrop.topAnchor),
-            heroScroll.bottomAnchor.constraint(equalTo: backdrop.bottomAnchor),
-
-            // Gotcha (4): the document pins to the clip view, not the scroll
-            // view. It is at least the clip's height, so a short column
-            // centres in it, and taller when the column needs to scroll.
-            heroDocument.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
-            heroDocument.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
-            heroDocument.topAnchor.constraint(equalTo: clip.topAnchor),
-            heroDocument.widthAnchor.constraint(equalTo: clip.widthAnchor),
-            heroDocument.heightAnchor.constraint(greaterThanOrEqualTo: clip.heightAnchor),
-
-            heroColumn.centerXAnchor.constraint(equalTo: heroDocument.centerXAnchor),
-            heroColumn.widthAnchor.constraint(lessThanOrEqualToConstant: Self.columnWidth),
-            heroColumn.leadingAnchor.constraint(greaterThanOrEqualTo: heroDocument.leadingAnchor, constant: inset),
-            heroColumn.trailingAnchor.constraint(lessThanOrEqualTo: heroDocument.trailingAnchor, constant: -inset),
-            heroColumn.topAnchor.constraint(greaterThanOrEqualTo: heroDocument.topAnchor, constant: inset),
-            heroDocument.bottomAnchor.constraint(greaterThanOrEqualTo: heroColumn.bottomAnchor, constant: inset),
-            preferredWidth,
-            centreY,
-        ])
+    /// The project the page shows, or nil on the cards.
+    var shownProject: LocalProject? {
+        guard case .project(let id) = mode else { return nil }
+        return registry.project(id)
     }
 
-    private func buildCourseStage(in root: NSView) {
-        courseStage.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(courseStage)
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        strip.onAction = { [weak self] action in self?.perform(action) }
-        webContainer.translatesAutoresizingMaskIntoConstraints = false
-        courseStage.addSubview(strip)
-        courseStage.addSubview(webContainer)
-        let inset = Self.pageInset
-        NSLayoutConstraint.activate([
-            courseStage.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            courseStage.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            courseStage.topAnchor.constraint(equalTo: root.topAnchor),
-            courseStage.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            strip.leadingAnchor.constraint(equalTo: courseStage.leadingAnchor, constant: inset),
-            strip.trailingAnchor.constraint(equalTo: courseStage.trailingAnchor, constant: -inset),
-            strip.topAnchor.constraint(equalTo: courseStage.topAnchor),
-            strip.heightAnchor.constraint(equalToConstant: DevOpsHubStrip.height),
-            webContainer.leadingAnchor.constraint(equalTo: strip.leadingAnchor),
-            webContainer.trailingAnchor.constraint(equalTo: strip.trailingAnchor),
-            webContainer.topAnchor.constraint(equalTo: strip.bottomAnchor, constant: HelmMetrics.s3),
-            webContainer.bottomAnchor.constraint(equalTo: courseStage.bottomAnchor, constant: -inset),
-        ])
-    }
+    /// The Split's Toggle Sidebar reaches the cards' column, and only while
+    /// the cards show.
+    var splitPage: HelmSplitPage? { mode == .cards ? cards.splitPage : nil }
 
-    // MARK: Showing a project
+    func showCards() { setMode(.cards) }
 
-    /// Show `id`'s page. The shell calls this for a project row's click.
-    func show(projectID id: String) {
+    func showProject(_ id: String) {
         guard registry.project(id) != nil else { return }
-        let changed = id != projectID
-        projectID = id
-        registry.lastShownProjectID = id
-        if isViewLoaded { render() }
-        if changed { onShownProjectChanged?() }
+        setMode(.project(id))
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        refreshPreflight()
-        render()
-        startUptimeTimer()
+    private func setMode(_ next: Mode) {
+        guard next != mode else { return }
+        mode = next
+        applyMode()
+        onModeChanged?()
+        onHistoryPlaceChanged?()
     }
 
-    override func viewDidDisappear() {
-        super.viewDidDisappear()
-        // GL-13: the uptime ticks only while someone can see it.
-        uptimeTimer?.invalidate()
-        uptimeTimer = nil
+    private func applyMode() {
+        guard isViewLoaded else { return }
+        let id: String?
+        if case .project(let shown) = mode { id = shown } else { id = nil }
+        // Pins first, so the view that shows has its frame before it renders.
+        NSLayoutConstraint.deactivate(id == nil ? projectPins : cardsPins)
+        NSLayoutConstraint.activate(id == nil ? cardsPins : projectPins)
+        if let id { projectView.show(projectID: id) }
+        cards.view.isHidden = id != nil
+        projectView.view.isHidden = id == nil
+        cards.isActive = id == nil
+        projectView.isActive = id != nil
     }
 
-    private func startUptimeTimer() {
-        uptimeTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: Self.uptimeInterval, repeats: true) { [weak self] _ in
-            self?.renderStrip()
-        }
-        // A minute's reading can land seconds late; the tolerance lets the
-        // system batch the wake-up (audit 3.4).
-        timer.tolerance = Self.uptimeInterval / 6
-        uptimeTimer = timer
-    }
-
-    static let uptimeInterval: TimeInterval = 60
-
-    /// Count the folder's files off the main thread (GL-12), for the checks
-    /// card and the preview image.
-    private func refreshPreflight() {
-        guard let project, !preflightInFlight.contains(project.id) else { return }
-        let id = project.id
-        let folder = project.folder
-        preflightFolder[id] = folder
-        preflightInFlight.insert(id)
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = LocalProjectPreflight.check(folder: folder)
-            var preview: NSImage?
-            if case .ready = outcome { preview = Self.previewImage(in: folder) }
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.preflightInFlight.remove(id)
-                self.preflight[id] = outcome
-                if id == self.projectID { self.backdrop.image = preview }
-                self.render()
+    /// A removed project cannot stay on screen, and a project started from
+    /// this page opens once it serves, when its setting says so.
+    private func registryChanged() {
+        if case .project(let id) = mode, registry.project(id) == nil { showCards() }
+        for id in opensWhenRunning {
+            switch registry.state(of: id) {
+            case .running:
+                opensWhenRunning.remove(id)
+                showProject(id)
+            case .starting:
+                continue
+            default:
+                opensWhenRunning.remove(id)
             }
         }
     }
 
-    /// The site's own share image, when it ships one, as the dimmed preview
-    /// behind the hero.
-    static func previewImage(in folder: URL) -> NSImage? {
-        for name in ["og.jpg", "og.png", "preview.png", "preview.jpg"] {
-            let url = folder.appendingPathComponent(name)
-            if FileManager.default.fileExists(atPath: url.path), let image = NSImage(contentsOf: url) { return image }
-        }
-        return nil
-    }
+    // MARK: WorkspaceHistoryPlace
 
-    // MARK: Render
+    static let cardsPlace = "cards"
+    static let projectPlacePrefix = "project:"
 
-    /// What the page is in for the shown project.
-    private func phase(for project: LocalProject) -> DevOpsHubWords.Phase? {
-        let state = registry.state(of: project.id)
-        guard case .running = state else { return .project(state) }
-        guard project.opensWhenReady || shownOnRequest.contains(project.id) else { return .runningNotShown }
-        if finished.contains(project.id) { return nil }
-        return .loading(progress[project.id] ?? 0)
-    }
-
-    private func render() {
-        guard isViewLoaded, let project else { return }
-        if preflightFolder[project.id] != project.folder {
-            preflight[project.id] = nil
-            backdrop.image = nil
-            refreshPreflight()
-        }
-        let state = registry.state(of: project.id)
-        syncWebView(for: project, state: state)
-        guard let phase = phase(for: project) else {
-            words = nil
-            heroStage.isHidden = true
-            courseStage.isHidden = false
-            renderStrip()
-            return
-        }
-        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: preflight[project.id],
-                                        now: registry.clock())
-        self.words = words
-        heroStage.isHidden = false
-        courseStage.isHidden = true
-        renderHero(words)
-    }
-
-    /// Load the site when its server is up, and drop it when it stops, so a
-    /// stale page never sits behind a stopped server.
-    private func syncWebView(for project: LocalProject, state: LocalProjectState) {
-        if state.isRunning {
-            // The web view is built the first time a site runs, never for a
-            // project that has only been looked at.
-            let web = webView(for: project.id)
-            guard loadedOrigin[project.id] != project.origin else { return }
-            loadedOrigin[project.id] = project.origin
-            finished.remove(project.id)
-            progress[project.id] = 0
-            web.load(origin: project.origin)
-        } else if loadedOrigin[project.id] != nil {
-            loadedOrigin[project.id] = nil
-            finished.remove(project.id)
-            progress[project.id] = nil
-            shownOnRequest.remove(project.id)
-            webViews[project.id]?.unload()
+    var historyPlace: String {
+        switch mode {
+        case .cards: return Self.cardsPlace
+        case .project(let id): return Self.projectPlacePrefix + id
         }
     }
 
-    private func webView(for id: String) -> DevOpsHubWebView {
-        if let existing = webViews[id] {
-            if existing.superview !== webContainer { install(existing) }
-            return existing
+    func showHistoryPlace(_ place: String) {
+        if place.hasPrefix(Self.projectPlacePrefix) {
+            let id = String(place.dropFirst(Self.projectPlacePrefix.count))
+            if registry.project(id) != nil {
+                showProject(id)
+                return
+            }
         }
-        let web = DevOpsHubWebView(projectID: id)
-        web.onProgress = { [weak self] value in
-            guard let self else { return }
-            self.progress[id] = value
-            if id == self.projectID, self.words?.progress != nil { self.render() }
-        }
-        web.onFinished = { [weak self] in
-            guard let self, self.loadedOrigin[id] != nil else { return }
-            self.finished.insert(id)
-            if id == self.projectID { self.render() }
-        }
-        web.applyTheme(ThemeManager.shared.theme)
-        webViews[id] = web
-        install(web)
-        return web
+        showCards()
     }
-
-    /// Only the shown project's web view sits in the page.
-    private func install(_ web: DevOpsHubWebView) {
-        for view in webContainer.subviews where view !== web { view.removeFromSuperview() }
-        guard web.superview !== webContainer else { return }
-        webContainer.addSubview(web)
-        NSLayoutConstraint.activate([
-            web.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
-            web.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
-            web.topAnchor.constraint(equalTo: webContainer.topAnchor),
-            web.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor),
-        ])
-    }
-
-    private func renderHero(_ words: DevOpsHubWords) {
-        let ring = words.progress.map { value in
-            HelmHeroColumn.Ring(fraction: value, label: "\(Int((value * 100).rounded()))%",
-                                caption: "Loading the site", spoken: "Loading, \(Int((value * 100).rounded())) percent",
-                                state: .ok)
-        }
-        let buttons = words.actions.map { action -> HelmButton in
-            let button = HelmButton(title: action.title, variant: .secondary, symbol: action.symbol,
-                                    target: self, action: #selector(heroButtonClicked(_:)))
-            button.identifier = NSUserInterfaceItemIdentifier(Self.identifier(for: action))
-            return button
-        }
-        hero.configure(header: .init(symbol: "shippingbox.fill", kicker: words.kicker, headline: words.headline,
-                                     body: words.body, ring: ring),
-                       sections: [], foot: buttons, tone: heroTone(words.tone))
-        checksHeader.configure(leading: .tile(symbol: "checklist", tint: checksTint(words.tone)),
-                               title: words.checksTitle, subline: "In order")
-        renderChecks(words.checks)
-    }
-
-    private func renderChecks(_ checks: [DevOpsHubWords.Check]) {
-        for view in checksRows.arrangedSubviews {
-            checksRows.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        checkDetailLabels = []
-        let theme = ThemeManager.shared.theme
-        for (index, check) in checks.enumerated() {
-            let row = DevOpsHubCheckRow(check: check, showsTopRule: index > 0)
-            row.applyTheme(theme)
-            checksRows.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: checksRows.widthAnchor).isActive = true
-            checkDetailLabels.append(row.detailLabel)
-        }
-        view.needsLayout = true
-    }
-
-    private func renderStrip() {
-        guard let project, case .running(let since) = registry.state(of: project.id) else { return }
-        strip.configure(address: "\(LocalStaticServer.loopbackHost):\(project.port)",
-                        line: DevOpsHubWords.runningLine(since: since, now: registry.clock(),
-                                                         counters: registry.counters(of: project.id)))
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        // Gotcha (22): a check's detail wraps at the card's own width, less
-        // the row's insets and its mark, never at its own resolved width.
-        let width = max(160, floor(checksCard.bounds.width - 2 * HelmMetrics.s4 - DevOpsHubCheckRow.markColumn))
-        for label in checkDetailLabels where abs(label.preferredMaxLayoutWidth - width) > 0.5 {
-            label.preferredMaxLayoutWidth = width
-            label.invalidateIntrinsicContentSize()
-        }
-    }
-
-    // MARK: Theme
-
-    private func heroTone(_ tone: DevOpsHubWords.Tone) -> HelmModuleCard.HeroTone {
-        let theme = ThemeManager.shared.theme
-        switch tone {
-        case .accent:
-            return HelmModuleCard.HeroTone(colour: .themeAccent)
-        case .amber:
-            let rgb = HelmContrast.components(HelmTheme.nsColor(theme.ansiHex[3]))
-            return HelmModuleCard.HeroTone(colour: .fixed(red: rgb.0, green: rgb.1, blue: rgb.2))
-        case .red:
-            let rgb = HelmContrast.components(HelmTheme.nsColor(theme.ansiHex[1]))
-            return HelmModuleCard.HeroTone(colour: .fixed(red: rgb.0, green: rgb.1, blue: rgb.2))
-        }
-    }
-
-    private func checksTint(_ tone: DevOpsHubWords.Tone) -> HelmTint {
-        switch tone {
-        case .accent: return .good
-        case .amber: return .warn
-        case .red: return .critical
-        }
-    }
-
-    private func applyTheme(_ theme: HelmTheme) {
-        guard isViewLoaded else { return }
-        // ThemeManager's checklist item 2: everything that resolves a system
-        // colour (the scroller, the web view's own controls) follows the
-        // theme's mode, not the OS's.
-        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-        view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        backdrop.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        backdropWash.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex)
-            .withAlphaComponent(theme.mode == .dark ? Self.darkWashAlpha : Self.washAlpha).cgColor
-        checksCard.applyTheme(theme)
-        checksHeader.applyTheme(theme)
-        for case let row as DevOpsHubCheckRow in checksRows.arrangedSubviews { row.applyTheme(theme) }
-        for web in webViews.values { web.applyTheme(theme) }
-        strip.applyTheme(theme)
-        // GL-24: a theme change repaints. The hero's tone is a theme colour,
-        // so the words are laid out again from what is already known.
-        if let words { hero.configure(header: hero.header, sections: [], foot: hero.footViews, tone: heroTone(words.tone)) }
-    }
-
-    /// How much of the page ground lies over the preview, so the hero and
-    /// the checks read on it.
-    static let washAlpha: CGFloat = 0.82
-    /// A dark ground over a light site's preview needs more, or the preview
-    /// reads as a grey slab rather than as a hint of the site.
-    static let darkWashAlpha: CGFloat = 0.9
 
     // MARK: Actions
 
-    @objc private func heroButtonClicked(_ sender: HelmButton) {
-        guard let raw = sender.identifier?.rawValue, let action = Self.action(forIdentifier: raw) else { return }
-        perform(action)
+    /// Start `id` from this page or from ⌘K: its site opens here once it
+    /// serves, when "Show the site when it's ready" is on.
+    func start(projectID id: String) {
+        guard let project = registry.project(id) else { return }
+        if project.opensWhenReady { opensWhenRunning.insert(id) }
+        registry.start(id)
+        registryChanged()
     }
 
-    static func identifier(for action: DevOpsHubWords.Action) -> String { "devopsHub.action.\(action)" }
-
-    static func action(forIdentifier identifier: String) -> DevOpsHubWords.Action? {
-        let all: [DevOpsHubWords.Action] = [.start, .cancel, .retry, .stop, .showHere, .openInBrowser, .settings,
-                                            .changePort, .chooseFolder, .showInFinder, .openPrivacySettings,
-                                            .copyCloneCommand]
-        return all.first { Self.identifier(for: $0) == identifier }
-    }
-
-    func perform(_ action: DevOpsHubWords.Action) {
-        guard let project else { return }
-        let id = project.id
-        switch action {
-        case .start, .retry:
-            preflight[id] = nil
-            registry.start(id)
-            refreshPreflight()
-        case .cancel, .stop:
+    func perform(_ primary: DevOpsHubCardWords.Primary, on id: String) {
+        switch primary {
+        case .start, .retry: start(projectID: id)
+        case .stop, .cancel:
+            opensWhenRunning.remove(id)
             registry.stop(id)
-        case .showHere:
-            shownOnRequest.insert(id)
-            render()
-        case .openInBrowser:
-            WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
-        case .settings, .changePort:
-            presentSettings()
-        case .chooseFolder:
-            chooseFolder()
-        case .showInFinder:
-            Self.showInFinder(project.folder)
-        case .openPrivacySettings:
-            Self.openFilesAndFoldersSettings()
-        case .copyCloneCommand:
-            guard let command = project.cloneCommand else { return }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-            Feedback.report("Clone command copied", kind: .done, persistence: .transient, in: view)
+        case .chooseFolder: chooseFolder(id)
         }
     }
 
-    /// The strip's buttons.
-    func perform(_ action: DevOpsHubStrip.Action) {
-        guard let project else { return }
+    func perform(_ action: DevOpsHubCardWords.Action, on id: String) {
+        guard let project = registry.project(id) else { return }
         switch action {
+        case .start: start(projectID: id)
+        case .stop:
+            opensWhenRunning.remove(id)
+            registry.stop(id)
+        case .restart: registry.restart(id)
+        case .open: showProject(id)
+        case .openInBrowser: WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
         case .copyAddress:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
             Feedback.report("Address copied", kind: .done, persistence: .transient, in: view)
-        case .reload:
-            webViews[project.id]?.reload()
-        case .openInBrowser:
-            WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
-        case .restart:
-            registry.restart(project.id)
-        case .stop:
-            registry.stop(project.id)
+        case .settings: presentSettings(projectID: id)
+        case .showInFinder: DevOpsHubProjectController.showInFinder(project.folder)
+        case .remove: confirmRemove(id)
         }
     }
 
-    /// Reload the site (⌘R on the page).
-    func reloadSite() {
-        guard let project, registry.state(of: project.id).isRunning else { return }
-        webViews[project.id]?.reload()
+    private func chooseFolder(_ id: String) {
+        guard let project = registry.project(id), let window = view.window else { return }
+        DevOpsHubProjectController.chooseFolder(for: project, registry: registry, in: window)
     }
 
-    /// The folder in Finder, or the nearest folder above it that exists.
-    static func showInFinder(_ folder: URL) {
-        guard !ExternalToolGuard.isActive else { return }
-        var target = folder
-        while !FileManager.default.fileExists(atPath: target.path), target.pathComponents.count > 1 {
-            target.deleteLastPathComponent()
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([target])
+    /// The Project settings sheet for `id`, over this page: a card's pencil,
+    /// its menu, ⌘E, and the project view's Project Settings and Change Port.
+    func presentSettings(projectID id: String) {
+        guard let project = registry.project(id) else { return }
+        let others = Set(registry.projects.filter { $0.id != id }.map(\.port))
+        let sheet = DevOpsHubSettingsSheet(project: project, takenPorts: others)
+        sheet.onSave = { [weak self] edited in self?.registry.update(edited) }
+        presentAsSheet(sheet)
     }
 
-    /// Opens the exact pane a refused folder needs, a fixed System Settings
-    /// URL rather than anything from data.
-    static func openFilesAndFoldersSettings() {
-        guard !ExternalToolGuard.isActive,
-              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")
-        else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    /// The Project settings sheet, over this page.
-    func presentSettings() {
-        guard let project else { return }
-        let sheet = DevOpsHubSettingsSheet(project: project)
-        sheet.onSave = { [weak self] edited in
-            guard let self else { return }
-            self.registry.update(edited)
-            self.preflight[edited.id] = nil
-            self.refreshPreflight()
+    /// Add Project: the same sheet with a name, suggesting the next free port.
+    func presentAddProject() {
+        let sheet = DevOpsHubSettingsSheet.adding(port: registry.nextFreePort(),
+                                                  takenPorts: Set(registry.projects.map(\.port)))
+        sheet.onSave = { [weak self] draft in
+            guard let self, let added = self.registry.add(draft) else { return }
+            Feedback.report("\(added.name) added", kind: .done, persistence: .transient, in: self.view)
         }
         presentAsSheet(sheet)
     }
 
-    private func chooseFolder() {
-        guard let project, let window = view.window else { return }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Choose the folder that holds \(project.name)\u{2019}s index.html."
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            var edited = project
-            edited.folderOverride = LocalProject.abbreviate(url.path)
-            self.registry.update(edited)
-            self.preflight[edited.id] = nil
-            self.refreshPreflight()
-        }
+    /// Remove asks first. It forgets the project and leaves its folder alone,
+    /// so it is a plain confirmation rather than GL-06's delete prompt.
+    private func confirmRemove(_ id: String) {
+        guard let project = registry.project(id) else { return }
+        let confirmed = HelmConfirm.confirm(
+            title: "Remove \(project.name) from DevOps Hub?",
+            body: "Grand Line stops serving it and forgets its settings. The folder \(project.displayFolder) "
+                + "is left as it is.",
+            confirmTitle: "Remove", destructive: true, confirmIsDefault: false, symbol: "shippingbox")
+        guard confirmed else { return }
+        opensWhenRunning.remove(id)
+        registry.remove(id)
+    }
+
+    /// Reload the site (⌘R on the page), when a project's site shows.
+    func reloadSite() {
+        guard case .project = mode else { return }
+        projectView.reloadSite()
     }
 
     #if FM_SELFTESTS
-    var debugShowsSite: Bool { isViewLoaded && !courseStage.isHidden && heroStage.isHidden }
-    var debugHero: HelmHeroColumn { hero }
-    var debugStrip: DevOpsHubStrip { strip }
-    var debugCheckTitles: [String] {
-        checksRows.arrangedSubviews.compactMap { ($0 as? DevOpsHubCheckRow)?.titleLabel.stringValue }
-    }
-    var debugHeroButtons: [HelmButton] { hero.debugFootButtons }
-    var debugWebView: DevOpsHubWebView? { projectID.flatMap { webViews[$0] } }
-    var debugBackdrop: NSImageView { backdrop }
-    /// The web view finished its first load, as `didFinish` reports it.
-    func debugFinishLoad() {
-        guard let id = projectID else { return }
-        webViews[id]?.onFinished?()
-    }
-    /// Draw the hero for `phase` whatever the registry says - for the
-    /// render gallery's states that a real run passes through too fast to
-    /// capture (starting, loading). Assertions never use it.
-    func debugShowHero(phase: DevOpsHubWords.Phase) {
-        guard let project else { return }
-        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: preflight[project.id],
-                                        now: registry.clock())
-        self.words = words
-        heroStage.isHidden = false
-        courseStage.isHidden = true
-        renderHero(words)
-        view.layoutSubtreeIfNeeded()
-    }
-    func debugSetPreflight(_ outcome: LocalProjectPreflight.Outcome) {
-        guard let id = projectID else { return }
-        preflight[id] = outcome
-        render()
-    }
+    var debugOpensWhenRunning: Set<String> { opensWhenRunning }
     #endif
-}
-
-// MARK: - The strip
-
-/// The hero as a 44pt strip over a running site: a state dot, "Running", the
-/// address as a copy button, the uptime and files served, and the four
-/// actions as the kit's ghost pills.
-final class DevOpsHubStrip: NSView {
-
-    enum Action: Equatable { case copyAddress, reload, openInBrowser, restart, stop }
-
-    var onAction: ((Action) -> Void)?
-
-    static let height: CGFloat = 44
-    static let cornerRadius: CGFloat = 12
-    static let dotSide: CGFloat = 8
-
-    private let surface = HelmHeroSurface()
-    private let dot = NSView()
-    private let stateLabel = NSTextField(labelWithString: "Running")
-    private let addressButton = HelmButton(title: "", variant: .secondary, size: .small, symbol: "doc.on.doc")
-    private let lineLabel = NSTextField(labelWithString: "")
-    private let reloadButton = HelmButton(title: "Reload", variant: .secondary, size: .small, symbol: "arrow.clockwise")
-    private let browserButton = HelmButton(title: "Open in Browser", variant: .secondary, size: .small, symbol: "safari")
-    private let restartButton = HelmButton(title: "Restart", variant: .secondary, size: .small,
-                                           symbol: "arrow.counterclockwise")
-    private let stopButton = HelmButton(title: "Stop", variant: .secondary, size: .small, symbol: "stop.fill")
-    private var themeToken: ThemeObservation?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = Self.cornerRadius
-        layer?.masksToBounds = true
-        setAccessibilityElement(true)
-        setAccessibilityRole(.group)
-        setAccessibilityLabel("Site controls")
-
-        surface.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(surface)
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = Self.dotSide / 2
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        stateLabel.font = .systemFont(ofSize: HelmType.scaled(13), weight: .bold)
-        lineLabel.font = HelmType.caption()
-        lineLabel.lineBreakMode = .byTruncatingTail
-        addressButton.toolTip = "Copy the address"
-        let pairs: [(HelmButton, Action)] = [(addressButton, .copyAddress), (reloadButton, .reload),
-                                             (browserButton, .openInBrowser), (restartButton, .restart),
-                                             (stopButton, .stop)]
-        for (button, action) in pairs {
-            button.target = self
-            button.action = #selector(buttonClicked(_:))
-            button.identifier = NSUserInterfaceItemIdentifier("devopsHub.strip.\(action)")
-        }
-        let leading = NSStackView(views: [dot, stateLabel, addressButton, lineLabel])
-        leading.orientation = .horizontal
-        leading.alignment = .centerY
-        leading.spacing = HelmMetrics.s2
-        leading.setCustomSpacing(HelmMetrics.s1 + 2, after: dot)
-        let trailing = NSStackView(views: [reloadButton, browserButton, restartButton, stopButton])
-        trailing.orientation = .horizontal
-        trailing.alignment = .centerY
-        trailing.spacing = HelmMetrics.s1 + 2
-        // Gotcha (5) and (10): only the quiet line gives way.
-        for view in [dot, stateLabel, addressButton, reloadButton, browserButton, restartButton, stopButton] {
-            view.setContentHuggingPriority(.required, for: .horizontal)
-            view.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-        lineLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        lineLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [leading, trailing])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fill
-        row.spacing = HelmMetrics.s3
-        row.translatesAutoresizingMaskIntoConstraints = false
-        leading.setHuggingPriority(.defaultLow, for: .horizontal)
-        trailing.setHuggingPriority(.required, for: .horizontal)
-        trailing.setClippingResistancePriority(.required, for: .horizontal)
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
-            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
-            surface.topAnchor.constraint(equalTo: topAnchor),
-            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
-            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
-            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3 + 2),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
-            row.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    deinit {
-        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
-    }
-
-    func configure(address: String, line: String) {
-        addressButton.title = address
-        addressButton.setAccessibilityLabel("Copy the address, \(address)")
-        lineLabel.stringValue = line
-    }
-
-    @objc private func buttonClicked(_ sender: HelmButton) {
-        let all: [Action] = [.copyAddress, .reload, .openInBrowser, .restart, .stop]
-        guard let action = all.first(where: { sender.identifier?.rawValue == "devopsHub.strip.\($0)" }) else { return }
-        onAction?(action)
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        let palette = HelmHeroColumn.palette(for: HelmModuleCard.HeroTone(colour: .themeAccent), in: theme)
-        surface.apply(palette)
-        let ink = HelmContrast.color(palette.ink)
-        appearance = HelmHeroColumn.NavInk(palette: palette).appearance
-        stateLabel.textColor = ink
-        lineLabel.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
-        dot.layer?.backgroundColor = HelmHeroSurface.signalColor(tintHex: HelmTint.good.hex(in: theme), on: palette).cgColor
-        for button in [addressButton, reloadButton, browserButton, restartButton, stopButton] { button.heroInk = ink }
-    }
-
-    #if FM_SELFTESTS
-    var debugAddress: String { addressButton.title }
-    var debugLine: String { lineLabel.stringValue }
-    func debugButton(_ action: Action) -> HelmButton {
-        switch action {
-        case .copyAddress: return addressButton
-        case .reload: return reloadButton
-        case .openInBrowser: return browserButton
-        case .restart: return restartButton
-        case .stop: return stopButton
-        }
-    }
-    #endif
-}
-
-// MARK: - A check
-
-/// One line of the checks card: a mark, a title, and a detail under it.
-final class DevOpsHubCheckRow: NSView {
-
-    static let markColumn: CGFloat = 30
-
-    let titleLabel = NSTextField(labelWithString: "")
-    let detailLabel = NSTextField(wrappingLabelWithString: "")
-    private let markView = NSImageView()
-    private let rule = NSView()
-    private let check: DevOpsHubWords.Check
-
-    init(check: DevOpsHubWords.Check, showsTopRule: Bool) {
-        self.check = check
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.stringValue = check.title
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .semibold)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        detailLabel.stringValue = check.detail
-        detailLabel.isSelectable = check.detailIsCode
-        detailLabel.font = check.detailIsCode
-            ? .monospacedSystemFont(ofSize: HelmType.scaled(11.5), weight: .regular) : HelmType.caption()
-        markView.translatesAutoresizingMaskIntoConstraints = false
-        markView.image = HelmSymbol.image(Self.symbol(for: check.mark), pointSize: HelmType.scaled(15), weight: .semibold)
-        rule.wantsLayer = true
-        rule.translatesAutoresizingMaskIntoConstraints = false
-        rule.isHidden = !showsTopRule
-        let text = NSStackView(views: [titleLabel, detailLabel])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 2
-        text.translatesAutoresizingMaskIntoConstraints = false
-        for view in [rule, markView, text] { addSubview(view) }
-        NSLayoutConstraint.activate([
-            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rule.topAnchor.constraint(equalTo: topAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1),
-            markView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            markView.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2 + 1),
-            markView.widthAnchor.constraint(equalToConstant: 18),
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.markColumn),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            text.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
-            text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s2),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    static func symbol(for mark: DevOpsHubWords.Check.Mark) -> String {
-        switch mark {
-        case .done: return "checkmark.circle.fill"
-        case .failed: return "exclamationmark.circle.fill"
-        case .attention: return "questionmark.circle.fill"
-        case .pending: return "circle"
-        case .working: return "circle.dotted"
-        case .info: return "info.circle"
-        }
-    }
-
-    func applyTheme(_ theme: HelmTheme) {
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        detailLabel.textColor = HelmTheme.mutedInk(theme)
-        rule.layer?.backgroundColor = HelmFlatList.hairRowColor(theme).cgColor
-        let tint: HelmTint
-        switch check.mark {
-        case .done: tint = .good
-        case .failed: tint = .critical
-        case .attention: tint = .warn
-        // The step in flight takes the accent, so it reads as the live one.
-        case .working: tint = .accent
-        case .pending, .info: tint = .neutral
-        }
-        markView.contentTintColor = tint == .neutral ? HelmTheme.mutedInk(theme)
-            : HelmContrast.legibleOn(fill: HelmTheme.nsColor(theme.chromeBackgroundHex),
-                                     preferring: HelmTheme.nsColor(tint.hex(in: theme)),
-                                     target: HelmContrast.nonTextTarget)
-    }
 }

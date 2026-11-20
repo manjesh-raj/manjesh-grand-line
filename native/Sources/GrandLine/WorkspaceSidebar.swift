@@ -6,8 +6,9 @@
 //
 // It lists Home and the eighteen modules under the four groups the module
 // table assigns (Work, Observe, Workbench, Machine), the live host sessions
-// as children of Connections, where a host is launched from, and DevOps
-// Hub's local projects as children of DevOps Hub. A
+// as children of Connections, where a host is launched from. DevOps Hub's
+// local projects are cards on its own page, not rows here, and the DevOps Hub
+// row carries their badge. A
 // module's pages are its tabs in the window toolbar, so every one of the 29
 // destinations is one click on its module and one on its tab.
 //
@@ -56,32 +57,28 @@ enum WorkspaceSidebarEntry: Equatable {
     case module(WorkspaceModule)
     /// A live host session, a child of Connections (`sessionsParent`).
     case session(hostID: UUID)
-    /// A local project, a child of DevOps Hub (`LocalProjectRegistry`).
-    case project(id: String)
 }
 
-/// A DevOps Hub project as the sidebar draws it: a state dot, the name, and
-/// the port while it serves. Pure, so `DevOpsHubModelSelfTest` asserts every
-/// state's mark and words headless.
+/// A DevOps Hub project as the DevOps Hub row's badge reads it
+/// (`WorkspaceSignals.devopsHubBadge`): its name and a mark for its state.
+/// Pure, so `DevOpsHubModelSelfTest` asserts every state's mark headless.
 struct WorkspaceSidebarProject: Equatable {
     let id: String
     let name: String
     let state: LocalProjectState
     let port: UInt16
 
-    /// The dot beside the name.
+    /// What the project's state means to the badge.
     enum Mark: Equatable {
-        /// Not started: the ink at half strength, as a session that has not
-        /// started is.
+        /// Not started.
         case idle
-        /// Starting: amber. The hub's badge shows the scanning dash beside it,
-        /// which is what tells it from a missing folder.
+        /// Starting: the badge's scanning dash.
         case starting
-        /// Serving: the good hue.
+        /// Serving: counted.
         case live
-        /// A start failed: red.
+        /// A start failed: the red dot.
         case failed
-        /// The folder is not where it should be: a steady amber.
+        /// The folder is not where it should be: the amber dot.
         case attention
     }
 
@@ -92,21 +89,6 @@ struct WorkspaceSidebarProject: Equatable {
         case .running: return .live
         case .failed: return .failed
         case .folderNotFound: return .attention
-        }
-    }
-
-    /// ":7420" while it serves, and nothing otherwise.
-    var trailing: String { state.isRunning ? ":\(port)" : "" }
-
-    /// The state in words, for the tooltip and VoiceOver.
-    var stateText: String {
-        switch state {
-        case .notStarted: return "Not started"
-        case .starting: return "Starting"
-        case .running: return "Running on \(LocalStaticServer.loopbackHost):\(port)"
-        case .failed(.portInUse): return "Port \(port) is in use"
-        case .failed: return "Failed to start"
-        case .folderNotFound(let noIndex): return noIndex ? "No index.html in its folder" : "Folder not found"
         }
     }
 }
@@ -123,17 +105,13 @@ enum WorkspaceSidebarModel {
     /// modules the captain's profile hides (R2-UX-01 (b)). A group with
     /// nothing left in it is left out too, rather than drawn as an empty
     /// heading.
-    static func roots(sessions: [HostSession], projects: [WorkspaceSidebarProject] = [],
-                      hidden: Set<WorkspaceModule> = []) -> [Node] {
+    static func roots(sessions: [HostSession], hidden: Set<WorkspaceModule> = []) -> [Node] {
         var roots = [Node(entry: .module(.home))]
         for group in WorkspaceGroup.allCases {
             let shown = modules(in: group, hidden: hidden)
             guard !shown.isEmpty else { continue }
             let parent = sessionsParent(hidden: hidden)
             let rows = shown.map { module -> Node in
-                if module == .devopsHub {
-                    return Node(entry: .module(module), children: projects.map { Node(entry: .project(id: $0.id)) })
-                }
                 guard module == parent else { return Node(entry: .module(module)) }
                 return Node(entry: .module(module), children: sessions.map { Node(entry: .session(hostID: $0.hostID)) })
             }
@@ -279,12 +257,11 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     // Forwarded, never owned - the sidebar has no idea what navigating is.
     var onSelectModule: ((WorkspaceModule) -> Void)?
+    /// A click on a module's row while it is already lit: DevOps Hub's goes
+    /// back to its project cards from a project's own view.
+    var onReselectModule: ((WorkspaceModule) -> Void)?
     var onSelectSession: ((UUID) -> Void)?
     var onEndSession: ((UUID) -> Void)?
-    /// DevOps Hub: open a project's page, or drive its server from the
-    /// row's menu without leaving the page that shows.
-    var onSelectProject: ((String) -> Void)?
-    var onProjectAction: ((String, WorkspaceSidebarProjectAction) -> Void)?
     var onConnectHost: (() -> Void)?
     var onLogOut: (() -> Void)?
 
@@ -305,16 +282,14 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     private var roots: [WorkspaceSidebarItem] = []
     private var sessions: [HostSession] = []
     private var shortcutIndexByHost: [UUID: Int] = [:]
+    /// DevOps Hub's projects, for its row's badge.
     private var projects: [WorkspaceSidebarProject] = []
-    /// The project the DevOps Hub page shows, which lights its row while the
-    /// page is the one showing.
-    private var shownProjectID: String?
     /// Section titles the captain collapsed, so a rebuild (a session coming
     /// or going) keeps them collapsed. In memory only: like the window's own
     /// sidebar width, it is not worth a preference.
     private var collapsedSections: Set<String> = []
-    /// Modules whose children were folded away by hand (DevOps Hub's projects),
-    /// kept across a rebuild the same way.
+    /// Modules whose children were folded away by hand (Connections' live
+    /// sessions), kept across a rebuild the same way.
     private var collapsedModules: Set<WorkspaceModule> = []
     /// What the workspace last said is showing, so a rebuild can light the
     /// same row again.
@@ -364,6 +339,10 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         outlineView.backgroundColor = .clear
         outlineView.dataSource = self
         outlineView.delegate = self
+        // A click on the row that is already lit changes no selection, so
+        // it reaches the shell through the table's own action instead.
+        outlineView.target = self
+        outlineView.action = #selector(rowClicked(_:))
         outlineView.setAccessibilityLabel("Sidebar")
         outlineView.onReturnKey = { [weak self] in self?.activateSelectionNow() }
         let menu = NSMenu()
@@ -419,37 +398,17 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 
     // MARK: What the shell tells it
 
-    /// DevOps Hub's projects changed. A new or removed project rebuilds the
-    /// rows; a state change repaints the project rows and the hub's badge in
-    /// place, as a badge change does.
-    func reload(projects: [WorkspaceSidebarProject], shownProjectID: String?) {
-        let reshapes = projects.map(\.id) != self.projects.map(\.id)
-            || projects.map(\.name) != self.projects.map(\.name)
-        let relights = shownProjectID != self.shownProjectID
+    /// DevOps Hub's projects changed: repaint its row's badge in place, as
+    /// any badge change does. The projects are cards on its page, not rows.
+    func reload(projects: [WorkspaceSidebarProject]) {
         self.projects = projects
-        self.shownProjectID = shownProjectID
         guard isViewLoaded else { return }
-        if reshapes {
-            rebuild()
-            return
-        }
-        if relights { applySelection(reveal: false) }
         let theme = ThemeManager.shared.theme
-        let selected = outlineView.selectedRow
         for row in 0..<outlineView.numberOfRows {
-            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem else { continue }
+            guard let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem,
+                  item.entry == .module(.devopsHub) else { continue }
             let view = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
-            switch item.entry {
-            case .project(let id):
-                guard let cell = view as? WorkspaceSidebarSessionCell,
-                      let project = projects.first(where: { $0.id == id }) else { continue }
-                cell.configure(project: project, theme: theme)
-                cell.setLit(row == selected, theme: theme)
-            case .module(.devopsHub):
-                (view as? WorkspaceSidebarPageCell)?.setBadge(badge(for: .devopsHub), theme: theme)
-            default:
-                continue
-            }
+            (view as? WorkspaceSidebarPageCell)?.setBadge(badge(for: .devopsHub), theme: theme)
         }
     }
 
@@ -510,7 +469,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         // keep and reveals the lit row as a navigation does.
         let isFirstBuild = roots.isEmpty
         let origin = scrollView.contentView.bounds.origin
-        roots = WorkspaceSidebarModel.roots(sessions: sessions, projects: projects, hidden: hidden)
+        roots = WorkspaceSidebarModel.roots(sessions: sessions, hidden: hidden)
             .map(WorkspaceSidebarItem.init)
         isApplyingSelection = true
         outlineView.reloadData()
@@ -611,13 +570,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         switch kind {
         case .host(let id, _):
             return all.first { $0.entry == .session(hostID: id) } ?? all.first { $0.entry == .module(.console) }
-        case .rail(.devopsHub):
-            // The project the page shows, or DevOps Hub itself before it
-            // has said.
-            if let id = shownProjectID, let row = all.first(where: { $0.entry == .project(id: id) }) {
-                return row
-            }
-            return all.first { $0.entry == .module(.devopsHub) }
         case .rail(let destination):
             // A door row the captain hid leaves its view to the module the
             // page lives in, so a row is still lit.
@@ -662,7 +614,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         // 13pt label fits in, so it follows the text scale alone.
         case .section: return max(HelmType.scaledRowHeight(M.sectionRowHeight), HelmType.scaled(M.sectionRowHeight))
         case .module: return HelmType.scaledRowHeight(M.moduleRowHeight)
-        case .session, .project: return HelmType.scaledRowHeight(M.sessionRowHeight)
+        case .session: return HelmType.scaledRowHeight(M.sessionRowHeight)
         }
     }
 
@@ -703,13 +655,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                 cell.setLit(lit, theme: theme)
             }
             return cell
-        case .project(let id):
-            let cell = WorkspaceSidebarSessionCell()
-            if let project = projects.first(where: { $0.id == id }) {
-                cell.configure(project: project, theme: theme)
-                cell.setLit(lit, theme: theme)
-            }
-            return cell
         }
     }
 
@@ -718,6 +663,15 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// Home to Settings used to open, and so build, every page on the way.
     static let keyboardSettle: TimeInterval = 0.12
     private var pendingKeyboardActivation: DispatchWorkItem?
+
+    @objc private func rowClicked(_ sender: Any?) {
+        guard outlineView.clickStartedOnLitRow else { return }
+        let row = outlineView.clickedRow
+        guard row >= 0, row == outlineView.selectedRow,
+              let item = outlineView.item(atRow: row) as? WorkspaceSidebarItem,
+              case .module(let module) = item.entry else { return }
+        onReselectModule?(module)
+    }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         paintLitRow()
@@ -823,8 +777,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             onSelectModule?(module)
         case .session(let hostID):
             onSelectSession?(hostID)
-        case .project(let id):
-            onSelectProject?(id)
         }
     }
 
@@ -856,21 +808,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
             menu.addItem(menuItem("End Session\u{2026}", symbol: "xmark.circle") { [weak self] in
                 self?.onEndSession?(hostID)
             })
-        case .project(let id):
-            guard let project = projects.first(where: { $0.id == id }) else { return }
-            menu.addItem(menuItem("Open \(project.name)", symbol: "shippingbox") { [weak self] in
-                self?.onSelectProject?(id)
-            })
-            menu.addItem(.separator())
-            for action in WorkspaceSidebarProjectAction.menu(for: project.state) {
-                if action == .separator {
-                    menu.addItem(.separator())
-                    continue
-                }
-                menu.addItem(menuItem(action.title, symbol: action.symbol) { [weak self] in
-                    self?.onProjectAction?(id, action)
-                })
-            }
         }
     }
 
@@ -955,11 +892,6 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                       let session = sessions.first(where: { $0.hostID == hostID }) else { return }
                 cell.configure(session: session, shortcutIndex: shortcutIndexByHost[hostID], theme: theme)
                 cell.setLit(row == selected, theme: theme)
-            case .project(let id):
-                guard let cell = cell as? WorkspaceSidebarSessionCell,
-                      let project = self.projects.first(where: { $0.id == id }) else { return }
-                cell.configure(project: project, theme: theme)
-                cell.setLit(row == selected, theme: theme)
             }
         }
     }
@@ -982,7 +914,12 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         guard let row = (0..<outlineView.numberOfRows).first(where: {
             (outlineView.item(atRow: $0) as? WorkspaceSidebarItem)?.entry == entry
         }) else { return false }
+        outlineView.debugClickedRow = row
+        defer { outlineView.debugClickedRow = nil }
+        outlineView.clickStartedOnLitRow = row == outlineView.selectedRow
         outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // The table's action follows every click, as it does on mouse-up.
+        _ = outlineView.sendAction(outlineView.action, to: outlineView.target)
         return true
     }
     /// The context menu a right-click on `entry` would show.
@@ -1074,6 +1011,17 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
 /// row wears an accent ring as well as its wash. A mouse click does not
 /// light it, and the first arrow key after one does.
 final class WorkspaceSidebarOutlineView: NSOutlineView {
+
+    /// Whether the click in flight began on the row that was already lit,
+    /// which is the one click that changes no selection
+    /// (`WorkspaceSidebarController.rowClicked`).
+    var clickStartedOnLitRow = false
+
+    override func mouseDown(with event: NSEvent) {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        clickStartedOnLitRow = row >= 0 && row == selectedRow
+        super.mouseDown(with: event)
+    }
     private(set) var showsKeyboardFocus = false {
         didSet {
             guard showsKeyboardFocus != oldValue else { return }
@@ -1100,8 +1048,8 @@ final class WorkspaceSidebarOutlineView: NSOutlineView {
     /// (16pt for a module row, measured).
     static let cellLeading: CGFloat = 4
 
-    /// When any row at a level can be expanded (DevOps Hub with its
-    /// projects, Connections with a live session), `NSOutlineView` moves every
+    /// When any row at a level can be expanded (Connections with a live
+    /// session), `NSOutlineView` moves every
     /// cell at that level right by the disclosure's width - 9pt, measured - so
     /// every module name loses 9pt, and the longer ones truncate at the
     /// Larger text size. The cells keep their place instead, and the chevron
@@ -1642,15 +1590,11 @@ final class WorkspaceSidebarBadgeView: NSView {
 /// A live session under Connections: a state dot, the host's label, and its
 /// ⌃⌘ shortcut, in the gradient's ink. The dot keeps the good hue, lifted to
 /// read on the gradient, while the session is connected.
-///
-/// A DevOps Hub project is drawn by the same cell: its state dot, its name,
-/// and its port in the shortcut's place while it serves. One cell, so the
-/// two kinds of child row can never drift apart.
 final class WorkspaceSidebarSessionCell: NSTableCellView {
     private let dot = NSView()
     private let label = NSTextField(labelWithString: "")
     private let shortcut = NSTextField(labelWithString: "")
-    private var mark: WorkspaceSidebarProject.Mark = .idle
+    private var isLive = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1694,31 +1638,16 @@ final class WorkspaceSidebarSessionCell: NSTableCellView {
         shortcut.textColor = words.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
         // Connected reads as the good hue; a restored page that has not
         // started reads as the ink at half strength, never as live - the
-        // registry's own rule. A project adds red for a failed start and
-        // amber for one starting or missing its folder.
-        let colour: NSColor
-        switch mark {
-        case .idle: colour = words.withAlphaComponent(Self.idleDotAlpha)
-        case .live: colour = ink.signal(tintHex: HelmTint.good.hex(in: theme), selected: lit)
-        case .failed: colour = ink.signal(tintHex: HelmTint.critical.hex(in: theme), selected: lit)
-        case .starting, .attention: colour = ink.signal(tintHex: HelmTint.warn.hex(in: theme), selected: lit)
-        }
+        // registry's own rule.
+        let colour = isLive ? ink.signal(tintHex: HelmTint.good.hex(in: theme), selected: lit)
+            : words.withAlphaComponent(Self.idleDotAlpha)
         dot.layer?.backgroundColor = colour.cgColor
     }
 
     static let idleDotAlpha: CGFloat = 0.5
 
-    func configure(project: WorkspaceSidebarProject, theme: HelmTheme) {
-        mark = project.mark
-        label.stringValue = project.name
-        shortcut.stringValue = project.trailing
-        toolTip = "\(project.name) \u{00B7} \(project.stateText)"
-        setAccessibilityLabel("\(project.name), \(project.stateText)")
-        setLit(false, theme: theme)
-    }
-
     func configure(session: HostSession, shortcutIndex: Int?, theme: HelmTheme) {
-        mark = session.isConnected ? .live : .idle
+        isLive = session.isConnected
         setLit(false, theme: theme)
         label.stringValue = session.label
         shortcut.stringValue = shortcutIndex.map { "\u{2303}\u{2318}\($0)" } ?? ""
@@ -1837,50 +1766,4 @@ final class WorkspaceSidebarHeader: HoverHighlightView {
     var debugTitleColor: NSColor? { title.textColor }
     var debugSubtitleColor: NSColor? { subtitle.textColor }
     #endif
-}
-
-/// What a project row's menu can do, without leaving the page that shows.
-enum WorkspaceSidebarProjectAction: Equatable {
-    case start, stop, restart, openInBrowser, copyAddress, settings, showInFinder
-    /// A divider in the menu, not an action.
-    case separator
-
-    var title: String {
-        switch self {
-        case .start: return "Start"
-        case .stop: return "Stop"
-        case .restart: return "Restart"
-        case .openInBrowser: return "Open in Browser"
-        case .copyAddress: return "Copy Address"
-        case .settings: return "Project Settings\u{2026}"
-        case .showInFinder: return "Show in Finder"
-        case .separator: return ""
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .start: return "play.fill"
-        case .stop: return "stop.fill"
-        case .restart: return "arrow.counterclockwise"
-        case .openInBrowser: return "safari"
-        case .copyAddress: return "doc.on.doc"
-        case .settings: return "slider.horizontal.3"
-        case .showInFinder: return "folder"
-        case .separator: return ""
-        }
-    }
-
-    /// The menu for a project in `state`: Start while it is stopped, Stop
-    /// and the address while it serves.
-    static func menu(for state: LocalProjectState) -> [WorkspaceSidebarProjectAction] {
-        switch state {
-        case .running:
-            return [.stop, .restart, .openInBrowser, .copyAddress, .separator, .settings, .showInFinder]
-        case .starting:
-            return [.stop, .separator, .settings, .showInFinder]
-        case .notStarted, .failed, .folderNotFound:
-            return [.start, .separator, .settings, .showInFinder]
-        }
-    }
 }

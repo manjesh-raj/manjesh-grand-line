@@ -77,6 +77,7 @@ final class AppSettings {
         static let dictationAccessibilityAsked = "fm.dictation.accessibilityAsked"
         static let sidebarWidth = "fm.sidebarWidth"
         static let connectionsViewMode = "fm.connections.viewMode"
+        static let devopsHubViewMode = "fm.devopsHub.viewMode"
         static let hostTagMatchAll = "fm.connections.tagMatchAll"
         static let hostsGrouped = "fm.connections.hostsGrouped"
         static let workspaceToolbarItems = "fm.workspaceToolbar.items"
@@ -390,6 +391,13 @@ final class AppSettings {
     var connectionsShowList: Bool {
         get { defaults.string(forKey: Keys.connectionsViewMode) == "list" }
         set { defaults.set(newValue ? "list" : "grid", forKey: Keys.connectionsViewMode) }
+    }
+
+    /// DevOps Hub's projects as cards or as the table, the same switch as
+    /// Connections' with its own stored choice. Grid is the default.
+    var devopsHubShowList: Bool {
+        get { defaults.string(forKey: Keys.devopsHubViewMode) == "list" }
+        set { defaults.set(newValue ? "list" : "grid", forKey: Keys.devopsHubViewMode) }
     }
 
     /// Whether the Hosts card grid draws one section per group. Off by

@@ -833,9 +833,11 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 Action(title: "Start \(project.name)", meta: "DevOps Hub",
                        keywords: ["run", "serve", "local", "devops", "hub"], destination: .devopsHub,
                        run: { [weak workspace] in
-                           workspace?.devopsHub.show(projectID: id)
+                           // The hub's own Start: the cards show it starting,
+                           // and its site opens there once it serves when
+                           // its setting says so.
                            workspace?.navigator.show(.devopsHub)
-                           LocalProjectRegistry.shared.start(id)
+                           workspace?.devopsHub.start(projectID: id)
                        }),
                 Action(title: "Stop \(project.name)", meta: "DevOps Hub",
                        keywords: ["server", "local", "devops", "hub"], destination: .devopsHub,

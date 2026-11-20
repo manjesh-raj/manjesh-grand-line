@@ -95,18 +95,70 @@ final class LocalProjectRegistry {
 
     var runningCount: Int { projects.filter { state(of: $0.id).isRunning }.count }
 
-    /// The project the DevOps Hub row opens: the one last shown, or the first.
-    var lastShownProjectID: String? {
-        get {
-            let stored = AppDefaults.store.string(forKey: Self.lastShownKey)
-            return projects.first { $0.id == stored }?.id ?? projects.first?.id
-        }
-        set { AppDefaults.store.set(newValue, forKey: Self.lastShownKey) }
+    /// The project the DevOps Hub row used to open. The row opens the
+    /// project cards now, and the page keeps what it shows for the session
+    /// only, so this preference is no longer read. It is removed once the
+    /// window is up (`forgetRetiredPreferences`).
+    static let retiredLastShownKey = "fm.devopsHub.lastProject"
+
+    /// Remove the preferences this registry no longer reads. Idempotent, so
+    /// it needs no settle flag of its own.
+    static func forgetRetiredPreferences(in defaults: UserDefaults = AppDefaults.store) {
+        defaults.removeObject(forKey: retiredLastShownKey)
     }
 
-    static let lastShownKey = "fm.devopsHub.lastProject"
+    /// Whether another project already uses `port`.
+    func portIsTaken(_ port: UInt16, except id: String? = nil) -> Bool {
+        projects.contains { $0.port == port && $0.id != id }
+    }
+
+    /// The first port from 7420 up that no project uses, for a new one.
+    func nextFreePort() -> UInt16 {
+        var port = LocalProject.devopsAtlas.port
+        while portIsTaken(port), port < UInt16.max { port += 1 }
+        return port
+    }
+
+    /// An id for `name` that no project has: its slug, then `-2`, `-3`...
+    func uniqueID(for name: String) -> String {
+        let base = LocalProject.slug(name)
+        var id = base
+        var suffix = 2
+        while project(id) != nil {
+            id = "\(base)-\(suffix)"
+            suffix += 1
+        }
+        return id
+    }
 
     // MARK: Editing
+
+    /// Register a new project from the Add Project sheet. Its id comes from
+    /// its name, made unique, and the rest is taken as given. Returns the project
+    /// as stored, or nil when its port is already another project's.
+    @discardableResult
+    func add(_ draft: LocalProject) -> LocalProject? {
+        guard !portIsTaken(draft.port) else { return nil }
+        var project = draft
+        project.id = uniqueID(for: draft.name)
+        project.lastRun = nil
+        projects.append(project)
+        LocalProjectStore.save(projects, at: storeURL)
+        notify()
+        return project
+    }
+
+    /// Forget a project. Its folder is left alone, and so is the site's own
+    /// storage (`DevOpsHubWebView`), so adding it back under the same name
+    /// finds its progress. A running project is stopped first.
+    func remove(_ id: String) {
+        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
+        if state(of: id) != .notStarted { stop(id) }
+        projects.remove(at: projects.firstIndex(where: { $0.id == id }) ?? index)
+        states[id] = nil
+        LocalProjectStore.save(projects, at: storeURL)
+        notify()
+    }
 
     /// Replace a project's settings and save them. A running project keeps
     /// serving as it was; the new folder or port applies on its next start.
@@ -227,6 +279,17 @@ final class LocalProjectRegistry {
 
     #if FM_SELFTESTS
     var debugStoreURL: URL { storeURL }
+
+    /// Put `id` in `state` with no server behind it, for the render gallery's
+    /// states a real run passes through too fast to capture. Assertions
+    /// drive the real `start` and `stop` instead.
+    func debugSetState(_ state: LocalProjectState, for id: String) {
+        servers[id]?.stop()
+        servers[id] = nil
+        startTokens[id] = nil
+        states[id] = state
+        notify()
+    }
 
     /// Stop everything and read the store again, for a suite that wrote a
     /// fixture after the shared registry was first built.

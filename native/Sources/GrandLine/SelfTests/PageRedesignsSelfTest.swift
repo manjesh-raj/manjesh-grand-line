@@ -593,19 +593,31 @@ enum PageRedesignsSelfTest {
 
     // MARK: DevOps Hub
 
-    /// DevOps Hub in a real sidebar shell: its row and its project's row, a
-    /// real click that opens the page, a real Start through the hero's own
-    /// button that serves a scratch site over loopback into the page's web
-    /// view, the strip's Stop, and the busy-port and missing-folder heroes.
+    /// DevOps Hub in a real sidebar shell: one row with no project under it,
+    /// a real click that opens the project cards, a real Start through a
+    /// card's own button that serves a scratch site over loopback and opens
+    /// it in the project view, the strip's Projects button, the window's
+    /// Back, the row's click back to the cards, Stop, the busy-port and
+    /// missing-folder cards, the pencil's sheet, and the band at 1100.
     private static func checkDevOpsHub(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                        _ ok: inout Bool) {
-        print("\n-- DevOps Hub: the sidebar rows, the page's states, a real start and stop --")
+        print("\n-- DevOps Hub: one sidebar row, the project cards, a real start, the project view and back --")
         _ = NSApplication.shared
         resize(window, width: 1512, shell)
         let registry = LocalProjectRegistry.shared
         check(registry.debugStoreURL.path.hasPrefix(scratch.path),
               "the shared registry reads \(registry.debugStoreURL.path), not the suite's own store", &ok)
         let (site, _) = DevOpsHubModelSelfTest.makeSite()
+        // A share image as wide as the course's own (1200pt), which the
+        // project view shows as its preview.
+        let preview = NSImage(size: NSSize(width: 1200, height: 630), flipped: false) { rect in
+            NSColor.systemTeal.setFill()
+            rect.fill()
+            return true
+        }
+        if let tiff = preview.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: site.appendingPathComponent("og.png"))
+        }
         var project = LocalProject.devopsAtlas
         project.folderOverride = site.path
         project.port = DevOpsHubModelSelfTest.freePort()
@@ -613,92 +625,171 @@ enum PageRedesignsSelfTest {
         registry.debugReload()
         defer { registry.stopAll(reason: .stopped) }
         let id = project.id
-        let row = WorkspaceSidebarEntry.project(id: id)
+        let hubRow = WorkspaceSidebarEntry.module(.devopsHub)
         settle(shell)
 
-        // The rows: DevOps Hub after Secrets, the project under it.
+        // One row: DevOps Hub after Secrets, with no project under it.
         let entries = shell.sidebar.debugVisibleEntries
-        guard let hub = entries.firstIndex(of: .module(.devopsHub)), hub > 0, hub + 1 < entries.count else {
+        guard let hub = entries.firstIndex(of: hubRow), hub > 0, hub + 1 < entries.count else {
             fail("the sidebar has no DevOps Hub row: \(entries)", &ok)
             return
         }
-        check(entries[hub - 1] == .module(.secrets) && entries[hub + 1] == row,
-              "DevOps Hub's neighbours are \(entries[hub - 1]) and \(entries[hub + 1])", &ok)
+        var nextIsSection = false
+        if case .section = entries[hub + 1] { nextIsSection = true }
+        check(entries[hub - 1] == .module(.secrets) && nextIsSection,
+              "DevOps Hub's neighbours are \(entries[hub - 1]) and \(entries[hub + 1]), want Secrets and the next group", &ok)
 
-        // A real click on the project row opens its page and lights the row.
-        check(shell.sidebar.debugClick(row), "the project row could not be clicked", &ok)
+        // A real click on the row opens the project cards and lights the row.
+        check(shell.sidebar.debugClick(hubRow), "the DevOps Hub row could not be clicked", &ok)
         settle(shell)
         let page = shell.workspace.devopsHub
-        check(page.isViewLoaded && page.view.window === window && !page.view.isHiddenOrHasHiddenAncestor,
-              "a click on the project row did not show its page", &ok)
-        check(shell.sidebar.debugSelectedEntry == row, "the lit row is \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
-        check(shell.toolbar.debugCrumb.contains("devops-atlas"), "the crumb reads \(shell.toolbar.debugCrumb)", &ok)
-        check(page.debugHero.debugHeadline == "devops-atlas is ready to start"
-                && page.debugHeroButtons.map(\.title) == ["Start", "Project Settings\u{2026}", "Show in Finder"],
-              "not started shows \(page.debugHero.debugHeadline) / \(page.debugHeroButtons.map(\.title))", &ok)
-        _ = waitUntil(timeout: 3) { page.debugCheckTitles.first == "Folder found" }
-        check(page.debugCheckTitles.first == "Folder found", "the checks read \(page.debugCheckTitles)", &ok)
-        page.view.layoutSubtreeIfNeeded()
-        let heroWidth = page.debugHero.frame.width
-        check(heroWidth > 400 && heroWidth <= DevOpsHubController.columnWidth + 0.5,
-              "the hero card is \(heroWidth)pt wide, want at most \(DevOpsHubController.columnWidth)", &ok)
-
-        // A real Start, through the hero's own button.
-        guard let start = page.debugHeroButtons.first(where: { $0.title == "Start" }) else {
-            fail("there is no Start button", &ok)
+        let cards = page.cards
+        check(page.isViewLoaded && page.view.window === window && !page.view.isHiddenOrHasHiddenAncestor
+                && page.mode == .cards && !cards.view.isHidden && page.projectView.view.isHidden,
+              "a click on the DevOps Hub row did not show the project cards", &ok)
+        check(shell.sidebar.debugSelectedEntry == hubRow,
+              "the lit row is \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
+        check(!shell.toolbar.debugCrumb.contains("devops-atlas"), "the cards' crumb reads \(shell.toolbar.debugCrumb)", &ok)
+        check(cards.heroColumn.superview === cards.splitPage?.sidebarPane && !cards.showsBand,
+              "at 1512 the hero column is not in the page's column", &ok)
+        check(cards.heroWords?.headline == "Nothing running." && cards.heroWords?.ring?.total == 1,
+              "the column reads \(cards.heroWords?.headline ?? "-")", &ok)
+        check(cards.grid.debugPlaced.map(\.key) == [id, DevOpsHubCardsController.addCardKey],
+              "the grid holds \(cards.grid.debugPlaced.map(\.key))", &ok)
+        guard let card = cards.grid.debugCardView(key: id), card.debugActionButtons.count == 3 else {
+            fail("the devops-atlas card is missing or does not have its three buttons", &ok)
             return
         }
-        start.performClick(nil)
-        let running = waitUntil(timeout: 5) { registry.state(of: id).isRunning }
-        check(running, "Start did not run the server: \(registry.state(of: id))", &ok)
-        let shown = waitUntil(timeout: 15) { page.debugShowsSite }
-        check(shown, "the site did not load into the page (\(page.words?.headline ?? "no hero"))", &ok)
-        check(page.debugWebView?.webView.url?.port == Int(project.port), "the web view is on \(String(describing: page.debugWebView?.webView.url))", &ok)
-        check(page.debugStrip.debugAddress == "127.0.0.1:\(project.port)" && page.debugStrip.debugLine.hasPrefix("up "),
-              "the strip reads \(page.debugStrip.debugAddress) / \(page.debugStrip.debugLine)", &ok)
-        settle(shell)
-        if let cell = shell.sidebar.debugCell(for: row) as? WorkspaceSidebarSessionCell {
-            check(cell.debugShortcut == ":\(project.port)", "the project row says \(cell.debugShortcut) while running", &ok)
-        } else {
-            fail("the project row has no cell", &ok)
+        check(card.debugStatus == nil && card.debugDetail == "Not started" && card.debugSubtitle == project.displayFolder,
+              "the card reads \(card.debugSubtitle) / \(card.debugDetail ?? "-")", &ok)
+        if case .count = (shell.sidebar.debugCell(for: hubRow) as? WorkspaceSidebarPageCell)?.debugBadge?.mark {
+            fail("the row counts a project running while none is", &ok)
         }
 
-        // The strip's Stop, through its own button.
-        page.debugStrip.debugButton(.stop).performClick(nil)
+        // A real Start, through the card's own first button. "Show the site
+        // when it's ready" is on, so the project view opens with the site.
+        card.debugActionButtons[0].performClick(nil)
+        let running = waitUntil(timeout: 5) { registry.state(of: id).isRunning }
+        check(running, "the card's Start did not run the server: \(registry.state(of: id))", &ok)
+        let opened = waitUntil(timeout: 5) { page.mode == .project(id) }
+        check(opened, "the project view did not open once the site served", &ok)
+        let shown = waitUntil(timeout: 15) { page.projectView.debugShowsSite }
+        check(shown, "the site did not load into the project view (\(page.projectView.words?.headline ?? "no hero"))", &ok)
+        check(page.projectView.debugWebView?.webView.url?.port == Int(project.port),
+              "the web view is on \(String(describing: page.projectView.debugWebView?.webView.url))", &ok)
+        let strip = page.projectView.debugStrip
+        check(strip.debugAddress == "127.0.0.1:\(project.port)" && strip.debugLine.hasPrefix("up "),
+              "the strip reads \(strip.debugAddress) / \(strip.debugLine)", &ok)
         settle(shell)
-        check(registry.state(of: id) == .notStarted && !page.debugShowsSite
-                && page.debugHero.debugHeadline == "devops-atlas is ready to start",
-              "Stop left \(registry.state(of: id)) with the site \(page.debugShowsSite ? "showing" : "gone")", &ok)
+        check(shell.toolbar.debugCrumb.contains("devops-atlas"), "the project view's crumb reads \(shell.toolbar.debugCrumb)", &ok)
+        check(shell.sidebar.debugSelectedEntry == hubRow, "the project view lights \(String(describing: shell.sidebar.debugSelectedEntry))", &ok)
+        let badge = (shell.sidebar.debugCell(for: hubRow) as? WorkspaceSidebarPageCell)?.debugBadge
+        check(badge?.mark == .count("1"), "the row's badge is \(String(describing: badge?.mark)) while one project runs", &ok)
+
+        // The strip's Projects button goes back to the cards, and the site
+        // keeps running.
+        strip.debugButton(.back).performClick(nil)
+        settle(shell)
+        check(page.mode == .cards && !cards.view.isHidden && registry.state(of: id).isRunning,
+              "Projects left the page on \(page.mode) with \(registry.state(of: id))", &ok)
+        check(cards.heroWords?.headline == "1 project running." && card.debugStatus?.hasPrefix("Running") == true
+                && card.debugSubtitle == "127.0.0.1:\(project.port)",
+              "the cards read \(cards.heroWords?.headline ?? "-") / \(card.debugStatus ?? "-")", &ok)
+        // Gotchas (13) and (15): the project view is hidden now, and nothing
+        // in it - the strip, or the 1200pt share image behind its hero - may
+        // hold the window at its own width. Measured with the real course
+        // before the fix: the window stayed at 1513.
+        resize(window, width: 1100, shell)
+        check(abs(window.frame.width - 1100) < 1 && cards.showsBand,
+              "with a project's view hidden the window stayed \(window.frame.width)pt wide", &ok)
+        resize(window, width: 1512, shell)
+
+        // Open, then the window's Back: the project view is a place in the
+        // history, so Back steps to the cards.
+        card.debugActionButtons[1].performClick(nil)
+        settle(shell)
+        check(page.mode == .project(id) && page.projectView.debugShowsSite,
+              "the card's Open left the page on \(page.mode)", &ok)
+        shell.toolbar.onBack?()
+        settle(shell)
+        check(page.mode == .cards, "the window's Back left the page on \(page.mode)", &ok)
+
+        // The DevOps Hub row, clicked while a project shows, goes back to
+        // the cards. From another page it opens the hub as it was left.
+        card.debugActionButtons[1].performClick(nil)
+        settle(shell)
+        shell.workspace.navigator.show(.health)
+        settle(shell)
+        check(shell.sidebar.debugClick(hubRow), "the DevOps Hub row could not be clicked again", &ok)
+        settle(shell)
+        check(page.mode == .project(id), "coming back from Health did not find the project as it was left", &ok)
+        check(shell.sidebar.debugClick(hubRow), "the DevOps Hub row could not be clicked a third time", &ok)
+        settle(shell)
+        check(page.mode == .cards, "the row's click on the project view did not go back to the cards", &ok)
+
+        // The card's Stop, through the same first button.
+        card.debugActionButtons[0].performClick(nil)
+        settle(shell)
+        check(registry.state(of: id) == .notStarted && card.debugDetail == "Not started \u{00B7} last ran just now",
+              "Stop left \(registry.state(of: id)) / \(card.debugDetail ?? "-")", &ok)
         let reuse = LocalStaticServer(root: site, port: project.port)
         check(DevOpsHubModelSelfTest.outcome(DevOpsHubModelSelfTest.start(reuse)) == "ready",
               "the port was not free after Stop", &ok)
 
-        // A busy port: the blocker above still holds it.
-        page.debugHeroButtons.first { $0.title == "Start" }?.performClick(nil)
+        // A busy port: the blocker above still holds it. The card says so in
+        // red, and the column leads with it.
+        card.debugActionButtons[0].performClick(nil)
         _ = waitUntil(timeout: 5) { registry.state(of: id) != .starting }
-        check(page.words?.headline == "Port \(project.port) is already in use" && page.words?.tone == .red,
-              "a busy port shows \(page.words?.headline ?? "-")", &ok)
+        check(card.debugStatus == "Port \(project.port) in use"
+                && cards.heroWords?.tone == .red && cards.heroWords?.headline == "devops-atlas couldn\u{2019}t start."
+                && page.mode == .cards,
+              "a busy port shows \(card.debugStatus ?? "-") / \(cards.heroWords?.headline ?? "-") on \(page.mode)", &ok)
+        if case .dot = (shell.sidebar.debugCell(for: hubRow) as? WorkspaceSidebarPageCell)?.debugBadge?.mark {} else {
+            fail("a failed start draws no dot on the DevOps Hub row", &ok)
+        }
         reuse.stop()
+
+        // The pencil opens the Project settings sheet for this card.
+        card.debugActionButtons[2].performClick(nil)
+        settle(shell)
+        let sheet = page.presentedViewControllers?.compactMap { $0 as? DevOpsHubSettingsSheet }.first
+        check(sheet?.mode == .edit && sheet?.debugPortText == "\(project.port)",
+              "the pencil did not open devops-atlas's settings", &ok)
+        if let sheet { page.dismiss(sheet) }
+        settle(shell)
+
+        // A narrow window: the column becomes a band over the cards.
+        resize(window, width: 1100, shell)
+        settle(shell)
+        check(cards.showsBand, "at 1100 the hero column did not become a band", &ok)
+        resize(window, width: 1512, shell)
+        settle(shell)
+        check(!cards.showsBand, "back at 1512 the hero column did not return to its column", &ok)
 
         writeDevOpsHubRenders(shell, window, page, project: project)
 
-        // A folder that is not there: the amber hero, with no port touched.
+        // A folder that is not there: the amber card, with Choose Folder first.
         var gone = project
         gone.folderOverride = site.appendingPathComponent("gone").path
         registry.update(gone)
-        page.debugHeroButtons.first { $0.title == "Start" }?.performClick(nil)
         settle(shell)
-        check(page.words?.tone == .amber && page.words?.headline == "Can\u{2019}t find the devops-atlas folder"
-                && page.debugHeroButtons.map(\.title).first == "Choose Folder\u{2026}",
-              "a missing folder shows \(page.words?.headline ?? "-")", &ok)
+        cards.grid.debugCardView(key: id)?.debugActionButtons.first?.performClick(nil)
+        settle(shell)
+        let missing = cards.grid.debugCardView(key: id)
+        check(missing?.debugStatus == "Folder not found" && cards.heroWords?.tone == .amber
+                && missing?.debugActionButtons.first?.symbolName == "folder",
+              "a missing folder shows \(missing?.debugStatus ?? "-") / \(cards.heroWords?.headline ?? "-")", &ok)
+        registry.update(project)
     }
 
     /// With `FM_DEVOPS_HUB_RENDER_DIR` set, one PNG of the whole window per
-    /// state, in Daylight and Dusk. `FM_DEVOPS_HUB_RENDER_SITE` serves a real
-    /// site (a real course clone) for the running state instead of
-    /// the fixture; it is read, never written. The states a real run passes
-    /// through too fast to capture are drawn through `debugShowHero(phase:)`,
-    /// with the sidebar's row told the same state.
+    /// state, in Daylight and Dusk: no projects, not started, starting,
+    /// running with the course shown, a busy port, a missing folder, three
+    /// projects, and the narrowest window on the cards and on the course.
+    /// `FM_DEVOPS_HUB_RENDER_SITE` serves a real site (a real course clone)
+    /// for the running states instead of the fixture. It is read, never
+    /// written. The states a real run passes through too fast to capture are
+    /// set on the registry directly (`debugSetState`).
     private static func writeDevOpsHubRenders(_ shell: MainSplitShellController, _ window: NSWindow,
                                               _ page: DevOpsHubController, project: LocalProject) {
         let env = ProcessInfo.processInfo.environment
@@ -707,47 +798,72 @@ enum PageRedesignsSelfTest {
         let registry = LocalProjectRegistry.shared
         var shown = project
         if let site = env["FM_DEVOPS_HUB_RENDER_SITE"], !site.isEmpty { shown.folderOverride = site }
-        registry.update(shown)
         let id = shown.id
-        func sidebar(_ state: LocalProjectState) {
-            shell.sidebar.reload(projects: [WorkspaceSidebarProject(id: id, name: shown.name, state: state,
-                                                                    port: shown.port)], shownProjectID: id)
+        let now = registry.clock()
+        var notes = LocalProject(id: "runbook-site", name: "runbook-site", kind: .staticSite,
+                                 folderOverride: "~/code/runbooks/dist", port: shown.port &+ 1,
+                                 opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
+        notes.lastRun = LocalProject.LastRun(startedAt: now.addingTimeInterval(-3 * 3600),
+                                             endedAt: now.addingTimeInterval(-2 * 3600), reason: "stopped")
+        let incident = LocalProject(id: "incident-notes", name: "incident-notes", kind: .staticSite,
+                                    folderOverride: "~/code/incident-notes/build", port: shown.port &+ 10,
+                                    opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
+        func use(_ projects: [LocalProject]) {
+            registry.stopAll(reason: .stopped)
+            LocalProjectStore.save(projects, at: registry.debugStoreURL)
+            registry.debugReload()
         }
-        let since = Date().addingTimeInterval(-12 * 60)
-        let states: [(String, LocalProjectState, DevOpsHubWords.Phase?)] = [
-            ("1-not-started", .notStarted, .project(.notStarted)),
-            ("2-starting", .starting, .loading(0.62)),
-            ("3-running", .running(since: since), nil),
-            ("4-port-in-use", .failed(.portInUse(holder: "python3 (pid 48211)")),
-             .project(.failed(.portInUse(holder: "python3 (pid 48211)")))),
-            ("5-cant-read-folder", .failed(.notReadable("Operation not permitted")),
-             .project(.failed(.notReadable("Operation not permitted")))),
-            ("6-folder-not-found", .folderNotFound(noIndex: false), .project(.folderNotFound(noIndex: false))),
-        ]
+        func write(_ name: String, _ theme: HelmTheme) {
+            settle(shell)
+            ReviewTourLab.writeSplitShellPNG(shell, window: window,
+                                             to: folder.appendingPathComponent("devops-hub-\(name)-\(theme.id).png"))
+        }
+        func runCourse() {
+            registry.start(id)
+            _ = waitUntil(timeout: 15) { page.projectView.debugShowsSite }
+            // The site's own animation settles before the snapshot.
+            RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        }
+        let since = now.addingTimeInterval(-42 * 60)
         for theme in [TasksSecretsHeroViewSelfTest.daylight, TasksSecretsHeroViewSelfTest.dusk] {
             ThemeManager.shared.setTheme(theme)
             resize(window, width: 1512, shell)
-            for (name, state, phase) in states {
-                if let phase {
-                    registry.stop(id)
-                    settle(shell)
-                    _ = waitUntil(timeout: 3) { page.debugBackdrop.image != nil }
-                    page.debugShowHero(phase: phase)
-                    sidebar(state)
-                } else {
-                    registry.start(id)
-                    _ = waitUntil(timeout: 15) { page.debugShowsSite }
-                    // The site's own animation settles before the snapshot.
-                    RunLoop.main.run(until: Date().addingTimeInterval(1.5))
-                }
-                settle(shell)
-                ReviewTourLab.writeSplitShellPNG(shell, window: window,
-                                                 to: folder.appendingPathComponent("devops-hub-\(name)-\(theme.id).png"))
-            }
+            use([])
+            page.showCards()
+            write("0-no-projects", theme)
+            use([shown])
+            write("1-not-started", theme)
+            registry.debugSetState(.starting, for: id)
+            write("2-starting", theme)
+            page.start(projectID: id)
+            registry.debugSetState(.notStarted, for: id)
+            page.start(projectID: id)
+            _ = waitUntil(timeout: 5) { page.mode == .project(id) }
+            runCourse()
+            write("3-running-course", theme)
+            page.showCards()
+            write("4-running-cards", theme)
+            registry.debugSetState(.failed(.portInUse(holder: "python3 (pid 48211)")), for: id)
+            write("5-port-busy", theme)
+            registry.debugSetState(.folderNotFound(noIndex: false), for: id)
+            write("6-folder-not-found", theme)
+            use([shown, notes, incident])
+            registry.debugSetState(.running(since: since), for: id)
+            registry.debugSetState(.failed(.portInUse(holder: "python3 (pid 48211)")), for: incident.id)
+            write("7-three-projects", theme)
+            resize(window, width: 1100, shell)
+            write("8-narrow-cards", theme)
+            use([shown])
+            page.start(projectID: id)
+            _ = waitUntil(timeout: 5) { page.mode == .project(id) }
+            runCourse()
+            write("9-narrow-course", theme)
+            page.showCards()
             registry.stop(id)
         }
         ThemeManager.shared.setTheme(TasksSecretsHeroViewSelfTest.daylight)
-        registry.update(project)
+        resize(window, width: 1512, shell)
+        use([project])
         settle(shell)
         print("PageRedesignsSelfTest: DevOps Hub renders written to \(dir)")
     }
