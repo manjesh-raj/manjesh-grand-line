@@ -20,11 +20,17 @@
 //   5. **The runner**: every transition, a Stop that beats a slow start, the
 //      last run it records, and the port holder named from `lsof`.
 //   6. **The words** for every state, and their tones and actions.
-//   7. **The sidebar**: each state's mark and port, the hub's badge order,
-//      the row menu, the chord DevOps Hub does not take, the Personal profile
-//      and the one-time settle of a stored hidden set.
-//   8. **The settings sheet's validation**, and the web view's same-site rule
-//      and stable store identifier.
+//   7. **The sidebar**: one DevOps Hub row with no project rows under it,
+//      each state's mark and the badge's order, the chord DevOps Hub does not
+//      take, the retired last-project preference, the Personal profile and
+//      the one-time settle of a stored hidden set.
+//   7a. **The cards view's words**: the column's verdict in every state and
+//      its precedence, each card's lines and first button, and the filter.
+//   7c. **Adding and removing**: the id from a name, the next free port, a
+//      taken port refused, a running project stopped before it goes, and an
+//      emptied store that stays empty.
+//   8. **The settings sheet's validation**, Add Project's too, and the web
+//      view's same-site rule and stable store identifier.
 
 #if FM_SELFTESTS
 
@@ -35,7 +41,8 @@ enum DevOpsHubModelSelfTest {
     static func run() -> Bool {
         var ok = true
         for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight, checkRunner,
-                      checkWords, checkSidebar, checkProfileAndSettle, checkSettingsAndWebRules] {
+                      checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
+                      checkSettingsAndWebRules] {
             var caseOK = true
             check(&caseOK)
             ok = ok && caseOK
@@ -447,9 +454,7 @@ enum DevOpsHubModelSelfTest {
         let t = Date(timeIntervalSince1970: 1_800_000_000)
         check(row(.notStarted).mark == .idle && row(.starting).mark == .starting && row(.running(since: t)).mark == .live
                 && row(.failed(.invalidPort)).mark == .failed && row(.folderNotFound(noIndex: false)).mark == .attention,
-              "a state draws the wrong mark", &ok)
-        check(row(.running(since: t)).trailing == ":7420" && row(.notStarted).trailing.isEmpty,
-              "the port shows while stopped, or not while running", &ok)
+              "a state reads as the wrong mark", &ok)
         check(WorkspaceSignals.devopsHubBadge([row(.notStarted)]) == nil, "a stopped project draws a badge", &ok)
         check(WorkspaceSignals.devopsHubBadge([row(.running(since: t))])?.mark == .count("1"), "running draws no count", &ok)
         check(WorkspaceSignals.devopsHubBadge([row(.starting)])?.mark == .count(WorkspaceSignals.scanningMark),
@@ -459,22 +464,170 @@ enum DevOpsHubModelSelfTest {
         let missing = WorkspaceSignals.devopsHubBadge([row(.folderNotFound(noIndex: false))])
         check(missing?.mark == .dot && missing?.tone == .attention, "a missing folder is \(String(describing: missing))", &ok)
 
-        let projects = [row(.notStarted)]
-        let roots = WorkspaceSidebarModel.roots(sessions: [], projects: projects, hidden: WorkspaceProfile.operator.hiddenModules)
+        // One row with no children: the projects are cards on the page.
+        let roots = WorkspaceSidebarModel.roots(sessions: [], hidden: WorkspaceProfile.operator.hiddenModules)
         let work = roots.first { $0.entry == .section(WorkspaceGroup.work.title) }
         let hub = work?.children.last
-        check(hub?.entry == .module(.devopsHub) && hub?.children.map(\.entry) == [.project(id: "devops-atlas")],
-              "DevOps Hub is not Work's last row with the project under it: \(String(describing: hub))", &ok)
-        let personal = WorkspaceSidebarModel.roots(sessions: [], projects: projects, hidden: WorkspaceProfile.personal.hiddenModules)
+        check(hub?.entry == .module(.devopsHub) && hub?.children.isEmpty == true,
+              "DevOps Hub is not Work's last row, or has rows under it: \(String(describing: hub))", &ok)
+        let personal = WorkspaceSidebarModel.roots(sessions: [], hidden: WorkspaceProfile.personal.hiddenModules)
         check(!personal.flatMap { [$0] + $0.children }.contains { $0.entry == .module(.devopsHub) },
               "a Personal sidebar lists DevOps Hub", &ok)
-        check(WorkspaceSidebarProjectAction.menu(for: .running(since: t)).first == .stop
-                && WorkspaceSidebarProjectAction.menu(for: .notStarted).first == .start
-                && WorkspaceSidebarProjectAction.menu(for: .running(since: t)).contains(.copyAddress)
-                && !WorkspaceSidebarProjectAction.menu(for: .notStarted).contains(.copyAddress),
-              "the project menu is wrong for its state", &ok)
         check(WorkspaceGoMenu.chord(for: .devopsHub, hidden: WorkspaceProfile.operator.hiddenModules) == nil,
               "DevOps Hub took a chord", &ok)
+
+        // The preference the row used to open is retired, and removing it
+        // leaves every other key alone.
+        let defaults = UserDefaults(suiteName: "devopshub.retired.\(UUID().uuidString)")!
+        defaults.set("devops-atlas", forKey: LocalProjectRegistry.retiredLastShownKey)
+        defaults.set("list", forKey: "fm.connections.viewMode")
+        LocalProjectRegistry.forgetRetiredPreferences(in: defaults)
+        check(defaults.string(forKey: LocalProjectRegistry.retiredLastShownKey) == nil
+                && defaults.string(forKey: "fm.connections.viewMode") == "list",
+              "the retired last-project key was not removed, or took another key with it", &ok)
+        LocalProjectRegistry.forgetRetiredPreferences(in: defaults)
+        check(defaults.string(forKey: LocalProjectRegistry.retiredLastShownKey) == nil, "a second removal failed", &ok)
+    }
+
+    // MARK: 7a - the cards view's words
+
+    private static func checkCardsWords(_ ok: inout Bool) {
+        print("\n-- the cards view's words --")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var atlas = LocalProject.devopsAtlas
+        atlas.folderOverride = "~/code/devops-atlas"
+        var notes = LocalProject(id: "runbook-site", name: "runbook-site", kind: .staticSite,
+                                 folderOverride: "~/code/runbooks/dist", port: 7421, opensWhenReady: true,
+                                 startsAtLaunch: false, lastRun: nil)
+        notes.lastRun = LocalProject.LastRun(startedAt: now.addingTimeInterval(-7200),
+                                             endedAt: now.addingTimeInterval(-3600), reason: "stopped")
+        func hero(_ projects: [LocalProject], _ states: [String: LocalProjectState]) -> DevOpsHubHeroWords {
+            DevOpsHubHeroWords.make(projects: projects, state: { states[$0] ?? .notStarted }, now: now)
+        }
+
+        let none = hero([], [:])
+        check(none.headline == "No projects yet." && none.ring == nil && none.list == nil && none.projectCount == 0,
+              "no projects reads \(none.headline) with ring \(String(describing: none.ring))", &ok)
+        let idle = hero([atlas, notes], [:])
+        check(idle.headline == "Nothing running." && idle.ring == .init(running: 0, total: 2) && idle.tone == .accent
+                && idle.body.hasPrefix("runbook-site last ran ") && idle.list?.title == "Recent"
+                && idle.list?.projectIDs == ["runbook-site", "devops-atlas"],
+              "nothing running reads \(idle.headline) / \(idle.body) / \(String(describing: idle.list))", &ok)
+        let running = hero([atlas, notes], ["devops-atlas": .running(since: now.addingTimeInterval(-42 * 60))])
+        check(running.headline == "1 project running."
+                && running.body == "devops-atlas on 127.0.0.1:7420, up 42 min."
+                && running.list == .init(title: "Running", projectIDs: ["devops-atlas"])
+                && running.runningCount == 1 && running.attentionCount == 0,
+              "one running reads \(running.headline) / \(running.body)", &ok)
+        let two = hero([atlas, notes], ["devops-atlas": .running(since: now), "runbook-site": .running(since: now)])
+        check(two.headline == "2 projects running." && two.body == "devops-atlas and runbook-site.",
+              "two running read \(two.headline) / \(two.body)", &ok)
+        let starting = hero([atlas], ["devops-atlas": .starting])
+        check(starting.headline == "Starting devops-atlas\u{2026}" && starting.tone == .accent,
+              "starting reads \(starting.headline)", &ok)
+        // The badge's precedence: a failure, then a missing folder, then
+        // what serves. A failure still says what is running.
+        let busy = hero([atlas, notes], ["devops-atlas": .running(since: now),
+                                         "runbook-site": .failed(.portInUse(holder: "python3 (pid 48211)"))])
+        check(busy.headline == "runbook-site couldn\u{2019}t start." && busy.tone == .red
+                && busy.body == "Port 7421 is in use by python3 (pid 48211). devops-atlas is running."
+                && busy.attentionCount == 1,
+              "a busy port reads \(busy.headline) / \(busy.body)", &ok)
+        let gone = hero([atlas], ["devops-atlas": .folderNotFound(noIndex: false)])
+        check(gone.headline == "Can\u{2019}t find the devops-atlas folder." && gone.tone == .amber,
+              "a missing folder reads \(gone.headline)", &ok)
+        let failedAndGone = hero([atlas, notes], ["devops-atlas": .folderNotFound(noIndex: true),
+                                                  "runbook-site": .failed(.notReadable("denied"))])
+        check(failedAndGone.tone == .red && failedAndGone.attentionCount == 2,
+              "a failure did not win over a missing folder", &ok)
+
+        // A card per state: the subtitle, the status, its tint and its first button.
+        func card(_ state: LocalProjectState) -> DevOpsHubCardWords {
+            DevOpsHubCardWords.make(project: atlas, state: state, now: now)
+        }
+        check(card(.notStarted).status == nil && card(.notStarted).detail == "Not started"
+                && card(.notStarted).subtitle == "~/code/devops-atlas"
+                && card(.notStarted).primary == .start && card(.notStarted).tint == .neutral,
+              "not started reads \(card(.notStarted))", &ok)
+        check(card(.starting).primary == .cancel && card(.starting).tint == .warn, "starting reads \(card(.starting))", &ok)
+        let live = card(.running(since: now.addingTimeInterval(-12 * 60)))
+        check(live.subtitle == "127.0.0.1:7420" && live.status == "Running \u{00B7} up 12 min" && live.primary == .stop
+                && live.tint == .good && live.menu.contains(.copyAddress) && live.menu.first == .stop,
+              "running reads \(live)", &ok)
+        let port = card(.failed(.portInUse(holder: "python3 (pid 48211)")))
+        check(port.status == "Port 7420 in use" && port.primary == .retry && port.tint == .critical
+                && port.accessibilityLabel.hasSuffix("Port 7420 in use by python3 (pid 48211)"),
+              "a busy port reads \(port)", &ok)
+        check(card(.folderNotFound(noIndex: false)).status == "Folder not found"
+                && card(.folderNotFound(noIndex: true)).status == "No index.html"
+                && card(.folderNotFound(noIndex: false)).primary == .chooseFolder,
+              "a missing folder reads \(card(.folderNotFound(noIndex: false)))", &ok)
+        check(card(.failed(.notReadable("x"))).status == "Can\u{2019}t read its folder"
+                && card(.failed(.other("x"))).status == "Failed to start",
+              "the other failures read wrong", &ok)
+        check(!card(.notStarted).menu.contains(.copyAddress) && card(.notStarted).menu.last == .remove,
+              "the stopped card's menu is \(card(.notStarted).menu)", &ok)
+        var ran = atlas
+        ran.lastRun = notes.lastRun
+        check(DevOpsHubCardWords.make(project: ran, state: .notStarted, now: now).detail?.hasPrefix("Not started \u{00B7} last ran ") == true,
+              "a project that ran does not say when", &ok)
+        check(DevOpsHubHeroWords.relative(now.addingTimeInterval(-5), now: now) == "just now",
+              "a run that just ended reads \(DevOpsHubHeroWords.relative(now.addingTimeInterval(-5), now: now))", &ok)
+
+        // The filter row.
+        check(DevOpsHubFilter.running.includes(.starting) && DevOpsHubFilter.running.includes(.running(since: now))
+                && !DevOpsHubFilter.running.includes(.notStarted)
+                && DevOpsHubFilter.attention.includes(.failed(.invalidPort))
+                && DevOpsHubFilter.attention.includes(.folderNotFound(noIndex: false))
+                && !DevOpsHubFilter.attention.includes(.running(since: now)),
+              "a filter includes the wrong states", &ok)
+        check(DevOpsHubFilter.matches(atlas, query: "ATLAS") && DevOpsHubFilter.matches(atlas, query: "7420")
+                && DevOpsHubFilter.matches(notes, query: "runbooks/dist") && !DevOpsHubFilter.matches(atlas, query: "runbook")
+                && DevOpsHubFilter.matches(atlas, query: "  "),
+              "the search matches the wrong projects", &ok)
+    }
+
+    // MARK: 7c - adding and removing
+
+    private static func checkAddAndRemove(_ ok: inout Bool) {
+        print("\n-- adding and removing a project --")
+        let (root, _) = makeSite()
+        let stub = StubServer()
+        let (registry, url) = makeRegistry(folder: root, stub: stub)
+        check(LocalProject.slug("Runbook Site!") == "runbook-site" && LocalProject.slug("  ") == "project"
+                && LocalProject.slug("Ünï Côde") == "n-c-de",
+              "the slug rule moved: \(LocalProject.slug("Runbook Site!"))", &ok)
+        check(registry.nextFreePort() == 7421, "the next free port beside devops-atlas is \(registry.nextFreePort())", &ok)
+        var draft = LocalProject(id: "", name: "Runbook Site", kind: .staticSite, folderOverride: root.path,
+                                 port: 7421, opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
+        let added = registry.add(draft)
+        check(added?.id == "runbook-site" && registry.projects.map(\.id) == ["devops-atlas", "runbook-site"]
+                && LocalProjectStore.load(at: url).map(\.id) == ["devops-atlas", "runbook-site"],
+              "the added project is \(String(describing: added?.id)), stored \(LocalProjectStore.load(at: url).map(\.id))", &ok)
+        draft.port = 7422
+        check(registry.add(draft)?.id == "runbook-site-2", "a second project of that name was not made unique", &ok)
+        draft.port = 7420
+        check(registry.add(draft) == nil && registry.projects.count == 3, "a taken port was accepted", &ok)
+        check(registry.portIsTaken(7421) && !registry.portIsTaken(7421, except: "runbook-site"),
+              "the taken-port rule ignores the project being edited", &ok)
+
+        // A running project is stopped before it is forgotten, and the
+        // folder is left alone.
+        registry.start("runbook-site")
+        stub.pending?(.success(()))
+        registry.remove("runbook-site")
+        check(registry.project("runbook-site") == nil && registry.state(of: "runbook-site") == .notStarted && stub.stopped,
+              "a running project was not stopped and removed", &ok)
+        check(FileManager.default.fileExists(atPath: root.appendingPathComponent("index.html").path),
+              "removing a project touched its folder", &ok)
+
+        // Removing the last project leaves an empty list, which stays empty
+        // rather than bringing the seed back (GL-21).
+        for project in registry.projects { registry.remove(project.id) }
+        check(registry.projects.isEmpty && LocalProjectStore.load(at: url).isEmpty,
+              "an emptied store read back as \(LocalProjectStore.load(at: url).map(\.id))", &ok)
+        try? FileManager.default.removeItem(at: url)
+        check(LocalProjectStore.load(at: url) == [LocalProject.devopsAtlas], "a missing file no longer seeds", &ok)
     }
 
     // MARK: 7b - the profile and the settle
@@ -529,6 +682,30 @@ enum DevOpsHubModelSelfTest {
         let (reset, _) = DevOpsHubSettingsSheet.edited(project, folderText: LocalProject.defaultFolder(for: project.id).path,
                                                        portText: "7420", opensWhenReady: true, startsAtLaunch: false)
         check(reset?.folderOverride == nil, "typing the default folder stored an override", &ok)
+        check(DevOpsHubSettingsSheet.edited(project, folderText: "", portText: "7421", opensWhenReady: true,
+                                            startsAtLaunch: false, takenPorts: [7421]).0 == nil,
+              "another project's port was accepted", &ok)
+
+        // Add Project: a name and a folder are required, and the folder is
+        // always stored as given.
+        let draft = LocalProject(id: "", name: "", kind: .staticSite, folderOverride: nil, port: 7421,
+                                 opensWhenReady: true, startsAtLaunch: false, lastRun: nil)
+        func adding(_ name: String, _ folder: String, _ port: String = "7421") -> (LocalProject?, String?) {
+            DevOpsHubSettingsSheet.edited(draft, name: name, folderText: folder, portText: port, opensWhenReady: true,
+                                          startsAtLaunch: false, takenPorts: [7420], requiresFolder: true)
+        }
+        check(adding("  ", "~/site").1 == "Give the project a name.", "a blank name was accepted", &ok)
+        check(adding("site", "").1 == "Choose the folder that holds its index.html.", "an empty folder was accepted", &ok)
+        check(adding("site", "~/site", "7420").0 == nil, "Add Project took devops-atlas's port", &ok)
+        let added = adding(" Runbook Site ", "~/code/runbooks/dist").0
+        check(added?.name == "Runbook Site" && added?.folderOverride == "~/code/runbooks/dist" && added?.port == 7421,
+              "a good Add read as \(String(describing: added))", &ok)
+        check(DevOpsHubSettingsSheet.suggestedName(for: URL(fileURLWithPath: "/x/runbooks/dist")) == "runbooks"
+                && DevOpsHubSettingsSheet.suggestedName(for: URL(fileURLWithPath: "/x/devops-atlas")) == "devops-atlas",
+              "a chosen folder suggests the wrong name", &ok)
+        check(DevOpsHubSettingsSheet.folderLine(.indexMissing) == "That folder has no index.html at its top."
+                && DevOpsHubSettingsSheet.folderLine(.ready(files: 3, bytes: 2048)).hasPrefix("index.html found \u{00B7} 3 files"),
+              "the folder line reads wrong", &ok)
 
         let origin = LocalStaticServer.origin(port: 7420)
         check(DevOpsHubWebView.isSameSite(URL(string: "http://127.0.0.1:7420/lesson/3")!, origin: origin)

@@ -546,6 +546,10 @@ final class MainSplitShellController: WorkspaceShellController {
 
     private func wireSidebar() {
         sidebar.onSelectModule = { [weak self] module in self?.openModule(module) }
+        sidebar.onReselectModule = { [weak self] module in
+            guard module == .devopsHub, let hub = self?.pageController as? DevOpsHubController else { return }
+            hub.showCards()
+        }
         sidebar.onSelectSession = { [weak self] id in self?.workspace.hosts.switchToSession(hostID: id) }
         sidebar.onEndSession = { [weak self] id in self?.workspace.hosts.confirmEndSession(hostID: id) }
         // The session strip's "+" opened Hosts; so does Console's own menu.
@@ -559,13 +563,10 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: DevOps Hub
 
-    /// The projects under DevOps Hub: a row's click opens its page, its menu
-    /// drives its server from whichever page is showing, and every change of
-    /// state repaints the rows. The page is not built for any of this: the
-    /// registry holds the state (GL-37).
+    /// DevOps Hub's projects: every change of state repaints its row's
+    /// badge. The page is not built for this: the registry holds the state
+    /// (GL-37), and the projects are cards on the page, not sidebar rows.
     private func wireLocalProjects() {
-        sidebar.onSelectProject = { [weak self] id in self?.openProject(id) }
-        sidebar.onProjectAction = { [weak self] id, action in self?.performProjectAction(action, on: id) }
         localProjectsObserver = NotificationCenter.default.addObserver(
             forName: LocalProjectRegistry.didChange, object: LocalProjectRegistry.shared, queue: .main
         ) { [weak self] _ in self?.reloadLocalProjects() }
@@ -577,33 +578,7 @@ final class MainSplitShellController: WorkspaceShellController {
         let rows = registry.projects.map {
             WorkspaceSidebarProject(id: $0.id, name: $0.name, state: registry.state(of: $0.id), port: $0.port)
         }
-        sidebar.reload(projects: rows, shownProjectID: registry.lastShownProjectID)
-    }
-
-    private func openProject(_ id: String) {
-        workspace.devopsHub.show(projectID: id)
-        workspace.navigator.show(.devopsHub)
-        reloadLocalProjects()
-        refreshModuleChrome()
-    }
-
-    private func performProjectAction(_ action: WorkspaceSidebarProjectAction, on id: String) {
-        let registry = LocalProjectRegistry.shared
-        guard let project = registry.project(id) else { return }
-        switch action {
-        case .start: registry.start(id)
-        case .stop: registry.stop(id)
-        case .restart: registry.restart(id)
-        case .openInBrowser: WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
-        case .copyAddress:
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
-        case .settings:
-            openProject(id)
-            workspace.devopsHub.presentSettings()
-        case .showInFinder: DevOpsHubController.showInFinder(project.folder)
-        case .separator: break
-        }
+        sidebar.reload(projects: rows)
     }
 
     // MARK: The window
@@ -1051,6 +1026,11 @@ final class MainSplitShellController: WorkspaceShellController {
         guard let controller else { return }
         if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
             (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
+            // DevOps Hub's crumb names the project its page shows.
+            (controller as? DevOpsHubController)?.onModeChanged = { [weak self, weak controller] in
+                guard let self, let controller, self.pageController === controller else { return }
+                self.refreshModuleChrome()
+            }
             if let source = controller as? WorkspaceInspectorSource {
                 source.onInspectorContentChanged = { [weak self, weak source] in
                     guard let self, let source, self.inspectorSource === source else { return }
@@ -1097,6 +1077,12 @@ final class MainSplitShellController: WorkspaceShellController {
     /// to. A tab whose own door row is listed is that row's to open, so
     /// Knowledge beside a listed Notebook row opens on Docs (R5-UX-05).
     override func openModule(_ module: WorkspaceModule) {
+        // The DevOps Hub row, clicked while the hub shows a project, goes
+        // back to the project cards. From any other page it opens the hub as
+        // it was left.
+        if module == .devopsHub, let hub = pageController as? DevOpsHubController, hub.view.window != nil {
+            hub.showCards()
+        }
         let hidden = AppSettings.shared.hiddenModules
         let owned = module.tabs.first { tab in
             let row = ModuleTable.sidebarModule(for: tab.route, pageTab: tab.name)
@@ -1290,10 +1276,9 @@ final class MainSplitShellController: WorkspaceShellController {
         let lit = litModule
         if showingHostPage {
             toolbar.setCrumb(group: module.title, module: hostPageLabel)
-        } else if module == .devopsHub, let project = LocalProjectRegistry.shared.lastShownProjectID
-            .flatMap(LocalProjectRegistry.shared.project) {
+        } else if module == .devopsHub, let project = (pageController as? DevOpsHubController)?.shownProject {
             // A project is DevOps Hub's place the way a host is Console's:
-            // the crumb names the module and the project.
+            // the crumb names the module and the project while its view shows.
             toolbar.setCrumb(group: module.title, module: project.name)
         } else {
             toolbar.setCrumb(group: lit.group?.title, module: lit.title)

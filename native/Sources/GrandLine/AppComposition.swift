@@ -1032,6 +1032,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // that the window is up (GL-12). Off by default, so this is nothing
         // on most launches.
         LocalProjectRegistry.shared.startLaunchProjects()
+        // The DevOps Hub row used to open the last project shown. It opens
+        // the project cards now, so the stored project is removed.
+        LocalProjectRegistry.forgetRetiredPreferences()
     }
 
     /// Review #3's UX13: the first-run welcome sheet.

@@ -63,3 +63,56 @@ With `python3 -m http.server` already listening on all interfaces, binding 127.0
 - `FM_RUN_DEVOPS_HUB_MODEL_TESTS` (headless): the server's rules, the same rules over a real loopback listener, the store, preflight, the runner, the words, the sidebar's marks and badge, the profile settle, and the settings validation.
 - `FM_RUN_PAGE_REDESIGNS_TESTS` (window-backed) has a DevOps Hub case: a real click on the project row, a real Start through the hero's button that loads a scratch site into the web view, the strip's Stop, a busy port and a missing folder.
 - `FM_DEVOPS_HUB_RENDER_DIR` writes a PNG of the window per state in Daylight and Dusk, and `FM_DEVOPS_HUB_RENDER_SITE` points the running state at a real site.
+
+## DevOps Hub as a page of project cards (2026-11-20)
+
+The first round nested each project under the DevOps Hub row, and the row opened the last project shown.
+The second board (`data/grand-line-devops-hub-page/`) drew the hub as a page of its own on Connections' pattern, in three layouts:
+
+- A, Connections' twin: a hero column beside the host card's roomy cards.
+- B, bigger preview cards that lead with the site's share image.
+- C, a hero band over a table.
+
+The recommended answers were confirmed:
+
+- Layout A.
+- A project opens inside the hub page rather than as a pushed view with a route of its own.
+- Add Project registers any local folder that has an `index.html` (name, folder, port).
+- Coming back to DevOps Hub finds it as it was left this session, and a click on the row while a project shows goes back to the cards.
+- No menu on the DevOps Hub row.
+
+### What shipped
+
+- `DevOpsHubController` is now the page that holds two views and switches between them.
+  `DevOpsHubCardsController` is the cards: a `HelmHeroColumn` in a `HelmSplitPage` pane, a filter row, and `HelmCardGrid` or `HelmDataTable`.
+  `DevOpsHubProjectController` is PR 619's page, with a Projects button on its strip and over its hero card.
+- `DevOpsHubHeroWords` and `DevOpsHubCardWords` (`DevOpsHubCardsWords.swift`) are the words, pure and asserted headless.
+  The column's verdict follows the sidebar badge's precedence, so the row and the page never disagree.
+- The two views are places in the window's Back and Forward history (`WorkspaceHistoryPlace`), so Back steps from a project to the cards.
+- A click on a sidebar row that is already lit changes no selection, so it never reached the shell.
+  The sidebar now records, at mouse-down, whether the click began on the lit row, and the table's own action reports it (`onReselectModule`).
+- `LocalProjectRegistry` gained `add` and `remove`.
+  The store seeds devops-atlas only when its file is missing: an emptied list stays empty (GL-21), or removing the last project would bring the seed back on the next launch.
+- `fm.devopsHub.lastProject` is no longer read, and is cleared once the window is up.
+- The project settings sheet is also the Add Project sheet: a name field, no default folder, the folder checked off the main thread as it is chosen, and a port another project uses refused in both modes.
+
+### Things that bit
+
+- **The share image held the window open.**
+  The project view's preview is an `NSImageView`, whose intrinsic size is its image's, and the course's `og.jpg` is 1200pt wide.
+  At the default compression resistance (750, above the window's 500) it kept the window at 1513pt whenever the project view was in the hierarchy, hidden or not.
+  It was there in PR 619 too, and only the real course showed it, because the suite's fixture site had no share image.
+  The preview gives way now, the fixture has a 1200pt `og.png`, and the cards check resizes to 1100 with a running project's view hidden.
+  Injected back, the check fails with the window at 1513.
+- **A hidden view still holds the window (gotcha (15)).**
+  The page deactivates the hidden view's pins as well, so nothing in it has a required path to the window.
+- **Long status lines ran under the card's icon column.**
+  `HelmCardGrid`'s status pill does not truncate, so "Port 50378 in use by python3 (pid 48211)" drew under the pencil.
+  The card keeps to short words, and who holds the port is in the column, the project view and the card's VoiceOver label.
+  A stopped project uses the card's quiet detail line ("Not started · last ran 2 hours ago"), the host card's "Last connected" shape.
+
+### Verification
+
+- `FM_RUN_DEVOPS_HUB_MODEL_TESTS` (headless) adds the column's words in every state and their precedence, each card's lines, the filter, add and remove, the emptied store, and Add Project's validation.
+- `FM_RUN_PAGE_REDESIGNS_TESTS` drives one row with no children, a real click that opens the cards, a real Start through a card that opens the course, the strip's Projects button, the window's Back, the row's click back to the cards, Stop, a busy port, the pencil's sheet, the band at 1100, and a missing folder.
+- `FM_DEVOPS_HUB_RENDER_DIR` now writes ten states per theme: no projects, not started, starting, running with the course, running on the cards, a busy port, a missing folder, three projects, and the narrowest window on the cards and on the course.

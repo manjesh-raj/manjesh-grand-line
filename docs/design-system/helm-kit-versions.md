@@ -36,6 +36,15 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 9.0.0 - DevOps Hub as a page of project cards
+
+The design picked on the second DevOps Hub board (`data/grand-line-devops-hub-page/`, layout A): the DevOps Hub row opens a page on Connections' pattern, and the projects are cards on it rather than rows in the sidebar.
+No kit file changed.
+It is a major release because the sidebar loses a row kind and the page's structure is replaced.
+
+- `WorkspaceSidebar` 3.1.0 → 4.0.0 (major): the DevOps Hub row has no children. The project rows, their menu (`WorkspaceSidebarProjectAction`) and the session cell's project drawing are removed. The row keeps its badge exactly as before: a red dot for a failed start, an amber dot for a missing folder, a count of the projects serving, the scanning dash while one starts, and nothing while all are stopped. A click on a module row that is already lit now reaches the shell (`onReselectModule`), which DevOps Hub uses to go back to its cards.
+- `DevOps Hub (page)` 1.0.0 → 2.0.0 (major): the page is two views. The project cards are a `HelmHeroColumn` in a `HelmSplitPage` pane (the verdict, a ring of projects running over projects registered, Running or Recent, an Add Project row, and Projects / Running / Attention at its foot), a filter row (search, All / Running / Attention, Grid / List) and the projects as `HelmCardGrid`'s roomy cards, each with Start or Stop, Open and Edit, or as a `HelmDataTable`. Below the collapse width the column becomes a band over the cards. Open shows the project inside the page: 1.0.0's project page, with a Projects button on its strip and over its hero card. The strip's Reload, Open in Browser and Restart keep only their glyphs below 820pt. The two views are places in the window's Back and Forward history.
+
 ## 8.1.0 - DevOps Hub, a local project served and shown in Grand Line
 
 The design confirmed on the DevOps Hub board (`data/grand-line-devops-hub/`): a DevOps Hub row in Work with its local projects nested under it, and layout C for a project's page.
