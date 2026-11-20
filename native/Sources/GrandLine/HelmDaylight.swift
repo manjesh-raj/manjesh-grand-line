@@ -602,7 +602,16 @@ enum HelmDomainHue: String, CaseIterable {
 
     /// This hue's gradient pair in `theme` - the §2.2 values on Daylight, the
     /// theme's own `HelmTint` slot (plus a derived lighter end) anywhere else.
+    ///
+    /// 1.1.0: on one of the six palettes the blue hue is the palette's own
+    /// accent, so a primary button, a page's blue tile and every other place
+    /// that asks for "the app's blue" takes the palette instead of Daylight's
+    /// `3D6BE8`. Every classic family keeps §2.2's pair exactly.
     func pair(in theme: HelmTheme) -> (h1: NSColor, h2: NSColor) {
+        if let accent = paletteBlue(in: theme) {
+            let h1 = HelmTheme.nsColor(accent)
+            return (h1, h1.blended(withFraction: Self.fallbackLightenFraction, of: .white) ?? h1)
+        }
         if theme.isDaylight {
             let pair = daylightPair
             return (HelmTheme.nsColor(pair.h1), HelmTheme.nsColor(pair.h2))
@@ -642,7 +651,14 @@ enum HelmDomainHue: String, CaseIterable {
     /// The result is monotone: adopting this can only ever remove a false
     /// signal from a legacy palette, never add one.
     func identityHex(in theme: HelmTheme) -> String {
-        theme.isDaylight ? daylightPair.h1 : HelmTint.neutral.hex(in: theme)
+        if let accent = paletteBlue(in: theme) { return accent }
+        return theme.isDaylight ? daylightPair.h1 : HelmTint.neutral.hex(in: theme)
+    }
+
+    /// The blue hue's replacement on one of the six palettes (its accent), and
+    /// `nil` for every other hue and every other theme.
+    private func paletteBlue(in theme: HelmTheme) -> String? {
+        self == .blue && theme.isPaletteTheme ? theme.accentHex : nil
     }
 
     /// Direction for a ribbon: left to right (`90deg` in the prototype's CSS).

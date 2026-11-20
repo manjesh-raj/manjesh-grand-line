@@ -1297,6 +1297,12 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_THEME_SPLIT_TESTS"] == "1" {
             exit(ThemeSplitSelfTest.run() ? 0 : 1)
         }
+        // `fm/grand-line-color-options`: the six palettes as theme families, their
+        // pinned heroes and the classic families' heroes left alone. See
+        // ThemePalettesSelfTest.swift's header.
+        if ProcessInfo.processInfo.environment["FM_RUN_THEME_PALETTES_TESTS"] == "1" {
+            exit(ThemePalettesSelfTest.run() ? 0 : 1)
+        }
         if ProcessInfo.processInfo.environment["FM_RUN_THEME_SPLIT_CONSOLE_TESTS"] == "1" {
             exit(ThemeSplitConsoleSelfTest.run() ? 0 : 1)
         }

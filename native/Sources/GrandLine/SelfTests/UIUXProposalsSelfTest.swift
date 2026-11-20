@@ -467,7 +467,7 @@ enum UIUXProposalsSelfTest {
               "S25: only the chosen card wears the ring", &ok)
         sheet.debugProfileCards.first?.debugKey(124)
         check(sheet.debugProfileCards.last?.isSelected == true, "S25: the right arrow moves the choice to the next card", &ok)
-        check(sheet.debugThemeCards.count == AppThemeFamily.allCases.count,
+        check(sheet.debugThemeCards.count == AppThemeFamily.members(of: .classic).count,
               "S25: the look step shows the seven family tiles", &ok)
         check(sheet.preferredContentSize.height > 200 && sheet.preferredContentSize.height < 470,
               "S25: the sheet hugs its content (\(sheet.preferredContentSize.height)pt, was a fixed 470)", &ok)

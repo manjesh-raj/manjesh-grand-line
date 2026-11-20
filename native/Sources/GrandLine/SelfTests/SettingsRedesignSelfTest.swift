@@ -73,6 +73,7 @@ enum SettingsRedesignSelfTest {
         for check in [checkSearchFiltersTheSidebar,
                       checkBackAndForwardWalkTheHistory,
                       checkTheThemeGridRendersFiltersAndSelects,
+                      checkThePalettesAreTheirOwnGroup,
                       checkADependentRowIsDimmedAndInert,
                       checkTheWidePageCollapsesAndComesBack,
                       checkTheClipboardHistorySwitchDrivesCapture,
@@ -287,6 +288,86 @@ enum SettingsRedesignSelfTest {
     }
 
     // MARK: 3. The theme grid
+
+    /// The six palettes sit in a group of their own under the seven classic
+    /// families: a heading between the two sets, the classics first and in
+    /// their old order, every palette selectable like any family, and the
+    /// page's "is showing" line and search following a palette too.
+    private static func checkThePalettesAreTheirOwnGroup(_ ok: inout Bool) {
+        print("\n-- the palettes are a group of their own, under the classics --")
+        let followBefore = AppSettings.shared.followSystemAppearance
+        AppSettings.shared.followSystemAppearance = false
+        defer { AppSettings.shared.followSystemAppearance = followBefore }
+        ThemeManager.shared.setTheme(.dusk)
+        let settings = makeSettings()
+        let window = mount(settings)
+        defer { _ = window }
+        settings.select(.appearance)
+        settings.view.layoutSubtreeIfNeeded()
+
+        let classics = AppThemeFamily.members(of: .classic)
+        let palettes = AppThemeFamily.members(of: .palette)
+        check(classics.map(\.title) == ["Daylight", "Graphite", "Paper", "Harbor", "Grove", "Ember", "High Contrast"],
+              "the classic group is the seven families, in their old order", &ok)
+        check(palettes.map(\.title) == ["Chart", "Porcelain", "Midnight", "Powder", "Pearl", "Forest"],
+              "the palette group is the six palettes, in the order they were proposed", &ok)
+        let cards = settings.debugThemeCards
+        check(cards.map { $0.theme.id } == (classics + palettes).map(\.darkID),
+              "the grid draws the classics, then the palettes (got \(cards.map { $0.theme.id }))", &ok)
+
+        guard let heading = settings.debugPaletteGroupHeading else {
+            fail("the grid has no Palettes heading", &ok)
+            return
+        }
+        check(heading.stringValue == "PALETTES", "the heading reads PALETTES (got \(heading.stringValue))", &ok)
+        check(heading.accessibilityLabel() == "Palettes", "the heading is spoken as Palettes", &ok)
+        check(heading.window != nil && !heading.isHidden && heading.frame.height > 0,
+              "the heading is in the window and laid out", &ok)
+        // Between the two sets on screen: below the last classic tile and
+        // above the first palette tile, in window coordinates.
+        func top(_ view: NSView) -> CGFloat { view.convert(view.bounds, to: nil).maxY }
+        func bottom(_ view: NSView) -> CGFloat { view.convert(view.bounds, to: nil).minY }
+        if let lastClassic = cards.first(where: { $0.theme.id == classics.last?.darkID }),
+           let firstPalette = cards.first(where: { $0.theme.id == palettes.first?.darkID }) {
+            check(bottom(lastClassic) > top(heading) && bottom(heading) > top(firstPalette),
+                  "the heading sits between the last classic tile and the first palette tile", &ok)
+        } else {
+            fail("could not find the last classic and first palette tiles", &ok)
+        }
+        let headingInk = heading.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        check(headingInk.map { HelmContrast.ratio($0, HelmTheme.nsColor(ThemeManager.shared.theme.backgroundHex)) >= HelmContrast.textTarget } == true,
+              "the heading clears the text floor on the page", &ok)
+
+        // Selecting a palette is a real activation, like a classic family.
+        guard let fathom = cards.first(where: { $0.theme.id == "fathom" }) else {
+            fail("no Fathom tile to select", &ok)
+            return
+        }
+        _ = fathom.hoverView.accessibilityPerformPress()
+        settings.view.layoutSubtreeIfNeeded()
+        check(ThemeManager.shared.theme.id == "fathom",
+              "pressing Chart moved the theme to fathom, the register the app was in (got \(ThemeManager.shared.theme.id))", &ok)
+        let active = settings.debugThemeCards.filter(\.isActive).map { $0.theme.id }
+        check(active == ["fathom"], "after selecting Chart only its tile is marked (got \(active))", &ok)
+        check(settings.debugPaletteGroupHeading != nil, "the heading survives the grid's rebuild on a theme change", &ok)
+        let note = settings.debugAppearanceNote.stringValue
+        check(note.hasPrefix("Fathom is showing."), "the note under the grid reads \"\(note)\"", &ok)
+
+        // Light moves a palette to its own light register.
+        _ = settings.debugAppearanceModeTabs.debugPillsForAccessibilityTests()[0].accessibilityPerformPress()
+        settings.view.layoutSubtreeIfNeeded()
+        check(ThemeManager.shared.theme.id == "chart", "Light moves Fathom to Chart (got \(ThemeManager.shared.theme.id))", &ok)
+
+        // Search finds Appearance by a palette's or a register's name.
+        for typed in ["palettes", "Chart", "fathom", "porcelain", "abyss", "oat"] {
+            settings.debugSetSearchText(typed)
+            check(settings.debugVisibleCategories.contains(.appearance),
+                  "searching \"\(typed)\" keeps Appearance (got \(settings.debugVisibleCategories.map(\.rawValue)))", &ok)
+        }
+        settings.debugSetSearchText("")
+        ThemeManager.shared.setTheme(.dusk)
+        if ok { print("  ok   classics then a Palettes heading then six palettes; select, note and search follow") }
+    }
 
     private static func checkTheThemeGridRendersFiltersAndSelects(_ ok: inout Bool) {
         print("\n-- the app theme grid draws the seven families, and selects --")

@@ -222,7 +222,7 @@ enum WorkspaceSidebarInk {
     private static var cached: (key: String, ink: HelmHeroColumn.NavInk)?
 
     static func of(_ theme: HelmTheme) -> HelmHeroColumn.NavInk {
-        let key = "\(theme.id)|\(theme.accentHex)"
+        let key = "\(theme.id)|\(theme.heroAccentHex)"
         if let cached, cached.key == key { return cached.ink }
         let ink = HelmHeroColumn.navInk(for: tone, in: theme)
         cached = (key, ink)

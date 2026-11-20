@@ -36,6 +36,21 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 9.1.0 - Six colour palettes as app theme families
+
+Six two-colour palettes join the seven app theme families, each with a light and a dark register, from the colour-options board (`data/grand-line-color-options/`).
+They are Chart and Fathom (deep blue and warm creme), Porcelain and Port (black cherry and porcelain), Ice and Midnight (ice blue and midnight navy), Lavender and Powder (powder blue and lavender white), Pearl and Abyss (midnight teal and pearl), and Oat and Forest (oat milk and forest green).
+Every classic family draws exactly what it drew before.
+It is a minor release: two tokens and one option are added, and nothing is removed.
+
+- `HelmHeroSurface` 1.1.0 → 1.2.0 (minor): `palette(for:)` draws from the theme's hero colour, `HelmTheme.heroAccentHex`. That is the register's pinned hero when it has one, otherwise the accent, so every classic register and terminal scheme gets the palette it always had. Fathom pins its heroes to Chart's deep blue `#07518A`, and Forest pins them to Oat's forest green `#1D4A35`. A dark register's accent has to be light to read as text, and the hero rule deepens a light colour by a third, which turned those two palettes' heroes grey.
+- `HelmModuleCard` 1.4.0 → 1.5.0 (minor): a hero card's `.themeAccent` tone is the theme's hero colour, so Home's Claude, Fleet and Hosts cards, the hero columns and the split cards follow a pinned hero with the sidebar. A preset or a custom card colour is unchanged in every theme.
+- `HelmDomainHue` 1.0.0 → 1.1.0 (minor): on one of the six palettes the blue hue resolves to the palette's accent, in `pair(in:)` and `identityHex(in:)`. Primary buttons (New Task, Add Host), a page's blue tile and every other place that asks for the app's blue take the palette instead of Daylight's `3D6BE8`. The classic families keep §2.2's pairs exactly.
+- `Settings (page)` 1.0.0 → 1.1.0 (minor): Appearance's theme grid draws the seven classic families as before, then a PALETTES heading and the six palettes in the same tiles. A palette is selected, marked and named in the "is showing" line like any family, and Settings' search finds every palette and register by name. The welcome sheet's look step keeps the seven classics.
+- `WorkspaceSidebar` 4.0.0 → 4.1.0 (minor): the sidebar's gradient follows the theme's hero colour, so Fathom's and Forest's sidebars are their pinned colour.
+- `Tasks board (page)` 1.1.0 → 1.2.0 (minor): the Tasks band, the Backlog lane band and the Calendar's month head take the hero colour.
+- `Setup (page)` 1.0.0 → 1.1.0 (minor): Setup's hero takes the hero colour in its accent tone. Its amber and red tones are unchanged.
+
 ## 9.0.0 - DevOps Hub as a page of project cards
 
 The design picked on the second DevOps Hub board (`data/grand-line-devops-hub-page/`, layout A): the DevOps Hub row opens a page on Connections' pattern, and the projects are cards on it rather than rows in the sidebar.

@@ -358,7 +358,7 @@ final class ShiftCalendarHeroHead: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        let accent = HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+        let accent = HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex))
         let palette = HelmHeroSurface.palette(accent: accent, quietInk: Double(Self.quietInkAlpha))
         surface.apply(palette)
         let ink = HelmContrast.color(palette.ink)

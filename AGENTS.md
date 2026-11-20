@@ -1196,6 +1196,14 @@ noted.
   is Daylight's own card-over-paper). `SettingsController`'s band is the worked
   example, and note it is the *page's* view: `HelmPageSidebar.Surface.panel`
   paints the nav list as a card, which is a smaller region than the column.
+- **A hero's base colour is `theme.heroAccentHex`, never `accentHex`.** The six
+  palettes (`AppThemeFamily.Group.palette`) may pin a dark register's heroes
+  to the colour the palette is named for, and a hero read from the accent
+  paints that register's grey-steel derived hero beside a pinned sidebar.
+  Anything that paints a fixed Daylight blue for the classic families gates a
+  palette's own colour on `theme.isPaletteTheme`, so the seven classic
+  families stay pixel-identical. `ThemePalettesSelfTest` guards both
+  ([`44-new-theme-families.md`](docs/history/44-new-theme-families.md)).
 - **A new terminal scheme is one surface step, and the step is the family's
   own canonical editor background.** In a scheme `backgroundHex` is the
   terminal background, so a scheme whose card differs from its page reopens

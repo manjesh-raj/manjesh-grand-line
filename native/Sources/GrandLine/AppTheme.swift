@@ -1,7 +1,8 @@
 // Grand Line - native macOS app.
 //
-// The app's own themes: seven families, each with a light and a dark
-// register, and nothing else.
+// The app's own themes: thirteen families, each with a light and a dark
+// register, and nothing else. Seven are the classic set; six are the
+// two-colour palettes, which Appearance lists in a group of their own.
 //
 // `fm/grandline-theme-split-app-terminal`. Until this existed the app had one
 // theme setting and it was a terminal colour scheme: picking Catppuccin Mocha
@@ -42,11 +43,42 @@ struct AppThemeInfo {
     let sideHex: String
     /// The terminal scheme this register uses under "Match app theme".
     let companionSchemeID: String
+    /// The colour this register's heroes are drawn from, when it is not the
+    /// accent. See `AppThemeRegister.hero`.
+    var heroHex: String? = nil
 }
 
-/// The seven families the Appearance page offers, in the prototype's order.
+/// The families the Appearance page offers: the seven classics in the
+/// prototype's order, then the six palettes in the order they were proposed
+/// (`data/grand-line-color-options/`).
 enum AppThemeFamily: String, CaseIterable {
     case daylight, graphite, paper, harbor, grove, ember, highContrast = "high-contrast"
+    case chart, porcelain, midnight, powder, pearl, forest
+
+    /// Which of Appearance's two groups a family sits in.
+    enum Group: CaseIterable {
+        /// The seven families the theme split shipped with.
+        case classic
+        /// The two-colour palettes: each family is derived from a pair of
+        /// colours, one for the paper and one for the accent and the hero.
+        case palette
+
+        var title: String {
+            switch self {
+            case .classic: return "Themes"
+            case .palette: return "Palettes"
+            }
+        }
+    }
+
+    var group: Group {
+        switch self {
+        case .daylight, .graphite, .paper, .harbor, .grove, .ember, .highContrast: return .classic
+        case .chart, .porcelain, .midnight, .powder, .pearl, .forest: return .palette
+        }
+    }
+
+    static func members(of group: Group) -> [AppThemeFamily] { allCases.filter { $0.group == group } }
 
     var title: String {
         switch self {
@@ -57,6 +89,12 @@ enum AppThemeFamily: String, CaseIterable {
         case .grove: return "Grove"
         case .ember: return "Ember"
         case .highContrast: return "High Contrast"
+        case .chart: return "Chart"
+        case .porcelain: return "Porcelain"
+        case .midnight: return "Midnight"
+        case .powder: return "Powder"
+        case .pearl: return "Pearl"
+        case .forest: return "Forest"
         }
     }
 
@@ -69,6 +107,12 @@ enum AppThemeFamily: String, CaseIterable {
         case .grove: return "grove"
         case .ember: return "ember"
         case .highContrast: return "contrast-light"
+        case .chart: return "chart"
+        case .porcelain: return "porcelain"
+        case .midnight: return "ice"
+        case .powder: return "lavender"
+        case .pearl: return "pearl"
+        case .forest: return "oat"
         }
     }
 
@@ -81,6 +125,12 @@ enum AppThemeFamily: String, CaseIterable {
         case .grove: return "moss"
         case .ember: return "cinder"
         case .highContrast: return "contrast-dark"
+        case .chart: return "fathom"
+        case .porcelain: return "port"
+        case .midnight: return "midnight"
+        case .powder: return "powder"
+        case .pearl: return "abyss"
+        case .forest: return "forest"
         }
     }
 
@@ -112,6 +162,20 @@ struct AppThemeRegister {
     let onAccent: String
     /// The prototype's `COMPANION` entry for this register.
     let companion: String
+    /// The colour every hero in this register is drawn from, when it is not
+    /// the accent: the sidebar column, Home's hero cards, the split cards and
+    /// the lane bands. `nil` (every classic register) means the accent, as it
+    /// always has.
+    ///
+    /// A dark register's accent has to read as text on a dark card, so it is
+    /// light, and the hero rule (`HelmHeroSurface.palette(accent:)`) deepens a
+    /// light colour a third of the way to black before white text clears the
+    /// floor. That turns a palette's deep blue into a grey steel blue. Two
+    /// palettes pin their dark hero to the colour they are named for instead,
+    /// because that colour still stands clear of their dark ground (Fathom's
+    /// deep blue at 1.92:1, Forest's green at 1.62:1). The other four would
+    /// sink into their own ground or card, so they keep the derived hero.
+    var hero: String? = nil
 
     /// The prototype's `APP` and `COMPANION` tables. Daylight and Dusk are
     /// listed for the side value and the companion; their surfaces, ink and
@@ -174,18 +238,82 @@ struct AppThemeRegister {
               ground: "000000", side: "0D0D0D", card: "111111", hair: "8A8A8A", ink: "FFFFFF", muted: "D6D6D6",
               accent: "85B7FF", ok: "6FE39A", warn: "FFD166", bad: "FF8A80", info: "85B7FF",
               pair: "contrast-light", onAccent: "111111", companion: "oxocarbon-dark"),
+        // The six palettes. Each is a pair of colours: the light register's
+        // paper and its accent and hero, with the dark register built from the
+        // dark colour and the light one as its ink. `info` (the link colour and
+        // `HelmTint.info`) is the accent in every palette register, as it is on
+        // Daylight, so no link or info tile stays blue on a palette that is not. Every text pair clears
+        // 4.5:1 (`ThemeSplitSelfTest`), and the measurements are in
+        // `data/grand-line-color-options/report.md`.
+        .init(id: "chart", family: .chart, name: "Chart", mode: .light,
+              ground: "FFF0D5", side: "F8E5C3", card: "FFFAF0", hair: "EAD8B6", ink: "12243A", muted: "6A5838",
+              accent: "07518A", ok: "1E6B47", warn: "84520E", bad: "AE2F2B", info: "07518A",
+              pair: "fathom", onAccent: "FFFFFF", companion: "solarized-light"),
+        .init(id: "fathom", family: .chart, name: "Fathom", mode: .dark,
+              ground: "0B1622", side: "0F1C2A", card: "132230", hair: "283B4F", ink: "FFF0D5", muted: "B4A68A",
+              accent: "6CAEE6", ok: "5CC08E", warn: "E8B25A", bad: "F2847A", info: "6CAEE6",
+              pair: "chart", onAccent: "0B1622", companion: "tokyo-night-dark", hero: "07518A"),
+        .init(id: "porcelain", family: .porcelain, name: "Porcelain", mode: .light,
+              ground: "FFF0D5", side: "F7E3C6", card: "FFFAF0", hair: "EAD5BA", ink: "2A1218", muted: "70544A",
+              accent: "430D1C", ok: "226D48", warn: "84520E", bad: "B8391C", info: "430D1C",
+              pair: "port", onAccent: "FFFFFF", companion: "rose-pine-dawn"),
+        .init(id: "port", family: .porcelain, name: "Port", mode: .dark,
+              ground: "1A0C10", side: "201015", card: "28141A", hair: "43262E", ink: "FFF0D5", muted: "BFA398",
+              accent: "E8919F", ok: "63C18F", warn: "E9B45C", bad: "FF8F6B", info: "E8919F",
+              pair: "porcelain", onAccent: "1A0C10", companion: "rose-pine-main"),
+        .init(id: "ice", family: .midnight, name: "Ice", mode: .light,
+              ground: "E9F0F5", side: "DDE7EF", card: "FFFFFF", hair: "CFDBE6", ink: "172C45", muted: "506274",
+              accent: "172C45", ok: "1D6E4C", warn: "855610", bad: "B23A34", info: "172C45",
+              pair: "midnight", onAccent: "FFFFFF", companion: "nord-snow"),
+        .init(id: "midnight", family: .midnight, name: "Midnight", mode: .dark,
+              ground: "0E1B2B", side: "122337", card: "172C45", hair: "2C4663", ink: "E9F0F5", muted: "A4B5C7",
+              accent: "8DBCE8", ok: "62CC9E", warn: "EDB85F", bad: "F79086", info: "8DBCE8",
+              pair: "ice", onAccent: "0E1B2B", companion: "nord-polar"),
+        .init(id: "lavender", family: .powder, name: "Lavender", mode: .light,
+              ground: "E9E8F8", side: "D9E2F6", card: "FFFFFF", hair: "D2D3EC", ink: "1E2142", muted: "565A7D",
+              accent: "3863A6", ok: "1D6F4C", warn: "835710", bad: "B0363E", info: "3863A6",
+              pair: "powder", onAccent: "FFFFFF", companion: "catppuccin-latte"),
+        .init(id: "powder", family: .powder, name: "Powder", mode: .dark,
+              ground: "15172B", side: "1A1D34", card: "20233D", hair: "363A5C", ink: "E9E8F8", muted: "A6A8CA",
+              accent: "8DB9F0", ok: "6CCB9C", warn: "EBBE6A", bad: "F58C8C", info: "8DB9F0",
+              pair: "lavender", onAccent: "15172B", companion: "catppuccin-mocha"),
+        .init(id: "pearl", family: .pearl, name: "Pearl", mode: .light,
+              ground: "F2F0E9", side: "E8E5DB", card: "FFFFFF", hair: "DEDACD", ink: "112430", muted: "5B6164",
+              accent: "0B3048", ok: "1D6E4E", warn: "855810", bad: "B23A30", info: "0B3048",
+              pair: "abyss", onAccent: "FFFFFF", companion: "light-owl"),
+        .init(id: "abyss", family: .pearl, name: "Abyss", mode: .dark,
+              ground: "071923", side: "0A2131", card: "0B3048", hair: "1F4A66", ink: "F2F0E9", muted: "A3B6BF",
+              accent: "62BCD4", ok: "62CD9C", warn: "EEBA64", bad: "F78E82", info: "62BCD4",
+              pair: "pearl", onAccent: "071923", companion: "night-owl"),
+        .init(id: "oat", family: .forest, name: "Oat", mode: .light,
+              ground: "EEE5D4", side: "E5D9C3", card: "FBF7EF", hair: "D9CBB1", ink: "1A2820", muted: "5F5542",
+              accent: "1D4A35", ok: "23703F", warn: "80530E", bad: "A93226", info: "1D4A35",
+              pair: "forest", onAccent: "FFFFFF", companion: "gruvbox-light"),
+        .init(id: "forest", family: .forest, name: "Forest", mode: .dark,
+              ground: "111A15", side: "15201A", card: "1C2A22", hair: "31432F", ink: "EEE5D4", muted: "ADA590",
+              accent: "82C49E", ok: "7BD08F", warn: "E6B65C", bad: "F08372", info: "82C49E",
+              pair: "oat", onAccent: "111A15", companion: "gruvbox-dark", hero: "1D4A35"),
     ]
 
     static func register(id: String) -> AppThemeRegister? { all.first { $0.id == id } }
 
+    /// Every family's and register's name in lower case, for Settings'
+    /// search: a search for "fathom" or "porcelain" finds Appearance.
+    static var searchTerms: String {
+        (AppThemeFamily.allCases.map(\.title) + all.map(\.name))
+            .map { $0.lowercased() }
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            .joined(separator: " ")
+    }
+
     var themeInfo: AppThemeInfo {
-        AppThemeInfo(family: family, sideHex: side, companionSchemeID: companion)
+        AppThemeInfo(family: family, sideHex: side, companionSchemeID: companion, heroHex: hero)
     }
 }
 
 extension HelmTheme {
 
-    /// The fourteen app themes, family by family, light then dark.
+    /// The twenty-six app themes, family by family, light then dark.
     static let appThemes: [HelmTheme] = AppThemeFamily.allCases.flatMap { family in
         [family.lightID, family.darkID].compactMap { id -> HelmTheme? in
             guard let register = AppThemeRegister.register(id: id) else { return nil }
@@ -201,7 +329,7 @@ extension HelmTheme {
         appThemes.first { $0.id == id }
     }
 
-    /// Is this one of the fourteen app themes, rather than a terminal scheme
+    /// Is this one of the app themes, rather than a terminal scheme
     /// the app has been put on directly (which only a self-test does)?
     var isAppTheme: Bool { app != nil }
 
@@ -212,12 +340,24 @@ extension HelmTheme {
     /// its own companion, which is exactly what the app did before the split
     /// - so every suite that sweeps `allThemes` through `setTheme` still sees
     /// the terminal it always saw.
+    /// The colour this theme's heroes are drawn from: the register's pinned
+    /// hero when it has one, otherwise the accent. Every classic register and
+    /// every terminal scheme answers its accent, so their heroes are exactly
+    /// what they were before the palettes existed.
+    var heroAccentHex: String { app?.heroHex ?? accentHex }
+
+    /// Is this a register of one of the six palettes? The places that paint
+    /// a fixed Daylight blue for the classic families ask this, so the
+    /// palettes can take their own colour while the classics stay exactly as
+    /// they were.
+    var isPaletteTheme: Bool { app?.family.group == .palette }
+
     var companionScheme: HelmTheme {
         guard let id = app?.companionSchemeID, let scheme = HelmTheme.theme(id: id) else { return self }
         return scheme
     }
 
-    /// One of the twelve app registers that are not Daylight or Dusk.
+    /// One of the twenty-four app registers that are not Daylight or Dusk.
     ///
     /// Every surface, ink and status value is the prototype's. What the
     /// prototype does not specify, `DaylightTokens` still needs, and each of
