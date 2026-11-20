@@ -509,13 +509,13 @@ enum HelmInputSurface {
     /// So focus is carried by the accent border and the glow alone - which is
     /// what the twelve pre-Daylight palettes have always done, making this one
     /// rule for all fourteen rather than a Daylight special case.
-    static func fill(_ theme: HelmTheme, focused: Bool) -> NSColor {
+    static func fill(_ theme: HelmTheme, focused: Bool, surface: HelmField.Surface = .inset) -> NSColor {
         // `focused` is deliberately kept even though both states answer the
         // same today: this is the one place the question is asked, so a future
         // change to the focused surface has exactly one place to land and
         // cannot reintroduce a layer that moves while its content does not.
         _ = focused
-        return HelmField.fill(theme)
+        return HelmField.fill(theme, surface: surface)
     }
 
     /// Apply the resting or focused chrome to a sunken well.
@@ -538,21 +538,22 @@ enum HelmInputSurface {
     static func apply(chrome: NSView, shadowHost: NSView? = nil,
                       theme: HelmTheme, focused: Bool,
                       hue: HelmDomainHue? = nil, isRow: Bool = false,
+                      surface: HelmField.Surface = .inset,
                       animated: Bool = false) {
         HelmMotion.animateLayers(animated, duration: focusTransitionDuration,
                                  on: [chrome.layer, shadowHost?.layer]) {
             applyChrome(chrome: chrome, shadowHost: shadowHost, theme: theme,
-                        focused: focused, hue: hue, isRow: isRow)
+                        focused: focused, hue: hue, isRow: isRow, surface: surface)
         }
     }
 
     private static func applyChrome(chrome: NSView, shadowHost: NSView?,
                                     theme: HelmTheme, focused: Bool,
-                                    hue: HelmDomainHue?, isRow: Bool) {
-        HelmField.applySunken(to: chrome, theme: theme, isRow: isRow)
+                                    hue: HelmDomainHue?, isRow: Bool, surface: HelmField.Surface) {
+        HelmField.applySunken(to: chrome, theme: theme, isRow: isRow, surface: surface)
         // Both states through `fill(_:focused:)`, so the layer and whatever
         // content paints over it cannot resolve to different colours.
-        chrome.layer?.backgroundColor = fill(theme, focused: focused).cgColor
+        chrome.layer?.backgroundColor = fill(theme, focused: focused, surface: surface).cgColor
         guard focused else {
             // Explicitly back to the hairline: `applySunken` only recolours,
             // so without this a well that has been focused once keeps the
