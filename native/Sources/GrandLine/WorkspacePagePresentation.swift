@@ -48,8 +48,10 @@ protocol WorkspaceInspectorSource: AnyObject {
     /// Called whenever `inspectorContent` may have changed: a new selection,
     /// a tab switch, or a store change under the selected item.
     var onInspectorContentChanged: (() -> Void)? { get set }
-    /// The page asking the shell to open the inspector, as the captain's own
-    /// request would - a row's Show in Inspector, or a double click.
+    /// The page asking the shell to open the inspector on its details - a
+    /// row's Show in Inspector, a double click, or a form like Add Host's.
+    /// Unlike the toolbar's inspector button it does not hold the pane open:
+    /// it closes with the details, and when the page changes.
     var onShowInspector: (() -> Void)? { get set }
     /// Whether the inspector may close now. A page with an edit in progress
     /// (H11: a host form with unsaved changes) asks the captain first, and

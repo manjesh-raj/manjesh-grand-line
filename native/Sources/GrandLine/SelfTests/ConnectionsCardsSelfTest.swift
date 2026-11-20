@@ -28,6 +28,9 @@
 //     there; and leaving unsaved changes asks Save, Discard or Cancel.
 //   - K6, K7 and K8: a key is edited, and made, in the side panel too, with
 //     the hosts using it as links to them.
+//   - A form's inspector belongs to Connections: leaving the page closes it
+//     rather than leaving the next page's crew panel open in its place, and
+//     only the toolbar's inspector button holds the pane open across pages.
 //   - X1: Import from SSH Config previews a fixture config in the panel and
 //     saves exactly the ticked hosts. No suite reads the captain's own.
 //
@@ -63,7 +66,7 @@ enum ConnectionsCardsSelfTest {
             settle(shell)
             for check in [checkGroupedOnFirstShow, checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
                           checkHostCards, checkFlatHostGrid, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
-                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkSSHConfigImport] {
+                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkAFormsInspectorStaysOnItsPage, checkSSHConfigImport] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -930,6 +933,120 @@ enum ConnectionsCardsSelfTest {
             keyStore.debugReplaceAll(keys)
         }
         settle(shell)
+    }
+
+    // MARK: A form's inspector stays on its page
+
+    /// Add Host, New Key and a host's pencil open their form in the shell's
+    /// inspector, and that inspector belongs to Connections. Measured before
+    /// the fix: the page's request held the pane open the way the toolbar's
+    /// inspector button does, so on Console and Home it stayed open on the
+    /// crew panel ("Ask the crew") that nobody had opened there. Leaving the
+    /// page now closes it, by the sidebar or by Back and Forward, and coming
+    /// back reopens the form with what was typed in it. A form opened over
+    /// an inspector the toolbar opened hands the pane back when it closes.
+    private static func checkAFormsInspectorStaysOnItsPage(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                           _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        // Nothing selected and nothing held open: the launch state.
+        hosts.hostsGrid.setSelected(nil, notify: true)
+        shell.debugResetInspectorPreference()
+        settle(shell)
+        defer { shell.debugResetInspectorPreference(); settle(shell) }
+        check(shell.debugInspectorIsCollapsed, "fixture: the inspector is open before Add Host", &ok)
+
+        func leaves(_ form: String, to destinations: [RailDestination]) {
+            for destination in destinations {
+                shell.workspace.navigator.show(destination)
+                settle(shell)
+                check(shell.debugInspectorIsCollapsed,
+                      "\(form)'s inspector stayed open on \(destination.rawValue), showing \(shell.inspector.debugTitle)", &ok)
+            }
+        }
+
+        // Add Host, then away by the sidebar to Console and Home.
+        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        settle(shell)
+        guard let draft = hosts.hostPanel, hosts.hostPanelKey == HostsController.newHostPanelKey,
+              !shell.debugInspectorIsCollapsed else {
+            return fail("Add Host did not open its form in the inspector", &ok)
+        }
+        draft.debugType("half-typed", into: draft.debugLabelField)
+        leaves("New Host", to: [.console, .homeCanvas])
+        // Back to Console stays closed; back again to Connections reopens the
+        // form, with the draft; Forward leaves it again.
+        shell.debugStep(.back)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed && shell.debugInspectorSource == nil,
+              "New Host's inspector is open after Back to Console, showing \(shell.inspector.debugTitle)", &ok)
+        shell.debugStep(.back)
+        settle(shell)
+        check(shell.debugInspectorSource === hosts && !shell.debugInspectorIsCollapsed
+                && shell.inspector.hostedContentView === draft.view && draft.debugLabelField.stringValue == "half-typed",
+              "Back to Connections did not reopen the New Host draft (showing \(shell.inspector.debugTitle))", &ok)
+        shell.debugStep(.forward)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed, "New Host's inspector is open after Forward to Console", &ok)
+        // Cancel closes the pane, since nothing was open before the form.
+        showHosts(shell)
+        hosts.hostPanel?.debugFooterButtons.first?.performClick(nil)
+        settle(shell)
+        check(hosts.hostPanel == nil && shell.debugInspectorIsCollapsed,
+              "Cancel on New Host left the inspector open on \(shell.inspector.debugTitle)", &ok)
+
+        // A host's pencil.
+        if let host = shell.workspace.hostStore.hosts.first(where: { $0.label == "edge-proxy-01" }) {
+            hosts.openHostPanel(forEditing: host)
+            settle(shell)
+            check(!shell.debugInspectorIsCollapsed, "the pencil did not open the host's form", &ok)
+            leaves("The host form", to: [.console])
+            showHosts(shell)
+            hosts.hostsGrid.setSelected(nil, notify: true)
+            settle(shell)
+        } else {
+            fail("fixture: edge-proxy-01 is missing", &ok)
+        }
+
+        // New Key.
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        hosts.debugAddKeySplit.mainButton.performClick(nil)
+        settle(shell)
+        check(hosts.keyPanel != nil && !shell.debugInspectorIsCollapsed, "New Key did not open its form in the inspector", &ok)
+        leaves("New Key", to: [.homeCanvas])
+        shell.workspace.navigator.show(.hosts)
+        hosts.selectModuleTab(named: "Keys")
+        settle(shell)
+        hosts.keyPanel?.debugFooterButtons.first?.performClick(nil)
+        settle(shell)
+        check(hosts.keyPanel == nil && shell.debugInspectorIsCollapsed, "Cancel on New Key left the inspector open", &ok)
+        hosts.selectModuleTab(named: "Hosts")
+        settle(shell)
+
+        // The toolbar's own request still holds: opened on Home, the form
+        // takes the pane over on Connections and hands it back on Cancel,
+        // and Console then shows the crew panel it was opened for.
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === shell.crewPanel.view,
+              "the inspector button did not open the crew panel on Home", &ok)
+        showHosts(shell)
+        hosts.debugAddHostSplit.mainButton.performClick(nil)
+        settle(shell)
+        check(shell.inspector.debugTitle == "New Host", "Add Host over an open inspector shows \(shell.inspector.debugTitle)", &ok)
+        hosts.hostPanel?.debugFooterButtons.first?.performClick(nil)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed, "Cancel on New Host closed the inspector the toolbar opened", &ok)
+        shell.workspace.navigator.show(.console)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === shell.crewPanel.view,
+              "the inspector the toolbar opened is not on Console's crew panel (\(shell.inspector.debugTitle))", &ok)
+        _ = shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector)
+        settle(shell)
+        if ok { print("  OK   a form's inspector stays on Connections, and the toolbar's holds across pages") }
     }
 
     // MARK: X1

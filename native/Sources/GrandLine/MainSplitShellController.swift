@@ -196,8 +196,10 @@ final class MainSplitShellController: WorkspaceShellController {
     /// it starts on, so selecting a host or a credential shows its details,
     /// as the prototype does.
     private var inspectorWanted = true
-    /// The captain opened the inspector themselves, so it stays open with its
-    /// empty state while nothing is selected.
+    /// The inspector was opened from the toolbar's own button, so it
+    /// stays open on every page - on a page's empty state, or the crew panel.
+    /// A page's own request (`onShowInspector`) never sets it: that one opens
+    /// the pane on the page's details and lets it close with them.
     private var inspectorPinnedOpen = false
     /// The page whose details the open inspector last brought in.
     private var inspectorEntranceSource: ObjectIdentifier?
@@ -856,10 +858,31 @@ final class MainSplitShellController: WorkspaceShellController {
         toolbar.onToggleInspector?()
     }
 
-    /// The captain's own request, from the inspector button, the pane's close
-    /// button, or a page's Show in Inspector: the only route that may widen
-    /// the window for it.
+    /// The toolbar's inspector button, ⌥⌘I and the pane's close button. This
+    /// and a page's request (`showInspectorForPage`) are the only routes that
+    /// may widen the window for the inspector.
     func setInspectorShown(_ shown: Bool) {
+        setInspectorShown(shown, holdingOpen: true)
+    }
+
+    /// A page's request: Add Host's form, a host's pencil, a row's Show in
+    /// Inspector. It opens the pane on the page's details, and turns details
+    /// back on if they had been switched off, but it does not hold the pane
+    /// open. The details belong to this page, so the pane closes with them
+    /// and when the page changes. This route used to hold the pane open the
+    /// way the toolbar does, which left the next page's crew panel open where
+    /// nobody had asked for it. An inspector the toolbar already holds open
+    /// stays held, so a form opened over it hands the pane back on close.
+    private func showInspectorForPage() {
+        guard inspectorSource?.inspectorContent != nil else {
+            inspectorWanted = true
+            reconcileInspector()
+            return
+        }
+        setInspectorShown(true, holdingOpen: false)
+    }
+
+    private func setInspectorShown(_ shown: Bool, holdingOpen: Bool) {
         // H11: closing the inspector over unsaved changes asks the page
         // first; a cancel leaves the inspector exactly as it was.
         if !shown, !inspectorItem.isCollapsed, let source = inspectorSource, !source.inspectorShouldClose() {
@@ -867,7 +890,7 @@ final class MainSplitShellController: WorkspaceShellController {
             return
         }
         inspectorWanted = shown
-        inspectorPinnedOpen = shown
+        if holdingOpen { inspectorPinnedOpen = shown }
         // S27: a page with no details shows the crew panel while the pane is
         // open, and lets go of it when the pane closes.
         if inspectorSource == nil { inspector.setContent(shown ? crewPanelContent() : nil) }
@@ -1038,7 +1061,7 @@ final class MainSplitShellController: WorkspaceShellController {
                 }
                 source.onShowInspector = { [weak self, weak source] in
                     guard let self, let source, self.inspectorSource === source else { return }
-                    self.setInspectorShown(true)
+                    self.showInspectorForPage()
                 }
             }
         }

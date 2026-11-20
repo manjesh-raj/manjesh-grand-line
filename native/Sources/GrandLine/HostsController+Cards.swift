@@ -346,8 +346,7 @@ extension HostsController {
         return parts.joined(separator: ", ")
     }
 
-    /// Select `key` and open the inspector on it, as the captain's own
-    /// request would (Space on a card).
+    /// Select `key` and open the inspector on it (Space on a card).
     func showDetails(forKey key: String) {
         guard mayLeaveHostPanel(for: key) else { return }
         hostsGrid.setSelected(key, notify: false)
