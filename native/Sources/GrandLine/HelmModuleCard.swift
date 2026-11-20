@@ -445,7 +445,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// The colour a hero card is painted in.
     struct HeroTone: Equatable {
         enum Colour: Equatable {
-            /// The theme's accent, re-read on every theme change.
+            /// The theme's hero colour, re-read on every theme change: its
+            /// accent, or the colour a palette register pins its heroes to
+            /// (`HelmTheme.heroAccentHex`).
             case themeAccent
             /// A fixed sRGB colour, the same in every theme.
             case fixed(red: Double, green: Double, blue: Double)
@@ -459,7 +461,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
         func accent(in theme: HelmTheme) -> (Double, Double, Double) {
             switch colour {
-            case .themeAccent: return HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+            case .themeAccent: return HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex))
             case let .fixed(red, green, blue): return (red, green, blue)
             }
         }

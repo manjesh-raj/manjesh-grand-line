@@ -122,3 +122,39 @@ It now names the fourteen K1 ids and checks each still resolves.
 - **The other two families the captain reviewed were not built.** Everforest and Kanagawa are on the board and were not picked; the scout's own recommendation flagged Everforest as shipping visibly compromised (a muted alpha of 0.96, which erases the primary/secondary text distinction the token exists to create).
 - **No screenshot.** This agent has no Screen Recording grant; the visual evidence is the `cacheDisplay` render described above, which is a real rasterised render rather than a screen capture. The live half - does Nord actually *look* like Nord on the captain's display - is his own check.
 - **Nord's light half is ours to own forever.** Nord ships dark-only upstream; `nord-snow` reuses Nord's published Snow Storm ramp for the surfaces and darkens the Aurora/Frost hues for paper. There is no upstream to re-sync it from.
+
+## The six palettes as app theme families (`fm/grand-line-color-options`, Helm 9.1.0)
+
+The colour-options board (`data/grand-line-color-options/`) proposed six two-colour palettes, and all six shipped as app theme families in a group of their own.
+Each has a light and a dark register in `AppThemeRegister.all`, with every token measured to clear 4.5:1 on its card, ground and side.
+Chart/Fathom is deep blue `#07518A` and warm creme `#FFF0D5`.
+Porcelain/Port is black cherry `#430D1C` and porcelain `#FFF0D5`. The request typed these with the letter O in place of a zero, and they were read as zeros.
+Ice/Midnight is ice blue `#E9F0F5` and midnight navy `#172C45`.
+Lavender/Powder is powder blue `#8DB9F0` and lavender white `#E9E8F8`.
+Pearl/Abyss is midnight teal `#0B3048` and pearl `#F2F0E9`.
+Oat/Forest is oat milk `#EEE5D4` and forest green `#1D4A35`.
+
+**A hero colour separate from the accent.**
+A dark register's accent has to be light enough to read as text on a dark card.
+`HelmHeroSurface.palette(accent:)` then deepens it 32-38% toward black before white text clears the floor, which turned Fathom's hero a grey steel blue.
+`AppThemeRegister.hero` pins a register's heroes to another colour, and `HelmTheme.heroAccentHex` is what every hero entry point reads now.
+Only Fathom (`#07518A`) and Forest (`#1D4A35`) pin, because only those two still stand clear of their own dark ground (1.92:1 and 1.62:1).
+Port, Midnight and Abyss would sink into their ground or their navy and teal cards (1.20 to 1.29:1), and Powder's pin would be a light hero needing dark ink.
+
+**Nothing on a palette stays Daylight blue.**
+The full page tour (every sidebar page in the Operator profile, the nine Settings pages and the new-host sheet) was rendered for all twelve registers, and a hue scan flagged saturated blue.
+Two leaks were found and fixed.
+First, primary buttons (New Task, Add Host) fell back to `HelmDomainHue.blue`'s fixed Daylight pair. On a palette that hue is now the palette's accent.
+Second, four palettes had a separate blue `info`, which is the link colour and Settings' Menu Bar tile. Every palette's `info` is now its accent, as Daylight's is.
+What is still blue on a palette is identity, not theme: a host's or a project's own colour, the host editor's colour swatches, and the other families' tiles on Appearance.
+
+**The classic families are pixel-identical.**
+The same tour was rendered with a build of `origin/main` and with the branch, for Daylight, Dusk, Grove and Moss.
+26 of the 30 pages were byte-identical.
+Home, Health and Secrets differed only where a clock draws: relative times, the auto-lock countdown and the Claude reset times. Two runs of the branch build differ in the same places.
+Settings › Appearance differed only by the new Palettes group under the unchanged tiles.
+
+Tests: `ThemePalettesSelfTest` (new, headless) guards the classic heroes, the pins, legibility, Home's card colours, the theme menu and search.
+`ThemeSplitSelfTest` carries the twelve new rows.
+`SettingsRedesignSelfTest.checkThePalettesAreTheirOwnGroup` drives the grid in a real window.
+The welcome sheet's look step keeps the seven classics, so its S25 height check is unchanged.

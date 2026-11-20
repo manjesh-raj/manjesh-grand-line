@@ -123,7 +123,7 @@ enum ShiftLaneTone: Equatable {
     func accent(in theme: HelmTheme) -> (Double, Double, Double) {
         let hex: String
         switch self {
-        case .accent: hex = theme.accentHex
+        case .accent: hex = theme.heroAccentHex
         case .slate: hex = Self.slateHex
         case .green: hex = theme.ansiHex[2]
         case .amber: hex = theme.ansiHex[3]
@@ -271,7 +271,7 @@ final class ShiftTasksHeroBand: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        let accent = HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+        let accent = HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex))
         let palette = HelmHeroSurface.palette(accent: words.isDimmed ? HelmHeroSurface.dimmed(accent) : accent,
                                               quietInk: 0.85)
         surface.apply(palette)

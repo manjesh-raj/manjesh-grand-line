@@ -571,7 +571,7 @@ final class SetupHeroRow: NSView {
     static func palette(for words: SetupHeroWords.Words, in theme: HelmTheme) -> HelmHeroSurface.Palette {
         let hex: String
         switch words.tone {
-        case .accent: hex = theme.accentHex
+        case .accent: hex = theme.heroAccentHex
         case .amber: hex = theme.ansiHex[3]
         case .red: hex = theme.ansiHex[1]
         }

@@ -75,7 +75,12 @@ enum ThemeMenu {
         header.isEnabled = false
         menu.addItem(header)
         let activeID = ThemeManager.shared.theme.id
-        for theme in themes {
+        for (index, theme) in themes.enumerated() {
+            // The palettes follow the classic families after a separator,
+            // as they follow them under their own heading on Appearance.
+            if index > 0, theme.app?.family.group != themes[index - 1].app?.family.group {
+                menu.addItem(.separator())
+            }
             let item = NSMenuItem(title: theme.name, action: action, keyEquivalent: "")
             item.target = target
             item.image = theme.swatchImage()

@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // The theme split (`fm/grandline-theme-split-app-terminal`): the app's own
-// seven families, the terminal's own colour choice, and the one-time move of
+// families (the seven classics and the six palettes), the terminal's own colour choice, and the one-time move of
 // an install's saved theme from the old model onto the new one.
 //
 // **Pure logic, no window or view hierarchy**, so it guards CI's blocking
@@ -70,13 +70,32 @@ enum ThemeSplitSelfTest {
         "cinder": "1A1513 211A17 2A211D 3C302A F2E8E2 AD9B90 F28C5E 5DBE8A E8B451 F27A6E 80A8F0 111111 rose-pine-main",
         "contrast-light": "FFFFFF F0F0F0 FFFFFF 767676 000000 333333 0038B8 0B6B2E 7A4A00 A3110C 0038B8 FFFFFF oxocarbon-light",
         "contrast-dark": "000000 0D0D0D 111111 8A8A8A FFFFFF D6D6D6 85B7FF 6FE39A FFD166 FF8A80 85B7FF 111111 oxocarbon-dark",
+        // The six palettes, as approved on the colour-options board
+        // (`data/grand-line-color-options/report.md`'s token table).
+        "chart": "FFF0D5 F8E5C3 FFFAF0 EAD8B6 12243A 6A5838 07518A 1E6B47 84520E AE2F2B 07518A FFFFFF solarized-light",
+        "fathom": "0B1622 0F1C2A 132230 283B4F FFF0D5 B4A68A 6CAEE6 5CC08E E8B25A F2847A 6CAEE6 0B1622 tokyo-night-dark",
+        "porcelain": "FFF0D5 F7E3C6 FFFAF0 EAD5BA 2A1218 70544A 430D1C 226D48 84520E B8391C 430D1C FFFFFF rose-pine-dawn",
+        "port": "1A0C10 201015 28141A 43262E FFF0D5 BFA398 E8919F 63C18F E9B45C FF8F6B E8919F 1A0C10 rose-pine-main",
+        "ice": "E9F0F5 DDE7EF FFFFFF CFDBE6 172C45 506274 172C45 1D6E4C 855610 B23A34 172C45 FFFFFF nord-snow",
+        "midnight": "0E1B2B 122337 172C45 2C4663 E9F0F5 A4B5C7 8DBCE8 62CC9E EDB85F F79086 8DBCE8 0E1B2B nord-polar",
+        "lavender": "E9E8F8 D9E2F6 FFFFFF D2D3EC 1E2142 565A7D 3863A6 1D6F4C 835710 B0363E 3863A6 FFFFFF catppuccin-latte",
+        "powder": "15172B 1A1D34 20233D 363A5C E9E8F8 A6A8CA 8DB9F0 6CCB9C EBBE6A F58C8C 8DB9F0 15172B catppuccin-mocha",
+        "pearl": "F2F0E9 E8E5DB FFFFFF DEDACD 112430 5B6164 0B3048 1D6E4E 855810 B23A30 0B3048 FFFFFF light-owl",
+        "abyss": "071923 0A2131 0B3048 1F4A66 F2F0E9 A3B6BF 62BCD4 62CD9C EEBA64 F78E82 62BCD4 071923 night-owl",
+        "oat": "EEE5D4 E5D9C3 FBF7EF D9CBB1 1A2820 5F5542 1D4A35 23703F 80530E A93226 1D4A35 FFFFFF gruvbox-light",
+        "forest": "111A15 15201A 1C2A22 31432F EEE5D4 ADA590 82C49E 7BD08F E6B65C F08372 82C49E 111A15 gruvbox-dark",
     ]
+
+    /// The registers whose heroes are pinned to the colour the palette is
+    /// named for, rather than drawn from the accent. Every other register's
+    /// hero colour is its accent.
+    private static let heroPins: [String: String] = ["fathom": "07518A", "forest": "1D4A35"]
 
     private static func same(_ a: String, _ b: String) -> Bool { a.uppercased() == b.uppercased() }
 
     private static func checkTheRegistersAreThePrototypes(_ ok: inout Bool) {
         print("\n-- every app register is the prototype's, wired where the app reads it --")
-        check(HelmTheme.appThemes.count == 14, "there are 14 app registers (got \(HelmTheme.appThemes.count))", &ok)
+        check(HelmTheme.appThemes.count == 26, "there are 26 app registers (got \(HelmTheme.appThemes.count))", &ok)
         check(Set(HelmTheme.appThemes.map(\.id)) == Set(prototype.keys),
               "the app registers are exactly the prototype's", &ok)
         for theme in HelmTheme.appThemes {
@@ -107,6 +126,9 @@ enum ThemeSplitSelfTest {
             if theme.id != "dusk", !same(theme.selectionTextHex, row[11]) {
                 fail("\(theme.id) text on accent is \(theme.selectionTextHex), the prototype's is \(row[11])", &ok)
             }
+            let hero = heroPins[theme.id] ?? row[6]
+            check(same(theme.heroAccentHex, hero),
+                  "\(theme.id) draws its heroes from \(hero) (got \(theme.heroAccentHex))", &ok)
             check(theme.companionScheme.id == row[12],
                   "\(theme.id) matches the terminal to \(row[12]) (got \(theme.companionScheme.id))", &ok)
             check(HelmTheme.theme(id: row[12]) != nil, "\(row[12]) is one of the 26 terminal schemes", &ok)
@@ -127,7 +149,7 @@ enum ThemeSplitSelfTest {
         check(both == ["daylight", "dusk"], "only Daylight and Dusk are in both catalogues (got \(both))", &ok)
         check(!HelmTheme.solarizedLight.isDaylight,
               "a terminal scheme set directly still renders with its own recipes, not the app's", &ok)
-        if ok { print("  ok   14 registers, every wired value the prototype's, every companion a real scheme") }
+        if ok { print("  ok   26 registers, every wired value the prototype's, every companion a real scheme") }
     }
 
     // MARK: 2. Contrast

@@ -281,11 +281,13 @@ final class WelcomeSheetController: NSViewController {
         themeGrid.alignment = .leading
         themeGrid.spacing = HelmMetrics.s2
         themeGrid.translatesAutoresizingMaskIntoConstraints = false
-        // The app's seven families, four to a row, as the tiles Settings ›
-        // Appearance draws. Applied on click rather than on finish: a theme
-        // picker that does not show you the theme is a list of words, and
-        // this app already applies a theme instantly everywhere.
-        let families = AppThemeFamily.allCases
+        // The app's seven classic families, four to a row, as the tiles
+        // Settings › Appearance draws. Applied on click rather than on finish:
+        // a theme picker that does not show you the theme is a list of words,
+        // and this app already applies a theme instantly everywhere. The
+        // palettes are Appearance's second group and stay there, so this
+        // first-run step keeps its two rows.
+        let families = AppThemeFamily.members(of: .classic)
         let perRow = 4
         for chunk in stride(from: 0, to: families.count, by: perRow) {
             let row = NSStackView()

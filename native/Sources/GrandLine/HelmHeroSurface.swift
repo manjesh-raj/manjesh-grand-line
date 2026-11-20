@@ -117,9 +117,10 @@ final class HelmHeroSurface: NSView {
 
     // MARK: The palette
 
-    /// The hero's colours on `theme`'s own accent.
+    /// The hero's colours on `theme`'s own hero colour: its accent, or the
+    /// colour a palette register pins its heroes to (`heroAccentHex`).
     static func palette(for theme: HelmTheme) -> Palette {
-        palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.accentHex)))
+        palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)))
     }
 
     /// The hero's colours on any accent. See the file header for the rule.

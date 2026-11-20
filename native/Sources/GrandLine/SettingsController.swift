@@ -213,7 +213,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         /// for the page that happens to hold it.
         var searchKeywords: String {
             switch self {
-            case .appearance: return "theme dark light colour color palette font text size system pair sidebar module profile personal operator hide show density compact comfortable"
+            case .appearance: return "theme dark light colour color palette palettes font text size system pair sidebar module profile personal operator hide show density compact comfortable "
+                + AppThemeRegister.searchTerms
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell scrollback history rows memory"
             case .shortcuts: return "keyboard shortcut hotkey chord key binding rebind record conflict menu split pane tab dictation capture"
             case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky clipboard history copy paste pasteboard"
@@ -648,6 +649,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private var mutedLabels: [NSTextField] = []
     private var themeCards: [SettingsThemeCard] = []
+    /// The Palettes group's heading in the theme grid, rebuilt with it.
+    private var paletteGroupHeading: NSTextField?
 
     @discardableResult
     private func muted(_ label: NSTextField) -> NSTextField {
@@ -1616,6 +1619,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     private func rebuildAppearanceGrid() {
         themeCards.removeAll()
+        paletteGroupHeading = nil
         for view in appearanceContainer.arrangedSubviews {
             appearanceContainer.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -1624,27 +1628,50 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         let current = ThemeManager.shared.theme
         let activeFamily = current.app?.family
 
-        // The theme split: seven families, each drawn in the register the
-        // app is in now (the prototype's `appCard`), so the grid previews
-        // what a click would show rather than a register the captain is not
-        // using.
-        let rows = HelmResponsiveGrid.rows(AppThemeFamily.allCases,
-                                           containerWidth: appearanceContainer.frame.width,
-                                           minItemWidth: Self.themeCardMinWidth,
-                                           spacing: HelmMetrics.s3) { family, _ in
-            let card = SettingsThemeCard.family(family, mode: current.mode, isActive: family == activeFamily)
-            card.onSelect = { [weak self] in self?.familyChosen(family) }
-            card.applyTheme(self.theme)
-            self.themeCards.append(card)
-            return card
-        }
-        for row in rows {
-            appearanceContainer.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: appearanceContainer.widthAnchor).isActive = true
+        // The theme split: every family, each drawn in the register the app
+        // is in now (the prototype's `appCard`), so the grid previews what a
+        // click would show rather than a register the app is not in.
+        // The seven classics come first with no heading, exactly as before;
+        // the palettes follow under a small heading of their own, so the two
+        // sets read as separate.
+        for group in AppThemeFamily.Group.allCases {
+            if group == .palette, let last = appearanceContainer.arrangedSubviews.last {
+                appearanceContainer.setCustomSpacing(HelmMetrics.s5, after: last)
+                let heading = Self.themeGroupHeading(group.title, theme: theme)
+                appearanceContainer.addArrangedSubview(heading)
+                appearanceContainer.setCustomSpacing(HelmMetrics.s2, after: heading)
+                paletteGroupHeading = heading
+            }
+            let rows = HelmResponsiveGrid.rows(AppThemeFamily.members(of: group),
+                                               containerWidth: appearanceContainer.frame.width,
+                                               minItemWidth: Self.themeCardMinWidth,
+                                               spacing: HelmMetrics.s3) { family, _ in
+                let card = SettingsThemeCard.family(family, mode: current.mode, isActive: family == activeFamily)
+                card.onSelect = { [weak self] in self?.familyChosen(family) }
+                card.applyTheme(self.theme)
+                self.themeCards.append(card)
+                return card
+            }
+            for row in rows {
+                appearanceContainer.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: appearanceContainer.widthAnchor).isActive = true
+            }
         }
         appearanceContainer.addArrangedSubview(appearanceNote)
         appearanceNote.widthAnchor.constraint(equalTo: appearanceContainer.widthAnchor).isActive = true
         refreshAppearanceNote()
+    }
+
+    /// A theme group's heading over its tiles: a kicker in the muted ink.
+    /// Rebuilt with the grid, so a theme change repaints it.
+    private static func themeGroupHeading(_ title: String, theme: HelmTheme) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
+        label.attributedStringValue = NSAttributedString(
+            string: title.uppercased(), attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+        label.setAccessibilityRole(.staticText)
+        label.setAccessibilityLabel(title)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
     }
 
     /// "Ink is showing. Terminal: matches the app (Tokyo Night)." - the
@@ -3391,6 +3418,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     /// The theme grid's cards, in grid order.
     var debugThemeCards: [SettingsThemeCard] { themeCards }
+    var debugPaletteGroupHeading: NSTextField? { paletteGroupHeading }
     var debugAppearanceModeTabs: HelmSegmentedTabs { appearanceModeTabs }
     var debugAppearanceNote: NSTextField { appearanceNote }
     var debugTerminalColors: TerminalColorsSettingsSections { terminalColors }
