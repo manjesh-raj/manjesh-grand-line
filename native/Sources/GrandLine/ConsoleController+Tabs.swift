@@ -933,7 +933,7 @@ extension ConsoleController {
         }
     }
 
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) { refreshSessionBand() }
 
     /// A tab's process ended. The console keeps running (other tabs may be live)
     /// and shows a dim "reconnect" hint in the tab that exited. A tab that is

@@ -713,12 +713,14 @@ enum MainSplitShellNavigationSelfTest {
         settle(shell)
         check(shell.debugHeader == nil && shell.toolbar.debugCrumb.hasSuffix("Console"),
               "Console draws a header, or the crumb reads \"\(shell.toolbar.debugCrumb)\"", &ok)
-        check(shell.debugSessionStripIsShown, "Console has a live session but no session strip", &ok)
+        let band = shell.workspace.console.sessionBand
+        check(!band.isHiddenOrHasHiddenAncestor && band.debugChipHostIDs() == [host],
+              "Console has a live session but its band lists \(band.debugChipHostIDs())", &ok)
         check(shell.sidebar.debugSelectedEntry == .module(.console), "the Console row is not lit", &ok)
-        // The strip is Console's: no other module carries it.
+        // The band is Console's page: no other module carries it.
         shell.workspace.navigator.show(.review)
         settle(shell)
-        check(!shell.debugSessionStripIsShown, "the session strip followed the captain out of Console", &ok)
+        check(band.isHiddenOrHasHiddenAncestor, "the session band followed the page change out of Console", &ok)
         // Quick Connect: its Hosts icon is Hosts' own quick-connect field. Stage
         // 7 made the one button a caption and two icons;
         // `SidebarRedesignsSelfTest` drives the Console icon and the caption's

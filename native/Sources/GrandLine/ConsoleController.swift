@@ -249,14 +249,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// edges, and the gap between the terminal card and the SRE Lead panel.
     /// Zero on the shared Firstmate console, which can never show the card -
     /// see `terminalInset`.
-    var cardMargin: CGFloat { isFirstmateConsole ? 0 : HelmMetrics.s3 }
+    ///
+    /// Con-1 of the Console / Add Host / Add Key board gave the shared
+    /// console the same margin as a host page, so its terminal is a padded
+    /// card too instead of running flush to the window's edge.
+    var cardMargin: CGFloat { HelmMetrics.s3 }
 
     /// Breathing room between the card's drawn border and the terminal's own
     /// first glyph column, the mockup's `.terminal { padding }`. Without it
     /// the 1pt border lands directly on the leading edge of the first
     /// character cell - seen in a real render, where it clipped the left edge
     /// of every line's first glyph.
-    var cardInnerPadding: CGFloat { isFirstmateConsole ? 0 : HelmMetrics.s2 }
+    var cardInnerPadding: CGFloat { HelmMetrics.s2 + 2 }
 
     /// How far every terminal on this page is inset from `content`, for the
     /// whole controller's lifetime.
@@ -311,6 +315,26 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// R2-UX-06: set once the sidebar layout shows this console (the shared
     /// one, or a host page).
     var drawsSidebarLayout = false
+
+    // MARK: Con-1's session band
+
+    /// The hero band above the tabs (`ConsoleSessionBand`), shown in the
+    /// sidebar layout, where it replaces the SESSIONS strip.
+    let sessionBand = ConsoleSessionBand()
+    /// The host this page is a session on, set when the page connects;
+    /// `nil` for the shared console.
+    var sessionHost: Host? {
+        didSet { refreshSessionBand() }
+    }
+    /// The workspace's side of the band: its session registry and the four
+    /// verbs (`HostSessionCoordinator`, which owns this page).
+    weak var sessionRouter: ConsoleSessionBandRouting? {
+        didSet { refreshSessionBand() }
+    }
+    var bandTabBarTop: NSLayoutConstraint?
+    var plainTabBarTop: NSLayoutConstraint?
+    /// Re-reads the current shell's folder while the page is on screen.
+    var sessionBandTimer: Timer?
     /// E7's stepper capsule - see `HelmZoomStepper`.
     var zoomStepper: HelmZoomStepper!
     /// `fm/cockpit-block-view-stage0` - only ever shown for the one opted-in
@@ -599,6 +623,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         view = root
 
         buildTabBar()
+        sessionBand.isHidden = true
+        root.addSubview(sessionBand)
+        sessionBand.onSwitch = { [weak self] in self?.sessionRouter?.bandSwitch(toSession: $0) }
+        sessionBand.onEnd = { [weak self] in self?.sessionRouter?.bandEndSession($0) }
+        sessionBand.onShowThisMac = { [weak self] in self?.sessionRouter?.bandShowThisMac() }
+        sessionBand.onConnect = { [weak self] in self?.sessionRouter?.bandConnect() }
         content.translatesAutoresizingMaskIntoConstraints = false
         content.wantsLayer = true
         root.addSubview(content)
@@ -637,10 +667,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
         sreLeadPaneWidthConstraint = sreLeadPane.widthAnchor.constraint(equalToConstant: 0)
 
+        let plainTop = tabBar.topAnchor.constraint(equalTo: root.topAnchor)
+        plainTabBarTop = plainTop
+        bandTabBarTop = tabBar.topAnchor.constraint(equalTo: sessionBand.bottomAnchor, constant: HelmMetrics.s1)
         NSLayoutConstraint.activate([
+            sessionBand.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: cardMargin),
+            sessionBand.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -cardMargin),
+            // On the line every page's first content starts on (S03).
+            sessionBand.topAnchor.constraint(equalTo: root.topAnchor,
+                                             constant: HelmMetrics.pageContentTop - HelmMetrics.pageHeaderLine),
             tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            tabBar.topAnchor.constraint(equalTo: root.topAnchor),
+            plainTop,
 
             // `content` (and therefore every tab's terminal inside it,
             // including the primary interactive tab SRE Lead's bridge
@@ -778,6 +816,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // AGENTS.md) - freshens the herdr badge the moment this page becomes
         // visible again, rather than waiting for the next poll tick.
         refreshHerdrStatus()
+        refreshSessionBand()
+        startSessionBandTimer()
     }
 
     /// The three privileged things this page does when it comes on screen -
@@ -872,6 +912,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // shell's `isHidden = true`, before the view reads as hidden, which
         // is why the window is the test and not only the view.
         pageIsOutOfSight = view.isHiddenOrHasHiddenAncestor || (view.window?.isVisible ?? false)
+        sessionBandTimer?.invalidate()
+        sessionBandTimer = nil
         syncBackgroundScrollback()
         refreshPeriodicWorkGating()
     }

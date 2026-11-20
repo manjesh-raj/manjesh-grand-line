@@ -457,8 +457,9 @@ extension ConsoleController {
     func refreshTerminalCardChrome() {
         cardChrome.pad = cardMargin
         cardChrome.paneStripWidth = sreLeadPaneIsOpen ? sreLeadPaneWidth : nil
-        cardChrome.isHidden = !(sreLeadPaneIsOpen
-            || (theme.drawsTerminalCard(for: terminalScheme) && terminalInset > 0))
+        // Con-1: every Console page has the margin now, and the terminal is
+        // always a card - the shared console included, in every palette.
+        cardChrome.isHidden = !(sreLeadPaneIsOpen || terminalInset > 0)
         cardChrome.needsDisplay = true
     }
 

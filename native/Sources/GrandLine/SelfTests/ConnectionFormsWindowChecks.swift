@@ -1,14 +1,16 @@
 // Grand Line - native macOS app.
 //
-// The window half of Host-1 and Key-1 (Console / Add Host / Add Key board,
-// Helm 9.2.0): the host and key forms in the real sidebar shell's inspector,
-// measured from their real layers after a real layout pass. Run from
+// The window half of Con-1, Host-1 and Key-1 (Console / Add Host / Add Key
+// board, Helm 9.2.0): Console's session band and terminal card, and the host
+// and key forms in the real sidebar shell's inspector, measured from their
+// real layers after a real layout pass. Run from
 // `PageRedesignsSelfTest`, which already owns an off-screen split shell, so
 // this adds no window-backed suite (`NEEDS_SESSION` is at its ceiling).
 //
 // With `FM_CONNECTION_FORMS_RENDER_DIR` set it also writes the PR's renders:
-// the host form empty, filled, with errors and saving, and the key form on
-// each path, in Daylight, Dusk and the Lavender palette.
+// Console with only local shells and with a live session, the host form
+// empty, filled, with errors and saving, and the key form on each path, in
+// Daylight, Dusk and the Lavender palette.
 
 #if FM_SELFTESTS
 
@@ -25,11 +27,53 @@ enum ConnectionFormsWindowChecks {
         let savedTheme = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(savedTheme) }
         resize(window, width: 1512, shell)
+        checkConsole(shell, &ok)
         checkHostForm(shell, &ok)
         checkKeyForm(shell, &ok)
         writeRenders(shell, window)
         shell.workspace.hostsPanel.debugCloseFormPanels()
         settle(shell)
+    }
+
+    // MARK: Con-1
+
+    private static func checkConsole(_ shell: MainSplitShellController, _ ok: inout Bool) {
+        print("\n-- Con-1: Console's session band and terminal card --")
+        shell.workspace.navigator.show(.console)
+        settle(shell)
+        let console = shell.workspace.console
+        let band = console.sessionBand
+        check(!band.isHiddenOrHasHiddenAncestor && band.frame.height == ConsoleSessionBand.height,
+              "Console's band is not showing (\(band.frame))", &ok)
+        check(band.debugKicker == "This Mac \u{00B7} local shells", "the band's kicker reads \(band.debugKicker)", &ok)
+        check(band.debugTitle.hasSuffix("no live sessions"), "with no sessions the band reads \(band.debugTitle)", &ok)
+        // The band sits above the tabs, both inside the page.
+        let bandFrame = band.convert(band.bounds, to: console.view)
+        let tabFrame = console.tabBar.convert(console.tabBar.bounds, to: console.view)
+        let above = console.view.isFlipped ? bandFrame.maxY <= tabFrame.minY + 0.5 : bandFrame.minY >= tabFrame.maxY - 0.5
+        check(above, "the band \(bandFrame) is not above the tabs \(tabFrame)", &ok)
+        // The shared console is a padded card now, like a host page.
+        check(console.terminalInset >= 20, "the shared console's terminal inset is \(console.terminalInset)pt", &ok)
+        check(console.debugTerminalCardVisible(), "the shared console draws no terminal card", &ok)
+        // A live session is a chip, and the chip's verbs reach the shell.
+        let host = UUID()
+        shell.workspace.hosts.sessions.register(hostID: host, label: "DEV Bastion", accentHex: "6cd7e3", state: .connected)
+        settle(shell)
+        check(band.debugChipHostIDs() == [host], "the band lists \(band.debugChipHostIDs()) for one session", &ok)
+        check(band.debugTitle.hasSuffix("1 live session"), "with one session the band reads \(band.debugTitle)", &ok)
+        var switched: UUID?
+        var ended: UUID?
+        let (wiredSwitch, wiredEnd) = (band.onSwitch, band.onEnd)
+        band.onSwitch = { switched = $0 }
+        band.onEnd = { ended = $0 }
+        band.debugClickChip(host.uuidString)
+        band.debugClickClose(host)
+        band.onSwitch = wiredSwitch
+        band.onEnd = wiredEnd
+        check(switched == host && ended == host, "the chip asked to switch to \(String(describing: switched)) and end \(String(describing: ended))", &ok)
+        shell.workspace.hosts.sessions.unregister(hostID: host)
+        settle(shell)
+        check(band.debugChipHostIDs().isEmpty, "an ended session kept its chip", &ok)
     }
 
     // MARK: Host-1
@@ -153,11 +197,27 @@ enum ConnectionFormsWindowChecks {
         }
         let restoreHeight = window.frame.height
         defer { resize(window, width: 1512, height: restoreHeight, shell) }
+        let console = shell.workspace.console
+        func writeConsole(_ name: String, _ theme: HelmTheme) {
+            shell.workspace.navigator.show(.console)
+            console.refreshSessionBand()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            write(name, theme)
+        }
         let themes = [TasksSecretsHeroViewSelfTest.daylight, TasksSecretsHeroViewSelfTest.dusk,
                       HelmTheme.appTheme(id: "lavender") ?? TasksSecretsHeroViewSelfTest.daylight]
         for theme in themes {
             ThemeManager.shared.setTheme(theme)
             resize(window, width: 1512, height: 1180, shell)
+            writeConsole("console-1-local", theme)
+            let live = UUID()
+            shell.workspace.hosts.sessions.register(hostID: live, label: "DEV Bastion", accentHex: "6cd7e3", state: .connected)
+            writeConsole("console-2-live", theme)
+            resize(window, width: 1100, height: 1180, shell)
+            writeConsole("console-3-live-narrow", theme)
+            shell.workspace.hosts.sessions.unregister(hostID: live)
+            resize(window, width: 1512, height: 1180, shell)
+            shell.workspace.navigator.show(.hosts)
             hosts.select(tab: .hosts)
             hosts.openNewHostPanel()
             write("host-1-empty", theme)
