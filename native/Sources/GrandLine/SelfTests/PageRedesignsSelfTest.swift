@@ -420,10 +420,10 @@ enum PageRedesignsSelfTest {
         check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector
                 && shell.inspector.debugTitle == work.title,
               "Return on the selected credential did not open it in the inspector", &ok)
-        // Return is the captain's own request, so it holds the inspector open
-        // (its empty state stays when the selection clears). Back to the
-        // launch state, so the lock below measures an inspector its
-        // selection opened.
+        // Return turns details back on, but unlike the toolbar's button it
+        // does not hold the pane open, so the pane closes with the details.
+        // Back to the launch state, so the lock below measures an inspector
+        // its selection opened.
         shell.debugResetInspectorPreference()
         settle(shell)
 
