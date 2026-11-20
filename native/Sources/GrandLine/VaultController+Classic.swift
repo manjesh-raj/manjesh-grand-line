@@ -118,9 +118,7 @@ extension VaultController {
         // which is the thing the captain actually has to go restart.
         addEmptyState(to: stack,
                       symbol: "exclamationmark.triangle",
-                      text: readWasRefusedHere
-                          ? "\(VaultSource.isolationNote)."
-                          : "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+                      text: failedReadText(noun: noun))
     }
 
     private func addEmptyState(to stack: NSStackView, symbol: String, text: String) {

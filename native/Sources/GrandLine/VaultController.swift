@@ -139,6 +139,29 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// captain would.
     var readWasRefusedHere = false
     var tools: [VaultTool]?
+    /// The last `av list` was answered with Deny on Automic Vault's approval
+    /// dialog. Said as such, with Refresh as the retry - and nothing here asks
+    /// again on its own.
+    var secretsReadDenied = false
+
+    // MARK: When this page runs `av` (fm/grand-line-vault-no-launch-prompt)
+
+    /// The page's reads, as seams so a suite can count them without an `av`
+    /// (a self-test process refuses the real one anyway). `snapshotLoader` is
+    /// `av --version` + `av list` + `av doctor --json`; `installCheck` is
+    /// Homebrew's view of the cask.
+    var snapshotLoader: () -> VaultSnapshot = { VaultSource.loadSnapshot() }
+    var installCheck: () -> CheckOutcome = { VaultSource.checkInstall() }
+
+    /// Whether this page has started its one automatic read. Later visits
+    /// show that read again; Refresh, Save secret and the recipe actions are
+    /// what read again.
+    private(set) var hasRequestedRead = false
+
+    /// The page appeared while the app was locked - session restore landing
+    /// on it at launch, under the lock screen - so its read waits for the
+    /// unlock rather than raising Automic Vault's approval dialog behind it.
+    private(set) var readDeferredByLock = false
 
     // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
 
@@ -179,6 +202,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
     var drillHeaderSubtitle: String? {
         guard installStatus != .notInstalled else {
             return "Automic Vault isn't installed on this machine yet"
+        }
+        if readDeferredByLock {
+            return "Not read yet - Automic Vault is read once Grand Line is unlocked"
+        }
+        if secretsReadDenied, secrets == nil {
+            return "Access denied by Automic Vault - choose Refresh to try again"
         }
         guard let secrets, let tools else {
             // B4: a self-test or tour process never runs `av`, so when that
@@ -236,6 +265,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
             if self?.hasLoadedOnce == true { self?.rebuildAfterThemeChangeIfVisible { self?.renderAll() } }
         }
+
+        // A read deferred by the lock happens on the unlock, if this page is
+        // still the one showing. Otherwise the next visit reads instead.
+        AppLockGate.shared.observe { [weak self] locked in
+            guard !locked, let self, self.readDeferredByLock, !self.view.isHiddenOrHasHiddenAncestor else { return }
+            self.startFirstRead()
+        }
     }
 
 
@@ -274,8 +310,36 @@ final class VaultController: NSViewController, DaylightDrillActions {
             if hasLoadedOnce { renderAll() }
         }
         view.layoutSubtreeIfNeeded()
-        // P3: keep the captain's place unless the page changed (`HelmScrollMemory`).
+        // P3: keep the place unless the page changed (`HelmScrollMemory`).
         scrollMemory.restore(scroll) { scrollToTop() }
+        pageWillAppear()
+    }
+
+    /// What one visit reads. The first visit while unlocked reads Automic
+    /// Vault; a later visit shows that read again without running `av`.
+    ///
+    /// Before `fm/grand-line-vault-no-launch-prompt` every visit ran
+    /// `av list`, including the one session restore makes at launch, under
+    /// the lock screen - so Automic Vault's "List saved secret names?"
+    /// dialog could be the first thing a launch showed. A locked visit now
+    /// defers its read to the unlock.
+    func pageWillAppear() {
+        guard !hasRequestedRead else {
+            refreshRecipeStatusFromDisk()
+            return
+        }
+        guard !AppLockGate.shared.isLocked else {
+            readDeferredByLock = true
+            onDrillSubtitleChanged?()
+            return
+        }
+        startFirstRead()
+    }
+
+    private func startFirstRead() {
+        readDeferredByLock = false
+        hasRequestedRead = true
+        VaultReadSession.recordUserRead()
         refresh()
     }
 
@@ -398,7 +462,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     // MARK: Refresh
 
-    @objc private func refreshTapped() { refresh() }
+    @objc private func refreshTapped() {
+        readDeferredByLock = false
+        hasRequestedRead = true
+        VaultReadSession.recordUserRead()
+        refresh()
+    }
 
     private func refresh() {
         refreshRecipeStatusFromDisk()
@@ -422,8 +491,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private func checkAvInstalled(completion: @escaping () -> Void) {
         guard !isInstallBusy else { completion(); return }
         isInstallBusy = true
+        let check = installCheck
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = VaultSource.checkInstall()
+            let outcome = check()
             DispatchQueue.main.async {
                 guard let self else { completion(); return }
                 self.isInstallBusy = false
@@ -438,13 +508,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private func loadSnapshot() {
         guard !isLoadingSnapshot else { return }
         isLoadingSnapshot = true
+        let load = snapshotLoader
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let snapshot = VaultSource.loadSnapshot()
+            let snapshot = load()
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoadingSnapshot = false
                 self.secrets = snapshot.secrets
                 self.tools = snapshot.tools
+                self.secretsReadDenied = snapshot.listWasDenied
                 self.readWasRefusedHere = snapshot.availability == .checkFailed(VaultSource.isolationNote)
                 self.renderAll()
             }
@@ -626,8 +698,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
             return
         }
         setRecipeBusy(true, status: "Exporting recipe\u{2026}")
+        VaultReadSession.recordUserRead()
+        let load = snapshotLoader
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let snapshot = VaultSource.loadSnapshot()
+            let snapshot = load()
             // B1: exporting a failed read would commit a recipe claiming this
             // machine has no secrets - a wrong backup is worse than no backup,
             // and this one gets pushed to a git remote.
@@ -660,6 +734,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
             return
         }
         setRecipeBusy(true, status: "Checking against backup\u{2026}")
+        VaultReadSession.recordUserRead()
+        let load = snapshotLoader
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let recipe = VaultRecipeGit.loadExistingRecipe(repoPath: repoPath) else {
                 DispatchQueue.main.async {
@@ -667,7 +743,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
                 }
                 return
             }
-            let snapshot = VaultSource.loadSnapshot()
+            let snapshot = load()
             // B1: every backed-up secret would report as "missing locally" -
             // the same lie as "0 secrets", in checklist form.
             guard !snapshot.isDegraded else {
@@ -1392,6 +1468,17 @@ extension VaultController: SidebarLayoutAdopting {
                             theme: theme)
     }
 
+    /// The sentence both layouts show for a read of `noun` that did not
+    /// happen. A denied approval dialog is its own wording, because its fix
+    /// is to ask again rather than to restart Automic Vault's helper.
+    func failedReadText(noun: String) -> String {
+        if readWasRefusedHere { return "\(VaultSource.isolationNote)." }
+        if secretsReadDenied, noun == "secrets" {
+            return "Access denied. Automic Vault\u{2019}s approval was declined, so the secret names were not read, and Grand Line will not ask again on its own. Choose Refresh to try again."
+        }
+        return "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh."
+    }
+
     /// B1's three states, as the table's own empty row: still reading, could
     /// not read, and genuinely none - never a confident empty list for a read
     /// that did not happen.
@@ -1401,9 +1488,7 @@ extension VaultController: SidebarLayoutAdopting {
                           body: "The \(noun) appear here once av answers.")
         }
         return .empty(symbol: "exclamationmark.triangle", title: "",
-                      body: readWasRefusedHere
-                          ? "\(VaultSource.isolationNote)."
-                          : "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+                      body: failedReadText(noun: noun))
     }
 
     private func secretTableRows() -> [HelmDataTable.Row] {

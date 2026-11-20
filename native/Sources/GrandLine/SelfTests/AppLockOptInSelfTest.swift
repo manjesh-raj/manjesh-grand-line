@@ -10,7 +10,10 @@
 //   2. That settlement keeps a configured lock exactly as it was, opens the
 //      app only when Automic Vault confirms no password was ever saved, and
 //      settles nothing on any other answer (`AppLockMigration`, then the real
-//      `LockPresenter` driven through its own availability seam).
+//      `LockPresenter` driven through its own availability seam). The check
+//      runs once a typed password does not verify, never when the lock screen
+//      goes up (`fm/grand-line-vault-no-launch-prompt`), so each case types
+//      one.
 //   3. With the lock off, nothing locks: not the launch, not idle, not the
 //      session ceiling, not Log Out (`AppLockController`).
 //   4. The two setup states have a way forward that is not a relaunch:
@@ -174,6 +177,16 @@ enum AppLockOptInSelfTest {
                 }
             }
             presenter.onUnlocked = { [unowned self] in self.unlocked += 1 }
+            presenter.verifyPassword = { _ in false }
+            presenter.avIsOnPath = { true }
+        }
+
+        /// The launch lock, then one password that does not verify - the
+        /// moment the lock screen first asks Automic Vault anything.
+        func lockAndType() {
+            presenter.showLock(reason: .launch)
+            presenter.debugLockScreen.debugPasswordField.stringValue = "not it"
+            presenter.debugLockScreen.debugUnlockButton.performClick(nil)
         }
 
         /// Until the background check has landed on main.
@@ -191,25 +204,25 @@ enum AppLockOptInSelfTest {
             // Undecided, and Automic Vault says no password was ever saved:
             // unconfigured means unlocked, and the answer is written down.
             let fresh = Harness(preference: nil, answers: [.notConfigured])
-            fresh.presenter.showLock(reason: .launch)
+            fresh.lockAndType()
             fresh.settle(asked: 1)
             check(fresh.preference == false, "an undecided install with no password settled to \(String(describing: fresh.preference)), want off", &ok)
             check(!fresh.presenter.debugOverlayIsShown && fresh.unlocked == 1 && !AppLockGate.shared.isLocked,
                   "an undecided install with no password was not opened (overlay \(fresh.presenter.debugOverlayIsShown), unlocked \(fresh.unlocked))", &ok)
 
             // Undecided, and the password is configured: the lock it had.
-            let captain = Harness(preference: nil, answers: [.configured])
-            captain.presenter.showLock(reason: .launch)
-            captain.settle(asked: 1)
-            check(captain.preference == true, "an undecided install with a password settled to \(String(describing: captain.preference)), want on", &ok)
-            check(captain.presenter.debugOverlayIsShown && captain.unlocked == 0 && AppLockGate.shared.isLocked,
+            let configuredInstall = Harness(preference: nil, answers: [.configured])
+            configuredInstall.lockAndType()
+            configuredInstall.settle(asked: 1)
+            check(configuredInstall.preference == true, "an undecided install with a password settled to \(String(describing: configuredInstall.preference)), want on", &ok)
+            check(configuredInstall.presenter.debugOverlayIsShown && configuredInstall.unlocked == 0 && AppLockGate.shared.isLocked,
                   "an install with a configured password was opened without it", &ok)
 
             // Undecided, and nothing answered about the password: still
             // locked, still undecided. No unanswered check turns a lock off.
             for answer in [VaultSource.AppPasswordAvailability.avUnavailable, .serviceNotRunning, .transientFailure] {
                 let unsure = Harness(preference: nil, answers: [answer])
-                unsure.presenter.showLock(reason: .launch)
+                unsure.lockAndType()
                 unsure.settle(asked: 1)
                 check(unsure.preference == nil && unsure.presenter.debugOverlayIsShown && unsure.unlocked == 0,
                       "an undecided install answered \(answer) was settled (\(String(describing: unsure.preference))) or opened", &ok)
@@ -217,7 +230,7 @@ enum AppLockOptInSelfTest {
 
             // On, and the password has gone: never opened, never turned off.
             let gone = Harness(preference: true, answers: [.notConfigured])
-            gone.presenter.showLock(reason: .launch)
+            gone.lockAndType()
             gone.settle(asked: 1)
             check(gone.preference == true && gone.presenter.debugOverlayIsShown && gone.unlocked == 0,
                   "a lock the captain turned on was opened or turned off because the password is missing", &ok)
@@ -230,7 +243,7 @@ enum AppLockOptInSelfTest {
         autoreleasepool {
             for first in [VaultSource.AppPasswordAvailability.notConfigured, .avUnavailable] {
                 let harness = Harness(preference: true, answers: [first, .configured])
-                harness.presenter.showLock(reason: .launch)
+                harness.lockAndType()
                 harness.settle(asked: 1)
                 guard let button = harness.presenter.debugLockScreen.debugCheckAgainButton else {
                     fail("the \(first) lock screen offers no Check again - it ends in a relaunch again", &ok)
@@ -243,7 +256,7 @@ enum AppLockOptInSelfTest {
                       "after Check again found the password, the \(first) screen still offers Check again", &ok)
             }
             let locked = Harness(preference: true, answers: [.configured])
-            locked.presenter.showLock(reason: .launch)
+            locked.lockAndType()
             locked.settle(asked: 1)
             check(locked.presenter.debugLockScreen.debugCheckAgainButton == nil,
                   "the password form offers Check again, which has nothing to check", &ok)

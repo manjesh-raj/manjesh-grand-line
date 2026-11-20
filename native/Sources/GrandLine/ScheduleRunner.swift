@@ -52,6 +52,10 @@
 // covers. `AppLockGate` exists for surfaces that show or write the captain's
 // data *while nobody is meant to be at the keyboard*; a background push the
 // captain explicitly scheduled is not that.
+//
+// One action waits for the unlock instead: the vault recipe export, which is
+// `av list` and can raise Automic Vault's approval dialog over the lock
+// screen (`waitsForUnlock`).
 
 import Foundation
 
@@ -252,7 +256,9 @@ final class ScheduleRunner {
         // of its own to get wrong - and two schedules genuinely due in the same
         // minute are a minute apart in practice, which for a nightly job is
         // indistinguishable from simultaneous.
+        let locked = AppLockGate.shared.isLocked
         let due = store.schedules.compactMap { schedule -> (AutomationSchedule, Date, TimeInterval)? in
+            guard !Self.waitsForUnlock(schedule.action, locked: locked) else { return nil }
             guard case .due(let occurrence, let lateBy) = ScheduleDueCalculator.verdict(
                 for: schedule, now: now, calendar: calendar) else { return nil }
             return (schedule, occurrence, lateBy)
@@ -274,6 +280,19 @@ final class ScheduleRunner {
         // finishes, so nothing that happens to the run can leave it due.
         store.markFired(id: schedule.id, occurrence: occurrence)
         execute(schedule)
+    }
+
+    /// Whether `action` stays due, untouched, while the app is locked.
+    ///
+    /// The vault recipe export is `av list`, which can raise Automic Vault's
+    /// approval dialog, and a launch is locked - so a missed weekly export
+    /// catching up at launch put that dialog over the lock screen
+    /// (`fm/grand-line-vault-no-launch-prompt`). Skipping it here, before
+    /// `markFired`, keeps the occurrence due: it runs on the first tick after
+    /// the unlock, with somebody at the keyboard. Every other action keeps
+    /// running behind the lock, as this file's header explains.
+    static func waitsForUnlock(_ action: ScheduledActionKind, locked: Bool) -> Bool {
+        locked && action == .vaultRecipeExport
     }
 
     /// The row's "Run now" action. Takes no occurrence, so a manual run never

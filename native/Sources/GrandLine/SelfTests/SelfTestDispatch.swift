@@ -1474,6 +1474,13 @@ enum SelfTestDispatch {
             exit(AppLockOptInSelfTest.run() ? 0 : 1)
         }
 
+        // `fm/grand-line-vault-no-launch-prompt`: no `av` at launch - the lock
+        // screen waits for a typed password, the Automic Vault page for the
+        // unlock and its first visit, unattended reads for both. Pure logic.
+        if ProcessInfo.processInfo.environment["FM_RUN_VAULT_READ_SESSION_TESTS"] == "1" {
+            exit(VaultReadSessionSelfTest.run() ? 0 : 1)
+        }
+
         // `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
         // whole pure-logic layer - redaction (including byte-level greps of a built
         // AI prompt and a saved investigation for planted secrets), source detection,

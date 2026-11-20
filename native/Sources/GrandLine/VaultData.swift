@@ -156,6 +156,12 @@ struct VaultSnapshot {
     /// expandable log exactly like `UpdatesController`'s rows do (Safety
     /// principle: show the real command output, not just a status word).
     let log: String
+
+    /// Whether `av list` failed because the person answered Automic Vault's
+    /// approval dialog with Deny. A different failure from a wedged helper,
+    /// with a different fix (ask again, rather than restart something), so
+    /// the page says it differently - and never asks again on its own.
+    var listWasDenied = false
 }
 
 enum VaultSource {
@@ -236,7 +242,27 @@ enum VaultSource {
         let tools = parseDoctorTools(doctorResult.stdout)
 
         let log = [listResult.combinedLog, doctorResult.combinedLog].filter { !$0.isEmpty }.joined(separator: "\n")
-        return VaultSnapshot(availability: availability, secrets: secrets, tools: tools, log: log)
+        return VaultSnapshot(availability: availability, secrets: secrets, tools: tools, log: log,
+                             listWasDenied: secrets == nil && isDenial(listResult.combinedLog))
+    }
+
+    /// Whether `av`'s output says the person denied its approval dialog.
+    ///
+    /// Read from the `av` binary's own strings rather than from a live run
+    /// (running `av list` to find out would raise the very dialog this is
+    /// about): its approval path prints "request denied". Matched on
+    /// "denied" alone, case-insensitively, because the surrounding wording is
+    /// not a documented contract. Not `private` - `VaultReadSessionSelfTest`
+    /// exercises it.
+    static func isDenial(_ output: String) -> Bool {
+        output.lowercased().contains("denied")
+    }
+
+    /// Whether `av` is on `PATH`, answered by a `PATH` lookup alone. It runs
+    /// nothing, so it is the one Automic Vault question that is safe to ask
+    /// at launch, behind the lock screen, before anybody has typed anything.
+    static func isAvOnPath() -> Bool {
+        resolveExecutable("av") != nil
     }
 
     // MARK: The approval-prompt split - which `av` reads may run unattended
@@ -611,4 +637,53 @@ enum VaultSource {
         Subprocess.run(executable: executable, arguments: args,
                        timeout: avTimeout, log: AppLog.keychain)
     }
+}
+
+// MARK: - When `av` may run without being asked (fm/grand-line-vault-no-launch-prompt)
+
+/// The one answer to "has anybody asked this process to read Automic Vault
+/// yet?", which decides whether anything may run `av` on its own.
+///
+/// **What it fixes.** Every launch used to put Automic Vault's "List saved
+/// secret names?" approval dialog on screen before the window had finished
+/// opening. The lock screen ran `av list` to learn whether the app password
+/// existed, before anyone had typed it. That check now waits for a typed
+/// password (`LockPresenter`), and this type covers the rest of the app:
+///
+///  - The Automic Vault page reads on its first appearance while unlocked,
+///    on Refresh, and after an action that changes the vault (Save secret).
+///    It keeps the read in memory for the session and does not read again on
+///    a later visit (`VaultController.pageWillAppear`).
+///  - Unattended `av` work (the background poller's `av doctor --json`) waits
+///    until the app is unlocked **and** the person has read the vault once
+///    this session. `av doctor` never raises the dialog (see the
+///    approval-prompt split above), but a launch that runs no `av` at all is
+///    the simpler promise, and the attention count it feeds already reads
+///    "hasn't been checked yet" while it is `nil` (GL-14).
+///
+/// Main-thread state, like `AppLockGate` itself. The poller asks on main
+/// before it dispatches its pass, never from its background queue.
+enum VaultReadSession {
+
+    /// Set the first time the person reads Automic Vault in this process.
+    /// Never persisted: a new launch starts unread.
+    private(set) static var userHasRead = false
+
+    /// Called from every place the person asks for a read: the page's first
+    /// unlocked appearance, Refresh, Export Recipe, Check against Backup.
+    static func recordUserRead() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        userHasRead = true
+    }
+
+    /// Whether unattended work may run `av` right now.
+    static func mayReadUnattended(locked: Bool = AppLockGate.shared.isLocked) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return !locked && userHasRead
+    }
+
+    #if FM_SELFTESTS
+    /// A suite starts every case from a launch that has read nothing.
+    static func debugReset() { userHasRead = false }
+    #endif
 }

@@ -532,9 +532,12 @@ final class BackgroundSignalsPoller {
         let passID = currentPassID
         let token = SubprocessCancellation()
         passToken = token
+        // Asked here, on main, where the lock and the session's first read
+        // live - never from the pass's own background queue.
+        let mayReadVault = VaultReadSession.mayReadUnattended()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            SubprocessCancellation.withScope(token) { self.runPass(token: token) }
+            SubprocessCancellation.withScope(token) { self.runPass(token: token, mayReadVault: mayReadVault) }
             DispatchQueue.main.async {
                 // A cancelled pass published nothing and did not complete.
                 if !token.isCancelled {
@@ -557,7 +560,7 @@ final class BackgroundSignalsPoller {
     /// scope. A cancelled pass stops at its next step and publishes nothing:
     /// what it gathered after its child was killed is a failure of our own
     /// making, not a reading.
-    private func runPass(token: SubprocessCancellation) {
+    private func runPass(token: SubprocessCancellation, mayReadVault: Bool) {
         // Computed once and shared with `checkSetupDrift` below (the
         // Software checklist step reads the exact same per-item outcomes)
         // rather than shelling out to `brew`/`npm` twice for the same
@@ -569,7 +572,15 @@ final class BackgroundSignalsPoller {
         guard !token.isCancelled else { return }
         checkGitHubSync(token: token)
         guard !token.isCancelled else { return }
-        checkVault(token: token)
+        // `fm/grand-line-vault-no-launch-prompt`: no `av` until the app is
+        // unlocked and the person has read Automic Vault once this session
+        // (`VaultReadSession`). Until then the attention count stays `nil`,
+        // which the canvas already reads as "not checked yet" (GL-14).
+        if mayReadVault {
+            checkVault(token: token)
+        } else {
+            AppLog.poller.info("vault check skipped: Automic Vault has not been read this session, so no av runs unattended")
+        }
         guard !token.isCancelled else { return }
         // The software half of setup drift is the sweep above, so this
         // reading is only as new as that sweep was.

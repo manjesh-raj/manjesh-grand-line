@@ -49,7 +49,7 @@ enum BackgroundSignalsSelfTest {
         checkHealthVerdicts(&ok)
         checkNoUnattendedAvList(&ok)
         checkVaultToolsPublish(&ok)
-        checkAppPasswordRetryBackoff(&ok)
+        checkLockScreenHasNoRetryTimer(&ok)
         checkPowerAwareCadence(&ok)
         checkPowerCadenceIsWired(&ok)
         print(ok ? "BackgroundSignalsSelfTest: all checks passed" : "BackgroundSignalsSelfTest: FAILED")
@@ -441,39 +441,30 @@ enum BackgroundSignalsSelfTest {
               "a failed tools read changed the secrets count to \(String(describing: poller.lastCounts.vaultSecrets))", &ok)
     }
 
-    // MARK: The lock screen's `av list` retry backs off
+    // MARK: The lock screen never re-asks `av list` on a timer
     //
-    // Every retry is an `av list`, i.e. an approval-service round trip. The
-    // flat 1.5s-forever cadence it replaced asked an unresponsive approval
-    // helper ~2,400 times an hour for as long as the lock screen was up.
+    // Every retry was an `av list`, i.e. an approval-service round trip that
+    // is entitled to raise Automic Vault's own dialog. The flat 1.5s cadence
+    // asked an unresponsive helper ~2,400 times an hour; the backoff that
+    // replaced it still answered a Deny with the same dialog seconds later.
+    // `fm/grand-line-vault-no-launch-prompt` removed the timer outright:
+    // Check again and the next typed password are the only re-asks. The
+    // behaviour is `VaultReadSessionSelfTest`'s; this is the source half.
 
-    private static func checkAppPasswordRetryBackoff(_ ok: inout Bool) {
-        print("\n-- lock screen `av list` retry backs off --")
-        let base = LockPresenter.appPasswordRetryBaseDelay
-        let ceiling = LockPresenter.appPasswordRetryCeiling
-
-        // The fixture has to be able to tell the two apart, or "starts at base"
-        // and "stops at ceiling" are the same assertion.
-        check(ceiling > base, "fixture: the ceiling (\(ceiling)) is not above the base (\(base))", &ok)
-
-        check(LockPresenter.appPasswordRetryDelay(attempt: 0) == base,
-              "first retry is \(LockPresenter.appPasswordRetryDelay(attempt: 0))s, expected \(base)s - the common 'the helper is still starting' case must still recover fast", &ok)
-
-        var previous = LockPresenter.appPasswordRetryDelay(attempt: 0)
-        var reachedCeiling = false
-        for attempt in 1...12 {
-            let delay = LockPresenter.appPasswordRetryDelay(attempt: attempt)
-            check(delay >= previous, "retry \(attempt) got faster (\(previous)s -> \(delay)s)", &ok)
-            check(delay <= ceiling, "retry \(attempt) is \(delay)s, above the \(ceiling)s ceiling", &ok)
-            if delay == ceiling { reachedCeiling = true }
-            previous = delay
+    private static func checkLockScreenHasNoRetryTimer(_ ok: inout Bool) {
+        print("\n-- the lock screen never re-runs `av list` on a timer --")
+        guard let root = SelfTestSources.appSourceDirectory(),
+              let source = try? String(contentsOf: root.appendingPathComponent("LockPresenter.swift"), encoding: .utf8) else {
+            fail("LockPresenter.swift could not be read - this check cannot run", &ok)
+            return
         }
-        check(reachedCeiling, "the backoff never reaches its \(ceiling)s ceiling within 12 retries", &ok)
-
-        // The whole point is that it is not flat: a schedule that never grows
-        // would satisfy every assertion above.
-        check(LockPresenter.appPasswordRetryDelay(attempt: 3) > base,
-              "the retry delay never grows past \(base)s - this is still the flat cadence the fix replaced", &ok)
+        let code = strippingComments(source)
+        check(code.contains("func checkAppPasswordAvailability("),
+              "fixture: LockPresenter no longer has checkAppPasswordAvailability - this guard is pointing at the wrong place", &ok)
+        for banned in ["asyncAfter", "Timer.scheduledTimer", "Timer("] {
+            check(!code.contains(banned),
+                  "LockPresenter schedules work (\(banned)) - a timed re-run of the `av list` check is what put Automic Vault's dialog back on screen after a Deny", &ok)
+        }
     }
 
 }

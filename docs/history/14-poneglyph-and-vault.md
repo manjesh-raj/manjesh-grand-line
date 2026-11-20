@@ -243,3 +243,62 @@ Worth recording because the *diagnostic* is reusable - the dialog names its exec
 - The `av` measurements above are real, taken against a live `av 3.16.0` and Automic Vault's own authorization log.
 - `FM_RUN_BACKGROUND_SIGNALS_TESTS` grew three cases, **each confirmed to catch a regression by name** via scripted file copy/restore (never `git stash`): pointing the poller back at `VaultSource.loadSnapshot` failed the source guard; making the tools-only publish write `secretCount ?? 0` failed both "the secrets count is left alone" cases; and flattening `appPasswordRetryDelay` back to a constant failed both backoff cases.
 - **Not verified:** the live Automic Vault dialog was never reproduced *from Grand Line itself*. The app was not launched from this worktree (the standing rule), so the poller's new `av doctor --json`-only path was not watched running in the real app - it is asserted by the source guard and by the measurements above, not by a running instance.
+
+## No `av` at launch (`fm/grand-line-vault-no-launch-prompt`)
+
+Every launch put Automic Vault's "List saved secret names?" dialog on screen, with `GrandLine -> /usr/local/bin/av` as its execution chain, before anyone had typed anything.
+This section is how that was traced, what replaced it, and what the dialog's red cross on GrandLine means.
+
+### The trigger, from the code
+
+With the app lock on, `AppLockController.lock(reason: .launch)` reaches `LockPresenter.showLock`, which called `checkAppPasswordAvailability` straight away.
+That is `VaultSource.checkAppPasswordConfigured()`, and it is `av list`: the lock screen asked whether `GRANDLINE_APP_PASSWORD` existed before showing the form that asks for it.
+The backoff retry from the section above then re-ran it on `.serviceNotRunning` and `.transientFailure`, and a Deny on the dialog lands in `.transientFailure` - so a Deny was answered with the same dialog a few seconds later.
+
+Every other `av` caller was checked as well:
+
+- The Automic Vault page ran `loadSnapshot()` on every `viewWillAppear`, including the one session restore makes at launch under the lock screen.
+  On the machine this was reported from, the saved destination was Console, so that was not the trigger there, but it was a second path to the same dialog.
+- `BackgroundSignalsPoller.checkVault` ran `av doctor --json` about ten seconds after launch, locked or not.
+  `av doctor` never reaches the approval service (measured above), so it raised nothing, but it was still `av` at launch.
+- `ScheduleRunner.vaultRecipeExport` runs `av list`. A missed weekly export would catch up on the first tick after launch, behind the lock screen.
+- Setup's hardening rows ran `av hardeners --json` on the page's first appearance, which session restore or GL-31's first-run landing can make at launch, under the lock screen.
+  `av hardeners` does not prompt (measured above), but it was still `av` at launch.
+- Settings' app-lock switch runs `av list` when it is turned on. That is the person asking, and it is unchanged.
+
+### What replaced it
+
+- **The lock screen** shows the password form and runs no `av`.
+  Whether `av` is installed is answered from `PATH` alone (`VaultSource.isAvOnPath()`).
+  A typed password is verified with `av inject` as before.
+  Only a password that does not verify runs `av list`, to tell "wrong password" from "no password saved" and "Automic Vault did not answer", and only until the password is known to exist in this process.
+  The retry timer is gone: the two waiting states show Check again, and the spinner became a still clock, because nothing is in flight.
+  An undecided install (R2-UX-01) now settles on the first answered check after a typed password, or on a verified password.
+- **The Automic Vault page** reads on its first visit while unlocked, keeps that read in memory for the session, and reads again only on Refresh, Save secret, Export Recipe or Check against Backup.
+  A visit while locked defers its read to the unlock and says "Not read yet".
+  A denied `av list` (the binary's own wording is "request denied") says "Access denied" with Refresh as the retry, and nothing asks again on its own.
+- **Unattended `av`** waits for `VaultReadSession.mayReadUnattended()`: the app unlocked and the vault read once this session.
+  Until then the poller skips its vault check and the attention count stays `nil`, which the canvas already reads as "not checked yet".
+- **Setup's hardener reads** wait for the unlock when the page first appears under the lock screen, the same way the Automic Vault page does.
+- **The scheduled vault export** stays due while the app is locked (`ScheduleRunner.waitsForUnlock`), so it runs on the first tick after the unlock rather than over the lock screen.
+
+### The red cross on GrandLine in the dialog
+
+Read-only checks against the running app (`dist/Grand Line.app`) and the copy in `/Applications`:
+
+- Both are signed by `Grand Line Code Signing`, issued by `Grand Line Local CA`, with `TeamIdentifier=not set`.
+- `codesign --verify --deep --strict` passes, so the signature is intact.
+- `spctl --assess` rejects it (`origin=Grand Line Code Signing`), and neither the user nor the admin trust-settings domain carries a trust setting for the local CA.
+
+So the signature is valid but not anchored to Apple and carries no Team ID.
+Automic Vault checks its own CLI against `anchor apple generic` and a fixed Team ID (the requirement string is in the `av` binary), so "Verified Launcher" in that dialog is `av` itself, and a process in the chain without an Apple-anchored identity is the likely reason for the cross.
+Running from `dist/` rather than `/Applications` does not change it - both copies carry the same signer.
+This was not confirmed against Automic Vault's own code, and signing was deliberately left alone; the Developer ID item (see `42-widgets.md`) is what would give GrandLine a Team ID.
+
+### Verified
+
+- `swift build` and `swift build -c release` clean, zero warnings.
+- `FM_RUN_VAULT_READ_SESSION_TESTS` (new, pure logic, thirteen cases) counts every `av` seam: none at launch for any lock reason, none for a verified password, one `av list` for a refused password and none for a second one, no re-run without Check again, none from a locked page visit, one on unlock, one per first visit, one per Refresh, a denied read that says so and is not retried, the unattended gate, the denial wording, the scheduled export, and the poller's and Setup's gates as source guards.
+- Confirmed to catch regressions by copy-aside injection (never `git stash`): putting the `av list` check back in `showLock` failed four lock cases; putting `refresh()` back in `viewWillAppear` failed both page cases; a 1.5s `asyncAfter` re-check failed the no-retry case and `BackgroundSignalsSelfTest`'s new no-timer guard; running `checkVault` outside `if mayReadVault` failed the poller guard; calling `checkGhHardening()` straight from Setup's `viewWillAppear` failed the Setup guard.
+- `AppLockOptInSelfTest` now types a password before expecting a settlement, and `BackgroundSignalsSelfTest`'s backoff case became a guard that `LockPresenter` schedules nothing.
+- **Not verified:** the live dialog was not reproduced from Grand Line, because `av` is never run from a worker or a suite and the app is never launched from a worktree. The fix is asserted through the seams above, not watched in a running instance.
