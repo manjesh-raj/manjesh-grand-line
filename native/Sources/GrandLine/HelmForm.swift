@@ -520,8 +520,8 @@ final class HelmTextField: NSTextField {
     /// §6.9: the domain hue this field's focus ring takes. Forwards to the
     /// shared `SunkenFieldTheming`, which is where the focus treatment lives.
     var domainHue: HelmDomainHue? {
-        get { theming.domainHue }
-        set { theming.domainHue = newValue }
+        get { theming?.domainHue }
+        set { theming?.domainHue = newValue }
     }
     /// Which well recipe this field paints (`HelmField.Surface`). A `.lead`
     /// field has no well, so it ignores this.

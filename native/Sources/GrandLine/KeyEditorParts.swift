@@ -83,7 +83,7 @@ final class KeyPathChoices: NSView {
             let text = NSStackView(views: [title, detail])
             text.orientation = .vertical
             text.alignment = .leading
-            text.spacing = 1
+            text.spacing = 0
             text.translatesAutoresizingMaskIntoConstraints = false
             var badge: NSTextField?
             var views: [NSView] = [iconBox, text]
@@ -165,7 +165,7 @@ final class KeyPathChoices: NSView {
             let chosen = row.path == selected
             row.view.normalColor = fill
             row.view.hoverColor = fill.hoverShifted(by: 0.06, forMode: theme.mode)
-            row.view.cornerRadius = 11
+            row.view.cornerRadius = HelmMetrics.rCard
             row.view.layer?.borderWidth = chosen ? 1.5 : 1
             row.view.layer?.borderColor = (chosen ? accent : HelmField.border(theme, surface: .raised)).cgColor
             row.view.accessibilityValueOverride = chosen ? "selected" : "not selected"

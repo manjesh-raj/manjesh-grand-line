@@ -301,7 +301,9 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         usernameField.stringValue = editing?.username ?? ""
         form.addFieldColumns([("Port", issueWrapped(portField, .port)),
                               ("Username", issueWrapped(usernameField, .username))])
-        for field in [labelField, addressField, portField, usernameField, jumpViaField] {
+        // The wrapped fields are not the form's own rows, so they take the
+        // sheet's hue here. The window's lead name field has no well.
+        for field in [labelField, addressField, portField, usernameField, jumpViaField] where field !== labelField || panel {
             field.domainHue = RailDestination.hosts.domainHue
         }
         environmentPicker.onSelect = { [weak self] title in
@@ -1228,7 +1230,7 @@ extension HostEditorController {
         let stack = NSStackView(views: [control, label])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 3
+        stack.spacing = HelmMetrics.s0
         stack.translatesAutoresizingMaskIntoConstraints = false
         control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         label.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true

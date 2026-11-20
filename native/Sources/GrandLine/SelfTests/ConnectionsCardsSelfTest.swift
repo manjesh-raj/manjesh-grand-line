@@ -666,7 +666,9 @@ enum ConnectionsCardsSelfTest {
         guarded.debugType("-oProxyCommand=touch /tmp/x", into: guarded.debugAddressField)
         problems.removeAll()
         guarded.debugCommand(#selector(NSResponder.insertNewline(_:)), in: guarded.debugAddressField)
-        check(problems.first?.contains("Address can't start with") == true, "GL-08: the panel saved a leading dash (\(problems))", &ok)
+        // Host-1 reports it under the field, not in a modal.
+        check(problems.isEmpty && guarded.debugIssueText(.address)?.contains("start with") == true,
+              "GL-08: the panel saved a leading dash, or said so in a modal (\(problems), \(guarded.debugIssueText(.address) ?? "no issue line"))", &ok)
         check(store.host(id: edge.id)?.address == "edge-01b.example.test" && guarded.debugIsDirty,
               "GL-08: a refused save changed the store or lost the edit", &ok)
         guarded.debugCommand(#selector(NSResponder.cancelOperation(_:)), in: guarded.debugAddressField)

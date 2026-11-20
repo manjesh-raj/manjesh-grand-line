@@ -184,7 +184,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     private var publicKeyBox: NSView?
     private let existingPanel = NSView()
     private let existingPicker = HostKeyPicker()
-    private let existingPassphraseField = HelmSecureTextField(placeholder: "Only if the key is encrypted")
+    private let existingPassphraseField = HelmSecureTextField(placeholder: "If encrypted")
     private let existingEmptyLabel = NSTextField(wrappingLabelWithString: "")
     private let existingFolderLabel = NSTextField(labelWithString: "")
     /// The pairs the last scan listed, by the picker row's id.

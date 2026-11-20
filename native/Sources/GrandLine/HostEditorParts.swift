@@ -65,7 +65,7 @@ final class RecordPreviewHeader: NSView {
         kickerLabel.translatesAutoresizingMaskIntoConstraints = false
         kickerLabel.lineBreakMode = .byTruncatingTail
         card.wantsLayer = true
-        card.layer?.cornerRadius = 11
+        card.layer?.cornerRadius = HelmMetrics.rCard
         card.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.font = HelmType.cardTitle()
@@ -74,7 +74,7 @@ final class RecordPreviewHeader: NSView {
         badgeLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .heavy)
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
         badgeBox.wantsLayer = true
-        badgeBox.layer?.cornerRadius = 5
+        badgeBox.layer?.cornerRadius = HelmMetrics.rChip
         badgeBox.translatesAutoresizingMaskIntoConstraints = false
         badgeBox.addSubview(badgeLabel)
         badgeBox.setContentHuggingPriority(.required, for: .horizontal)
@@ -344,7 +344,7 @@ final class HostKeyPicker: NSView {
             let text = NSStackView(views: [title, detail])
             text.orientation = .vertical
             text.alignment = .leading
-            text.spacing = 1
+            text.spacing = 0
             text.setClippingResistancePriority(.defaultLow, for: .horizontal)
             var views: [NSView] = [radio, text]
             var chip: NSView?
