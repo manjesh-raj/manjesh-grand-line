@@ -554,8 +554,9 @@ enum SidebarRedesignsSelfTest {
 
     // MARK: 1b - Home stays in sight (R4-BUG-03)
 
-    /// With Console holding one session the default sidebar is 27 rows (24
-    /// until R5-UX-05 put Runbooks in Observe, 25 until DevOps Hub), a few
+    /// With Console holding one session the default sidebar is 26 rows (24
+    /// until R5-UX-05 put Runbooks in Observe, 25 until DevOps Hub, 27 while
+    /// DevOps Hub listed its project under it), a few
     /// points taller than its clip view in a 950pt window. Selecting a bottom
     /// row then scrolled the whole column up by the overflow and left Home
     /// half under the header, on every page whose module sits low in the
@@ -576,10 +577,10 @@ enum SidebarRedesignsSelfTest {
             fail("the sidebar's outline is not in a scroll view", &ok)
             return
         }
-        // DevOps Hub and its one project made it 27, and 62pt taller: at
-        // 950pt the list now overflows by about a row and a bit, so the
-        // whole-list sweep runs where the default set fits again.
-        check(outline.numberOfRows == 27, "the default sidebar with one session should be 27 rows, got \(outline.numberOfRows)", &ok)
+        // DevOps Hub made it 26. Its projects are cards on its page now, not
+        // rows under it. At 950pt the list still overflows, so the whole-list
+        // sweep runs where the default set fits.
+        check(outline.numberOfRows == 26, "the default sidebar with one session should be 26 rows, got \(outline.numberOfRows)", &ok)
         var fits = window.frame
         fits.size.height = Self.defaultSetFitsHeight
         window.setFrame(fits, display: false)

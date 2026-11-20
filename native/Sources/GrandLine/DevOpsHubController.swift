@@ -44,6 +44,7 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
     /// serves ("Show the site when it's ready").
     private var opensWhenRunning: Set<String> = []
     private var registryObserver: NSObjectProtocol?
+    private var themeToken: ThemeObservation?
     /// Each view's pins to the page. A hidden view's are inactive, so its
     /// subtree has no required path to the window (gotcha (15)): the strip
     /// of a project shown earlier must not hold the window open while the
@@ -62,12 +63,14 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
 
     deinit {
         if let registryObserver { NotificationCenter.default.removeObserver(registryObserver) }
+        if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
     // MARK: Build
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
+        root.wantsLayer = true
         view = root
         for child in [cards, projectView] as [NSViewController] {
             addChild(child)
@@ -92,6 +95,14 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
         registryObserver = NotificationCenter.default.addObserver(
             forName: LocalProjectRegistry.didChange, object: registry, queue: .main
         ) { [weak self] _ in self?.registryChanged() }
+        // ThemeManager's checklist item 2: the page itself follows the
+        // theme's mode, not the OS's, so anything resolving a system colour
+        // under it does too - whichever of its two views shows.
+        themeToken = ThemeManager.shared.observe { [weak self] theme in
+            guard let self, self.isViewLoaded else { return }
+            self.view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            self.view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        }
         applyMode()
     }
 
