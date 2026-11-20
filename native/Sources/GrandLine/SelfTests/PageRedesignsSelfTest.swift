@@ -64,7 +64,8 @@ enum PageRedesignsSelfTest {
                 ReviewTourLab.seedDemoKnowledge(shell.workspace)
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
-                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkDevOpsHub] {
+                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkDevOpsHub,
+                              ConnectionFormsWindowChecks.checkForms] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok
