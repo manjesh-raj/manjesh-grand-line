@@ -96,8 +96,8 @@ final class LockScreenController: NSViewController {
         /// `av` is on PATH but its background approval service (the
         /// "Automic Vault" menu-bar app) isn't reachable yet - the password
         /// secret may already exist, `av` just can't confirm it right now.
-        /// `AppShellController` retries the underlying check on a timer
-        /// while this state is showing; this screen just displays it.
+        /// Check again re-runs the underlying check; nothing retries it on a
+        /// timer (`fm/grand-line-vault-no-launch-prompt`).
         case serviceNotRunning
         /// `av list` failed (or timed out) for a reason that isn't the
         /// specific `.serviceNotRunning` marker text - e.g. the approval
@@ -105,8 +105,8 @@ final class LockScreenController: NSViewController {
         /// sleep/wake (`fm/grandline-vault-wake-recheck-fix`, live-
         /// confirmed: a suspended helper process makes `av list` hang
         /// indefinitely). The password secret may well already exist here
-        /// too; `AppShellController` retries on the same cadence as
-        /// `.serviceNotRunning` - this screen just displays it.
+        /// too, and a denied approval dialog lands here as well. Check
+        /// again re-runs the check, as for `.serviceNotRunning`.
         case transientFailure
 
         /// The domain hue this state's ribbon, mark and primary action take.
@@ -285,9 +285,11 @@ final class LockScreenController: NSViewController {
     /// R2-UX-01: the way forward from both setup states, without quitting.
     private let checkAgainButton = HelmButton(title: "Check again", variant: .secondary)
 
-    /// The two "retrying, nothing to type yet" states show a spinner instead
-    /// of a form, because there is nothing useful the captain can do yet.
-    private let waitingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.poneglyph.domainHue)
+    /// The two "Automic Vault did not answer" states show a still clock and a
+    /// line instead of a form. It used to be a moving spinner, back when
+    /// these states retried on a timer; nothing is in flight now, so nothing
+    /// moves (`fm/grand-line-vault-no-launch-prompt`).
+    private let waitingGlyph = NSImageView()
     private let waitingStack = NSStackView()
     private let waitingLabel = NSTextField(labelWithString: "")
 
@@ -564,7 +566,10 @@ final class LockScreenController: NSViewController {
         waitingStack.alignment = .centerY
         waitingStack.spacing = HelmMetrics.s2
         waitingStack.translatesAutoresizingMaskIntoConstraints = false
-        waitingStack.addArrangedSubview(waitingSpinner)
+        waitingGlyph.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+        waitingGlyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: HelmType.scaled(12), weight: .regular)
+        waitingGlyph.translatesAutoresizingMaskIntoConstraints = false
+        waitingStack.addArrangedSubview(waitingGlyph)
         waitingStack.addArrangedSubview(waitingLabel)
         waitingStack.isHidden = true
 
@@ -787,6 +792,7 @@ final class LockScreenController: NSViewController {
         messageLabel.textColor = muted
         avMessageLabel.textColor = muted
         waitingLabel.textColor = muted
+        waitingGlyph.contentTintColor = muted
         localAuthNote.textColor = muted
         footerLeftLabel.textColor = muted
         footerRightLabel.textColor = muted
@@ -1095,7 +1101,6 @@ final class LockScreenController: NSViewController {
         avUnavailableStack.isHidden = true
         checkAgainButton.isHidden = true
         waitingStack.isHidden = true
-        waitingSpinner.stopAnimation()
         localAuthStack.isHidden = true
         localAuthButton.isEnabled = true
         footerLeftLabel.stringValue = ""
@@ -1141,20 +1146,25 @@ final class LockScreenController: NSViewController {
             checkAgainButton.isHidden = onCheckAgain == nil
             footerLeftLabel.stringValue = "Nothing is installed from this screen"
 
+        // Neither waiting state retries on its own any more
+        // (`fm/grand-line-vault-no-launch-prompt`): the check is `av list`,
+        // and asking it again unprompted can put Automic Vault's approval
+        // dialog back on screen. So the spinner stays still and Check again
+        // is the way forward.
         case .serviceNotRunning:
             titleLabel.stringValue = "Waking Automic Vault"
-            subtitleLabel.stringValue = "Its approval service isn't answering yet. Retrying - this usually clears in a few seconds."
+            subtitleLabel.stringValue = "Its approval service isn't answering yet. This usually clears in a few seconds - then choose Check again."
             waitingStack.isHidden = false
-            waitingLabel.stringValue = "Checking\u{2026}"
-            waitingSpinner.startAnimation()
+            waitingLabel.stringValue = "Waiting for Automic Vault"
+            checkAgainButton.isHidden = onCheckAgain == nil
             showLocalAuthIfAvailable()
 
         case .transientFailure:
             titleLabel.stringValue = "Couldn't reach the vault"
-            subtitleLabel.stringValue = "The check timed out. Your password is probably fine - retrying."
+            subtitleLabel.stringValue = "Automic Vault didn't answer, or the request was denied. Your password is probably fine - choose Check again to ask once more."
             waitingStack.isHidden = false
-            waitingLabel.stringValue = "Retrying\u{2026}"
-            waitingSpinner.startAnimation()
+            waitingLabel.stringValue = "Not checked again until you ask"
+            checkAgainButton.isHidden = onCheckAgain == nil
             showLocalAuthIfAvailable()
         }
 

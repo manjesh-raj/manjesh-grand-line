@@ -51,10 +51,28 @@ final class LockPresenter {
     /// The way out, run after `AppLockGate` is clear - see `hideLock`.
     var resumeAfterUnlock: () -> Void = {}
 
-    /// R2-UX-01: the Automic Vault check behind every lock screen. A seam so
-    /// a suite can drive each answer without an `av` on PATH (a self-test
-    /// process refuses it anyway).
+    /// R2-UX-01: the Automic Vault check that explains a refused password.
+    /// It is `av list`, which can raise Automic Vault's approval dialog, so
+    /// it runs only after somebody typed a password that did not verify, or
+    /// chose Check again - never when the lock screen goes up
+    /// (`fm/grand-line-vault-no-launch-prompt`). A seam so a suite can drive
+    /// each answer without an `av` on PATH (a self-test process refuses it
+    /// anyway).
     var checkAvailability: () -> VaultSource.AppPasswordAvailability = { VaultSource.checkAppPasswordConfigured() }
+
+    /// The typed password's own check (`av inject`). A seam for the same
+    /// reason as `checkAvailability`.
+    var verifyPassword: (String) -> Bool = { VaultSource.verifyAppPassword($0) }
+
+    /// Whether `av` is on PATH. A `PATH` lookup that runs nothing, so it is
+    /// the one Automic Vault question asked when the lock screen goes up.
+    var avIsOnPath: () -> Bool = { VaultSource.isAvOnPath() }
+
+    /// Set once `checkAvailability` has answered `.configured` in this
+    /// process. A later refused password is then simply a wrong password, and
+    /// does not run `av list` (and raise its dialog) again to say so. Check
+    /// again still asks, because that is the person asking.
+    private var passwordKnownConfigured = false
 
     /// R2-UX-01: the app lock preference, read and written here only to
     /// settle an install that has never decided (`AppLockMigration`).
@@ -81,11 +99,8 @@ final class LockPresenter {
             lockScreen.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
         lockScreen.view.isHidden = true
-        lockScreen.onAttempt = { typed, completion in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let ok = VaultSource.verifyAppPassword(typed)
-                DispatchQueue.main.async { completion(ok) }
-            }
+        lockScreen.onAttempt = { [weak self] typed, completion in
+            self?.attempt(typed, completion: completion)
         }
         // Fires only once the success animation has actually played out
         // (see `LockScreenController.playUnlockSuccessAnimation`) - hiding
@@ -120,17 +135,54 @@ final class LockPresenter {
         // is picked up without quitting.
         lockScreen.onCheckAgain = { [weak self] in
             guard let self else { return }
-            self.appPasswordRetryAttempt = 0
             self.checkAppPasswordAvailability(reason: self.shownReason)
+        }
+    }
+
+    /// One typed password, verified off the main thread (`av inject`).
+    ///
+    /// A password that does not verify is the first moment this screen asks
+    /// Automic Vault anything else: whether the password exists at all, or
+    /// whether Automic Vault could not answer. Before
+    /// `fm/grand-line-vault-no-launch-prompt` that `av list` ran as soon as
+    /// the lock screen went up, so every launch raised Automic Vault's
+    /// approval dialog before anyone had typed a thing.
+    private func attempt(_ typed: String, completion: @escaping (Bool) -> Void) {
+        let verify = verifyPassword
+        let check = checkAvailability
+        let alreadyKnown = passwordKnownConfigured
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            if verify(typed) {
+                DispatchQueue.main.async {
+                    // A verified password proves it is configured, which is
+                    // all an undecided install's settlement needs to know.
+                    if let self, self.readPreference() == nil { self.writePreference(true) }
+                    self?.passwordKnownConfigured = true
+                    completion(true)
+                }
+                return
+            }
+            let availability = alreadyKnown ? nil : check()
+            DispatchQueue.main.async {
+                completion(false)
+                guard let self, let availability else { return }
+                if availability == .configured {
+                    // The password exists, so this one was simply wrong. The
+                    // form and its "didn't match" line stay as they are.
+                    self.passwordKnownConfigured = true
+                    if self.readPreference() == nil { self.writePreference(true) }
+                    return
+                }
+                self.applyPasswordAvailability(availability, reason: self.shownReason)
+            }
         }
     }
 
     // MARK: App-level password lock (fm/grandline-app-lock)
 
-    /// Shows the lock overlay for `reason`, re-checking whether
-    /// `GRANDLINE_APP_PASSWORD` is actually configured in Automic Vault
-    /// (never cached - the captain could set it between one lock and the
-    /// next) before deciding which of the lock screen's two states to show.
+    /// Shows the lock overlay for `reason`, with the password form ready.
+    /// Whether `GRANDLINE_APP_PASSWORD` exists is not asked here - see the
+    /// comment above `avIsOnPath()` below for why that waits.
     func showLock(reason: AppLockReason) {
         // Audit #2 §5.1(b): before `setLocked(true)` below, because a console
         // page's incident card is an `NSPopover` and the gate's generic
@@ -181,35 +233,34 @@ final class LockPresenter {
         // bar's logo tile is a static gradient with no animation to stop, so
         // there is nothing left to do here - the lock overlay covers the whole
         // window including the bar, which was always the real guarantee.
-        // Optimistic default so the overlay never shows a blank subtitle for
-        // the fraction of a second the background `av list` check takes -
-        // corrected below once that check actually resolves.
-        let optimisticSubtitle = reason == .sessionExpired
-            ? "Your session expired - please log in again."
-            : "Grand Line is locked."
-        lockScreen.apply(.locked(subtitle: optimisticSubtitle))
+        // The password form is the resting state, and nothing here asks
+        // Automic Vault whether the password exists. That question is
+        // `av list`, which can raise Automic Vault's approval dialog, so it
+        // waits for a typed password that does not verify (`attempt`) or for
+        // Check again (`fm/grand-line-vault-no-launch-prompt`). The one thing
+        // answered now is whether `av` is installed at all, from `PATH`.
+        guard avIsOnPath() else {
+            lockScreen.apply(.avUnavailable)
+            return
+        }
+        lockScreen.apply(.locked(subtitle: Self.lockedSubtitle(for: reason)))
         lockScreen.focusPasswordField()
-        // fm/grandline-vault-bootstrap-fix: proactively try to start Automic
-        // Vault's own background approval service before the very first
-        // check - avoids ever hitting the "service not running" state below
-        // on an ordinary launch where the captain just hasn't opened the
-        // menu-bar app yet (e.g. right after a reboot). Fire-and-forget on
-        // the same background queue as the check that follows.
+        // fm/grandline-vault-bootstrap-fix: start Automic Vault's own
+        // approval service if it is not running, so the first password typed
+        // after a reboot does not meet a stopped helper. `pgrep`, then
+        // `open -g` only when needed - never `av`, so never its dialog.
         DispatchQueue.global(qos: .userInitiated).async {
             VaultSource.ensureServiceRunning()
         }
-        // A new lock screen always gets the fast first retry, whatever the
-        // previous one ended on.
-        appPasswordRetryAttempt = 0
-        checkAppPasswordAvailability(reason: reason)
     }
 
-    /// Re-checks `VaultSource.checkAppPasswordConfigured()` and updates the
-    /// lock screen's content state. When the service genuinely isn't running
-    /// yet (`.serviceNotRunning`), retries on a short timer rather than
-    /// immediately settling on a message - `ensureServiceRunning()` above
-    /// usually resolves this before the first attempt even lands; this is
-    /// the fallback for a slower start (e.g. right after a reboot).
+    private static func lockedSubtitle(for reason: AppLockReason) -> String {
+        reason == .sessionExpired ? "Your session expired - please log in again." : "Grand Line is locked."
+    }
+
+    /// Asks `VaultSource.checkAppPasswordConfigured()` (`av list`) and shows
+    /// what it answered. Reached only from Check again and from a refused
+    /// password - never from `showLock`, and never from a timer.
     private func checkAppPasswordAvailability(reason: AppLockReason) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let availability = self?.checkAvailability() ?? .transientFailure
@@ -228,100 +279,38 @@ final class LockPresenter {
         if readPreference() == nil, let settled = AppLockMigration.settledPreference(for: availability) {
             writePreference(settled)
             if !settled {
-                appPasswordRetryAttempt = 0
                 openWithoutLock()
                 return
             }
         }
         switch availability {
         case .configured:
-            // A settled outcome ends the retry sequence, so the next lock that
-            // does need one starts back at `appPasswordRetryBaseDelay`.
-            appPasswordRetryAttempt = 0
-            let subtitle = reason == .sessionExpired
-                ? "Your session expired - please log in again."
-                : "Grand Line is locked."
-            lockScreen.apply(.locked(subtitle: subtitle))
+            passwordKnownConfigured = true
+            lockScreen.apply(.locked(subtitle: Self.lockedSubtitle(for: reason)))
             lockScreen.focusPasswordField()
         case .notConfigured:
-            appPasswordRetryAttempt = 0
             lockScreen.apply(.noPasswordConfigured)
             lockScreen.focusPasswordField()
         case .avUnavailable:
-            appPasswordRetryAttempt = 0
             lockScreen.apply(.avUnavailable)
         case .serviceNotRunning:
             lockScreen.apply(.serviceNotRunning)
-            scheduleAppPasswordAvailabilityRetry(reason: reason)
         case .transientFailure:
             // Any `av list` failure/timeout that isn't the specific
             // `.serviceNotRunning` marker text (fm/grandline-vault-wake-
-            // recheck-fix) - live-confirmed that a suspended/unresponsive
-            // approval helper (e.g. right after a long sleep/wake) can make
-            // `av list` fail or hang in a way that previously fell through
-            // to a hard, misleading `.avUnavailable` state with no retry at
-            // all, even though `av` is genuinely installed and the
-            // password secret genuinely exists. Retried on the same cadence
-            // as `.serviceNotRunning` below.
+            // recheck-fix) - a suspended or unresponsive approval helper, or
+            // a denied approval dialog. The password may well exist, so this
+            // is never `.avUnavailable` or `.notConfigured`.
             lockScreen.apply(.transientFailure)
-            scheduleAppPasswordAvailabilityRetry(reason: reason)
         }
-    }
-
-    /// Retries while the lock screen is up, on a **backoff** - fast at first
-    /// so the ordinary "Automic Vault is still starting" case recovers within
-    /// a couple of seconds, then slower so a genuinely wedged approval service
-    /// is not hammered for the rest of the session.
-    ///
-    /// This used to be a flat 1.5s forever, on the reasoning that the retry is
-    /// "a cheap subprocess call, not a real cost". That reasoning was wrong in
-    /// a way nothing here could see: the call is `av list`, and `av list` is
-    /// the one `av` read that goes through Automic Vault's approval service -
-    /// every attempt is an approval-service round trip, and one that is
-    /// entitled to raise Automic Vault's own modal dialog. Measured, each `av
-    /// list` writes a row to Automic Vault's authorization log, so a lock
-    /// screen left up against an unresponsive helper was asking it ~2,400
-    /// times an hour. `VaultData.swift`'s "approval-prompt split" comment
-    /// block has the measurements.
-    ///
-    /// The backoff is deliberately not a give-up: the lock screen has nothing
-    /// else useful to show and the captain cannot get past it any other way,
-    /// so it keeps asking - just at `appPasswordRetryCeiling` rather than at 1.5s.
-    private func scheduleAppPasswordAvailabilityRetry(reason: AppLockReason) {
-        let delay = Self.appPasswordRetryDelay(attempt: appPasswordRetryAttempt)
-        appPasswordRetryAttempt += 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.lockScreen.view.isHidden else { return }
-            self.checkAppPasswordAvailability(reason: reason)
-        }
-    }
-
-    /// How many consecutive retries the current lock screen has scheduled.
-    /// Reset by `applyPasswordAvailability` on any outcome that is not a
-    /// retryable one, and by `showLock`, so a fresh lock always starts fast.
-    private var appPasswordRetryAttempt = 0
-
-    /// The first delay, and the one the ordinary "the helper is still coming
-    /// up" case is answered at.
-    static let appPasswordRetryBaseDelay: TimeInterval = 1.5
-
-    /// The slowest this ever gets. Chosen so a captain who starts Automic
-    /// Vault by hand while staring at the lock screen still sees it clear
-    /// within a few seconds of doing so, rather than a minute later.
-    static let appPasswordRetryCeiling: TimeInterval = 15
-
-    /// Doubles from `appPasswordRetryBaseDelay` and stops at
-    /// `appPasswordRetryCeiling`: 1.5, 3, 6, 12, 15, 15, ... - so the first
-    /// four retries fire at 1.5s, 4.5s, 10.5s and 22.5s, i.e. all inside the
-    /// first 23 seconds, which is the window the flat 1.5s cadence actually
-    /// existed for.
-    ///
-    /// `static` and pure so a suite can assert the schedule without a window,
-    /// a lock screen or an `av` on PATH.
-    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval {
-        guard attempt > 0 else { return appPasswordRetryBaseDelay }
-        let scaled = appPasswordRetryBaseDelay * pow(2, Double(min(attempt, 16)))
-        return min(scaled, appPasswordRetryCeiling)
+        // **No retry timer** (`fm/grand-line-vault-no-launch-prompt`). Both
+        // waiting states used to re-run this check on a backoff for as long
+        // as the lock screen was up. That check is `av list`, and every run of
+        // it may raise Automic Vault's approval dialog - so a Deny was
+        // answered with the same dialog again a few seconds later, for as
+        // long as the screen stayed up. The way forward is Check again, the
+        // next typed password, or the local fallback, each of which is the
+        // person asking.
     }
 
     /// R2-UX-01: the app opens with the lock off - the same way out a
@@ -364,8 +353,9 @@ final class LockPresenter {
     /// screen, nothing but a beep. This is that escape hatch, reachable from
     /// the menu bar alone with no other window ever appearing.
     func attemptUnlockFromCompactMode(password: String, completion: @escaping (Bool) -> Void) {
+        let verify = verifyPassword
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ok = VaultSource.verifyAppPassword(password)
+            let ok = verify(password)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion(false); return }
                 if ok {

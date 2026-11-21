@@ -346,6 +346,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private var isHardeningHomebrew = false
     private var homebrewDisruptionAcknowledged = false
     private var hasCheckedHardenersOnce = false
+    /// The page first appeared while the app was locked (session restore or
+    /// GL-31's first-run landing, under the lock screen), so its
+    /// `av hardeners --json` reads wait for the unlock: a launch runs no `av`
+    /// at all (`fm/grand-line-vault-no-launch-prompt`).
+    private var hardenersDeferredByLock = false
     private let notSyncedStack = NSStackView()
 
     // MARK: "Run full setup" sequencer state (Part D)
@@ -470,6 +475,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             // rebuild, so they follow the theme now even while hidden.
             self?.refreshStepperVisuals()
             self?.rebuildAfterThemeChangeIfVisible { self?.rebuildDynamicSections() }
+        }
+        AppLockGate.shared.observe { [weak self] locked in
+            guard !locked, let self, self.hardenersDeferredByLock, !self.view.isHiddenOrHasHiddenAncestor else { return }
+            self.checkHardenersOnce()
         }
 
         // Review #3's UI5, both halves of it on this page:
@@ -670,13 +679,22 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             checkAllSoftware()
         }
         if !hasCheckedHardenersOnce {
-            hasCheckedHardenersOnce = true
-            checkGhHardening()
-            checkAwsHardening()
-            checkCodexHardening()
-            checkHomebrewHardening()
+            if AppLockGate.shared.isLocked {
+                hardenersDeferredByLock = true
+            } else {
+                checkHardenersOnce()
+            }
         }
         scrollToTop()
+    }
+
+    private func checkHardenersOnce() {
+        hardenersDeferredByLock = false
+        hasCheckedHardenersOnce = true
+        checkGhHardening()
+        checkAwsHardening()
+        checkCodexHardening()
+        checkHomebrewHardening()
     }
 
     private func scrollToTop() {
