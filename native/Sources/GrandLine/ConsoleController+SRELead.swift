@@ -47,33 +47,29 @@ extension ConsoleController {
         sreLeadHeader.wantsLayer = true
         sreLeadCard.addSubview(sreLeadHeader)
 
+        // Sre-2: the hero is the whole header, and it has its own edge, so
+        // the divider stays at zero height.
         sreLeadHeaderDivider.translatesAutoresizingMaskIntoConstraints = false
         sreLeadHeaderDivider.wantsLayer = true
+        sreLeadHeaderDivider.isHidden = true
         sreLeadCard.addSubview(sreLeadHeaderDivider)
 
-        sreLeadHeaderIcon.configure(symbol: "sparkles", tint: .accent, pointSize: 12)
-        sreLeadHeader.addSubview(sreLeadHeaderIcon)
+        sreLeadHero.set(title: "SRE Lead", subtitle: sreLeadHeroSubtitle)
+        sreLeadHeader.addSubview(sreLeadHero)
+        sreLeadHero.trailing.addArrangedSubview(sreLeadStatusPill)
 
-        sreLeadHeaderLabel.font = HelmType.rowTitle()
-        sreLeadHeaderLabel.translatesAutoresizingMaskIntoConstraints = false
-        sreLeadHeaderLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        sreLeadHeader.addSubview(sreLeadHeaderLabel)
-
-        sreLeadHeader.addSubview(sreLeadStatusPill)
-
-        sreLeadGeneratePostmortemButton.translatesAutoresizingMaskIntoConstraints = false
-        sreLeadGeneratePostmortemButton.title = ""
-        sreLeadGeneratePostmortemButton.isBordered = false
-        sreLeadGeneratePostmortemButton.wantsLayer = true
         sreLeadGeneratePostmortemButton.toolTip = "Generate Postmortem. " + AITransparency.willSendToClaude("this incident's transcript")
-        sreLeadGeneratePostmortemButton.image = HelmSymbol.image("doc.badge.plus", pointSize: 12,
-                                                         weight: HelmSymbol.weight(for: .semibold),
-                                                         accessibilityDescription: "Generate Postmortem")
-        sreLeadGeneratePostmortemButton.imageScaling = .scaleProportionallyDown
+        sreLeadGeneratePostmortemButton.setAccessibilityLabel("Generate Postmortem")
         sreLeadGeneratePostmortemButton.target = self
         sreLeadGeneratePostmortemButton.action = #selector(generatePostmortemClicked)
         sreLeadGeneratePostmortemButton.isHidden = true
-        sreLeadHeader.addSubview(sreLeadGeneratePostmortemButton)
+        sreLeadHero.trailing.addArrangedSubview(sreLeadGeneratePostmortemButton)
+        sreLeadStatusPill.label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let insets = sreLeadGeneratePostmortemButton.alignmentRectInsets
+        NSLayoutConstraint.activate([
+            sreLeadGeneratePostmortemButton.widthAnchor.constraint(equalToConstant: 26 - insets.left - insets.right),
+            sreLeadGeneratePostmortemButton.heightAnchor.constraint(equalToConstant: 26 - insets.top - insets.bottom),
+        ])
 
         NSLayoutConstraint.activate([
             // The card fills the backdrop apart from the workspace padding.
@@ -89,27 +85,16 @@ extension ConsoleController {
             sreLeadHeader.leadingAnchor.constraint(equalTo: sreLeadCard.leadingAnchor),
             sreLeadHeader.trailingAnchor.constraint(equalTo: sreLeadCard.trailingAnchor),
             sreLeadHeader.topAnchor.constraint(equalTo: sreLeadCard.topAnchor),
-            sreLeadHeader.heightAnchor.constraint(equalToConstant: 46),
+
+            sreLeadHero.leadingAnchor.constraint(equalTo: sreLeadHeader.leadingAnchor),
+            sreLeadHero.trailingAnchor.constraint(equalTo: sreLeadHeader.trailingAnchor),
+            sreLeadHero.topAnchor.constraint(equalTo: sreLeadHeader.topAnchor),
+            sreLeadHero.bottomAnchor.constraint(equalTo: sreLeadHeader.bottomAnchor),
 
             sreLeadHeaderDivider.leadingAnchor.constraint(equalTo: sreLeadCard.leadingAnchor),
             sreLeadHeaderDivider.trailingAnchor.constraint(equalTo: sreLeadCard.trailingAnchor),
             sreLeadHeaderDivider.topAnchor.constraint(equalTo: sreLeadHeader.bottomAnchor),
-            sreLeadHeaderDivider.heightAnchor.constraint(equalToConstant: 1),
-
-            sreLeadHeaderIcon.leadingAnchor.constraint(equalTo: sreLeadHeader.leadingAnchor, constant: HelmMetrics.s3),
-            sreLeadHeaderIcon.centerYAnchor.constraint(equalTo: sreLeadHeader.centerYAnchor),
-
-            sreLeadHeaderLabel.leadingAnchor.constraint(equalTo: sreLeadHeaderIcon.trailingAnchor, constant: HelmMetrics.s2),
-            sreLeadHeaderLabel.centerYAnchor.constraint(equalTo: sreLeadHeader.centerYAnchor),
-
-            sreLeadStatusPill.leadingAnchor.constraint(greaterThanOrEqualTo: sreLeadHeaderLabel.trailingAnchor, constant: HelmMetrics.s2),
-            sreLeadStatusPill.trailingAnchor.constraint(equalTo: sreLeadGeneratePostmortemButton.leadingAnchor, constant: -HelmMetrics.s2),
-            sreLeadStatusPill.centerYAnchor.constraint(equalTo: sreLeadHeader.centerYAnchor),
-
-            sreLeadGeneratePostmortemButton.trailingAnchor.constraint(equalTo: sreLeadHeader.trailingAnchor, constant: -HelmMetrics.s3),
-            sreLeadGeneratePostmortemButton.centerYAnchor.constraint(equalTo: sreLeadHeader.centerYAnchor),
-            sreLeadGeneratePostmortemButton.widthAnchor.constraint(equalToConstant: 22),
-            sreLeadGeneratePostmortemButton.heightAnchor.constraint(equalToConstant: 22),
+            sreLeadHeaderDivider.heightAnchor.constraint(equalToConstant: 0),
         ])
 
         buildSRELeadEmptyState()
@@ -271,7 +256,8 @@ extension ConsoleController {
                     let chat = state.chatView ?? self.makeSRELeadChat(for: tab)
                     state.chatView = chat
                     chat.clearMessages()
-                    chat.append(SRELeadMessage(role: .status, text: "SRE Lead is ready. Ask a question about this cluster below."))
+                    // Sre-2: the empty state says what to ask; the divider only marks the start.
+                    chat.append(SRELeadMessage(role: .status, text: "SRE Lead is ready."))
                     chat.setInputEnabled(true)
                     state.phase = .ready
                     self.updateSRELeadControls()
@@ -289,15 +275,35 @@ extension ConsoleController {
     /// real input field instead of the captain having to click into a raw
     /// `claude` TUI first. Scoped to `tab`'s own runner/chat, so two tabs'
     /// turns can never cross-talk.
-    func handleSRELeadSubmit(_ text: String, in tab: TabModel) {
-        guard let state = tab.sreLead, let runner = state.runner, let chat = state.chatView else { return }
-        chat.append(SRELeadMessage(role: .user, text: text))
+    ///
+    /// Sre-2: while the turn runs the header pill says Working, the chat shows
+    /// a working card with the elapsed time and the send button turns into
+    /// Stop. `appendQuestion: false` is Try again, which asks the last
+    /// question again without a second copy of it in the thread.
+    func handleSRELeadSubmit(_ text: String, in tab: TabModel, appendQuestion: Bool = true) {
+        guard let state = tab.sreLead, let runner = state.runner, let chat = state.chatView,
+              !state.isTurnInFlight else { return }
+        if appendQuestion { chat.append(SRELeadMessage(role: .user, text: text)) }
+        let started = Date()
+        state.turnID += 1
+        let turn = state.turnID
+        state.turnStartedAt = started
+        state.lastQuestion = text
         chat.setInputEnabled(false)
-        runner.ask(text) { [weak self, weak chat, weak tab] result in
+        chat.setWorking(since: started)
+        if tab === currentTab { updateSRELeadStatusPill(phase: state.phase) }
+        runner.ask(text) { [weak self, weak chat, weak tab, weak state] result in
             guard let chat else { return }
+            // A reply to a turn the captain stopped, or to an earlier turn:
+            // nobody is waiting for it.
+            guard let state, state.turnID == turn, state.isTurnInFlight else { return }
+            state.turnStartedAt = nil
+            chat.setWorking(since: nil)
+            if let self, let tab, tab === self.currentTab { self.updateSRELeadStatusPill(phase: state.phase) }
             switch result {
             case .success(let reply):
-                chat.append(SRELeadMessage(role: .assistant, text: reply))
+                chat.append(SRELeadMessage(role: .assistant, text: reply,
+                                           elapsed: Date().timeIntervalSince(started)))
                 // F8 (incident mode): a completed turn is one of the three
                 // things that attach themselves to an active incident on this
                 // host. Only ever a real reply - a failed turn is an error in
@@ -314,7 +320,7 @@ extension ConsoleController {
                     self.onSRELeadReplyWhileBackground?(tab)
                 }
             case .failure(let error):
-                chat.append(SRELeadMessage(role: .error, text: error.message))
+                chat.append(SRELeadMessage(role: .error, text: error.message, retryable: true))
             }
             chat.setInputEnabled(true)
             // Only steal first responder back if the captain is still
@@ -324,6 +330,25 @@ extension ConsoleController {
                   let window = self.view.window, window.firstResponder !== chat else { return }
             window.makeFirstResponder(chat)
         }
+    }
+
+    /// Sre-2's Stop: ends the turn in flight. The reply, if one still
+    /// arrives, is dropped (`turnID`), and the thread says the turn was
+    /// stopped rather than showing an error card.
+    func stopSRELeadTurn(in tab: TabModel) {
+        guard let state = tab.sreLead, state.isTurnInFlight, let chat = state.chatView else { return }
+        state.turnStartedAt = nil
+        state.runner?.cancel()
+        chat.setWorking(since: nil)
+        chat.append(SRELeadMessage(role: .status, text: "Stopped. Ask again when you're ready."))
+        chat.setInputEnabled(true)
+        if tab === currentTab { updateSRELeadStatusPill(phase: state.phase) }
+    }
+
+    /// The header's second line: the host SRE Lead reads, and that it only
+    /// ever runs read-only kubectl there.
+    var sreLeadHeroSubtitle: String {
+        "\(hostIdentity?.label ?? "This Mac") \u{00B7} read-only kubectl"
     }
 
     func showSRELeadError(_ message: String, in tab: TabModel) {
@@ -404,6 +429,8 @@ extension ConsoleController {
             tab.sreLead?.chatView?.isHidden = (tab !== current)
         }
         sreLeadEmptyStateView.isHidden = (current.sreLead?.chatView != nil)
+        sreLeadHero.set(title: "SRE Lead", subtitle: sreLeadHeroSubtitle)
+        current.sreLead?.chatView?.hostLabel = hostIdentity?.label ?? "this Mac"
         updateSRELeadStatusPill(phase: current.sreLead?.phase ?? .notStarted)
         setSRELeadPaneOpen(current.sreLead != nil)
     }
@@ -417,12 +444,13 @@ extension ConsoleController {
         switch phase {
         case .notStarted: text = ""
         case .starting: text = "Starting\u{2026}"
-        case .ready: text = "Ready"
+        case .ready: text = currentTab?.sreLead?.isTurnInFlight == true ? "Working" : "Ready"
         case .failed: text = "Failed"
         }
         sreLeadStatusPill.isHidden = text.isEmpty
         guard !text.isEmpty else { return }
-        sreLeadStatusPill.configure(text: text.uppercased(), tint: phase.tint ?? .neutral, theme: theme)
+        let tint: HelmTint = text == "Working" ? .warn : (phase.tint ?? .neutral)
+        sreLeadStatusPill.configure(text: text.uppercased(), tint: tint, theme: theme)
     }
 
     /// Turns the bordered-terminal-card look on - one condition, evaluated in
@@ -540,6 +568,15 @@ extension ConsoleController {
             guard let self, let tab, tab === self.currentTab else { return }
             self.updateGeneratePostmortemButton()
         }
+        chat.onStop = { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            self.stopSRELeadTurn(in: tab)
+        }
+        chat.onRetry = { [weak self, weak tab] in
+            guard let self, let tab, let question = tab.sreLead?.lastQuestion else { return }
+            self.handleSRELeadSubmit(question, in: tab, appendQuestion: false)
+        }
+        chat.hostLabel = hostIdentity?.label ?? "this Mac"
         chat.setInputEnabled(false)
         sreLeadCard.addSubview(chat)
         NSLayoutConstraint.activate([

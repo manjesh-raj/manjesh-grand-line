@@ -726,10 +726,23 @@ final class MainSplitShellController: WorkspaceShellController {
             self.sidebarItem.minimumThickness = Self.sidebarMinimum
             self.sidebarItem.maximumThickness = Self.sidebarMaximum
         }
-        guard animate else {
+        // An expand lands at its full width at once and eases in by fading,
+        // never by easing the pane's width open. The rows are laid out at the
+        // full width the whole time, so a pane growing from 0 uncovers the
+        // icon column first and the labels last - measured in a real window
+        // (`fm/grandline-popover-redesign`): the pane was 4, 70 and 263pt
+        // wide over the first 0.3s while every label already held its full
+        // width. The expand also widens the window and re-lays out the page
+        // on the same turn, and on a busy main thread that icons-only stretch
+        // lasted a second or two, which is what the captain saw. A fade is a
+        // layer animation, so it runs on the render server whatever the main
+        // thread is doing, and the labels are there from the first frame.
+        // The collapse still eases its width shut: nothing appears there.
+        guard animate, collapsed else {
             sidebarItem.isCollapsed = collapsed
             splitController.splitView.layoutSubtreeIfNeeded()
             if !collapsed { holdDividerAtSidebarWidth(expandWidth) }
+            if !collapsed, animate { WorkspaceMotion.fadeIn(sidebar.view) }
             // The pin holds for one more main-queue turn. A page re-lays out
             // for the narrower column on that turn (Home's grid,
             // `HomeCanvasController`'s clip-view observer), and until it has,
@@ -740,22 +753,12 @@ final class MainSplitShellController: WorkspaceShellController {
             if collapsed { release() } else { DispatchQueue.main.async(execute: release) }
             return
         }
-        // R2-BUG-02: the eased expand handed back a sidebar squeezed to its
-        // 200pt minimum, on every run in the review's lab and 1 in 9 in PR
-        // #523's. Instrumented, the cause is not the page: Home had already
-        // re-laid out for the narrower column when the pin came off. It is
-        // the split view's own held divider position, which an animated
-        // uncollapse leaves where the animation started, so releasing the
-        // range let the pane fall to its minimum (measured: 236pt at the
-        // release, 200pt after the next layout pass). Setting the divider to
-        // the pinned width first makes that the position the split holds,
-        // and the release then waits the same one turn the plain path does.
-        WorkspaceMotion.setCollapsed(sidebarItem, collapsed, animated: true) { [weak self] in
-            guard !collapsed, let self else { release(); return }
-            self.holdDividerAtSidebarWidth(expandWidth)
-            self.splitController.splitView.layoutSubtreeIfNeeded()
-            DispatchQueue.main.async(execute: release)
-        }
+        // Only the collapse eases its width. R2-BUG-02 (an eased expand handed
+        // back a sidebar squeezed to its 200pt minimum, because the animated
+        // uncollapse left the split's held divider where the animation
+        // started) cannot happen any more: the expand takes the plain path
+        // above, which sets the divider to the pinned width before it lets go.
+        WorkspaceMotion.setCollapsed(sidebarItem, true, animated: true) {}
     }
 
     /// Make the pinned width the position the split view holds once the pin

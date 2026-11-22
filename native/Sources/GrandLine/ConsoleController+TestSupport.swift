@@ -174,6 +174,21 @@ extension ConsoleController {
         tabs.first(where: { $0.id == id })?.sreLead?.chatView?.debugMessageTexts()
     }
 
+    /// Sre-2: the tab at `id`'s own chat view, for a suite that drives its
+    /// composer, its Stop and its Try again.
+    func debugSRELeadChat(forTabID id: UUID) -> SRELeadChatView? {
+        tabs.first(where: { $0.id == id })?.sreLead?.chatView
+    }
+
+    /// Sre-2: the header pill's word, `nil` while it is hidden.
+    var debugSRELeadStatusText: String? { sreLeadStatusPill.isHidden ? nil : sreLeadStatusPill.text }
+
+    /// Sre-2: the header's second line.
+    var debugSRELeadHeroSubtitle: String { sreLeadHero.subtitleLabel.stringValue }
+
+    /// The SRE Lead card (header and chat), for a render.
+    var debugSRELeadCard: NSView { sreLeadCard }
+
     /// How many tabs on this page currently have SRE Lead actively running -
     /// the same count `startSRELead(for:)` checks against `sreLeadMaxConcurrent`.
     func debugActiveSRELeadCount() -> Int { activeSRELeadTabCount() }

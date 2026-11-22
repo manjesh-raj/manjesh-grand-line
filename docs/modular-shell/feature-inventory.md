@@ -794,7 +794,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.CompactMode` | CompactMode controls | `iconClicked` | Menu bar extra (compact mode, unchanged) |  |
 | `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode; the Today tab's Open Tasks moved into the Bridge-shaped Tasks pane, `action.TasksBridgeView`) |  |
 | `action.CompactModeStatusMenu` | CompactModeStatusMenu controls | `fire` | Menu bar extra (compact mode, unchanged) |  |
-| `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `runClicked` | Console (Compose popover) |  |
+| `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `retryClicked`, `runClicked` | Console (Compose popover) |  |
 | `action.ConsoleController+SRELead` | ConsoleController+SRELead controls | `generatePostmortemClicked`, `startSRELeadForCurrentTabClicked` | Console (SRE Lead) |  |
 | `action.ConsoleController+Toolbar` | ConsoleController+Toolbar controls | `analyzeLogsTapped`, `herdrRestartButtonClicked`, `incidentButtonClicked`, `newShellTab`, `refreshBlockView`, `showFind`, `tailLogsTapped`, `toggleBlockView`, `toggleComposer`, `toggleDragForwarding`, `toggleKubeContextBadge`, `toggleQuotaUsage`, `toggleSRELead` | Console (the toolbar above the terminal, unchanged) |  |
 | `action.CredentialVaultController` | CredentialVaultController controls | `addTapped`, `clearClipboardNow`, `lockTapped`, `recoveryTapped`, `settingsTapped` | Secrets › Secrets |  |
@@ -874,7 +874,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.PoneglyphMenuBar` | PoneglyphMenuBar controls | `copyTapped`, `iconClicked`, `openVault` | Menu bar extra (Poneglyph, unchanged) |  |
 | `action.PortForwardingController` | PortForwardingController controls | `addRuleClicked`, `cancel`, `kindChanged`, `removeClicked`, `save` | Connections › Hosts (host editor) |  |
 | `action.PostmortemsController` | PostmortemsController controls | `openLogAnalyzerTapped`, `seedExamplePostmortemTapped` | Runbooks › Postmortems |  |
-| `action.QuotaUsagePopover` | QuotaUsagePopover controls | `copyClicked` | Console (Claude usage popover) |  |
+| `action.QuotaUsagePopover` | QuotaUsagePopover controls | `copyClicked`, `refreshClicked` | Console (Claude usage popover) |  |
 | `action.ReadingListCardView` | ReadingListCardView controls | `copyLinkTapped`, `deleteTapped`, `editTagsTapped`, `openExternallyTapped`, `openTapped`, `summariseTapped`, `toggleReadTapped` | Knowledge › Reading list |  |
 | `action.ReadingListController` | ReadingListController controls | `addExampleLinkTapped`, `clicked`, `closeReaderTapped`, `pasteTapped`, `readerBackTapped`, `readerOpenExternallyTapped`, `readerReloadTapped`, `refreshMetadataTapped` | Knowledge › Reading list |  |
 | `action.RecentDestinationsPopover` | RecentDestinationsPopover controls | `buttonClicked` | Toolbar (back and forward, with the Recents list as their menu) |  |
@@ -911,7 +911,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ShiftTaskEditorController` | ShiftTaskEditorController controls | `chooseImageClicked`, `deleteTask`, `dismissDetected`, `priorityItemSelected`, `projectItemSelected` | Tasks (task editor; also the inspector's fields) |  |
 | `action.SnippetEditorController` | SnippetEditorController controls | `deleteSnippet` | Connections › Snippets (snippet editor) |  |
 | `action.SnippetExpansionPanel` | SnippetExpansionPanel controls | `requestPermission` | Connections › Snippets (the expansion switch: a card in the floating bar's column, a plain row over the table in the sidebar layout) |  |
-| `action.SRELeadChatView` | SRELeadChatView controls | `submit` | Console (SRE Lead pane) |  |
+| `action.SRELeadChatView` | SRELeadChatView controls | `chipClicked`, `copyClicked`, `expandClicked`, `retryClicked`, `sendOrStop` | Console (SRE Lead pane) |  |
 | `action.StickyBoardController` | StickyBoardController controls | `archiveToggleTapped`, `newNoteTapped`, `seedExampleNoteTapped` | Sticky Board |  |
 | `action.StickyBoardViews` | StickyBoardViews controls | `addClicked`, `archiveClicked`, `boxClicked`, `colorClicked`, `deleteClicked`, `makeTaskClicked`, `overflowClicked`, `toggleChecklistClicked`, `unarchiveClicked` | Sticky Board |  |
 | `action.StrawHatChatView` | StrawHatChatView controls | `submit` | Crew › Ask the crew |  |
@@ -930,7 +930,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.VaultLauncherIssueSheet` | VaultLauncherIssueSheet controls | `closeTapped`, `copyTapped`, `recheckTapped` | Secrets › Automic Vault (a launcher's fix steps) |  |
 | `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `skipTapped` | Window (first-run welcome sheet; the profile step is the sidebar layout's, R2-UX-01, and its choices are `HelmChoiceCard`s and the look step's are theme tiles since S25) |  |
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
-| `action.WhiteboardController` | WhiteboardController controls | `addExampleDiagramTapped`, `dslTapped`, `emptyBoardClicked`, `generateTapped` | Whiteboard |  |
+| `action.WhiteboardController` | WhiteboardController controls | `dslTapped`, `generateTapped` | Whiteboard |  |
 | `action.WhiteboardDSLPopover` | WhiteboardDSLPopover controls | `appendToggled`, `componentMenuPicked`, `componentsButtonClicked`, `insertClicked` | Whiteboard |  |
 | `action.WorkspaceInspector` | WorkspaceInspector controls | `closeClicked` | Inspector (its own close button; the toolbar's inspector button opens it) |  |
 | `action.WorkspaceInspectorCrewPanel` | WorkspaceInspectorCrewPanel controls | `suggestedAskTapped` | Inspector (the crew panel's suggested asks, Operator only, S27) |  |

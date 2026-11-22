@@ -1722,3 +1722,13 @@ The column is a flat stack of `HoverHighlightView` rows and would have needed al
   Context menus keep the theme's own appearance, since they float over the page.
 - The window toolbar's sidebar button over the pane is the system's own glass item and was not restyled.
   No off-screen render can show glass, so how it reads on the gradient in the packaged app is the captain's check.
+
+## The sidebar's labels arrive with it (`fm/grandline-popover-redesign`)
+
+The captain saw the sidebar come back with only its icons, and the labels a second or two later.
+Instrumented in a real window, every label held its full width throughout the expand.
+The pane itself was what animated: it grew from 0 to 4, 70, 263 and 273pt over about 0.3s, clipping rows already laid out at full width, so the icon column showed first.
+The expand also widens the window and re-lays out the page on the same turn, and on a busy main thread that stretch lasted much longer.
+The expand now lands at full width at once and fades in (`WorkspaceMotion.fadeIn`), a layer animation that does not wait on the main thread.
+The collapse still eases its width.
+`SidebarPolishSelfTest` checks, on the turn of the click, that the pane is full width, the Tasks label is fully visible and the fade is running; the old eased expand fails all three.

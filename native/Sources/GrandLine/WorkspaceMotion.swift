@@ -7,7 +7,8 @@
 //
 // | Prototype                                 | Here                                         |
 // |-------------------------------------------|----------------------------------------------|
-// | the sidebar's width, 200ms                | `paneDuration` (move, 180ms)                 |
+// | the sidebar's width, 200ms                | `paneDuration` (move, 180ms): the collapse   |
+// |                                           | eases its width, the expand fades in         |
 // | the inspector sliding in 16px, 220ms      | `inspectorEntrance` (move, 180ms, 16pt)      |
 // | a module or tab's content entering, 220ms | the page change's own entrance, on a tab too |
 // | a row's hover and selection fill, 120ms   | `HelmRowWash` (state, 120ms)                 |
@@ -73,6 +74,17 @@ enum WorkspaceMotion {
     /// animator is asked, so a suite waits on this rather than on it.
     static var debugPaneMotionsInFlight = 0
     #endif
+
+    /// Fade `view` in over `paneDuration`: the sidebar's expand, which lands
+    /// at its full width at once (`MainSplitShellController.setSidebarCollapsed`
+    /// says why). Opacity only, so it never moves a frame Auto Layout owns;
+    /// nothing at all under Reduce Motion.
+    static func fadeIn(_ view: NSView) {
+        view.wantsLayer = true
+        guard !HelmMotion.isReduced, let layer = view.layer else { return }
+        HelmMotion.withoutActions { layer.opacity = 0 }
+        HelmMotion.animateLayers(duration: paneDuration, on: [layer]) { layer.opacity = 1 }
+    }
 
     /// Slide `view` in from the trailing edge with a fade. Layer properties
     /// only, so it never moves a frame Auto Layout owns; nothing at all under

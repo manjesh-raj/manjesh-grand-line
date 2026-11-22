@@ -572,15 +572,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// hide two borders and the space between them.
     let sreLeadCard = NSView()
     let sreLeadHeader = NSView()
-    /// The panel's identity block, mirroring the reference mockup's `sre-head`:
-    /// the same `sparkles` glyph in a tinted tile that `SRELeadChatView`
-    /// already puts on every assistant reply, so the panel and its messages
-    /// read as one agent rather than two unrelated treatments.
-    let sreLeadHeaderIcon = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: HelmMetrics.rChip)
-    /// Live phase readout ("Ready" / "Starting…" / "Failed"), the mockup's
-    /// `status` chip. Uses the shared `ToolRowLayout.pill`, so its hue is
-    /// contrast-corrected against the card fill like every other pill in the
-    /// app rather than being a raw tint used as text (Phase 0's rule).
+    /// Sre-2 (`fm/grandline-popover-redesign`): the panel opens on the hero
+    /// gradient - a white sparkle tile, "SRE Lead", the host it reads and that
+    /// it only runs read-only kubectl, then the status pill and the postmortem
+    /// button as ghost controls on the gradient.
+    let sreLeadHero = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white,
+                                        insets: NSEdgeInsets(top: 12, left: 12, bottom: 13, right: 12))
+    /// Live phase readout ("Starting…" / "Ready" / "Working" / "Failed"), a
+    /// `HelmStatusPill` drawn on the hero (`heroInk`).
     let sreLeadStatusPill = HelmStatusPill()
     var sreLeadStatusLabel: NSTextField { sreLeadStatusPill.label }
     /// Separates the header bar from the body below it - needed once the
@@ -588,12 +587,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// (matching the header's own long-standing fill) so the two don't read
     /// as one indistinguishable block (`fm/grandline-sre-lead-polish`).
     let sreLeadHeaderDivider = NSView()
-    let sreLeadHeaderLabel = NSTextField(labelWithString: "SRE Lead")
     /// "Generate Postmortem" (`fm/grandline-sre-lead-postmortem`) - hidden
     /// until `updateGeneratePostmortemButton()` sees a real assistant reply
     /// in the current tab's chat (see `SRELeadChatView.hasRealExchange`), so
     /// it never appears over an empty/just-opened session.
-    let sreLeadGeneratePostmortemButton = NSButton()
+    let sreLeadGeneratePostmortemButton = HelmButton(symbol: "doc.badge.plus", variant: .secondary, size: .small)
     /// Shown inside `sreLeadPane` whenever the currently selected tab has no
     /// `sreLead` state yet - "started, running, or not-yet-started, never
     /// another tab's" (design doc). Lets a captain start SRE Lead for
@@ -654,6 +652,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // command is not, and it used to reach the terminal with no gate at all
         // while the DevOps Command Library's own send has always confirmed.
         // Same asymmetry as S1, one path over.
+        composer.targetTabName = { [weak self] in self?.currentTab?.name }
         composer.onRunInTerminal = { [weak self] command in
             CommandRiskConfirmation.confirmAIAuthored(command: command,
                                                       source: "Compose") {

@@ -97,6 +97,21 @@
 // two are numerically identical in 3 of 12 `HelmTheme.allThemes`, which
 // would have silently reproduced the same invisible-field bug in exactly
 // those themes).
+//
+// `fm/grandline-popover-redesign` (Comp-1 of the console popovers board,
+// `data/grand-line-console-popovers-sre-mockups/`): the popover opens on the
+// hero gradient every hero card paints, with a white sparkle tile and one line
+// saying nothing runs on its own. The intent well is a raised `HelmComposerCard`
+// (white on the card rather than the inset `side` colour, which read as a
+// flat lavender box on the Lavender palette), and its footer adds "↩ new
+// line" and a character count. The examples are raised chips with a leading
+// symbol; they still only fill the field. The result is a section card with
+// the command in the terminal scheme's own colours, Copy with a two-second
+// "Copied" state, and Run in Terminal naming the tab it sends to. Generating
+// shows a working card with the elapsed time, and a failure is a critical
+// `HelmAccentRow` with Try again. The popover is a fixed 420pt and a long
+// command wraps, so it no longer jumps between 380 and 640pt - the
+// `fm/grandline-composer-theme-and-width` grow-to-fit described above is gone.
 
 import AppKit
 
@@ -107,6 +122,9 @@ final class ConsoleComposerController: NSObject, NSPopoverDelegate {
 
     /// Set by `ConsoleController` to `currentTab?.terminal.send(txt:)`.
     var onRunInTerminal: ((String) -> Void)?
+    /// The name of the tab Run in Terminal sends to, read on every open so
+    /// the popover can say where the command will land.
+    var targetTabName: (() -> String?)?
 
     override init() {
         super.init()
@@ -140,6 +158,7 @@ final class ConsoleComposerController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
         } else {
             content.reset()
+            content.setTargetTabName(targetTabName?())
             popover.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
             content.focusIntentField()
         }
@@ -165,395 +184,582 @@ final class ConsoleComposerController: NSObject, NSPopoverDelegate {
     }
 }
 
-/// The popover's content: a tinted-icon header, an intent field + Generate
-/// (with a `⌘⏎` shortcut hint), a status/error line, and (once generated) the
-/// command in a real code-block view with Copy/Run actions. No history is
-/// kept - this is a one-shot generate-review-run per tab open, per the
-/// task's explicit scope; closing and reopening the popover always starts
-/// fresh (`reset()`).
+/// The popover's content (Comp-1): the hero header, the intent well with its
+/// footer, then one of the working card, the result card or the error row,
+/// and the example chips. No history is kept - this is a one-shot
+/// generate-review-run per open, and closing and reopening the popover always
+/// starts fresh (`reset()`).
 private final class ConsoleComposerViewController: NSViewController, NSTextViewDelegate {
     private var theme = ThemeManager.shared.theme
 
-    /// Popover width grows to fit a long generated command, floored/capped
-    /// so a short command doesn't leave an oversized empty box and a long
-    /// one can never grow off whatever screen it's on.
-    static let minWidth: CGFloat = 380
-    static let maxWidth: CGFloat = 640
-    private var rootWidthConstraint: NSLayoutConstraint!
+    /// Comp-1: one width, so the popover never jumps while a command arrives.
+    /// A long command wraps inside the result card instead.
+    static let width: CGFloat = 420
+    static let inset: CGFloat = 14
+    static let intentHeight: CGFloat = 64
+    static let cardRadius: CGFloat = 12
+    /// How long Copy says "Copied".
+    static let copiedDuration: TimeInterval = 2
 
-    /// A few visible lines of wrapped text, per the captain's explicit ask -
-    /// see this file's header for why this replaced a single-line field.
-    static let intentHeight: CGFloat = 72
+    /// What the popover is showing under the well.
+    enum Phase: Equatable {
+        case idle
+        case generating(started: Date)
+        case result(command: String, seconds: TimeInterval)
+        case failed(message: String)
+    }
+    private(set) var phase: Phase = .idle
 
-    /// Border opacity for the intent field and code-block scroll views -
-    /// bumped from the original 0.5 (which, combined with the intent field's
-    /// former `drawsBackground = false`, is why the input box read as
-    /// undifferentiated text - see this file's header) to a more visible
-    /// level so the boundary itself is never the only thing telling these
-    /// controls apart from the popover's own background.
-    static let fieldBorderAlpha: CGFloat = 0.7
+    private let header = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white)
 
-    private let iconTile = IconTileView(size: 30, cornerRadius: 8)
-    private let titleLabel = NSTextField(labelWithString: "Compose a command")
-    /// The uppercase caption above the composer card - mirrors the reference
-    /// mockup's "Command intent" label and `SRELeadChatView`'s own composer
-    /// kicker, the shared piece of "related, but not identical" the two
-    /// composers now carry (`fm/grandline-input-composer-redesign`).
-    private let composerKicker = NSTextField(labelWithString: "")
-    /// The card SRE Lead's composer shares (`HelmComposerCard`,
-    /// `HelmUIComponents.swift`) - a rounded, sunken-fill container whose
-    /// border brightens (plus a soft accent glow) while `intentTextView` has
-    /// focus. Replaces the intent field's own separate hand-rolled
-    /// border/radius, which used to sit with no visible relationship to the
-    /// footer row (hint + Generate) directly beneath it.
-    private let composerCard = HelmComposerCard(cornerRadius: HelmMetrics.rRow)
+    private let intentKicker = NSTextField(labelWithString: "")
+    private let targetLabel = NSTextField(labelWithString: "")
+    private var targetTabName: String?
+
+    private let composerCard = HelmComposerCard(cornerRadius: ConsoleComposerViewController.cardRadius)
     private let intentScroll = NSScrollView()
     private let intentTextView = NSTextView()
-    private let intentPlaceholderLabel = NSTextField(labelWithString: "Describe what you want to run…")
-    private let generateButton = HelmButton(title: "Generate", variant: .primary, target: nil, action: nil)
-    private let shortcutHintLabel = NSTextField(labelWithString: "\u{2318}\u{23ce} to generate")
-    /// A cheap, real addition per the task brief: clicking one of these fills
-    /// the intent field with a generic example phrase (matching the reference
-    /// mockup's own example chips) rather than requiring the captain to think
-    /// of a first prompt from a blank box. These are static, generic example
-    /// *intents* for the natural-language field - not fabricated command
-    /// output, and not tied to any specific host/cluster this app doesn't
-    /// actually know about.
-    private static let exampleIntents = [
-        "List pods in a namespace",
-        "Check disk usage on a host",
-        "Tail the most recent log file",
+    private let intentPlaceholderLabel = NSTextField(labelWithString: "Describe what you want to run\u{2026}")
+    private let generateButton = HelmButton(title: "Generate", variant: .primary, size: .small)
+    private let shortcutHintLabel = NSTextField(labelWithString: "\u{2318}\u{21A9} generate  \u{00B7}  \u{21A9} new line")
+    private let countLabel = NSTextField(labelWithString: "0 chars")
+
+    /// Static, generic example intents for the natural-language field - not
+    /// fabricated command output, and not tied to any host this app does not
+    /// know about. A click fills the field; it never generates.
+    static let exampleIntents: [(symbol: String, text: String)] = [
+        ("list.bullet", "List pods in a namespace"),
+        ("internaldrive", "Check disk usage on a host"),
+        ("doc.text.magnifyingglass", "Tail the most recent log file"),
     ]
+    private let examplesKicker = NSTextField(labelWithString: "")
     private let examplesFlow = ChipFlowView(frame: .zero)
     private var exampleButtons: [HelmButton] = []
-    private let statusLabel = NSTextField(labelWithString: "")
 
-    private let codeScroll = NSScrollView()
-    private let codeTextView = NSTextView()
-    private let copyButton = HelmButton(title: "Copy", variant: .secondary, target: nil, action: nil)
-    private let runButton = HelmButton(title: "Run in Terminal", variant: .primary, target: nil, action: nil)
-    private let commandStack = NSStackView()
+    // Working card.
+    private let workingCard = DashedCardView()
+    private let workingGlyph = NSImageView()
+    private let workingLabel = NSTextField(labelWithString: "Claude is writing the command\u{2026}")
+    private let workingElapsed = NSTextField(labelWithString: "")
+    private let workingBars = [NSView(), NSView()]
+    private var workingTimer: Timer?
+
+    // Result card.
+    private let resultCard = NSView()
+    private let resultKicker = NSTextField(labelWithString: "")
+    private let resultMeta = NSTextField(labelWithString: "")
+    private let codePanel = NSView()
+    private let codeLabel = NSTextField(labelWithString: "")
+    private let reviewLabel = NSTextField(labelWithString: "")
+    private let copyButton = HelmButton(title: "Copy", variant: .secondary, size: .small, symbol: "doc.on.doc")
+    private let runButton = HelmButton(title: "Run in Terminal", variant: .primary, size: .small, symbol: "play.fill")
+    private var copiedReset: DispatchWorkItem?
+
+    // Error row.
+    private let errorBody = NSTextField(wrappingLabelWithString: "")
+    private let retryButton = HelmButton(title: "Try again", variant: .quiet, size: .small)
+    private lazy var errorRow = HelmAccentRow(contentView: errorBody, trailingAccessory: retryButton, hover: false)
 
     var onRunInTerminal: ((String) -> Void)?
-    /// Fires whenever the content's own fitting size may have changed (a
-    /// width recompute, or a height change from a status/command-block
-    /// toggle) - `ConsoleComposerController` forwards this straight to
-    /// `popover.contentSize`, the same explicit "compute then set" style
-    /// `ShiftSearchController.resizeToFit()` already uses.
+    /// Fires whenever the content's fitting height may have changed;
+    /// `ConsoleComposerController` hands it to `popover.contentSize`.
     var onSizeChanged: ((NSSize) -> Void)?
-    private var generatedCommand: String?
-    private var statusIsError = false
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.minWidth, height: 170))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 300))
         root.wantsLayer = true
         view = root
 
-        iconTile.configure(symbol: "sparkles", tint: .violet)
+        header.set(title: "Compose a command", subtitle: "Describe it, review it, then run it. Nothing runs on its own.")
 
-        titleLabel.setScaledFont(ofSize: 13.5, weight: .semibold)
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleRow = NSStackView(views: [iconTile, titleLabel])
-        titleRow.orientation = .horizontal
-        titleRow.alignment = .centerY
-        titleRow.spacing = 10
-        titleRow.translatesAutoresizingMaskIntoConstraints = false
-
-        composerKicker.translatesAutoresizingMaskIntoConstraints = false
-        composerKicker.attributedStringValue = NSAttributedString(
-            string: "Command intent".uppercased(),
-            attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern]
-        )
-
-        buildIntentField()
-
-        generateButton.toolTip = AITransparency.willSendToClaude("what you typed, with secrets redacted,")
-        generateButton.target = self
-        generateButton.action = #selector(generateClicked)
-        generateButton.controlSize = .small
-        // `⌘⏎` fires Generate regardless of first responder - `NSWindow`'s
-        // `performKeyEquivalent:` traversal reaches this button before a
-        // command-modified key event ever reaches whichever view is first
-        // responder, so this works the same whether the intent field is
-        // focused or not. A plain Return inside the (now multi-line) intent
-        // field just inserts a newline, per this file's header.
-        generateButton.keyEquivalent = "\r"
-        generateButton.keyEquivalentModifierMask = [.command]
-
-        shortcutHintLabel.setScaledFont(ofSize: 10)
-        shortcutHintLabel.textColor = HelmTheme.mutedInk(theme)
-        shortcutHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        shortcutHintLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-
-        let footerSpacer = NSView()
-        footerSpacer.translatesAutoresizingMaskIntoConstraints = false
-        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        generateButton.setContentHuggingPriority(.required, for: .horizontal)
-        generateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        // The reference mockup's "hint on the left, Generate on the right"
-        // footer - `justify-content: space-between`'s AppKit equivalent is a
-        // flexible spacer between the two fixed-width ends (gotcha #10: a
-        // plain `.gravityAreas` row would not stretch anything to fill the
-        // gap on its own).
-        let footerRow = NSStackView(views: [shortcutHintLabel, footerSpacer, generateButton])
-        footerRow.orientation = .horizontal
-        footerRow.alignment = .centerY
-        footerRow.distribution = .fill
-        footerRow.spacing = 8
-        footerRow.translatesAutoresizingMaskIntoConstraints = false
-
-        let cardStack = NSStackView(views: [intentScroll, footerRow])
-        cardStack.orientation = .vertical
-        cardStack.alignment = .leading
-        cardStack.spacing = HelmMetrics.s2
-        cardStack.translatesAutoresizingMaskIntoConstraints = false
-        composerCard.contentContainer.addSubview(cardStack)
-        composerCard.translatesAutoresizingMaskIntoConstraints = false
-
-        // A cheap, real addition per the task brief: a row of example intents
-        // that fill the field when clicked, matching the reference mockup's
-        // own example chips - see `Self.exampleIntents`'s doc comment for why
-        // these are static/generic rather than fetched from anywhere.
-        exampleButtons = Self.exampleIntents.map { intent in
-            let button = HelmButton(title: intent, variant: .secondary, size: .small)
-            button.target = self
-            button.action = #selector(exampleClicked(_:))
-            return button
+        intentKicker.attributedStringValue = NSAttributedString(
+            string: "Command intent".uppercased(), attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern])
+        targetLabel.font = HelmType.caption()
+        targetLabel.lineBreakMode = .byTruncatingTail
+        targetLabel.alignment = .right
+        // Gotcha (12): no bare spacer view - the kicker hugs its text and the
+        // target line takes the rest, right-aligned.
+        targetLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        targetLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        intentKicker.setContentHuggingPriority(.required, for: .horizontal)
+        intentKicker.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Pinned by hand: the kicker at the leading edge, the target line at
+        // the trailing edge, and the target line gives way first.
+        let intentRow = NSView()
+        for label in [intentKicker, targetLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            intentRow.addSubview(label)
         }
-        examplesFlow.translatesAutoresizingMaskIntoConstraints = false
-        examplesFlow.setChips(exampleButtons)
-
-        statusLabel.setScaledFont(ofSize: 11)
-        statusLabel.textColor = HelmTheme.mutedInk(theme)
-        statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.maximumNumberOfLines = 3
-        statusLabel.isHidden = true
-
-        buildCodeBlock()
-
-        copyButton.target = self
-        copyButton.action = #selector(copyClicked)
-        copyButton.controlSize = .small
-
-        runButton.target = self
-        runButton.action = #selector(runClicked)
-        runButton.controlSize = .small
-        runButton.keyEquivalent = "\r"
-
-        let actionRow = NSStackView(views: [copyButton, runButton])
-        actionRow.orientation = .horizontal
-        actionRow.spacing = 6
-
-        commandStack.orientation = .vertical
-        commandStack.alignment = .leading
-        commandStack.spacing = 8
-        commandStack.translatesAutoresizingMaskIntoConstraints = false
-        commandStack.addArrangedSubview(codeScroll)
-        commandStack.addArrangedSubview(actionRow)
-        commandStack.isHidden = true
-
-        let stack = NSStackView(views: [titleRow, composerKicker, composerCard, examplesFlow, statusLabel, commandStack])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(HelmMetrics.s1, after: composerKicker)
-        stack.setCustomSpacing(HelmMetrics.s2, after: composerCard)
-        root.addSubview(stack)
-
-        rootWidthConstraint = root.widthAnchor.constraint(equalToConstant: Self.minWidth)
-
         NSLayoutConstraint.activate([
-            rootWidthConstraint,
-            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -12),
-            titleRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            composerKicker.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            composerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            examplesFlow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            commandStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            codeScroll.widthAnchor.constraint(equalTo: commandStack.widthAnchor),
-            codeScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
-
-            cardStack.leadingAnchor.constraint(equalTo: composerCard.contentContainer.leadingAnchor, constant: HelmMetrics.s2),
-            cardStack.trailingAnchor.constraint(equalTo: composerCard.contentContainer.trailingAnchor, constant: -HelmMetrics.s2),
-            cardStack.topAnchor.constraint(equalTo: composerCard.contentContainer.topAnchor, constant: HelmMetrics.s2),
-            cardStack.bottomAnchor.constraint(equalTo: composerCard.contentContainer.bottomAnchor, constant: -HelmMetrics.s2),
-            footerRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
-            intentScroll.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
-            intentScroll.heightAnchor.constraint(equalToConstant: Self.intentHeight),
-            intentPlaceholderLabel.leadingAnchor.constraint(equalTo: intentScroll.leadingAnchor, constant: 4),
-            intentPlaceholderLabel.topAnchor.constraint(equalTo: intentScroll.topAnchor, constant: 6),
-            intentPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: intentScroll.trailingAnchor, constant: -4),
+            intentKicker.leadingAnchor.constraint(equalTo: intentRow.leadingAnchor),
+            intentKicker.topAnchor.constraint(equalTo: intentRow.topAnchor),
+            intentKicker.bottomAnchor.constraint(equalTo: intentRow.bottomAnchor),
+            targetLabel.trailingAnchor.constraint(equalTo: intentRow.trailingAnchor),
+            targetLabel.firstBaselineAnchor.constraint(equalTo: intentKicker.firstBaselineAnchor),
+            targetLabel.leadingAnchor.constraint(greaterThanOrEqualTo: intentKicker.trailingAnchor, constant: HelmMetrics.s2),
         ])
 
+        buildWell()
+        buildChips()
+        buildWorkingCard()
+        buildResultCard()
+        buildErrorRow()
+
+        let body = NSStackView(views: [intentRow, composerCard, workingCard, resultCard, errorRow, examplesKicker, examplesFlow])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = HelmMetrics.s2
+        body.setCustomSpacing(HelmMetrics.s3, after: composerCard)
+        body.setCustomSpacing(HelmMetrics.s3, after: workingCard)
+        body.setCustomSpacing(HelmMetrics.s3, after: resultCard)
+        body.setCustomSpacing(HelmMetrics.s3, after: errorRow)
+        body.setCustomSpacing(6, after: examplesKicker)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        for view in body.arrangedSubviews {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        root.addSubview(header)
+        root.addSubview(body)
+        NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(equalToConstant: Self.width),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            header.topAnchor.constraint(equalTo: root.topAnchor),
+            body.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.inset),
+            body.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.inset),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            body.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.inset),
+        ] + body.arrangedSubviews.map { $0.widthAnchor.constraint(equalTo: body.widthAnchor) })
+
+        render()
         applyTheme(theme)
     }
 
-    /// The intent text view, now living inside `composerCard` rather than
-    /// carrying its own separate border/radius - mirrors `buildCodeBlock()`'s
-    /// own monospace styling below in spirit, but transparent rather than
-    /// separately filled, so the field and the footer row beneath it read as
-    /// one card surface (`fm/grandline-input-composer-redesign`), not two
-    /// stacked boxes. See this file's header for why the placeholder is a
-    /// manually-overlaid label rather than a built-in API (`NSTextView` has
-    /// none).
-    private func buildIntentField() {
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // Before the first layout the text view has no container origin yet.
+        placePlaceholder(intentPlaceholderLabel, in: intentTextView)
+    }
+
+    // MARK: Building
+
+    /// The intent text view on a raised `HelmComposerCard`, with the footer
+    /// row (shortcut hint, character count, Generate) on the same surface.
+    private func buildWell() {
+        composerCard.surface = .raised
         intentTextView.isRichText = false
         intentTextView.isEditable = true
         intentTextView.isSelectable = true
-        intentTextView.setScaledFont(ofSize: 12)
-        intentTextView.textContainerInset = NSSize(width: 4, height: 6)
+        intentTextView.setScaledFont(ofSize: 13)
+        intentTextView.textContainerInset = NSSize(width: 8, height: 9)
         intentTextView.isVerticallyResizable = true
         intentTextView.isHorizontallyResizable = false
         intentTextView.autoresizingMask = [.width]
         intentTextView.textContainer?.widthTracksTextView = true
-        // Transparent, not its own fill: `composerCard.contentContainer`'s
-        // layer now paints the one shared sunken surface both the text view
-        // and the footer row sit on. (The original "give this its own fill"
-        // fix for the field being invisible against the popover's own
-        // background - see git history - is superseded by the card itself
-        // always being visibly bordered/filled regardless of what's inside
-        // it.)
+        // The card's own layer paints the well; the text view shows it through.
         intentTextView.drawsBackground = false
         intentTextView.delegate = self
-        // Phase 0's D1 fix: the card lights from this view's first-responder
-        // state, not from `textDidBeginEditing` (which fires on the first
-        // keystroke, so a click used to look like it had missed).
         composerCard.senseFocus(on: intentTextView)
 
         intentScroll.documentView = intentTextView
         intentScroll.hasVerticalScroller = true
+        intentScroll.autohidesScrollers = true
         intentScroll.borderType = .noBorder
         intentScroll.drawsBackground = false
         intentScroll.translatesAutoresizingMaskIntoConstraints = false
 
         intentPlaceholderLabel.font = intentTextView.font
-        intentPlaceholderLabel.isEditable = false
-        intentPlaceholderLabel.isBordered = false
-        intentPlaceholderLabel.isSelectable = false
-        intentPlaceholderLabel.drawsBackground = false
-        intentPlaceholderLabel.lineBreakMode = .byWordWrapping
+        intentPlaceholderLabel.lineBreakMode = .byTruncatingTail
         intentPlaceholderLabel.maximumNumberOfLines = 1
-        intentPlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        intentScroll.addSubview(intentPlaceholderLabel)
+        // A subview of the text view, placed at its own text origin
+        // (`placePlaceholder`), so the placeholder and the first typed
+        // character start at the same point whatever the insets are.
+        intentTextView.addSubview(intentPlaceholderLabel)
+
+        generateButton.toolTip = AITransparency.willSendToClaude("what you typed, with secrets redacted,")
+        generateButton.target = self
+        generateButton.action = #selector(generateClicked)
+        // `⌘⏎` fires Generate whatever has focus: `NSWindow`'s
+        // `performKeyEquivalent:` reaches this button before the key event
+        // reaches the text view, where a plain Return inserts a new line.
+        generateButton.keyEquivalent = "\r"
+        generateButton.keyEquivalentModifierMask = [.command]
+
+        shortcutHintLabel.font = HelmType.caption()
+        countLabel.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+        for label in [shortcutHintLabel, countLabel] {
+            label.setContentHuggingPriority(.required, for: .horizontal)
+            label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        }
+        generateButton.setContentHuggingPriority(.required, for: .horizontal)
+        generateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let footer = NSStackView(views: [shortcutHintLabel, spacer, countLabel, generateButton])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.distribution = .fill
+        footer.spacing = HelmMetrics.s2
+        footer.translatesAutoresizingMaskIntoConstraints = false
+
+        composerCard.contentContainer.addSubview(intentScroll)
+        composerCard.contentContainer.addSubview(footer)
+        let container = composerCard.contentContainer
+        NSLayoutConstraint.activate([
+            intentScroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+            intentScroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+            intentScroll.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
+            intentScroll.heightAnchor.constraint(equalToConstant: Self.intentHeight),
+            footer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            footer.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.s2),
+            footer.topAnchor.constraint(equalTo: intentScroll.bottomAnchor, constant: 2),
+            footer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s2),
+        ])
     }
 
-    func textDidChange(_ notification: Notification) {
-        updateIntentPlaceholderVisibility()
+    private func buildChips() {
+        exampleButtons = Self.exampleIntents.map { example in
+            let button = HelmButton(title: example.text, variant: .secondary, size: .small, symbol: example.symbol)
+            button.surface = .raised
+            button.target = self
+            button.action = #selector(exampleClicked(_:))
+            button.toolTip = "Fill the field with \u{201C}\(example.text)\u{201D}"
+            return button
+        }
+        examplesFlow.setChips(exampleButtons)
     }
 
-    private func updateIntentPlaceholderVisibility() {
-        intentPlaceholderLabel.isHidden = !intentTextView.string.isEmpty
+    /// Comp-1's generating state: a dashed card with an hourglass, what is
+    /// happening, the elapsed time and two placeholder lines where the
+    /// command will land.
+    private func buildWorkingCard() {
+        workingGlyph.translatesAutoresizingMaskIntoConstraints = false
+        workingLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+        workingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        workingElapsed.font = .monospacedDigitSystemFont(ofSize: HelmType.scaled(11), weight: .regular)
+        workingElapsed.setContentHuggingPriority(.required, for: .horizontal)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // The ticking elapsed time is the live signal: the kit has no spinner
+        // (UI-61), and a static glyph needs no Reduce Motion gate.
+        let top = NSStackView(views: [workingGlyph, workingLabel, spacer, workingElapsed])
+        top.orientation = .horizontal
+        top.alignment = .centerY
+        top.distribution = .fill
+        top.spacing = HelmMetrics.s2
+        let stack = NSStackView(views: [top] + workingBars)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        workingCard.addSubview(stack)
+        var constraints = [
+            stack.leadingAnchor.constraint(equalTo: workingCard.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: workingCard.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: workingCard.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: workingCard.bottomAnchor, constant: -12),
+            top.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ]
+        for (bar, fraction) in zip(workingBars, [0.92, 0.64]) {
+            bar.wantsLayer = true
+            bar.layer?.cornerRadius = 4.5
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            constraints += [
+                bar.heightAnchor.constraint(equalToConstant: 9),
+                bar.widthAnchor.constraint(equalTo: stack.widthAnchor, multiplier: fraction),
+            ]
+        }
+        NSLayoutConstraint.activate(constraints)
+        workingCard.setAccessibilityElement(true)
+        workingCard.setAccessibilityRole(.staticText)
+        workingCard.setAccessibilityLabel("Claude is writing the command")
     }
 
-    /// One of `Self.exampleIntents`, clicked - fills and focuses the field,
-    /// matching the reference mockup's own click-to-fill example chips.
-    /// Deliberately does not auto-generate: the field is filled for the
-    /// captain to review/edit, exactly like typing it in by hand would be.
-    @objc private func exampleClicked(_ sender: HelmButton) {
-        guard let index = exampleButtons.firstIndex(where: { $0 === sender }) else { return }
-        intentTextView.string = Self.exampleIntents[index]
-        updateIntentPlaceholderVisibility()
-        view.window?.makeFirstResponder(intentTextView)
+    /// The generated command on a section card: the command in the terminal
+    /// scheme's own colours behind a `$` prompt, then Copy and Run in Terminal
+    /// with where Run sends it.
+    private func buildResultCard() {
+        resultCard.wantsLayer = true
+        resultCard.layer?.cornerRadius = Self.cardRadius
+        resultCard.layer?.borderWidth = 1
+        resultKicker.attributedStringValue = NSAttributedString(
+            string: "Generated command".uppercased(), attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern])
+        resultMeta.font = HelmType.caption()
+        resultMeta.alignment = .right
+        resultMeta.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        resultKicker.setContentHuggingPriority(.required, for: .horizontal)
+        resultKicker.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let top = NSStackView(views: [resultKicker, resultMeta])
+        top.orientation = .horizontal
+        top.alignment = .firstBaseline
+        top.distribution = .fill
+
+        codePanel.wantsLayer = true
+        codePanel.layer?.cornerRadius = 10
+        codePanel.layer?.borderWidth = 1
+        codeLabel.isSelectable = true
+        codeLabel.lineBreakMode = .byWordWrapping
+        codeLabel.maximumNumberOfLines = 0
+        codeLabel.cell?.wraps = true
+        codeLabel.cell?.isScrollable = false
+        codeLabel.translatesAutoresizingMaskIntoConstraints = false
+        codeLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        codePanel.addSubview(codeLabel)
+
+        reviewLabel.font = HelmType.caption()
+        reviewLabel.maximumNumberOfLines = 2
+        reviewLabel.lineBreakMode = .byWordWrapping
+        reviewLabel.cell?.wraps = true
+        reviewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        reviewLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        copyButton.surface = .raised
+        copyButton.target = self
+        copyButton.action = #selector(copyClicked)
+        runButton.target = self
+        runButton.action = #selector(runClicked)
+        runButton.keyEquivalent = "\r"
+        for button in [copyButton, runButton] {
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        let actions = NSStackView(views: [reviewLabel, copyButton, runButton])
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.distribution = .fill
+        actions.spacing = 6
+        actions.setCustomSpacing(HelmMetrics.s2, after: reviewLabel)
+
+        let stack = NSStackView(views: [top, codePanel, actions])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s2
+        stack.setCustomSpacing(9, after: codePanel)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        resultCard.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: resultCard.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: resultCard.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: resultCard.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: resultCard.bottomAnchor, constant: -10),
+            top.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            codePanel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            codeLabel.leadingAnchor.constraint(equalTo: codePanel.leadingAnchor, constant: 12),
+            codeLabel.trailingAnchor.constraint(equalTo: codePanel.trailingAnchor, constant: -12),
+            codeLabel.topAnchor.constraint(equalTo: codePanel.topAnchor, constant: 10),
+            codeLabel.bottomAnchor.constraint(equalTo: codePanel.bottomAnchor, constant: -10),
+        ])
+        // Gotcha (22): the wrap width comes from what this label does not
+        // decide - the popover's fixed width less the insets around it.
+        codeLabel.preferredMaxLayoutWidth = Self.width - 2 * Self.inset - 2 * 10 - 2 * 12
+        reviewLabel.preferredMaxLayoutWidth = 170
     }
 
-    /// Mirrors `ToolInstance.codeEditor`'s own monospace/bordered/rounded
-    /// code-block styling (Tools page's YAML/JSON output) rather than a
-    /// plain `NSTextField`, so a generated command reads the same way any
-    /// other code output in this app does.
-    private func buildCodeBlock() {
-        codeTextView.isEditable = false
-        codeTextView.isSelectable = true
-        codeTextView.isRichText = false
-        codeTextView.setScaledFont(ofSize: 11.5, weight: .regular, voice: .monospaced)
-        codeTextView.textContainerInset = NSSize(width: 8, height: 8)
-        codeTextView.isVerticallyResizable = true
-        codeTextView.isHorizontallyResizable = false
-        codeTextView.autoresizingMask = [.width]
-        codeTextView.textContainer?.widthTracksTextView = true
-        codeTextView.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        codeTextView.backgroundColor = HelmField.fill(theme)
+    private func buildErrorRow() {
+        errorBody.font = .systemFont(ofSize: HelmType.scaled(12.5))
+        errorBody.isSelectable = true
+        errorBody.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.tint = .accent
+        retryButton.target = self
+        retryButton.action = #selector(retryClicked)
+        retryButton.toolTip = "Generate again from the same intent"
+        errorRow.actionReveal = .always
+    }
 
-        codeScroll.documentView = codeTextView
-        codeScroll.hasVerticalScroller = true
-        codeScroll.borderType = .noBorder
-        codeScroll.wantsLayer = true
-        codeScroll.layer?.cornerRadius = 8
-        codeScroll.layer?.borderWidth = 1
-        codeScroll.drawsBackground = false
-        codeScroll.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.fieldBorderAlpha).cgColor
-        codeScroll.translatesAutoresizingMaskIntoConstraints = false
+    // MARK: State
+
+    func setTargetTabName(_ name: String?) {
+        targetTabName = name?.isEmpty == false ? name : nil
+        applyTargetName()
     }
 
     func reset() {
         intentTextView.string = ""
-        updateIntentPlaceholderVisibility()
-        generatedCommand = nil
-        codeTextView.string = ""
-        commandStack.isHidden = true
-        statusLabel.isHidden = true
-        generateButton.isEnabled = true
         intentTextView.isEditable = true
-        statusIsError = false
-        updateWidth(for: nil)
+        stopWorkingTimer()
+        copiedReset?.cancel()
+        phase = .idle
+        render()
+        updateIntentFeedback()
     }
 
-    /// Re-themes every colored element in the popover - registered against
-    /// a live `ThemeManager.shared.observe` by `ConsoleComposerController`
-    /// (see this file's header), not just applied once at construction.
+    /// Shows `phase`: one of the working card, the result card and the error
+    /// row (or none), the examples under them, and the controls' enablement.
+    private func render() {
+        guard isViewLoaded else { return }
+        var generating = false
+        if case .generating = phase { generating = true }
+        workingCard.isHidden = !generating
+        resultCard.isHidden = true
+        errorRow.isHidden = true
+        switch phase {
+        case .idle, .generating:
+            break
+        case let .result(command, seconds):
+            resultCard.isHidden = false
+            resultMeta.stringValue = String(format: "claude \u{00B7} %.1fs", seconds)
+            setCode(command)
+            setCopied(false)
+        case let .failed(message):
+            errorRow.isHidden = false
+            errorBody.stringValue = message
+            errorRow.configure(HelmAccentRow.Content(tint: .critical, kicker: "Couldn't generate",
+                                                     badgeSymbol: "exclamationmark.triangle.fill"), theme: theme)
+        }
+        examplesKicker.attributedStringValue = NSAttributedString(
+            string: (resultCard.isHidden ? "Suggestions" : "Try another").uppercased(),
+            attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern,
+                         .foregroundColor: HelmTheme.mutedInk(theme)])
+        examplesKicker.isHidden = generating
+        examplesFlow.isHidden = generating
+        intentTextView.isEditable = !generating
+        generateButton.title = generating ? "Generating\u{2026}" : "Generate"
+        exampleButtons.forEach { $0.isEnabled = !generating }
+        updateIntentFeedback()
+        applyTargetName()
+        updateSize()
+    }
+
+    private func updateIntentFeedback() {
+        intentPlaceholderLabel.isHidden = !intentTextView.string.isEmpty
+        placePlaceholder(intentPlaceholderLabel, in: intentTextView)
+        let count = intentTextView.string.count
+        countLabel.stringValue = count == 1 ? "1 char" : "\(count) chars"
+        var generating = false
+        if case .generating = phase { generating = true }
+        generateButton.isEnabled = !generating
+            && !intentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Puts `placeholder` where `textView`'s first character is drawn: its
+    /// container origin plus the line fragment padding, less the label
+    /// cell's own 2pt inset.
+    private func placePlaceholder(_ placeholder: NSTextField, in textView: NSTextView) {
+        let origin = textView.textContainerOrigin
+        let padding = textView.textContainer?.lineFragmentPadding ?? 0
+        let size = placeholder.fittingSize
+        placeholder.frame = NSRect(x: origin.x + padding - 2, y: origin.y,
+                                   width: min(size.width, max(0, textView.bounds.width - origin.x - padding)),
+                                   height: size.height)
+    }
+
+    private func applyTargetName() {
+        let muted = HelmTheme.mutedInk(theme)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        targetLabel.isHidden = targetTabName == nil
+        if let name = targetTabName {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .right
+            paragraph.lineBreakMode = .byTruncatingTail
+            let text = NSMutableAttributedString(string: "Runs in ", attributes: [
+                .font: HelmType.caption(), .foregroundColor: muted, .paragraphStyle: paragraph])
+            text.append(NSAttributedString(string: name, attributes: [
+                .font: NSFont.systemFont(ofSize: HelmType.caption().pointSize, weight: .semibold), .foregroundColor: ink,
+                .paragraphStyle: paragraph]))
+            targetLabel.attributedStringValue = text
+            targetLabel.toolTip = "Run in Terminal sends the command to \(name)"
+        }
+        reviewLabel.stringValue = targetTabName.map { "Review it first.\nRun sends it to \($0)." } ?? "Review it first.\nRun sends it to this tab."
+    }
+
+    private func setCode(_ command: String) {
+        let scheme = ThemeManager.shared.terminalScheme
+        let font = NSFont.monospacedSystemFont(ofSize: HelmType.scaled(11.5), weight: .regular)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 2
+        paragraph.lineBreakMode = .byWordWrapping
+        let prompt = HelmTheme.nsColor(scheme.ansiHex.count > 4 ? scheme.ansiHex[4] : scheme.cursorHex)
+        let text = NSMutableAttributedString(string: "$ ", attributes: [.font: font, .foregroundColor: prompt,
+                                                                        .paragraphStyle: paragraph])
+        text.append(NSAttributedString(string: command, attributes: [
+            .font: font, .foregroundColor: HelmTheme.nsColor(scheme.foregroundHex), .paragraphStyle: paragraph]))
+        codeLabel.attributedStringValue = text
+        codeLabel.setAccessibilityLabel("Generated command: \(command)")
+    }
+
+    private func setCopied(_ copied: Bool) {
+        copyButton.title = copied ? "Copied" : "Copy"
+        copyButton.symbolName = copied ? "checkmark" : "doc.on.doc"
+        copyButton.tint = copied ? .good : nil
+    }
+
+    private func updateSize() {
+        view.layoutSubtreeIfNeeded()
+        onSizeChanged?(NSSize(width: Self.width, height: view.fittingSize.height))
+    }
+
+    private func startWorkingTimer(from start: Date) {
+        stopWorkingTimer()
+        workingElapsed.stringValue = "0s"
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            self?.workingElapsed.stringValue = "\(Int(Date().timeIntervalSince(start)))s"
+        }
+        timer.tolerance = 0.2
+        workingTimer = timer
+    }
+
+    private func stopWorkingTimer() {
+        workingTimer?.invalidate()
+        workingTimer = nil
+    }
+
+    // MARK: Theming
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        guard isViewLoaded else { return }
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let fieldFill = HelmField.fill(theme)
+        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
 
-        view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        iconTile.applyTheme(theme)
-        titleLabel.textColor = ink
-        composerKicker.textColor = muted
+        view.layer?.backgroundColor = surface.cgColor
+        header.applyTheme(theme)
+        intentKicker.textColor = muted
         composerCard.applyTheme(theme)
-        shortcutHintLabel.textColor = muted
-        statusLabel.textColor = statusIsError ? .systemRed : muted
         HelmSelection.apply(to: intentTextView, theme: theme)
-        HelmSelection.apply(to: codeTextView, theme: theme)
-        codeTextView.textColor = ink
-        codeTextView.backgroundColor = fieldFill
-        codeScroll.layer?.borderColor = line.withAlphaComponent(Self.fieldBorderAlpha).cgColor
-        intentTextView.textColor = ink
-        intentTextView.insertionPointColor = ink
-        intentPlaceholderLabel.textColor = muted
-        // `HelmButton` (the example chips) themes itself.
+        let wellInk = HelmField.ink(theme, surface: .raised)
+        let wellMuted = HelmField.mutedInk(theme, surface: .raised)
+        intentTextView.textColor = wellInk
+        intentTextView.insertionPointColor = wellInk
+        intentPlaceholderLabel.textColor = wellMuted
+        shortcutHintLabel.textColor = wellMuted
+        countLabel.textColor = wellMuted
+
+        let raisedEdge = HelmField.border(theme, surface: .raised)
+        workingCard.dashColor = raisedEdge
+        workingLabel.textColor = ink
+        workingElapsed.textColor = muted
+        workingGlyph.image = HelmSymbol.image("hourglass", pointSize: HelmType.scaled(11), weight: .semibold)
+        workingGlyph.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        let track = theme.mode == .dark ? surface.blended(withFraction: 0.14, of: ink) ?? line
+                                        : line.blended(withFraction: 0.25, of: surface) ?? line
+        workingBars.forEach { $0.layer?.backgroundColor = track.cgColor }
+
+        resultCard.layer?.backgroundColor = surface.cgColor
+        resultCard.layer?.borderColor = line.cgColor
+        resultKicker.textColor = muted
+        resultMeta.textColor = muted
+        reviewLabel.textColor = muted
+        let scheme = ThemeManager.shared.terminalScheme
+        let codeFill = HelmTheme.nsColor(scheme.backgroundHex)
+        codePanel.layer?.backgroundColor = codeFill.cgColor
+        let codeEdge = codeFill.blended(withFraction: 0.1, of: theme.mode == .dark ? .white : .black) ?? line
+        codePanel.layer?.borderColor = codeEdge.cgColor
+        if case let .result(command, _) = phase { setCode(command) }
+
+        errorBody.textColor = ink
+        if case .failed = phase {
+            errorRow.configure(HelmAccentRow.Content(tint: .critical, kicker: "Couldn't generate",
+                                                     badgeSymbol: "exclamationmark.triangle.fill"), theme: theme)
+        }
+        examplesKicker.textColor = muted
+        render()
+        // `HelmButton` themes itself.
     }
 
-    /// Measures the generated command's longest line against the code
-    /// block's own font and clamps the result to `[minWidth, maxWidth]` -
-    /// `nil` (no command yet, or a fresh/reset popover) always floors to
-    /// `minWidth` so a short/empty state never leaves an oversized box.
-    private func computeWidth(for command: String?) -> CGFloat {
-        guard let command, !command.isEmpty else { return Self.minWidth }
-        let font = codeTextView.font ?? .monospacedSystemFont(ofSize: HelmType.scaled(11.5), weight: .regular)
-        let longestLine = command.components(separatedBy: "\n").max(by: { $0.count < $1.count }) ?? command
-        let textWidth = (longestLine as NSString).size(withAttributes: [.font: font]).width
-        // Stack leading/trailing insets (14pt each side) + the code block's
-        // own text-container inset (8pt each side) + a little breathing room
-        // for the vertical scroller.
-        let chrome: CGFloat = (14 * 2) + (8 * 2) + 24
-        return min(max(textWidth + chrome, Self.minWidth), Self.maxWidth)
-    }
-
-    private func updateWidth(for command: String?) {
-        rootWidthConstraint.constant = computeWidth(for: command)
-        view.layoutSubtreeIfNeeded()
-        onSizeChanged?(view.fittingSize)
-    }
+    // MARK: Actions
 
     func focusIntentField() {
         DispatchQueue.main.async { [weak self] in
@@ -562,53 +768,154 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         }
     }
 
+    func textDidChange(_ notification: Notification) {
+        updateIntentFeedback()
+    }
+
+    /// One of `Self.exampleIntents`: fills and focuses the field. Never
+    /// generates - the field is filled for the captain to review or edit.
+    @objc private func exampleClicked(_ sender: HelmButton) {
+        guard let index = exampleButtons.firstIndex(where: { $0 === sender }) else { return }
+        intentTextView.string = Self.exampleIntents[index].text
+        updateIntentFeedback()
+        view.window?.makeFirstResponder(intentTextView)
+    }
+
     @objc private func generateClicked() {
         let intent = intentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !intent.isEmpty else { return }
-        generatedCommand = nil
-        commandStack.isHidden = true
-        statusIsError = false
-        statusLabel.isHidden = false
-        statusLabel.textColor = HelmTheme.mutedInk(theme)
-        statusLabel.stringValue = "Generating…"
-        generateButton.isEnabled = false
-        intentTextView.isEditable = false
-        updateWidth(for: nil)
-
+        if case .generating = phase { return }
+        let started = Date()
+        phase = .generating(started: started)
+        startWorkingTimer(from: started)
+        render()
         ConsoleCommandComposer.generate(intent: intent) { [weak self] result in
             guard let self else { return }
-            self.generateButton.isEnabled = true
-            self.intentTextView.isEditable = true
+            self.stopWorkingTimer()
             switch result {
             case .success(let command):
-                self.statusLabel.isHidden = true
-                self.generatedCommand = command
-                self.codeTextView.string = command
-                self.commandStack.isHidden = false
-                self.updateWidth(for: command)
+                self.phase = .result(command: command, seconds: Date().timeIntervalSince(started))
             case .failure(let error):
-                self.statusIsError = true
-                self.statusLabel.isHidden = false
-                self.statusLabel.textColor = .systemRed
-                self.statusLabel.stringValue = error.message
-                self.generatedCommand = nil
-                self.commandStack.isHidden = true
-                self.updateWidth(for: nil)
+                self.phase = .failed(message: Self.sentence(error.message))
             }
+            self.render()
         }
     }
 
+    /// A failure message as a sentence: capitalised, with a full stop.
+    static func sentence(_ message: String) -> String {
+        guard let first = message.first else { return message }
+        var text = first.uppercased() + message.dropFirst()
+        if !text.hasSuffix(".") { text += "." }
+        return text
+    }
+
+    @objc private func retryClicked() {
+        generateClicked()
+    }
+
     @objc private func copyClicked() {
-        guard let command = generatedCommand else { return }
+        guard case let .result(command, _) = phase else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
+        setCopied(true)
+        copiedReset?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.setCopied(false) }
+        copiedReset = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.copiedDuration, execute: work)
     }
 
     /// The only path that ever sends the generated command anywhere - never
     /// called automatically, only from this explicit button click (or its
-    /// ⏎ key equivalent while it has focus).
+    /// ⏎ key equivalent).
     @objc private func runClicked() {
-        guard let command = generatedCommand else { return }
+        guard case let .result(command, _) = phase else { return }
         onRunInTerminal?(command)
     }
+
+    #if FM_SELFTESTS
+    /// Sets a state directly, for a render or a suite: no `claude` runs.
+    func debugShow(intent: String, phase: Phase, focused: Bool = false) {
+        intentTextView.string = intent
+        self.phase = phase
+        stopWorkingTimer()
+        if case .generating = phase { workingElapsed.stringValue = "3s" }
+        render()
+        if focused { view.window?.makeFirstResponder(intentTextView) }
+    }
+    var debugComposerCard: HelmComposerCard { composerCard }
+    var debugExampleButtons: [HelmButton] { exampleButtons }
+    var debugCopyButton: HelmButton { copyButton }
+    var debugRetryButton: HelmButton { retryButton }
+    var debugTargetText: String { targetLabel.isHidden ? "" : targetLabel.stringValue }
+    var debugVisibleSections: [String] {
+        [("working", workingCard), ("result", resultCard), ("error", errorRow)]
+            .filter { !$0.1.isHidden }.map(\.0)
+    }
+    func debugClickCopy() { copyButton.performClick(nil) }
+    #endif
 }
+
+/// A card drawn with a dashed hairline - Comp-1's "the command will land
+/// here" placeholder while Claude writes it.
+private final class DashedCardView: NSView {
+    private let border = CAShapeLayer()
+    var dashColor: NSColor = .separatorColor {
+        didSet { HelmMotion.withoutActions { border.strokeColor = dashColor.cgColor } }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        border.fillColor = nil
+        border.lineWidth = 1
+        border.lineDashPattern = [4, 3]
+        layer?.addSublayer(border)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func layout() {
+        super.layout()
+        HelmMotion.withoutActions {
+            border.frame = bounds
+            border.path = CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
+                                 cornerWidth: ConsoleComposerViewController.cardRadius,
+                                 cornerHeight: ConsoleComposerViewController.cardRadius, transform: nil)
+        }
+    }
+}
+
+#if FM_SELFTESTS
+extension ConsoleComposerController {
+    /// The popover's content view, laid out at its own size, for a render or
+    /// a suite. Nothing is shown in a window.
+    var debugContentView: NSView { content.view }
+    func debugShow(intent: String, phase: ConsoleComposerDebugPhase, target: String?, focused: Bool = false) {
+        content.setTargetTabName(target)
+        let mapped: ConsoleComposerViewController.Phase
+        switch phase {
+        case .idle: mapped = .idle
+        case .generating: mapped = .generating(started: Date())
+        case let .result(command): mapped = .result(command: command, seconds: 2.4)
+        case let .failed(message): mapped = .failed(message: message)
+        }
+        content.debugShow(intent: intent, phase: mapped, focused: focused)
+    }
+    var debugComposerCard: HelmComposerCard { content.debugComposerCard }
+    var debugExampleButtons: [HelmButton] { content.debugExampleButtons }
+    var debugCopyButton: HelmButton { content.debugCopyButton }
+    var debugTargetText: String { content.debugTargetText }
+    var debugVisibleSections: [String] { content.debugVisibleSections }
+    func debugClickCopy() { content.debugClickCopy() }
+    func debugApplyTheme(_ theme: HelmTheme) { content.applyTheme(theme) }
+}
+
+/// The states a suite or a render can put the Compose popover in.
+enum ConsoleComposerDebugPhase {
+    case idle
+    case generating
+    case result(String)
+    case failed(String)
+}
+#endif

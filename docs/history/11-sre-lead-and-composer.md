@@ -95,3 +95,42 @@ That delegation could not work as described.
 Every kubectl call goes through one shared terminal tab, and the bridge refuses a second request while one is in flight, so a parallel subagent got "busy" rather than a result.
 Each subagent was also one more model loop reading pod logs an attacker can write into.
 `Task` is gone from `allowedTools` and `builtInTools`, the persona now runs its checks one after another, and `ClaudeOneShotToolPolicySelfTest` fails if either `Task` or a subagent instruction comes back.
+
+## Compose, Claude usage and SRE Lead in the hero language (`fm/grandline-popover-redesign`, Helm 9.3.0)
+
+The captain picked Comp-1, Use-1 and Sre-2 on the console popovers board (`data/grand-line-console-popovers-sre-mockups/`).
+All three surfaces open on `PopoverHeroHeader`, the hero gradient with a tile, a title, one quiet line and a trailing slot.
+
+**Comp-1 (Compose).** The intent well is a raised `HelmComposerCard`, with "↩ new line" and a character count in its footer.
+The examples are raised chips with a leading symbol, and they still only fill the field.
+The popover is a fixed 420pt and a long command wraps, so the grow-to-640pt width from `fm/grandline-composer-theme-and-width` is gone.
+The result card shows the command in the terminal scheme's own colours, Copy says "Copied" for two seconds, and the footer names the tab Run sends to.
+A failure is a critical `HelmAccentRow` with Try again.
+
+**Use-1 (Claude usage).** The hero holds a ring per window, including the Fable week the parser already read.
+A comfortable arc is the hero ink, and a warning or critical one takes its hue through `HelmHeroSurface.signalColor`.
+A window with no reading is a dashed track and an em dash (GL-14).
+The pace pill takes its colour from the pace, not from the bar.
+Before this, an unknown pace on an idle session was green, and "Behind" was the same green as "On pace".
+Refresh and Retry both call `refresh()`; the 10-minute timer is unchanged.
+
+**Sre-2 (SRE Lead).** The header is the hero with the host and "read-only kubectl", a ghost `HelmStatusPill` that says Working while a turn runs, and the postmortem button.
+Questions are accent bubbles, and an answer is one card with hairline-separated sections and a dot in each kicker.
+A Finding longer than six lines collapses with Show more.
+Code blocks and the whole answer have Copy.
+Stop ends a turn: the reply, if one still arrives, is dropped by `SRELeadTabState.turnID`, and the thread says "Stopped" rather than showing an error.
+A turn's failure is marked `retryable`, and Try again asks the last question again without a second copy of it in the thread.
+Starter and follow-up chips fill the composer and never send.
+
+What was left out, as follow-ups:
+
+- Streaming. The runner still answers in one piece (`--output-format json`), so the working card shows elapsed time rather than text as it arrives.
+- The kubectl commands a turn ran. That needs a request callback on `SRELeadBridge` beside `onRunbookRun`.
+- The popover arrow. AppKit paints it in the popover's plain background, so it sits as a pale notch above the hero gradient.
+
+Two traps worth knowing for any view here:
+
+- The kit has no spinner (`NSProgressIndicator()` is source-guarded, UI-61), so the working cards use a static hourglass and a ticking elapsed time.
+- A label's intrinsic width can sit a fraction under what its cell needs to draw it (40.5pt against 44.1pt, measured on "AHEAD"). Where layout rounds to whole points, a 1x display or an off-window render, the word truncated. `HelmStatusPill` now holds its word at the cell's own width, and the question bubble is sized from its cell.
+
+Verified with `FM_RUN_CONSOLE_POPOVERS_TESTS` (new, headless, with renders via `FM_CONSOLE_POPOVERS_RENDER_DIR`), two new cases in `FM_RUN_SRE_LEAD_PER_TAB_TESTS`, and a real-window capture of each surface from the probe app.

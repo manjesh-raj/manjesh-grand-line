@@ -1383,6 +1383,19 @@ final class HelmComposerCard: NSView {
         }
     }
 
+    /// 1.1.0: which well recipe the card paints (`HelmField.Surface`).
+    /// `.inset`, the default, is every composer's sunken fill as it always
+    /// was. `.raised` is the card's own colour with a hairline stepped toward
+    /// ink - the Compose popover and SRE Lead's composer (Comp-1, Sre-2), whose
+    /// inset well was the Lavender palette's `side` colour on a lavender
+    /// panel. Text inside a raised card takes `HelmField.ink(_:surface:)`.
+    var surface: HelmField.Surface = .inset {
+        didSet {
+            guard surface != oldValue, let lastTheme else { return }
+            applyTheme(lastTheme)
+        }
+    }
+
     init(cornerRadius: CGFloat = HelmMetrics.rRow) {
         self.cornerRadius = cornerRadius
         super.init(frame: .zero)
@@ -1455,7 +1468,7 @@ final class HelmComposerCard: NSView {
         lastTheme = theme
         HelmInputSurface.apply(chrome: contentContainer, shadowHost: self,
                                theme: theme, focused: isFocused, hue: domainHue,
-                               animated: animated)
+                               surface: surface, animated: animated)
         if let focusTarget { HelmSelection.apply(to: focusTarget, theme: theme) }
     }
 }

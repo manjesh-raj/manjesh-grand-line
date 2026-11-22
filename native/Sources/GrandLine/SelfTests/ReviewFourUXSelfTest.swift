@@ -20,7 +20,8 @@
 // R4-UX-05's inspector half (a disabled button on a page with no details)
 // was reversed at the captain's request: the button now opens the inspector
 // on every page, which is `MainSplitShellPanesSelfTest.checkTheInspectorOpensOnEveryPage`,
-// R4-UX-07's Whiteboard overlay is `WhiteboardViewSelfTest`, and R4-UX-08's
+// R4-UX-07's Whiteboard overlay was removed by `fm/grandline-popover-redesign` (an empty board is
+// a plain canvas now, checked in `WhiteboardViewSelfTest`), and R4-UX-08's
 // schedule Stop is `ScheduleRunnerSelfTest`. R4-UX-09 and R4-UX-10 shipped
 // with R4-UI-09 and are `MainSplitShellPanesSelfTest.checkTasksBoardAndFilterRow`.
 //
@@ -267,11 +268,6 @@ enum ReviewFourUXSelfTest {
         let steps = KubernetesController.scopeSteps.components(separatedBy: "\n")
         check(steps.count == 3 && steps.enumerated().allSatisfy { $0.element.hasPrefix("\($0.offset + 1). ") },
               "R4-UX-07: the Kubernetes scope wall is not three numbered steps: \(steps)", &ok)
-        if case .success(let diagram) = DiagramDSL.build(WhiteboardController.exampleDiagram, mode: .flowchart) {
-            check(!diagram.elements.isEmpty, "R4-UX-07: the Whiteboard's example diagram is empty", &ok)
-        } else {
-            fail("R4-UX-07: the Whiteboard's example diagram does not build", &ok)
-        }
     }
 
     // MARK: R4-UX-08

@@ -1226,6 +1226,29 @@ final class HelmButton: NSButton {
         didSet { if heroInk != oldValue { restyle() } }
     }
 
+    /// 1.3.0: the well a `.secondary` button is drawn as. `.inset`,
+    /// the default, is the sunken fill every secondary button has always had.
+    /// `.raised` is `HelmField.Surface.raised` - the card's own colour with a
+    /// hairline stepped toward ink - for a chip that sits beside raised wells
+    /// (the Compose popover's examples, Comp-1), where the inset fill is the
+    /// Lavender palette's `side` colour and reads as a lavender pill. Ignored
+    /// by every other variant and by a disabled button.
+    var surface: HelmField.Surface = .inset {
+        didSet { if surface != oldValue { restyle() } }
+    }
+
+    /// A `.secondary` palette moved onto the raised well: the fill and its
+    /// hover and press steps, and the border. The label is the variant's own,
+    /// corrected against the raised fill.
+    static func raisedPalette(_ base: Palette, theme: HelmTheme) -> Palette {
+        let fill = HelmField.fill(theme, surface: .raised)
+        return Palette(fill: fill,
+                       hoverFill: fill.hoverShifted(by: 0.05, forMode: theme.mode),
+                       pressedFill: fill.hoverShifted(by: 0.10, forMode: theme.mode),
+                       border: HelmField.border(theme, surface: .raised),
+                       label: HelmContrast.legible(base.label, over: fill))
+    }
+
     static let heroFillAlpha: CGFloat = 0.16
     static let heroBorderAlpha: CGFloat = 0.38
 
@@ -1872,6 +1895,9 @@ final class HelmButton: NSButton {
         let p: Palette
         if let heroInk {
             p = Self.heroPalette(ink: heroInk, enabled: isEnabled)
+        } else if surface == .raised, variant == .secondary, isEnabled {
+            p = Self.raisedPalette(Self.palette(variant: variant, tint: tint, theme: theme,
+                                                domainHue: domainHue, tintHex: tintHex), theme: theme)
         } else {
             p = isEnabled
                 ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue, tintHex: tintHex)
