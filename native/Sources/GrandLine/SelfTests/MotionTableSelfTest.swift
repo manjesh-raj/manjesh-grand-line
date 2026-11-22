@@ -137,6 +137,8 @@ enum MotionTableSelfTest {
                   reason: "the crew's working pulse, an ambient loop"),
         Exception(file: "NotificationCenterPopover.swift", snippet: "bounce.duration",
                   reason: "the bell's arrival bounce, a keyframe gesture"),
+        Exception(file: "ConsoleComposerPopover.swift", snippet: "copiedDuration",
+                  reason: "how long Copy says Copied, not how it moves - a hold, like a toast's"),
     ]
 
     /// The three shapes a UI duration is written in here.
