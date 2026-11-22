@@ -63,6 +63,8 @@ enum SRELeadPerTabSelfTest {
             ("fifthTabStartsSixthIsRefused", test_fifthTabStartsSixthIsRefused),
             ("closingATabOnlyTearsDownItsOwnSession", test_closingATabOnlyTearsDownItsOwnSession),
             ("scrollbackSurvivesSRELeadToggle", test_scrollbackSurvivesSRELeadToggle),
+            ("aTurnShowsWorkingAndStopEndsIt", test_aTurnShowsWorkingAndStopEndsIt),
+            ("anErrorOffersTryAgainWhichAsksAgain", test_anErrorOffersTryAgainWhichAsksAgain),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -146,7 +148,103 @@ enum SRELeadPerTabSelfTest {
         return condition()
     }
 
+    /// A fake `claude` that writes the question it was asked to `log` (one
+    /// line per call) and then either sleeps for `sleep` seconds or exits 1
+    /// with a message on stderr.
+    private static func writeScriptedClaude(log: URL, sleep: Int?, fail: Bool) -> URL {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fake-claude-sre2-\(UUID().uuidString).sh")
+        var script = "#!/bin/sh\nQ=$(cat)\necho \"$Q\" >> '\(log.path)'\n"
+        if let sleep { script += "sleep \(sleep)\n" }
+        if fail {
+            script += "echo 'the cluster is unreachable' >&2\nexit 1\n"
+        } else {
+            script += "printf '{\"result\": \"reply-to: %s\", \"is_error\": false, \"session_id\": \"s\"}' \"$Q\"\n"
+        }
+        try? script.write(to: path, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        return path
+    }
+
     // MARK: Cases
+
+    /// Sre-2 (`fm/grandline-popover-redesign`): while a turn runs the header
+    /// says Working, the chat shows its working card and the send button is
+    /// Stop. Stop ends the turn: the pill is Ready again, the thread says the
+    /// turn was stopped (a status line, never an error card), the composer
+    /// takes input again, and nothing the stopped turn might still say lands.
+    private static func test_aTurnShowsWorkingAndStopEndsIt() -> String? {
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("sre2-log-\(UUID().uuidString).txt")
+        let script = writeScriptedClaude(log: log, sleep: 20, fail: false)
+        defer { try? FileManager.default.removeItem(at: script); try? FileManager.default.removeItem(at: log) }
+        SRELead.claudePathOverrideForTests = script.path
+        let (host, controller, ids) = makeStartedTestConsole(tabCount: 1)
+        _ = host
+        guard let tab = ids.first else { return "no tab" }
+        controller.debugSelectTab(tab)
+        controller.debugStartSRELead(forTabID: tab)
+        guard waitUntil({ controller.debugSRELeadPhase(forTabID: tab) == .ready }),
+              let chat = controller.debugSRELeadChat(forTabID: tab) else { return "SRE Lead never reached .ready" }
+        guard controller.debugSRELeadStatusText == "READY" else {
+            return "before a turn the pill reads \(controller.debugSRELeadStatusText ?? "nothing"), want READY"
+        }
+        guard controller.debugSRELeadHeroSubtitle.hasSuffix("read-only kubectl") else {
+            return "the header's second line reads \(controller.debugSRELeadHeroSubtitle)"
+        }
+        controller.debugAskSRELead(forTabID: tab, question: "Why is checkout-api restarting?")
+        guard controller.debugSRELeadStatusText == "WORKING" else {
+            return "during a turn the pill reads \(controller.debugSRELeadStatusText ?? "nothing"), want WORKING"
+        }
+        guard chat.debugIsWorking, chat.debugSendSymbol == "stop.fill", chat.debugSendEnabled else {
+            return "during a turn: working card \(chat.debugIsWorking), send symbol \(chat.debugSendSymbol ?? "none"), enabled \(chat.debugSendEnabled)"
+        }
+        chat.debugClickSend()
+        guard controller.debugSRELeadStatusText == "READY" else {
+            return "after Stop the pill reads \(controller.debugSRELeadStatusText ?? "nothing"), want READY"
+        }
+        let texts = chat.debugMessageTexts()
+        guard !chat.debugIsWorking, texts.last?.hasPrefix("Stopped") == true else {
+            return "after Stop: working card \(chat.debugIsWorking), transcript \(texts)"
+        }
+        guard chat.debugRetryButtons.isEmpty else { return "Stop rendered an error card with Try again: \(texts)" }
+        chat.debugSetComposerText("again")
+        guard chat.debugSendEnabled, chat.debugSendSymbol == "arrow.up" else {
+            return "after Stop the composer does not take a question (send \(chat.debugSendSymbol ?? "none"), enabled \(chat.debugSendEnabled))"
+        }
+        return nil
+    }
+
+    /// Sre-2: a failed turn is an error card with Try again, and Try again
+    /// asks the same question again - one more `claude` call - without a
+    /// second copy of the question in the thread.
+    private static func test_anErrorOffersTryAgainWhichAsksAgain() -> String? {
+        let log = FileManager.default.temporaryDirectory.appendingPathComponent("sre2-log-\(UUID().uuidString).txt")
+        let script = writeScriptedClaude(log: log, sleep: nil, fail: true)
+        defer { try? FileManager.default.removeItem(at: script); try? FileManager.default.removeItem(at: log) }
+        SRELead.claudePathOverrideForTests = script.path
+        let (host, controller, ids) = makeStartedTestConsole(tabCount: 1)
+        _ = host
+        guard let tab = ids.first else { return "no tab" }
+        controller.debugSelectTab(tab)
+        controller.debugStartSRELead(forTabID: tab)
+        guard waitUntil({ controller.debugSRELeadPhase(forTabID: tab) == .ready }),
+              let chat = controller.debugSRELeadChat(forTabID: tab) else { return "SRE Lead never reached .ready" }
+        let question = "QUESTIONTOREPEAT"
+        controller.debugAskSRELead(forTabID: tab, question: question)
+        guard waitUntil({ !chat.debugRetryButtons.isEmpty }) else {
+            return "the failed turn shows no Try again: \(chat.debugMessageTexts())"
+        }
+        chat.debugRetryButtons.last?.performClick(nil)
+        guard waitUntil({ chat.debugRetryButtons.count == 2 }) else {
+            return "Try again did not run a second turn: \(chat.debugMessageTexts())"
+        }
+        let asked = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").components(separatedBy: "\n")
+            .filter { $0.contains(question) }
+        guard asked.count == 2 else { return "claude was asked the question \(asked.count) time(s), want 2" }
+        let shown = chat.debugMessageTexts().filter { $0 == question }
+        guard shown.count == 1 else { return "the question is in the thread \(shown.count) times, want once" }
+        return nil
+    }
 
     private static func test_independentPhasesAndNoChatCrossTalk() -> String? {
         let script = writeFakeClaude()

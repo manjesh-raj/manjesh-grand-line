@@ -462,9 +462,9 @@ extension ConsoleController {
         // would square off the card's top corners inside its clip.
         sreLeadHeader.layer?.backgroundColor = NSColor.clear.cgColor
         sreLeadHeaderDivider.layer?.backgroundColor = line.withAlphaComponent(HelmCard.dividerAlpha).cgColor
-        sreLeadHeaderIcon.applyTheme(theme)
-        sreLeadHeaderLabel.textColor = ink
-        sreLeadGeneratePostmortemButton.contentTintColor = ink
+        sreLeadHero.applyTheme(theme)
+        sreLeadStatusPill.heroInk = sreLeadHero.ink
+        sreLeadGeneratePostmortemButton.heroInk = sreLeadHero.ink
         sreLeadEmptyStateView.layer?.backgroundColor = paneBg.cgColor
         cardChrome.applyTheme(theme)
         // §6.13: whether the terminal card is drawn at all depends on the

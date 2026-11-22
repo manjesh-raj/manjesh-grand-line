@@ -1137,6 +1137,9 @@ enum SelfTestDispatch {
         }
         // Host-1 and Key-1 of the Console / Add Host / Add Key board: the forms'
         // pure half (the ~/.ssh scan, inline validation, the raised well).
+        if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_POPOVERS_TESTS"] == "1" {
+            exit(ConsolePopoversSelfTest.run() ? 0 : 1)
+        }
         if ProcessInfo.processInfo.environment["FM_RUN_CONNECTION_FORMS_TESTS"] == "1" {
             exit(ConnectionFormsSelfTest.run() ? 0 : 1)
         }

@@ -3844,6 +3844,25 @@ final class HelmRingGauge: NSView {
     var trackColorOverride: NSColor?
     var labelColorOverride: NSColor?
 
+    /// 1.3.0: draw the track dashed, for a window with no reading (GL-14's
+    /// "unknown is never zero"): a solid empty track reads as 0%, a dashed one
+    /// as nothing measured. The Claude usage popover's rings (Use-1). Off by
+    /// default.
+    var showsDashedTrack = false {
+        didSet {
+            guard showsDashedTrack != oldValue else { return }
+            HelmMotion.withoutActions {
+                track.lineDashPattern = showsDashedTrack ? Self.dashPattern(scale: scale) : nil
+                track.lineCap = showsDashedTrack ? .butt : .round
+            }
+        }
+    }
+
+    /// The dash the board draws (3 on, 4 off at 62pt), scaled with the ring.
+    static func dashPattern(scale: CGFloat) -> [NSNumber] {
+        [NSNumber(value: Double(3.2 * scale)), NSNumber(value: Double(4.3 * scale))]
+    }
+
     override func layout() {
         super.layout()
         let inset = strokeWidth / 2
@@ -3891,6 +3910,8 @@ final class HelmRingGauge: NSView {
     #if FM_SELFTESTS
     /// S11: the arc's painted colour, after `applyTheme`.
     var debugArcColor: CGColor? { value.strokeColor }
+    /// 1.3.0: the track's dash, `nil` when solid.
+    var debugTrackDash: [NSNumber]? { track.lineDashPattern }
     /// The centre label as drawn.
     var debugLabel: String { label.stringValue }
     #endif

@@ -243,3 +243,10 @@ unredacted original is never written to disk.
   a broken placeholder, confirmed by dropping the `files` from the payload and watching it fail
   alone while everything else still passed.
   The live half - the crosshair, the shutter, the real clipboard - is the captain's own check.
+
+## The empty-board card is gone (`fm/grandline-popover-redesign`)
+
+The captain did not want R4-UX-07's "A blank board" empty state over a new board.
+The Whiteboard now opens straight onto an empty canvas, and the subtitle no longer says "An empty board".
+The example-diagram action went with the card, since the card was its only entry point.
+`WhiteboardViewSelfTest` now asserts that nothing covers the ready canvas.

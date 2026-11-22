@@ -72,6 +72,15 @@ final class HelmStatusPill: NSView {
     var style: Style {
         didSet { if style != oldValue { applyStyleLayout(); applyTheme(lastTheme) } }
     }
+    /// 1.1.0: a pill on a hero gradient (SRE Lead's header, Sre-2). The
+    /// capsule takes `HelmButton`'s ghost recipe - a translucent shade of the
+    /// ink's opposite, a hairline of the ink - and the word is the ink itself,
+    /// so it reads as the hero's own words rather than a tinted chip pasted on
+    /// it. `.pill` only. `nil`, the default, changes nothing.
+    var heroInk: NSColor? {
+        didSet { if heroInk != oldValue { applyTheme(lastTheme) } }
+    }
+
     /// The word. Read-only to callers - the pill owns its font and colour.
     let label = NSTextField(labelWithString: "")
     private let dot = NSView()
@@ -80,6 +89,21 @@ final class HelmStatusPill: NSView {
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
     private var pillConstraints: [NSLayoutConstraint] = []
     private var dotConstraints: [NSLayoutConstraint] = []
+    /// 1.1.0: the word's width as its cell draws it, rounded up to a whole
+    /// point. The label's intrinsic width can sit a fraction under what the
+    /// cell needs (40.5pt against 44.1pt with the cell's insets, measured on
+    /// "AHEAD"), and where layout rounds to whole points - a 1x display, or a
+    /// view rendered off-window - the pill came out 0.1pt short and drew
+    /// "AHE…".
+    ///
+    /// Not required: a row that deliberately squeezes a pill still truncates
+    /// it. 740 sits under the label's own compression resistance (750), so it
+    /// adds no new way for a pill to push on a window (gotcha (13)).
+    private lazy var wordWidth: NSLayoutConstraint = {
+        let floor = label.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
+        floor.priority = NSLayoutConstraint.Priority(740)
+        return floor
+    }()
 
     static let dotSize: CGFloat = 8
 
@@ -166,13 +190,25 @@ final class HelmStatusPill: NSView {
             // `ToolRowLayout.pill` sets the twelve legacy palettes' semibold;
             // the kit's one chip face is `HelmType.chip()` everywhere.
             label.font = HelmType.chip()
+            if let heroInk {
+                let ghost = HelmButton.heroPalette(ink: heroInk, enabled: true)
+                layer?.backgroundColor = ghost.fill.cgColor
+                layer?.borderColor = ghost.border.cgColor
+                layer?.borderWidth = 1
+                label.textColor = heroInk
+            } else {
+                layer?.borderWidth = 0
+            }
         case .dotWord:
+            layer?.borderWidth = 0
             let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
             dot.layer?.backgroundColor = HelmTheme.nsColor(hex).cgColor
             label.font = HelmType.chip()
             label.textColor = HelmContrast.legibleTintedText(tintHex: hex, over: surface, theme: theme)
             layer?.backgroundColor = NSColor.clear.cgColor
         }
+        wordWidth.constant = ceil(label.cell?.cellSize.width ?? 0)
+        wordWidth.isActive = true
         setAccessibilityLabel(label.stringValue)
     }
 

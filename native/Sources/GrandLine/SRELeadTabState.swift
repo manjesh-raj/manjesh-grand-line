@@ -37,6 +37,16 @@ final class SRELeadTabState {
     /// never allocates one.
     var chatView: SRELeadChatView?
 
+    /// Sre-2 (`fm/grandline-popover-redesign`): the turn in flight, if any.
+    /// `turnStartedAt` is when it was asked (the working card's clock and the
+    /// answer's "18s"), `turnID` tells a reply that arrives after Stop that it
+    /// belongs to a turn nobody is waiting for, and `lastQuestion` is what Try
+    /// again asks again.
+    var turnStartedAt: Date?
+    var turnID = 0
+    var lastQuestion: String?
+    var isTurnInFlight: Bool { turnStartedAt != nil }
+
     /// Stops the bridge's poll timer, cancels any in-flight `claude -p`
     /// turn, and removes every scratch file `SRELead.setUp` wrote for this
     /// tab - mirrors the old page-level `tearDownSRELead()`'s cleanup

@@ -36,6 +36,19 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 9.3.0 - Compose, Claude usage and SRE Lead in the hero language
+
+The picks from the console popovers board (`data/grand-line-console-popovers-sre-mockups/`): Comp-1, Use-1 and Sre-2.
+The Compose popover, the Claude usage popover and the SRE Lead panel each open on the hero gradient, and both composers are raised wells.
+It is a minor release: every kit change is an opt-in option or a fix, and nothing is removed.
+
+- `HelmComposerCard` 1.0.0 → 1.1.0 (minor): `surface`, `.inset` by default and `.raised` for the card-coloured well with a hairline stepped toward ink. Both composers were the Lavender palette's `side` colour on a lavender panel.
+- `HelmButton` 1.2.0 → 1.3.0 (minor): `surface`, which draws a `.secondary` button as the raised well. The Compose examples, its Copy and SRE Lead's question chips use it, so a chip beside a raised well is not a lavender pill.
+- `HelmStatusPill` 1.0.0 → 1.1.0 (minor): `heroInk`, a ghost pill on a hero gradient (SRE Lead's status). The pill also holds its word at the width its cell draws it, rounded up: the label's intrinsic width sat a fraction under what the cell needs, and where layout rounds to whole points (a 1x display, an off-window render) "AHEAD" drew as "AHE…".
+- `HelmRingGauge` 1.2.0 → 1.3.0 (minor): `showsDashedTrack`, for a window with no reading (GL-14). The Claude usage popover's rings use it.
+- `Console (page)` 1.0.0 → 1.1.0 (minor): Comp-1 and Sre-2. Compose opens on a hero with a raised intent well, a fixed 420pt width with the command wrapping, a result card in the terminal scheme's colours with Copied feedback and the target tab named, a working card, and an error row with Try again. SRE Lead's header is a hero with the host and "read-only kubectl", a ghost status pill that says Working during a turn, and the postmortem button. The thread has question bubbles, one answer card with sections and a collapsing Finding, Copy on code and on the answer, Stop, Try again, and starter and follow-up chips above a pill composer.
+- `Claude usage popover` none → 1.0.0 (new): Use-1. A hero with a ring per window, including the Fable week, a Refresh button, rows with a countdown and a pace pill coloured by the pace rather than the bar, a critical warning row and a Retry on failure.
+
 ## 9.2.0 - Console, Add Host and Add Key in the hero language
 
 The picks from the Console / Add Host / Add Key board (`data/grand-line-console-addhost-mockups/`): the S1 hero style, Con-1, Host-1 and Key-1.
