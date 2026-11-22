@@ -410,7 +410,6 @@ extension ConsoleController {
         }
 
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         // The bar's fill and hairline, and every glyph in it, are the
         // component's / `HelmButton`'s own business now - this page no longer
