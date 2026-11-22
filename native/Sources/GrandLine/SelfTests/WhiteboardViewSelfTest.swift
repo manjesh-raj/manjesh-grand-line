@@ -963,37 +963,30 @@ enum WhiteboardViewSelfTest {
         }
     }
 
-    // MARK: R4-UX-07 - the empty board's state
+    // MARK: An empty board is a plain canvas
 
-    /// A fresh board says what to do and offers one action, an example to
-    /// start from; pressing it draws the example and the state goes. Its own
-    /// controller, so the board the cases above drew on is not involved.
+    /// A fresh board opens straight into an empty canvas. R4-UX-07 once laid
+    /// a "A blank board" empty state over it, and the captain asked for it to
+    /// go (`fm/grandline-popover-redesign`). Nothing may cover the ready
+    /// canvas, and the drill subtitle must not announce an empty board.
+    /// Its own controller, so the board the cases above drew on is not
+    /// involved.
     private static func checkEmptyBoardState(_ window: NSWindow, _ check: (Bool, String) -> Void) {
         let controller = WhiteboardController()
         window.contentView = controller.view
         window.displayIfNeeded()
         guard waitFor(timeout: 30, until: { controller.debugWebView.isReady }) else {
-            check(false, "R4-UX-07: the second canvas never reported ready")
+            check(false, "empty board: the second canvas never reported ready")
             return
         }
-        guard waitFor(timeout: 5, until: { controller.debugEmptyBoardState != nil }),
-              let state = controller.debugEmptyBoardState else {
-            check(false, "R4-UX-07: an empty board shows no empty state - it is a bare canvas")
-            return
-        }
-        check(state.debugTitle == "A blank board", "R4-UX-07: the empty board is titled \(state.debugTitle)")
-        func buttons(in view: NSView) -> [HelmButton] {
-            view.subviews.flatMap { ($0 as? HelmButton).map { [$0] } ?? buttons(in: $0) }
-        }
-        let actions = buttons(in: state)
-        check(actions.map(\.title) == ["Add an example diagram"],
-              "R4-UX-07: the empty board offers \(actions.map(\.title)), want one example action")
-        actions.first?.performClick(nil)
-        let drew = waitFor(timeout: 10) {
-            controller.debugEmptyBoardState == nil && (controller.drillHeaderSubtitle.map { !$0.hasPrefix("An empty board") } ?? false)
-        }
-        check(drew, "R4-UX-07: the example action did not draw onto the board and clear the empty state "
-              + "(subtitle \(controller.drillHeaderSubtitle ?? "none"))")
+        // Let the first `stats` reply land, which is when the old overlay
+        // used to appear.
+        pump(0.5)
+        check(controller.debugCanvasCoverViews.isEmpty,
+              "empty board: a view covers the ready canvas: \(controller.debugCanvasCoverViews)")
+        check(controller.drillHeaderSubtitle.map { !$0.hasPrefix("An empty board") } ?? false,
+              "empty board: the subtitle still announces an empty board "
+              + "(\(controller.drillHeaderSubtitle ?? "none"))")
     }
 
     private static func waitFor(timeout: TimeInterval, until condition: () -> Bool) -> Bool {
