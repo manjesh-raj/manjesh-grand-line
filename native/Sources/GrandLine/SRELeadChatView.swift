@@ -548,7 +548,11 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         // A line that wraps is centred on its own: two hairlines squeezed
         // beside two lines of words read as a rendering fault.
         let oneLine = measured.height <= ceil(label.font?.boundingRectForFont.height ?? 16) + 2
-        let row = NSStackView(views: oneLine ? [hairline(), label, hairline()] : [label])
+        let lead = hairline(), trail = hairline()
+        let row = NSStackView(views: oneLine ? [lead, label, trail] : [label])
+        // Two flexible hairlines tie; without this one of them took all the
+        // slack and the words sat against the trailing edge.
+        if oneLine { lead.widthAnchor.constraint(equalTo: trail.widthAnchor).isActive = true }
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = HelmMetrics.s2
