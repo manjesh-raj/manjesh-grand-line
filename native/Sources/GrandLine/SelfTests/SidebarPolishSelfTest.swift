@@ -160,6 +160,25 @@ enum SidebarPolishSelfTest {
         let expand = shell.lastPaneMotionForTests
         check(expand?.collapsed == false && expand?.duration == WorkspaceMotion.paneDuration,
               "the sidebar button's expand was \(String(describing: expand))", &ok)
+        // `fm/grandline-popover-redesign`: the labels are there the moment
+        // the sidebar is. The eased expand used to grow the pane's width from
+        // 0 over rows laid out at full width, so the icon column showed first
+        // and the labels last - for a second or two on a busy main thread.
+        // So, on the same turn as the click and before any run-loop pass: the
+        // pane is already the sidebar's full width, every label is laid out
+        // at its full text width, and the ease is a fade.
+        let paneWidth = shell.debugSidebarPane?.frame.width ?? 0
+        check(abs(paneWidth - shell.debugSidebarWidth) < 0.5 && paneWidth > 100,
+              "the expand did not land at full width at once: the pane is \(paneWidth)pt, the sidebar \(shell.debugSidebarWidth)pt", &ok)
+        if let label = cell(.tasks, shell)?.debugLabel {
+            let visible = label.convert(label.bounds, to: shell.debugSidebarPane).intersection(shell.debugSidebarPane?.bounds ?? .zero)
+            check(visible.width >= label.fittingSize.width - 0.5,
+                  "the Tasks label shows \(visible.width)pt of its \(label.fittingSize.width)pt the moment the sidebar expands", &ok)
+        } else {
+            check(false, "no Tasks row to measure the expand against", &ok)
+        }
+        check(shell.sidebar.view.layer?.animation(forKey: "opacity") != nil,
+              "the expand does not fade in (no opacity animation on the sidebar)", &ok)
         waitForPanes(shell)
         check(!shell.debugSidebarIsCollapsed, "the eased expand never landed", &ok)
         // R2-BUG-02: and it lands at its own width. The eased expand released
