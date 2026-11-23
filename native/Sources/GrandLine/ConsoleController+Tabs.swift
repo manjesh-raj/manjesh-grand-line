@@ -188,6 +188,12 @@ extension ConsoleController {
         // The pane tree goes in before anything else touches the tab's views:
         // `adoptPrimary` is what puts this tab's terminal on screen at all.
         mountSplitContainer(for: tab)
+        // A pane tree mounts visible, and on top of every tab added before
+        // it. A tab added without being selected (session restore's second
+        // and later tabs) has to hide at once, or its terminal covers the
+        // selected tab's: the strip lit "Herdr" while the page showed and
+        // took typing for "Shell". `select` re-derives this for every tab.
+        updateTabViewVisibility(tab)
 
         let chip = TabChipView(tabID: tab.id, name: name)
         let id = tab.id
