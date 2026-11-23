@@ -33,6 +33,11 @@ enum FeelPassSelfTest {
             ("2 the hero paints its palette and its ring", checkHeroView),
             ("2 the ring takes a size", checkRingSize),
             ("2 the hero's words come from the briefing", checkHeroWords),
+            ("2 the hero shows every word at every width", checkHeroShowsEverything),
+            ("2 the tiles fill the width in balanced rows", checkHeroRows),
+            ("2 a tile keeps the hero's contrast in every theme", checkHeroTileContrast),
+            ("2 a tile's click goes to its own page", checkHeroTileClicks),
+            ("2 Open Needs you only when a task needs the captain", checkHeroNeedsYou),
             ("3 today's task figures", checkTaskCounts),
             ("5 the toolbar tabs are no wider than the control they replaced", checkToolbarTabsWidth),
             ("6 density is a factor on every row height", checkDensityRowHeights),
@@ -142,7 +147,8 @@ enum FeelPassSelfTest {
         let hero = HelmHeroCard()
         hero.frame = NSRect(x: 0, y: 0, width: 1100, height: 220)
         hero.configure(.init(kicker: "Morning briefing", title: "One fleet task needs a decision.",
-                             body: "Two follow-ups are due.", ring: .init(value: 6, total: 8, caption: "services healthy")))
+                             tiles: [.init(label: "Overview", text: "Two follow-ups are due.", tint: .warn, isLink: true)],
+                             ring: .init(value: 6, total: 8, label: "Health", caption: "services healthy", isLink: true)))
         hero.setActions([HelmButton(title: "See Health", variant: .secondary)])
         for id in ["daylight", "dusk", "ember", "contrast-dark"] {
             guard let theme = HelmTheme.appThemes.first(where: { $0.id == id }) else {
@@ -156,13 +162,13 @@ enum FeelPassSelfTest {
             check(hero.debugTitleColor.map { HelmContrast.ratio($0, ink) < 1.001 } ?? false,
                   "\(id): the title is not painted in the hero's ink", &ok)
             check(hero.debugGradientColors.count == 2, "\(id): the gradient has \(hero.debugGradientColors.count) stops", &ok)
-            let arc = hero.debugRing.debugArcColor.flatMap(NSColor.init(cgColor:))
+            let arc = hero.debugRing?.debugArcColor.flatMap(NSColor.init(cgColor:))
             check(arc.map { HelmContrast.ratio($0, ink) < 1.001 } ?? false, "\(id): the ring's arc is not the ink", &ok)
         }
-        check(hero.debugRingShown && hero.debugRing.centreLabelForTests == "6/8",
-              "the ring reads \(hero.debugRing.centreLabelForTests)", &ok)
+        check(hero.debugRingShown && hero.debugRing?.centreLabelForTests == "6/8",
+              "the ring reads \(hero.debugRing?.centreLabelForTests ?? "nothing")", &ok)
         check(hero.debugActionTitles == ["See Health"], "the hero's actions are \(hero.debugActionTitles)", &ok)
-        hero.configure(.init(kicker: "", title: "Not generated yet today", body: "", ring: nil))
+        hero.configure(.init(kicker: "", title: "Not generated yet today", tiles: [], ring: nil))
         check(!hero.debugRingShown, "a hero with no figure still draws a ring", &ok)
     }
 
@@ -178,20 +184,198 @@ enum FeelPassSelfTest {
     }
 
     private static func checkHeroWords(_ ok: inout Bool) {
-        let record = MorningBriefingRecord(
+        var record = MorningBriefingRecord(
             day: "2026-11-18", generatedAt: Date(),
-            clauses: [BriefingClause(text: "One fleet task needs a decision.", target: .none),
-                      BriefingClause(text: "Two follow-ups are due.", target: .none),
+            clauses: [BriefingClause(text: "One fleet task needs a decision.", target: .fleet),
+                      BriefingClause(text: "Two follow-ups are due.", target: .tasks),
                       BriefingClause(text: "20 tasks finished.", target: .none)],
             isDegraded: false, degradedReason: nil, dismissed: false, sources: ["fleet"], shiftTaskID: nil)
+        // No headline (an older record, or the local stat line): the first
+        // clause leads and the rest are the tiles.
         let words = HomeBriefingHero.words(record: record, enabled: true, settingsName: "Settings")
-        check(words.title == "One fleet task needs a decision." && words.body == "Two follow-ups are due. 20 tasks finished.",
-              "the hero reads \"\(words.title)\" / \"\(words.body)\"", &ok)
+        check(words.title == "One fleet task needs a decision."
+                && words.facts.map(\.text) == ["Two follow-ups are due.", "20 tasks finished."] && words.note == nil,
+              "the hero reads \"\(words.title)\" over \(words.facts.map(\.text))", &ok)
+        // H-b: the AI's headline leads and every clause is a tile.
+        record.headline = "A decision is waiting"
+        let headed = HomeBriefingHero.words(record: record, enabled: true, settingsName: "Settings")
+        check(headed.title == "A decision is waiting" && headed.facts.count == 3,
+              "with a headline the hero reads \"\(headed.title)\" over \(headed.facts.count) tiles", &ok)
+        record.headline = "   "
+        check(HomeBriefingHero.words(record: record, enabled: true, settingsName: "Settings").title
+                == "One fleet task needs a decision.", "a blank headline replaced the first clause", &ok)
         let off = HomeBriefingHero.words(record: nil, enabled: false, settingsName: "Settings")
-        check(off.title == "Morning briefing is off" && off.body.contains("Settings"),
+        check(off.title == "Morning briefing is off" && (off.note ?? "").contains("Settings") && off.facts.isEmpty,
               "with the briefing off the hero reads \"\(off.title)\"", &ok)
         let pending = HomeBriefingHero.words(record: nil, enabled: true, settingsName: "Settings")
-        check(pending.title == "Not generated yet today", "before today's briefing the hero reads \"\(pending.title)\"", &ok)
+        check(pending.title == "Not generated yet today" && pending.note != nil,
+              "before today's briefing the hero reads \"\(pending.title)\"", &ok)
+
+        // A clause's tile: labelled with its page, a dot in its target's hue,
+        // and a link only where the clause points somewhere.
+        let name: (RailDestination) -> String = { $0 == .overview ? "Overview" : "Tasks" }
+        let fleet = HomeBriefingHero.tile(BriefingClause(text: "A.", target: .fleet), pageName: name)
+        check(fleet.label == "Overview" && fleet.isLink && fleet.tint == BriefingTarget.fleet.tint,
+              "a fleet clause's tile is \(fleet)", &ok)
+        let note = HomeBriefingHero.tile(BriefingClause(text: "B.", target: .none), pageName: name)
+        check(note.label == "Note" && !note.isLink && note.tint == nil, "a clause pointing nowhere is \(note)", &ok)
+        check(HomeBriefingHero.page(of: .tasks) == .shift && HomeBriefingHero.page(of: .none) == nil,
+              "a clause's page is not the page its link opens", &ok)
+    }
+
+    /// The captain's two defects (fm/grandline-briefing-card): a headline cut
+    /// to one line with an ellipsis, and words held in a 560pt column on a
+    /// card twice that wide. Measured on the captain's own briefing, at a
+    /// narrow, the captain's and a full-screen width.
+    private static func checkHeroShowsEverything(_ ok: inout Bool) {
+        let headline = "Pull request status is unknown because the scan could not reach the forge."
+        let facts = ["20 fleet tasks finished today and 48 are queued.",
+                     "No crew is working, and nothing needs a decision or is blocked.",
+                     "The watcher is healthy and no personal tasks or follow-ups are due."]
+        for width in [600, 975, 1400] as [CGFloat] {
+            let hero = HelmHeroCard()
+            hero.configure(.init(kicker: "Morning briefing \u{00B7} generated 12:46 PM \u{00B7} 1 source", title: headline,
+                                 tiles: facts.map { .init(label: "Overview", text: $0, tint: .warn, isLink: true) },
+                                 ring: .init(value: 6, total: 6, label: "Health", caption: "services healthy", isLink: true)))
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 900))
+            host.addSubview(hero)
+            NSLayoutConstraint.activate([
+                hero.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                hero.widthAnchor.constraint(equalToConstant: width),
+                hero.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            for _ in 0..<3 { host.layoutSubtreeIfNeeded() }
+            let column = width - HelmHeroCard.insets.left - HelmHeroCard.insets.right
+            let title = hero.debugTitleLabel
+            let oneLine = ceil(title.attributedStringValue.size().width)
+            // The fixture must be able to fail: at the narrow width the
+            // headline cannot fit one line.
+            if width == 600 {
+                check(oneLine > column, "fixture: the headline fits one line at \(width)pt - the wrap check measures nothing", &ok)
+            }
+            // A label's frame carries its cell's 2pt padding either side.
+            check(abs(title.frame.width - column) <= 4.5,
+                  "at \(width)pt the headline is \(title.frame.width)pt wide, want the column's \(column)", &ok)
+            let lines = (oneLine / max(1, column)).rounded(.up)
+            let lineHeight = ceil(title.font?.boundingRectForFont.height ?? 26)
+            check(title.frame.height >= (lines - 1) * lineHeight + lineHeight * 0.8,
+                  "at \(width)pt the headline needs \(Int(lines)) lines and is \(title.frame.height)pt tall", &ok)
+            check(title.cell?.wraps == true && title.maximumNumberOfLines == 0,
+                  "the headline's cell does not wrap, or caps its lines", &ok)
+            // Every tile ends inside the card, the rows reach the column's
+            // edge, and no sentence is clipped.
+            let tiles = hero.debugTiles + [hero.debugRingTile].compactMap { $0 }
+            let right = tiles.map { $0.convert($0.bounds, to: hero).maxX }.max() ?? 0
+            check(abs(right - (width - HelmHeroCard.insets.right)) < 1.5,
+                  "at \(width)pt the tiles end at \(right), want the column's edge \(width - HelmHeroCard.insets.right)", &ok)
+            for tile in tiles {
+                let text = tile.debugTextLabel
+                let needed = text.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: text.frame.width, height: 10_000)).height ?? 0
+                check(text.frame.height >= needed - 0.5 && text.frame.maxY <= tile.bounds.height + 0.5,
+                      "at \(width)pt \"\(text.stringValue.prefix(30))\" is \(text.frame.height)pt tall in a "
+                      + "\(tile.bounds.height)pt tile, needs \(needed)", &ok)
+                check(tile.convert(tile.bounds, to: hero).maxY <= hero.bounds.height - HelmHeroCard.insets.bottom + 0.5,
+                      "at \(width)pt a tile runs past the card's bottom inset", &ok)
+            }
+        }
+    }
+
+    private static func checkHeroRows(_ ok: inout Bool) {
+        let rows = { HelmHeroCard.rows(count: $0, width: $1) }
+        // Room for four (4 * 200 + 3 * 10 = 830): five tiles are three over
+        // two, never four over a lone fifth.
+        check(rows(5, 900) == [3, 2], "five tiles at 900pt are \(rows(5, 900))", &ok)
+        check(rows(5, 1352) == [5], "five tiles at 1352pt are \(rows(5, 1352))", &ok)
+        check(rows(6, 927) == [3, 3], "six tiles at 927pt are \(rows(6, 927))", &ok)
+        check(rows(2, 552) == [2], "two tiles at 552pt are \(rows(2, 552))", &ok)
+        check(rows(3, 300) == [1, 1, 1], "three tiles at 300pt are \(rows(3, 300))", &ok)
+        check(rows(0, 900).isEmpty, "no tiles still makes a row", &ok)
+    }
+
+    /// A tile's wash moves away from the ink, so the text inside one never
+    /// reads worse than on the gradient - over either stop, in every theme.
+    /// And a fact's dot clears the non-text floor on the washed tile.
+    private static func checkHeroTileContrast(_ ok: inout Bool) {
+        var failures: [String] = []
+        for theme in everyTheme {
+            let palette = HelmHeroCard.palette(for: theme)
+            let wash = HelmHeroCard.tileWash(for: palette)
+            for stop in [palette.start, palette.end] {
+                let tile = HelmContrast.mix(stop, wash.rgb, wash.alpha)
+                let bare = HelmContrast.ratio(palette.ink, stop)
+                let washed = HelmContrast.ratio(palette.ink, tile)
+                if washed + 0.001 < min(bare, HelmContrast.textTarget) || washed < HelmContrast.textTarget {
+                    failures.append("\(theme.id) ink \(String(format: "%.2f", washed)):1 on a tile")
+                }
+                for tint in [HelmTint.good, .warn, .info, .critical] {
+                    let dot = HelmContrast.components(HelmHeroSurface.signalColor(tintHex: tint.hex(in: theme), on: palette))
+                    let ratio = HelmContrast.ratio(dot, tile)
+                    if ratio < HelmContrast.nonTextTarget - 0.05 {
+                        failures.append("\(theme.id) \(tint) dot \(String(format: "%.2f", ratio)):1 on a tile")
+                    }
+                }
+            }
+        }
+        check(failures.isEmpty, "tiles lose contrast: \(failures.prefix(6).joined(separator: "; "))"
+              + (failures.count > 6 ? " and \(failures.count - 6) more" : ""), &ok)
+    }
+
+    /// Through the tile's own click recognizer (VoiceOver's press replays
+    /// it), so deleting the wiring fails this - not a call to the handler.
+    private static func checkHeroTileClicks(_ ok: inout Bool) {
+        let hero = HelmHeroCard()
+        hero.configure(.init(kicker: "", title: "Two things",
+                             tiles: [.init(label: "Review", text: "A.", tint: .good, isLink: true),
+                                     .init(label: "Note", text: "B.", tint: nil, isLink: false),
+                                     .init(label: "Tasks", text: "C.", tint: .warn, isLink: true)],
+                             ring: .init(value: 5, total: 6, label: "Health", caption: "services healthy", isLink: true)))
+        var opened: [Int] = []
+        var ringOpened = 0
+        hero.onActivateTile = { opened.append($0) }
+        hero.onActivateRing = { ringOpened += 1 }
+        let tiles = hero.debugTiles
+        guard tiles.count == 3, let ring = hero.debugRingTile else {
+            fail("the hero drew \(tiles.count) tiles and \(hero.debugRingTile == nil ? "no" : "a") ring tile", &ok)
+            return
+        }
+        check(tiles[0].isActivatable && !tiles[1].isActivatable && tiles[2].isActivatable && ring.isActivatable,
+              "a tile is clickable where its fact points nowhere, or not where it points somewhere", &ok)
+        _ = tiles[2].accessibilityPerformPress()
+        _ = tiles[1].accessibilityPerformPress()
+        _ = tiles[0].accessibilityPerformPress()
+        _ = ring.accessibilityPerformPress()
+        check(opened == [2, 0], "pressing the tiles opened \(opened), want [2, 0]", &ok)
+        check(ringOpened == 1, "pressing the services tile opened Health \(ringOpened) times", &ok)
+        check(tiles[0].debugLabel == "REVIEW" && tiles[0].debugText == "A.", "the first tile reads \(tiles[0].debugLabel ?? "-")", &ok)
+        // A new render with the same shape keeps its views (and their hover).
+        hero.configure(.init(kicker: "", title: "Two things",
+                             tiles: [.init(label: "Review", text: "A2.", tint: .good, isLink: true),
+                                     .init(label: "Note", text: "B.", tint: nil, isLink: false),
+                                     .init(label: "Tasks", text: "C.", tint: .warn, isLink: true)],
+                             ring: .init(value: 6, total: 6, label: "Health", caption: "services healthy", isLink: true)))
+        check(hero.debugTiles.first === tiles[0] && hero.debugTiles.first?.debugText == "A2.",
+              "a words-only change rebuilt the tiles", &ok)
+    }
+
+    private static func checkHeroNeedsYou(_ ok: inout Bool) {
+        func task(_ status: String) -> FleetTask {
+            var t = FleetTask(id: "t-\(status)", repo: "grand-line", kind: "ship", pr: nil)
+            t.status = status
+            return t
+        }
+        let idle = [task("done"), task("queued")]
+        // The captain's morning: nothing waiting, and the PR scan failed. The
+        // verdict is amber and says nothing known needs them.
+        let verdict = FleetGreeting.answer(tasks: idle, prs: .failed("offline"), homeOk: true)
+        check(verdict.tint != .good, "fixture: a failed PR scan no longer tints the verdict - the check measures nothing", &ok)
+        check(!HomeBriefingHero.offersNeedsYou(crewShown: true, tasks: idle),
+              "the hero offers Open Needs you when nothing needs the captain", &ok)
+        check(HomeBriefingHero.offersNeedsYou(crewShown: true, tasks: idle + [task("needs_decision")]),
+              "a decision waiting does not offer Open Needs you", &ok)
+        check(HomeBriefingHero.offersNeedsYou(crewShown: true, tasks: [task("blocked")]),
+              "a blocked task does not offer Open Needs you", &ok)
+        check(!HomeBriefingHero.offersNeedsYou(crewShown: false, tasks: [task("blocked")]),
+              "Open Needs you shows with the crew hidden from Home", &ok)
     }
 
     // MARK: - Item 3

@@ -1819,3 +1819,40 @@ The fix does not depend on it.
 - `checkHideFromTheMenuAndBringItBack` hides each card from its menu, then brings it back with the toast's Undo and again with Customize's Add a Card.
   Removing the Hide wiring failed it and the menu check by name.
 - The `rebuildGrid` guard is a backstop and has no check of its own: with `endCardResize` on both exits from Customize, a drag cannot outlive Customize to reach it.
+
+## The Morning briefing hero as sentence tiles (`fm/grandline-briefing-card`, Helm 10.0.0)
+
+The captain reported Home's Morning briefing hero as broken.
+The headline ended in an ellipsis ("Pull request status is unknown because the scan cou..."), the words sat on the left with the middle of the card empty, and an "Open Needs you" button showed while the greeting said nothing needed them.
+
+An off-screen render of the real `HelmHeroCard` on the captain's stored record found three causes.
+
+- The title was `NSTextField(labelWithString:)` with `.byTruncatingTail`, so it was one line at every width.
+  The headline needed 767pt and got 433pt at a 600pt card and 564pt at both 975pt and 1400pt.
+- The text column was capped at `textMaxWidth = 560`, the prototype's 62ch, and the ring was pinned to the trailing edge.
+- `renderFeelPass` passed the fleet verdict as "needs you" whenever its tint was not `.good`.
+  A failed PR scan tints it `.warn` with the words "Nothing known needs you right now".
+
+The captain picked Br-3 with the H-b headline from a four-layout board (`data/grandline-briefing-card/board/briefing-options.html`).
+
+- The headline and the kicker wrap across the card's full width and are never truncated.
+- Every briefing sentence is a `HelmHeroTile` labelled with the page it points to (`HomeBriefingHero.page(of:)`, which `follow(_:)` now shares), and a click opens that page.
+  The services figure is the last tile, with a 40pt ring, and opens Health.
+- Tiles are laid out by `HelmHeroTileGrid` in balanced rows (`HelmHeroCard.rows`): five tiles with room for four are three over two, not four over a lone fifth.
+- The prompt asks for a short `headline` (at most 80 characters, no full stop).
+  It is stored as an optional field on `MorningBriefingRecord`, so an older record still decodes.
+  A record without one, which includes the local stat line, leads with its first clause, and the rest become tiles.
+- A tile's wash moves away from the ink (black under white ink, white under black), so text in a tile never reads worse than on the gradient.
+  `FeelPassSelfTest.checkHeroTileContrast` sweeps every theme, and also checks each fact's dot against the washed tile.
+- "Open Needs you" now needs a crew task that is waiting on a decision or blocked (`HomeBriefingHero.offersNeedsYou`, over `FleetGreeting.needingCaptain`).
+- The greeting line still reads the verdict's own words, so it can say "Nothing known needs you right now" on a failed scan.
+  That is accurate and was left as it is.
+
+Two traps found on the way:
+
+- Setting `lineBreakMode = .byWordWrapping` on a `labelWithString` cell turns its `wraps` back on.
+  So an injection that only swaps the constructor does not reproduce the shipped defect.
+  The truncating break mode is what made it one line.
+- `HelmHeroCard`'s action row used to start visible and empty.
+  Home calls `setActions` only when the titles change, so with no actions the column still spent its 14pt spacing under the content.
+  It starts hidden now.

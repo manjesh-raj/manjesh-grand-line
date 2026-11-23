@@ -1045,6 +1045,13 @@ enum OpenPRsSource {
 /// the one passed in, nothing to mock.
 enum FleetGreeting {
 
+    /// The fleet tasks the captain has to act on: a decision waiting, or a
+    /// task blocked. The one definition `answer` and Home's hero both read,
+    /// so "Needs you" cannot mean two things.
+    static func needingCaptain(_ tasks: [FleetTask]) -> [FleetTask] {
+        tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
+    }
+
     /// "Good morning" / "Good afternoon" / "Good evening" / "Still up".
     /// The exact four-way split Overview has always used.
     static func timeOfDay(at date: Date = Date()) -> String {
@@ -1130,7 +1137,7 @@ enum FleetGreeting {
         }
 
         let working = tasks.filter { $0.status == "working" }
-        let needs = tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
+        let needs = needingCaptain(tasks)
 
         guard !needs.isEmpty else {
             let prPhrase: String

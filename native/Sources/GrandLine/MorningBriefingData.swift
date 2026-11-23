@@ -182,6 +182,12 @@ struct MorningBriefingRecord: Codable, Equatable {
     /// determined there is exactly one due. Resolved from the store, never
     /// from model output.
     var shiftTaskID: String?
+    /// The AI's one-line takeaway ("2 decisions are waiting and 3 PRs are
+    /// ready"), which Home's hero leads with. Optional, and absent from a
+    /// record an earlier build wrote or the local stat line produced, so the
+    /// synthesised decoder reads it with `decodeIfPresent` and a reader falls
+    /// back to the first clause (GL-01).
+    var headline: String?
 }
 
 // MARK: - The structured input
@@ -409,6 +415,10 @@ enum MorningBriefingAI {
         - Say nothing about a fact listed as "unknown" other than that it is unknown, and only \
         if it is worth mentioning at all.
         - Write 2 to 4 short clauses, most-urgent first. Each clause is one short sentence.
+        - Also write one "headline": the single takeaway of the whole briefing, at most \
+        \(maxHeadlineLength) characters, plain words, no full stop. It may restate a count from \
+        the facts but must not add one. An unknown fact is never the headline unless nothing \
+        else is worth saying.
         - Skip anything that is zero or clear. A briefing that has little to report should be \
         short; do not pad it.
         - Be plain and factual. No greetings, no encouragement, no advice about what to do next.
@@ -421,7 +431,7 @@ enum MorningBriefingAI {
         below and the cockpit shows it on its own card.
 
         Reply with exactly this JSON shape:
-        {"clauses": [{"text": "one short sentence", "link": "review"}]}
+        {"headline": "short takeaway", "clauses": [{"text": "one short sentence", "link": "review"}]}
 
         Facts:
         \(facts.joined(separator: "\n"))
@@ -439,7 +449,7 @@ enum MorningBriefingAI {
     /// exactly once. A failure is never fatal - the caller renders
     /// `MorningBriefingLocal.clauses` instead and says so.
     static func generate(inputs: BriefingInputs,
-                         completion: @escaping (Result<[BriefingClause], MorningBriefingAIError>) -> Void) {
+                         completion: @escaping (Result<Reply, MorningBriefingAIError>) -> Void) {
         guard let claude = resolvedClaude() else {
             completion(.failure(MorningBriefingAIError(message: "claude isn't installed or on PATH")))
             return
@@ -452,10 +462,7 @@ enum MorningBriefingAI {
             case .failure(let error):
                 completion(.failure(MorningBriefingAIError(message: error.message)))
             case .success(let reply):
-                switch parse(reply.text) {
-                case .success(let clauses): completion(.success(clauses))
-                case .failure(let error): completion(.failure(error))
-                }
+                completion(parseReply(reply.text))
             }
         }
     }
@@ -467,6 +474,17 @@ enum MorningBriefingAI {
     /// Bound on one clause, so a runaway reply cannot produce a card taller
     /// than the page.
     static let maxClauseLength = 220
+    /// The longest headline kept. A longer one is dropped rather than cut,
+    /// and the hero leads with the first clause instead: a headline that
+    /// needs an ellipsis has stopped being one.
+    static let maxHeadlineLength = 80
+
+    /// A parsed reply: the clauses, and the headline when the model wrote a
+    /// usable one.
+    struct Reply: Equatable {
+        var clauses: [BriefingClause]
+        var headline: String?
+    }
 
     /// Turns a reply into validated clauses. Kept `internal` so the self-test
     /// can drive it against hand-built payloads including the malformed ones a
@@ -477,6 +495,13 @@ enum MorningBriefingAI {
     /// else becomes `.none`, so the model cannot name a destination that does
     /// not exist - and it never gets to choose a colour at all.
     static func parse(_ reply: String) -> Result<[BriefingClause], MorningBriefingAIError> {
+        parseReply(reply).map(\.clauses)
+    }
+
+    /// `parse`, plus the headline. The headline is optional: a reply without
+    /// one, or with one that is empty or too long, still parses, and the hero
+    /// falls back to its first clause.
+    static func parseReply(_ reply: String) -> Result<Reply, MorningBriefingAIError> {
         guard let object = decodeJSONObject(from: reply) else {
             return .failure(MorningBriefingAIError(message: "claude's reply was not valid JSON"))
         }
@@ -498,7 +523,18 @@ enum MorningBriefingAI {
         guard !out.isEmpty else {
             return .failure(MorningBriefingAIError(message: "claude's reply had no usable clauses"))
         }
-        return .success(out)
+        return .success(Reply(clauses: out, headline: headline(object["headline"])))
+    }
+
+    /// The headline, trimmed, without a closing full stop, and only when it
+    /// is short enough to be one.
+    static func headline(_ raw: Any?) -> String? {
+        guard var text = (raw as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        if text.hasSuffix(".") && !text.hasSuffix("..") { text.removeLast() }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.count <= maxHeadlineLength else { return nil }
+        return text
     }
 
     /// Tolerant of the two things a model does anyway despite being asked not
@@ -617,6 +653,7 @@ enum MorningBriefing {
     /// decides whether `clauses` came from the AI or the local layer.
     static func record(inputs: BriefingInputs,
                        clauses: [BriefingClause],
+                       headline: String? = nil,
                        isDegraded: Bool,
                        degradedReason: String?,
                        now: Date = Date()) -> MorningBriefingRecord {
@@ -628,7 +665,8 @@ enum MorningBriefing {
             degradedReason: degradedReason,
             dismissed: false,
             sources: inputs.contributingSources,
-            shiftTaskID: inputs.singleDueTaskID)
+            shiftTaskID: inputs.singleDueTaskID,
+            headline: headline)
     }
 
     /// "Generated 6:58 AM from the fleet snapshot, PR queue, tasks, and

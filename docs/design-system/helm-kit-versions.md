@@ -36,6 +36,18 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 10.0.0 - The Morning briefing hero as sentence tiles
+
+The captain's pick from the briefing card board (`data/grandline-briefing-card/board/`): Br-3 with the H-b headline.
+The hero's headline wrapped nowhere and was cut off with an ellipsis, and its words sat in a 560pt column that left the middle of a wide card empty.
+It now leads with a headline that wraps across the whole card, and every briefing sentence is a tile labelled with the page it came from.
+It is a major release because `HelmHeroCard.Content` lost its `body`, which the tiles replace.
+
+- `HelmHeroCard` 1.0.2 → 2.0.0 (major): `Content.tiles` replaces `body`, and `Content.Ring` gains a `label` and a link. The headline and the kicker wrap and are never truncated. The 560pt `textMaxWidth` cap and the trailing 86pt ring are gone: tiles fill the width in balanced rows (`rows(count:width:)`), and the services figure is the last tile, with a 40pt ring. A tile's wash moves away from the ink, so text in a tile never reads worse than on the gradient. `onActivateTile` and `onActivateRing` report clicks.
+- `HelmHeroTile` none → 1.0.0 (new): one fact in the hero, as a frosted well with a dot, a page kicker and the wrapped sentence, or a small ring before the words. A tile that points somewhere is a `HoverHighlightView` with a click, so it has the button role, the focus ring and the keyboard press.
+- `HelmHeroTileGrid` none → 1.0.0 (new): lays the hero's tiles out in rows that each fill the width, every tile in a row as tall as the tallest, at a height derived from the width the card gives it.
+- `Home (page)` 2.0.0 → 2.1.0 (minor): the Morning briefing hero leads with the AI's own short headline (a new optional `headline` on the stored briefing, with the first sentence as the fallback) over one tile per sentence, each opening its page. "Open Needs you" shows only when a crew task is waiting on a decision or blocked, not whenever the fleet verdict is amber (a failed PR scan made it amber with nothing needing the captain).
+
 ## 9.3.0 - Compose, Claude usage and SRE Lead in the hero language
 
 The picks from the console popovers board (`data/grand-line-console-popovers-sre-mockups/`): Comp-1, Use-1 and Sre-2.

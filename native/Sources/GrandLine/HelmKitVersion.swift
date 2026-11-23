@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "9.3.0"
+    static let version = "10.0.0"
 
     struct Component {
         let name: String
@@ -127,7 +127,9 @@ enum HelmKit {
         // HelmGradientTile.swift
         Component("HelmGradientTile", "1.0.0", file: "HelmGradientTile.swift"),
         // HelmHeroCard.swift
-        Component("HelmHeroCard", "1.0.2", file: "HelmHeroCard.swift"),
+        Component("HelmHeroCard", "2.0.0", file: "HelmHeroCard.swift"),
+        Component("HelmHeroTile", "1.0.0", file: "HelmHeroCard.swift"),
+        Component("HelmHeroTileGrid", "1.0.0", file: "HelmHeroCard.swift"),
         // HelmHeroColumn.swift
         Component("HelmHeroColumn", "1.4.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroNavRow", "1.0.0", file: "HelmHeroColumn.swift"),
@@ -238,7 +240,7 @@ enum HelmKit {
         Component("ShiftProjectPalette", "2.0.0", file: "ShiftBoardViews.swift"),
         Component("Home Health card", "1.0.1", file: "HomeCanvasController.swift"),
         Component("Home Tasks card", "1.0.1", file: "HomeCanvasController.swift"),
-        Component("Home (page)", "2.0.0", file: "HomeCanvasController.swift"),
+        Component("Home (page)", "2.1.0", file: "HomeCanvasController.swift"),
         Component("Home Hosts card", "1.0.0", file: "HomeCanvasController.swift"),
         Component("Home Claude card", "1.1.0", file: "HomeCanvasController.swift"),
         Component("Home Fleet card", "1.1.0", file: "HomeCanvasController.swift"),
@@ -276,7 +278,7 @@ enum HelmKit {
         SourceDigest(file: "HelmHeroColumn.swift", stamp: "HelmHeroColumn@1.4.0,HelmHeroNavRow@1.0.0,HelmHeroRow@1.0.0", sha256: "c731441f02be60fd5623bfb53fefafce6cf1addfeffe958cf56a42a0a034baca"),
         SourceDigest(file: "HelmHeroSplitCard.swift", stamp: "HelmHeroSplitCard@1.0.0", sha256: "97051bf0f9e67923946b5f2c9c33bff0cb9dd03506d027f1540bc9e01dbf7bef"),
         SourceDigest(file: "HelmHeroSurface.swift", stamp: "HelmHeroSurface@1.2.0", sha256: "8b9dc46c07e78d857cf4ac57f91ac43a2c6c50a4fc4008e528b7f38a8d0f6526"),
-        SourceDigest(file: "HelmHeroCard.swift", stamp: "HelmHeroCard@1.0.2", sha256: "7c97e0ffd62f5c59050abd9caf0364972e36ab94f6591c821af8b13f6c84bad3"),
+        SourceDigest(file: "HelmHeroCard.swift", stamp: "HelmHeroCard@2.0.0,HelmHeroTile@1.0.0,HelmHeroTileGrid@1.0.0", sha256: "7b192a8aa76132dfcf3fc73ae37e1dcec8e8bf1930f2c94467f48fe604a46876"),
         SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.0.1", sha256: "2bdb4a69dd6b6b98010799797ddf8f87ce9df79f61d256922d521c73d8abc880"),
         SourceDigest(file: "HelmChoiceCard.swift", stamp: "HelmChoiceCard@1.0.0", sha256: "61392738ce874320cc5c6e4b261921f969545e264122a1094f6be6eb6fdc676b"),
         SourceDigest(file: "HelmFilterBar.swift", stamp: "HelmFilterBar@1.0.1", sha256: "1b8f2acace87634cb6575687afc07fa63b9f4aa0ef00f0928ce99221f9248a36"),
