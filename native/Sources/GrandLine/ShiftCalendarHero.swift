@@ -28,6 +28,15 @@
 // between them), and `ShiftCalendarViewSelfTest` reads the page's own
 // rectangles back to hold the two together.
 //
+// **Cf-4 (the five-screen redesign board, `data/grandline-page-redesign-
+// options/`).** The Tasks page's filter row no longer sits above the
+// calendar. The month card's head carries it instead, as three glass menus on
+// its top edge: "Showing All tasks", "in All projects" and "Colour by", each
+// drawn solid while it narrows what the calendar shows. The page's grey
+// caption line went with the row, so the one fact it held that no figure
+// says - how many of the period's dates are a repeat rule's, not yet tasks -
+// joins the kicker.
+//
 // Both heads are painted with `HelmHeroSurface` and the palette rule T-4's
 // bands use, so the calendar's heads and the Tasks board's match. The words
 // come from `ShiftCalendarHeroWords`, which is pure, so the title, the
@@ -157,6 +166,8 @@ final class ShiftCalendarHeroHead: NSView {
     static let ringSide: CGFloat = 44
     static let weekdayGap: CGFloat = 10
     static let weekdayHeight: CGFloat = 15
+    /// Between Cf-4's menus and the title row under them.
+    static let menuGap: CGFloat = HelmMetrics.s2
     /// The ink's share for the kicker, the ring's caption and the weekday
     /// names, which the palette is deepened to carry (T-4's 0.85).
     static let quietInkAlpha: CGFloat = 0.85
@@ -170,6 +181,27 @@ final class ShiftCalendarHeroHead: NSView {
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
     var onToday: (() -> Void)?
+    /// Cf-4's menus, shown from the pill that was clicked.
+    var onShowScopeMenu: ((NSView) -> Void)?
+    var onShowProjectMenu: ((NSView) -> Void)?
+    var onShowColourMenu: ((NSView) -> Void)?
+
+    /// What Cf-4's three menus say. `nil` draws no menus at all.
+    struct Filters: Equatable {
+        /// "All tasks", "Due today" and so on, with its count when it has one.
+        var scope: String
+        var scopeNarrows: Bool
+        var project: String
+        var projectNarrows: Bool
+        var colour: String
+    }
+
+    /// How many of the period's dates are a repeat rule's, not yet tasks -
+    /// the caption's clause the head says now (Cf-4).
+    var repeatDates = 0 {
+        didSet { if repeatDates != oldValue { applyKicker(); updateHeight() } }
+    }
+
     /// The head's height changed: the page has to leave a new amount of the
     /// card to it.
     var onHeightChange: (() -> Void)?
@@ -192,6 +224,19 @@ final class ShiftCalendarHeroHead: NSView {
     private let ringColumn = NSStackView()
     private let titleRow = NSStackView()
     private let topRow = NSStackView()
+    private lazy var scopeMenuButton = HelmButton(title: "Showing All tasks", variant: .secondary, size: .small,
+                                                  symbol: "chevron.down", target: self,
+                                                  action: #selector(scopeMenuTapped))
+    private lazy var projectMenuButton = HelmButton(title: "in All projects", variant: .secondary, size: .small,
+                                                    symbol: "chevron.down", target: self,
+                                                    action: #selector(projectMenuTapped))
+    private lazy var colourMenuButton = HelmButton(title: "Colour by Priority", variant: .secondary, size: .small,
+                                                   symbol: "chevron.down", target: self,
+                                                   action: #selector(colourMenuTapped))
+    private let menuRow = NSStackView()
+    private var topRowUnderMenus: NSLayoutConstraint!
+    private var topRowAtTop: NSLayoutConstraint!
+    private(set) var filters: Filters?
     private let weekdayRow = ShiftCalendarWeekdayRow()
     private var height: NSLayoutConstraint!
     private(set) var words: ShiftCalendarHeroWords.Head?
@@ -281,6 +326,26 @@ final class ShiftCalendarHeroHead: NSView {
         addSubview(topRow)
         addSubview(weekdayRow)
 
+        for button in [scopeMenuButton, projectMenuButton, colourMenuButton] {
+            button.symbolTrailing = true
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            menuRow.addArrangedSubview(button)
+        }
+        scopeMenuButton.toolTip = "Which tasks the calendar shows"
+        projectMenuButton.toolTip = "Show one project's tasks"
+        colourMenuButton.toolTip = "What a task chip's colour says"
+        scopeMenuButton.setAccessibilityLabel("Which tasks to show")
+        projectMenuButton.setAccessibilityLabel("Project")
+        colourMenuButton.setAccessibilityLabel("Colour calendar chips by")
+        menuRow.orientation = .horizontal
+        menuRow.alignment = .centerY
+        menuRow.spacing = HelmMetrics.s2
+        menuRow.translatesAutoresizingMaskIntoConstraints = false
+        menuRow.setHuggingPriority(.required, for: .horizontal)
+        menuRow.isHidden = true
+        addSubview(menuRow)
+
         let insets = Self.insets
         height = heightAnchor.constraint(equalToConstant: 100)
         NSLayoutConstraint.activate([
@@ -294,7 +359,10 @@ final class ShiftCalendarHeroHead: NSView {
             glyph.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
             topRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: insets.left),
             topRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right),
-            topRow.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
+            // Cf-4: the menus sit on the head's top edge, right-aligned over
+            // the figures, and the title row starts under them.
+            menuRow.topAnchor.constraint(equalTo: topAnchor, constant: insets.top),
+            menuRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -insets.right),
             // The weekday names span the head, because their columns are the
             // grid's, measured from the card's edge.
             weekdayRow.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -303,6 +371,15 @@ final class ShiftCalendarHeroHead: NSView {
             weekdayRow.heightAnchor.constraint(equalToConstant: Self.weekdayHeight),
             height,
         ])
+        // Gotcha (13): kept off the head's left edge below the window's own
+        // priority, so a narrow head clips the menus rather than growing the
+        // window.
+        let menusClearLeft = menuRow.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: insets.left)
+        menusClearLeft.priority = NSLayoutConstraint.Priority(450)
+        menusClearLeft.isActive = true
+        topRowAtTop = topRow.topAnchor.constraint(equalTo: topAnchor, constant: insets.top)
+        topRowUnderMenus = topRow.topAnchor.constraint(equalTo: menuRow.bottomAnchor, constant: Self.menuGap)
+        topRowAtTop.isActive = true
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         setWeekdays(calendar: .current)
     }
@@ -328,7 +405,6 @@ final class ShiftCalendarHeroHead: NSView {
         guard words != self.words || scale != self.scale else { return }
         self.words = words
         self.scale = scale
-        kickerLabel.stringValue = words.kicker.uppercased()
         titleLabel.stringValue = words.title
         let figures = words.figures
         self.figures.configure([
@@ -351,8 +427,40 @@ final class ShiftCalendarHeroHead: NSView {
         // weekday names are this head's.
         weekdayRow.isHidden = scale != .month
         setAccessibilityLabel("\(words.kicker). \(words.title)")
+        applyKicker()
         applyTheme(theme)
         applyWidthRules()
+        updateHeight()
+    }
+
+    /// The kicker, with the period's repeat dates when it has any.
+    private func applyKicker() {
+        var kicker = words?.kicker ?? ""
+        if repeatDates > 0 {
+            kicker += " \u{00B7} \(repeatDates) repeat date\(repeatDates == 1 ? "" : "s") not yet created"
+        }
+        kickerLabel.stringValue = kicker.uppercased()
+        let palette = HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+                                              quietInk: Double(Self.quietInkAlpha))
+        let quiet = HelmContrast.color(palette.ink).withAlphaComponent(Self.quietInkAlpha)
+        kickerLabel.attributedStringValue = NSAttributedString(
+            string: kickerLabel.stringValue, attributes: HelmType.kickerAttributes(color: quiet))
+    }
+
+    /// Cf-4: what the three menus say, or `nil` for none.
+    func setFilters(_ filters: Filters?) {
+        guard filters != self.filters else { return }
+        self.filters = filters
+        let shows = filters != nil
+        menuRow.isHidden = !shows
+        topRowAtTop.isActive = !shows
+        topRowUnderMenus.isActive = shows
+        if let filters {
+            scopeMenuButton.title = "Showing \(filters.scope)"
+            projectMenuButton.title = "in \(filters.project)"
+            colourMenuButton.title = "Colour by \(filters.colour)"
+        }
+        applyTheme(theme)
         updateHeight()
     }
 
@@ -375,6 +483,14 @@ final class ShiftCalendarHeroHead: NSView {
         ringCaption.textColor = quiet
         weekdayRow.color = quiet
         for button in [previousButton, nextButton, todayButton] { button.heroInk = ink }
+        // A menu that narrows what the calendar shows is drawn solid, so a
+        // filter that is on can be seen from across the room.
+        let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+            ? palette.start : palette.end
+        let deep = HelmContrast.color(darker)
+        for button in [scopeMenuButton, projectMenuButton, colourMenuButton] { button.heroInk = ink }
+        scopeMenuButton.heroSelection = filters?.scopeNarrows == true ? deep : nil
+        projectMenuButton.heroSelection = filters?.projectNarrows == true ? deep : nil
         figures.heroInk = ink
         figures.applyTheme(theme)
         ring.trackColorOverride = ink.withAlphaComponent(0.25)
@@ -411,6 +527,7 @@ final class ShiftCalendarHeroHead: NSView {
     /// card starts exactly where the head ends.
     private func updateHeight() {
         var total = Self.insets.top + topRow.fittingSize.height + Self.insets.bottom
+        if !menuRow.isHidden { total += menuRow.fittingSize.height + Self.menuGap }
         if !weekdayRow.isHidden { total += Self.weekdayGap + Self.weekdayHeight }
         let whole = ceil(total)
         guard height.constant != whole else { return }
@@ -424,6 +541,9 @@ final class ShiftCalendarHeroHead: NSView {
     @objc private func previousTapped() { onPrevious?() }
     @objc private func nextTapped() { onNext?() }
     @objc private func todayTapped() { onToday?() }
+    @objc private func scopeMenuTapped() { onShowScopeMenu?(scopeMenuButton) }
+    @objc private func projectMenuTapped() { onShowProjectMenu?(projectMenuButton) }
+    @objc private func colourMenuTapped() { onShowColourMenu?(colourMenuButton) }
 
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }
@@ -436,6 +556,11 @@ final class ShiftCalendarHeroHead: NSView {
     }
     var debugWeekdayRow: ShiftCalendarWeekdayRow? { weekdayRow.isHidden ? nil : weekdayRow }
     var debugTitleLabel: NSTextField { titleLabel }
+    var debugMenuButtons: (scope: HelmButton, project: HelmButton, colour: HelmButton)? {
+        menuRow.isHidden ? nil : (scopeMenuButton, projectMenuButton, colourMenuButton)
+    }
+    var debugMenuRowFrameInHead: NSRect { menuRow.frame }
+    var debugTopRowFrameInHead: NSRect { topRow.frame }
     #endif
 }
 

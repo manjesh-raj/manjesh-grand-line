@@ -226,3 +226,18 @@ Weekly review has no nested scroll view, and Calendar is a web view that fills t
 It samples a grid over Board, List and Weekly review, and delivers a real wheel event wherever the pointer sits in a nested scroll view with nothing to scroll.
 With the lane's scroll view put back to a plain `NSScrollView`, it fails Board with 45 of those points keeping the wheel.
 It is headless on purpose: `E2ETestingPolicySelfTest` caps the window-backed suites, and hit-testing plus the responder chain need no window server.
+
+## The band's figures are the filters (`fm/grandline-page-redesign-options`, Helm 10.2.0)
+
+The captain called the "16 open · 0 due today · 0 follow-ups · 0 overdue" line above the band a duplicate, and the filter row under it too plain.
+From the five-screen redesign board they picked Tf-2: the band's figures are the filters.
+
+- The band (`ShiftTasksHeroBand`) draws four figure buttons: All open, Due today and Overdue pick the scope and are drawn solid while on, and Follow-ups jumps to its card when the board is not already showing them as a lane (R4-UI-09).
+- Under a hairline, Smart views (My priorities, Recently updated) are glass pills that turn solid while on, and the project and sort are glass menus.
+- The sidebar layout no longer builds the `HelmFilterBar` row. The menus are built from the store on each click (`projectMenu`, `sortMenu`), and the sort goes through the floating bar pop-up's own handler, so the remembered order follows.
+- The grey line is gone through `WorkspaceHeaderLineCollapsing.drawsSubtitleOnHeaderLine`. `drillHeaderSubtitle` is unchanged: the floating bar still draws it and the crew panel reads it as the page's context.
+- On a narrow page the ring steps out first, then the figures drop under the words. They never leave the band, because they are the page's only filters.
+
+Two layout traps were found in the renders. A figure button is a plain view with no intrinsic size, so it took the band's slack until it reported its words' width (gotcha (12)). The ring's caption is wider than the ring, and a vertical stack held it to the ring's width, so the ring column became a plain view at least as wide as either.
+
+`TasksSecretsHeroViewSelfTest` drives the figures and pills through their own click paths. Unwiring the band's scope callback fails five of its cases, and putting the grey line back fails one.

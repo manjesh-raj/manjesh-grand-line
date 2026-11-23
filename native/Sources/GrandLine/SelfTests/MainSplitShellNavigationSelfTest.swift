@@ -146,7 +146,14 @@ enum MainSplitShellNavigationSelfTest {
             let live = page?.drillHeaderSubtitle ?? destination.drillSubtitle
             // Home has no live subtitle of its own, so its header carries the day.
             let subtitle = destination == .homeCanvas && live.isEmpty ? MainSplitShellController.homeSubtitle() : live
-            if module.showsHeader {
+            // Tf-2, Cf-4 and Sk-1: a page whose own hero says what its line
+            // said draws no line, though its subtitle is still its summary.
+            let drawsLine = (page as? WorkspaceHeaderLineCollapsing)?.drawsSubtitleOnHeaderLine ?? true
+            if module.showsHeader && !drawsLine {
+                check(shell.debugHeader == nil,
+                      "\(destination.rawValue) repeats \(String(describing: shell.debugHeader)) over its own hero", &ok)
+                check(!live.isEmpty, "\(destination.rawValue) has no summary for the crew panel", &ok)
+            } else if module.showsHeader {
                 check(shell.debugHeader?.title == row.title && shell.debugHeader?.subtitle == subtitle,
                       "\(destination.rawValue)'s header is \(String(describing: shell.debugHeader)), want \(row.title) / \(subtitle)", &ok)
             } else {
@@ -930,16 +937,23 @@ enum MainSplitShellNavigationSelfTest {
         resize(window, width: 1512, shell)
         settle(shell)
         _ = settleHomeGrid(shell, canvas)
-        check(canvas.debugGreetingTitle.hasSuffix(HomeGreeting.captainName(fleetCaptain: nil))
-                || canvas.debugGreetingTitle.contains(", "),
-              "Home's greeting reads \"\(canvas.debugGreetingTitle)\"", &ok)
-        check(canvas.debugGreetingSummary.hasPrefix(MainSplitShellController.homeSubtitle() + ". "),
-              "Home's summary does not open with the day: \"\(canvas.debugGreetingSummary)\"", &ok)
         check(shell.debugHeader == nil, "the column still draws Home's date line over the greeting", &ok)
         guard let hero = canvas.debugBriefingHero else {
             fail("the briefing is not drawn as the hero", &ok)
             return
         }
+        // Hg-2: the greeting is the hero's title, its date leads the kicker,
+        // and the day's verdict is the hero's pill - with no second greeting
+        // on the page ground above it.
+        let content = hero.debugContent
+        let greeting = content.greeting ?? ""
+        check(greeting.hasSuffix(HomeGreeting.captainName(fleetCaptain: nil)) || greeting.contains(", "),
+              "Hg-2: the hero's greeting reads \"\(greeting)\"", &ok)
+        check(!canvas.debugGreetingOnGround, "Hg-2: the greeting is drawn twice, on the page and in the hero", &ok)
+        check(content.kicker.hasPrefix(HomeGreeting.date() + " \u{00B7} Morning briefing"),
+              "Hg-2: the hero's kicker does not open with the day: \"\(content.kicker)\"", &ok)
+        check(hero.debugGreetingLabel != nil && !(content.status?.text ?? "").isEmpty && hero.debugStatusPill != nil,
+              "Hg-2: the hero draws no greeting or no verdict pill", &ok)
         check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
         check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
         // The captain removed the band between the hero and the cards: no
@@ -1330,10 +1344,14 @@ enum MainSplitShellNavigationSelfTest {
               "\u{2318}\u{21E7}] on the Calendar's Week showed \(tasks.calendar.scale.title)", &ok)
         check(shell.sidebar.debugSelectedEntry == .module(.calendar),
               "Tasks' Calendar view lit \(String(describing: shell.sidebar.debugSelectedEntry)), want the Calendar row", &ok)
-        check(shell.debugHeader?.title == "Calendar" && shell.debugHeader?.subtitle == tasks.calendar.caption,
-              "the Calendar view's header is \(String(describing: shell.debugHeader)), want Calendar / the calendar's caption", &ok)
-        check(!tasks.debugCalendarSection.isHidden && !tasks.debugWorkspaceFilterRow.isHidden,
-              "the Calendar view should show the calendar under the filter row", &ok)
+        // Cf-4: the caption line is gone - the month head says it - and the
+        // filters are the head's own menus, so nothing sits over the card.
+        check(shell.debugHeader == nil,
+              "the Calendar view's header line still reads \(String(describing: shell.debugHeader))", &ok)
+        check(!tasks.calendar.caption.isEmpty, "the calendar has no caption for the page's summary", &ok)
+        check(!tasks.debugCalendarSection.isHidden
+                && tasks.calendar.debugCalendarView.debugHeroHead?.debugMenuButtons != nil,
+              "the Calendar view should show the calendar with its filter menus on the month head", &ok)
 
         // The calendar fills the column under the filter row, and gives the
         // window back its size.
@@ -1356,8 +1374,8 @@ enum MainSplitShellNavigationSelfTest {
         clickTab("Board", shell)
         check(!(shell.toolbar.debugPageActions.compactMap { ($0 as? HelmButton)?.title }.contains("Today")),
               "Board's toolbar still carries the Calendar's Today", &ok)
-        check(shell.toolbar.debugCrumb.hasSuffix("Tasks") && shell.debugHeader?.title == "Tasks",
-              "Board's crumb and header read \(shell.toolbar.debugCrumb) / \(shell.debugHeader?.title ?? "none"), want Tasks", &ok)
+        check(shell.toolbar.debugCrumb.hasSuffix("Tasks") && shell.debugHeader == nil,
+              "Board's crumb and header read \(shell.toolbar.debugCrumb) / \(shell.debugHeader?.title ?? "none"), want Tasks and no line", &ok)
         check(shell.sidebar.debugClick(.module(.calendar)), "the sidebar has no Calendar row", &ok)
         settle(shell)
         check(tasks.isShowingCalendar && selectedTabName(shell) == tasks.calendar.scale.title
@@ -1386,7 +1404,8 @@ enum MainSplitShellNavigationSelfTest {
         current.dueDate = day(0)
         store.addTask(current)
         settle(shell)
-        tasks.debugScopeFilter.debugClickTab(id: ShiftController.ShiftTaskScope.overdue.rawValue)
+        // Tf-2: through the band's own Overdue figure.
+        tasks.debugHeroBand?.debugFigureButtons[2].performPrimaryAction()
         settle(shell)
         check(tasks.taskScope == .overdue, "the Overdue filter did not take on Board", &ok)
         clickTab("Calendar", shell)
@@ -1402,10 +1421,13 @@ enum MainSplitShellNavigationSelfTest {
         check(unfiltered.count == 2, "the fixture's two tasks did not both land on the calendar unfiltered", &ok)
         check(!events.contains(current.id) && overdue.contains(late.id),
               "with Overdue set on Board the calendar draws \(events.sorted()) and pins \(overdue)", &ok)
-        check(!tasks.calendar.caption.isEmpty && shell.debugHeader?.subtitle == tasks.calendar.caption,
-              "the filtered calendar's header reads \(String(describing: shell.debugHeader))", &ok)
-        tasks.debugScopeFilter.debugClickTab(id: ShiftController.ShiftTaskScope.all.rawValue)
+        // Cf-4: the month head says which filter is on, drawn solid.
+        let scopeMenu = tasks.calendar.debugCalendarView.debugHeroHead?.debugMenuButtons?.scope
+        check(scopeMenu?.title.hasPrefix("Showing Overdue") == true && scopeMenu?.heroSelection != nil,
+              "the filtered calendar's scope menu reads \(scopeMenu?.title ?? "nothing")", &ok)
+        tasks.debugPickScopeFromMenu(ShiftController.ShiftTaskScope.all.rawValue)
         settle(shell)
+        check(tasks.taskScope == .all, "All tasks from the calendar's menu left \(tasks.taskScope) on", &ok)
         check(Set(calendarView.debugEventIDs).contains(current.id),
               "All tasks on the calendar should draw today's task again, got \(calendarView.debugEventIDs)", &ok)
         store.deleteTask(id: late.id)

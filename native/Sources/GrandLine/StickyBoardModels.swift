@@ -119,7 +119,10 @@ enum StickyBoardCork {
     static func frameHex(dark: Bool) -> String { dark ? "3B2A1B" : "8B5E3C" }
 
     /// How wide that band is.
-    static let frameWidth: CGFloat = 7
+    ///
+    /// Sk-1 thinned it from 7pt to 4pt: the frame reads as an edge round the
+    /// cork rather than a second brown block beside it.
+    static let frameWidth: CGFloat = 4
 }
 
 /// The Sticky Board's own font roles.

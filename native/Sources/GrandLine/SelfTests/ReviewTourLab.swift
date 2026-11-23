@@ -234,6 +234,7 @@ enum ReviewTourLab {
         /// process's own settings, and Settings > Terminal's rule editor open
         /// on the first, so both the list and the editor can be rendered.
         case demoRules
+        case demoSticky
         /// `select <title>`: select the showing page's row with this title,
         /// through the page's own selection path - a host, a key, a snippet
         /// or a credential.
@@ -415,6 +416,7 @@ enum ReviewTourLab {
             if argument == "logs" { return .success(.demoLogs) }
             if argument == "health" { return .success(.demoHealth) }
             if argument == "rules" { return .success(.demoRules) }
+            if argument == "sticky" { return .success(.demoSticky) }
             if argument.hasPrefix("loading ") {
                 let card = String(argument.dropFirst("loading ".count))
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
@@ -957,6 +959,9 @@ enum ReviewTourLab {
                 // Applied before the shell mounted (`runTourFile`), because
                 // Fleet's first scan runs at mount.
                 log.append("demo bitbucket (fake identity, tripwire behind the network gate)")
+            case .demoSticky:
+                seedDemoSticky(shell.workspace.stickyBoard.debugStore)
+                log.append("demo sticky (the captain's two notes and two more)")
             case .demoHealth:
                 seedDemoHealth(shell.workspace.health)
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
@@ -2277,6 +2282,31 @@ extension ReviewTourLab {
 
     /// Every verdict, through the registry's own reporting API, and a no-op
     /// Retry for the two services that have one.
+    /// A Sticky Board like the captain's (the five-screen redesign board's
+    /// 9.png): an IDEAS note and the backlog checklist, plus two more so the
+    /// board is not two islands. Placed below both the old header and the
+    /// case tag, so a before and an after render seed the same board.
+    static func seedDemoSticky(_ store: StickyBoardStore) {
+        guard store.activeNotes.isEmpty else { return }
+        _ = store.addNote(title: "IDEAS", text: "First Note", color: .pink, x: 48, y: 128,
+                          size: CGSize(width: 243, height: 164), rotationDegrees: -1.6)
+        let backlog = store.addNote(
+            title: "Manjesh Grand Line Backlog's",
+            text: "- [x] Rename the App to \u{201C}Grand Line\u{201D}\n"
+                + "- [x] All Destinations in icon shortcuts for hosts is not required\n"
+                + "- [ ] Merge Home and Overview Page\n"
+                + "- [x] We need a new card for claude status in Overview Page\n"
+                + "- [x] Test\n- [ ] Mermaid - Draw flow Embed",
+            color: .blue, x: 330, y: 120, size: CGSize(width: 410, height: 298), rotationDegrees: 0.8)
+        store.convertToChecklist(id: backlog.id)
+        _ = store.addNote(title: "Read later", text: "Liquid Glass HIG notes\nSwiftTerm release notes",
+                          color: .yellow, x: 790, y: 132, rotationDegrees: 2.2)
+        let handover = store.addNote(title: "On-call handover",
+                                     text: "- [x] Rotate the pager key\n- [ ] Share the runbook link",
+                                     color: .green, x: 120, y: 340, rotationDegrees: 1.4)
+        store.convertToChecklist(id: handover.id)
+    }
+
     static func seedDemoHealth(_ health: HealthController) {
         let registry = ServiceHealthRegistry.shared
         let now = Date()

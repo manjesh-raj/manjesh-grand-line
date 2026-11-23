@@ -1226,6 +1226,16 @@ final class HelmButton: NSButton {
         didSet { if heroInk != oldValue { restyle() } }
     }
 
+    /// 1.4.0: a ghost pill on a hero that is the chosen one of a set (Tf-2's
+    /// Smart views on the Tasks band, Cf-4's menus naming a filter that is
+    /// on). Drawn solid in the hero's ink, with the label in this colour -
+    /// the hero's deeper stop, which clears the text floor against the ink by
+    /// the hero's own palette rule. `nil`, the default, is the ghost pill.
+    /// Ignored without `heroInk`.
+    var heroSelection: NSColor? {
+        didSet { if heroSelection != oldValue { restyle() } }
+    }
+
     /// 1.3.0: the well a `.secondary` button is drawn as. `.inset`,
     /// the default, is the sunken fill every secondary button has always had.
     /// `.raised` is `HelmField.Surface.raised` - the card's own colour with a
@@ -1893,7 +1903,10 @@ final class HelmButton: NSButton {
         // UI2: a disabled button is a different recipe, not the same one at a
         // lower alpha. See `disabledPalette`.
         let p: Palette
-        if let heroInk {
+        if let heroInk, let heroSelection, isEnabled {
+            p = Palette(fill: heroInk, hoverFill: heroInk.withAlphaComponent(0.9),
+                        pressedFill: heroInk.withAlphaComponent(0.82), border: heroInk, label: heroSelection)
+        } else if let heroInk {
             p = Self.heroPalette(ink: heroInk, enabled: isEnabled)
         } else if surface == .raised, variant == .secondary, isEnabled {
             p = Self.raisedPalette(Self.palette(variant: variant, tint: tint, theme: theme,

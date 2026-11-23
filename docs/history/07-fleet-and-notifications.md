@@ -1856,3 +1856,17 @@ Two traps found on the way:
 - `HelmHeroCard`'s action row used to start visible and empty.
   Home calls `setActions` only when the titles change, so with no actions the column still spent its 14pt spacing under the content.
   It starts hidden now.
+
+## The greeting moves into the briefing hero (`fm/grandline-page-redesign-options`, Helm 10.2.0)
+
+The captain asked for a better design for Home's "Good afternoon, Manjesh" and its grey "Monday, 23 November. Nothing known needs you right now." line.
+The five-screen redesign board (`data/grandline-page-redesign-options/`) offered four options, and the captain picked Hg-2: the greeting becomes the briefing hero's title.
+
+- `HelmHeroCard` 2.1.0 takes an optional `greeting`, drawn in `HelmType.heroTitle` above the headline, which drops to a 17pt second line.
+- It also takes an optional `status`: the day's verdict as a glass pill at the top right (`HelmHeroStatusPill`), with its dot in the verdict's colour.
+- The verdict's words are `HomeGreeting.sentence` without the date or its full stop, and its colour is `HomeGreeting.verdictTint`: red for anything late or failing, amber for anything due or waiting on the captain, blue for PRs ready, green only when every figure was read and nothing is due, and no colour for a day still being read (GL-14).
+- The date leads the hero's kicker ("Monday, 23 November · Morning briefing · generated ...").
+- The greeting keeps its own row on the page ground whenever the briefing is not drawn as the hero: hidden by the captain's layout, nothing to say, or Customize drawing it as a card.
+
+`FeelPassSelfTest` asserts the verdict's colours and a hero with and without a greeting, headless. `MainSplitShellNavigationSelfTest` asserts the greeting is the hero's title and is not drawn twice.
+Injecting an always-green verdict fails six of the colour cases.

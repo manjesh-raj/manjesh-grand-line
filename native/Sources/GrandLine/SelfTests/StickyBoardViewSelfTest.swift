@@ -67,6 +67,7 @@ enum StickyBoardViewSelfTest {
         checkChecklistNote(controller, check)
         checkArchiveDrawer(controller, check)
         checkTheSubtitleDoesNotClaimAnUnrealSync(controller, check)
+        checkColourFilter(controller, check)
 
         if ok {
             print("[sticky-board-view] OK - all window-backed StickyBoard checks passed")
@@ -773,51 +774,91 @@ enum StickyBoardViewSelfTest {
     // MARK: 2c. The board's own case-file header
 
     private static func checkBoardHeader(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        // Sk-1 (the five-screen redesign board): the 45pt "CASE: MY
+        // THOUGHTS" title became a typewritten case tag pinned to the cork.
         let title = controller.debugBoardTitle
-        check(!title.stringValue.isEmpty, "the board should carry its own case-file title")
+        check(!title.stringValue.isEmpty, "the board should carry its own case-file name")
         check(title.font?.fontName != NSFont.systemFont(ofSize: 15).fontName,
-              "the board title should render in the typewriter voice, got \(title.font?.fontName ?? "nil")")
-        // `fm/grandline-sticky-board-header-size-3x`: the captain reviewed
-        // the original, deliberately-under-20pt header live and asked for it
-        // at roughly 3x its point size instead - a second, sanctioned
-        // exception on top of the first (this header stays exempt from
-        // `DaylightDrillPageSelfTest`'s general hero-floor sweep regardless,
-        // since that check never covered Sticky Board to begin with; it only
-        // visits Review and Tasks). What this guards now is that the *new*
-        // sanctioned size actually shipped and stays roughly 3x the
-        // documented original 15pt (i.e. ~45pt) rather than silently
-        // drifting back down toward the old floor, or ballooning well past
-        // what "roughly 3x" was ever meant to cover.
-        let originalPointSize: CGFloat = 15
-        let expectedScale: CGFloat = 3
-        let expected = originalPointSize * expectedScale
-        let actual = title.font?.pointSize ?? -1
-        check(actual >= expected - 5 && actual <= expected + 5,
-              "the board title should render at roughly \(expectedScale)x its original "
-              + "\(originalPointSize)pt (~\(expected)pt), was \(actual)")
+              "the board's name should render in the typewriter voice, got \(title.font?.fontName ?? "nil")")
+        let size = title.font?.pointSize ?? -1
+        check(abs(size - HelmType.scaled(StickyBoardController.caseTitleSize)) < 0.5,
+              "Sk-1: the case tag's name should be \(StickyBoardController.caseTitleSize)pt, was \(size)")
+        check(title.isEditable && title.delegate === controller,
+              "Sk-1: the board's name is not an editable field with its commit wired (gotcha (19))")
 
-        // The pill states something true rather than a permanent sticker: a
+        // The stamp states something true rather than a permanent sticker: a
         // board with notes is ACTIVE, an empty one is not (GL-14's rule - an
         // empty state and a broken one must never render the same).
         check(controller.debugStatusLabel.stringValue == "ACTIVE",
               "a board with notes should read ACTIVE, got \(controller.debugStatusLabel.stringValue)")
         check(controller.debugStatusDot.layer?.backgroundColor != nil, "the status dot should be filled")
+        // The meta line carries what the grey subtitle line used to repeat.
+        let notes = controller.debugStore.activeNotes.count
+        check(controller.debugCaseMeta.hasPrefix(notes == 1 ? "1 note" : "\(notes) notes"),
+              "Sk-1: the tag's meta line reads \"\(controller.debugCaseMeta)\" over \(notes) notes")
 
-        // The header's ink is corrected against the CORK it sits on, not
-        // against the theme's own background - a dark theme's near-white ink
-        // on light tan cork would be illegible.
+        // The tag is paper in every theme, and its ink is measured against
+        // the paper it sits on, never the cork or the theme's own ground.
+        let paper = HelmTheme.nsColor(StickyBoardController.casePaperHex)
         for id in ["helm-light", "helm-dark"] {
             guard let theme = HelmTheme.theme(id: id) else { continue }
             controller.debugApplyTheme(theme)
-            let cork = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: theme.mode == .dark))
             guard let ink = controller.debugBoardTitle.textColor else {
-                check(false, "\(id): the board title should have an ink colour")
+                check(false, "\(id): the board's name should have an ink colour")
                 continue
             }
-            let ratio = HelmContrast.ratio(ink, cork)
+            let ratio = HelmContrast.ratio(ink, paper)
             check(ratio >= HelmContrast.textTarget,
-                  "\(id): the board title reads \(ratio) against the cork, below the \(HelmContrast.textTarget) floor")
+                  "\(id): the board's name reads \(ratio) against the tag, below the \(HelmContrast.textTarget) floor")
+            let fill = controller.debugBoardHeader.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))
+            check(fill.map { HelmContrast.components($0) == HelmContrast.components(paper) } ?? false,
+                  "\(id): the case tag is not drawn on its paper")
         }
+
+        // Renaming: a new name is kept, and an emptied one goes back to the
+        // default rather than leaving a blank tag.
+        controller.debugCommitCaseTitle("Q4 ideas")
+        check(controller.debugBoardTitle.stringValue == "Q4 ideas"
+                && AppDefaults.store.string(forKey: StickyBoardController.caseTitleKey) == "Q4 ideas",
+              "Sk-1: renaming the board did not keep \"Q4 ideas\"")
+        controller.debugCommitCaseTitle("   ")
+        check(controller.debugBoardTitle.stringValue == StickyBoardController.defaultCaseTitle
+                && AppDefaults.store.string(forKey: StickyBoardController.caseTitleKey) == nil,
+              "Sk-1: an emptied name left \"\(controller.debugBoardTitle.stringValue)\"")
+    }
+
+    /// Sk-1's floating pill: a swatch shows only its colour's notes, New note
+    /// on a filtered board adds that colour, and the first swatch shows them
+    /// all again. Driven through each swatch's own click recognizer. Last in
+    /// the run: its delete leaves an Undo toast, which `checkDeleteAndUndo`
+    /// would otherwise find before its own.
+    private static func checkColourFilter(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        let bar = controller.debugFloatingBar
+        check(!bar.isHidden && bar.debugSwatchCount == StickyNoteColor.allCases.count + 1,
+              "Sk-1: the floating pill is hidden or has \(bar.debugSwatchCount) swatches")
+        guard let colour = controller.debugStore.activeNotes.first?.color else {
+            check(false, "Sk-1: the board has no note to filter - this check is vacuous")
+            return
+        }
+        bar.debugClickSwatch(colour)
+        check(controller.colourFilter == colour, "Sk-1: the \(colour) swatch did not filter the board")
+        let colours = Dictionary(controller.debugStore.activeNotes.map { ($0.id, $0.color) }, uniquingKeysWith: { a, _ in a })
+        for (id, view) in controller.debugNoteViews {
+            check(view.isHidden == (colours[id] != colour),
+                  "Sk-1: a \(colours[id].map { "\($0)" } ?? "?") note is \(view.isHidden ? "hidden" : "shown") under the \(colour) filter")
+        }
+        let before = Set(controller.debugStore.activeNotes.map(\.id))
+        controller.debugNewNote()
+        if let added = controller.debugStore.activeNotes.first(where: { !before.contains($0.id) }) {
+            check(added.color == colour, "Sk-1: New note on a \(colour) board added a \(added.color) note")
+            check(controller.debugNoteViews[added.id]?.isHidden == false, "Sk-1: the new note is hidden by the filter")
+            controller.debugDeleteNote(id: added.id)
+        } else {
+            check(false, "Sk-1: New note added nothing")
+        }
+        bar.debugClickSwatch(nil)
+        check(controller.colourFilter == nil && controller.debugNoteViews.values.allSatisfy { !$0.isHidden },
+              "Sk-1: the every-note swatch left notes hidden")
     }
 
     // MARK: 3. Delete + undo, including the real Toast button

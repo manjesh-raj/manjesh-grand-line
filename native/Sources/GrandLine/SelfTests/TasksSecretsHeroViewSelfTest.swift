@@ -129,28 +129,84 @@ enum TasksSecretsHeroViewSelfTest {
         }
         let page = shift.view
         let bandFrame = frame(of: band, in: page)
-        let filter = frame(of: shift.workspaceFilterRow, in: page)
-        check(bandFrame.height <= 80 && bandFrame.height >= 56,
-              "T-4: the band is \(bandFrame.height)pt tall, want a slim band of about 72", &ok)
-        check(page.isFlipped ? bandFrame.maxY <= filter.minY : bandFrame.minY >= filter.maxY,
-              "T-4: the band \(bandFrame) does not sit over the filter row \(filter)", &ok)
+        check(bandFrame.height <= 170 && bandFrame.height >= 100,
+              "Tf-2: the band is \(bandFrame.height)pt tall, want the band and its filter pills, about 140", &ok)
+        // Tf-2: the band is the filters. No filter row, and no grey count
+        // line on the header above it.
+        check(!containsFilterBar(page), "Tf-2: the page still draws a filter row", &ok)
+        check(shell.debugHeader == nil, "Tf-2: the header line still says \(shell.debugHeader?.subtitle ?? "")", &ok)
         check(band.debugHeadline.hasSuffix("today.") || band.debugHeadline.hasPrefix("Nothing")
                 || band.debugHeadline.hasPrefix("Only"),
               "T-4: the band says \"\(band.debugHeadline)\"", &ok)
         check(band.debugKicker.hasPrefix("TASKS \u{00B7} "), "T-4: the kicker is \"\(band.debugKicker)\"", &ok)
-        check(band.debugFigures?.debugCaptions == ["Due today", "Overdue", "Follow-ups", "Done, 7 days"],
-              "T-4: the figures are \(band.debugFigures?.debugCaptions ?? [])", &ok)
+        check(band.debugFigureCaptions == ["All open", "Due today", "Overdue", "Follow-ups"],
+              "Tf-2: the figures are \(band.debugFigureCaptions)", &ok)
+        check(band.debugSelectedFigure == "All open", "Tf-2: \(band.debugSelectedFigure ?? "nothing") is on at first", &ok)
         check(band.debugRing != nil, "T-4: the band draws no ring", &ok)
         if let palette = band.debugPalette {
-            check(isInk(band.debugHeadlineColor, HelmContrast.color(palette.ink)), "T-4: the headline is not in the ink", &ok)
+            let ink = HelmContrast.color(palette.ink)
+            check(isInk(band.debugHeadlineColor, ink), "T-4: the headline is not in the ink", &ok)
+            // The figure that is on is drawn solid in the ink.
+            if let all = band.debugFigureButtons.first {
+                check(isInk(all.debugFillColor, ink), "Tf-2: the figure that is on is not drawn solid", &ok)
+            }
         }
-        // A narrow page keeps the verdict and lets the figures go.
+
+        // A figure is the scope: a click on Due today shows today's, through
+        // the figure's own click, and All open goes back.
+        band.debugFigureButtons[1].performPrimaryAction()
+        settle(shell)
+        check(shift.debugTaskScope == "due_today", "Tf-2: Due today picked \(shift.debugTaskScope)", &ok)
+        check(band.debugSelectedFigure == "Due today", "Tf-2: \(band.debugSelectedFigure ?? "nothing") is drawn on", &ok)
+        band.debugFigureButtons[0].performPrimaryAction()
+        settle(shell)
+        check(shift.debugTaskScope == "all", "Tf-2: All open picked \(shift.debugTaskScope)", &ok)
+
+        // A Smart view is a pill that turns solid while it is on, and a
+        // second click goes back to every task.
+        let pills = band.debugPills
+        pills.priorities.performClick(nil)
+        settle(shell)
+        check(shift.debugTaskScope == "my_priorities", "Tf-2: My priorities picked \(shift.debugTaskScope)", &ok)
+        check(pills.priorities.heroSelection != nil, "Tf-2: My priorities is on but drawn as a ghost pill", &ok)
+        check(band.debugSelectedFigure == nil, "Tf-2: a figure stays on beside a Smart view", &ok)
+        pills.priorities.performClick(nil)
+        settle(shell)
+        check(shift.debugTaskScope == "all", "Tf-2: a second click left \(shift.debugTaskScope) on", &ok)
+        check(pills.project.title == "All projects", "Tf-2: the project pill says \(pills.project.title)", &ok)
+        check(!pills.sort.isHidden, "Tf-2: the band draws no sort", &ok)
+
+        // R4-UI-09: Follow-ups is a lane on a wide board, so its figure goes
+        // nowhere; on List it jumps to the Follow-ups card.
+        let followUps = band.debugFigureButtons[3]
+        check(!followUps.debugIsActivatable, "Tf-2: Follow-ups jumps away from a board that shows them", &ok)
+        showTasks(shell, tab: "List")
+        check(shift.debugHeroBand?.debugFigureButtons[3].debugIsActivatable == true,
+              "Tf-2: on List the Follow-ups figure does not jump to the card", &ok)
+        showTasks(shell)
+
+        // A narrow page keeps every filter: the ring steps out and the
+        // figures drop under the words rather than leaving the band.
         resize(window, width: 1000, shell)
         if let band = shift.debugHeroBand {
-            check(band.debugFigures == nil || frame(of: band, in: page).width >= ShiftTasksHeroBand.figuresMinimumWidth,
-                  "T-4: a \(frame(of: band, in: page).width)pt band still draws its figures", &ok)
+            let bounds = band.bounds
+            for figure in band.debugFigureButtons {
+                let f = figure.convert(figure.bounds, to: band)
+                check(!figure.isHiddenOrHasHiddenAncestor && bounds.contains(f.insetBy(dx: 1, dy: 1)),
+                      "Tf-2: at \(bounds.width)pt \(figure.caption) is \(f) in a \(bounds.size) band", &ok)
+            }
+            for pill in [band.debugPills.priorities, band.debugPills.recent, band.debugPills.project] {
+                let f = pill.convert(pill.bounds, to: band)
+                check(bounds.contains(f.insetBy(dx: 1, dy: 1)),
+                      "Tf-2: at \(bounds.width)pt the \(pill.title) pill is \(f), outside the band", &ok)
+            }
         }
         resize(window, width: 1512, shell)
+    }
+
+    /// Whether a `HelmFilterBar` is anywhere under `view`.
+    static func containsFilterBar(_ view: NSView) -> Bool {
+        view is HelmFilterBar || view.subviews.contains { !$0.isHidden && containsFilterBar($0) }
     }
 
     private static func checkTasksLanes(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {

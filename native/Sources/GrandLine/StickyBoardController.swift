@@ -65,7 +65,7 @@
 
 import AppKit
 
-final class StickyBoardController: NSViewController, DaylightDrillActions {
+final class StickyBoardController: NSViewController, DaylightDrillActions, NSTextFieldDelegate {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
     /// This page's store.
@@ -122,20 +122,40 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     // the other way around, with the small "ACTIVE" pill's fixed 16pt height
     // setting the header's height and the title merely centred inside it,
     // which only worked because the title was smaller than the pill's box).
+    ///
+    /// **Sk-1 (the five-screen redesign board, `data/grandline-page-
+    /// redesign-options/`) replaced that 45pt title** with a typewritten
+    /// case tag pinned to the cork: a small "CASE FILE" kicker, the board's
+    /// name - which the captain can now rename, where it used to be a
+    /// literal - and a meta line holding the status stamp, the counts and the
+    /// sync state the page's grey subtitle line used to repeat. The identity
+    /// stays (typewriter, pin, paper on cork); the loudest thing in the app
+    /// does not. The tag is paper, so like a note's paper it is one literal
+    /// colour in every theme and its ink is measured against it.
     private let boardHeader = NSView()
-    /// The captain's own sticky-note artwork, branding the case-file header
-    /// itself - `fm/grandline-card-shortcut-icons`'s "surface it inside the
-    /// feature too" ask, distinct from the card (`HomeCanvasController.
-    /// fillStickyBoard`) and the floating-bar shortcut/drill header
-    /// (`RailDestination.drillHeaderArtwork`'s `.stickyBoard` case), which
-    /// both already carry it. Always visible once the board is open,
-    /// regardless of note count - unlike the empty-state overlay below, which
-    /// only shows with zero notes.
-    private let boardIcon = NSImageView()
-    private let boardTitle = NSTextField(labelWithString: "CASE: MY THOUGHTS")
+    private let caseKicker = NSTextField(labelWithString: "CASE FILE")
+    /// The board's name, editable in place. Persisted per machine
+    /// (`caseTitleKey`); an emptied name goes back to the default.
+    private let boardTitle = NSTextField(string: "")
+    private let caseMeta = NSTextField(labelWithString: "")
+    private let casePin = NSView()
     private let statusPill = NSView()
     private let statusDot = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
+    /// Sk-1's floating pill: New note and the colour filter, over the cork's
+    /// foot. It does not scroll with the canvas.
+    private let floatingBar = StickyBoardFloatingBar()
+    /// The colour the board is filtered to, or `nil` for every note. Not
+    /// persisted: a filter left on across a relaunch would read as notes gone
+    /// missing.
+    private(set) var colourFilter: StickyNoteColor?
+
+    static let caseTitleKey = "fm.stickyBoard.caseTitle"
+    static let defaultCaseTitle = "My thoughts"
+    /// The tag's paper and its ink: one literal pair in every theme, as a
+    /// note's paper is (`StickyBoardModels.swift`'s third colour category).
+    static let casePaperHex = "F6F1E4"
+    static let caseInkHex = "2B2216"
 
     private var overlay: HelmEmptyState?
     /// Which of the two empty states `overlay` currently holds - see
@@ -249,8 +269,16 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         scrollView.documentView = canvas
         boardCard.addSubview(scrollView)
 
+        // Sk-1: the cork's own corners are rounded inside the thin frame.
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = Self.corkCornerRadius
+        scrollView.layer?.masksToBounds = true
+
         buildBoardHeader()
         boardCard.addSubview(boardHeader)
+        floatingBar.onNewNote = { [weak self] in self?.newNoteTapped() }
+        floatingBar.onPickColour = { [weak self] colour in self?.setColourFilter(colour) }
+        boardCard.addSubview(floatingBar)
 
         overlayContainer.translatesAutoresizingMaskIntoConstraints = false
         overlayContainer.isHidden = true
@@ -276,8 +304,12 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             scrollView.bottomAnchor.constraint(equalTo: boardCard.bottomAnchor, constant: -StickyBoardCork.frameWidth),
 
             // Pinned over the cork's top-left, inside the frame band.
-            boardHeader.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: HelmMetrics.s3),
-            boardHeader.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: HelmMetrics.s3),
+            boardHeader.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: HelmMetrics.s5),
+            boardHeader.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: HelmMetrics.s4),
+
+            // Sk-1: New note and the colour filter float over the cork's foot.
+            floatingBar.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            floatingBar.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -HelmMetrics.s4),
 
             overlayContainer.leadingAnchor.constraint(equalTo: boardCard.leadingAnchor),
             overlayContainer.trailingAnchor.constraint(equalTo: boardCard.trailingAnchor),
@@ -332,6 +364,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         store.gitSync?.observeStatus { [weak self] status in
             guard let self else { return }
             self.syncStatus = status
+            // Sk-1: the case tag's meta line says the sync state too.
+            if self.isViewLoaded { self.applyBoardHeaderTheme() }
             self.onDrillSubtitleChanged?()
         }
     }
@@ -352,102 +386,119 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
     }
 
-    /// The title's designed point size, and the multiplier the captain asked
-    /// for live (roughly 3x the original 15pt). Kept as named constants
-    /// rather than an inline `45` so the "roughly 3x" relationship the
-    /// self-test checks for is legible at both ends, not just asserted.
-    private static let boardTitleBasePointSize: CGFloat = 15
-    private static let boardTitleScale: CGFloat = 3
+    /// The case tag's measurements.
+    static let caseTitleSize: CGFloat = 22
+    static let caseTagInsets = NSEdgeInsets(top: 11, left: 16, bottom: 10, right: 16)
+    static let stampDotSide: CGFloat = 6
+    static let casePinSide: CGFloat = 14
 
-    /// The board icon's fixed side, in points - roughly the title's own cap
-    /// height rather than its full line height (which includes descender/
-    /// leading slack a square icon would otherwise look oversized against).
-    private static let boardIconSide: CGFloat = 40
+    /// The board's saved name, or the default.
+    static var savedCaseTitle: String {
+        let saved = AppDefaults.store.string(forKey: caseTitleKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (saved?.isEmpty ?? true) ? defaultCaseTitle : saved ?? defaultCaseTitle
+    }
 
-    /// The case-file header: a typewriter title and a live status pill. See
-    /// the property declarations above for why a second in-page title is a
-    /// sanctioned exception here specifically.
+    /// Sk-1's case tag: paper pinned to the cork, with the kicker, the
+    /// board's name and a meta line of stamp, counts and sync.
     private func buildBoardHeader() {
         boardHeader.translatesAutoresizingMaskIntoConstraints = false
         boardHeader.wantsLayer = true
+        boardHeader.layer?.masksToBounds = false
+        // Paper: the smallest step on the scale, a corner rather than a curve.
+        boardHeader.layer?.cornerRadius = HelmMetrics.s0
+        boardHeader.layer?.shadowOpacity = 0.28
+        boardHeader.layer?.shadowRadius = 7
+        boardHeader.layer?.shadowOffset = CGSize(width: 0, height: -3)
+        boardHeader.setAccessibilityElement(true)
+        boardHeader.setAccessibilityRole(.group)
 
-        boardIcon.translatesAutoresizingMaskIntoConstraints = false
-        boardIcon.image = StickyNotesIcon.image
-        boardIcon.imageScaling = .scaleProportionallyUpOrDown
-        // Artwork mode only, matching `HelmGradientTile`'s and
-        // `DaylightBarIconButton`'s own established idiom: a raster asset
-        // clips to its own rounded corners rather than needing a themed
-        // background behind it - the icon's own colours already read as a
-        // self-contained piece of art.
-        boardIcon.wantsLayer = true
-        boardIcon.layer?.cornerRadius = HelmMetrics.dTileSmall
-        boardIcon.layer?.masksToBounds = true
-        boardHeader.addSubview(boardIcon)
-
-        boardTitle.translatesAutoresizingMaskIntoConstraints = false
-        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.boardTitleBasePointSize * Self.boardTitleScale))
+        caseKicker.font = StickyFont.typewriter(HelmType.scaled(10.5))
+        caseKicker.setAccessibilityElement(false)
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.caseTitleSize))
+        boardTitle.isBordered = false
+        boardTitle.drawsBackground = false
+        boardTitle.focusRingType = .exterior
+        boardTitle.lineBreakMode = .byTruncatingTail
+        boardTitle.cell?.usesSingleLineMode = true
+        // Gotcha (19): a persisted field commits on focus loss as well as on
+        // Return, so the delegate carries the commit.
+        boardTitle.delegate = self
+        boardTitle.stringValue = Self.savedCaseTitle
+        boardTitle.toolTip = "Rename this board"
+        boardTitle.setAccessibilityLabel("Board name")
+        caseMeta.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .semibold)
+        caseMeta.lineBreakMode = .byTruncatingTail
+        caseMeta.setAccessibilityElement(true)
+        for view in [caseKicker, boardTitle, caseMeta, statusPill, statusDot, statusLabel, casePin] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+        for label in [caseKicker, boardTitle, caseMeta] {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        boardHeader.addSubview(caseKicker)
         boardHeader.addSubview(boardTitle)
-
-        statusPill.translatesAutoresizingMaskIntoConstraints = false
-        statusPill.wantsLayer = true
-        statusPill.layer?.cornerRadius = 13
-        statusPill.layer?.borderWidth = 1
         boardHeader.addSubview(statusPill)
+        boardHeader.addSubview(caseMeta)
+        boardHeader.addSubview(casePin)
 
-        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        // The stamp: a small box inked in the state's colour.
+        statusPill.wantsLayer = true
+        statusPill.layer?.cornerRadius = HelmMetrics.s1
+        statusPill.layer?.borderWidth = 1.5
         statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 4.5
+        statusDot.layer?.cornerRadius = Self.stampDotSide / 2
         statusPill.addSubview(statusDot)
-
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .heavy)
         statusPill.addSubview(statusLabel)
 
+        casePin.wantsLayer = true
+        casePin.layer?.cornerRadius = Self.casePinSide / 2
+        casePin.layer?.borderWidth = 1
+        casePin.setAccessibilityElement(false)
+
+        let i = Self.caseTagInsets
         NSLayoutConstraint.activate([
-            // The title now drives `boardHeader`'s own height with a required
-            // top+bottom pin, rather than a `>=` against a header whose
-            // height a small, fixed-size pill used to set. A `>=` here (the
-            // pre-3x shape) only worked because the title's natural height
-            // was already smaller than the pill's fixed box; at 3x the title
-            // is by far the taller element, and a `>=` paired with a
-            // required `centerYAnchor` would have left AutoLayout resolving
-            // the conflict by silently compressing the title's own frame
-            // below its real line height (this app's AppKit gotcha
-            // catalogue's own "vertical compression, not a visible warning"
-            // failure mode) rather than growing the header to fit it.
-            // The icon sits to the title's left, vertically centred on it -
-            // never on `boardHeader` itself, whose height the title alone
-            // still drives (see the comment above).
-            boardIcon.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor),
-            boardIcon.centerYAnchor.constraint(equalTo: boardTitle.centerYAnchor),
-            boardIcon.widthAnchor.constraint(equalToConstant: Self.boardIconSide),
-            boardIcon.heightAnchor.constraint(equalToConstant: Self.boardIconSide),
-
-            boardTitle.leadingAnchor.constraint(equalTo: boardIcon.trailingAnchor, constant: HelmMetrics.s3),
-            boardTitle.topAnchor.constraint(equalTo: boardHeader.topAnchor),
-            boardTitle.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor),
-
-            // The pill stays a compact badge - scaled up a little for
-            // proportion against the much taller title (16 -> 26pt, its
-            // corner radius kept at exactly half its height for the same
-            // capsule shape), not tripled itself, which would read as a
-            // second oversized element competing with the title rather than
-            // a small status badge beside it. Centred on the title's own
-            // vertical midpoint, since the header's height is the title's
-            // now.
-            statusPill.leadingAnchor.constraint(equalTo: boardTitle.trailingAnchor, constant: HelmMetrics.s3),
-            statusPill.trailingAnchor.constraint(equalTo: boardHeader.trailingAnchor),
-            statusPill.centerYAnchor.constraint(equalTo: boardTitle.centerYAnchor),
-            statusPill.heightAnchor.constraint(equalToConstant: 26),
-
-            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 9),
+            caseKicker.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor, constant: i.left),
+            caseKicker.topAnchor.constraint(equalTo: boardHeader.topAnchor, constant: i.top),
+            caseKicker.trailingAnchor.constraint(lessThanOrEqualTo: boardHeader.trailingAnchor, constant: -i.right),
+            // The field's text sits on the kicker's left edge.
+            boardTitle.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor, constant: i.left - 2),
+            boardTitle.trailingAnchor.constraint(equalTo: boardHeader.trailingAnchor, constant: -i.right),
+            boardTitle.topAnchor.constraint(equalTo: caseKicker.bottomAnchor, constant: HelmMetrics.s1),
+            boardTitle.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            boardTitle.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+            statusPill.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor, constant: i.left),
+            statusPill.topAnchor.constraint(equalTo: boardTitle.bottomAnchor, constant: 4),
+            statusPill.heightAnchor.constraint(equalToConstant: 17),
+            statusPill.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor, constant: -i.bottom),
+            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 5),
             statusDot.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
-            statusDot.widthAnchor.constraint(equalToConstant: 9),
-            statusDot.heightAnchor.constraint(equalToConstant: 9),
-
-            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
-            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -10),
+            statusDot.widthAnchor.constraint(equalToConstant: Self.stampDotSide),
+            statusDot.heightAnchor.constraint(equalToConstant: Self.stampDotSide),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 4),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -6),
             statusLabel.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+            caseMeta.leadingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: 8),
+            caseMeta.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+            caseMeta.trailingAnchor.constraint(lessThanOrEqualTo: boardHeader.trailingAnchor, constant: -i.right),
+            casePin.centerXAnchor.constraint(equalTo: boardHeader.centerXAnchor),
+            casePin.centerYAnchor.constraint(equalTo: boardHeader.topAnchor, constant: 1),
+            casePin.widthAnchor.constraint(equalToConstant: Self.casePinSide),
+            casePin.heightAnchor.constraint(equalToConstant: Self.casePinSide),
         ])
+    }
+
+    /// The tag's meta line: what the page's subtitle line used to say, which
+    /// is a claim about the board and its sync (B13), so it is derived the
+    /// same way.
+    private var caseMetaText: String {
+        let count = visibleNotes.count
+        let noun = count == 1 ? "1 note" : "\(count) notes"
+        if store.isInFailedLoadState { return "\(noun) \u{00B7} the saved file couldn't be read" }
+        if showingArchive { return "\(noun) archived \u{00B7} \(syncSummary)" }
+        let archived = store.archivedNotes.count
+        let archiveNote = archived == 0 ? "" : " \u{00B7} \(archived) archived"
+        return "\(noun)\(archiveNote) \u{00B7} \(syncSummary)"
     }
 
     /// The pill says something true about the board rather than a permanent
@@ -481,6 +532,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             addNoteView(for: note)
         }
         for note in visible { noteViews[note.id]?.isArchived = note.isArchived }
+        applyColourFilter()
         updateArchiveButton()
         refreshBoardChrome()
         updateOverlay()
@@ -694,7 +746,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         let position = nextPosition()
         let note = store.addNote(
             text: "",
-            color: StickyNoteColor.allCases.randomElement() ?? .yellow,
+            // Sk-1: a board filtered to one colour adds a note of that
+            // colour, or the new note would vanish under the filter.
+            color: colourFilter ?? StickyNoteColor.allCases.randomElement() ?? .yellow,
             x: Double(position.x), y: Double(position.y),
             rotationDegrees: Double.random(in: -4...4))
         addNoteView(for: note)
@@ -784,6 +838,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
 
     // MARK: Theme
 
+    /// Sk-1: the cork's own corner radius inside the thin frame.
+    static let corkCornerRadius: CGFloat = 12
+
     private func applyTheme() {
         // **`ThemeManager.swift`'s checklist item 2, and the actual root cause
         // of the captain's "Sticky Board only half re-themes" report.**
@@ -832,8 +889,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// plain card.
     private func applyBoardFrame() {
         HelmCard.applyCardSurface(to: boardCard, theme: theme,
-                                  cornerRadius: HelmMetrics.rCard,
-                                  daylightRadius: HelmMetrics.dSurface)
+                                  cornerRadius: Self.corkCornerRadius + StickyBoardCork.frameWidth,
+                                  daylightRadius: Self.corkCornerRadius + StickyBoardCork.frameWidth)
         guard overlayContainer.isHidden else { return }
         let dark = theme.mode == .dark
         boardCard.layer?.backgroundColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark)).cgColor
@@ -859,23 +916,71 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// `HelmContrast.legibleOn(fill:preferring:)` is the app's own guaranteed
     /// correction for exactly this "I chose this opaque fill myself" case.
     private func applyBoardHeaderTheme() {
-        let dark = theme.mode == .dark
-        let cork = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
-        let ink = HelmContrast.legibleOn(fill: cork, preferring: dark ? .white : .black)
-        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.boardTitleBasePointSize * Self.boardTitleScale))
+        // Sk-1: the tag is paper, a literal in every theme, so its ink is the
+        // paper's own and is measured against the paper, never the cork.
+        let paper = HelmTheme.nsColor(Self.casePaperHex)
+        let ink = HelmContrast.legibleOn(fill: paper, preferring: HelmTheme.nsColor(Self.caseInkHex))
+        boardHeader.layer?.backgroundColor = paper.cgColor
+        boardHeader.layer?.shadowColor = NSColor.black.cgColor
+        caseKicker.textColor = ink.withAlphaComponent(0.72)
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.caseTitleSize))
         boardTitle.textColor = ink
+        caseMeta.stringValue = caseMetaText
+        caseMeta.textColor = ink.withAlphaComponent(0.72)
+        boardHeader.setAccessibilityLabel("\(boardTitle.stringValue), \(statusText.lowercased()), \(caseMetaText)")
 
-        let tintHex = statusTint.hex(in: theme)
-        let tint = HelmTheme.nsColor(tintHex)
-        statusPill.layer?.backgroundColor = cork.blended(withFraction: dark ? 0.22 : 0.30, of: .white)?.cgColor
-        statusPill.layer?.borderColor = ink.withAlphaComponent(0.30).cgColor
+        // The stamp's colour is the state's own, deepened on paper.
+        let tint = HelmContrast.legibleOn(fill: paper, preferring: HelmTheme.nsColor(statusTint.hex(in: theme)))
+        statusPill.layer?.backgroundColor = NSColor.clear.cgColor
+        statusPill.layer?.borderColor = tint.cgColor
         statusDot.layer?.backgroundColor = tint.cgColor
         // `kickerAttributes` is the app's one uppercase/tracked label recipe -
         // hand-rolling `.kern:` anywhere outside `HelmType` is a build failure
         // (`HelmContrastSelfTest.checkNoHandRolledKickers`).
         statusLabel.attributedStringValue = NSAttributedString(
             string: statusText,
-            attributes: HelmType.kickerAttributes(color: ink))
+            attributes: HelmType.kickerAttributes(color: tint))
+        statusLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .heavy)
+
+        casePin.layer?.backgroundColor = HelmTheme.nsColor("D33A2C").cgColor
+        casePin.layer?.borderColor = HelmTheme.nsColor("8F1D14").cgColor
+        casePin.layer?.shadowOpacity = 0.35
+        casePin.layer?.shadowRadius = 2
+        casePin.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        floatingBar.applyTheme(theme)
+        floatingBar.isHidden = showingArchive || store.isInFailedLoadState || store.activeNotes.isEmpty
+        floatingBar.selected = colourFilter
+    }
+
+
+    // MARK: Sk-1 - the colour filter
+
+    /// Shows only `colour`'s notes, or every note for `nil`.
+    func setColourFilter(_ colour: StickyNoteColor?) {
+        colourFilter = colour
+        applyColourFilter()
+        floatingBar.selected = colour
+    }
+
+    private func applyColourFilter() {
+        let notes = Dictionary(visibleNotes.map { ($0.id, $0.color) }, uniquingKeysWith: { a, _ in a })
+        for (id, view) in noteViews {
+            view.isHidden = colourFilter.map { notes[id] != $0 } ?? false
+        }
+    }
+
+    /// The case tag's name was edited: Return or focus leaving the field
+    /// (gotcha (19)). An emptied name goes back to the default.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === boardTitle else { return }
+        let name = boardTitle.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty || name == Self.defaultCaseTitle {
+            AppDefaults.store.removeObject(forKey: Self.caseTitleKey)
+        } else {
+            AppDefaults.store.set(name, forKey: Self.caseTitleKey)
+        }
+        boardTitle.stringValue = Self.savedCaseTitle
+        applyBoardHeaderTheme()
     }
 
     // MARK: Probe / self-test surface
@@ -899,8 +1004,14 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         view.subviews.compactMap { ($0 as? NSTextField)?.stringValue }
     }
     var debugBoardHeader: NSView { boardHeader }
-    var debugBoardIcon: NSImageView { boardIcon }
     var debugBoardTitle: NSTextField { boardTitle }
+    var debugCaseMeta: String { caseMeta.stringValue }
+    var debugFloatingBar: StickyBoardFloatingBar { floatingBar }
+    /// Ends an edit of the board's name the way focus leaving it does.
+    func debugCommitCaseTitle(_ name: String) {
+        boardTitle.stringValue = name
+        controlTextDidEndEditing(Notification(name: NSControl.textDidEndEditingNotification, object: boardTitle))
+    }
     var debugStatusLabel: NSTextField { statusLabel }
     var debugStatusDot: NSView { statusDot }
     var debugScrollView: NSScrollView { scrollView }
@@ -933,4 +1044,13 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
 // in the sidebar layout; Archive stays an outlined page action.
 extension StickyBoardController: WorkspacePrimaryActionProviding {
     var workspacePrimaryAction: NSView? { newNoteButton }
+}
+
+/// Sk-1: the case tag's meta line says what the grey subtitle line said - the
+/// counts and the sync state - so the sidebar layout's header line draws
+/// nothing on this page and gives up its slot. The subtitle stays the page's
+/// summary for the floating bar and the crew panel.
+extension StickyBoardController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { true }
+    var drawsSubtitleOnHeaderLine: Bool { false }
 }

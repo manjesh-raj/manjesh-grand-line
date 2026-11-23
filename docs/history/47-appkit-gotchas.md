@@ -847,5 +847,15 @@ cell up; it also makes the field selectable, which a row title is not. Two
 single-line labels in a 420pt-capped card truncated this way for as long as the
 credential vault's setup screen has existed.
 
----
+### (23) No baseline constraint inside a view a stack may detach
 
+Found in `fm/grandline-page-redesign-options` (Helm 10.2.0), building Hg-2's verdict pill on the Home hero.
+`HelmHeroStatusPill` is an arranged view of the hero's head stack and starts hidden, so the stack detaches it.
+Its dot was centred on the label with `dot.centerYAnchor == label.firstBaselineAnchor - 4`.
+The first `layoutSubtreeIfNeeded` on a hero with no verdict threw `NSInternalInconsistencyException` with "Expression 0 unable to find variable NSView:0x... .Height{id: 91} in engine 0x0".
+The stack trace ran through `_updateConstraintsForSubtreeIfNeededCollectingViewsWithInvalidBaselines` into `nsli_lowerAttribute`, which is AppKit lowering the baseline constraint for a view with no layout engine.
+`FeelPassSelfTest` aborted on it, so it read as a crashed suite rather than a layout defect.
+Anchoring the dot to `label.topAnchor` plus half the first line's spare height removed it, and the suite passed.
+The same pill shown (with a verdict) never hit it, which is why the trap only appears on the hidden path.
+
+---

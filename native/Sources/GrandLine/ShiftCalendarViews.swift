@@ -1459,6 +1459,22 @@ final class ShiftCalendarView: NSView {
         trayHead.onHeightChange = { [weak self] in self?.pushHeads() }
     }
 
+    /// Cf-4: the Tasks page's filters as the month head's menus, and where a
+    /// click on one goes. `nil` filters draw no menus.
+    func setHeroFilters(_ filters: ShiftCalendarHeroHead.Filters?) { heroHead.setFilters(filters) }
+    var onShowScopeMenu: ((NSView) -> Void)? {
+        get { heroHead.onShowScopeMenu }
+        set { heroHead.onShowScopeMenu = newValue }
+    }
+    var onShowProjectMenu: ((NSView) -> Void)? {
+        get { heroHead.onShowProjectMenu }
+        set { heroHead.onShowProjectMenu = newValue }
+    }
+    var onShowColourMenu: ((NSView) -> Void)? {
+        get { heroHead.onShowColourMenu }
+        set { heroHead.onShowColourMenu = newValue }
+    }
+
     /// Cal-8's heads in place of the page's own header: the sidebar
     /// layout's calendar, which is where T-4's bands are too.
     var drawsHeroHead = false {
@@ -1718,7 +1734,9 @@ final class ShiftCalendarView: NSView {
         let tasksOnly = list.filter { $0.kind == .task && !$0.isSkipped }
         let today = ShiftDateFormatting.components(from: Date()).dateStr
         let period = ShiftCalendarModel.periodPhrase(scale: scale, visibleStart: visibleRange?.start, today: today)
-        caption = Self.subtitle(total: tasksOnly.count, projected: tasksOnly.filter(\.isProjected).count,
+        let projected = tasksOnly.filter(\.isProjected).count
+        heroHead.repeatDates = projected
+        caption = Self.subtitle(total: tasksOnly.count, projected: projected,
                                 followUps: list.filter { $0.kind == .followUp }.count, tray: tray, period: period,
                                 summary: pageSummary)
     }
