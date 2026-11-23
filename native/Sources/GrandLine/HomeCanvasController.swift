@@ -2061,9 +2061,6 @@ final class HomeCanvasController: NSViewController {
         var width: CGFloat
         /// The hub's columns are budgeted from the height; the shelf's are not.
         var height: CGFloat
-        /// The shelf's height-exempt cards' own heights, which the grid
-        /// states as floors when it builds a row - a change means a rebuild.
-        var exemptHeights: [CGFloat]
     }
 
     private func rebuildGrid() {
@@ -2125,7 +2122,7 @@ final class HomeCanvasController: NSViewController {
                 }
             }
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: [], customizing: false, dashboard: true,
-                                          width: available, height: lastGridHeight, exemptHeights: [])
+                                          width: available, height: lastGridHeight)
             return
         }
 
@@ -2168,11 +2165,10 @@ final class HomeCanvasController: NSViewController {
             minItemWidth: Self.minModuleWidth,
             spacing: Self.gridSpacing,
             // PF2: a card is content-sized now, so uniformity is per row.
-            equalHeights: true,
-            // ...with one exception per `DaylightModule.sizesToOwnContent`:
-            // the Claude usage card renders at its own taller height rather
-            // than dragging the cards beside it up to match it.
-            exemptsHeightTie: { $0.sizesToOwnContent }
+            // Every card joins its row's tie, the Claude card included
+            // (`fm/grandline-widget-polish`): the captain wants it as tall as
+            // Fleet and Hosts beside it.
+            equalHeights: true
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
             let card = self.makeCard(for: module, placement: .shelf(width: cardWidth))
@@ -2198,8 +2194,7 @@ final class HomeCanvasController: NSViewController {
         if Set(cardsByModule.keys) == Set(modules) {
             gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map(cardSpan),
                                           customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0,
-                                          exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
+                                          width: available, height: 0)
         }
     }
 
@@ -2231,7 +2226,6 @@ final class HomeCanvasController: NSViewController {
             columnCount: HomeCardGrid.columns,
             spacing: Self.gridSpacing,
             equalHeights: true,
-            exemptsHeightTie: { $0.sizesToOwnContent },
             fixedHeight: { heights[$0] ?? nil },
             packedRows: placed
         ) { [weak self] module, cardWidth in
@@ -2274,8 +2268,7 @@ final class HomeCanvasController: NSViewController {
                                           heights: modules.map { heights[$0].flatMap { $0 } ?? -1 },
                                           rowLengths: placed.map(\.count),
                                           customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0,
-                                          exemptHeights: shelfExemptHeights(modules) { self.content(for: $0, placement: $1) })
+                                          width: available, height: 0)
         }
         view.layoutSubtreeIfNeeded()
         updateSizeBadge()
@@ -2342,9 +2335,6 @@ final class HomeCanvasController: NSViewController {
             guard let placement = cardPlacements[module] else { return false }
             contents[module] = content(for: module, placement: placement)
         }
-        let exempt = shelfExemptHeights(modules) { module, _ in contents[module]! }
-        guard exempt.count == previous.exemptHeights.count,
-              zip(exempt, previous.exemptHeights).allSatisfy({ abs($0 - $1) <= 0.5 }) else { return false }
         for module in modules {
             if let content = contents[module] { cardsByModule[module]?.configure(content) }
         }
@@ -2360,17 +2350,6 @@ final class HomeCanvasController: NSViewController {
             guard shownLayout.size(of: module).height != nil else { return -1 }
             let width = HomeCardGrid.width(columns: cardSpan(module), containerWidth: available, spacing: Self.gridSpacing)
             return arrangedHeight(of: module, width: width) ?? -1
-        }
-    }
-
-    /// The fitting height of each shelf card exempt from its row's height
-    /// tie, measured the way `HelmResponsiveGrid.spanningRows` measures the
-    /// floor it states for one.
-    private func shelfExemptHeights(_ modules: [DaylightModule],
-                                    content: (DaylightModule, CardPlacement) -> HelmModuleCard.Content) -> [CGFloat] {
-        modules.filter(\.sizesToOwnContent).compactMap { module in
-            guard let placement = cardPlacements[module] else { return nil }
-            return Self.probeCard(content(module, placement)).fittingSize.height
         }
     }
 
@@ -3706,7 +3685,9 @@ final class HomeCanvasController: NSViewController {
         /// The header's status. `nil` while the headline is the verdict;
         /// only a refresh that failed adds one.
         let chip: HelmModuleChip?
-        /// GL-14: the figures may be behind, so the colour dims.
+        /// GL-14: there is no reading to show, so the colour dims. A failed
+        /// refresh over a real reading keeps the colour - its pill and
+        /// headline say the figures may be behind.
         let isStale: Bool
     }
 
@@ -3779,7 +3760,7 @@ final class HomeCanvasController: NSViewController {
             let time = fetchedAt.map { briefingTimeFormatter.string(from: $0) }
             return ClaudeHeroPanel(headline: time.map { "Showing the \($0) reading" } ?? "Showing the last reading",
                                    body: "The last refresh failed, so these figures may be behind.",
-                                   ring: ring, chip: .warn("Can't reach"), isStale: true)
+                                   ring: ring, chip: .warn("Can't reach"), isStale: false)
         }
         return ClaudeHeroPanel(headline: headline, body: sentences.isEmpty ? nil : sentences.joined(separator: " "),
                                ring: ring, chip: nil, isStale: false)
@@ -3861,11 +3842,14 @@ final class HomeCanvasController: NSViewController {
         let body: String
         let ring: HelmModuleCard.HeroRing?
         let items: [HelmKPIStrip.Item]
+        /// GL-14: the card has no real fleet to show, so its colour dims.
+        /// Only a fleet that was never read sets it - a stale watcher's
+        /// counts are real and stay in the captain's colour.
         let isStale: Bool
     }
 
     /// Five states, worst first: a crewmate blocked (red), one waiting on a
-    /// decision (amber), a watcher that has stopped reporting (dimmed),
+    /// decision (amber), a watcher that has stopped reporting (amber pill),
     /// crew working, and all clear. Two of them are new on this card: today
     /// `blocked` and `needs_decision` both read amber, and the watcher's
     /// health was not read at all.
@@ -3927,10 +3911,15 @@ final class HomeCanvasController: NSViewController {
                              headline: "\(deciding.count) waiting on you", body: body,
                              ring: ring, items: items, isStale: false)
         }
+        // A stale watcher keeps the card's colour (`fm/grandline-widget-polish`).
+        // The counts are the snapshot's own, not unknowns, and the pill, the
+        // headline and the body already say they may be behind. Dimmed, the
+        // card turned grey for as long as the watcher stayed stopped, which
+        // read as Fleet ignoring the theme beside Claude and Hosts.
         if snapshot.watcher.status == "stale" {
             return FleetHero(subtitle: watcher, chip: .warn("Watcher stale"), headline: "Counts may be behind",
                              body: "The watcher has stopped reporting, so these numbers may be out of date.",
-                             ring: ring, items: items, isStale: true)
+                             ring: ring, items: items, isStale: false)
         }
         if !working.isEmpty {
             return FleetHero(subtitle: watcher, chip: .ok("All clear"),

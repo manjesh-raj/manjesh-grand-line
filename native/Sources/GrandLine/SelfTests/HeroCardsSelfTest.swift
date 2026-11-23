@@ -252,8 +252,11 @@ enum HeroCardsSelfTest {
               "at limit's ring is \(String(describing: critical.ring)) - the spend is the verdict", &ok)
 
         let stale = panel(.stale)
-        check(stale.isStale && stale.chip == .warn("Can't reach") && stale.headline.hasPrefix("Showing the "),
+        check(stale.chip == .warn("Can't reach") && stale.headline.hasPrefix("Showing the "),
               "stale reads \"\(stale.headline)\" with \(String(describing: stale.chip))", &ok)
+        // The last reading is real, so the card keeps its colour; only a card
+        // with no reading at all dims (`fm/grandline-widget-polish`).
+        check(!stale.isStale, "a failed refresh over a real reading dims the Claude card to grey", &ok)
         check(stale.ring?.label == "49%", "stale drops the last reading's ring", &ok)
 
         let idle = panel(.idle)
@@ -290,8 +293,11 @@ enum HeroCardsSelfTest {
               "a blocked crewmate reads \(String(describing: critical.chip)) - it should be red, not amber", &ok)
         check(critical.body.contains("1 more is waiting on you"), "blocked hides the decision behind it", &ok)
         let stale = hero(.stale)
-        check(stale.isStale && stale.chip == .warn("Watcher stale") && stale.subtitle == "watcher stale",
+        check(stale.chip == .warn("Watcher stale") && stale.subtitle == "watcher stale",
               "a stale watcher reads \"\(stale.headline)\", \(stale.subtitle)", &ok)
+        // Its counts are real, so the card keeps the captain's colour rather
+        // than dimming to grey (`fm/grandline-widget-polish`).
+        check(!stale.isStale, "a stale watcher dims the Fleet card to grey", &ok)
         let idle = hero(.idle)
         check(idle.headline == "All clear" && idle.items.first?.reading == .value("0"),
               "idle reads \"\(idle.headline)\"", &ok)

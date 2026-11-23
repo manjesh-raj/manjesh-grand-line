@@ -26,9 +26,9 @@
 //    general paragraph/list/code-block parser with two app-specific callout
 //    labels layered on; Luffy's persona never emits those labels, so the
 //    callout case simply never fires and the general half does all the work.
-//  - `HelmComposerCard` (the focus-glowing sunken well), `HelmAccentRow` (the
-//    accent-bar + badge + kicker card), `IconTileView`, `HelmButton`,
-//    `HelmEmptyState`, `HelmType`, `HelmMetrics`, `HelmField`, `HelmSelection`.
+//  - `HelmPromptWell` (the terminal-prompt composer Compose and SRE Lead
+//    use), `HelmAccentRow` (the accent-bar + badge + kicker card),
+//    `IconTileView`, `HelmButton`, `HelmEmptyState`, `HelmType`, `HelmMetrics`.
 //
 // ## The one deliberate difference from SRE Lead's transcript
 //
@@ -115,56 +115,24 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
     // MARK: Composer
     //
-    // A rounded, single-surface pill rather than `SRELeadChatView.
-    // buildComposer`'s text-box-plus-toolbar-strip shape. The two composers
-    // were never a shared component (each view hand-rolls its own `HelmComposerCard`
-    // instance and its own text view - see this file's header), so this
-    // redesign is scoped to this file alone: nothing here touches
-    // `SRELeadChatView.swift`, and its own composer is unaffected.
+    // The terminal-prompt well Compose and SRE Lead already use
+    // (`HelmPromptWell`, C1 of the Console fixes board): a "❯" prompt, typed
+    // text in the terminal's monospaced font and colours, a block cursor, and
+    // the send button at the trailing end of the prompt line. The captain
+    // asked for this input to be as simple to type into as Compose's, and to
+    // look like it (`fm/grandline-widget-polish`). It replaces the rounded
+    // pill that copied the ⌘K query well.
     //
-    // The captain's complaint (a screenshot of the old shape) was threefold:
-    // a plain bordered box, raw keybinding text ("\u{21B5} to send \u{00B7} \u{21E7}\u{21B5}
-    // for a new line") competing for attention below the field, and a small
-    // square send button sitting in its own separate strip. The fix is
-    // structural, not just a bigger corner radius: the text field and the
-    // send button now live in one `NSStackView` row inside the same rounded
-    // surface, bottom-aligned so the button tracks the text box's own bottom
-    // edge as it grows - the same shape iMessage/WhatsApp/ChatGPT's input
-    // bars use - and the keybinding hint moved to a tooltip instead of a
-    // permanently-visible label.
+    // What did not move: plain Return sends and Shift-Return inserts a new
+    // line (`textView(_:doCommandBy:)` below), the keybinding hint stays a
+    // tooltip, and the data line stays under the well.
     private let composerWrap = NSView()
-    /// Seeded with the shared well radius rather than the generic `rRow`, so
-    /// the very first paint - before `applyTheme` resolves it per theme -
-    /// already agrees with the ⌘K query line.
-    private let composerCard = HelmComposerCard(cornerRadius: HelmField.cornerRadius)
-    private let textScroll = NSScrollView()
-    private let textView = NSTextView()
-    /// `NSTextView` has no placeholder API - a muted label overlaid at the
-    /// text container's inset, toggled on every edit.
-    ///
-    /// **Built with its final text *and* its final font, never mutated into
-    /// them afterwards.** This label is a bare subview of an `NSScrollView`
-    /// rather than an arranged subview of an `NSStackView`, which is the exact
-    /// shape of AGENTS.md's documented trap: a stack recomputes an intrinsic
-    /// size on every layout pass, a bare scroll-view subview leans on the
-    /// auto-generated `NSContentSizeLayoutConstraint`, and that constraint
-    /// silently never re-resolves when the label is changed later - with no
-    /// ambiguity or conflict warning printed.
-    ///
-    /// Measured here, not assumed: setting the font after construction left
-    /// the frame at a stale 124x16 (the *previous* font's metrics) against an
-    /// `intrinsicContentSize` of 136x19 queried in the same breath, so the
-    /// placeholder rendered as "Message the cr…" with ~500pt of empty well
-    /// beside it. `invalidateIntrinsicContentSize()` does not fix it -
-    /// confirmed by injection, the frame does not move a point.
-    private let textPlaceholderLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "Message the crew\u{2026}")
-        label.font = HelmField.prominentFont()
-        return label
-    }()
+    /// One line tall when empty, growing to five before it scrolls - the same
+    /// shape as SRE Lead's composer.
+    private let well = HelmPromptWell(minLines: 1, maxLines: 5)
+    private var textView: HelmPromptTextView { well.textView }
     private let sendButton = HelmButton(symbol: "arrow.up", variant: .primary, size: .small)
-
-    private var textScrollHeightConstraint: NSLayoutConstraint!
+    static let placeholder = "Message the crew\u{2026}"
 
     /// The keybinding hint, now a tooltip rather than a permanent label -
     /// still discoverable on hover, no longer a strip of text competing with
@@ -184,69 +152,9 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private let dataFootnote = NSTextField(labelWithString:
         AITransparency.sentToClaude("what you type, and what the crew reads from your stores,"))
 
-    // The composer's chrome is the ⌘K palette's own query well
-    // (`HelmSearchField(size: .prominent)`), reached through the same tokens
-    // rather than by copying its numbers - the captain compared the two side
-    // by side and this one read plainer
-    // (`fm/grand-line-strawhat-chat-input-restyle`).
-    //
-    // The fill, the resting border and the focus *colour* were already
-    // shared - both surfaces route them through `HelmInputSurface.apply`.
-    //
-    // What differed, and it is worth recording because the obvious reading is
-    // wrong: the old bespoke 18pt radius **never reached the well's fill**.
-    // `HelmInputSurface.apply` calls `HelmField.applySunken`, which re-sets the
-    // chrome layer's own radius from `HelmField.cornerRadius(for:)` on every
-    // theme pass - so the fill has always drawn at the search bar's 8 (or
-    // `dWell` on the Daylight family). The 18 only ever reached
-    // `HelmComposerCard.layout()`'s `shadowPath`, i.e. the *focus glow*, which
-    // therefore drew a rounded-18 halo around a rounded-8 well. That mismatch
-    // is exactly the "no matching focus treatment" in the captain's report,
-    // and it is invisible to any check that reads the fill's radius back - see
-    // `debugComposerGlowCornerRadius`.
-    //
-    // The rest was type and spacing: 13pt body text against the well's 15, and
-    // a deeper, asymmetric inset (14 leading, plus another 13 of the text
-    // container's own padding underneath it) against the well's flat 12.
-    //
-    // The one deliberate divergence is the focus *hue*: §6.9 gives a page's
-    // well that page's domain hue, which is why `SRELeadChatView` lights
-    // Console's teal. The ⌘K panel is not a page, so it takes the theme
-    // accent instead. See `applyTheme`.
-
-    /// The card's own vertical padding around `inputRow`. Paired with
-    /// `minTextHeight` below so the resting composer is exactly
-    /// `HelmField.prominentHeight` tall.
-    private static let composerVerticalPadding: CGFloat = 6
-
-    /// The text container's vertical inset. Small, because the *card* already
-    /// supplies the breathing room - the text view is only ever text on top of
-    /// a well somebody else drew, exactly like `HelmSearchField`'s chromeless
-    /// editor.
-    ///
-    /// Chosen so one line of `HelmField.prominentFont()` (19pt of bounding
-    /// height at the default chrome scale) plus this inset twice still fits
-    /// inside `prominentHeight` minus the card's own padding - i.e. so the
-    /// resting composer lands *on* the token rather than a point over it. The
-    /// same shape of derived constant `HelmField.controlHeight`'s own comment
-    /// records for itself.
-    private static let textContainerInsetHeight: CGFloat = 4
-
-    /// The resting height of the text box, so the whole composer lands on
-    /// `HelmField.prominentHeight` - the ⌘K well's own height.
-    ///
-    /// Floored at whatever one line of `HelmField.prominentFont()` genuinely
-    /// needs rather than pinned to that arithmetic: `prominentHeight` is a
-    /// fixed token and the font is scaled, so at GL-32's larger chrome text
-    /// scales the line outgrows the token and the box has to follow it. A
-    /// constant here would clip the first line instead.
-    private static var minTextHeight: CGFloat {
-        let line = ceil(HelmField.prominentFont().boundingRectForFont.height)
-        return max(HelmField.prominentHeight - composerVerticalPadding * 2,
-                   line + textContainerInsetHeight * 2)
-    }
-
-    private static let maxTextHeight: CGFloat = 120
+    /// The send button's side: SRE Lead's own, so it sits inside a one-line
+    /// prompt well with room around it.
+    private static let sendSide: CGFloat = SRELeadChatView.sendSide
 
     /// This whole view is a bordered card (the controller paints the border),
     /// so its own content has to be inset from that edge - without it the
@@ -371,8 +279,8 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         composerWrap.translatesAutoresizingMaskIntoConstraints = false
         addSubview(composerWrap)
 
-        composerCard.translatesAutoresizingMaskIntoConstraints = false
-        composerWrap.addSubview(composerCard)
+        well.translatesAutoresizingMaskIntoConstraints = false
+        composerWrap.addSubview(well)
 
         dataFootnote.font = HelmType.captionSmall()
         dataFootnote.lineBreakMode = .byTruncatingTail
@@ -381,44 +289,6 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
         buildTextView()
         buildSendButton()
-
-        // One horizontal row, not a text box stacked over a toolbar strip:
-        // the field and the button share the same rounded surface, and
-        // `.bottom` alignment keeps the button pinned to the field's own
-        // bottom edge as it grows - the shape a modern chat input uses.
-        //
-        // AGENTS.md gotcha (10): a horizontal `NSStackView` left at its
-        // default `.gravityAreas` distribution ignores hugging/compression
-        // priorities entirely, so `.fill` has to be set explicitly or
-        // `textScroll`'s "grow to fill" priority below does nothing.
-        let inputRow = NSStackView(views: [textScroll, sendButton])
-        inputRow.orientation = .horizontal
-        inputRow.alignment = .bottom
-        inputRow.distribution = .fill
-        inputRow.spacing = HelmMetrics.s2
-        inputRow.translatesAutoresizingMaskIntoConstraints = false
-        composerCard.contentContainer.addSubview(inputRow)
-        // The placeholder is a sibling of the row, not a subview of
-        // `textScroll` - which is what `HelmSearchField` does too (its own
-        // placeholder lives in the plain `well`, never inside a control).
-        // Measured: as a bare subview of the scroll view the label resolved to
-        // a 124x16 frame against its own 136x19 intrinsic size and rendered as
-        // "Message the cr…" with ~500pt of empty well beside it, and neither
-        // setting its final font at construction nor
-        // `invalidateIntrinsicContentSize()` moved it a point. A plain
-        // `NSView` parent lays it out correctly with no coaxing.
-        //
-        // Added *below* the row, not above it: an `NSTextField` hit-tests even
-        // when it is neither editable nor selectable, so a placeholder sitting
-        // on top swallows the click that lands on the words "Message the
-        // crew…" - the single most natural place to click to start typing.
-        // Measured: `hitTest` returned the label there. Everything above it in
-        // z-order draws no background (`textScroll` and `textView` both have
-        // `drawsBackground = false`), so it is still fully visible underneath.
-        composerCard.contentContainer.addSubview(textPlaceholderLabel,
-                                                 positioned: .below, relativeTo: inputRow)
-
-        textScrollHeightConstraint = textScroll.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
 
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -431,138 +301,50 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             composerWrap.trailingAnchor.constraint(equalTo: trailingAnchor),
             composerWrap.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            composerCard.leadingAnchor.constraint(equalTo: composerWrap.leadingAnchor, constant: Self.contentInset),
-            composerCard.trailingAnchor.constraint(equalTo: composerWrap.trailingAnchor, constant: -Self.contentInset),
-            composerCard.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s2),
-            composerCard.bottomAnchor.constraint(equalTo: dataFootnote.topAnchor, constant: -4),
+            well.leadingAnchor.constraint(equalTo: composerWrap.leadingAnchor, constant: Self.contentInset),
+            well.trailingAnchor.constraint(equalTo: composerWrap.trailingAnchor, constant: -Self.contentInset),
+            well.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s2),
+            well.bottomAnchor.constraint(equalTo: dataFootnote.topAnchor, constant: -4),
 
-            dataFootnote.leadingAnchor.constraint(equalTo: composerCard.leadingAnchor,
-                                                  constant: HelmField.prominentInset),
-            dataFootnote.trailingAnchor.constraint(lessThanOrEqualTo: composerCard.trailingAnchor),
+            // Under the prompt, where the well's own text column starts.
+            dataFootnote.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: HelmPromptWell.edgeInset),
+            dataFootnote.trailingAnchor.constraint(lessThanOrEqualTo: well.trailingAnchor),
             dataFootnote.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor,
                                                  constant: -Self.contentInset),
-
-            // The row - and therefore the whole rounded surface - is sized
-            // bottom-up from `textScroll`'s own dynamic height; nothing here
-            // gives `composerCard` a height of its own.
-            // `HelmField.prominentInset` is where the ⌘K well starts its own
-            // content, and with the text container's own padding zeroed below
-            // it is where this composer's text starts too. The trailing side
-            // is tighter on purpose: what sits there is a filled round button,
-            // not text, and a button reads as inset by its own chrome.
-            inputRow.leadingAnchor.constraint(equalTo: composerCard.contentContainer.leadingAnchor,
-                                              constant: HelmField.prominentInset),
-            inputRow.trailingAnchor.constraint(equalTo: composerCard.contentContainer.trailingAnchor,
-                                               constant: -HelmMetrics.s2),
-            inputRow.topAnchor.constraint(equalTo: composerCard.contentContainer.topAnchor,
-                                          constant: Self.composerVerticalPadding),
-            inputRow.bottomAnchor.constraint(equalTo: composerCard.contentContainer.bottomAnchor,
-                                             constant: -Self.composerVerticalPadding),
-            textScrollHeightConstraint,
-
-            // Activated here, once `textScroll` is in the real tree - see
-            // `SRELeadChatView.buildComposer`'s own note on the measured
-            // layout bug that ordering caused there.
-            // Pinned to where the caret actually lands, which is the scroll
-            // view's own leading edge now that both the text container's
-            // width inset and its line-fragment padding are zero. Before
-            // that they were two different numbers a point apart, so the
-            // placeholder and the text it stands in for did not share a
-            // left edge.
-            textPlaceholderLabel.leadingAnchor.constraint(equalTo: textScroll.leadingAnchor),
-            textPlaceholderLabel.topAnchor.constraint(equalTo: textScroll.topAnchor,
-                                                      constant: Self.textContainerInsetHeight),
-            textPlaceholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textScroll.trailingAnchor),
         ])
     }
 
+    /// The well's text view. The well owns its font, colours, placeholder,
+    /// cursor and growth; this view owns its delegate - Return to send.
     private func buildTextView() {
-        textView.isRichText = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        // The ⌘K well's own type, through the shared token - one step up from
-        // `HelmType.body()`, which is what made the old composer read as the
-        // smaller, plainer of the two controls.
-        textView.font = HelmField.prominentFont()
-        textView.textContainerInset = NSSize(width: 0, height: Self.textContainerInsetHeight)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.drawsBackground = false
         textView.delegate = self
-        // Phase 0's D1 fix: focus is sensed from the window's first responder,
-        // never from `textDidBeginEditing` (which only fires on the first
-        // keystroke, so a captain clicking in would see nothing).
-        composerCard.senseFocus(on: textView)
-
-        // `NSTextContainer`'s default 5pt line-fragment padding is a second,
-        // invisible horizontal inset on top of `textContainerInset` - between
-        // them the caret used to sit 13pt inside a box whose own leading
-        // constraint was already 14pt in. Zeroed so `prominentInset` above is
-        // the *whole* distance from the well's edge to the text, exactly as it
-        // is in `HelmSearchField`.
-        textView.textContainer?.lineFragmentPadding = 0
-
-        textScroll.documentView = textView
-        textScroll.hasVerticalScroller = true
-        textScroll.borderType = .noBorder
-        textScroll.drawsBackground = false
-        textScroll.translatesAutoresizingMaskIntoConstraints = false
-        // The one flexible element in `inputRow` - everything else
-        // (`sendButton`) is fixed-size, so this is what absorbs the row's
-        // leftover width under `.fill` distribution.
-        textScroll.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textScroll.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textScroll.toolTip = Self.keybindingHint
-
-        // Deliberately NOT re-assigned here - see the property's own note. It
-        // is already `HelmField.prominentFont()`, the same token the text view
-        // above takes, so the two cannot drift; assigning it a second time is
-        // what used to strand the frame at the previous font's metrics.
-        textPlaceholderLabel.isEditable = false
-        textPlaceholderLabel.isBordered = false
-        textPlaceholderLabel.isSelectable = false
-        textPlaceholderLabel.drawsBackground = false
-        textPlaceholderLabel.lineBreakMode = .byTruncatingTail
-        textPlaceholderLabel.maximumNumberOfLines = 1
-        // AGENTS.md gotcha (13): an `NSTextField` defaults to 750 horizontal
-        // compression resistance, which is above
-        // `NSLayoutPriorityWindowSizeStayPut` (500) - so its intrinsic width
-        // would become a floor for the whole window through
-        // textScroll -> card -> composer -> this view -> `bodyContainer`.
-        // Short placeholder text makes that floor small rather than absent,
-        // and "small" is not the property worth relying on.
-        textPlaceholderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        textPlaceholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        textView.setAccessibilityLabel("Message the crew")
+        textView.toolTip = Self.keybindingHint
+        well.placeholder = Self.placeholder
     }
 
-    /// The send button - fixed size, held at the trailing edge of `inputRow`
-    /// by that row's own `.fill` distribution and required hugging below, so
-    /// it never shrinks or grows past its own natural size regardless of how
-    /// much room the text box takes.
+    /// The send button, on the trailing end of the prompt line.
     private func buildSendButton() {
         sendButton.translatesAutoresizingMaskIntoConstraints = false
-        sendButton.toolTip = AITransparency.willSendToClaude("your message, and what the crew reads from your stores,")
+        sendButton.setAccessibilityLabel("Send")
         sendButton.target = self
         sendButton.action = #selector(submit)
         sendButton.isEnabled = false
-        sendButton.toolTip = Self.keybindingHint
+        // R2-SEC-05: the button that starts the `claude -p` call says what it
+        // sends. The keybinding hint is the text view's own tooltip.
+        sendButton.toolTip = AITransparency.willSendToClaude("your message, and what the crew reads from your stores,")
         sendButton.setContentHuggingPriority(.required, for: .horizontal)
         sendButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        well.setTrailingAccessory(sendButton)
 
         // `HelmPageToolbar.iconButton`'s alignment-rect correction: a
         // `HelmButton` paints its chrome in its own layer, which fills the
         // *frame*, while Auto Layout constrains its *alignment rect* - so a
-        // plain height constraint renders a visibly taller box. Slightly
-        // larger than the old 28pt square (a more tactile, "this is the
-        // thing you press" size once it sits beside the text rather than in
-        // its own thin strip).
-        let side: CGFloat = 32
+        // plain size constraint renders a visibly larger box.
         let insets = sendButton.alignmentRectInsets
         NSLayoutConstraint.activate([
-            sendButton.widthAnchor.constraint(equalToConstant: side - insets.left - insets.right),
-            sendButton.heightAnchor.constraint(equalToConstant: side - insets.top - insets.bottom),
+            sendButton.widthAnchor.constraint(equalToConstant: Self.sendSide - insets.left - insets.right),
+            sendButton.heightAnchor.constraint(equalToConstant: Self.sendSide - insets.top - insets.bottom),
         ])
     }
 
@@ -1142,16 +924,14 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     @objc private func submit() {
         let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, isInputEnabled else { return }
+        // The well re-fits its height and shows its placeholder again on
+        // its own when `string` changes.
         textView.string = ""
-        updateTextPlaceholderVisibility()
-        updateTextViewHeight()
         updateSendButtonEnabled()
         onSubmit?(text)
     }
 
     func textDidChange(_ notification: Notification) {
-        updateTextPlaceholderVisibility()
-        updateTextViewHeight()
         updateSendButtonEnabled()
     }
 
@@ -1165,20 +945,6 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         }
         submit()
         return true
-    }
-
-    private func updateTextPlaceholderVisibility() {
-        textPlaceholderLabel.isHidden = !textView.string.isEmpty
-    }
-
-    private func updateTextViewHeight() {
-        guard let layoutManager = textView.layoutManager, let textContainer = textView.textContainer else { return }
-        layoutManager.ensureLayout(for: textContainer)
-        let used = layoutManager.usedRect(for: textContainer).height
-        let desired = ceil(used) + textView.textContainerInset.height * 2
-        let clamped = min(max(desired, Self.minTextHeight), Self.maxTextHeight)
-        guard abs(clamped - textScrollHeightConstraint.constant) > 0.5 else { return }
-        textScrollHeightConstraint.constant = clamped
     }
 
     // MARK: Theming
@@ -1238,7 +1004,6 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         let themeChanged = appliedThemeID != theme.id
         appliedThemeID = theme.id
         self.theme = theme
-        HelmSelection.apply(to: textView, theme: theme)
         dataFootnote.textColor = HelmTheme.mutedInk(theme)
         // `chromeBackgroundHex`, not `backgroundHex` - the latter is the
         // *terminal's* token. `SRELeadChatView` shipped that exact mix-up once
@@ -1250,22 +1015,11 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         // destination of its own. §6.9 lights a page's well with that page's
         // domain hue (which is why `SRELeadChatView` uses Console's), and
         // `RailDestination.domainHue`'s own comment already names violet as
-        // "what the page's focus ring and primary button take".
-        //
-        // The one place this composer deliberately does *not* copy the ⌘K
-        // well, which takes the bare theme accent because a floating panel is
-        // not a page and has no hue to claim.
-        composerCard.domainHue = theme.isDaylight ? RailDestination.strawHat.domainHue : nil
-        // The search bar's own radius, through the shared token. This drives
-        // the focus glow's `shadowPath` (the fill's radius is `applySunken`'s,
-        // one layer down), so before this the glow's corners did not follow
-        // the well's on any of the twelve legacy palettes.
-        composerCard.cornerRadius = HelmField.cornerRadius(for: theme)
-        composerCard.applyTheme(theme)
-        let ink = HelmField.ink(theme)
-        textView.textColor = ink
-        textView.insertionPointColor = ink
-        textPlaceholderLabel.textColor = HelmField.mutedInk(theme)
+        // "what the page's focus ring and primary button take". The well
+        // paints everything else - its fill, prompt, text, cursor and
+        // selection - from the terminal scheme.
+        well.domainHue = theme.isDaylight ? RailDestination.strawHat.domainHue : nil
+        well.applyTheme(theme)
         emptyState.applyTheme(theme)
         crewStrip.applyTheme(theme)
         crewStripDivider.layer?.backgroundColor =
@@ -1302,7 +1056,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     var debugDataFootnote: (text: String, frame: NSRect, isMounted: Bool) {
         (dataFootnote.stringValue, dataFootnote.frame, dataFootnote.isDescendant(of: self))
     }
-    var debugComposerFrame: NSRect { composerCard.frame }
+    var debugComposerFrame: NSRect { well.frame }
     var debugComposerWrapFrame: NSRect { composerWrap.frame }
     var debugDataFootnoteFittingWidth: CGFloat { dataFootnote.fittingSize.width }
 
@@ -1370,73 +1124,20 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// message cards are inset from the bordered card's own edge rather than
     /// flush against it.
     var debugTranscriptLeadingInset: CGFloat { convert(stack.bounds, from: stack).minX }
-    /// The composer card's leading edge inside this view, same reason.
-    var debugComposerLeadingInset: CGFloat { convert(composerCard.bounds, from: composerCard).minX }
+    /// The composer well's leading edge inside this view, same reason.
+    var debugComposerLeadingInset: CGFloat { convert(well.bounds, from: well).minX }
 
-    /// The composer well's own resolved chrome - read off the real layer
-    /// rather than re-derived, so a check cannot pass by repeating whatever
-    /// mistake the component made.
-    var debugComposerGeometry: HelmField.Geometry { HelmField.geometry(of: composerCard.contentContainer) }
+    /// The terminal-prompt well itself, for `ConsolePopoversSelfTest.
+    /// checkPromptWell`, the check Compose and SRE Lead already answer to.
+    var debugWell: HelmPromptWell { well }
 
-    /// The whole well's height, which is what a captain compares against the
-    /// ⌘K query line sitting a keystroke away.
-    var debugComposerHeight: CGFloat { composerCard.frame.height }
+    /// The whole well's height, so a suite can see it grow with real text.
+    var debugComposerHeight: CGFloat { well.frame.height }
 
-    /// Where the composer's text actually starts, measured from the well's own
-    /// leading edge - the sum of the row inset, the text container's width
-    /// inset and the container's line-fragment padding, which is three numbers
-    /// no single constant can stand in for.
-    var debugComposerTextInset: CGFloat {
-        let scrollInWell = composerCard.contentContainer.convert(textScroll.bounds, from: textScroll)
-        return scrollInWell.minX
-            + textView.textContainerInset.width
-            + (textView.textContainer?.lineFragmentPadding ?? 0)
-    }
+    /// The send button's frame inside the well, so a suite can assert it sits
+    /// on the prompt line rather than in a strip of its own.
+    var debugSendButtonFrameInWell: NSRect { well.convert(sendButton.bounds, from: sendButton) }
 
-    /// The radius the focus glow's `shadowPath` is cut to.
-    ///
-    /// Deliberately separate from `debugComposerGeometry.radius`, which reads
-    /// the *fill's* layer - and which `HelmInputSurface.apply` re-sets from the
-    /// shared token on every theme pass, so it can never disagree with the
-    /// search bar and a check against it is vacuous. The glow is the half that
-    /// genuinely could disagree, and did.
-    var debugComposerGlowCornerRadius: CGFloat { composerCard.cornerRadius }
-
-    /// The placeholder's resolved frame against the size it asks for - the
-    /// pair that catches it being laid out smaller than its own text, which is
-    /// what an `NSTextField` does as a bare subview of an `NSScrollView`.
-    var debugPlaceholderFrameWidth: CGFloat { textPlaceholderLabel.frame.width }
-    var debugPlaceholderIntrinsicWidth: CGFloat { textPlaceholderLabel.intrinsicContentSize.width }
-
-    /// What a click on the placeholder's own words actually lands on. The
-    /// placeholder must never be the answer: it is painted over the editor and
-    /// an `NSTextField` hit-tests even when it is neither editable nor
-    /// selectable, so on top it swallows the click that starts a message.
-    func debugHitTestOnPlaceholder() -> NSView? {
-        let box = textPlaceholderLabel.frame
-        return composerCard.contentContainer.hitTest(
-            composerCard.contentContainer.convert(NSPoint(x: box.midX, y: box.midY),
-                                                  to: composerCard.contentContainer.superview))
-    }
-
-    var debugPlaceholderIsTextView: Bool { debugHitTestOnPlaceholder() is NSTextView }
-
-    var debugComposerFontSize: CGFloat { textView.font?.pointSize ?? -1 }
-
-    var debugComposerPlaceholderFontSize: CGFloat { textPlaceholderLabel.font?.pointSize ?? -1 }
-
-    /// Where the placeholder's *glyphs* sit, so "the placeholder stands where
-    /// the text will" is assertable rather than eyeballed.
-    ///
-    /// The alignment rect, never `frame`: `NSTextField.alignmentRectInsets` is
-    /// non-zero (2pt a side here), so its frame starts before its text does -
-    /// the same distinction `HelmPageToolbar.iconButton` has to compensate for
-    /// on `NSButton`. Reading the frame reports a placeholder 2pt left of
-    /// where it draws, which is a measurement bug wearing a layout bug's
-    /// clothes.
-    var debugComposerPlaceholderInset: CGFloat {
-        textPlaceholderLabel.alignmentRect(forFrame: textPlaceholderLabel.frame).minX
-    }
     /// The view rendered for the last appended message, so a suite can measure
     /// real, laid-out geometry inside a reply block.
     var debugLastBlockView: NSView? { stack.arrangedSubviews.last }
