@@ -131,12 +131,12 @@ enum ConsolePopoversSelfTest {
         composer.debugApplyTheme(theme)
         layOut(view, width: 420)
 
-        check(composer.debugComposerCard.surface == .raised, "the intent well is not raised", &ok)
+        checkPromptWell(composer.debugWell, "Compose", hint: true, &ok)
         check(composer.debugExampleButtons.count == 3 && composer.debugExampleButtons.allSatisfy { $0.surface == .raised && $0.symbolName != nil },
               "the examples are not three raised chips with a symbol", &ok)
 
         composer.debugShow(intent: "", phase: .idle, target: "Shell 2")
-        check(composer.debugTargetText == "Runs in Shell 2", "the target line reads \"\(composer.debugTargetText)\"", &ok)
+        check(composer.debugTargetText == "runs in Shell 2", "the target line reads \"\(composer.debugTargetText)\"", &ok)
         check(composer.debugVisibleSections.isEmpty, "an empty popover shows \(composer.debugVisibleSections)", &ok)
         let idleHeight = view.fittingSize.height
 
@@ -157,8 +157,32 @@ enum ConsolePopoversSelfTest {
         check(abs(view.fittingSize.width - 420) < 0.5, "a failure changes the width", &ok)
 
         composer.debugShow(intent: "", phase: .idle, target: nil)
-        check(composer.debugTargetText.isEmpty, "with no tab the target line still shows \"\(composer.debugTargetText)\"", &ok)
-        if ok { print("  OK   raised well and chips, a fixed 420pt in every state, one section per state, the target tab") }
+        check(composer.debugTargetText == "runs in this tab", "with no tab the target line reads \"\(composer.debugTargetText)\"", &ok)
+        if ok { print("  OK   prompt well and raised chips, a fixed 420pt in every state, one section per state, the target tab") }
+    }
+
+    /// C1: a terminal-prompt well in the terminal scheme's colours, with
+    /// AppKit's own caret off so there is one cursor, not two. The cursor
+    /// itself is a window check (`ConsoleFixesWindowChecks`): it needs focus.
+    static func checkPromptWell(_ well: HelmPromptWell, _ name: String, hint: Bool, _ ok: inout Bool) {
+        layOut(well, width: 380)
+        let palette = HelmPromptWell.palette(for: ThemeManager.shared.terminalScheme)
+        check(close(color(well.debugChrome.layer?.backgroundColor), palette.fill),
+              "\(name): the well is not the terminal background", &ok)
+        check(well.debugPromptLabel.stringValue == HelmPromptWell.promptGlyph && !well.debugPromptLabel.isHidden,
+              "\(name): the well draws no \(HelmPromptWell.promptGlyph) prompt", &ok)
+        check(close(well.debugPromptLabel.textColor, palette.prompt), "\(name): the prompt is not the scheme's magenta", &ok)
+        check(close(well.textView.textColor, palette.text), "\(name): typed text is not the scheme's green", &ok)
+        check(well.textView.insertionPointColor.alphaComponent == 0, "\(name): AppKit's own caret still draws", &ok)
+        check(well.debugHintLabel.isHidden == !hint, "\(name): the hint line shows \(!well.debugHintLabel.isHidden), want \(hint)", &ok)
+        check(!well.debugPlaceholderLabel.isHidden, "\(name): an empty well shows no placeholder", &ok)
+        // Both palettes in the run - a light scheme and a dark one - keep
+        // the typed text and the prompt legible over the well.
+        for scheme in [TasksSecretsHeroViewSelfTest.daylight, TasksSecretsHeroViewSelfTest.dusk] {
+            let p = HelmPromptWell.palette(for: scheme)
+            check(HelmContrast.ratio(p.text, p.fill) >= 4.5 && HelmContrast.ratio(p.prompt, p.fill) >= 3,
+                  "\(name): in \(scheme.id) the prompt well's text is \(HelmContrast.ratio(p.text, p.fill)):1", &ok)
+        }
     }
 
     // MARK: Use-1
@@ -262,7 +286,7 @@ enum ConsolePopoversSelfTest {
         print("\n-- Sre-2: the SRE Lead thread --")
         let chat = SRELeadChatView(frame: NSRect(x: 0, y: 0, width: 368, height: 640))
         chat.applyTheme(theme)
-        check(chat.debugComposerCard.surface == .raised, "the SRE Lead composer is not raised", &ok)
+        checkPromptWell(chat.debugWell, "SRE Lead", hint: false, &ok)
         chat.append(SRELeadMessage(role: .status, text: "SRE Lead is ready."))
         check(chat.debugEmptyStateVisible, "a thread with only the ready line shows no empty state", &ok)
         check(chat.debugChipTitles == SRELeadChatView.starterQuestions.map(\.label),

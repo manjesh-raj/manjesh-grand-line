@@ -6,6 +6,13 @@
 // shell and folder, and carries one chip per live session, so switching to or
 // ending a session is a click from any Console page.
 //
+// B2 of the Console fixes board (`fm/grandline-console-fixes`) made it one
+// line, 40pt tall: where the terminal is and its live state in plain words
+// ("This Mac · no ssh sessions", "prod-db · Connected · ops@10.0.4.12"),
+// and the chips. The captain found the three-line band confusing: its tab
+// count repeated the tab strip right under it, and its "zsh · ~" line
+// repeated the shell's own prompt.
+//
 // It replaces the sidebar layout's SESSIONS strip, which listed the same
 // sessions in a separate row. The floating bar keeps that strip, under its bar
 // on every page. Like the strip, the band reads `HostSessionRegistry` and
@@ -27,9 +34,10 @@ protocol ConsoleSessionBandRouting: AnyObject {
 final class ConsoleSessionBand: NSView {
     /// The words and the place, from the page that owns the band.
     struct Content: Equatable {
-        var kicker: String
+        /// Where: "This Mac", or the host's name.
         var title: String
-        var subtitle: String
+        /// Its state: "no ssh sessions", or "Connected · ops@host".
+        var detail: String
         /// `nil` for this Mac; a host's accent for a host page.
         var tileAccentHex: String?
         /// The host whose page this is, so its chip is the lit one.
@@ -51,16 +59,15 @@ final class ConsoleSessionBand: NSView {
     var onShowThisMac: (() -> Void)?
     var onConnect: (() -> Void)?
 
-    static let height: CGFloat = 64
+    /// B2: one line of words and the chips' 28pt with a 6pt margin.
+    static let height: CGFloat = 40
 
     private let hero = HelmHeroSurface()
-    private let tile = IconTileView(size: 38, cornerRadius: 10)
-    private let kickerLabel = NSTextField(labelWithString: "")
+    private let tile = IconTileView(size: 24, cornerRadius: 7)
     private let titleLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
     private let chipRow = NSStackView()
     private var chipViews: [(chip: Chip?, view: HoverHighlightView, label: NSTextField, close: NSButton?)] = []
-    private(set) var content = Content(kicker: "", title: "", subtitle: "", tileAccentHex: nil,
+    private(set) var content = Content(title: "", detail: "", tileAccentHex: nil,
                                        currentHostID: nil, showsThisMac: false)
     private(set) var chips: [Chip] = []
     private var observation: ThemeObservation?
@@ -69,24 +76,14 @@ final class ConsoleSessionBand: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 14
+        layer?.cornerRadius = 12
         layer?.masksToBounds = true
         addSubview(hero)
-        kickerLabel.lineBreakMode = .byTruncatingTail
-        kickerLabel.maximumNumberOfLines = 1
-        kickerLabel.usesSingleLineMode = true
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(15.5), weight: .bold)
         titleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.font = HelmType.code()
-        subtitleLabel.lineBreakMode = .byTruncatingMiddle
-        for label in [kickerLabel, titleLabel, subtitleLabel] {
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
-        let text = NSStackView(views: [kickerLabel, titleLabel, subtitleLabel])
-        text.orientation = .vertical
-        text.alignment = .leading
-        text.spacing = 0
-        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.usesSingleLineMode = true
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let text = titleLabel
         text.translatesAutoresizingMaskIntoConstraints = false
         chipRow.orientation = .horizontal
         chipRow.alignment = .centerY
@@ -107,12 +104,12 @@ final class ConsoleSessionBand: NSView {
             hero.trailingAnchor.constraint(equalTo: trailingAnchor),
             hero.topAnchor.constraint(equalTo: topAnchor),
             hero.bottomAnchor.constraint(equalTo: bottomAnchor),
-            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            tile.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2),
             tile.centerYAnchor.constraint(equalTo: centerYAnchor),
-            text.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
+            text.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s2 + 2),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
             text.trailingAnchor.constraint(lessThanOrEqualTo: chipRow.leadingAnchor, constant: -HelmMetrics.s3),
-            chipRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            chipRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(HelmMetrics.s1 + 2)),
             chipRow.centerYAnchor.constraint(equalTo: centerYAnchor),
             chipRow.leadingAnchor.constraint(greaterThanOrEqualTo: centerXAnchor, constant: -60),
             chipsCollapse,
@@ -139,7 +136,7 @@ final class ConsoleSessionBand: NSView {
 
     func update(_ content: Content, chips: [Chip]) {
         guard content != self.content || chips != self.chips || chipViews.isEmpty else { return }
-        let rebuild = chips != self.chips || content.currentHostID != self.content.currentHostID
+        let rebuild = chipViews.isEmpty || chips != self.chips || content.currentHostID != self.content.currentHostID
             || content.showsThisMac != self.content.showsThisMac
         self.content = content
         self.chips = chips
@@ -156,7 +153,7 @@ final class ConsoleSessionBand: NSView {
         for chip in chips {
             chipViews.append(makeChip(chip, title: chip.label, symbol: nil))
         }
-        chipViews.append(makeChip(nil, title: "Connect", symbol: "plus", isConnect: true))
+        chipViews.append(makeChip(nil, title: chips.isEmpty ? "Connect a host" : "Connect", symbol: "plus", isConnect: true))
     }
 
     private func makeChip(_ chip: Chip?, title: String, symbol: String?, isConnect: Bool = false)
@@ -253,18 +250,20 @@ final class ConsoleSessionBand: NSView {
         let ink = HelmContrast.color(palette.ink)
         let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
             ? palette.start : palette.end
-        kickerLabel.attributedStringValue = NSAttributedString(
-            string: content.kicker.uppercased(), attributes: HelmType.kickerAttributes(color: ink.withAlphaComponent(0.82)))
-        titleLabel.stringValue = content.title
-        titleLabel.textColor = ink
-        subtitleLabel.stringValue = content.subtitle
-        subtitleLabel.textColor = ink.withAlphaComponent(0.85)
-        subtitleLabel.toolTip = content.subtitle
+        let line = NSMutableAttributedString(string: content.title, attributes: [
+            .font: NSFont.systemFont(ofSize: HelmType.scaled(13.5), weight: .bold), .foregroundColor: ink])
+        if !content.detail.isEmpty {
+            line.append(NSAttributedString(string: "  \u{00B7}  \(content.detail)", attributes: [
+                .font: NSFont.systemFont(ofSize: HelmType.scaled(13), weight: .medium),
+                .foregroundColor: ink.withAlphaComponent(0.82)]))
+        }
+        titleLabel.attributedStringValue = line
+        titleLabel.toolTip = line.string
         if let accent = content.tileAccentHex {
-            tile.configure(symbol: "server.rack", tint: .accent, pointSize: HelmType.scaled(15))
+            tile.configure(symbol: "server.rack", tint: .accent, pointSize: HelmType.scaled(11))
             tile.overrideFill(hex: accent)
         } else {
-            tile.configure(symbol: "terminal.fill", tint: .accent, pointSize: HelmType.scaled(15))
+            tile.configure(symbol: "terminal.fill", tint: .accent, pointSize: HelmType.scaled(11))
             tile.overrideFill(hex: "FFFFFF")
         }
         tile.applyTheme(theme)
@@ -285,13 +284,12 @@ final class ConsoleSessionBand: NSView {
                 item.label.textColor = text.withAlphaComponent(0.7)
             }
         }
-        setAccessibilityLabel([content.kicker, content.title, content.subtitle].joined(separator: ", "))
+        setAccessibilityLabel([content.title, content.detail].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 
     #if FM_SELFTESTS
-    var debugTitle: String { titleLabel.stringValue }
-    var debugKicker: String { content.kicker }
-    var debugSubtitle: String { subtitleLabel.stringValue }
+    /// The band's one line, as drawn.
+    var debugLine: String { titleLabel.stringValue }
     func debugChipHostIDs() -> [UUID] { chipViews.compactMap { $0.chip?.hostID } }
     var debugChipTitles: [String] { chipViews.map(\.label.stringValue) }
     var debugLitHostID: UUID? { content.currentHostID }

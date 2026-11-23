@@ -48,7 +48,7 @@ import Foundation
 enum HelmKit {
 
     /// The kit as a whole. Moves by the largest bump of each release.
-    static let version = "9.3.0"
+    static let version = "9.4.0"
 
     struct Component {
         let name: String
@@ -182,6 +182,9 @@ enum HelmKit {
         Component("HelmPageSidebar", "1.2.0", file: "HelmPageSidebar.swift"),
         // HelmPlateCard.swift
         Component("HelmPlateCard", "1.1.1", file: "HelmPlateCard.swift"),
+        // HelmPromptWell.swift
+        Component("HelmPromptTextView", "1.0.0", file: "HelmPromptWell.swift"),
+        Component("HelmPromptWell", "1.0.0", file: "HelmPromptWell.swift"),
         // HelmRevealableSecretField.swift
         Component("HelmRevealableSecretField", "1.0.0", file: "HelmRevealableSecretField.swift"),
         // HelmScrollMemory.swift
@@ -244,7 +247,7 @@ enum HelmKit {
         Component("Home Fleet card", "1.1.0", file: "HomeCanvasController.swift"),
         Component("Health (page)", "1.0.0", file: "HealthController.swift"),
         Component("Connections (page)", "1.1.0", file: "HostsController.swift"),
-        Component("Console (page)", "1.1.0", file: "ConsoleController.swift"),
+        Component("Console (page)", "1.2.0", file: "ConsoleController.swift"),
         Component("Claude usage popover", "1.0.0", file: "QuotaUsagePopover.swift"),
         Component("Secrets (page)", "1.0.0", file: "CredentialVaultController.swift"),
         Component("Automic Vault (page)", "1.0.0", file: "VaultController.swift"),
@@ -271,6 +274,7 @@ enum HelmKit {
 
     /// One recorded digest per kit file.
     static let sourceDigests: [SourceDigest] = [
+        SourceDigest(file: "HelmPromptWell.swift", stamp: "HelmPromptTextView@1.0.0,HelmPromptWell@1.0.0", sha256: "f63de288d5cb52389445855414c463ea6dd9edee7d4b6db6aa7ce0668017e26c"),
         SourceDigest(file: "HelmPageScaffold.swift", stamp: "HelmPageScaffold@1.0.0", sha256: "cb99965fc36bd64fa45b76f8321efa195f4b3e1e6539271ae776408206fb4134"),
         SourceDigest(file: "HelmDensity.swift", stamp: "HelmDensity@1.0.0", sha256: "c725fb34b3438a1b7bd2ee9a3ba69a52d05b328e9a09b365bd4a468611d61983"),
         SourceDigest(file: "HelmHeroColumn.swift", stamp: "HelmHeroColumn@1.4.0,HelmHeroNavRow@1.0.0,HelmHeroRow@1.0.0", sha256: "c731441f02be60fd5623bfb53fefafce6cf1addfeffe958cf56a42a0a034baca"),

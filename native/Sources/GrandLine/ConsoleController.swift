@@ -321,6 +321,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// The hero band above the tabs (`ConsoleSessionBand`), shown in the
     /// sidebar layout, where it replaces the SESSIONS strip.
     let sessionBand = ConsoleSessionBand()
+    /// How far the band sits under the window toolbar.
+    static let bandTop: CGFloat = HelmMetrics.s2
     /// The host this page is a session on, set when the page connects;
     /// `nil` for the shared console.
     var sessionHost: Host? {
@@ -333,8 +335,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     }
     var bandTabBarTop: NSLayoutConstraint?
     var plainTabBarTop: NSLayoutConstraint?
-    /// Re-reads the current shell's folder while the page is on screen.
-    var sessionBandTimer: Timer?
     /// E7's stepper capsule - see `HelmZoomStepper`.
     var zoomStepper: HelmZoomStepper!
     /// `fm/cockpit-block-view-stage0` - only ever shown for the one opted-in
@@ -668,13 +668,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
         let plainTop = tabBar.topAnchor.constraint(equalTo: root.topAnchor)
         plainTabBarTop = plainTop
-        bandTabBarTop = tabBar.topAnchor.constraint(equalTo: sessionBand.bottomAnchor, constant: HelmMetrics.s1)
+        // The tab strip's own row centres its chips, which already leaves
+        // them 7pt under the band; a further gap read as loose (item 1).
+        bandTabBarTop = tabBar.topAnchor.constraint(equalTo: sessionBand.bottomAnchor)
         NSLayoutConstraint.activate([
             sessionBand.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: cardMargin),
             sessionBand.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -cardMargin),
-            // On the line every page's first content starts on (S03).
-            sessionBand.topAnchor.constraint(equalTo: root.topAnchor,
-                                             constant: HelmMetrics.pageContentTop - HelmMetrics.pageHeaderLine),
+            // Directly under the window toolbar: Console gives up the empty
+            // header line (`WorkspaceHeaderLineCollapsing`), and the band
+            // keeps a small gap rather than S03's 44pt (item 1).
+            sessionBand.topAnchor.constraint(equalTo: root.topAnchor, constant: ConsoleController.bandTop),
             tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             plainTop,
@@ -816,7 +819,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // visible again, rather than waiting for the next poll tick.
         refreshHerdrStatus()
         refreshSessionBand()
-        startSessionBandTimer()
     }
 
     /// The three privileged things this page does when it comes on screen -
@@ -911,8 +913,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // shell's `isHidden = true`, before the view reads as hidden, which
         // is why the window is the test and not only the view.
         pageIsOutOfSight = view.isHiddenOrHasHiddenAncestor || (view.window?.isVisible ?? false)
-        sessionBandTimer?.invalidate()
-        sessionBandTimer = nil
         syncBackgroundScrollback()
         refreshPeriodicWorkGating()
     }

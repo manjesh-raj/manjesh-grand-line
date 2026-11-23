@@ -136,15 +136,11 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
 
     private let composerWrap = NSView()
     private let composerKicker = NSTextField(labelWithString: "Ask a question")
-    private let composerCard = HelmComposerCard(cornerRadius: SRELeadChatView.composerRadius)
-    private let textScroll = NSScrollView()
-    private let textView = NSTextView()
-    private let textPlaceholderLabel = NSTextField(labelWithString: "Ask SRE Lead\u{2026}")
+    /// C1: the question is typed at a terminal prompt, the same well as
+    /// Compose's, growing from one line to five.
+    private let well = HelmPromptWell(minLines: 1, maxLines: 5)
+    private var textView: HelmPromptTextView { well.textView }
     private let sendButton = HelmButton(symbol: "arrow.up", variant: .primary, size: .small)
-    private var textScrollHeightConstraint: NSLayoutConstraint!
-
-    private static let minTextHeight: CGFloat = 34
-    private static let maxTextHeight: CGFloat = 120
 
     /// Whether the composer may take input at all right now - independent of
     /// whether it holds text. Send is enabled only when both are true.
@@ -229,8 +225,6 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
 
         composerKicker.attributedStringValue = NSAttributedString(
             string: "Ask a question".uppercased(), attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern])
-        composerCard.surface = .raised
-
         buildTextView()
         sendButton.toolTip = AITransparency.willSendToClaude("your question and the cluster output it reads")
         sendButton.setAccessibilityLabel("Send")
@@ -238,10 +232,9 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         sendButton.action = #selector(sendOrStop)
         sendButton.isEnabled = false
         sendButton.translatesAutoresizingMaskIntoConstraints = false
-        composerCard.contentContainer.addSubview(textScroll)
-        composerCard.contentContainer.addSubview(sendButton)
+        well.setTrailingAccessory(sendButton)
 
-        let composerStack = NSStackView(views: [chipsFlow, composerKicker, composerCard])
+        let composerStack = NSStackView(views: [chipsFlow, composerKicker, well])
         composerStack.orientation = .vertical
         composerStack.alignment = .leading
         composerStack.spacing = HelmMetrics.s2
@@ -255,11 +248,9 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         rule.translatesAutoresizingMaskIntoConstraints = false
         composerWrap.addSubview(rule)
 
-        textScrollHeightConstraint = textScroll.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
         // The same alignment-rect correction `HelmPageToolbar.iconButton`
         // uses, so the button measures `sendSide` square.
         let insets = sendButton.alignmentRectInsets
-        let container = composerCard.contentContainer
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -279,50 +270,18 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
             composerStack.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s3 - 2),
             composerStack.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor, constant: -HelmMetrics.s3),
             chipsFlow.widthAnchor.constraint(equalTo: composerStack.widthAnchor),
-            composerCard.widthAnchor.constraint(equalTo: composerStack.widthAnchor),
-
-            textScroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.s1),
-            textScroll.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s0),
-            textScroll.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s0),
-            textScroll.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -HelmMetrics.s1),
-            textScrollHeightConstraint,
-            sendButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -(HelmMetrics.s1 + 1)),
-            sendButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -(HelmMetrics.s1 + 1)),
+            well.widthAnchor.constraint(equalTo: composerStack.widthAnchor),
             sendButton.widthAnchor.constraint(equalToConstant: Self.sendSide - insets.left - insets.right),
             sendButton.heightAnchor.constraint(equalToConstant: Self.sendSide - insets.top - insets.bottom),
         ])
     }
 
-    /// The auto-growing text view. Plain Return sends and Shift-Return
-    /// inserts a new line, as before.
+    /// The prompt well's text view. Plain Return sends and Shift-Return
+    /// inserts a new line, as before; the well grows with the question.
     private func buildTextView() {
-        textView.isRichText = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.font = HelmType.body()
-        textView.textContainerInset = NSSize(width: HelmMetrics.s2, height: HelmMetrics.s2 + 1)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        // The card's own layer paints the well; the text view shows it through.
-        textView.drawsBackground = false
         textView.delegate = self
-        composerCard.senseFocus(on: textView)
-
-        textScroll.documentView = textView
-        textScroll.hasVerticalScroller = true
-        textScroll.autohidesScrollers = true
-        textScroll.borderType = .noBorder
-        textScroll.drawsBackground = false
-        textScroll.translatesAutoresizingMaskIntoConstraints = false
-
-        textPlaceholderLabel.font = textView.font
-        textPlaceholderLabel.lineBreakMode = .byTruncatingTail
-        textPlaceholderLabel.maximumNumberOfLines = 1
-        // A subview of the text view at its own text origin, so it never
-        // drifts from where the first typed character lands.
-        textView.addSubview(textPlaceholderLabel)
+        textView.setAccessibilityLabel("Ask SRE Lead")
+        well.placeholder = "Ask SRE Lead\u{2026}"
     }
 
     // MARK: Messages
@@ -426,24 +385,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
             sendButton.setAccessibilityLabel("Send")
             sendButton.isEnabled = isInputEnabled && hasText
         }
-        textPlaceholderLabel.stringValue = isWorking ? "SRE Lead is working\u{2026}" : "Ask SRE Lead\u{2026}"
-        textPlaceholderLabel.isHidden = !textView.string.isEmpty
-        placePlaceholder()
-    }
-
-    /// The placeholder where the text view draws its first character. Also
-    /// run after every layout pass: before the first one the text view has
-    /// not worked out its container origin yet.
-    private func placePlaceholder() {
-        let origin = textView.textContainerOrigin
-        let padding = textView.textContainer?.lineFragmentPadding ?? 0
-        let size = textPlaceholderLabel.fittingSize
-        textPlaceholderLabel.frame = NSRect(x: origin.x + padding - 2, y: origin.y, width: size.width, height: size.height)
-    }
-
-    override func layout() {
-        super.layout()
-        placePlaceholder()
+        well.placeholder = isWorking ? "SRE Lead is working\u{2026}" : "Ask SRE Lead\u{2026}"
     }
 
     /// Whether the thread has anything the captain or SRE Lead said in it.
@@ -913,7 +855,6 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         let text = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, isInputEnabled, !isWorking else { return }
         textView.string = ""
-        updateTextViewHeight()
         updateComposerState()
         onSubmit?(text)
     }
@@ -921,7 +862,6 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     // MARK: Text view delegate
 
     func textDidChange(_ notification: Notification) {
-        updateTextViewHeight()
         updateComposerState()
     }
 
@@ -936,23 +876,10 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         return true
     }
 
-    /// Grows or shrinks the text view to its content, clamped to
-    /// `[minTextHeight, maxTextHeight]`.
-    private func updateTextViewHeight() {
-        guard let layoutManager = textView.layoutManager, let textContainer = textView.textContainer else { return }
-        layoutManager.ensureLayout(for: textContainer)
-        let used = layoutManager.usedRect(for: textContainer).height
-        let desired = ceil(used) + textView.textContainerInset.height * 2
-        let clamped = min(max(desired, Self.minTextHeight), Self.maxTextHeight)
-        guard abs(clamped - textScrollHeightConstraint.constant) > 0.5 else { return }
-        textScrollHeightConstraint.constant = clamped
-    }
-
     // MARK: Theming
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        HelmSelection.apply(to: textView, theme: theme)
         // **`chromeBackgroundHex`, not `backgroundHex`** - this view fills the
         // pane once a tab has a chat, and `backgroundHex` is the terminal's
         // token (`fm/grandline-sre-lead-polish`).
@@ -960,12 +887,8 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         composerKicker.textColor = HelmTheme.mutedInk(theme)
         composerWrap.subviews.first { $0.identifier?.rawValue == "sre.composer.rule" }?
             .layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
-        composerCard.domainHue = theme.isDaylight ? RailDestination.console.domainHue : nil
-        composerCard.applyTheme(theme)
-        let ink = HelmField.ink(theme, surface: .raised)
-        textView.textColor = ink
-        textView.insertionPointColor = ink
-        textPlaceholderLabel.textColor = HelmField.mutedInk(theme, surface: .raised)
+        well.domainHue = theme.isDaylight ? RailDestination.console.domainHue : nil
+        well.applyTheme(theme)
         emptyTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         emptyBody.textColor = HelmTheme.mutedInk(theme)
         workingCard?.applyTheme(theme)
@@ -988,7 +911,8 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     func debugClickChip(_ index: Int) { chipButtons[index].performClick(nil) }
     var debugComposerText: String { textView.string }
     var debugEmptyStateVisible: Bool { !emptyState.isHidden }
-    var debugComposerCard: HelmComposerCard { composerCard }
+    var debugWell: HelmPromptWell { well }
+    var debugComposerTextView: NSTextView { textView }
     func debugSetComposerText(_ text: String) {
         textView.string = text
         textDidChange(Notification(name: NSText.didChangeNotification))

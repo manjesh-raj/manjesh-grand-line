@@ -91,3 +91,13 @@ protocol WorkspaceHeaderAccessoryProviding: AnyObject {
     /// page says its actions may have changed.
     var workspaceHeaderAccessory: NSView? { get }
 }
+
+/// A page whose own first content sits directly under the window toolbar
+/// when the header line has nothing to say, rather than under S03's empty
+/// 32pt slot. Console is the one (`fm/grandline-console-fixes`): it draws no
+/// header line at all, so the slot was only ever dead space above its band,
+/// which the captain asked to remove. The line still shows the moment it
+/// carries a subtitle or a control.
+protocol WorkspaceHeaderLineCollapsing: AnyObject {
+    var collapsesEmptyHeaderLine: Bool { get }
+}
