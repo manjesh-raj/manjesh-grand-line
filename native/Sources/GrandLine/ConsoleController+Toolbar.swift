@@ -603,6 +603,12 @@ extension ConsoleController {
     @objc func tailLogsTapped() { onTailLogs?() }
 }
 
+/// Item 1 of `fm/grandline-console-fixes`: Console draws no header line, so
+/// its band starts directly under the window toolbar.
+extension ConsoleController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { true }
+}
+
 extension ConsoleController: SidebarLayoutAdopting {
     func adoptSidebarLayout() {
         guard !drawsSidebarLayout else { return }

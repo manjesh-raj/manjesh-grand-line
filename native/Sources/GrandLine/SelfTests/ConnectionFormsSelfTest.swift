@@ -284,21 +284,13 @@ enum ConnectionFormsSelfTest {
     // MARK: Con-1
 
     private static func checkSessionBandWords(_ scratch: URL, _ ok: inout Bool) {
-        print("\n-- Con-1: the band's words and its process reads --")
-        check(ConsoleController.localTitle(tabs: 3, liveSessions: 0) == "3 tabs, no live sessions"
-              && ConsoleController.localTitle(tabs: 1, liveSessions: 1) == "1 tab \u{00B7} 1 live session"
-              && ConsoleController.localTitle(tabs: 2, liveSessions: 4) == "2 tabs \u{00B7} 4 live sessions",
-              "the band's title reads \(ConsoleController.localTitle(tabs: 3, liveSessions: 0))", &ok)
-        // The shell line reads a tab's shell process. This process stands in
-        // for one: its name and its folder are known to the suite.
-        let pid = getpid()
-        let name = ConsoleController.processName(pid)
-        check(name == ProcessInfo.processInfo.processName, "this process reads as \(name ?? "nothing")", &ok)
-        let folder = ConsoleController.workingDirectory(ofProcess: pid).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
-        let expected = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).resolvingSymlinksInPath().path
-        check(folder == expected, "this process's folder reads \(folder ?? "nothing"), want \(expected)", &ok)
-        check(ConsoleController.workingDirectory(ofProcess: -1) == nil && ConsoleController.processName(-1) == nil,
-              "a process that does not exist read as something", &ok)
+        print("\n-- Con-1 and B2: the band's words --")
+        // B2: one line of plain words. No tab count (the strip under the
+        // band says it) and no shell or folder (the prompt says them).
+        check(ConsoleController.localDetail(liveSessions: 0) == "no ssh sessions"
+              && ConsoleController.localDetail(liveSessions: 1) == "1 ssh session"
+              && ConsoleController.localDetail(liveSessions: 4) == "4 ssh sessions",
+              "the band's detail reads \(ConsoleController.localDetail(liveSessions: 0))", &ok)
         // The chips follow the registry's order and its shortcut numbers.
         let registry = HostSessionRegistry()
         let a = UUID(), b = UUID()

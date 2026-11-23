@@ -23,6 +23,12 @@
 // line is `HelmMetrics.pageHeaderLine` tall whether it says anything or not,
 // and every page's first content starts at the same height under it. An
 // empty line draws nothing and is not an accessibility element.
+//
+// One exception, the captain's (`fm/grandline-console-fixes`): Console never
+// says anything on this line, and the empty slot read as dead space above its
+// session band. A page that adopts `WorkspaceHeaderLineCollapsing` gives up an
+// empty slot (`collapsesWhenEmpty`), so Console's band starts just under the
+// toolbar. The slot comes back the moment the line has words or a control.
 
 import AppKit
 
@@ -88,6 +94,16 @@ final class WorkspaceModuleHeader: NSView {
     /// Whether the subtitle's line has any text.
     var hasSubtitle: Bool { !subtitleLabel.isHidden }
 
+    /// Whether an empty line gives up its slot (`WorkspaceHeaderLineCollapsing`)
+    /// rather than keeping S03's height. Off for every page but Console.
+    var collapsesWhenEmpty = false {
+        didSet { refreshCollapse() }
+    }
+
+    private func refreshCollapse() {
+        isHidden = collapsesWhenEmpty && subtitleLabel.isHidden && accessory == nil
+    }
+
     /// Show `view` at the trailing end of the subtitle's line, or nothing.
     func setAccessory(_ view: NSView?) {
         guard view !== accessory else { return }
@@ -101,6 +117,7 @@ final class WorkspaceModuleHeader: NSView {
             accessoryHost.addArrangedSubview(view)
         }
         resizeSlot()
+        refreshCollapse()
     }
 
     /// The module's name (kept for VoiceOver only) and the page's subtitle.
@@ -116,6 +133,7 @@ final class WorkspaceModuleHeader: NSView {
         setAccessibilityRole(.group)
         setAccessibilityLabel(says ? (subtitle.isEmpty ? title : "\(title ?? ""), \(subtitle)") : nil)
         resizeSlot()
+        refreshCollapse()
     }
 
     /// `pageHeaderLine`, or taller when the line's text or control needs

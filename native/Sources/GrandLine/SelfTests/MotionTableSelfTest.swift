@@ -131,6 +131,8 @@ enum MotionTableSelfTest {
                   reason: "the wrong-password rock, paired with the shake"),
         Exception(file: "LockScreenController.swift", snippet: "let duration = 0.55",
                   reason: "the unlock scene's own choreography"),
+        Exception(file: "HelmPromptWell.swift", snippet: "blink.duration",
+                  reason: "the prompt well's block cursor blinking, an ambient loop at the system caret's rate"),
         Exception(file: "DictationHUD.swift", snippet: "animation.duration",
                   reason: "the listening pulse, an ambient loop"),
         Exception(file: "StrawHatCrewViews.swift", snippet: "pulse.duration",

@@ -394,6 +394,15 @@ enum MainSplitShellPanesSelfTest {
                 fail("S03: \(destination.rawValue) could not be measured", &ok)
                 continue
             }
+            // Console is the one page that gives up an empty header line
+            // (`WorkspaceHeaderLineCollapsing`, the captain's item 1 of
+            // `fm/grandline-console-fixes`): its band starts `bandTop` under
+            // the toolbar. `ConsoleFixesWindowChecks` measures that edge.
+            if destination == .console {
+                check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
+                      "S03: Console keeps an empty header line", &ok)
+                continue
+            }
             let slot = shell.debugContentPaneHeader.frame.height
             check(abs(slot - HelmMetrics.pageHeaderLine) < 0.5,
                   "S03: \(destination.rawValue)'s header line is \(slot)pt tall, want \(HelmMetrics.pageHeaderLine)", &ok)
