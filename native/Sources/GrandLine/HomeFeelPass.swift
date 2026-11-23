@@ -94,19 +94,70 @@ enum HomeGreeting {
 /// What the briefing hero says, from the stored briefing.
 enum HomeBriefingHero {
 
-    /// The first clause is the headline and the rest is the body - the
-    /// prototype's "2 calls need you" over its two supporting sentences. With
-    /// no briefing today the hero says why, in `fillBriefing`'s own words.
-    static func words(record: MorningBriefingRecord?, enabled: Bool,
-                      settingsName: String) -> (title: String, body: String) {
+    /// The hero's headline, the facts drawn as tiles, and - with no briefing
+    /// today - the one sentence saying why.
+    struct Words: Equatable {
+        var title: String
+        var facts: [BriefingClause]
+        var note: String?
+    }
+
+    /// The captain's Br-3/H-b pick: the AI's own headline over every clause
+    /// as a tile. A record with no headline (one an earlier build wrote, or
+    /// the local stat line) leads with its first clause instead, and the rest
+    /// are the tiles. With no briefing today the hero says why, in
+    /// `fillBriefing`'s own words.
+    static func words(record: MorningBriefingRecord?, enabled: Bool, settingsName: String) -> Words {
         guard let record, let first = record.clauses.first else {
             return enabled
-                ? ("Not generated yet today", "Your first briefing of the day appears here.")
-                : ("Morning briefing is off",
-                   "Turn on Morning briefing in \(settingsName) to get one short summary each morning.")
+                ? Words(title: "Not generated yet today", facts: [],
+                        note: "Your first briefing of the day appears here.")
+                : Words(title: "Morning briefing is off", facts: [],
+                        note: "Turn on Morning briefing in \(settingsName) to get one short summary each morning.")
         }
-        let rest = record.clauses.dropFirst().map(\.text).joined(separator: " ")
-        return (first.text, rest)
+        if let headline = record.headline?.trimmingCharacters(in: .whitespacesAndNewlines), !headline.isEmpty {
+            return Words(title: headline, facts: record.clauses, note: nil)
+        }
+        return Words(title: first.text, facts: Array(record.clauses.dropFirst()), note: nil)
+    }
+
+    /// The page a clause is about, which is both its tile's label and where
+    /// a click on it goes. `nil` for a clause that points nowhere.
+    ///
+    /// The same targets `FleetController.activateBriefingClause` resolves,
+    /// with two honest differences the canvas cannot avoid: `.fleet` scrolls
+    /// Overview's own "In flight" section into view there, and here it simply
+    /// opens Overview; `.quota` anchors its popover on Overview's briefing
+    /// card, and here the nearest true equivalent is the Console page, where
+    /// the Claude-usage control actually lives.
+    static func page(of target: BriefingTarget) -> RailDestination? {
+        switch target {
+        case .none: return nil
+        case .fleet: return .overview
+        case .review: return .review
+        case .tasks: return .shift
+        case .setup: return .bootstrap
+        case .updates: return .updates
+        case .githubSync: return .githubSync
+        case .quota: return .console
+        }
+    }
+
+    /// Whether the hero offers "Open Needs you": only when a crew task is
+    /// waiting on a decision or blocked. Not the fleet verdict's tint - a
+    /// failed PR scan tints that amber too, with the words "Nothing known
+    /// needs you right now", and the button then led nowhere useful.
+    static func offersNeedsYou(crewShown: Bool, tasks: [FleetTask]) -> Bool {
+        crewShown && !FleetGreeting.needingCaptain(tasks).isEmpty
+    }
+
+    /// The tile a clause is drawn as. A clause that points nowhere is still a
+    /// fact, labelled as a note so it lines up with its neighbours.
+    static func tile(_ clause: BriefingClause, pageName: (RailDestination) -> String) -> HelmHeroCard.Content.Tile {
+        let page = page(of: clause.target)
+        let tint = clause.target.tint
+        return .init(label: page.map(pageName) ?? "Note", text: clause.text,
+                     tint: tint == .neutral ? nil : tint, isLink: page != nil)
     }
 }
 

@@ -351,7 +351,26 @@ enum MorningBriefingSelfTest {
         check(isFailure(MorningBriefingAI.parse("not json at all")), "non-JSON parsed as success", &ok)
         check(isFailure(MorningBriefingAI.parse(#"{"summary":"wrong schema"}"#)), "a reply with no clauses key parsed as success", &ok)
         check(isFailure(MorningBriefingAI.parse(#"{"clauses":[]}"#)), "an empty clause array parsed as success", &ok)
-        print("  OK - fences, prose, unknown links, colour, blanks, caps, malformed")
+
+        // The headline (Br-3/H-b): kept when short, its full stop dropped,
+        // and optional - a reply without one, or with one too long to be a
+        // headline, still parses and leaves the hero its first clause.
+        func headline(_ json: String) -> String?? {
+            if case .success(let reply) = MorningBriefingAI.parseReply(json) { return .some(reply.headline) }
+            return .none
+        }
+        let clause = #""clauses":[{"text":"Two PRs are ready.","link":"review"}]"#
+        check(headline("{\"headline\":\" Two PRs are ready to merge. \",\(clause)}") == .some("Two PRs are ready to merge"),
+              "a short headline was not kept trimmed and without its full stop: \(String(describing: headline("{\"headline\":\" Two PRs are ready to merge. \",\(clause)}")))", &ok)
+        check(headline("{\(clause)}") == .some(nil), "a reply with no headline did not parse to a nil headline", &ok)
+        check(headline("{\"headline\":\"   \",\(clause)}") == .some(nil), "a blank headline was kept", &ok)
+        let tooLong = String(repeating: "y", count: MorningBriefingAI.maxHeadlineLength + 1)
+        check(headline("{\"headline\":\"\(tooLong)\",\(clause)}") == .some(nil),
+              "a headline over \(MorningBriefingAI.maxHeadlineLength) characters was kept", &ok)
+        check(headline("{\"headline\":42,\(clause)}") == .some(nil), "a non-string headline was kept", &ok)
+        check(MorningBriefingAI.prompt(inputs: BriefingInputs()).contains(#""headline""#),
+              "the prompt does not ask for a headline", &ok)
+        print("  OK - fences, prose, unknown links, colour, blanks, caps, malformed, headline")
     }
 
     // MARK: 7 - the once-per-day record
@@ -381,7 +400,19 @@ enum MorningBriefingSelfTest {
         }
         check(back.clauses == record.clauses, "clauses changed across a round trip", &ok)
         check(back.day == record.day, "the day stamp changed across a round trip", &ok)
-        print("  OK - stable key, app-resolved task id, JSON round trip")
+
+        // The headline travels with the record, and a record an earlier
+        // build wrote (no `headline` key at all) still decodes (GL-01).
+        let headed = MorningBriefing.record(inputs: inputs, clauses: record.clauses,
+                                            headline: "Two PRs are ready", isDegraded: false, degradedReason: nil)
+        let headedBack = (try? JSONEncoder().encode(headed))
+            .flatMap { try? JSONDecoder().decode(MorningBriefingRecord.self, from: $0) }
+        check(headedBack?.headline == "Two PRs are ready", "the headline did not survive a round trip", &ok)
+        let legacy = #"{"isDegraded":false,"clauses":[{"text":"20 fleet tasks finished today.","target":"fleet"}],"generatedAt":817024561.6,"dismissed":false,"sources":["the fleet snapshot"],"day":"2026-11-22"}"#
+        let legacyBack = try? JSONDecoder().decode(MorningBriefingRecord.self, from: Data(legacy.utf8))
+        check(legacyBack != nil && legacyBack?.headline == nil,
+              "a record written before the headline existed no longer decodes", &ok)
+        print("  OK - stable key, app-resolved task id, JSON round trip, headline")
     }
 
     // MARK: 8 - the Shift half, against a real store
@@ -677,7 +708,7 @@ enum MorningBriefingSelfTest {
 
     private static func generateSync(inputs: BriefingInputs) -> Result<[BriefingClause], MorningBriefingAIError>? {
         var outcome: Result<[BriefingClause], MorningBriefingAIError>?
-        MorningBriefingAI.generate(inputs: inputs) { outcome = $0 }
+        MorningBriefingAI.generate(inputs: inputs) { outcome = $0.map(\.clauses) }
         // See `DictationCleanupSelfTest.runRewriteSync`'s note: this runs on
         // the main thread before `app.run()`, so a semaphore would deadlock on
         // the very block it is waiting for. Pump the run loop instead.

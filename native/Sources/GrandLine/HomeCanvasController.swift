@@ -1041,6 +1041,8 @@ final class HomeCanvasController: NSViewController {
         let crewShown = !hiddenModules.contains(.crew)
         let healthShown = !hiddenModules.contains(.health)
         let fleetAnswer = crewShown ? overviewAnswer() : nil
+        let fleetNeedsCaptain = HomeBriefingHero.offersNeedsYou(crewShown: crewShown,
+                                                                tasks: fleetSnapshot?.tasks ?? [])
         let facts = HomeGreeting.Facts(
             dueToday: hiddenModules.contains(.tasks) ? nil : counts?.due,
             overdue: counts?.overdue,
@@ -1054,7 +1056,7 @@ final class HomeCanvasController: NSViewController {
         greetingHeader.setAccessibilityRole(.group)
         greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
 
-        if briefingIsHero { renderBriefingHero(fleetNeedsYou: facts.fleetNeedsYou != nil, healthShown: healthShown) }
+        if briefingIsHero { renderBriefingHero(fleetNeedsYou: fleetNeedsCaptain, healthShown: healthShown) }
     }
 
     private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool) {
@@ -1068,14 +1070,26 @@ final class HomeCanvasController: NSViewController {
             if record.isDegraded { kicker += " \u{00B7} offline" }
         }
         // The feasibility audit's ring: the services figure Home's Health
-        // card already draws, at the hero's 86pt. No ring when the profile
-        // hides Health, and none before anything has reported - an empty
-        // ring would read as zero healthy (GL-14).
+        // card already draws, as the last tile. None when the profile hides
+        // Health, and none before anything has reported - an empty ring
+        // would read as zero healthy (GL-14).
         var ring: HelmHeroCard.Content.Ring?
         if healthShown, healthSummary.total > 0 {
-            ring = .init(value: healthSummary.healthy, total: healthSummary.total, caption: "services healthy")
+            ring = .init(value: healthSummary.healthy, total: healthSummary.total,
+                         label: PlaceName.short(.health), caption: "services healthy", isLink: true)
         }
-        briefingHero.configure(.init(kicker: kicker, title: words.title, body: words.body, ring: ring))
+        var tiles = words.facts.map { HomeBriefingHero.tile($0, pageName: PlaceName.short) }
+        if let note = words.note { tiles.append(.init(label: nil, text: note, tint: nil, isLink: false)) }
+        briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring))
+        let facts = words.facts
+        briefingHero.onActivateTile = { [weak self] index in
+            guard let self, !self.isCustomizing, facts.indices.contains(index) else { return }
+            self.follow(facts[index].target)
+        }
+        briefingHero.onActivateRing = { [weak self] in
+            guard let self, !self.isCustomizing else { return }
+            self.heroOpenHealth()
+        }
 
         // The prototype's two actions, each only when it has somewhere real
         // to go: the crew's decisions when one is waiting, Health when a
@@ -2754,32 +2768,17 @@ final class HomeCanvasController: NSViewController {
         return card
     }
 
-    /// The briefing's clause links.
-    ///
-    /// The same targets `FleetController.activateBriefingClause` resolves, with
-    /// two honest differences the canvas cannot avoid: `.fleet` scrolls
-    /// Overview's own "In flight" section into view there, and here it simply
-    /// opens Overview; `.quota` anchors its popover on Overview's briefing
-    /// card, and here the nearest true equivalent is the Console page, where
-    /// the Claude-usage control actually lives. Neither invents a
-    /// destination - both open the page that owns the thing the clause is
-    /// about.
+    /// The briefing's clause links, from the briefing card and from the
+    /// hero's tiles. `HomeBriefingHero.page(of:)` is where each target goes
+    /// (and why two of them differ from Overview's own briefing card).
     private func follow(_ target: BriefingTarget) {
-        switch target {
-        case .none: return
-        case .fleet: onOpenDestination?(.overview)
-        case .review: onOpenDestination?(.review)
-        case .tasks:
-            if let id = AppSettings.shared.morningBriefingRecord?.shiftTaskID {
-                onOpenShiftTask?(id)
-            } else {
-                onOpenDestination?(.shift)
-            }
-        case .setup: onOpenDestination?(.bootstrap)
-        case .updates: onOpenDestination?(.updates)
-        case .githubSync: onOpenDestination?(.githubSync)
-        case .quota: onOpenDestination?(.console)
+        // The one Shift task a `.tasks` clause is about, when the app itself
+        // resolved there is exactly one; otherwise the clause's page.
+        if target == .tasks, let id = AppSettings.shared.morningBriefingRecord?.shiftTaskID {
+            onOpenShiftTask?(id)
+            return
         }
+        if let page = HomeBriefingHero.page(of: target) { onOpenDestination?(page) }
     }
 
     // MARK: Layout

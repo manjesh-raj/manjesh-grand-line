@@ -1262,8 +1262,8 @@ final class FleetController: NSViewController {
     /// is built first and is what ships whenever the AI half cannot answer.
     private func finishBriefing(inputs: BriefingInputs) {
         let localClauses = MorningBriefingLocal.clauses(from: inputs)
-        func commit(_ clauses: [BriefingClause], degradedReason: String?) {
-            let record = MorningBriefing.record(inputs: inputs, clauses: clauses,
+        func commit(_ clauses: [BriefingClause], headline: String? = nil, degradedReason: String?) {
+            let record = MorningBriefing.record(inputs: inputs, clauses: clauses, headline: headline,
                                                 isDegraded: degradedReason != nil,
                                                 degradedReason: degradedReason)
             AppSettings.shared.morningBriefingRecord = record
@@ -1278,8 +1278,8 @@ final class FleetController: NSViewController {
         }
         MorningBriefingAI.generate(inputs: inputs) { result in
             switch result {
-            case .success(let clauses):
-                commit(clauses, degradedReason: nil)
+            case .success(let reply):
+                commit(reply.clauses, headline: reply.headline, degradedReason: nil)
             case .failure(let error):
                 // Never fatal: the deterministic clauses are already built.
                 AppLog.ai.info("morning briefing fell back to the local summary: \(error.message, privacy: .public)")
