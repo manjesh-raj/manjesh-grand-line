@@ -35,7 +35,9 @@
 // is said by the headline, by the header's status pill, by the ring's arc in
 // the state's colour, and on the Claude card by the report's own bars and
 // figures, which sit on the card's surface and keep their severity colours. A
-// stale reading dims the colour toward grey (GL-14).
+// card with no real reading to show dims the colour toward grey (GL-14); a
+// reading that is only old, such as Fleet's stale watcher, keeps its colour
+// and says so in its pill and headline.
 
 import AppKit
 

@@ -5001,6 +5001,9 @@ enum HelmResponsiveGrid {
     /// The identifier on the height constraint `spanningRows` gives an item
     /// with a `fixedHeight`, so a caller can move it without a rebuild.
     static let fixedHeightIdentifier = "HelmResponsiveGrid.fixedHeight"
+    /// The floor that holds a fixed-height item at its row's tied height.
+    /// It lives on the row, not the item, so a moved item leaves it behind.
+    static let fixedHeightFloorIdentifier = "HelmResponsiveGrid.fixedHeightFloor"
     /// The identifier on the constraints `spanningRows` puts on an item
     /// itself - its width and its height floor - so a caller that moves the
     /// item into a new row can take them off first.
@@ -5033,9 +5036,10 @@ enum HelmResponsiveGrid {
     /// `exemptsHeightTie` is the per-item escape hatch from `equalHeights`,
     /// and it is deliberately per *item* rather than per grid. There is no
     /// standard card size here: a card whose design genuinely needs more room
-    /// than its neighbours (the home canvas's Claude usage report is the one
-    /// today, via `DaylightModule.sizesToOwnContent`) should render at its own
-    /// height without dragging every card beside it up to match.
+    /// than its neighbours should render at its own height without dragging
+    /// every card beside it up to match. Home's Claude card used it until
+    /// `fm/grandline-widget-polish`; today Home's own caller is `fixedHeight`,
+    /// which rides the same path.
     ///
     /// Precisely what it changes, because the asymmetry is deliberate: an
     /// exempt card stops being **the reference its neighbours tie to**, and
@@ -5052,7 +5056,8 @@ enum HelmResponsiveGrid {
     /// row (`HomeCardGrid`), and the caller keeps each span wide enough to
     /// read. `fixedHeight` gives an item a height of its own: it is exempt
     /// from the tie exactly as `exemptsHeightTie` describes, and it prefers
-    /// that height over its natural one without ever going below it.
+    /// that height over its natural one without ever going below it - or
+    /// below the height its row's tied cards settle on.
     /// `packedRows` replaces the greedy packing with rows the caller has
     /// already packed - Home's arranged cards are reflowed a row at a time
     /// (`HomeCardGrid.rows`), so where a row breaks is theirs to say.
@@ -5127,6 +5132,9 @@ enum HelmResponsiveGrid {
             // carefully the widths inside it were priced at 499.
             stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
             stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            // The height the row's tied cards settle on, when the row has
+            // both tied and exempt cards. A fixed height is floored at it.
+            var tiedHeight: NSLayoutDimension?
             if equalHeights {
                 if exemptViews.isEmpty {
                     // No exemption in this row: the row's own height is the
@@ -5201,6 +5209,7 @@ enum HelmResponsiveGrid {
                         collapse.priority = HelmDaylightPriority.columnHug
                         collapse.isActive = true
                         tieHeights(itemViews, to: guide.heightAnchor)
+                        tiedHeight = guide.heightAnchor
                     }
                 }
             }
@@ -5208,15 +5217,37 @@ enum HelmResponsiveGrid {
             // measured the item's natural height: measured with it, the floor
             // is the fixed height itself, and the item could never be made
             // shorter again without a rebuild. Over the stack's own 250
-            // stretch and the 499 tie, and under that required floor - so the
-            // item is its fixed height when its content fits and its
+            // stretch, under the 499 tie, and under that required floor - so
+            // the item is its fixed height when its content fits and its
             // content's when it does not. Safe as a height for the reason the
             // floor's own comment gives.
+            //
+            // Under the tie, not over it. It sat at 750 until the floor below
+            // joined it, and through that floor a short fixed height then
+            // pulled the tied cards' guide down at 750 - level with their own
+            // compression resistance, so the solver squashed them. Measured
+            // on Home: Fleet and Hosts drawn at 286pt against their own 317pt
+            // beside a Claude card saved at the 124pt minimum.
+            //
+            // A fixed height is also a floor, never a ceiling, against the
+            // row (`fm/grandline-widget-polish`): the item is never shorter
+            // than the cards tied beside it. A height dragged taller still
+            // holds; one dragged, or left, below its neighbours draws at
+            // their height instead of sticking out short. Required, for the
+            // floor's reason above, and on the guide rather than the row, so
+            // a taller fixed item cannot pull its neighbours up after it.
+            // A row with no tied card has no row height to floor to, and
+            // each fixed item keeps its own.
             for (view, height) in fixedViews {
                 let preferred = view.heightAnchor.constraint(equalToConstant: height)
-                preferred.priority = .defaultHigh
+                preferred.priority = NSLayoutConstraint.Priority(HelmDaylightPriority.contentTie.rawValue - 1)
                 preferred.identifier = fixedHeightIdentifier
                 preferred.isActive = true
+                if let tiedHeight {
+                    let floor = view.heightAnchor.constraint(greaterThanOrEqualTo: tiedHeight)
+                    floor.identifier = fixedHeightFloorIdentifier
+                    floor.isActive = true
+                }
             }
             return stack
         }

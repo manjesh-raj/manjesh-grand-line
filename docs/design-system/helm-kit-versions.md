@@ -36,6 +36,18 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 10.1.0 - Home card polish and the Crew terminal prompt
+
+Three fixes the captain asked for together (`fm/grandline-widget-polish`).
+It is a minor release: a fixed card height gained a floor, and no call site moved.
+
+- `HelmResponsiveGrid` 1.0.0 → 1.1.0 (minor): a `fixedHeight` item is never shorter than the cards tied beside it in its row. The saved height is a floor, not a ceiling: a card dragged taller still holds its height, and one dragged (or left) below its neighbours draws at their height. The floor sits on the tied cards' guide, so a taller fixed card does not pull its neighbours up. A row with no tied card has nothing to floor to.
+
+- `Home Fleet card` 1.1.0 → 1.1.1 (patch): a stale watcher no longer dims the card to grey. Its counts are real, and the amber "Watcher stale" pill, the headline and the body already say they may be behind, so the card keeps the theme accent (or the captain's colour) like Claude and Hosts beside it. A fleet that was never read still dims (GL-14).
+- `Home Claude card` 1.1.0 → 1.1.1 (patch): the card joins its row's height tie again, so by default it is as tall as Fleet and Hosts. It left the tie when its dense report was the tallest card on the row; as the split hero it is the shortest. The captain's own card was shorter for a second reason: a saved 264pt height beside 276pt neighbours, which `HelmResponsiveGrid` 1.1.0's floor now draws at the row's height. A failed refresh over a real reading keeps the card's colour, by the same rule as Fleet.
+
+The Crew page's message input is now `HelmPromptWell`, the terminal-prompt composer Compose and SRE Lead use: a "❯" prompt, monospaced text in the terminal scheme's colours, a block cursor, and the send button on the prompt line. Return still sends and Shift-Return still adds a line.
+
 ## 10.0.0 - The Morning briefing hero as sentence tiles
 
 The captain's pick from the briefing card board (`data/grandline-briefing-card/board/`): Br-3 with the H-b headline.

@@ -878,13 +878,16 @@ enum DaylightModuleSelfTest {
         }
     }
 
-    /// One card may leave the row's height tie, and only that card.
+    /// A card may leave the row's height tie, and only that card.
     ///
     /// **The captain's report this exists for.** #478 made the Claude usage
     /// card taller. `equalHeights` then pulled Morning briefing and Fleet up
     /// to match it, so two cards whose design had not changed rendered the
-    /// same content in a taller box. There is no standard card size here:
-    /// `DaylightModule.sizesToOwnContent` lets exactly one module opt out.
+    /// same content in a taller box. The Claude card has since become the
+    /// split hero and joined its row's tie again (`fm/grandline-widget-polish`),
+    /// but the grid's `exemptsHeightTie` is still the path every card with a
+    /// height the captain dragged takes (`fixedHeight`), so it is still
+    /// asserted here.
     ///
     /// Three properties, and the second is the one that actually caught the
     /// first attempt at this fix:
@@ -1039,11 +1042,6 @@ enum DaylightModuleSelfTest {
                  + "\(tiedAnatomy.bodyContentHeight)pt, given \(tiedAnatomy.bodyAreaHeight)pt", &ok)
         }
 
-        // And the one module that actually carries the exemption today.
-        let exempt = DaylightModule.allCases.filter(\.sizesToOwnContent)
-        if exempt != [.claudeStatus] {
-            fail("exactly one module should size to its own content (.claudeStatus), got \(exempt)", &ok)
-        }
 
         if ok {
             print(String(format: "  OK - exempt card %.0fpt, its neighbour back at its own %.0fpt "

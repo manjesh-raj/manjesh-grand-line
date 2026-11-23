@@ -49,6 +49,7 @@ enum HeroCardsViewSelfTest {
             checkHideFromTheMenuAndBringItBack,
             checkTheHostsCardListsItsHosts,
             checkTheHostsPillsRunTheirVerbs,
+            checkTheClaudeCardIsAsTallAsItsRow,
             writeRenders,
         ]
         for check in checks {
@@ -148,6 +149,7 @@ enum HeroCardsViewSelfTest {
     /// The real canvas, Home's arranged cards set to the three hero cards at
     /// `mode`, fed `state`, in a probe window.
     static func mountCanvas(_ mode: HomeCardSizeMode, state: State, theme: HelmTheme,
+                            sizes: [DaylightModule: HomeCardLayout.CardSize]? = nil,
                             body: (HomeCanvasController, NSWindow) -> Void) {
         ThemeManager.shared.setTheme(theme)
         let canvas = HomeCanvasController(sources: .init(
@@ -165,7 +167,8 @@ enum HeroCardsViewSelfTest {
                                             startedAt: Date().addingTimeInterval(-42 * 60), state: .connected) : nil
         }
         canvas.cardLayout = HomeCardLayout(shown: [.claudeStatus, .fleet, .hosts],
-                                           sizes: [.claudeStatus: mode.size, .fleet: mode.size, .hosts: mode.size])
+                                           sizes: sizes ?? [.claudeStatus: mode.size, .fleet: mode.size,
+                                                            .hosts: mode.size])
         canvas.applyQuota(.success(quota(state)))
         if state == .stale { canvas.applyQuota(.failure("quota-axi timed out")) }
         canvas.applyFleet(snapshot: fleet(state), mergedPRs: [], prFetchFailure: nil)
@@ -277,8 +280,12 @@ enum HeroCardsViewSelfTest {
                                 check(!known.isEmpty && known.allSatisfy { isPainted($0.element, ink) },
                                       "\(tag): the KPI strip's figures are not in the hero's ink", &ok)
                             }
-                            // Stale dims the colour (GL-14); every other state
-                            // keeps the captain's colour. The Hosts card's
+                            // Every state here keeps the captain's colour,
+                            // stale included: these stale states still show a
+                            // real reading (a failed refresh over the last
+                            // quota, a stopped watcher over real counts), so
+                            // only a card with nothing to show dims (GL-14,
+                            // `HeroCardsSelfTest`). The Hosts card's
                             // stale reading is its hosts file, which these
                             // states leave readable, and its second lines
                             // take the quiet-ink palette.
@@ -295,8 +302,8 @@ enum HeroCardsViewSelfTest {
                                 }
                             } else {
                                 let fresh = HelmModuleCard.HeroTone(colour: .themeAccent).palette(in: theme)
-                                check((palette == fresh) == (state != .stale),
-                                      "\(tag): the colour is \(state == .stale ? "not dimmed" : "dimmed")", &ok)
+                                check(palette == fresh,
+                                      "\(tag): the colour is not the theme accent - a \(state) reading dimmed it", &ok)
                             }
                         }
                         // A split card's report sits on the card's surface and
@@ -615,6 +622,84 @@ enum HeroCardsViewSelfTest {
                       "a click on a Connect pill would also open the card", &ok)
             } else {
                 fail("fixture: the card has no click recognizer to ask", &ok)
+            }
+        }
+    }
+
+    /// `fm/grandline-widget-polish`: in the captain's own row - Claude at
+    /// half the row, Fleet and Hosts a quarter each - the Claude card is as
+    /// tall as the two beside it, in every state and theme. Three heights:
+    /// none saved (the default), a saved one below the row (the captain's
+    /// real 264pt beside 276pt neighbours, which drew short), and a saved one
+    /// above it, which must still hold without pulling the neighbours up.
+    private static func checkTheClaudeCardIsAsTallAsItsRow(_ ok: inout Bool) {
+        func sizes(_ height: CGFloat?) -> [DaylightModule: HomeCardLayout.CardSize] {
+            [.claudeStatus: HomeCardLayout.CardSize(columns: HomeCardSizeMode.standard.columns, height: height),
+             .fleet: HomeCardSizeMode.narrow.size, .hosts: HomeCardSizeMode.narrow.size]
+        }
+        /// The three cards' frames in window coordinates, or nil when they
+        /// are not one laid-out row ("the same height" would then be about
+        /// three unrelated rows).
+        func row(_ canvas: HomeCanvasController, _ tag: String) -> [NSRect]? {
+            guard let claude = canvas.cardForTests(.claudeStatus), let fleet = canvas.cardForTests(.fleet),
+                  let hosts = canvas.cardForTests(.hosts) else {
+                fail("\(tag): the row has no Claude, Fleet or Hosts card", &ok)
+                return nil
+            }
+            let frames = [claude, fleet, hosts].map { $0.convert($0.bounds, to: nil) }
+            guard frames.allSatisfy({ abs($0.maxY - frames[0].maxY) < 1 && $0.height > 0 }) else {
+                fail("\(tag): the three cards are not on one laid-out row (\(frames))", &ok)
+                return nil
+            }
+            return frames
+        }
+
+        for theme in [daylight, dusk] {
+            for state in [State.normal, .stale] {
+                var neighbour: CGFloat = 0
+                mountCanvas(.standard, state: state, theme: theme, sizes: sizes(nil)) { canvas, _ in
+                    let tag = "\(theme.id) \(state) default"
+                    guard let frames = row(canvas, tag) else { return }
+                    neighbour = frames[1].height
+                    check(abs(frames[0].height - frames[1].height) < 1 && abs(frames[0].height - frames[2].height) < 1,
+                          "\(tag): Claude is \(frames[0].height)pt tall beside Fleet \(frames[1].height)pt "
+                          + "and Hosts \(frames[2].height)pt", &ok)
+                }
+                // A saved height over the row still holds, and the neighbours
+                // stay at their own height - which is also how the row's own
+                // height, without the Claude card in it, is read.
+                let tall = HomeCardGrid.storedHeight(neighbour + 80)
+                var own: CGFloat = 0
+                mountCanvas(.standard, state: state, theme: theme, sizes: sizes(tall)) { canvas, _ in
+                    let tag = "\(theme.id) \(state) saved \(tall)pt"
+                    guard let frames = row(canvas, tag) else { return }
+                    own = frames[1].height
+                    check(abs(frames[0].height - tall) < 1,
+                          "\(tag): a taller saved height drew at \(frames[0].height)pt, not \(tall)pt", &ok)
+                    check(abs(frames[1].height - frames[2].height) < 1 && frames[1].height <= neighbour + 0.5,
+                          "\(tag): the taller Claude card pulled Fleet (\(frames[1].height)pt) and Hosts "
+                          + "(\(frames[2].height)pt) up past the \(neighbour)pt row", &ok)
+                }
+                // A saved height under the row draws at the row's height
+                // rather than sticking out short: the captain's real case, a
+                // 264pt Claude card beside 276pt neighbours. The lowest height
+                // a drag can store, so the card's own content decides how
+                // short it would have been.
+                let short = HomeCardGrid.heightRange.lowerBound
+                mountCanvas(.standard, state: state, theme: theme, sizes: sizes(short)) { canvas, _ in
+                    let tag = "\(theme.id) \(state) saved \(short)pt"
+                    guard let frames = row(canvas, tag), let claude = canvas.cardForTests(.claudeStatus) else { return }
+                    // The fixture's own power: without the floor the card
+                    // would draw at its content's height, which has to be
+                    // under the neighbours' or this checks nothing.
+                    let content = claude.fittingSize.height
+                    check(content < own - 1,
+                          "\(tag): fixture - the Claude card's content (\(content)pt) is not under its "
+                          + "neighbours' \(own)pt, so a short saved height cannot draw short here", &ok)
+                    check(abs(frames[0].height - frames[1].height) < 1 && abs(frames[1].height - own) < 1,
+                          "\(tag): Claude is \(frames[0].height)pt beside Fleet \(frames[1].height)pt "
+                          + "(own \(own)pt, all \(frames.map(\.height)), content \(content)) - a saved height under the row still draws short", &ok)
+                }
             }
         }
     }
