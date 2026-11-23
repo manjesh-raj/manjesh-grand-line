@@ -48,6 +48,15 @@ It is a major release because `HelmHeroCard.Content` lost its `body`, which the 
 - `HelmHeroTileGrid` none → 1.0.0 (new): lays the hero's tiles out in rows that each fill the width, every tile in a row as tall as the tallest, at a height derived from the width the card gives it.
 - `Home (page)` 2.0.0 → 2.1.0 (minor): the Morning briefing hero leads with the AI's own short headline (a new optional `headline` on the stored briefing, with the first sentence as the fallback) over one tile per sentence, each opening its page. "Open Needs you" shows only when a crew task is waiting on a decision or blocked, not whenever the fleet verdict is amber (a failed PR scan made it amber with nothing needing the captain).
 
+## 9.4.0 - Console fixes: a terminal-prompt composer and a one-line band
+
+The captain's picks from the Console fixes board (`data/grandline-console-fixes/board/`): C1 for both composers and B2 for the band.
+It is a minor release: one new component, and the Console page's own changes.
+
+- `HelmPromptWell` none → 1.0.0 (new): C1. A text input drawn as a terminal prompt, in the terminal scheme's colours: an optional "~" hint line, a "❯" prompt, typed text in the scheme's green, and a block cursor it draws itself. The cursor shows the moment the field has focus, is hollow in a window that is not key, and stops blinking under Reduce Motion. The placeholder starts after the cursor. Focus lights the border and glow every other well uses. A caller adds a footer (Compose) or a trailing control (SRE Lead's send button).
+- `HelmPromptTextView` none → 1.0.0 (new): the well's text view. It reports changes to its text and its selection, including a caller setting `string`.
+- `Console (page)` 1.1.0 → 1.2.0 (minor): the Compose popover and SRE Lead's composer take `HelmPromptWell`, so neither hides its caret under its placeholder any more. The session band is one 40pt line (B2): where, and the live state in plain words, with the chips; it no longer shows the tab count or the shell and folder, and it no longer polls. The page gives up the empty header line, so the band sits 8pt under the window toolbar and the tab strip directly under the band. A tab added without being selected no longer draws its terminal over the selected one, which is what left the tab dot on Herdr while the captain typed in Shell.
+
 ## 9.3.0 - Compose, Claude usage and SRE Lead in the hero language
 
 The picks from the console popovers board (`data/grand-line-console-popovers-sre-mockups/`): Comp-1, Use-1 and Sre-2.

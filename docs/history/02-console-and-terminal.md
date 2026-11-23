@@ -176,3 +176,46 @@ Every damaged line was missing exactly columns 54..<80, which is what pinned it 
   Upstream fixed that one by v1.99.3, in the same shape.
 - **Other copy paths, checked and not affected:** herdr's own drag selection extracts through libghostty and writes the clipboard itself, an OSC 52 write from a program decodes straight to the pasteboard (and a dropped base64 chunk could not produce a 26-byte gap), and the AppKit text views and the WKWebView pages copy from their own text.
 - **Not done:** a height shrink still gives up rows below the cursor even when a full-screen program has text there, which is upstream behaviour for a cursor parked above real content and a separate shape from this one.
+
+## Console fixes: the tab dot, the dead space, the caret, C1 and B2 (`fm/grandline-console-fixes`)
+
+The captain reported four Console bugs and two design concerns, and picked C1 and B2 from the board at `data/grandline-console-fixes/board/`.
+
+### The tab dot stayed on Herdr while the captain typed in Shell
+
+Reproduced with a failing check before the fix (`SessionRestoreSelfTest.test_consoleTabs`).
+`addTab(select: false)` mounted the new tab's pane tree visible, on top of every tab added before it.
+Session restore reuses the auto-opened Shell as the first restored tab and adds the rest unselected, so after a launch with "Herdr" and "Shell" the strip lit Herdr while the page showed, and took typing for, Shell.
+Measured: after restoring four tabs, all four pane trees were visible.
+`addTab` now runs `updateTabViewVisibility` on the new tab at once.
+The chip styling was never wrong; the page was showing the wrong terminal.
+
+### The caret did not show until the first keystroke
+
+Both composers put their placeholder label inside the text view, at the text's own origin, which is exactly where AppKit draws the insertion point.
+A subview draws over its superview, so the placeholder's first glyph covered the caret until typing hid the placeholder.
+The first theory, a text view with no height, was measured and ruled out: the focused, empty text views were 64pt and 34pt tall.
+AppKit shows no caret in an off-screen window of a process that is not the active app, so the live caret itself could not be rendered here.
+`HelmPromptWell` draws its own block cursor as the text view's topmost subview, turns AppKit's caret off, and starts the placeholder after the cursor while it shows.
+`ConsoleFixesWindowChecks` asserts the cursor shows on focus inside the visible text, is topmost, is clear of the placeholder, moves on a keystroke and hides when focus leaves.
+
+### The dead space above the band (item 1)
+
+S03 keeps a 32pt header slot on every page, and Console never says anything on that line, so the band sat 44pt under the toolbar.
+A page can now adopt `WorkspaceHeaderLineCollapsing` to give up an empty slot, and only Console does.
+The band sits 8pt under the toolbar (`ConsoleController.bandTop`), and the tab strip starts directly under the band, whose own row already centres the chips 7pt below it.
+S03's every-page check in `MainSplitShellPanesSelfTest` names Console as its one exception.
+
+### C1: a terminal-prompt composer, for Compose and SRE Lead
+
+`HelmPromptWell` (Helm 9.4.0) paints the terminal scheme: its background as the fill, a "❯" prompt in the scheme's magenta, typed text in its green, and a block cursor in its cursor colour, each made legible over the fill.
+Compose adds a "~ describe it in plain words" hint line and a footer with the target tab, a ⌘↩ key cap and Generate; the kicker, the shortcut sentence and the character count went.
+SRE Lead's composer grows from one line to five with its send button as the trailing control, and keeps Return to send and Shift-Return for a new line.
+The cursor is hollow in a window that is not key and stops blinking under Reduce Motion.
+
+### B2: the band is one line
+
+The band is 40pt and says where and the live state in plain words: "This Mac · no ssh sessions", or "prod-db · Connected · ops@host · key ops".
+It no longer shows the tab count (the strip under it says that) or the shell and folder (the prompt says those).
+Without the folder line, the two-second polling timer and the `proc_pidinfo` reads went too; the session registry already refreshes every band when a session changes.
+The band's first update also never built its chips when the content's host fields matched the initial value, which hid the Connect chip until something changed; an empty chip row now always rebuilds.

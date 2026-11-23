@@ -45,8 +45,8 @@ enum ConnectionFormsWindowChecks {
         let band = console.sessionBand
         check(!band.isHiddenOrHasHiddenAncestor && band.frame.height == ConsoleSessionBand.height,
               "Console's band is not showing (\(band.frame))", &ok)
-        check(band.debugKicker == "This Mac \u{00B7} local shells", "the band's kicker reads \(band.debugKicker)", &ok)
-        check(band.debugTitle.hasSuffix("no live sessions"), "with no sessions the band reads \(band.debugTitle)", &ok)
+        check(band.debugLine == "This Mac  \u{00B7}  no ssh sessions", "with no sessions the band reads \(band.debugLine)", &ok)
+        check(band.debugChipTitles == ["Connect a host"], "with no sessions the band's chips are \(band.debugChipTitles)", &ok)
         // The band sits above the tabs, both inside the page.
         let bandFrame = band.convert(band.bounds, to: console.view)
         let tabFrame = console.tabBar.convert(console.tabBar.bounds, to: console.view)
@@ -60,7 +60,7 @@ enum ConnectionFormsWindowChecks {
         shell.workspace.hosts.sessions.register(hostID: host, label: "DEV Bastion", accentHex: "6cd7e3", state: .connected)
         settle(shell)
         check(band.debugChipHostIDs() == [host], "the band lists \(band.debugChipHostIDs()) for one session", &ok)
-        check(band.debugTitle.hasSuffix("1 live session"), "with one session the band reads \(band.debugTitle)", &ok)
+        check(band.debugLine.hasSuffix("1 ssh session"), "with one session the band reads \(band.debugLine)", &ok)
         var switched: UUID?
         var ended: UUID?
         let (wiredSwitch, wiredEnd) = (band.onSwitch, band.onEnd)

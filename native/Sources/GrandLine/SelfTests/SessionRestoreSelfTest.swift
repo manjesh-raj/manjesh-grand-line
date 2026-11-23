@@ -357,6 +357,15 @@ enum SessionRestoreSelfTest {
         // The first restored tab is the selected one.
         guard console.currentTab === console.tabs.first else { return "the first restored tab was not selected" }
 
+        // And the selected tab is the one on screen. The captain's "the dot
+        // stays on Herdr while I type in Shell": a tab restored without being
+        // selected mounted its terminal visible, on top of the selected
+        // tab's, so the strip lit one tab while the page showed another.
+        let showing = console.tabs.filter { !$0.splits.isHidden }.map(\.name)
+        guard showing == [console.tabs[0].name] else {
+            return "after restore the strip lights \(console.tabs[0].name) but the page shows \(showing)"
+        }
+
         // Restoring again is a no-op - this runs at launch, and appending to
         // an already-populated console would be a surprise, not a restore.
         console.restoreConsoleTabs([.init(name: "extra", hasUserChosenName: true)])

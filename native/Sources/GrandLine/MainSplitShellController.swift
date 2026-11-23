@@ -205,6 +205,10 @@ final class MainSplitShellController: WorkspaceShellController {
     private var inspectorEntranceSource: ObjectIdentifier?
     /// The showing page, for re-reading its live subtitle and actions.
     private weak var pageController: NSViewController?
+    /// Whether the showing page gives up an empty header line's slot.
+    private var headerLineCollapses: Bool {
+        (pageController as? WorkspaceHeaderLineCollapsing)?.collapsesEmptyHeaderLine ?? false
+    }
     private var lockOverlayIsShown = false
     private var didSettleInitialSidebarWidth = false
     private var themeToken: ThemeObservation?
@@ -1358,7 +1362,8 @@ final class MainSplitShellController: WorkspaceShellController {
         // unless the profile hides the module it opens.
         let hidden = AppSettings.shared.hiddenModules
         toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
-        contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: pageSubtitle)
+        contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: pageSubtitle,
+                              collapsesWhenEmpty: headerLineCollapses)
         // The lit row follows the showing tab too: Tasks' Calendar view is
         // the Calendar row's (`ModuleTable.sidebarModule(for:pageTab:)`).
         sidebar.select(workspace.navigator.currentDestinationKind, pageTab: currentTab?.name)
@@ -1567,7 +1572,8 @@ final class MainSplitShellController: WorkspaceShellController {
         if shownCalendar != nil { refreshModuleChrome() }
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
-        contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle)
+        contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle,
+                              collapsesWhenEmpty: headerLineCollapses)
         // S27: the crew panel's context is the line just written.
         if inspectorSource == nil, crewPanelLoaded { crewPanel.setContext(currentCrewContext) }
     }
@@ -1678,7 +1684,9 @@ final class MainSplitShellController: WorkspaceShellController {
 /// layout at its own height, so every page's body starts at the same line
 /// under the toolbar and its first content `pageContentInset` below that.
 /// Console's session strip is that module's first content, so it sits at the
-/// same line, and Console's page starts under it. The layout drew a status strip under the body until the
+/// same line, and Console's page starts under it. Console is the one page
+/// that gives up an empty header line (`WorkspaceHeaderLineCollapsing`), so its
+/// band sits just under the toolbar. The layout drew a status strip under the body until the
 /// captain had it removed from every module; its readouts live in the
 /// sidebar's badges, Console's session strip, Home's Claude card, the Tasks
 /// sync pill and the toolbar's focus chip.
@@ -1746,8 +1754,9 @@ final class WorkspaceContentPaneController: NSViewController {
     /// with no header line (Connections, Console): S03 keeps the line's slot
     /// there too, empty, so its page starts at the same height as every
     /// other.
-    func setHeader(title: String?, subtitle: String) {
+    func setHeader(title: String?, subtitle: String, collapsesWhenEmpty: Bool = false) {
         _ = view
+        header.collapsesWhenEmpty = collapsesWhenEmpty
         header.configure(title: title, subtitle: subtitle)
     }
 

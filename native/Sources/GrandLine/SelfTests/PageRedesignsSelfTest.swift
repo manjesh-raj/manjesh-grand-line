@@ -65,7 +65,7 @@ enum PageRedesignsSelfTest {
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
                               checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkDevOpsHub,
-                              ConnectionFormsWindowChecks.checkForms] {
+                              ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
                     var ok = true
                     check(shell, window, scratch, &ok)
                     allOK = allOK && ok
