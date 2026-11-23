@@ -1007,3 +1007,15 @@ Confirmed to catch a regression:
 |---|---|
 | The tray's gap 14 to 12 | The month, week and folded seam checks, and three weekday-alignment checks |
 | This week counted from after the week's first instant | "this week should count three open tasks and a follow-up, 3" |
+
+## The filters move onto the month head (`fm/grandline-page-redesign-options`, Helm 10.2.0)
+
+The captain called the "16 open tasks · none on the calendar yet · 16 unscheduled" caption unnecessary, and asked for the filter row (the same row as Tasks) to be redesigned.
+From the five-screen redesign board they picked Cf-4: two menus in the hero.
+
+- `ShiftCalendarHeroHead` draws three glass menus on its top edge: "Showing All tasks · 16", "in All projects" and "Colour by Priority". The first two are drawn solid while they narrow what the calendar shows.
+- They open the same scope, project and colour menus Tasks' band uses (`ShiftController.scopeMenu`, `projectMenu`, `colourMenu`), so a filter set on Board is the filter on the calendar and back.
+- The caption line is gone with Tasks' (the same controller). Its one fact no figure says - how many of the period's dates are a repeat rule's, not yet tasks - joins the head's kicker.
+- With no row above it, the calendar section takes the page's full height (`applyCalendarHeight`).
+
+`MainSplitShellNavigationSelfTest` sets Overdue on Board through the band, reads it back on the calendar's scope menu, and clears it from that menu.

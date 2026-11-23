@@ -42,7 +42,10 @@ enum StickyBoardMetrics {
     /// asked of the view because `cascadeOrigin` is a pure function two
     /// callers reach with no board mounted at all (`StrawHatProposalExecutor`
     /// places a crew-proposed note before this page has ever been built).
-    static let headerClearance: CGFloat = 84
+    ///
+    /// Sk-1: the header is the case tag now, a little taller than the old
+    /// one-line title, so the first row starts a little lower.
+    static let headerClearance: CGFloat = 112
 
     /// Resize bounds. The minimum is what still fits the title line, the pin,
     /// the overflow button and one line of body text without clipping; the
@@ -206,13 +209,15 @@ final class StickyBoardCanvasView: NSView {
             state = state &* 6364136223846793005 &+ 1442695040888963407
             return CGFloat((state >> 33) % 100_000) / 100_000
         }
-        return (0..<170).map { i in
+        // Sk-1: a finer grain - more specks, each about half the size - so
+        // the cork reads as a surface rather than as a pattern.
+        return (0..<300).map { i in
             Speck(x: next() * side,
                   y: next() * side,
-                  length: 1.6 + next() * 4.4,
-                  thickness: 0.9 + next() * 1.5,
+                  length: 1.0 + next() * 2.4,
+                  thickness: 0.7 + next() * 0.9,
                   angle: next() * 180,
-                  alpha: 0.16 + next() * 0.30,
+                  alpha: 0.14 + next() * 0.26,
                   isDark: i % 3 != 0)
         }
     }
@@ -1438,5 +1443,156 @@ final class StickyChecklistView: NSView {
     var debugRows: [StickyChecklistRowView] { rows }
     var debugSummaryText: String { summaryLabel.stringValue }
     var debugAddButton: NSButton { addButton }
+    #endif
+}
+
+// MARK: - Sk-1's floating pill
+
+/// New note and the colour filter, in one pill floating over the cork's foot
+/// (Sk-1 on the five-screen redesign board). The first swatch is every note;
+/// each of the six after it shows only that colour's notes, and New note then
+/// adds a note of that colour.
+///
+/// A swatch is a `HoverHighlightView` with a click, so it is a real button for
+/// VoiceOver and the keyboard (GL-16), and the pill takes no click of its own.
+final class StickyBoardFloatingBar: NSView {
+
+    static let swatchSide: CGFloat = 18
+    static let height: CGFloat = 40
+
+    var onNewNote: (() -> Void)?
+    var onPickColour: ((StickyNoteColor?) -> Void)?
+    /// The colour the board is filtered to; `nil` is every note.
+    var selected: StickyNoteColor? {
+        didSet { if selected != oldValue { restyleSwatches() } }
+    }
+
+    private lazy var newButton = HelmButton(title: "Note", variant: .primary, size: .small, symbol: "plus",
+                                            target: self, action: #selector(newTapped))
+    private let divider = NSView()
+    private let row = NSStackView()
+    private var swatches: [(colour: StickyNoteColor?, view: HoverHighlightView)] = []
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = Self.height / 2
+        layer?.borderWidth = 1
+        layer?.shadowOpacity = 0.25
+        layer?.shadowRadius = 10
+        layer?.shadowOffset = CGSize(width: 0, height: -4)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("New note and colour filter")
+        newButton.toolTip = "Add a sticky note"
+        newButton.setContentHuggingPriority(.required, for: .horizontal)
+        divider.wantsLayer = true
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        row.addArrangedSubview(newButton)
+        row.addArrangedSubview(divider)
+        for colour in [nil] + StickyNoteColor.allCases.map(Optional.some) {
+            let swatch = HoverHighlightView()
+            swatch.translatesAutoresizingMaskIntoConstraints = false
+            swatch.wantsLayer = true
+            swatch.cornerRadius = Self.swatchSide / 2
+            swatch.layer?.borderWidth = 1
+            swatch.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(swatchClicked(_:))))
+            swatch.accessibilityRoleOverride = .radioButton
+            swatch.accessibilityLabelOverride = colour.map { "\(Self.name(of: $0)) notes" } ?? "Every note"
+            swatch.toolTip = colour.map { "Show only the \(Self.name(of: $0).lowercased()) notes" } ?? "Show every note"
+            NSLayoutConstraint.activate([
+                swatch.widthAnchor.constraint(equalToConstant: Self.swatchSide),
+                swatch.heightAnchor.constraint(equalToConstant: Self.swatchSide),
+            ])
+            swatches.append((colour, swatch))
+            row.addArrangedSubview(swatch)
+        }
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s2
+        row.setCustomSpacing(HelmMetrics.s3, after: newButton)
+        row.setCustomSpacing(HelmMetrics.s3, after: divider)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.heightAnchor.constraint(equalToConstant: 20),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    static func name(of colour: StickyNoteColor) -> String {
+        colour.rawValue.prefix(1).uppercased() + colour.rawValue.dropFirst()
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        divider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+        appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        restyleSwatches()
+    }
+
+    private func restyleSwatches() {
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        let edge = NSColor.black.withAlphaComponent(0.18)
+        for (colour, swatch) in swatches {
+            if let colour {
+                swatch.normalColor = HelmTheme.nsColor(colour.paperHex)
+            } else {
+                // Every note: the six papers as one round mark.
+                swatch.normalColor = NSColor(patternImage: Self.allColoursImage(side: Self.swatchSide))
+            }
+            swatch.hoverColor = swatch.normalColor
+            let on = colour == selected
+            swatch.layer?.borderWidth = on ? 2.5 : 1
+            swatch.layer?.borderColor = (on ? accent : edge).cgColor
+            swatch.accessibilityValueOverride = on ? "selected" : nil
+        }
+    }
+
+    /// The "every note" swatch: the six papers as slices of one disc.
+    static func allColoursImage(side: CGFloat) -> NSImage {
+        NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let colours = StickyNoteColor.allCases
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            for (index, colour) in colours.enumerated() {
+                let start = CGFloat(index) / CGFloat(colours.count) * 360
+                let end = CGFloat(index + 1) / CGFloat(colours.count) * 360
+                let path = NSBezierPath()
+                path.move(to: center)
+                path.appendArc(withCenter: center, radius: side / 2, startAngle: start, endAngle: end)
+                path.close()
+                HelmTheme.nsColor(colour.paperHex).setFill()
+                path.fill()
+            }
+            return true
+        }
+    }
+
+    @objc private func newTapped() { onNewNote?() }
+
+    @objc private func swatchClicked(_ sender: NSClickGestureRecognizer) {
+        guard let match = swatches.first(where: { $0.view === sender.view }) else { return }
+        onPickColour?(match.colour)
+    }
+
+    #if FM_SELFTESTS
+    var debugNewButton: HelmButton { newButton }
+    /// The swatch for `colour` (`nil`: every note), clicked through its own
+    /// recognizer as a real click is.
+    func debugClickSwatch(_ colour: StickyNoteColor?) {
+        swatches.first { $0.colour == colour }?.view.performPrimaryAction()
+    }
+    var debugSwatchCount: Int { swatches.count }
     #endif
 }

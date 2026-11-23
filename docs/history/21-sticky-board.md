@@ -52,3 +52,19 @@
   - **Two things from the mockup were deliberately left out**, and both are scope rather than oversight: "Edit note" (this note is edited inline; there is no editor sheet to open) and "Send to Notebook" (a real F1 integration, not named in the report's own F6 entry).
   - **A checklist row's checkbox is a borderless, image-only `NSButton` drawn from an SF Symbol in the note's own ink** - not `HelmToggle`, and not a stock bezel. It sits on literal paper (see the three-colour-categories bullet above), where a themed control does not belong, and `HelmContrastSelfTest` bans a stock bezel outright: the first draft set `bezelStyle = .regularSquare` out of habit and the full run failed `FM_RUN_CONTRAST_TESTS` by file and line. The line was dead code anyway on a borderless button.
   - **The window-backed case asserts what the note *paints*, not only what the store holds.** `checkChecklistNote` renders the note view before and after a real `performClick` on a real checkbox and requires the pixels to differ - a checklist that updated its model without repainting passes every model-level assertion above it. Both of AGENTS.md's rules for that call are applied: the rep is scaled by `pixelsWide / bounds.width` before indexing, and the samples are compared against each other rather than converted to sRGB. The discriminating half is a third render of an unchanged note, which must match the second exactly, or "some pixels differed" is measuring noise. Confirmed to catch the regression: dropping the `applyChecklist` re-apply from the controller's toggle callback reports `0 pixels differed`.
+
+## A case tag instead of a case-file title (`fm/grandline-page-redesign-options`, Helm 10.2.0)
+
+The captain asked for the Sticky Board to be redesigned, and picked Sk-1 (refined cork) from the five-screen redesign board.
+v1's plain dotted grid was turned down earlier in favour of the cork, so every option kept a tactile surface.
+
+- The 45pt "CASE: MY THOUGHTS" title (the sanctioned 3x exception) is replaced by a typewritten case tag pinned to the cork: a "CASE FILE" kicker, the board's name, and a meta line of the status stamp, the counts and the sync state.
+- The name can now be renamed in place. It is kept per machine in `fm.stickyBoard.caseTitle`, and an emptied name goes back to "My thoughts". It commits on Return and on focus loss (gotcha (19)).
+- The tag is paper: one literal colour (`F6F1E4`) in every theme, with its ink measured against the paper, the same rule a note's paper follows.
+- The frame is 4pt instead of 7pt, the cork's corners are rounded, and the grain is finer (300 smaller specks per tile instead of 170).
+- A floating pill over the cork's foot holds "+ Note" and a colour filter. A filtered board shows only that colour's notes, and New note then adds one of that colour. The filter is not persisted.
+- The page's grey subtitle line is not drawn in the sidebar layout, because the tag says the same thing.
+- `headerClearance` moves from 84 to 112, so a cascaded note still starts below the taller tag (B12 re-measures it).
+
+What was not built: auto-sizing notes to their content. A note's size is the captain's own persisted choice, so shrinking it would overwrite what they set. The tag's slight tilt from the mock was also dropped, because AppKit resets a layer transform on an Auto Layout view.
+`StickyBoardViewSelfTest` checks the tag, the rename and the colour filter through the swatches' own clicks. Disabling the filter fails four of its cases.

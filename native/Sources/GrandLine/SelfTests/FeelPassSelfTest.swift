@@ -31,6 +31,8 @@ enum FeelPassSelfTest {
             ("1 the greeting's captain name", checkCaptainName),
             ("2 the hero's ink clears the text floor in every theme", checkHeroPaletteContrast),
             ("2 the hero paints its palette and its ring", checkHeroView),
+            ("2 Hg-2: the verdict's colour is the worst thing it says", checkVerdictTint),
+            ("2 Hg-2: the greeting leads the hero and the verdict is its pill", checkGreetingInHero),
             ("2 the ring takes a size", checkRingSize),
             ("2 the hero's words come from the briefing", checkHeroWords),
             ("2 the hero shows every word at every width", checkHeroShowsEverything),
@@ -170,6 +172,78 @@ enum FeelPassSelfTest {
         check(hero.debugActionTitles == ["See Health"], "the hero's actions are \(hero.debugActionTitles)", &ok)
         hero.configure(.init(kicker: "", title: "Not generated yet today", tiles: [], ring: nil))
         check(!hero.debugRingShown, "a hero with no figure still draws a ring", &ok)
+    }
+
+    /// Hg-2: the pill's dot is the worst thing the sentence says, and an
+    /// unread day has no colour at all (GL-14).
+    private static func checkVerdictTint(_ ok: inout Bool) {
+        typealias Facts = HomeGreeting.Facts
+        let cases: [(Facts, HelmTint?, HelmTint?, String)] = [
+            (Facts(dueToday: 0, overdue: 0, prsReady: 0, servicesFailing: 0), nil, .good, "a read, quiet day"),
+            (Facts(dueToday: nil, overdue: nil, prsReady: nil, servicesFailing: nil), nil, nil, "an unread day"),
+            (Facts(dueToday: 2, overdue: 0, prsReady: 0, servicesFailing: 0), nil, .warn, "tasks due"),
+            (Facts(dueToday: 2, overdue: 1, prsReady: 0, servicesFailing: 0), nil, .critical, "a task overdue"),
+            (Facts(dueToday: 0, overdue: 0, prsReady: 3, servicesFailing: 0), nil, .info, "PRs ready"),
+            (Facts(dueToday: 0, overdue: 0, prsReady: 3, servicesFailing: 1), nil, .critical, "a service failing"),
+            (Facts(dueToday: 0, overdue: 0, fleetNeedsYou: "Nothing known needs you right now",
+                   prsReady: nil, servicesFailing: 0), .warn, .warn, "the PR scan failed"),
+            (Facts(dueToday: 0, overdue: 1, fleetNeedsYou: "1 task needs your call", prsReady: 0,
+                   servicesFailing: 0), .warn, .critical, "late work beats the crew's call"),
+        ]
+        for (facts, fleet, want, name) in cases {
+            let got = HomeGreeting.verdictTint(facts, fleetTint: fleet)
+            check(got == want, "\(name): the verdict is \(String(describing: got)), want \(String(describing: want))", &ok)
+        }
+        let verdict = HomeGreeting.verdict(Facts(dueToday: 0, overdue: 0, fleetNeedsYou: "Nothing known needs you right now",
+                                                 prsReady: nil, servicesFailing: 0), fleetTint: .warn)
+        check(verdict.text == "Nothing known needs you right now",
+              "the pill's words are \"\(verdict.text)\" - no date, no full stop", &ok)
+    }
+
+    /// Hg-2: with a greeting the card leads with it in the display voice,
+    /// the headline drops to its second line, and the verdict is a pill at
+    /// the top right that the words wrap beside rather than run under.
+    private static func checkGreetingInHero(_ ok: inout Bool) {
+        // Laid out on its own, no window: the pill's place and the words'
+        // wrap are the card's own constraints and its `layout()`.
+        let hero = HelmHeroCard()
+        hero.frame = NSRect(x: 0, y: 0, width: 1100, height: 260)
+        hero.configure(.init(kicker: "Monday, 23 November \u{00B7} Morning briefing",
+                             title: "20 fleet tasks finished today, 48 still queued",
+                             tiles: [.init(label: "Tasks", text: "No personal tasks are due.", tint: .warn, isLink: true)],
+                             ring: nil, greeting: "Good afternoon, Manjesh",
+                             status: .init(text: "Nothing known needs you right now", tint: .warn)))
+        hero.layoutSubtreeIfNeeded()
+        hero.layoutSubtreeIfNeeded()
+        guard let greeting = hero.debugGreetingLabel, let pill = hero.debugStatusPill else {
+            fail("the hero draws no greeting or no verdict pill", &ok)
+            return
+        }
+        check(greeting.stringValue == "Good afternoon, Manjesh" && greeting.font == HelmType.heroTitle(),
+              "the greeting is \"\(greeting.stringValue)\" in \(greeting.font?.fontName ?? "nil") - want the display voice", &ok)
+        check(abs((hero.debugTitleLabel.font?.pointSize ?? 0) - HelmType.scaled(HelmHeroCard.headlineUnderGreetingSize)) < 0.5,
+              "under a greeting the headline is \(hero.debugTitleLabel.font?.pointSize ?? 0)pt, want a second line", &ok)
+        check(pill.debugText == "Nothing known needs you right now", "the pill says \"\(pill.debugText)\"", &ok)
+        let pillFrame = pill.convert(pill.bounds, to: hero)
+        let greetingFrame = greeting.convert(greeting.bounds, to: hero)
+        check(pillFrame.maxX <= hero.bounds.maxX - HelmHeroCard.insets.right + 0.5
+                && abs(pillFrame.maxX - (hero.bounds.maxX - HelmHeroCard.insets.right)) < 1,
+              "the pill sits at \(pillFrame), not at the card's right inset", &ok)
+        check(greetingFrame.maxX <= pillFrame.minX, "the greeting \(greetingFrame) runs under the pill \(pillFrame)", &ok)
+        // The pill's dot is the verdict's colour, made legible on the hero.
+        if let dot = pill.debugDotColor {
+            let theme = ThemeManager.shared.theme
+            let want = HelmHeroSurface.signalColor(tintHex: HelmTint.warn.hex(in: theme), on: HelmHeroCard.palette(for: theme))
+            check(HelmContrast.components(dot) == HelmContrast.components(want),
+                  "the pill's dot is not the verdict's amber", &ok)
+        } else {
+            fail("the pill has no dot", &ok)
+        }
+        // Without a greeting the card is 2.0.0's: the headline is the title.
+        hero.configure(.init(kicker: "Morning briefing", title: "One fleet task needs a decision.", tiles: [], ring: nil))
+        check(hero.debugGreetingLabel == nil && hero.debugStatusPill == nil
+                && abs((hero.debugTitleLabel.font?.pointSize ?? 0) - HelmType.scaled(HelmHeroCard.titleSize)) < 0.5,
+              "a hero with no greeting does not draw as 2.0.0 did", &ok)
     }
 
     private static func checkRingSize(_ ok: inout Bool) {

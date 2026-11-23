@@ -499,44 +499,21 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Set once, the first time the sidebar shell shows this page
     /// (`adoptSidebarLayout`). The floating bar never sets it.
     private(set) var drawsSidebarLayout = false
-    /// T-4 on the page-redesign board: the page's hero as a slim band over
-    /// the filter row (`ShiftHeroBand.swift`). Board and List show it;
-    /// Calendar (which fills the page), Weekly review and a project's own
-    /// page do not.
+    /// T-4 on the page-redesign board: the page's hero as a slim band
+    /// (`ShiftHeroBand.swift`). Board and List show it; Calendar (which fills
+    /// the page), Weekly review and a project's own page do not.
+    ///
+    /// Tf-2 on the five-screen redesign board: the band is also the page's
+    /// filters. Its figures pick the scope and its glass pills hold Smart
+    /// views and the project and sort menus, so the sidebar layout has no
+    /// filter row and no grey count line above the band. Calendar's month
+    /// head carries the same filters as menus (Cf-4,
+    /// `ShiftCalendarHeroHead.setFilters`).
     private(set) lazy var heroBand = ShiftTasksHeroBand()
-    /// The page column's filters, as one row under the header.
-    /// S16: a `HelmFilterBar` - scope tabs, the project pop-up, the
-    /// Follow-ups jump, and the sort (Board, List) or Colour by (Calendar)
-    /// trailing. Below the width its slots need, all but the tabs fold into
-    /// "Filter · n".
-    private(set) lazy var workspaceFilterRow: HelmFilterBar = {
-        let bar = HelmFilterBar(scope: scopeFilter, popups: [projectPopup], chips: [followUpsJump],
-                                trailing: [sortPopup, colourControl])
-        bar.activeFilterCount = { [weak self] in self?.projectFilter == nil ? 0 : 1 }
-        return bar
-    }()
-    private lazy var scopeFilter: HelmSegmentedTabs = {
-        let tabs = HelmSegmentedTabs(items: ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) },
-                                     selected: ShiftTaskScope.all.rawValue, size: .compact)
-        tabs.setAccessibilityLabel("Which tasks to show")
-        tabs.onSelect = { [weak self] id in
-            guard let self, let scope = ShiftTaskScope(rawValue: id) else { return }
-            self.taskScope = scope
-            self.render()
-        }
-        return tabs
-    }()
-    private lazy var followUpsJump: HelmButton = {
-        let button = HelmButton(title: "Follow-ups", variant: .quiet, size: .small, symbol: "bell",
-                                target: self, action: #selector(followUpsJumpClicked))
-        button.toolTip = "Go to the Follow-ups card"
-        return button
-    }()
-    private let projectPopup = HelmPopUpButton()
-    /// Whether the Follow-ups jump belongs in the row: not while Follow-ups
-    /// is a lane on the board, which is on screen already (R4-UI-09).
+    /// Whether the band's Follow-ups figure jumps to the Follow-ups card: not
+    /// while Follow-ups is a lane on the board, which is on screen already
+    /// (R4-UI-09).
     private var followUpsJumpWanted = true
-    private var projectPopupSignature: String?
     /// The List tab: every task the filters keep, as one table.
     private lazy var tasksTable: HelmDataTable = {
         let table = HelmDataTable(columns: [
@@ -1710,7 +1687,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // hairline with it, and restores the captain's own choice on return.
         splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard
         applyContentLeadingInset()
-        if drawsSidebarLayout { workspaceFilterRow.isHidden = view != .dashboard || isProjectDetailFullPage }
+        // Tf-2: the band is the board's and the list's filters, so it leaves
+        // with them when Weekly review shows.
+        if drawsSidebarLayout { heroBand.isHidden = view != .dashboard || isProjectDetailFullPage || tasksView == .calendar }
         if view == .weeklyReview { renderWeeklyReview() }
         applyCalendarVisibility()
         applyTheme()
@@ -2063,10 +2042,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             taskPanel.isHidden = true
             tasksLeftColumn?.isHidden = true
             tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
-            workspaceFilterRow.isHidden = isProjectDetailFullPage || topLevelView != .dashboard
-            // The calendar fills the page under the filter row, so it keeps
-            // that height rather than giving it to the band.
-            heroBand.isHidden = workspaceFilterRow.isHidden || calendarShowing
+            // The calendar fills the page, so it keeps the band's height; its
+            // month head carries the filters instead (Cf-4).
+            heroBand.isHidden = isProjectDetailFullPage || topLevelView != .dashboard || calendarShowing
             // R2-UX-07: an empty Tasks page was three empty states (the
             // board's lanes, Follow-ups and Projects) under a filter row of
             // zeros. With nothing at all it is one invitation instead. The
@@ -2076,7 +2054,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             let startHere = showsStartHere && !failed && !isProjectDetailFullPage && !calendarShowing
             startHereState.isHidden = !startHere
             if startHere {
-                for view in [boardSection, tasksTable.card, workspaceFilterRow, heroBand] + startHereReplaces {
+                for view in [boardSection, tasksTable.card, heroBand] + startHereReplaces {
                     view.isHidden = true
                 }
             } else {
@@ -2092,7 +2070,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
                 followUpsRow?.isHidden = laneOnBoard || calendarShowing
                 projectsSectionView?.isHidden = board || calendarShowing
                 followUpsJumpWanted = !laneOnBoard && !calendarShowing
-                fitFilterRow()
+                refreshFilters()
             }
         }
     }
@@ -2116,7 +2094,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             boardFitsFollowUpLane = fits
             applyTasksViewVisibility()
         }
-        fitFilterRow()
     }
 
     /// The lane's pending follow-ups: the board's project filter applies, and
@@ -2138,9 +2115,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     var debugFollowUpLaneOnBoard: Bool { boardView.trailingLaneShown && !boardSection.isHidden }
     var debugFollowUpsRowHidden: Bool { followUpsRow?.isHidden ?? true }
     var debugProjectsSectionHidden: Bool { projectsSectionView?.isHidden ?? true }
-    var debugFollowUpsJumpHidden: Bool { followUpsJump.isHidden }
-    var debugFilterRowCollapsed: Bool { workspaceFilterRow.debugIsCollapsed }
-    var debugFilterRow: HelmFilterBar { workspaceFilterRow }
+    /// Tf-2: whether the band's Follow-ups figure jumps anywhere.
+    var debugFollowUpsJumps: Bool { followUpsJumpWanted }
     var debugAgendaRowCount: Int { reviewAgendaList.superview == nil ? 0 : reviewAgendaList.rows.count }
     var debugAgendaPanelShown: Bool { reviewAgendaPanel.superview != nil && !reviewAgendaPanel.isHiddenOrHasHiddenAncestor }
     #endif
@@ -2880,8 +2856,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         reviewFocusCaption.textColor = muted
         reviewFocusChart.applyTheme(theme)
         if drawsSidebarLayout {
-            scopeFilter.applyTheme(theme)
-            projectPopup.contentTintColor = ink
             tasksTable.applyTheme(theme)
             followUpsTable.applyTheme(theme)
             reviewCardsRow.applyTheme(theme)
@@ -3018,6 +2992,15 @@ extension ShiftController: ModuleTabHosting {
 // and cards, the List tab is the same tasks as one table, and Follow-ups and
 // Projects stay where they always were, under the view.
 
+/// Tf-2 and Cf-4: the grey count line above the band said what the band's
+/// figures and the calendar head already say, so the sidebar layout's header
+/// line draws nothing here and gives up its slot. The subtitle itself stays
+/// the page's summary (the floating bar and the crew panel read it).
+extension ShiftController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { drawsSidebarLayout }
+    var drawsSubtitleOnHeaderLine: Bool { !drawsSidebarLayout }
+}
+
 extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
 
     func adoptSidebarLayout() {
@@ -3031,12 +3014,10 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         splitPage?.pageForcesCollapse = true
         applyContentLeadingInset()
         topToolbar?.isHidden = true
-        buildWorkspaceFilterRow()
-        contentStack.insertArrangedSubview(workspaceFilterRow, at: 0)
-        workspaceFilterRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        // T-4: the page's hero as a slim band over the filter row.
+        // T-4: the page's hero as a slim band, and since Tf-2 its filters.
         contentStack.insertArrangedSubview(heroBand, at: 0)
         heroBand.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        wireFilters()
         boardView.adoptWorkspaceStyle()
         if let index = dashboardContainer.arrangedSubviews.firstIndex(of: boardSection) {
             dashboardContainer.insertArrangedSubview(tasksTable.card, at: index + 1)
@@ -3098,90 +3079,177 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     var debugHeroBand: ShiftTasksHeroBand? { drawsSidebarLayout && !heroBand.isHidden ? heroBand : nil }
     #endif
 
-    private func buildWorkspaceFilterRow() {
-        projectPopup.controlSize = .small
-        projectPopup.target = self
-        projectPopup.action = #selector(projectPopupChanged)
-        projectPopup.toolTip = "Show one project's tasks"
-        projectPopup.setAccessibilityLabel("Project")
-        projectPopup.setContentHuggingPriority(.required, for: .horizontal)
-        followUpsJump.setContentHuggingPriority(.required, for: .horizontal)
-        // The sort and the calendar's Colour by move here from the tab row
-        // the toolbar's tabs replaced.
-        for view in [sortPopup, colourControl] as [NSView] {
-            view.removeFromSuperview()
-        }
-        // S16: the bar owns the order, the spacing, the spacer and the
-        // scope tabs' own-width preference (R4-UI-08's gotcha (10)/(12) fix).
-        _ = workspaceFilterRow
+    /// The band's and the calendar head's filters call back here, so the
+    /// scope, the project, the sort and the colouring each have one owner.
+    private func wireFilters() {
+        heroBand.onSelectScope = { [weak self] id in self?.selectScope(id) }
+        heroBand.onFollowUps = { [weak self] in self?.followUpsJumpClicked() }
+        heroBand.onShowProjectMenu = { [weak self] view in self?.popUp(self?.projectMenu(), from: view) }
+        heroBand.onShowSortMenu = { [weak self] view in self?.popUp(self?.sortMenu(), from: view) }
+        if calendarSection.superview != nil { wireCalendarFilters() }
     }
 
-    /// The filter row's counts and selection, the project list, and the
-    /// List tab's rows - from the same pass `render` just made.
+    /// Cf-4: the calendar's month head draws the same filters as menus. Run
+    /// when the calendar is embedded, which can be before or after the shell
+    /// adopts the page.
+    func wireCalendarFilters() {
+        guard drawsSidebarLayout else { return }
+        calendar.setHeroFilterHandlers(
+            scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) },
+            project: { [weak self] view in self?.popUp(self?.projectMenu(), from: view) },
+            colour: { [weak self] view in self?.popUp(self?.colourMenu(), from: view) })
+        refreshFilters()
+    }
+
+    private func selectScope(_ id: String) {
+        guard let scope = ShiftTaskScope(rawValue: id) else { return }
+        taskScope = scope
+        render()
+    }
+
+    /// The counts, the List tab's rows and what every filter says - from the
+    /// same pass `render` just made.
     fileprivate func renderWorkspaceChrome() {
         renderHeroBand()
-        let c = counts()
-        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.all.title, count: c.open),
-                             forID: ShiftTaskScope.all.rawValue)
-        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.dueToday.title, count: c.dueToday),
-                             forID: ShiftTaskScope.dueToday.rawValue)
-        scopeFilter.setTitle(WorkspaceToolbar.tabLabel(ShiftTaskScope.overdue.title, count: c.overdue),
-                             forID: ShiftTaskScope.overdue.rawValue)
-        scopeFilter.select(taskScope.rawValue)
-        followUpsJump.title = c.followUps > 0 ? "Follow-ups \u{2002}\(c.followUps)" : "Follow-ups"
-        followUpsJump.setAccessibilityLabel(c.followUps > 0 ? "Follow-ups, \(c.followUps) pending" : "Follow-ups")
-        let signature = Self.projectSignature(store.projects)
-        if signature != projectPopupSignature {
-            projectPopupSignature = signature
-            projectPopup.removeAllItems()
-            projectPopup.addItem(withTitle: "All projects")
-            for project in store.projects {
-                projectPopup.addItem(withTitle: project.name.isEmpty ? "Untitled project" : project.name)
-                projectPopup.lastItem?.representedObject = project.id
-                projectPopup.lastItem?.image = Self.projectDot(
-                    ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project), in: theme))
-            }
-        }
-        let selected = projectFilter.flatMap { id in store.projects.firstIndex { $0.id == id }.map { $0 + 1 } } ?? 0
-        projectPopup.selectItem(at: selected)
-        refreshFilterMenuTitle()
+        refreshFilters()
         tasksTable.setRows(taskTableRows())
         followUpsTable.setRows(followUpTableRows())
     }
 
-    /// R4-UI-08: at 960pt the filter row ran past the page's right edge and
-    /// cut "Due date" in half with nothing to say there was more. When the
-    /// row's controls at their own widths do not fit, the project and sort
-    /// pop-ups collapse into one Filter button, and the Follow-ups jump moves
-    /// into its menu. Measured from the expanded controls' fitting
-    /// widths whichever form shows, so it cannot flip back and forth.
-    fileprivate func fitFilterRow() {
-        // The row is tied to the content column's width, and the column
-        // takes a new width before the row is laid out to it - the column's
-        // own frame change is what runs this. Reading the row measured the
-        // width it had a moment ago: on a first visit zero, which left the
-        // previous view's controls up, and after a narrowing the old width,
-        // so a row that no longer fitted did not collapse (both caught in
-        // tour-lab renders of the Calendar view).
-        let available = contentStack.bounds.width
-        guard drawsSidebarLayout, available > 0 else { return }
-        let calendarShowing = tasksView == .calendar
-        let bar = workspaceFilterRow
-        bar.setPageHidden(sortPopup, topLevelView != .dashboard || calendarShowing)
-        bar.setPageHidden(colourControl, !calendarShowing || topLevelView != .dashboard)
-        bar.setPageHidden(followUpsJump, !followUpsJumpWanted)
-        bar.fit(width: available)
+    /// What the band's figures and pills, and the calendar head's menus, say.
+    func refreshFilters() {
+        guard drawsSidebarLayout else { return }
+        let project = projectFilter.flatMap { id in store.projects.first { $0.id == id } }
+        let projectTitle = project.map { $0.name.isEmpty ? "Untitled project" : $0.name } ?? "All projects"
+        heroBand.setFilters(scope: taskScope.rawValue, projectTitle: projectTitle,
+                            projectFiltered: project != nil, sortTitle: taskSort.title,
+                            followUpsJumps: followUpsJumpWanted)
+        guard calendarSection.superview != nil else { return }
+        calendar.setHeroFilters(.init(scope: Self.scopeMenuTitle(taskScope, counts: counts()),
+                                      scopeNarrows: taskScope != .all,
+                                      project: projectTitle, projectNarrows: project != nil,
+                                      colour: calendarColouring.title))
     }
 
-    private func refreshFilterMenuTitle() {
-        workspaceFilterRow.refreshFilterButtonTitle()
+    /// "All tasks · 16", "Overdue · 2", "My priorities": the scope with its
+    /// count where the page has one, as the calendar's scope menu reads it.
+    static func scopeMenuTitle(_ scope: ShiftTaskScope, counts c: Counts) -> String {
+        switch scope {
+        case .all: return "\(scope.title) \u{00B7} \(c.open)"
+        case .dueToday: return "\(scope.title) \u{00B7} \(c.dueToday)"
+        case .overdue: return "\(scope.title) \u{00B7} \(c.overdue)"
+        case .myPriorities, .recentlyUpdated: return scope.title
+        }
     }
 
-    @objc fileprivate func projectPopupChanged() {
-        let id = projectPopup.selectedItem?.representedObject as? String
-        projectFilter = id
+    // MARK: The filter menus (Tf-2, Cf-4)
+
+    /// Every scope, in the two groups the old row drew, with the counts the
+    /// page has and a check on the one that is on.
+    func scopeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let c = counts()
+        for (index, group) in [ShiftTaskScope.workspaceCases, ShiftTaskScope.smartViewCases].enumerated() {
+            if index > 0 { menu.addItem(.separator()) }
+            for scope in group {
+                let item = NSMenuItem(title: Self.scopeMenuTitle(scope, counts: c),
+                                      action: #selector(scopeMenuPicked(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = scope.rawValue
+                item.state = scope == taskScope ? .on : .off
+                item.image = HelmSymbol.image(scope.symbol, pointSize: 12, weight: .regular)
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
+    /// All projects, then each project with its hue's dot.
+    func projectMenu() -> NSMenu {
+        let menu = NSMenu()
+        let all = NSMenuItem(title: "All projects", action: #selector(projectMenuPicked(_:)), keyEquivalent: "")
+        all.target = self
+        all.state = projectFilter == nil ? .on : .off
+        menu.addItem(all)
+        if !store.projects.isEmpty { menu.addItem(.separator()) }
+        for project in store.projects {
+            let item = NSMenuItem(title: project.name.isEmpty ? "Untitled project" : project.name,
+                                  action: #selector(projectMenuPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = project.id
+            item.state = project.id == projectFilter ? .on : .off
+            item.image = Self.projectDot(ShiftProjectPalette.hex(for: ShiftProjectPalette.hue(for: project), in: theme))
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    func sortMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (index, order) in ShiftTaskSort.allCases.enumerated() {
+            let item = NSMenuItem(title: order.title, action: #selector(sortMenuPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = order == taskSort ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    func colourMenu() -> NSMenu {
+        let menu = NSMenu()
+        for (index, colouring) in ShiftCalendarColouring.allCases.enumerated() {
+            let item = NSMenuItem(title: colouring.title, action: #selector(colourMenuPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.state = colouring == calendarColouring ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc fileprivate func scopeMenuPicked(_ sender: NSMenuItem) {
+        selectScope(sender.representedObject as? String ?? ShiftTaskScope.all.rawValue)
+    }
+
+    @objc fileprivate func projectMenuPicked(_ sender: NSMenuItem) {
+        projectFilter = sender.representedObject as? String
         render()
     }
+
+    @objc fileprivate func sortMenuPicked(_ sender: NSMenuItem) {
+        guard ShiftTaskSort.allCases.indices.contains(sender.tag) else { return }
+        // Through the sort pop-up's own handler, so the floating bar's
+        // pop-up and the remembered order follow too.
+        sortPopup.selectItem(at: sender.tag)
+        sortChanged()
+    }
+
+    @objc fileprivate func colourMenuPicked(_ sender: NSMenuItem) {
+        let all = ShiftCalendarColouring.allCases
+        guard all.indices.contains(sender.tag) else { return }
+        setCalendarColouring(all[sender.tag])
+        refreshFilters()
+    }
+
+    /// Opens `menu` under `view`, in the page's own appearance
+    /// (`ThemeManager`'s checklist item 2: an `NSMenu` resolves system colours).
+    private func popUp(_ menu: NSMenu?, from view: NSView) {
+        guard let menu else { return }
+        menu.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        let below = view.isFlipped ? view.bounds.maxY + 4 : -4
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: below), in: view)
+    }
+
+    #if FM_SELFTESTS
+    /// Picks a menu item through its own target and action, as a click on it
+    /// does, without opening the menu (which would run a modal loop).
+    static func debugPick(_ menu: NSMenu, where matches: (NSMenuItem) -> Bool) {
+        guard let item = menu.items.first(where: matches), let action = item.action,
+              let target = item.target as? NSObject else { return }
+        target.perform(action, with: item)
+    }
+    #endif
 
     @objc fileprivate func followUpsJumpClicked() {
         scrollToPanel(followUpPanel)
@@ -3579,10 +3647,6 @@ final class ShiftProjectTag: NSView {
 
 #if FM_SELFTESTS
 extension ShiftController {
-    var debugWorkspaceFilterRow: HelmFilterBar { workspaceFilterRow }
-    var debugScopeFilter: HelmSegmentedTabs { scopeFilter }
-    var debugProjectPopup: HelmPopUpButton { projectPopup }
-    var debugFollowUpsJump: HelmButton { followUpsJump }
     var debugTasksTable: HelmDataTable { tasksTable }
     var debugFollowUpsTable: HelmDataTable { followUpsTable }
     var debugReviewCards: [HelmKPIStrip.BoxedCell] { reviewCardsRow.debugCells }
@@ -3592,11 +3656,20 @@ extension ShiftController {
     }
     var debugNewTaskButton: HelmButton { newTaskButton }
     var debugTasksViewID: String { topLevelView == .weeklyReview ? "review" : tasksView.rawValue }
-    /// Pick a project through the popup's own action, as a click does.
+    /// Pick a project through the project menu's own item, as a click on it
+    /// does (the band's and the calendar's menus are the same menu).
     func debugPickProject(id: String?) {
-        let index = id.flatMap { pid in store.projects.firstIndex { $0.id == pid }.map { $0 + 1 } } ?? 0
-        projectPopup.selectItem(at: index)
-        _ = projectPopup.sendAction(projectPopup.action, to: projectPopup.target)
+        Self.debugPick(projectMenu()) { ($0.representedObject as? String) == id && ($0.action != nil) }
+    }
+    /// Pick a scope through the calendar's scope menu, as a click on it does.
+    func debugPickScopeFromMenu(_ id: String) {
+        Self.debugPick(scopeMenu()) { ($0.representedObject as? String) == id }
+    }
+    func debugPickSort(_ sort: ShiftTaskSort) {
+        Self.debugPick(sortMenu()) { $0.title == sort.title }
+    }
+    func debugPickColouring(_ colouring: ShiftCalendarColouring) {
+        Self.debugPick(colourMenu()) { $0.title == colouring.title }
     }
 }
 #endif

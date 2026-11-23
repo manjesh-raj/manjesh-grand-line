@@ -1028,11 +1028,18 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// The greeting and the hero, on Home's arranged space only.
+    ///
+    /// Hg-2 (the five-screen redesign board): while the briefing is drawn as
+    /// the hero, the greeting is the hero's own title and the day's verdict
+    /// its pill, so the page-ground header is not drawn. Without the hero -
+    /// the briefing hidden by the captain's layout, or nothing to say, or
+    /// Customize drawing it as a card - the greeting keeps its own row.
     private func renderFeelPass(now: Date = Date()) {
         let on = showsArrangedCards
-        greetingHeader.isHidden = !on
+        let greetingOnGround = on && !briefingIsHero
+        greetingHeader.isHidden = !greetingOnGround
         briefingHero.isHidden = !briefingIsHero
-        stackTop?.constant = Self.contentTopMargin - (on ? Self.greetingInkInset : 0)
+        stackTop?.constant = Self.contentTopMargin - (greetingOnGround ? Self.greetingInkInset : 0)
         guard on else { return }
 
         let counts = HomeTaskCounts(store: sources.shiftStore, now: now)
@@ -1041,6 +1048,7 @@ final class HomeCanvasController: NSViewController {
         let crewShown = !hiddenModules.contains(.crew)
         let healthShown = !hiddenModules.contains(.health)
         let fleetAnswer = crewShown ? overviewAnswer() : nil
+        let fleetTint = fleetAnswer.flatMap { $0.tint == .good ? nil : $0.tint }
         let fleetNeedsCaptain = HomeBriefingHero.offersNeedsYou(crewShown: crewShown,
                                                                 tasks: fleetSnapshot?.tasks ?? [])
         let facts = HomeGreeting.Facts(
@@ -1056,14 +1064,22 @@ final class HomeCanvasController: NSViewController {
         greetingHeader.setAccessibilityRole(.group)
         greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
 
-        if briefingIsHero { renderBriefingHero(fleetNeedsYou: fleetNeedsCaptain, healthShown: healthShown) }
+        if briefingIsHero {
+            let verdict = HomeGreeting.verdict(facts, fleetTint: fleetTint)
+            renderBriefingHero(fleetNeedsYou: fleetNeedsCaptain, healthShown: healthShown,
+                               greeting: greetingTitle.stringValue,
+                               status: .init(text: verdict.text, tint: verdict.tint), now: now)
+        }
     }
 
-    private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool) {
+    private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool, greeting: String,
+                                    status: HelmHeroCard.Content.Status, now: Date) {
         let record = AppSettings.shared.morningBriefingRecord
         let words = HomeBriefingHero.words(record: record, enabled: AppSettings.shared.morningBriefingEnabled,
                                            settingsName: PlaceName.of(.settings))
-        var kicker = "Morning briefing"
+        // Hg-2: the date the page-ground summary used to open with leads the
+        // kicker, since the greeting it sat under is this card's title now.
+        var kicker = "\(HomeGreeting.date(now)) \u{00B7} Morning briefing"
         if let record, !record.clauses.isEmpty {
             kicker += " \u{00B7} generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
             kicker += " \u{00B7} \(record.sources.count) source\(record.sources.count == 1 ? "" : "s")"
@@ -1080,7 +1096,8 @@ final class HomeCanvasController: NSViewController {
         }
         var tiles = words.facts.map { HomeBriefingHero.tile($0, pageName: PlaceName.short) }
         if let note = words.note { tiles.append(.init(label: nil, text: note, tint: nil, isLink: false)) }
-        briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring))
+        briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring,
+                                     greeting: greeting, status: status))
         let facts = words.facts
         briefingHero.onActivateTile = { [weak self] index in
             guard let self, !self.isCustomizing, facts.indices.contains(index) else { return }
@@ -1115,6 +1132,9 @@ final class HomeCanvasController: NSViewController {
     #if FM_SELFTESTS
     var debugGreetingTitle: String { greetingHeader.isHidden ? "" : greetingTitle.stringValue }
     var debugGreetingSummary: String { greetingHeader.isHidden ? "" : greetingSummary.stringValue }
+    /// Hg-2: whether the greeting is drawn on the page ground rather than as
+    /// the briefing hero's title.
+    var debugGreetingOnGround: Bool { !greetingHeader.isHidden }
     var debugBriefingHero: HelmHeroCard? { briefingHero.isHidden ? nil : briefingHero }
     #endif
 

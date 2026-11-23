@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here, and how much of the suite a PR has to run locally
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 22 measured traps, one rule each
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 23 measured traps, one rule each
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -670,7 +670,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Twenty-two traps, every one measured on this app rather than read about. Each
+Twenty-three traps, every one measured on this app rather than read about. Each
 was found by instrumenting a real layout or event pass; several took a full task
 to root-cause, and at least four have recurred in a new file after being fixed
 in an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1037,6 +1037,19 @@ And the trap underneath it: **`NSTextField(labelWithString:)` builds a cell whos
 `wraps` is false**, so `maximumNumberOfLines = 0` and a word-wrap line break
 mode do nothing and the label truncates with no ellipsis however wide you make
 it. `wrappingLabelWithString` is the constructor that sets the cell up.
+
+### (23) No baseline constraint inside a view a stack may detach
+
+An `NSStackView` with `detachesHiddenViews` (the default) takes a hidden
+arranged view out of the hierarchy, and a `firstBaselineAnchor` or
+`lastBaselineAnchor` constraint inside that view is still lowered on the next
+layout - with no engine. AppKit throws `NSInternalInconsistencyException`
+("unable to find variable ... in engine 0x0") from `layoutSubtreeIfNeeded`,
+which reads as a crash in whatever suite laid the page out, not as a
+constraint bug. Anchor to the label's `topAnchor` or `centerYAnchor` instead;
+a baseline constraint belongs only in a view that is never hidden in a stack.
+Measured on `HelmHeroStatusPill` (Helm 10.2.0), whose dot sat on its label's
+first baseline and which is hidden until a card has a verdict.
 
 ---
 
@@ -1491,7 +1504,7 @@ can correct an earlier one - and several do.
 | [`44-new-theme-families.md`](docs/history/44-new-theme-families.md) | The six families that took the picker from 14 palettes to 26 (Nord, Dracula/Alucard, One, Ayu, Night Owl/Light Owl, Oxocarbon) |
 | [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) | The app's name, the bundle identifier, the Keychain service names, the Application Support folder |
 | [`46-review-bugs-b1-b14.md`](docs/history/46-review-bugs-b1-b14.md) | `FM_SCRATCH_ROOT` and the probe's safety, the Keychain service prefix, the quit-time ggml abort, the traffic-light hit-test recursion, Shift git sync's three data-loss paths |
-| [`47-appkit-gotchas.md`](docs/history/47-appkit-gotchas.md) | Any of the 22 gotchas above - the probe, the numbers and the wrong fixes tried first |
+| [`47-appkit-gotchas.md`](docs/history/47-appkit-gotchas.md) | Any of the 23 gotchas above - the probe, the numbers and the wrong fixes tried first |
 | [`48-test-hermeticity.md`](docs/history/48-test-hermeticity.md) | The `UserDefaults` leak between suites: five incidents, the mitigations, and the per-process suite domain that replaced them |
 | [`49-devops-hub.md`](docs/history/49-devops-hub.md) | DevOps Hub: the in-process loopback server, the project registry and store, the devops-atlas page and its web view |
 

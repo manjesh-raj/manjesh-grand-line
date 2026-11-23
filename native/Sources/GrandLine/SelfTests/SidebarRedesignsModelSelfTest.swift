@@ -349,19 +349,23 @@ enum SidebarRedesignsModelSelfTest {
     // MARK: 6 - Tasks' filters
 
     /// The page column held the Workspace views, Follow-ups, the Projects and
-    /// the Smart views; the filter row is where they live in the sidebar
-    /// layout. A source guard, because the window-backed half drives a sample.
+    /// the Smart views. In the sidebar layout they lived in a filter row, and
+    /// since Tf-2 and Cf-4 they live in the band and the calendar's month head:
+    /// the scope menu lists both groups, the band's figures and pills pick the
+    /// scope, and Follow-ups and the project menu are the band's too. A source
+    /// guard, because the window-backed half drives a sample.
     private static func checkTasksKeepsItsFilters(_ ok: inout Bool) {
         guard let shift = code("ShiftController.swift") else {
             fail("could not read ShiftController.swift - the guard would pass vacuously", &ok)
             return
         }
         check(ShiftController.ShiftTaskScope.allCases.count == 5,
-              "the scopes changed; the filter row lists \(ShiftController.ShiftTaskScope.allCases.count)", &ok)
-        for needle in ["ShiftTaskScope.allCases.map { .init(id: $0.rawValue, title: $0.title) }",
-                       // R4-UI-08, then S16: the row is a HelmFilterBar, whose Filter button
-                       // stands in for the folded controls when the row is narrow.
-                       "HelmFilterBar(scope: scopeFilter, popups: [projectPopup], chips: [followUpsJump],",
+              "the scopes changed; the scope menu lists \(ShiftController.ShiftTaskScope.allCases.count)", &ok)
+        for needle in ["[ShiftTaskScope.workspaceCases, ShiftTaskScope.smartViewCases]",
+                       "heroBand.onSelectScope = { [weak self] id in self?.selectScope(id) }",
+                       "heroBand.onFollowUps = { [weak self] in self?.followUpsJumpClicked() }",
+                       "heroBand.onShowProjectMenu = { [weak self] view in self?.popUp(self?.projectMenu(), from: view) }",
+                       "scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) }",
                        "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
                        "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
                        "boardView.adoptWorkspaceStyle()"] {

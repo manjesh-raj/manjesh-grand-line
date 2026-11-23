@@ -734,8 +734,12 @@ enum SidebarRedesignsSelfTest {
         clickTab("Board", shell)
         check(tasks.drawsSidebarLayout, "Tasks did not adopt its sidebar presentation", &ok)
         check(!tasks.debugSidebarIsVisible, "Tasks still draws its own page column beside the board", &ok)
-        let row = tasks.debugWorkspaceFilterRow
-        check(!row.isHidden && row.window != nil, "Tasks has no filter row", &ok)
+        // Tf-2: the band is the page's filters.
+        guard let band = tasks.debugHeroBand else {
+            fail("Tasks has no band to filter from", &ok)
+            return
+        }
+        check(band.window != nil, "Tasks' band is not on screen", &ok)
 
         // New task at the toolbar's far right, after Search.
         let ids = shell.toolbar.debugItemIdentifiers
@@ -744,19 +748,20 @@ enum SidebarRedesignsSelfTest {
               "New task is not the toolbar's last item, after Search: \(ids.map(\.rawValue))", &ok)
         check(!shell.toolbar.debugPageActions.contains { $0 === tasks.debugNewTaskButton }, "New task is drawn twice", &ok)
 
-        // The column's scopes, through the filter row's own control.
+        // The column's scopes, through the band's own figures (Tf-2).
         let counts = tasks.counts()
-        check(tasks.debugScopeFilter.selected == "all", "the filter row does not start on All tasks", &ok)
-        tasks.debugScopeFilter.debugClickTab(id: "due_today")
+        check(tasks.debugTaskScope == "all" && band.debugSelectedFigure == "All open",
+              "the band does not start on All open", &ok)
+        band.debugFigureButtons[1].performPrimaryAction()
         settle(shell)
         check(tasks.debugTaskScope == "due_today", "the Due today filter did not filter", &ok)
         let dueToday = tasks.debugVisibleTaskIDs(.backlog) + tasks.debugVisibleTaskIDs(.inProgress)
         check(dueToday.count == counts.dueToday && counts.dueToday > 0,
               "Due today shows \(dueToday.count) cards, the count says \(counts.dueToday)", &ok)
-        tasks.debugScopeFilter.debugClickTab(id: "all")
+        band.debugFigureButtons[0].performPrimaryAction()
         settle(shell)
 
-        // The project filter, through the popup's own action.
+        // The project filter, through the project menu's own item.
         guard let project = shell.workspace.shiftStore.projects.first else {
             fail("the demo tasks have no project", &ok)
             return
@@ -771,8 +776,8 @@ enum SidebarRedesignsSelfTest {
         settle(shell)
         check(tasks.debugProjectFilter == nil, "All projects did not clear the filter", &ok)
 
-        // Follow-ups: the column's jump, now the row's.
-        check(tasks.debugFollowUpsJump.title.hasPrefix("Follow-ups"), "the Follow-ups jump is missing", &ok)
+        // Follow-ups: the column's jump, now the band's figure.
+        check(band.debugFigureCaptions.last == "Follow-ups", "the Follow-ups figure is missing", &ok)
 
         // The prototype's lanes: each a tint hugging its own cards.
         guard let lanes = tasks.debugBoardView?.debugColumnViews, lanes.count == 3 else {
@@ -821,8 +826,18 @@ enum SidebarRedesignsSelfTest {
         } else {
             fail("the completed task left the table", &ok)
         }
-        check(tasks.debugWorkspaceFilterRow.arrangedSubviews.contains { $0 === tasks.debugSortPopup },
-              "the sort left the filter row", &ok)
+        // Tf-2: the sort is the band's menu on List too.
+        if let band = tasks.debugHeroBand {
+            check(!band.debugPills.sort.isHidden, "the List tab's band has no sort", &ok)
+            tasks.debugPickSort(.priority)
+            settle(shell)
+            check(band.debugPills.sort.title == ShiftTaskSort.priority.title,
+                  "picking Priority left the sort reading \(band.debugPills.sort.title)", &ok)
+            tasks.debugPickSort(.dueDate)
+            settle(shell)
+        } else {
+            fail("the List tab draws no band", &ok)
+        }
     }
 
     /// Follow-ups are the List tab's table too: a check, the columns and a ⋯
@@ -947,7 +962,7 @@ enum SidebarRedesignsSelfTest {
         check(tasks.moduleTabNames == ["Board", "List", "Calendar", "Weekly review"],
               "Tasks' tabs are \(tasks.moduleTabNames)", &ok)
         clickTab("Weekly review", shell)
-        check(tasks.debugWorkspaceFilterRow.isHidden, "the filter row shows over Weekly review", &ok)
+        check(tasks.debugHeroBand == nil, "the band and its filters show over Weekly review", &ok)
         let cards = tasks.debugReviewCards
         check(cards.map(\.debugCaption) == ["Completed this week", "Focus time", "Overdue", "Follow-ups open",
                                             "Coming up next week"],

@@ -209,6 +209,11 @@ final class MainSplitShellController: WorkspaceShellController {
     private var headerLineCollapses: Bool {
         (pageController as? WorkspaceHeaderLineCollapsing)?.collapsesEmptyHeaderLine ?? false
     }
+    /// What the header line says: the page's subtitle, unless the page draws
+    /// it somewhere of its own (`drawsSubtitleOnHeaderLine`).
+    private var headerLineSubtitle: String {
+        (pageController as? WorkspaceHeaderLineCollapsing)?.drawsSubtitleOnHeaderLine == false ? "" : pageSubtitle
+    }
     private var lockOverlayIsShown = false
     private var didSettleInitialSidebarWidth = false
     private var themeToken: ThemeObservation?
@@ -1362,7 +1367,7 @@ final class MainSplitShellController: WorkspaceShellController {
         // unless the profile hides the module it opens.
         let hidden = AppSettings.shared.hiddenModules
         toolbar.setQuickConnect(console: !hidden.contains(.console), hosts: !hidden.contains(.connections))
-        contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: pageSubtitle,
+        contentPane.setHeader(title: module.showsHeader ? lit.title : nil, subtitle: headerLineSubtitle,
                               collapsesWhenEmpty: headerLineCollapses)
         // The lit row follows the showing tab too: Tasks' Calendar view is
         // the Calendar row's (`ModuleTable.sidebarModule(for:pageTab:)`).
@@ -1572,7 +1577,7 @@ final class MainSplitShellController: WorkspaceShellController {
         if shownCalendar != nil { refreshModuleChrome() }
         guard let page = pageController as? DaylightDrillActions, let subtitle = page.drillHeaderSubtitle else { return }
         pageSubtitle = subtitle
-        contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: pageSubtitle,
+        contentPane.setHeader(title: currentModule.showsHeader ? litModule.title : nil, subtitle: headerLineSubtitle,
                               collapsesWhenEmpty: headerLineCollapses)
         // S27: the crew panel's context is the line just written.
         if inspectorSource == nil, crewPanelLoaded { crewPanel.setContext(currentCrewContext) }

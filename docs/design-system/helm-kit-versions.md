@@ -36,6 +36,22 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 10.2.0 - Home, Tasks, Calendar and the Sticky Board, from the five-screen board
+
+The captain's picks from the five-screen redesign board (`data/grandline-page-redesign-options/`): Hg-2 for Home, Tf-2 for Tasks, Cf-4 for Calendar and Sk-1 for the Sticky Board.
+It is a minor release: two components gained an option, one is new, and no call site had to change.
+
+- `HelmHeroCard` 2.0.0 → 2.1.0 (minor): `Content.greeting` draws the page's greeting in the display voice (`HelmType.heroTitle`) above the headline, which then drops to a 17pt second line. `Content.status` draws the day's verdict as a glass pill at the top right, its dot in the verdict's colour. The words wrap beside the pill, which never grows past 340pt. A card with neither draws as 2.0.0 did.
+- `HelmHeroStatusPill` none → 1.0.0 (new): the hero's verdict pill. A dot and wrapping words on the tiles' own wash, with a hairline in the ink, as one static-text element for VoiceOver.
+- `HelmButton` 1.3.0 → 1.4.0 (minor): `heroSelection` draws a hero ghost pill as the chosen one of a set, solid in the hero's ink with its label in the colour given (the hero's deeper stop). Tasks' Smart views and the calendar's filter menus use it.
+
+- `Home (page)` 2.1.0 → 2.2.0 (minor): the greeting is the briefing hero's title and the day's verdict its pill (Hg-2). The date leads the hero's kicker. The greeting keeps its own row on the page when the briefing is not drawn as the hero.
+- `Tasks board (page)` 1.2.0 → 1.3.0 (minor): the band is the page's filters (Tf-2). Its figures (All open, Due today, Overdue) pick the scope and Follow-ups jumps to its card, and Smart views and the project and sort menus are glass pills under a hairline. The filter row and the grey count line above the band are gone.
+- `Calendar (page)` none → 1.0.0 (new): the month head carries the Tasks page's filters as three glass menus on its top edge (Cf-4), and its kicker says how many of the period's dates are a repeat rule's, not yet tasks. The caption line above the calendar is gone.
+- `Sticky Board (page)` none → 1.0.0 (new): the case-file title is a typewritten case tag pinned to the cork, with a name the captain can rename and a meta line of stamp, counts and sync (Sk-1). The frame is 4pt instead of 7pt, the cork's corners are rounded and its grain is finer. A floating pill holds New note and a colour filter.
+
+The sidebar layout's header line gains an opt-out: a page whose own hero says what its subtitle said (`WorkspaceHeaderLineCollapsing.drawsSubtitleOnHeaderLine`) leaves the line empty, and the empty line gives up its slot. Tasks and the Sticky Board use it.
+
 ## 10.1.0 - Home card polish and the Crew terminal prompt
 
 Three fixes the captain asked for together (`fm/grandline-widget-polish`).

@@ -45,8 +45,50 @@ enum HomeGreeting {
 
     /// The date, then one sentence of what is worth knowing first.
     static func summary(_ facts: Facts, now: Date = Date()) -> String {
-        let date = now.formatted(.dateTime.weekday(.wide).day().month(.wide))
-        return "\(date). \(sentence(facts))"
+        "\(date(now)). \(sentence(facts))"
+    }
+
+    /// "Monday, 23 November" - the summary's first words, and the briefing
+    /// hero's kicker when the greeting moves into it (Hg-2).
+    static func date(_ now: Date = Date()) -> String {
+        now.formatted(.dateTime.weekday(.wide).day().month(.wide))
+    }
+
+    /// The day's verdict as the briefing hero's pill (Hg-2): the summary's
+    /// sentence without the date or its full stop, and the colour of the
+    /// worst thing it says. `fleetTint` is the fleet verdict's own colour,
+    /// for when `facts.fleetNeedsYou` is what the sentence leads with.
+    static func verdict(_ facts: Facts, fleetTint: HelmTint? = nil) -> (text: String, tint: HelmTint?) {
+        var text = sentence(facts)
+        if text.hasSuffix(".") { text.removeLast() }
+        return (text, verdictTint(facts, fleetTint: fleetTint))
+    }
+
+    /// The worst of what the sentence says: red for anything late or failing,
+    /// amber for anything due or waiting on the captain, blue for good news
+    /// waiting to be acted on, and green only when every figure was read and
+    /// nothing is due. A day still being read has no colour at all (GL-14).
+    static func verdictTint(_ facts: Facts, fleetTint: HelmTint? = nil) -> HelmTint? {
+        func rank(_ tint: HelmTint) -> Int {
+            switch tint {
+            case .critical: return 4
+            case .warn: return 3
+            case .info, .accent, .violet: return 2
+            case .good: return 1
+            case .neutral: return 0
+            }
+        }
+        var worst: HelmTint?
+        func raise(_ tint: HelmTint) {
+            if let current = worst, rank(current) >= rank(tint) { return }
+            worst = tint
+        }
+        if let fleet = facts.fleetNeedsYou, !fleet.isEmpty { raise(fleetTint ?? .warn) }
+        if (facts.overdue ?? 0) > 0 || (facts.servicesFailing ?? 0) > 0 { raise(.critical) }
+        if (facts.dueToday ?? 0) > 0 { raise(.warn) }
+        if (facts.prsReady ?? 0) > 0 { raise(.info) }
+        if let worst { return worst }
+        return facts.dueToday == nil ? nil : .good
     }
 
     static func sentence(_ facts: Facts) -> String {

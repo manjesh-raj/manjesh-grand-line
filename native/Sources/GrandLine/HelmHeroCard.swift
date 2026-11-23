@@ -34,6 +34,15 @@
 // and the palette rule moved there when two Home cards took the hero style,
 // so this card and `HelmModuleCard` paint one copy of it.
 //
+// **The greeting can lead the card (2.1.0).** The captain's Hg-2 pick on
+// the five-screen redesign board (`data/grandline-page-redesign-options/`):
+// Home's "Good afternoon" left its own row on the page ground and became this
+// card's title, so one card answers "how is my day". With a `greeting`, the
+// card draws it in the page's display voice (`HelmType.heroTitle`) and the
+// headline drops to a second line under it. A `status` is the day's verdict
+// as a glass pill at the top right, its dot in the verdict's own colour. A
+// card with neither draws exactly as 2.0.0 did.
+//
 // **The card is not a button.** A tile that points somewhere is a
 // `HoverHighlightView` with its own click (role, focus ring and keyboard press
 // come with it, GL-16), and the actions are real `HelmButton`s. The card
@@ -50,6 +59,11 @@ final class HelmHeroCard: NSView {
     static var startLift: Double { HelmHeroSurface.startLift }
     static let insets = NSEdgeInsets(top: 22, left: 24, bottom: 22, right: 28)
     static let titleSize: CGFloat = 22
+    /// The headline's size when a greeting leads the card: a second line,
+    /// not a second title.
+    static let headlineUnderGreetingSize: CGFloat = 17
+    /// The widest the verdict pill grows before its words wrap.
+    static let statusMaxWidth: CGFloat = 340
     static let bodySize: CGFloat = 13.5
     /// The narrowest a tile may get before the row wraps to another.
     static let tileMinWidth: CGFloat = 200
@@ -65,6 +79,20 @@ final class HelmHeroCard: NSView {
         var tiles: [Tile]
         /// The services figure, drawn as the last tile. `nil` draws none.
         var ring: Ring?
+        /// The page's greeting ("Good afternoon, Manjesh"), drawn above the
+        /// headline in the display voice. `nil` keeps the headline as the
+        /// card's title.
+        var greeting: String? = nil
+        /// The day's verdict, as a glass pill at the top right. `nil` draws
+        /// none.
+        var status: Status? = nil
+
+        struct Status: Equatable {
+            var text: String
+            /// The verdict's colour, drawn as the pill's dot. `nil` draws the
+            /// ink's own quiet dot: a verdict this page has not read yet.
+            var tint: HelmTint?
+        }
 
         struct Tile: Equatable {
             /// The page the fact came from, as a kicker. `nil` draws the text
@@ -97,6 +125,11 @@ final class HelmHeroCard: NSView {
     private let surface = HelmHeroSurface()
     private let kickerLabel = NSTextField(wrappingLabelWithString: "")
     private let titleLabel = NSTextField(wrappingLabelWithString: "")
+    private let greetingLabel = NSTextField(wrappingLabelWithString: "")
+    private let statusPill = HelmHeroStatusPill()
+    /// The kicker, the greeting and the headline, beside the verdict pill.
+    private let textColumn = NSStackView()
+    private let head = NSStackView()
     private let grid = HelmHeroTileGrid()
     private let actionsRow = NSStackView()
     private let column = NSStackView()
@@ -121,7 +154,7 @@ final class HelmHeroCard: NSView {
 
         // Both wrap: `wrappingLabelWithString` is the constructor whose cell
         // wraps at all (gotcha (22)), and nothing caps the line count.
-        for label in [kickerLabel, titleLabel] {
+        for label in [kickerLabel, greetingLabel, titleLabel] {
             label.maximumNumberOfLines = 0
             label.lineBreakMode = .byWordWrapping
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -139,12 +172,39 @@ final class HelmHeroCard: NSView {
         // costs the column its spacing under the tiles.
         actionsRow.isHidden = true
 
-        column.setViews([kickerLabel, titleLabel, grid, actionsRow], in: .top)
+        greetingLabel.font = HelmType.heroTitle()
+        greetingLabel.isHidden = true
+        statusPill.isHidden = true
+
+        for label in [kickerLabel, greetingLabel, titleLabel] { textColumn.addArrangedSubview(label) }
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = HelmMetrics.s1 + 2
+        textColumn.detachesHiddenViews = true
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
+        // Gotcha (12): stack-level priorities for a stack. The words take the
+        // slack; the pill keeps its own width.
+        textColumn.setHuggingPriority(.defaultLow, for: .horizontal)
+        textColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        // Arranged, not gravity areas: under `.fill` the words are the one
+        // flexible member (gotcha (10)).
+        head.addArrangedSubview(textColumn)
+        head.addArrangedSubview(statusPill)
+        head.orientation = .horizontal
+        head.alignment = .top
+        head.distribution = .fill
+        head.spacing = HelmMetrics.s4
+        head.detachesHiddenViews = true
+        head.translatesAutoresizingMaskIntoConstraints = false
+        head.setHuggingPriority(.defaultLow, for: .horizontal)
+        head.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        column.setViews([head, grid, actionsRow], in: .top)
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s2
-        column.setCustomSpacing(HelmMetrics.s1 + 2, after: kickerLabel)
-        column.setCustomSpacing(HelmMetrics.s3 + 4, after: titleLabel)
+        column.setCustomSpacing(HelmMetrics.s3 + 4, after: head)
         column.setCustomSpacing(HelmMetrics.s3 + 2, after: grid)
         column.detachesHiddenViews = true
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -158,10 +218,13 @@ final class HelmHeroCard: NSView {
             column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -i.right),
             column.topAnchor.constraint(equalTo: topAnchor, constant: i.top),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -i.bottom),
-            // The headline and the tiles span the column; the kicker and the
-            // actions keep their own widths at its leading edge.
-            titleLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
-            kickerLabel.widthAnchor.constraint(equalTo: column.widthAnchor),
+            // The words and the tiles span the column, less the verdict pill
+            // beside the words; the actions keep their own widths at its
+            // leading edge.
+            head.widthAnchor.constraint(equalTo: column.widthAnchor),
+            titleLabel.widthAnchor.constraint(equalTo: textColumn.widthAnchor),
+            greetingLabel.widthAnchor.constraint(equalTo: textColumn.widthAnchor),
+            kickerLabel.widthAnchor.constraint(equalTo: textColumn.widthAnchor),
             grid.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
 
@@ -183,7 +246,11 @@ final class HelmHeroCard: NSView {
         self.content = content
         kickerLabel.stringValue = content.kicker.uppercased()
         kickerLabel.isHidden = content.kicker.isEmpty
+        greetingLabel.stringValue = content.greeting ?? ""
+        greetingLabel.isHidden = (content.greeting ?? "").isEmpty
         titleLabel.stringValue = content.title
+        statusPill.isHidden = content.status == nil
+        if let status = content.status { statusPill.configure(text: status.text) }
         if tilesChanged { rebuildTiles() }
         for (tile, fact) in zip(tileViews, content.tiles) {
             tile.configure(label: fact.label, text: fact.text)
@@ -194,7 +261,8 @@ final class HelmHeroCard: NSView {
             ringTile.ring?.setSpokenLabel("\(ring.value) of \(ring.total) \(ring.caption)")
         }
         grid.isHidden = grid.tiles.isEmpty
-        setAccessibilityLabel(([content.kicker, content.title] + content.tiles.map(\.text)
+        setAccessibilityLabel(([content.kicker, content.greeting ?? "", content.title, content.status?.text ?? ""]
+            + content.tiles.map(\.text)
             + [content.ring.map { "\($0.value) of \($0.total) \($0.caption)" }].compactMap { $0 })
             .filter { !$0.isEmpty }.joined(separator: ", "))
         applyTheme(theme)
@@ -289,7 +357,12 @@ final class HelmHeroCard: NSView {
         kickerLabel.attributedStringValue = NSAttributedString(string: kickerLabel.stringValue,
                                                                attributes: HelmType.kickerAttributes(color: ink))
         titleLabel.textColor = ink
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.titleSize), weight: .bold)
+        greetingLabel.textColor = ink
+        greetingLabel.font = HelmType.heroTitle()
+        // Under a greeting the headline is the card's second line.
+        titleLabel.font = greetingLabel.isHidden
+            ? .systemFont(ofSize: HelmType.scaled(Self.titleSize), weight: .bold)
+            : .systemFont(ofSize: HelmType.scaled(Self.headlineUnderGreetingSize), weight: .semibold)
         let wash = Self.tileWash(for: palette)
         let hover = Self.tileWash(for: palette, hovered: true)
         let fill = HelmContrast.color(wash.rgb).withAlphaComponent(wash.alpha)
@@ -299,6 +372,8 @@ final class HelmHeroCard: NSView {
             tile.apply(ink: ink, fill: fill, hoverFill: hoverFill, dot: dot, theme: theme)
         }
         ringTile?.apply(ink: ink, fill: fill, hoverFill: hoverFill, dot: nil, theme: theme)
+        let statusDot = content.status?.tint.map { HelmHeroSurface.signalColor(tintHex: $0.hex(in: theme), on: palette) }
+        statusPill.apply(ink: ink, fill: fill, dot: statusDot ?? ink.withAlphaComponent(0.55))
         // Item 2 of `ThemeManager`'s checklist: system-resolved colours in the
         // buttons follow the theme's mode, not the OS's.
         appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
@@ -309,8 +384,15 @@ final class HelmHeroCard: NSView {
         // Gotcha (22): every wrap width comes from the card's own width, less
         // its insets - never from a label's own resolved frame.
         let width = max(120, floor(bounds.width - Self.insets.left - Self.insets.right))
-        for label in [kickerLabel, titleLabel] where abs(label.preferredMaxLayoutWidth - width) > 0.5 {
-            label.preferredMaxLayoutWidth = width
+        // The pill's own width comes from its words, capped, never from the
+        // words beside it; the words then wrap in what is left.
+        var textWidth = width
+        if !statusPill.isHidden {
+            statusPill.maxWidth = min(Self.statusMaxWidth, floor(width * 0.45))
+            textWidth = max(120, width - statusPill.fittingSize.width - head.spacing)
+        }
+        for label in [kickerLabel, greetingLabel, titleLabel] where abs(label.preferredMaxLayoutWidth - textWidth) > 0.5 {
+            label.preferredMaxLayoutWidth = textWidth
             label.invalidateIntrinsicContentSize()
         }
         grid.layoutWidth = width
@@ -320,6 +402,8 @@ final class HelmHeroCard: NSView {
     var debugContent: Content { content }
     var debugTitleLabel: NSTextField { titleLabel }
     var debugTitleColor: NSColor? { titleLabel.textColor }
+    var debugGreetingLabel: NSTextField? { greetingLabel.isHidden ? nil : greetingLabel }
+    var debugStatusPill: HelmHeroStatusPill? { statusPill.isHidden ? nil : statusPill }
     var debugGradientColors: [CGColor] { surface.debugGradientColors }
     var debugRing: HelmRingGauge? { ringTile?.ring }
     var debugRingShown: Bool { ringTile != nil }
@@ -336,6 +420,100 @@ final class HelmHeroCard: NSView {
 /// constraints: the arrangement changes with the width, and the height it
 /// reports is derived from `layoutWidth`, which the card sets from its own
 /// bounds (the same shape as a wrapping label's `preferredMaxLayoutWidth`).
+/// The hero's verdict: a glass pill with a coloured dot and a few words, at
+/// the card's top right (Hg-2). Not a control - the tiles and the actions are
+/// the card's ways out - so it is one static-text element for VoiceOver.
+///
+/// Its wash is the tiles' own, so the words never read worse than on the
+/// gradient (the file header's rule), and it carries a hairline in the ink so
+/// it reads as a pill rather than a darker patch. Long words wrap inside it
+/// at `maxWidth`; nothing is ever cut off.
+final class HelmHeroStatusPill: NSView {
+
+    static let height: CGFloat = 30
+    static let dotSide: CGFloat = 8
+    static let insets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 13)
+
+    /// The widest the pill may grow; its words wrap inside this.
+    var maxWidth: CGFloat = HelmHeroCard.statusMaxWidth {
+        didSet {
+            guard abs(maxWidth - oldValue) > 0.5 else { return }
+            label.preferredMaxLayoutWidth = max(40, maxWidth - Self.insets.left - Self.dotSide - 8 - Self.insets.right)
+            label.invalidateIntrinsicContentSize()
+        }
+    }
+
+    private let dot = NSView()
+    private let label = NSTextField(wrappingLabelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.borderWidth = 1
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Self.dotSide / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        label.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
+        label.maximumNumberOfLines = 0
+        label.lineBreakMode = .byWordWrapping
+        label.preferredMaxLayoutWidth = maxWidth - Self.insets.left - Self.dotSide - 8 - Self.insets.right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        // Gotcha (5): a leaf view, so its content priorities hold the pill to
+        // its words.
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.setAccessibilityElement(false)
+        addSubview(dot)
+        addSubview(label)
+        let i = Self.insets
+        NSLayoutConstraint.activate([
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: i.left),
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
+            // Centred on the first line by the label's top, never by a
+            // baseline: a baseline constraint in a hidden pill, which the
+            // head's stack detaches, is lowered with no engine and throws.
+            dot.topAnchor.constraint(equalTo: label.topAnchor,
+                                     constant: floor((HelmType.scaled(13) * 1.25 - Self.dotSide) / 2)),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -i.right),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: i.top),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -i.bottom),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.height),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(text: String) {
+        label.stringValue = text
+        setAccessibilityLabel(text)
+        needsLayout = true
+    }
+
+    func apply(ink: NSColor, fill: NSColor, dot dotColor: NSColor) {
+        layer?.backgroundColor = fill.cgColor
+        layer?.borderColor = ink.withAlphaComponent(0.28).cgColor
+        label.textColor = ink
+        dot.layer?.backgroundColor = dotColor.cgColor
+    }
+
+    override func layout() {
+        super.layout()
+        // A capsule on one line, a rounded card when the words wrap.
+        layer?.cornerRadius = min(bounds.height / 2, Self.height / 2)
+    }
+
+    #if FM_SELFTESTS
+    var debugText: String { label.stringValue }
+    var debugDotColor: NSColor? { dot.layer?.backgroundColor.flatMap(NSColor.init(cgColor:)) }
+    var debugLabel: NSTextField { label }
+    #endif
+}
+
 final class HelmHeroTileGrid: NSView {
 
     var tiles: [HelmHeroTile] = [] {

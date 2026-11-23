@@ -437,8 +437,10 @@ enum UIUXProposalsSelfTest {
         check(!fixedWidth.debugFilterButtonShown, "S16: a bar with nothing to fold never shows the Filter button", &ok)
 
         guard sourcesAvailable else { print("  SKIP: S16 source half, no app sources"); return }
-        for page in ["ShiftController.swift", "UpdatesController.swift", "LogAnalyzerController.swift",
-                     "CredentialVaultController.swift"] {
+        // Tasks left this list with Tf-2 of the five-screen redesign: its
+        // filters are the band's figures and pills, and the calendar head's
+        // menus (Cf-4), so it builds no filter row at all.
+        for page in ["UpdatesController.swift", "LogAnalyzerController.swift", "CredentialVaultController.swift"] {
             check(source(page).contains("HelmFilterBar("), "S16: \(page) builds its filter row with HelmFilterBar", &ok)
         }
         check(source("ShiftController+Calendar.swift").contains("HelmPopUpButton()"),

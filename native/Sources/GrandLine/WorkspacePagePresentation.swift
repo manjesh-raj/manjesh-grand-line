@@ -100,4 +100,16 @@ protocol WorkspaceHeaderAccessoryProviding: AnyObject {
 /// carries a subtitle or a control.
 protocol WorkspaceHeaderLineCollapsing: AnyObject {
     var collapsesEmptyHeaderLine: Bool { get }
+    /// Whether the page's live subtitle is drawn on the line at all. Tasks
+    /// (Tf-2, Cf-4) and the Sticky Board (Sk-1) say what the line said in
+    /// their own hero, band or case tag, so a second copy above it was the
+    /// duplicate the captain asked to remove. The subtitle is still the
+    /// page's summary - the crew panel reads it as the page's context, and
+    /// the floating bar's drill header draws it - it is only not repeated on
+    /// this line. Defaults to true.
+    var drawsSubtitleOnHeaderLine: Bool { get }
+}
+
+extension WorkspaceHeaderLineCollapsing {
+    var drawsSubtitleOnHeaderLine: Bool { true }
 }

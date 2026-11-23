@@ -403,6 +403,15 @@ enum MainSplitShellPanesSelfTest {
                       "S03: Console keeps an empty header line", &ok)
                 continue
             }
+            // Tasks, its Calendar and the Sticky Board say what their line
+            // said in their own band, month head and case tag (Tf-2, Cf-4,
+            // Sk-1), so they give up the empty line the way Console does, and
+            // their hero starts under the toolbar.
+            if (shell.debugSlotController(destination) as? WorkspaceHeaderLineCollapsing)?.drawsSubtitleOnHeaderLine == false {
+                check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
+                      "S03: \(destination.rawValue) keeps an empty header line over its own hero", &ok)
+                continue
+            }
             let slot = shell.debugContentPaneHeader.frame.height
             check(abs(slot - HelmMetrics.pageHeaderLine) < 0.5,
                   "S03: \(destination.rawValue)'s header line is \(slot)pt tall, want \(HelmMetrics.pageHeaderLine)", &ok)
@@ -956,8 +965,9 @@ enum MainSplitShellPanesSelfTest {
               "R4-UI-09: the lane counts \(tasks.followUpLane.debugCount) of \(pending) pending follow-ups", &ok)
         check(tasks.debugFollowUpsRowHidden && tasks.debugProjectsSectionHidden,
               "R4-UI-09: at 1512 Follow-ups or Projects still stacks under the board", &ok)
-        check(tasks.debugFollowUpsJumpHidden, "R4-UI-09: the Follow-ups jump shows beside the lane it would jump to", &ok)
-        check(!tasks.debugFilterRowCollapsed, "R4-UI-08: at 1512 the filter row collapsed", &ok)
+        check(!tasks.debugFollowUpsJumps, "R4-UI-09: the Follow-ups figure jumps beside the lane it would jump to", &ok)
+        check(tasks.debugHeroBand?.debugFiguresInTopRow == true,
+              "Tf-2: at 1512 the band's figures dropped under its words", &ok)
         check(tasks.followUpLane.debugMenuTitles(at: 0).contains("Mark Done"),
               "R4-UI-09: a lane card's menu reads \(tasks.followUpLane.debugMenuTitles(at: 0))", &ok)
         // S08: four lanes, one chrome. The page's first render runs before
@@ -972,28 +982,17 @@ enum MainSplitShellPanesSelfTest {
               "S08: the lane has no dashed \"Add follow-up\" row (in lane \(foot.inLane), outlined \(foot.outlined))", &ok)
         check(foot.button.target === lane && foot.button.action != nil,
               "S08: \"Add follow-up\" is not wired to the lane's add", &ok)
-        checkFilterRowFits(tasks, "1512", &ok)
+        checkBandFits(tasks, "1512", &ok)
 
         // 960: the lanes are too narrow for four, so Follow-ups goes back
-        // under the board, and the row collapses into one Filter button.
+        // under the board and the band's Follow-ups figure jumps to it. The
+        // band keeps every filter at its own width (Tf-2).
         resize(window, width: 960, shell)
         check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden,
               "R4-UI-09: at 960 Follow-ups is neither off the board nor under it", &ok)
-        check(tasks.debugFilterRowCollapsed, "R4-UI-08: at 960 the filter row did not collapse", &ok)
-        // S16: the folded controls open in the bar's popover - the same
-        // project pop-up, Follow-ups jump and sort, with their own handlers.
-        let bar = tasks.debugFilterRow
-        check(bar.debugFilterButtonShown, "S16: at 960 the Filter button is not on the row", &ok)
-        bar.debugOpenFilters()
-        let folded = bar.debugPopoverViews
-        check(folded.contains { $0 === tasks.debugProjectPopup } && folded.contains { $0 === tasks.debugSortPopup }
-                && folded.contains { $0 === tasks.debugFollowUpsJump },
-              "S16: the Filter popover holds \(folded.map { type(of: $0) })", &ok)
-        bar.debugCloseFilters()
-        check(bar.arrangedSubviews.contains { $0 === tasks.debugProjectPopup }
-                && bar.arrangedSubviews.contains { $0 === tasks.debugSortPopup },
-              "S16: closing the popover did not put the folded controls back on the row", &ok)
-        checkFilterRowFits(tasks, "960", &ok)
+        check(tasks.debugFollowUpsJumps && tasks.debugHeroBand?.debugFigureButtons.last?.debugIsActivatable == true,
+              "Tf-2: at 960 the Follow-ups figure does not jump to the card under the board", &ok)
+        checkBandFits(tasks, "960", &ok)
 
         // List keeps Projects under its table; Weekly review lists next week.
         resize(window, width: 1512, shell)
@@ -1011,17 +1010,24 @@ enum MainSplitShellPanesSelfTest {
         tasks.selectModuleTab(named: "Board")
     }
 
-    /// Every control the Tasks filter row shows ends inside it, at its own width. Measured
-    /// on alignment rects, which is what the stack places: a label's frame
-    /// runs a couple of points past its text either side.
-    private static func checkFilterRowFits(_ tasks: ShiftController, _ width: String, _ ok: inout Bool) {
-        let row = tasks.debugFilterRow
-        row.layoutSubtreeIfNeeded()
-        for view in row.arrangedSubviews where !view.isHidden && view.fittingSize.width > 0 {
-            let placed = view.alignmentRect(forFrame: view.frame)
-            check(placed.maxX <= row.bounds.width + 0.5 && view.frame.width + 0.5 >= view.fittingSize.width,
-                  "R4-UI-08: at \(width) a \(type(of: view)) is cut at \(view.frame.width) of "
-                  + "\(view.fittingSize.width)pt, ending at \(placed.maxX) of \(row.bounds.width)", &ok)
+    /// Every filter the Tasks band carries (Tf-2) ends inside it, at its own
+    /// width: the figures and the pills are the page's only filters, so one
+    /// cut short or pushed past the band's edge is a filter the captain
+    /// cannot reach.
+    private static func checkBandFits(_ tasks: ShiftController, _ width: String, _ ok: inout Bool) {
+        guard let band = tasks.debugHeroBand else {
+            fail("Tf-2: at \(width) Tasks draws no band", &ok)
+            return
+        }
+        band.layoutSubtreeIfNeeded()
+        let pills = band.debugPills
+        let controls: [NSView] = band.debugFigureButtons + [pills.priorities, pills.recent, pills.project, pills.sort]
+        for view in controls where !view.isHiddenOrHasHiddenAncestor && view.fittingSize.width > 0 {
+            let placed = view.convert(view.bounds, to: band)
+            check(placed.minX >= -0.5 && placed.maxX <= band.bounds.width + 0.5
+                    && view.frame.width + 0.5 >= view.fittingSize.width,
+                  "Tf-2: at \(width) a \(type(of: view)) is cut at \(view.frame.width) of "
+                  + "\(view.fittingSize.width)pt, at \(placed) in a \(band.bounds.width)pt band", &ok)
         }
     }
 }

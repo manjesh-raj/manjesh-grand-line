@@ -180,6 +180,21 @@ final class TaskCalendarController: NSViewController {
     /// Tasks page's header carries it while this view shows.
     var caption: String { calendarView.caption }
 
+    /// Cf-4: the Tasks page's filters as the month head's menus, and where a
+    /// click on one goes (`ShiftController.wireCalendarFilters`).
+    func setHeroFilters(_ filters: ShiftCalendarHeroHead.Filters?) {
+        _ = view
+        calendarView.setHeroFilters(filters)
+    }
+
+    func setHeroFilterHandlers(scope: @escaping (NSView) -> Void, project: @escaping (NSView) -> Void,
+                               colour: @escaping (NSView) -> Void) {
+        _ = view
+        calendarView.onShowScopeMenu = scope
+        calendarView.onShowProjectMenu = project
+        calendarView.onShowColourMenu = colour
+    }
+
     /// What a task chip's colour says: priority or project.
     var colouring: ShiftCalendarColouring { calendarView.colouring }
 
