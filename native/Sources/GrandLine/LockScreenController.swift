@@ -465,8 +465,8 @@ final class LockScreenController: NSViewController {
         // over it, punching the crescent out against the sky; it is filled with
         // the sky's own top colour in `applyTheme`, so it reads as absence
         // rather than as a second object.
-        sunLayer.cornerRadius = 44
-        sunLayer.frame = NSRect(x: 0, y: 0, width: 88, height: 88)
+        sunLayer.cornerRadius = Self.sunSide / 2
+        sunLayer.frame = NSRect(x: 0, y: 0, width: Self.sunSide, height: Self.sunSide)
         sunLayer.shadowOpacity = 0.75
         sunLayer.shadowRadius = 28
         sunLayer.shadowOffset = .zero
@@ -506,8 +506,8 @@ final class LockScreenController: NSViewController {
         daySkyLayer.endPoint = CGPoint(x: 0.5, y: 0)
         daySkyLayer.opacity = 0
         root.layer?.insertSublayer(daySkyLayer, above: skyLayer)
-        daySunLayer.cornerRadius = 44
-        daySunLayer.frame = NSRect(x: 0, y: 0, width: 88, height: 88)
+        daySunLayer.cornerRadius = Self.sunSide / 2
+        daySunLayer.frame = NSRect(x: 0, y: 0, width: Self.sunSide, height: Self.sunSide)
         daySunLayer.shadowOpacity = 0.75
         daySunLayer.shadowRadius = 28
         daySunLayer.shadowOffset = .zero
@@ -1610,6 +1610,9 @@ final class LockScreenController: NSViewController {
     // MARK: - The lamp (board design L-2)
 
     enum LightSource { case pointer, key }
+
+    /// The sun's (and the day-break sun's) diameter; both are discs.
+    private static let sunSide: CGFloat = 88
 
     /// Reduce Motion and VoiceOver start lit: there is no gate to work out
     /// and nothing to pull.

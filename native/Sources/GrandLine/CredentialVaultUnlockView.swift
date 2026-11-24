@@ -269,7 +269,7 @@ final class CredentialVaultUnlockView: NSView {
         passwordRow.orientation = .horizontal
         passwordRow.alignment = .centerY
         passwordRow.distribution = .fill
-        passwordRow.spacing = 10
+        passwordRow.spacing = HelmMetrics.s2
         passwordRow.translatesAutoresizingMaskIntoConstraints = false
         passwordRow.addArrangedSubview(passwordWell)
         passwordRow.addArrangedSubview(touchRoundButton)
@@ -953,8 +953,13 @@ final class CredentialVaultUnlockView: NSView {
 
     /// What a key in this window does: opens a shut chest, or glints by the
     /// treasure in an open one.
+    ///
+    /// Not while the app is locked: those keys are the app password, typed on
+    /// the lock screen in front of this page, and they must not open the
+    /// vault's chest behind it. The chest shows and writes nothing, so it
+    /// reads the lock state rather than claiming an `AppLockedSurface` case.
     private func handleKeyDown() {
-        guard openStyle, !isHiddenOrHasHiddenAncestor else { return }
+        guard openStyle, !isHiddenOrHasHiddenAncestor, !AppLockGate.shared.isLocked else { return }
         if isLit { chest.glint() } else { openChest(.key) }
     }
 
@@ -1016,7 +1021,7 @@ final class CredentialVaultUnlockView: NSView {
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = 0
             fade.toValue = 1
-            fade.duration = 0.22
+            fade.duration = HelmMotion.moveDuration
             animation = fade
         } else if layoutMode == .side {
             // The light reaches the form and it comes up beside the chest.

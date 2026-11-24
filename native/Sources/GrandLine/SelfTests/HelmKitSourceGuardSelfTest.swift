@@ -174,7 +174,8 @@ enum HelmKitSourceGuardSelfTest {
         "IncidentCardView.swift": 1,
         "KeyChordRecorderView.swift": 1,
         "KeyboardShortcutsSheetController.swift": 1,
-        "LockScreenController.swift": 2,
+        // The L-2 lighthouse build spelled both suns as `sunSide / 2`.
+        "LockScreenController.swift": 1,
         "LogAnalyzerController.swift": 16,
         "LogAnalyzerViews.swift": 1,
         "NotebookController.swift": 1,

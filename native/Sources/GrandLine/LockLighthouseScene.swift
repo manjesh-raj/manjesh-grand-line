@@ -157,18 +157,28 @@ final class LockLighthouseScene {
         HelmMotion.withoutImplicitAnimation {
             tower.contents = LighthouseArt.image(palette: p.art)
             glass.backgroundColor = p.warmLight.cgColor
-            for beam in beams {
-                for case let wedge as CAGradientLayer in beam.sublayers ?? [] {
-                    wedge.colors = [p.warmLight.withAlphaComponent(0.78), p.warm.withAlphaComponent(0.34),
-                                    p.warm.withAlphaComponent(0.11), p.warm.withAlphaComponent(0)].map(\.cgColor)
-                }
-            }
-            halo.colors = [p.warmLight.withAlphaComponent(1), p.warm.withAlphaComponent(0.6), p.warm.withAlphaComponent(0)].map(\.cgColor)
-            halo.locations = [0, 0.26, 0.68]
-            flare.colors = [p.warm.withAlphaComponent(0.9), p.warm.withAlphaComponent(0.25), p.warm.withAlphaComponent(0)].map(\.cgColor)
-            flare.locations = [0, 0.55, 0.8]
             for ring in rings { ring.strokeColor = p.warmLight.withAlphaComponent(0.75).cgColor }
             for band in [fogFar, fogBank, fogVeil] { band.layer.backgroundColor = p.fog.cgColor }
+        }
+        for beam in beams {
+            for case let wedge as CAGradientLayer in beam.sublayers ?? [] {
+                Self.setStops(wedge, [p.warmLight.withAlphaComponent(0.78), p.warm.withAlphaComponent(0.34),
+                                      p.warm.withAlphaComponent(0.11), p.warm.withAlphaComponent(0)])
+            }
+        }
+        Self.setStops(halo, [p.warmLight.withAlphaComponent(1), p.warm.withAlphaComponent(0.6), p.warm.withAlphaComponent(0)],
+                      [0, 0.26, 0.68])
+        Self.setStops(flare, [p.warm.withAlphaComponent(0.9), p.warm.withAlphaComponent(0.25), p.warm.withAlphaComponent(0)],
+                      [0, 0.55, 0.8])
+    }
+
+    /// Every gradient's stops go through here with implicit animation off: a
+    /// standalone layer's colour change would otherwise cross-fade on a theme
+    /// switch.
+    private static func setStops(_ layer: CAGradientLayer, _ colors: [NSColor], _ locations: [NSNumber]? = nil) {
+        HelmMotion.withoutImplicitAnimation {
+            layer.colors = colors.map(\.cgColor)
+            if let locations { layer.locations = locations }
         }
     }
 

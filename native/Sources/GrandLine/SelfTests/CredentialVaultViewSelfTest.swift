@@ -187,6 +187,13 @@ enum CredentialVaultViewSelfTest {
               "S-1: shut means the page dark, the dome down and the lining folded")
         check(chest.debugSeamPulsing, "S-1: light leaks from the seam while shut")
 
+        // Not while the app is locked: those keys are the app password, typed
+        // on the lock screen in front of this page.
+        AppLockGate.shared.setLocked(true)
+        gate.debugKeyDown()
+        AppLockGate.shared.setLocked(false)
+        check(!gate.debugIsLit, "GL-09: a key typed while the app is locked opened the vault's chest behind the lock screen")
+
         // The first key opens it, through the monitor's own handler.
         gate.debugKeyDown()
         check(gate.debugIsLit && gate.debugFormHostAlpha == 1 && !gate.debugFormHostInert && formTakesClicks(),

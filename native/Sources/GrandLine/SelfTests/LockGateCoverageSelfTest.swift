@@ -93,6 +93,12 @@ enum LockGateCoverageSelfTest {
                   + "active and therefore decides when to lock. Gating it on the gate it "
                   + "feeds would be circular, and a locked app that stopped watching for "
                   + "activity could never re-arm its own idle timer."),
+        .init(file: "LockScreenController.swift", gate: nil,
+              reason: "the lock overlay's own monitor (L-2): the first key typed on the dark lock "
+                  + "screen lights its lamp. It has to run precisely while the app is locked, so "
+                  + "gating it on the gate would be circular, like `AppLock.swift`'s. It returns "
+                  + "every event untouched, shows and writes nothing, and `stopAnimations()` "
+                  + "removes it with the overlay."),
         .init(file: "CockpitTerminalView.swift", gate: nil,
               reason: "records a keystroke timestamp for `lastUserActivity` and routes "
                   + "drag-vs-selection inside one terminal view. It shows nothing, writes "

@@ -103,7 +103,6 @@ final class VaultChestScene {
         // The two lids hinge on their bottom edges.
         lid.anchorPoint = CGPoint(x: 0.5, y: 0)
         dome.anchorPoint = CGPoint(x: 0.5, y: 0)
-        seam.cornerRadius = 1.5
         seam.shadowOffset = .zero
         seam.shadowRadius = 5
         seam.shadowOpacity = 0.7
@@ -148,30 +147,35 @@ final class VaultChestScene {
                 dome.contents = VaultChestArt.dome(dim: dim)
                 padlock.contents = VaultChestArt.padlock(dim: dim, touchID: touchID)
             }
-            hold.colors = [light.holdCentre.cgColor, light.holdEdge.cgColor]
-            seamGlow.colors = [light.seamGlow.cgColor, light.seamGlow.withAlphaComponent(0).cgColor]
-            seamGlow.locations = [0, 0.7]
-            shadow.colors = [light.shadow.cgColor, light.shadow.withAlphaComponent(0).cgColor]
-            shadow.locations = [0, 0.7]
-            formGlow.colors = [light.formGlow.cgColor, light.formGlow.withAlphaComponent(0).cgColor]
-            formGlow.locations = [0, 0.7]
-            // Stacked, the board's mouth gradient runs dark at the top.
-            mouthLayer.colors = [light.mouthBottom.cgColor, light.mouthTop.cgColor]
             seam.backgroundColor = light.seam.cgColor
             seam.shadowColor = light.glow.cgColor
             padlock.shadowColor = light.mouthBottom.cgColor
-            raysMask.colors = [NSColor.black.cgColor, NSColor.black.cgColor,
-                               NSColor.black.withAlphaComponent(0.55).cgColor, NSColor.clear.cgColor]
-            raysMask.locations = [0, 0.13, 0.48, 1]
-            applyRays()
-            applyGlow()
+        }
+        setStops(hold, [light.holdCentre, light.holdEdge])
+        for (layer, colour) in [(seamGlow, light.seamGlow), (shadow, light.shadow), (formGlow, light.formGlow)] {
+            setStops(layer, [colour, colour.withAlphaComponent(0)], [0, 0.7])
+        }
+        // The board's mouth runs dark at the top; the layer's y runs up.
+        setStops(mouthLayer, [light.mouthBottom, light.mouthTop])
+        setStops(raysMask, [.black, .black, NSColor.black.withAlphaComponent(0.55), .clear], [0, 0.13, 0.48, 1])
+        applyRays()
+        applyGlow()
+    }
+
+    /// Every gradient's stops go through here, so none of them cross-fades:
+    /// these are standalone layers, whose property changes animate by
+    /// default, and a theme change or a relayout must not fade the dark in.
+    private func setStops(_ layer: CAGradientLayer, _ colors: [NSColor], _ locations: [NSNumber]? = nil) {
+        HelmMotion.withoutImplicitAnimation {
+            layer.colors = colors.map(\.cgColor)
+            if let locations { layer.locations = locations }
         }
     }
 
     /// The rays: 28 warm wedges round the mouth, each a third of its slot.
     private func applyRays() {
-        let ray = light.ray.cgColor, clear = light.ray.withAlphaComponent(0).cgColor
-        var colors: [CGColor] = [], locations: [NSNumber] = []
+        let ray = light.ray, clear = light.ray.withAlphaComponent(0)
+        var colors: [NSColor] = [], locations: [NSNumber] = []
         let slots = 28
         for k in 0..<slots {
             let a0 = Double(k) / Double(slots), a1 = Double(k + 1) / Double(slots)
@@ -179,16 +183,13 @@ final class VaultChestScene {
             colors += [ray, ray, clear, clear]
             locations += [a0, a0 + w, a0 + w + 0.0005, a1].map { NSNumber(value: $0) }
         }
-        rays.colors = colors
-        rays.locations = locations
+        setStops(rays, colors, locations)
     }
 
     private func applyGlow() {
         let side = layout == .side
-        glow.colors = [light.glow.withAlphaComponent(0.42).cgColor,
-                       light.glow.withAlphaComponent(side ? 0.1 : 0.12).cgColor,
-                       light.glow.withAlphaComponent(0).cgColor]
-        glow.locations = [0, side ? 0.52 : 0.5, 0.72]
+        setStops(glow, [light.glow.withAlphaComponent(0.42), light.glow.withAlphaComponent(side ? 0.1 : 0.12),
+                        light.glow.withAlphaComponent(0)], [0, side ? 0.52 : 0.5, 0.72])
     }
 
     /// VoiceOver hears what a tap will do now.
@@ -226,6 +227,7 @@ final class VaultChestScene {
                 let f = local(frame)
                 layer.position = CGPoint(x: f.midX, y: f.midY)
             }
+            seam.cornerRadius = seam.bounds.height / 2
             seam.shadowPath = CGPath(rect: seam.bounds.insetBy(dx: -3, dy: -3), transform: nil)
             for (layer, frame) in [(lid, VaultChestArt.lidFrame), (dome, VaultChestArt.domeFrame)] {
                 layer.bounds = CGRect(origin: .zero, size: frame.size)
