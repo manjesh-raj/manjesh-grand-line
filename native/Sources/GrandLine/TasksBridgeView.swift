@@ -14,8 +14,10 @@
 // **Two surfaces host it**, and that is why it is one view rather than two:
 //
 //   * The compact-mode popover's Today tab (`CompactTodayPane`), at 330pt.
+//     Since MB-1 (Helm 10.4.0) the popover's hero head says the date, done
+//     today and the streak, so this host leaves the pane's own header out.
 //   * The Tasks menu-bar item (`ShiftMenuBarPopoverController`), at the same
-//     width, with the header's pin and the footer's Settings shown.
+//     width, with the header (and its pin) and the footer's Settings shown.
 //
 // **Local on purpose.** The notification panel's own Bridge restyle is being
 // built in parallel, and main has no shared Now card yet. So this file owns
@@ -60,9 +62,14 @@ final class TasksBridgePane: NSView {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private(set) var digest: TasksBridgeDigest = .empty
 
-    /// - Parameter showsPin: the menu-bar item's "keep this open" pin. The
-    ///   compact popover has no use for one, so it passes false.
-    init(showsPin: Bool) {
+    /// - Parameters:
+    ///   - showsPin: the menu-bar item's "keep this open" pin. The compact
+    ///     popover has no use for one, so it passes false.
+    ///   - showsHeader: whether the pane draws its own header. True, the
+    ///     default, is the Tasks menu-bar item. The compact popover passes
+    ///     false (MB-1): its hero head already says the date, done today and
+    ///     the streak, and two headers say it twice.
+    init(showsPin: Bool, showsHeader: Bool = true) {
         header = TasksBridgeHeader(showsPin: showsPin)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -93,12 +100,19 @@ final class TasksBridgePane: NSView {
         nowCard.onOpen = { [weak self] id in self?.onOpenTask?(id) }
         nowCard.showsStartFocus = false
 
-        column.setViews([header, nowCard, upNextKicker, upNextStack, backlogKicker, backlogStack, chipsRow],
+        // Left out of the column rather than hidden in it. The column detaches
+        // a hidden view, and the header's title row is aligned on its first
+        // baseline, which is gotcha (23): a baseline constraint inside a view
+        // a stack may detach throws from the next layout pass. The header
+        // still exists and is still configured, so `header` reads the same
+        // in both hosts.
+        column.setViews((showsHeader ? [header] : [])
+                            + [nowCard, upNextKicker, upNextStack, backlogKicker, backlogStack, chipsRow],
                         in: .leading)
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s2
-        column.setCustomSpacing(HelmMetrics.s3, after: header)
+        if showsHeader { column.setCustomSpacing(HelmMetrics.s3, after: header) }
         column.setCustomSpacing(HelmMetrics.s4, after: nowCard)
         column.setCustomSpacing(HelmMetrics.s1, after: upNextKicker)
         column.setCustomSpacing(HelmMetrics.s3, after: upNextStack)
@@ -199,6 +213,8 @@ final class TasksBridgePane: NSView {
     }
 
     #if FM_SELFTESTS
+    /// Whether the pane draws its own header (it is in the column).
+    var debugShowsHeader: Bool { header.superview === column }
     var debugNowCard: TasksBridgeNowCard { nowCard }
     var debugTimelineRows: [TasksBridgeTimelineRow] {
         timelineRows.orderedRows.compactMap { $0 as? TasksBridgeTimelineRow }

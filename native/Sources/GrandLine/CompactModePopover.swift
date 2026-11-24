@@ -3,6 +3,19 @@
 // F22's compact popover: the whole app in 330pt, as the reviewed mockup draws
 // it - a header, four tabs, a capture line and a footer.
 //
+// **The header is MB-1's hero head** (Helm 10.4.0, the captain's pick from the
+// hero restyle board in `data/grandline-hero-restyle-designs-scout/`). It was
+// a plain "Grand Line · compact mode" title over the tab strip. It is now a
+// `PopoverHeroHeader` in the `.verdict` style on the quiet-ink palette, as the
+// notifications panel's N-1 head is, and its words follow the tab that is
+// showing (`CompactHeroWords`): "2 of 6 done today" with a ring and the
+// streak, "3 notes on the board", "3 codes ready", "Ask the crew". The tab
+// strip moved into the head as the same `HelmSegmentedTabs` in the hero's ink
+// (`heroInk`), so ← →, the radio roles and the selection are unchanged. The
+// Today pane leaves its own header out in this host only, because the head
+// says the same three things. Locked, the head says so with a padlock and
+// the tabs leave it, and the pane keeps the same password check.
+//
 // **The four tabs are the app's existing menu-bar popovers, merged.** That is
 // the mockup's own judgment call, quoted in `CompactMode.swift`'s header, and
 // it is what this file is mostly about:
@@ -161,6 +174,12 @@ final class CompactModePopoverController: NSViewController {
     /// (`AppShellController.makeCaptureFiler`).
     var captureFiler: CaptureFiler = .unwired
 
+    /// MB-1: every note on the Sticky Board that is not archived, for the
+    /// Notes head ("12 notes on the board"). The rows stop at
+    /// `CompactModeDigest.maxRows`, so their count is not the board's. Nil
+    /// means the count is not known, and the head says so (GL-14).
+    var noteCountProvider: (() -> Int)?
+
     var onOpenFullWindow: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     /// Close the popover - used by a pane that has just navigated the window.
@@ -184,10 +203,18 @@ final class CompactModePopoverController: NSViewController {
 
     // MARK: Chrome
 
-    private let iconTile = IconTileView(size: 22, cornerRadius: 7)
-    private let titleLabel = NSTextField(labelWithString: "Grand Line")
-    private let modeLabel = NSTextField(labelWithString: "compact mode")
+    /// MB-1's headline size. The `.verdict` style's own 21pt is a page hero's.
+    /// Beside the ring and the gear the Today words have 168pt, and at 21pt
+    /// "2 of 6 done today" measures 177pt in the rounded heavy face, so it
+    /// truncated. 15pt is the board's own, and measures 130pt.
+    static let headlineSize: CGFloat = 15
+    /// The Today ring: the board's 44pt, the size Tasks' own band ring is.
+    static let ringSide: CGFloat = 44
+    /// The ring's track on the gradient, as the notifications head draws it.
+    static let ringTrackAlpha: CGFloat = 0.26
+
     private let settingsButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "gearshape")
+    private let ring = HelmRingGauge(side: CompactModePopoverController.ringSide)
     private let tabs = HelmSegmentedTabs(
         items: CompactModeTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
         selected: CompactModeTab.today.rawValue,
@@ -196,6 +223,15 @@ final class CompactModePopoverController: NSViewController {
         // pins both of the control's edges - which without `equalWidths` is
         // gotcha (10) exactly. See that parameter's own note.
         equalWidths: true)
+    /// The hero head: a glass tile, the tab's words, the ring and the gear on
+    /// the title row, and the tab strip as its body.
+    private lazy var head = PopoverHeroHeader(
+        symbol: CompactHeroWords.appSymbol, tileStyle: .glass, tileSide: 32,
+        insets: NSEdgeInsets(top: HelmMetrics.s3, left: 14, bottom: HelmMetrics.s3, right: 14),
+        body: tabs, bodySpacing: HelmMetrics.s3, titleStyle: .verdict,
+        quietInk: HelmHeroColumn.quietInkAlpha, titleSize: Self.headlineSize)
+    /// What the head says right now.
+    private(set) var heroWords: CompactHeroWords?
 
     private let bodyContainer = NSStackView()
 
@@ -208,7 +244,6 @@ final class CompactModePopoverController: NSViewController {
         keys: HelmKeyHint.keys(for: [.control, .option], key: "G"), caption: "toggle")
     private let openWindowButton = HelmButton(title: "Open full window", variant: .quiet, size: .small)
 
-    private let headerDivider = NSView()
     private let captureDivider = NSView()
     private let footerDivider = NSView()
 
@@ -263,32 +298,30 @@ final class CompactModePopoverController: NSViewController {
         //
         // The chrome above the body and the chrome below it are each pinned
         // to their own edge of a fixed-size root; the body is whatever is
-        // left between them. So the header, the tab strip, the capture line
-        // and the footer are at the same coordinates on all four tabs, and a
-        // tab whose content wants more room gets a scroller rather than
+        // left between them. So the head, the tab strip in it, the capture
+        // line and the footer are at the same coordinates on all four tabs,
+        // and a tab whose content wants more room gets a scroller rather than
         // dragging the popover's own frame with it.
         //
         // Doing this with one stack instead would mean handing the body the
         // stack's slack, and neither `bodyContainer` (an `NSStackView`) nor a
         // scroll view has an intrinsic size - so a hugging priority on either
         // is a no-op, which is AGENTS.md gotcha (12) exactly.
-        topGroup.setViews([headerRow, headerDivider, tabsRow], in: .leading)
         bottomGroup.setViews([captureDivider, captureRow, captureNotice,
                               footerDivider, footerRow], in: .leading)
-        for group in [topGroup, bottomGroup] {
-            group.orientation = .vertical
-            group.alignment = .leading
-            // The dividers carry the vertical rhythm, so the stack's own
-            // spacing is the gap either side of one - half of `s2`, which is
-            // what makes a divider read as a rule between two groups rather
-            // than as a third element with its own margins.
-            group.spacing = HelmMetrics.s1
-            group.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(group)
-            for child in group.arrangedSubviews {
-                child.widthAnchor.constraint(equalTo: group.widthAnchor).isActive = true
-            }
+        bottomGroup.orientation = .vertical
+        bottomGroup.alignment = .leading
+        // The dividers carry the vertical rhythm, so the stack's own spacing
+        // is the gap either side of one - half of `s2`, which is what makes a
+        // divider read as a rule between two groups rather than as a third
+        // element with its own margins.
+        bottomGroup.spacing = HelmMetrics.s1
+        bottomGroup.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(bottomGroup)
+        for child in bottomGroup.arrangedSubviews {
+            child.widthAnchor.constraint(equalTo: bottomGroup.widthAnchor).isActive = true
         }
+        root.addSubview(head)
 
         buildBodyScroll()
         root.addSubview(bodyScroll)
@@ -300,9 +333,11 @@ final class CompactModePopoverController: NSViewController {
             root.widthAnchor.constraint(equalToConstant: Self.width),
             root.heightAnchor.constraint(equalToConstant: Self.height),
 
-            topGroup.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            topGroup.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            topGroup.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s2 + 2),
+            // The head runs edge to edge from the top, as the board draws it:
+            // the gradient is the popover's top, not a card inside it.
+            head.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            head.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            head.topAnchor.constraint(equalTo: root.topAnchor),
 
             bottomGroup.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             bottomGroup.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -311,8 +346,11 @@ final class CompactModePopoverController: NSViewController {
 
             bodyScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             bodyScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bodyScroll.topAnchor.constraint(equalTo: topGroup.bottomAnchor,
-                                            constant: HelmMetrics.s1),
+            // No rule under the head: the gradient's edge is the boundary. The
+            // panes carry their own 8pt top inset, so the content starts 10pt
+            // under the head, the board's `.pbody` padding.
+            bodyScroll.topAnchor.constraint(equalTo: head.bottomAnchor,
+                                            constant: HelmMetrics.s0),
             bodyScroll.bottomAnchor.constraint(equalTo: bottomGroup.topAnchor,
                                                constant: -HelmMetrics.s1),
         ])
@@ -326,13 +364,10 @@ final class CompactModePopoverController: NSViewController {
         renderPane()
     }
 
-    private let headerRow = NSStackView()
-    private let tabsRow = NSView()
     private let footerRow = NSStackView()
 
-    /// The chrome pinned to the top edge and the chrome pinned to the bottom
-    /// edge. See `loadView` for why these are two stacks rather than one.
-    private let topGroup = NSStackView()
+    /// The chrome pinned to the bottom edge. The head is pinned to the top
+    /// one. See `loadView` for why these are two pieces rather than one stack.
     private let bottomGroup = NSStackView()
 
     /// The fixed region every tab's content is laid out *within*.
@@ -388,43 +423,24 @@ final class CompactModePopoverController: NSViewController {
         bodyScroll.reflectScrolledClipView(bodyScroll.contentView)
     }
 
+    /// MB-1's head: the ring and the gear in its trailing slot, the tab strip
+    /// as its body. The head's own row is gotcha (10)'s `.fill`, with only
+    /// the words free to give way, so the ring and the gear never shrink.
     private func buildHeader() {
-        iconTile.configure(symbol: "sailboat", tint: .accent, pointSize: 12)
-        titleLabel.setScaledFont(ofSize: 12.5, weight: .semibold)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        modeLabel.font = HelmType.captionSmall()
-        modeLabel.translatesAutoresizingMaskIntoConstraints = false
-
         settingsButton.target = self
         settingsButton.action = #selector(settingsTapped)
         settingsButton.toolTip = "Compact mode settings"
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        ring.translatesAutoresizingMaskIntoConstraints = false
+        ring.isHidden = true
+        for fixed in [ring, settingsButton] as [NSView] {
+            fixed.setContentHuggingPriority(.required, for: .horizontal)
+            fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        head.trailing.addArrangedSubview(ring)
+        head.trailing.addArrangedSubview(settingsButton)
 
-        // A real low-priority zero-width spacer, not a hugging priority:
-        // AGENTS.md gotcha (12) measured that a bare `NSView()` has no
-        // intrinsic size, so `setContentHuggingPriority` on one is a no-op and
-        // the spacer happily absorbs the whole row.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
-        collapsed.priority = .defaultLow
-        collapsed.isActive = true
-
-        headerRow.setViews([iconTile, titleLabel, modeLabel, spacer, settingsButton], in: .leading)
-        headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
-        headerRow.distribution = .fill
-        headerRow.spacing = HelmMetrics.s2
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-        headerRow.edgeInsets = NSEdgeInsets(top: 0, left: HelmMetrics.s4, bottom: 0, right: HelmMetrics.s3)
-        // Only the mode caption may give up width; the title and the gear
-        // never shrink. Gotcha (5)'s rule for a row mixing fixed chrome with
-        // variable text, applied to a very short row.
-        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        modeLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        modeLabel.lineBreakMode = .byTruncatingTail
-
-        for divider in [headerDivider, captureDivider, footerDivider] {
+        for divider in [captureDivider, footerDivider] {
             divider.wantsLayer = true
             divider.translatesAutoresizingMaskIntoConstraints = false
             divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
@@ -432,17 +448,9 @@ final class CompactModePopoverController: NSViewController {
     }
 
     private func buildBody() {
-        // The tab strip in its own container so it can carry the row inset
-        // without the capsule itself stretching edge to edge.
+        // The tab strip is the head's body, so the head insets it and spans
+        // it across the popover (`equalWidths` holds the four segments equal).
         tabs.translatesAutoresizingMaskIntoConstraints = false
-        tabsRow.translatesAutoresizingMaskIntoConstraints = false
-        tabsRow.addSubview(tabs)
-        NSLayoutConstraint.activate([
-            tabs.leadingAnchor.constraint(equalTo: tabsRow.leadingAnchor, constant: HelmMetrics.s3),
-            tabs.trailingAnchor.constraint(equalTo: tabsRow.trailingAnchor, constant: -HelmMetrics.s3),
-            tabs.topAnchor.constraint(equalTo: tabsRow.topAnchor, constant: HelmMetrics.s1),
-            tabs.bottomAnchor.constraint(equalTo: tabsRow.bottomAnchor, constant: -HelmMetrics.s1),
-        ])
 
         bodyContainer.orientation = .vertical
         bodyContainer.alignment = .leading
@@ -524,6 +532,9 @@ final class CompactModePopoverController: NSViewController {
         captureField.target = self
         captureField.action = #selector(captureSubmitted)
         captureField.translatesAutoresizingMaskIntoConstraints = false
+        // MB-1 draws the capture line as a raised well (the board's `.rfield`),
+        // the card's own colour with a hairline, rather than a sunken one.
+        captureField.wellSurface = .raised
         captureButton.target = self
         captureButton.action = #selector(captureSubmitted)
         captureButton.toolTip = "File this where the active tab keeps things"
@@ -565,6 +576,16 @@ final class CompactModePopoverController: NSViewController {
         let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
         collapsed.priority = .defaultLow
         collapsed.isActive = true
+
+        // The hint has no intrinsic size, so without a hug of its own the
+        // row's slack landed inside it, and its own stack then set "toggle"
+        // about 70pt away from ⌃ ⌥ G (gotchas (10) and (12), measured in
+        // MB-1's renders). `columnHug` beats the spacer's 250 and never a
+        // label's compression resistance, so the hint is exactly its keys
+        // and its caption.
+        let hintHug = hotkeyHint.widthAnchor.constraint(equalToConstant: 0)
+        hintHug.priority = HelmDaylightPriority.columnHug
+        hintHug.isActive = true
 
         footerRow.setViews([hotkeyHint, spacer, openWindowButton], in: .leading)
         footerRow.orientation = .horizontal
@@ -619,7 +640,8 @@ final class CompactModePopoverController: NSViewController {
     /// data-bearing pane hidden, per `prepareToShowLocked()`'s own header.
     private func renderLockState() {
         _ = view
-        tabsRow.isHidden = true
+        head.setBodyHidden(true)
+        showHeroWords(.locked)
         settingsButton.isHidden = true
         todayPane.isHidden = true
         notesPane.isHidden = true
@@ -661,21 +683,33 @@ final class CompactModePopoverController: NSViewController {
     private func renderPane() {
         guard !isLocked else { return }
         _ = view
+        // Each tab's head is read from the same values its pane renders, so
+        // the two can never disagree. A provider that was never wired is an
+        // unknown count, never a zero (GL-14).
+        let words: CompactHeroWords
         switch selected {
         case .today:
-            todayPane.present(bridgeProvider?() ?? .empty, theme: theme)
+            let digest = bridgeProvider?()
+            todayPane.present(digest ?? .empty, theme: theme)
+            words = .today(digest, overdue: todayProvider?().overdueCount)
         case .notes:
-            notesPane.present(notesProvider?() ?? [], theme: theme)
+            let rows = notesProvider?() ?? []
+            notesPane.present(rows, theme: theme)
+            words = .notes(onBoard: noteCountProvider?(), shown: rows.count)
         case .vault:
             // The real controller's real entry point. `AppDelegate` wires its
             // providers to the one `CredentialVaultController`.
-            vaultPane.present(codes: vaultCodesProvider?() ?? [],
-                              vaultUnlocked: vaultUnlockedProvider?() ?? false)
+            let codes = vaultCodesProvider?()
+            let unlocked = vaultUnlockedProvider?() ?? false
+            vaultPane.present(codes: codes ?? [], vaultUnlocked: unlocked)
+            words = .vault(codes: codes?.count, unlocked: unlocked)
         case .crew:
-            break   // the crew pane holds its own conversation state across opens
+            // The crew pane holds its own conversation state across opens.
+            words = .crew
         }
 
-        tabsRow.isHidden = false
+        head.setBodyHidden(false)
+        showHeroWords(words)
         todayPane.isHidden = selected != .today
         notesPane.isHidden = selected != .notes
         vaultPane.view.isHidden = selected != .vault
@@ -690,6 +724,18 @@ final class CompactModePopoverController: NSViewController {
         view.layoutSubtreeIfNeeded()
         scrollBodyToTop()
         onSizeChanged?(Self.contentSize)
+    }
+
+    /// The head's words, its glyph and the Today ring.
+    private func showHeroWords(_ words: CompactHeroWords) {
+        heroWords = words
+        head.setSymbol(words.symbol)
+        head.set(kicker: words.kicker, title: words.headline, subtitle: words.detail)
+        ring.isHidden = words.ring == nil
+        if let progress = words.ring {
+            ring.configure(fraction: progress.fraction, text: progress.text)
+            ring.setSpokenLabel(progress.spoken)
+        }
     }
 
     /// What the popover is, on every tab. Never measured from the content -
@@ -765,14 +811,14 @@ final class CompactModePopoverController: NSViewController {
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
 
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        modeLabel.textColor = HelmTheme.mutedInk(theme)
         let hairline = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.dividerAlpha)
-        for divider in [headerDivider, captureDivider, footerDivider] {
+        for divider in [captureDivider, footerDivider] {
             divider.layer?.backgroundColor = hairline.cgColor
         }
-        iconTile.applyTheme(theme)
+        // The head first: the tabs, the gear and the ring read its ink.
+        head.applyTheme(theme)
         tabs.applyTheme(theme)
+        paintHeroControls()
         hotkeyHint.applyTheme(theme)
         todayPane.applyTheme(theme)
         notesPane.applyTheme(theme)
@@ -784,6 +830,20 @@ final class CompactModePopoverController: NSViewController {
         // `HelmButton`s and theme themselves - a page must never set their
         // font, title attributes, tint or bezel (the component index's own
         // rule, source-guarded).
+    }
+
+    /// The tabs, the gear and the ring in the head's ink, read after its
+    /// theme pass. The chosen tab is solid ink with its words in the head's
+    /// deeper stop, as the notifications head's chosen list is.
+    private func paintHeroControls() {
+        let ink = head.ink
+        tabs.heroInk = ink
+        tabs.heroSelection = head.deepStop
+        settingsButton.heroInk = ink
+        ring.trackColorOverride = ink.withAlphaComponent(Self.ringTrackAlpha)
+        ring.valueColorOverride = ink
+        ring.labelColorOverride = ink
+        ring.applyTheme(theme, hue: .blue)
     }
 
     #if FM_SELFTESTS
@@ -800,11 +860,14 @@ final class CompactModePopoverController: NSViewController {
         // stack, so a raw `.frame` would compare two different spaces.
         func inRoot(_ v: NSView) -> NSRect { v.convert(v.bounds, to: view) }
         return ["tabs": inRoot(tabs), "footer": inRoot(footerRow),
-                "header": inRoot(headerRow), "body": inRoot(bodyScroll)]
+                "header": inRoot(head), "body": inRoot(bodyScroll)]
     }
+    var debugHead: PopoverHeroHeader { head }
+    var debugRing: HelmRingGauge { ring }
     var debugCaptureNotice: String? { captureNotice.isHidden ? nil : captureNotice.stringValue }
     var debugCaptureField: HelmTextField { captureField }
     var debugOpenWindowButton: HelmButton { openWindowButton }
+    var debugHotkeyHint: HelmKeyHint { hotkeyHint }
     var debugSettingsButton: HelmButton { settingsButton }
     var debugVisiblePaneCount: Int {
         [todayPane.isHidden, notesPane.isHidden, vaultPane.view.isHidden, crewPane.view.isHidden]
@@ -818,7 +881,8 @@ final class CompactModePopoverController: NSViewController {
     /// covers the controller's decision half).
     var debugIsLocked: Bool { isLocked }
     var debugLockPane: CompactLockPane { lockPane }
-    var debugTabsRowIsHidden: Bool { tabsRow.isHidden }
+    /// Whether the tab strip is out of the head (it is the head's body).
+    var debugTabsRowIsHidden: Bool { head.debugBodyIsHidden }
     #endif
 }
 
@@ -847,7 +911,9 @@ final class CompactTodayPane: NSView {
         }
     }
 
-    private let bridge = TasksBridgePane(showsPin: false)
+    /// MB-1: no header of its own here. The popover's hero head says the
+    /// date, done today and the streak.
+    private let bridge = TasksBridgePane(showsPin: false, showsHeader: false)
     private let footer = TasksBridgeFooter(showsSettings: false)
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -1003,14 +1069,20 @@ final class CompactNotesPane: NSView {
 /// `VaultSource.verifyAppPassword` check and the same `hideLock()`/
 /// `onUnlocked?()` unlock transition the real lock screen's own `onAttempt`
 /// runs.
+///
+/// MB-1: "Grand Line is locked" and "Enter your password to unlock." are the
+/// popover's hero head now (`CompactHeroWords.locked`), so the pane is the
+/// field, Unlock and the error line.
 final class CompactLockPane: NSView {
+    /// MB-1: the form is a centred column at most this wide, as the board
+    /// draws it, rather than running the popover's full width.
+    static let columnWidth: CGFloat = 240
+
     /// `(typed password, completion(success))`, mirroring
     /// `LockScreenController.onAttempt` exactly so both call sites read the
     /// same shape.
     var onAttempt: ((String, @escaping (Bool) -> Void) -> Void)?
 
-    private let titleLabel = NSTextField(labelWithString: "Grand Line is locked")
-    private let subtitleLabel = NSTextField(wrappingLabelWithString: "Enter your password to unlock.")
     private let passwordField = HelmSecureTextField(placeholder: "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}")
     /// H4's un-clipped host for the field's focus glow - `LockScreenController`'s
     /// own `passwordWell`, same reason.
@@ -1023,13 +1095,9 @@ final class CompactLockPane: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.setScaledFont(ofSize: 13, weight: .semibold)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        subtitleLabel.font = HelmType.captionSmall()
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
         passwordField.target = self
+        // The board's raised well, as the capture line's is.
+        passwordField.wellSurface = .raised
         passwordField.action = #selector(submitTapped)
         passwordWell.translatesAutoresizingMaskIntoConstraints = false
         passwordWell.addSubview(passwordField)
@@ -1047,24 +1115,35 @@ final class CompactLockPane: NSView {
         unlockButton.translatesAutoresizingMaskIntoConstraints = false
 
         errorLabel.font = HelmType.captionSmall()
+        errorLabel.alignment = .center
         errorLabel.translatesAutoresizingMaskIntoConstraints = false
         errorLabel.isHidden = true
 
-        column.setViews([titleLabel, subtitleLabel, passwordWell, unlockButton, errorLabel], in: .leading)
+        column.setViews([passwordWell, unlockButton, errorLabel], in: .leading)
         column.orientation = .vertical
-        column.alignment = .leading
+        column.alignment = .centerX
         column.spacing = HelmMetrics.s2
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
+        // Centred and capped, with inequalities rather than a required width
+        // tie (gotcha (3)), and the preference to fill below 500 (gotcha (13)).
+        let fills = column.widthAnchor.constraint(equalTo: widthAnchor, constant: -2 * HelmMetrics.s3)
+        fills.priority = HelmDaylightPriority.contentTie
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s3),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s3),
+            column.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: HelmMetrics.s3),
+            column.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -HelmMetrics.s3),
+            column.centerXAnchor.constraint(equalTo: centerXAnchor),
+            column.widthAnchor.constraint(lessThanOrEqualToConstant: Self.columnWidth),
+            fills,
+            column.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s4),
             column.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -HelmMetrics.s2),
         ])
-        for child in [passwordWell, unlockButton] {
-            child.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        }
+        // The field spans the column. Unlock keeps its own width, centred
+        // under it, as the board's small button is. The error line is left
+        // untied, as before: it starts hidden, and the stack detaches a
+        // hidden view, which would drop a width tie to it on the first
+        // layout pass. Its one sentence is centred by the column.
+        passwordWell.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -1106,8 +1185,6 @@ final class CompactLockPane: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         passwordField.domainHue = .blue
         passwordField.applyTheme(theme)
         unlockButton.domainHue = .blue
@@ -1119,6 +1196,8 @@ final class CompactLockPane: NSView {
 
     #if FM_SELFTESTS
     var debugPasswordField: HelmSecureTextField { passwordField }
+    var debugColumn: NSStackView { column }
+    var debugErrorLabel: NSTextField { errorLabel }
     var debugUnlockButton: HelmButton { unlockButton }
     var debugErrorLabelText: String? { errorLabel.isHidden ? nil : errorLabel.stringValue }
     /// Drives the real submit path - `submitTapped` itself, not a copy -

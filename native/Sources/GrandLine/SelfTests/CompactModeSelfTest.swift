@@ -1,7 +1,8 @@
 // Grand Line - native macOS app.
 //
 // F22's **pure-logic** half: the mode's policy, its hotkey chord, its tab
-// table, and the whole Today/Notes derivation.
+// table, the whole Today/Notes derivation, and what MB-1's hero head says on
+// each tab and in each state (`CompactHeroWords`).
 //
 // **This suite is deliberately NOT in `NEEDS_SESSION`**, and per AGENTS.md's
 // "Writing a self-test" that classification is operative rather than
@@ -95,6 +96,10 @@ enum CompactModeSelfTest {
         checkBridgeBacklogIsUndatedWithClaimedFirst(check)
         checkBridgeProgressCountsDoneTodayFromCompletedAt(check)
         checkBridgeStreakCountsConsecutiveDays(check)
+        checkTheHeroHeadSaysTodayFromTheDigest(check)
+        checkTheHeroHeadNeverSaysUnknownAsZero(check)
+        checkTheHeroHeadCountsTheWholeBoard(check)
+        checkTheHeroHeadOnVaultCrewAndTheLock(check)
 
         print(ok ? "CompactModeSelfTest: OK" : "CompactModeSelfTest: FAILURES")
         return ok
@@ -517,6 +522,136 @@ enum CompactModeSelfTest {
               "and it says so in its detail too - got \(byID["blank"]?.detail ?? "nil")")
         check(byID["new"]?.color == .yellow && rows.allSatisfy { $0.title.isEmpty == false },
               "every row carries the note's own paper colour and a non-empty title")
+    }
+
+    // MARK: MB-1's hero head (`CompactHeroWords`)
+
+    /// The Today head reads the Today pane's own digest, so the head and the
+    /// rows under it cannot disagree: the date in the kicker, "2 of 6 done
+    /// today", the streak and the uncapped overdue count, and the ring.
+    private static func checkTheHeroHeadSaysTodayFromTheDigest(_ check: (Bool, String) -> Void) {
+        let digest = bridge(tasks: [task("late", "Renew the cert", dueOffsetDays: -2),
+                                    task("today", "Rotate the keys", dueOffsetDays: 0)],
+                            completed: [finished("a", daysAgo: 0), finished("b", daysAgo: 1)])
+        check(digest.progress == .init(done: 1, total: 3) && digest.streakDays == 2 && !digest.dateText.isEmpty,
+              "the fixture is one done of three with a two-day streak, or the words below prove nothing - "
+                  + "got \(String(describing: digest.progress)), streak \(digest.streakDays)")
+        let words = CompactHeroWords.today(digest, overdue: 1)
+        check(words.kicker == "Today \u{00B7} \(digest.dateText)",
+              "the kicker names the tab and the day - got \(words.kicker)")
+        check(words.headline == "1 of 3 done today",
+              "the headline is the day's progress in words - got \(words.headline)")
+        check(words.detail == "2-day streak \u{00B7} 1 overdue",
+              "the second line is the streak and the overdue count - got \(words.detail)")
+        check(words.ring == .init(fraction: 1.0 / 3.0, text: "1/3", spoken: "1 of 3 done today"),
+              "the ring is the same progress, with a sentence for VoiceOver - got \(String(describing: words.ring))")
+        check(words.symbol == CompactHeroWords.appSymbol, "the tile is the app's sailboat while unlocked")
+
+        let noStreak = bridge(tasks: [task("today", "Rotate the keys", dueOffsetDays: 0)])
+        check(noStreak.streakDays == 0 && noStreak.progress != nil,
+              "the second fixture has progress and no streak - got streak \(noStreak.streakDays)")
+        check(CompactHeroWords.today(noStreak, overdue: 0).detail == "Nothing overdue",
+              "with no streak and nothing overdue the line says so - got "
+                  + CompactHeroWords.today(noStreak, overdue: 0).detail)
+        check(CompactHeroWords.today(noStreak, overdue: nil).detail == "No streak yet",
+              "and with the overdue count unknown it does not claim nothing is overdue - got "
+                  + CompactHeroWords.today(noStreak, overdue: nil).detail)
+        check(CompactHeroWords.today(digest, overdue: nil).detail == "2-day streak",
+              "an unknown overdue count is left out rather than read as zero - got "
+                  + CompactHeroWords.today(digest, overdue: nil).detail)
+
+        let empty = bridge()
+        let emptyWords = CompactHeroWords.today(empty, overdue: 0)
+        check(empty.progress == nil, "a day with nothing due and nothing done has no progress (GL-14)")
+        check(emptyWords.headline == "Nothing due today" && emptyWords.ring == nil
+                  && emptyWords.detail == "Capture a task below to start the day",
+              "it says nothing is due and draws no ring rather than \"0 of 0\" - got "
+                  + "\(emptyWords.headline) / \(emptyWords.detail)")
+        let backlogOnly = bridge(tasks: [task("undated", "Clean up contexts", dueOffsetDays: nil)])
+        check(CompactHeroWords.today(backlogOnly, overdue: 0).detail == "Claim one from the backlog to start",
+              "with a backlog to claim, the line points at it - got "
+                  + CompactHeroWords.today(backlogOnly, overdue: 0).detail)
+    }
+
+    /// GL-14: a count the popover was never handed reads as not loaded, on
+    /// every tab that has one, and never as the empty state.
+    private static func checkTheHeroHeadNeverSaysUnknownAsZero(_ check: (Bool, String) -> Void) {
+        let unknown = [CompactHeroWords.today(nil, overdue: nil),
+                       CompactHeroWords.notes(onBoard: nil, shown: 0),
+                       CompactHeroWords.vault(codes: nil, unlocked: true)]
+        let empty = [CompactHeroWords.today(bridge(), overdue: 0),
+                     CompactHeroWords.notes(onBoard: 0, shown: 0),
+                     CompactHeroWords.vault(codes: 0, unlocked: true)]
+        for (a, b) in zip(unknown, empty) {
+            check(a.headline != b.headline && a.detail != b.detail,
+                  "\(a.kicker): unknown reads differently from empty - got \"\(a.headline)\" and \"\(b.headline)\"")
+            check(a.headline.contains("loaded"), "\(a.kicker): unknown says it is not loaded - got \(a.headline)")
+            check(!a.headline.contains("0") && !a.detail.contains("0") && a.ring == nil,
+                  "\(a.kicker): and shows no number or ring at all - got \(a.headline) / \(a.detail)")
+        }
+        check(CompactHeroWords.today(nil, overdue: nil).kicker == "Today",
+              "an unknown digest has no date, so the kicker is the tab alone")
+    }
+
+    /// The Notes head counts the whole board, not the five rows the pane
+    /// draws: `noteCount` makes `notes(_:)`'s cut without its cap.
+    private static func checkTheHeroHeadCountsTheWholeBoard(_ check: (Bool, String) -> Void) {
+        let board = (0..<7).map { note("n\($0)", title: "Note \($0)", text: "", createdOffsetDays: -$0) }
+            + [note("away", title: "Put away", text: "", createdOffsetDays: 0, archived: true)]
+        let rows = CompactModeDigest.notes(board)
+        let count = CompactModeDigest.noteCount(board)
+        check(rows.count == CompactModeDigest.maxRows && count == 7,
+              "seven notes and one archived: the pane lists \(CompactModeDigest.maxRows) and the board "
+                  + "holds 7 - got \(rows.count) rows and a count of \(count)")
+        let words = CompactHeroWords.notes(onBoard: count, shown: rows.count)
+        check(words.kicker == "Notes" && words.headline == "7 notes on the board",
+              "the headline counts the board - got \(words.headline)")
+        check(words.detail == "The newest 5 are below",
+              "and says the rows are only the newest - got \(words.detail)")
+        let few = CompactHeroWords.notes(onBoard: 3, shown: 3)
+        check(few.headline == "3 notes on the board" && few.detail == "Click one to open it on the board",
+              "a board that fits says what a click does - got \(few.headline) / \(few.detail)")
+        let one = CompactHeroWords.notes(onBoard: 1, shown: 1)
+        check(one.headline == "1 note on the board" && one.detail == "Click it to open it on the board",
+              "one note is singular - got \(one.headline) / \(one.detail)")
+        let none = CompactHeroWords.notes(onBoard: 0, shown: 0)
+        check(none.headline == "The board is empty" && none.detail == "Capture a note below",
+              "an empty board points at the capture line - got \(none.headline) / \(none.detail)")
+    }
+
+    private static func checkTheHeroHeadOnVaultCrewAndTheLock(_ check: (Bool, String) -> Void) {
+        let three = CompactHeroWords.vault(codes: 3, unlocked: true)
+        check(three.kicker == "Vault" && three.headline == "3 codes ready" && three.detail == "Copy one from its row",
+              "three codes - got \(three.headline) / \(three.detail)")
+        check(CompactHeroWords.vault(codes: 1, unlocked: true).headline == "1 code ready", "one code is singular")
+        let none = CompactHeroWords.vault(codes: 0, unlocked: true)
+        check(none.headline == "No 2FA codes yet" && none.detail == "Add a 2FA secret to a credential",
+              "an unlocked vault with no 2FA secret says so - got \(none.headline)")
+        let locked = CompactHeroWords.vault(codes: 3, unlocked: false)
+        check(locked.headline == "Poneglyph is locked" && locked.detail == "Unlock it in the app to copy a code",
+              "a locked vault is locked whatever it holds, and never \"No 2FA codes yet\" - got \(locked.headline)")
+
+        let crew = CompactHeroWords.crew
+        check(crew.kicker == "Crew" && crew.headline == "Ask the crew"
+                  && crew.detail == "It knows your tasks, docs and health",
+              "the crew head - got \(crew.headline) / \(crew.detail)")
+
+        let app = CompactHeroWords.locked
+        check(app.symbol == CompactHeroWords.lockedSymbol && app.kicker == "Grand Line"
+                  && app.headline == "Grand Line is locked" && app.detail == "Enter your password to unlock.",
+              "locked, the head is the lock pane's own words under a padlock - got \(app.headline) / \(app.detail)")
+        check(app.spoken == "Grand Line, Grand Line is locked, Enter your password to unlock.",
+              "and VoiceOver reads the three lines in order - got \(app.spoken)")
+        check(CompactModeTab.allCases.allSatisfy { tab in
+            let words: CompactHeroWords
+            switch tab {
+            case .today: words = .today(bridge(), overdue: 0)
+            case .notes: words = .notes(onBoard: 0, shown: 0)
+            case .vault: words = .vault(codes: 0, unlocked: true)
+            case .crew: words = .crew
+            }
+            return words.kicker.hasPrefix(tab.title) && words.symbol == CompactHeroWords.appSymbol
+        }, "every tab's kicker starts with the tab's own name, under the sailboat")
     }
 
     private static func checkNotesDetailPrefersTheChecklistProgress(_ check: (Bool, String) -> Void) {

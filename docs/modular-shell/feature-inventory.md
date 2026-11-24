@@ -581,7 +581,7 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 |---|---|---|---|---|
 | `tab.CompactModeTab.crew` | Compact popover tab: crew | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.CompactModeTab.notes` | Compact popover tab: notes | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
-| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover; the Today tab is the Tasks popover in the Bridge shape - Now card, Up next with follow-ups, backlog to claim, done today and the streak - with the focus and follow-up chips kept) |  |
+| `tab.CompactModeTab.today` | Compact popover tab: today | menu-bar compact mode popover | Menu bar extra (compact mode popover; the Today tab is the Tasks popover in the Bridge shape - Now card, Up next with follow-ups, backlog to claim - with the focus and follow-up chips kept, and done today and the streak in MB-1's hero head over the tabs, with a ring) |  |
 | `tab.CompactModeTab.vault` | Compact popover tab: vault | menu-bar compact mode popover | Menu bar extra (compact mode popover, unchanged) |  |
 | `tab.HostsTab.hosts` | Hosts page column: Hosts | Hosts page's own sidebar column | Connections › Hosts |  |
 | `tab.HostsTab.keys` | Hosts page column: SSH Keys | Hosts page's own sidebar column | Connections › Keys |  |
@@ -794,7 +794,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.CommandLibraryAIPopover` | CommandLibraryAIPopover controls | `askClicked`, `copyClicked`, `saveTemplateClicked` | Connections › Commands |  |
 | `action.CommandLibraryViews` | CommandLibraryViews controls | `addCommandClicked`, `aiActionPicked`, `aiClicked`, `appendToExistingRunbook`, `categoryCommandRowClicked`, `categoryRowClicked`, `copyClicked`, `createNewWorkflowRunbook`, `duplicateClicked`, `editClicked`, `favoriteClicked`, `favoriteRowClicked`, `paramValueChanged`, `recentRowClicked`, `searchResultRowClicked`, `sendToHostsClicked`, `sendToTerminalClicked`, `workflowClicked` | Connections › Commands |  |
 | `action.CompactMode` | CompactMode controls | `iconClicked` | Menu bar extra (compact mode, unchanged) |  |
-| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode; the Today tab's Open Tasks moved into the Bridge-shaped Tasks pane, `action.TasksBridgeView`) |  |
+| `action.CompactModePopover` | CompactModePopover controls | `captureSubmitted`, `clicked`, `openBoardTapped`, `openWindowTapped`, `settingsTapped`, `submitTapped` | Menu bar extra (compact mode; the Today tab's Open Tasks moved into the Bridge-shaped Tasks pane, `action.TasksBridgeView`; MB-1 moved the gear and the tabs into the hero head, unchanged) |  |
 | `action.CompactModeStatusMenu` | CompactModeStatusMenu controls | `fire` | Menu bar extra (compact mode, unchanged) |  |
 | `action.ConsoleComposerPopover` | ConsoleComposerPopover controls | `copyClicked`, `exampleClicked`, `generateClicked`, `retryClicked`, `runClicked` | Console (Compose popover) |  |
 | `action.ConsoleController+SRELead` | ConsoleController+SRELead controls | `generatePostmortemClicked`, `startSRELeadForCurrentTabClicked` | Console (SRE Lead) |  |

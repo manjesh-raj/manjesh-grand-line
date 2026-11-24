@@ -275,6 +275,7 @@ enum HelmKit {
         Component("Task sheet", "1.0.0", file: "ShiftTaskEditorController.swift"),
         Component("Crew (page)", "1.1.0", file: "FleetController.swift"),
         Component("Reply composer", "1.0.0", file: "FleetReplyCard.swift"),
+        Component("Menu-bar popover", "1.0.0", file: "CompactModePopover.swift"),
     ]
 
     struct SourceDigest {

@@ -1213,6 +1213,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return [] }
             return CompactModeDigest.notes(self.appShell.workspace.stickyBoardStore.activeNotes)
         }
+        // MB-1's Notes head counts the whole board, not the five rows.
+        popover.noteCountProvider = { [weak self] in
+            guard let self else { return 0 }
+            return CompactModeDigest.noteCount(self.appShell.workspace.stickyBoardStore.activeNotes)
+        }
         popover.onRevealNote = { [weak self] id in
             guard let self else { return }
             NSApp.activate(ignoringOtherApps: true)
