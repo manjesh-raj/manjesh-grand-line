@@ -102,6 +102,7 @@ enum CredentialVaultViewSelfTest {
         checkTheRecoverySheetUnobservesTheTheme(scratch: scratch, check)
         checkTouchIDIndicatorAlignmentAndOrdering(scratch: scratch, window: window, check)
         checkDragReorderWithinCategory(scratch: scratch, window: window, check)
+        checkTheChestGate(window: window, check)
 
         window.contentView = nil
         if ok {
@@ -110,6 +111,187 @@ enum CredentialVaultViewSelfTest {
         }
         print("CredentialVaultViewSelfTest: FAILED")
         return false
+    }
+
+    // MARK: S-1 / V-4 - the treasure chest gate
+
+    /// The unlock state's chest (board design S-1, card style V-4 Open).
+    ///
+    /// What it protects, in the order the captain would notice it gone:
+    /// typing-first (the form is transparent and inert while the chest is
+    /// shut, never hidden, and the field keeps first responder), the first
+    /// key opening it, the padlock reaching Touch ID while the chest is
+    /// shut, "tap again to close" never discarding a half-typed password,
+    /// nothing said in an invisible form, the recovery door still working,
+    /// Reduce Motion starting open, the two other states keeping their card,
+    /// and no loop running on a gate nobody can see (GL-13).
+    private static func checkTheChestGate(window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- S-1: the treasure chest gate --")
+        if NSWorkspace.shared.isVoiceOverEnabled {
+            print("  SKIP: VoiceOver is on, so the chest starts open by design")
+            return
+        }
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedReduced }
+
+        let gate = CredentialVaultUnlockView()
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 700))
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.addSubview(gate)
+        NSLayoutConstraint.activate([
+            gate.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            gate.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            gate.topAnchor.constraint(equalTo: host.topAnchor),
+            gate.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        var touchIDTaps = 0
+        var unlockedWith: String?
+        gate.onUnlockWithTouchID = { touchIDTaps += 1 }
+        gate.onUnlock = { unlockedWith = $0 }
+        gate.setMode(.unlock(touchIDAvailable: true, recoveryAvailable: true))
+        gate.focusPasswordField()
+        for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+        let field = gate.debugPasswordField
+        let chest = gate.debugChest
+        func fieldIsFirstResponder() -> Bool {
+            let responder = window.firstResponder
+            return responder === field || (responder as? NSText)?.delegate === field
+        }
+        func formTakesClicks() -> Bool {
+            let frame = gate.debugFormHostFrame
+            let hit = gate.hitTest(gate.convert(NSPoint(x: frame.midX, y: frame.midY), to: host))
+            return hit.map { $0 !== gate && !($0 is ChestLayerView) } ?? false
+        }
+
+        // V-4 Open: no card, a gold avatar, the arrow in the pill and the
+        // round Touch ID button; no Unlock, "or" or wide Touch ID button.
+        check(gate.debugOpenStyle && gate.debugChestShown, "S-1: the unlock state draws the chest")
+        check(gate.debugGoldAvatarShown && !gate.debugIconTileShown, "V-4: the gold avatar replaces the icon tile")
+        check(!gate.debugArrowButton.isHidden && !gate.debugTouchRoundButton.isHidden,
+              "V-4: the arrow and the round Touch ID button show")
+        check(gate.debugPrimaryButton.isHidden, "V-4: the Unlock button is hidden - the arrow submits")
+        check((gate.debugCard?.layer?.borderWidth ?? 0) == 0, "V-4: the open form has no card border")
+        check(chest.debugHasArt, "S-1: the chest's art is drawn")
+        check(gate.debugLayoutMode == .side, "S-1: side by side at 1200pt")
+
+        // Shut: the form transparent and inert, never hidden, the field focused.
+        check(!gate.debugIsLit, "S-1: a fresh gate starts with the chest shut")
+        check(gate.debugFormHostAlpha == 0, "S-1: the form is not there while the chest is shut")
+        check(gate.debugFormHostInert && !formTakesClicks(), "S-1: the invisible form takes no clicks")
+        check(!gate.debugFormHostIsHidden, "S-1: the form is never isHidden - that would move first responder")
+        check(fieldIsFirstResponder(), "S-1: the password field is first responder on the shut gate")
+        check(gate.debugKeyMonitorInstalled, "S-1: a key monitor is installed, so the first key opens the chest")
+        check(chest.debugHoldOpacity == 1 && chest.debugLidOpacity == 0 && chest.debugDomeOpacity == 1,
+              "S-1: shut means the page dark, the dome down and the lining folded")
+        check(chest.debugSeamPulsing, "S-1: light leaks from the seam while shut")
+
+        // The first key opens it, through the monitor's own handler.
+        gate.debugKeyDown()
+        check(gate.debugIsLit && gate.debugFormHostAlpha == 1 && !gate.debugFormHostInert && formTakesClicks(),
+              "S-1: the first key opens the chest and brings the form in")
+        check(chest.debugHoldOpacity == 0 && chest.debugLidOpacity == 1 && chest.debugDomeOpacity == 0
+              && chest.debugRaysOpacity == 1, "S-1: open means the light up, the dome back and the lining up")
+        check(chest.debugFlyingCount > 0, "S-1: opening throws coins and gems")
+        check(chest.debugTwinkling && chest.debugRaysLooping && !chest.debugSeamPulsing,
+              "S-1: the open chest twinkles and its rays sway, and the seam stops")
+        check(fieldIsFirstResponder(), "S-1: opening the chest left the field focused")
+
+        // The arrow submits exactly what Return does.
+        field.stringValue = "a master password"
+        gate.debugArrowButton.performClick(nil)
+        check(unlockedWith == "a master password", "V-4: the arrow submits the typed password, got \(unlockedWith ?? "nil")")
+
+        // Tap again to close - never over a half-typed password.
+        gate.debugClickChest()
+        check(gate.debugIsLit, "S-1: tapping the chest closed it over a typed password")
+        field.stringValue = ""
+        gate.debugClickChest()
+        check(!gate.debugIsLit && gate.debugFormHostAlpha == 0 && gate.debugFormHostInert,
+              "S-1: tapping the open chest with an empty field shuts it")
+        check(chest.debugHoldOpacity == 1, "S-1: shutting brings the dark back")
+        gate.debugClickChest()
+        check(gate.debugIsLit, "S-1: tapping the shut chest opens it")
+
+        // The padlock reaches Touch ID from a shut chest, and opens it so the
+        // busy text and any refusal are visible.
+        gate.debugClickChest()
+        gate.debugClickPadlock()
+        check(touchIDTaps == 1, "S-1: the padlock reaches Touch ID while the chest is shut, got \(touchIDTaps) taps")
+        check(gate.debugIsLit, "S-1: the padlock opens the chest as it asks for Touch ID")
+        gate.debugTouchRoundButton.performClick(nil)
+        check(touchIDTaps == 2, "V-4: the round button reaches Touch ID too")
+
+        // Nothing is said in an invisible form.
+        gate.debugClickChest()
+        gate.showMessage("That's not the right password.")
+        check(gate.debugIsLit, "S-1: a message opened the chest rather than speaking into an invisible form")
+        gate.showMessage("")
+
+        // The recovery door still works, with its own button back.
+        gate.debugClickRecoveryLink()
+        check(gate.debugRecoveryFieldVisible && !gate.debugPrimaryButton.isHidden,
+              "S-1: the recovery door shows its field and its Unlock button")
+        check(gate.debugArrowButton.isHiddenOrHasHiddenAncestor && gate.debugTouchRoundButton.isHiddenOrHasHiddenAncestor,
+              "S-1: the arrow and Touch ID go behind the recovery door")
+        gate.debugClickRecoveryLink()
+        check(!gate.debugArrowButton.isHidden, "S-1: backing out of the recovery door brings the arrow back")
+
+        // Without Touch ID the padlock is part of the chest.
+        gate.setMode(.create)
+        gate.setMode(.unlock(touchIDAvailable: false))
+        check(!gate.debugIsLit && gate.debugTouchRoundButton.isHidden, "S-1: no Touch ID, no round button")
+        gate.debugClickPadlock()
+        check(gate.debugIsLit && touchIDTaps == 2, "S-1: without Touch ID the padlock opens the chest")
+
+        // Stacked below the side-by-side width, with the chest under the form.
+        host.setFrameSize(NSSize(width: 860, height: 700))
+        for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+        check(gate.debugLayoutMode == .stacked, "S-1: stacked at 860pt")
+        check(chest.chestFrame.maxY <= gate.debugFormHostFrame.minY + 0.5,
+              "S-1: stacked, the chest sits under the form (\(chest.chestFrame) vs \(gate.debugFormHostFrame))")
+        host.setFrameSize(NSSize(width: 1200, height: 700))
+
+        // GL-13: nothing loops on a hidden gate, and showing it again starts shut.
+        gate.isHidden = true
+        check(!chest.debugTwinkling && !chest.debugRaysLooping && !chest.debugSeamPulsing,
+              "GL-13: the chest's loops stop when the gate is hidden")
+        gate.isHidden = false
+        check(!gate.debugIsLit, "S-1: a gate shown again (a relock) starts with the chest shut")
+
+        // Reduce Motion starts open and stays open.
+        HelmMotion.reducedOverrideForTests = true
+        gate.setMode(.create)
+        gate.setMode(.unlock(touchIDAvailable: false))
+        check(gate.debugIsLit && gate.debugFormHostAlpha == 1, "S-1: Reduce Motion starts with the chest open")
+        gate.debugClickChest()
+        check(gate.debugIsLit, "S-1: Reduce Motion never shuts the chest")
+        check(chest.debugFlyingCount == 0 && !chest.debugTwinkling, "S-1: Reduce Motion throws no treasure")
+        HelmMotion.reducedOverrideForTests = false
+
+        // The other two states keep their card, and lose the chest and the monitor.
+        for mode in [CredentialVaultUnlockView.Mode.create, .unreadable(reason: "x", backupPath: nil)] {
+            gate.setMode(mode)
+            check(!gate.debugOpenStyle && !gate.debugChestShown && gate.debugFormHostAlpha == 1 && !gate.debugFormHostInert,
+                  "S-1: \(mode) keeps the card with no chest")
+            check((gate.debugCard?.layer?.borderWidth ?? 0) > 0, "S-1: \(mode) keeps its card border")
+            check(!gate.debugKeyMonitorInstalled, "S-1: \(mode) installs no key monitor")
+        }
+        gate.setMode(.unlock(touchIDAvailable: false))
+        gate.removeFromSuperview()
+        check(!gate.debugKeyMonitorInstalled, "S-1: the key monitor goes when the gate leaves its window")
+
+        // Source half: the monitor reaches the handler `debugKeyDown` drives,
+        // and returns the event so the field editor still gets every key.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let source = try? String(contentsOf: dir.appendingPathComponent("CredentialVaultUnlockView.swift"), encoding: .utf8) {
+            check(source.contains("if let self, event.window === self.window { self.handleKeyDown() }"),
+                  "S-1: the key monitor calls handleKeyDown, which is what the check drives")
+            check(source.contains("return event"), "S-1: the key monitor returns the event rather than swallowing it")
+        } else {
+            print("  SKIP: app sources not reachable for the key monitor guard")
+        }
     }
 
     // MARK: Harness

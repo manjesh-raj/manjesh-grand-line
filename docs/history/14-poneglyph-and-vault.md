@@ -302,3 +302,38 @@ This was not confirmed against Automic Vault's own code, and signing was deliber
 - Confirmed to catch regressions by copy-aside injection (never `git stash`): putting the `av list` check back in `showLock` failed four lock cases; putting `refresh()` back in `viewWillAppear` failed both page cases; a 1.5s `asyncAfter` re-check failed the no-retry case and `BackgroundSignalsSelfTest`'s new no-timer guard; running `checkVault` outside `if mayReadVault` failed the poller guard; calling `checkGhHardening()` straight from Setup's `viewWillAppear` failed the Setup guard.
 - `AppLockOptInSelfTest` now types a password before expecting a settlement, and `BackgroundSignalsSelfTest`'s backoff case became a guard that `LockPresenter` schedules nothing.
 - **Not verified:** the live dialog was not reproduced from Grand Line, because `av` is never run from a worker or a suite and the app is never launched from a worktree. The fix is asserted through the seams above, not watched in a running instance.
+
+## The treasure chest gate (`fm/grandline-login-lamp-design-scout`)
+
+The captain's pick for the Secrets page from the lamp lock-screen board: S-1 Treasure chest, with card style V-4 Open.
+Only the `.unlock` state changed.
+`.create` and `.unreadable` keep their card, and the controller, the store and every unlock path are untouched.
+
+- **The same typing-first rule as the lock screen.**
+  While the chest is shut the page is dark and the form is transparent and inert (`VaultGateHost`), never `isHidden`.
+  Any key opens the chest through a local key-down monitor that returns every event unchanged, and the monitor goes when the gate leaves the unlock state or its window.
+- **The padlock reaches Touch ID even while the chest is shut.**
+  It opens the chest first, so the "Deriving your key" text and any refusal are visible.
+  Without Touch ID it is part of the chest and opens it.
+- **Nothing is said in an invisible form.**
+  `showMessage` and `setBusy` open a shut chest, and a refusal on an open one jolts the lid and dips the rays.
+  The field is never cleared, as before.
+- **Tap again to close** only with the visible field empty and no check running.
+  Reduce Motion and VoiceOver start open and never close.
+- **Two layer views around the form.**
+  `VaultChestScene.backView` (the dark, the glow, the rays, the open lid's lining) sits below the form and `frontView` (the heap, the body, the padlock, the burst) above it, so in the stacked layout the form rises out of the chest.
+  Side by side from 900pt (form 260pt right of centre, chest 260pt left), stacked below it.
+- **The art is a port of the board's generator** (`VaultChestArt.swift`): the same `coin`, `brilliant`, `stepCut`, `bar`, `goblet`, `crown` and `strand` functions, the same seeded LCG, and SVG's `objectBoundingBox` gradient mapping.
+  The one approximation is SVG's Gaussian blur, which became a soft radial falloff.
+- **The recovery door keeps its Unlock button.**
+  The recovery field has no arrow of its own, and Return in it reaches the button's key equivalent.
+- **GL-13:** `viewDidHide` stops every loop, and a gate shown again (a relock, or the page revisited) starts shut unless something is typed in it.
+- **Left out on purpose: the board's success flood.**
+  The controller swaps to the list in the same turn the unlock succeeds, so a flourish would mean delaying the list, which is an unlock behaviour change this task ruled out.
+
+### Verified
+
+- `FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS` gained `checkTheChestGate` (V-4's controls, shut and inert with the field focused, the first key, the arrow submitting, tap to close, the padlock and the round button reaching Touch ID, a message opening the chest, the recovery door, no-Touch-ID, stacked geometry, GL-13, Reduce Motion, and the other two states).
+- Copy-aside injections: dropping `touchIDClicked()` from the padlock, `stopLoops()` from `viewDidHide`, the empty-field rule from `canShut`, and the open from `showMessage` each failed their named cases. `isHidden` on the form host failed the never-hidden case and the first-responder case, and emptying the key handler failed the first-key cases.
+- Off-screen renders in lavender and powder, side by side and stacked, shut, open and refused, compared against the board.
+- **Found, not fixed (out of scope):** `handleUnlockOutcome(.staleTouchIDKey)` shows its message and then calls `render()`, whose `setMode(.unlock)` clears the message label, so B17's sentence is wiped before it can be read.

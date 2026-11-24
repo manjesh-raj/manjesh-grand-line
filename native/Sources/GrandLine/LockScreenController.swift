@@ -80,6 +80,30 @@
 // `wantsLayer` root now, exactly like every other Daylight surface - so this
 // screen is visible to the off-screen render probe for the first time, and
 // `FM_RUN_LOCK_SCREEN_TESTS` uses that to verify its own work.
+//
+// # L-2: the lighthouse (`fm/grandline-login-lamp-design-scout`)
+//
+// The captain picked board design L-2 with the Going Merry and card style C-4
+// "Open sea". The scene is a blue hour (the light register's own sky taken
+// toward its ink), a lighthouse on a cliff whose lamp is the gate's light,
+// sea fog, and the Going Merry riding the swell.
+//
+// - **The card is not there until the lamp is lit.** `.locked` starts dark;
+//   every other state starts lit, because those cards carry setup commands,
+//   Check again and the Touch ID fallback, and none of that may hide behind a
+//   lamp. Reduce Motion and VoiceOver start lit too.
+// - **Typing always works.** The field is first responder from the first
+//   frame, exactly as `focusPasswordField()` has always made it; the card is
+//   hidden by alpha (never `isHidden`, which would move first responder off
+//   it) and refuses clicks while dark. A local key-down monitor lights the
+//   lamp on the first key and hands the event on untouched.
+// - **Tap the lighthouse** to light it, and tap it again to put it out while
+//   the field is empty. Return and the in-field arrow submit as Unlock did.
+// - C-4 Open sea applies to `.locked` only: no card surface, a round avatar,
+//   and the password as a pill on the scene with an arrow inside it. The
+//   setup states keep the card exactly as before.
+// - The success flourish is still one `CATransaction` whose completion fires
+//   `onUnlockAnimationFinished`; day breaking and the beams fading ride in it.
 import AppKit
 
 final class LockScreenController: NSViewController {
@@ -211,13 +235,29 @@ final class LockScreenController: NSViewController {
     /// moon rather than a blue sun. Hidden in light mode.
     private let moonBiteLayer = CALayer()
 
+    // MARK: Lighthouse (board design L-2)
+
+    /// The lighthouse, its lens, the fog and the flash. Owns layers only.
+    private let lighthouse = LockLighthouseScene()
+    /// Day breaking on unlock in the light register: today's sky and sun,
+    /// faded in over the dusk.
+    private let daySkyLayer = CAGradientLayer()
+    private let daySunLayer = CALayer()
+    /// The tower's tap target: light the lamp, or with the field empty, put it out.
+    private let lighthouseHotspot = SceneHotspotView()
+    /// Whether the lamp is on, which is whether the gate's card is showing.
+    private(set) var isLit = true
+    private var keyMonitor: Any?
+    /// The colours the current scene resolved to, for the success flourish.
+    private var currentScene: SceneColors?
+
     // MARK: Card
 
     /// The un-clipped shadow host. §2.5: a layer with a shadow must not clip,
     /// and a rounded fill must - so the card is the two-layer arrangement
     /// `HelmComposerCard` already proved here, with `shadowPath` resynced on
     /// every layout pass.
-    private let cardShadowHost = NSView()
+    private let cardShadowHost = GateHostView()
     /// The clipped content layer - this is the view that carries the fill,
     /// border and corner radius.
     private let card = NSView()
@@ -236,6 +276,14 @@ final class LockScreenController: NSViewController {
     private let ribbonView = GradientHostView()
     private var ribbonLayer: CAGradientLayer { ribbonView.gradient }
     private let markTile = HelmGradientTile(size: .hero)
+    /// C-4 Open sea: the round avatar that stands in for the mark tile on `.locked`.
+    private let avatar = OpenSeaAvatarView()
+    /// C-4 Open sea: the arrow inside the password pill. Return still submits.
+    private let arrowButton = HelmIconButton(symbol: "arrow.right", label: "Unlock")
+    private var formFullWidth: NSLayoutConstraint?
+    private var formOpenWidth: NSLayoutConstraint?
+    /// Whether the gate draws as C-4 Open sea (no card) - `.locked` only.
+    private var openStyle = false
 
     // MARK: Content
 
@@ -353,17 +401,24 @@ final class LockScreenController: NSViewController {
         // for both the boat simply rides up and the card stays intact.
         NSLayoutConstraint.activate([
             contentStack.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            contentStack.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -30),
+            // 40pt higher than the original -30, so the gate clears the Going
+            // Merry's flag by the board's 86pt (captain's call, round 4).
+            contentStack.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -70),
             boatImageView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             boatImageView.topAnchor.constraint(greaterThanOrEqualTo: cardShadowHost.bottomAnchor,
                                                constant: HelmMetrics.s5),
         ])
-        let onTheWater = boatImageView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -78)
+        let onTheWater = boatImageView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -76)
         onTheWater.priority = NSLayoutConstraint.Priority(250)
         let stayOnScreen = boatImageView.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
                                                                 constant: -8)
         stayOnScreen.priority = NSLayoutConstraint.Priority(400)
         NSLayoutConstraint.activate([onTheWater, stayOnScreen])
+
+        // The tower's tap target sits over the drawing; its frame follows the
+        // scene in `layoutSceneLayers`.
+        root.addSubview(lighthouseHotspot)
+        lighthouseHotspot.onClick = { [weak self] in self?.toggleLamp() }
 
         // Follow the app's active Helm theme, live - see `ThemeManager.swift`'s
         // header checklist. Registered last, after every view above exists, so
@@ -435,13 +490,34 @@ final class LockScreenController: NSViewController {
             root.layer?.addSublayer(gradient)
         }
 
-        let config = NSImage.SymbolConfiguration(pointSize: 38, weight: .regular)
-        boatImageView.image = NSImage(systemSymbolName: "sailboat", accessibilityDescription: "Grand Line")?
-            .withSymbolConfiguration(config)
+        // L-2: the Going Merry, at the board's 80% (about 110pt). Its image is
+        // drawn per theme in `applyTheme`, darkened for dusk and night.
+        boatImageView.imageScaling = .scaleProportionallyUpOrDown
+        boatImageView.setAccessibilityLabel("Going Merry")
         boatImageView.wantsLayer = true
         boatImageView.translatesAutoresizingMaskIntoConstraints = false
-        boatImageView.widthAnchor.constraint(equalToConstant: 52).isActive = true
-        boatImageView.heightAnchor.constraint(equalToConstant: 52).isActive = true
+        boatImageView.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        boatImageView.heightAnchor.constraint(equalToConstant: 96).isActive = true
+
+        // L-2: day breaking over the dusk on unlock, and the lighthouse
+        // between the back swell and the front one.
+        daySkyLayer.locations = [0, 0.55, 1]
+        daySkyLayer.startPoint = CGPoint(x: 0.5, y: 1)
+        daySkyLayer.endPoint = CGPoint(x: 0.5, y: 0)
+        daySkyLayer.opacity = 0
+        root.layer?.insertSublayer(daySkyLayer, above: skyLayer)
+        daySunLayer.cornerRadius = 44
+        daySunLayer.frame = NSRect(x: 0, y: 0, width: 88, height: 88)
+        daySunLayer.shadowOpacity = 0.75
+        daySunLayer.shadowRadius = 28
+        daySunLayer.shadowOffset = .zero
+        daySunLayer.opacity = 0
+        daySunLayer.setValue(CGFloat(0.78), forKey: "xFrac")
+        daySunLayer.setValue(CGFloat(0.82), forKey: "yFrac")
+        root.layer?.insertSublayer(daySunLayer, above: sunLayer)
+        if let rootLayer = root.layer {
+            lighthouse.install(in: rootLayer, aboveBackSea: backSeaGradient, belowFrontSea: seaGradient)
+        }
     }
 
     private func buildCard() {
@@ -502,6 +578,15 @@ final class LockScreenController: NSViewController {
             passwordField.bottomAnchor.constraint(equalTo: passwordWell.bottomAnchor),
         ])
         passwordField.glowHost = passwordWell
+        // C-4: the arrow inside the pill, shown on `.locked` only.
+        arrowButton.target = self
+        arrowButton.action = #selector(submitTapped)
+        arrowButton.isHidden = true
+        passwordWell.addSubview(arrowButton)
+        NSLayoutConstraint.activate([
+            arrowButton.trailingAnchor.constraint(equalTo: passwordWell.trailingAnchor, constant: -4),
+            arrowButton.centerYAnchor.constraint(equalTo: passwordWell.centerYAnchor),
+        ])
         formStack.addArrangedSubview(passwordWell)
         formStack.addArrangedSubview(unlockButton)
 
@@ -610,8 +695,9 @@ final class LockScreenController: NSViewController {
         footerStack.addArrangedSubview(footerDivider)
         footerStack.addArrangedSubview(footerRow)
 
+        avatar.isHidden = true
         let body = NSStackView(views: [
-            markTile, titleLabel, subtitleLabel, formStack, errorLabel,
+            markTile, avatar, titleLabel, subtitleLabel, formStack, errorLabel,
             messageLabel, setupCommandStack, avUnavailableStack, checkAgainButton, waitingStack, localAuthStack,
             footerStack,
         ])
@@ -647,7 +733,6 @@ final class LockScreenController: NSViewController {
             errorLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             messageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             avMessageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
-            formStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             passwordWell.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             unlockButton.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
@@ -656,6 +741,10 @@ final class LockScreenController: NSViewController {
             footerStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             footerDivider.widthAnchor.constraint(equalTo: footerStack.widthAnchor),
         ])
+        // The form fills the card, except as C-4's 250pt pill on the scene.
+        formFullWidth = formStack.widthAnchor.constraint(equalTo: body.widthAnchor)
+        formOpenWidth = formStack.widthAnchor.constraint(equalToConstant: 250)
+        formFullWidth?.isActive = true
     }
 
     // MARK: - Theme
@@ -681,6 +770,27 @@ final class LockScreenController: NSViewController {
         let celestialGlow: NSColor
         let star: NSColor
         let isDarkRegister: Bool
+        /// L-2: the lighthouse, its beam and the fog.
+        let lighthouse: LockLighthouseScene.Palette
+        /// How much the Going Merry is darkened for this light.
+        let boatDim: CGFloat
+        /// L-2, light register: today's day sky, which breaks over the dusk on unlock.
+        let day: DayColors?
+    }
+
+    private struct DayColors {
+        let skyTop: NSColor
+        let skyMid: NSColor
+        let ground: NSColor
+        let wave: NSColor
+        let backWave: NSColor
+        let sun: NSColor
+        let sunGlow: NSColor
+    }
+
+    /// `a` moved toward `b` by `t` (0 keeps `a`), in straight sRGB.
+    private static func toward(_ a: NSColor, _ b: NSColor, _ t: CGFloat) -> NSColor {
+        blend(b, into: a, fraction: Double(t))
     }
 
     /// A straight sRGB mix of `hue` into `ground`.
@@ -698,47 +808,87 @@ final class LockScreenController: NSViewController {
 
     private func sceneColors(for theme: HelmTheme) -> SceneColors {
         let ground = HelmTheme.nsColor(theme.backgroundHex)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let light = HelmField.sceneLight(theme)
         let sea = HelmDomainHue.teal.pair(in: theme)
         let sky = HelmDomainHue.blue.pair(in: theme)
+        let amber = HelmDomainHue.amber.pair(in: theme)
         let isDark = theme.mode == .dark
+        // The lamp's warm light, shared by the beam, the halo and the glass.
+        let warm = Self.toward(amber.h2, light, 0.3)
+        let warmLight = Self.toward(amber.h2, light, 0.62)
 
         if isDark {
             // Night harbour: a deep sky reading down into the theme's own
             // ground, a cool moon, and a sea that all but dissolves into the
             // horizon. Every value is a blend of real tokens - there is no
             // second hand-tuned palette here, which is the whole point.
+            let skyTop = Self.blend(sky.h1, into: ground, fraction: 0.34)
+            let rock = Self.toward(ground, ink, 0.06)
+            let iron = Self.toward(ground, ink, 0.25)
+            let tower = Self.toward(ink, ground, 0.22)
             return SceneColors(
-                skyTop: Self.blend(sky.h1, into: ground, fraction: 0.34),
+                skyTop: skyTop,
                 skyMid: Self.blend(sky.h1, into: ground, fraction: 0.11),
                 ground: ground,
                 wave: Self.blend(sea.h1, into: ground, fraction: 0.5),
                 backWave: Self.blend(sea.h1, into: ground, fraction: 0.28),
-                boat: HelmTheme.nsColor(theme.chromeInkHex),
+                boat: ink,
                 celestial: sky.h2,
                 celestialGlow: sky.h2.withAlphaComponent(0.35),
-                star: HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.85),
-                isDarkRegister: true
+                star: ink.withAlphaComponent(0.85),
+                isDarkRegister: true,
+                lighthouse: LockLighthouseScene.Palette(
+                    art: LighthouseArt.Palette(rock: rock, rockEdge: light.withAlphaComponent(0.05), tower: tower,
+                                               towerLine: Self.toward(tower, ground, 0.35),
+                                               band: Self.toward(sky.h1, ground, 0.35), iron: iron,
+                                               darkGlass: Self.toward(iron, tower, 0.3)),
+                    warm: warm, warmLight: warmLight, fog: Self.toward(ground, ink, 0.2)),
+                boatDim: 0.26,
+                day: nil
             )
         }
-        // Daylight harbour: a soft blue zenith fading into the theme's own warm
-        // paper at the horizon, an amber sun, a turquoise sea.
-        let sun = HelmDomainHue.amber.pair(in: theme)
-        return SceneColors(
+        // The day this dusk breaks into: today's Daylight harbour, a soft blue
+        // zenith fading into the theme's own warm paper, an amber sun and a
+        // turquoise sea.
+        let day = DayColors(
             skyTop: Self.blend(sky.h2, into: ground, fraction: 0.46),
             skyMid: Self.blend(sky.h2, into: ground, fraction: 0.13),
             ground: ground,
             wave: Self.blend(sea.h1, into: ground, fraction: 0.5),
             backWave: Self.blend(sea.h2, into: ground, fraction: 0.3),
-            boat: Self.blend(sea.h1, into: HelmTheme.nsColor(theme.chromeInkHex), fraction: 0.55),
-            celestial: sun.h2,
-            celestialGlow: sun.h1.withAlphaComponent(0.4),
+            sun: amber.h2,
+            sunGlow: amber.h1.withAlphaComponent(0.4))
+        // L-2's blue hour: that same day taken toward the theme's ink.
+        let skyTop = Self.toward(day.skyTop, ink, 0.83)
+        let skyMid = Self.toward(day.skyMid, ink, 0.66)
+        let iron = Self.toward(ground, ink, 0.88)
+        let tower = Self.toward(light, skyMid, 0.2)
+        return SceneColors(
+            skyTop: skyTop,
+            skyMid: skyMid,
+            ground: Self.toward(ground, ink, 0.45),
+            wave: Self.toward(day.wave, ink, 0.5),
+            backWave: Self.toward(day.backWave, ink, 0.42),
+            boat: Self.blend(sea.h1, into: ink, fraction: 0.55),
+            // A setting sun: the theme's amber pulled toward its red.
+            celestial: Self.toward(amber.h1, HelmTheme.nsColor(theme.ansiHex[1]), 0.32),
+            celestialGlow: Self.toward(amber.h1, HelmTheme.nsColor(theme.ansiHex[1]), 0.4).withAlphaComponent(0.34),
             star: .clear,
-            isDarkRegister: false
+            isDarkRegister: false,
+            lighthouse: LockLighthouseScene.Palette(
+                art: LighthouseArt.Palette(rock: Self.toward(skyTop, ink, 0.4), rockEdge: light.withAlphaComponent(0.07),
+                                           tower: tower, towerLine: Self.toward(tower, skyMid, 0.45),
+                                           band: sky.h1, iron: iron, darkGlass: Self.toward(iron, tower, 0.3)),
+                warm: warm, warmLight: warmLight, fog: Self.toward(light, skyMid, 0.28)),
+            boatDim: 0.16,
+            day: day
         )
     }
 
     private func applyTheme(_ theme: HelmTheme) {
         let scene = sceneColors(for: theme)
+        currentScene = scene
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
 
@@ -768,12 +918,22 @@ final class LockScreenController: NSViewController {
             sunLayer.shadowColor = scene.celestialGlow.cgColor
             moonBiteLayer.backgroundColor = scene.skyTop.cgColor
             moonBiteLayer.isHidden = !scene.isDarkRegister
+            // L-2: by dusk the sun is setting on the left horizon; at night
+            // the moon keeps its place.
+            sunLayer.setValue(CGFloat(scene.isDarkRegister ? 0.78 : 0.19), forKey: "xFrac")
+            sunLayer.setValue(scene.isDarkRegister ? nil : CGFloat(124), forKey: "yPts")
+            if let day = scene.day {
+                daySkyLayer.colors = [day.skyTop, day.skyMid, day.ground].map(\.cgColor)
+                daySunLayer.backgroundColor = day.sun.cgColor
+                daySunLayer.shadowColor = day.sunGlow.cgColor
+            }
             for star in starLayers {
                 star.backgroundColor = scene.star.cgColor
                 star.isHidden = !scene.isDarkRegister
             }
         }
-        boatImageView.contentTintColor = scene.boat
+        boatImageView.image = GoingMerryArt.image(size: NSSize(width: 110, height: 96), dim: scene.boatDim)
+        lighthouse.applyPalette(scene.lighthouse)
 
         // Card chrome. `applyCardSurface` is the app's one card fill/border, so
         // this gate cannot drift from the sheets it is meant to match; the
@@ -816,7 +976,49 @@ final class LockScreenController: NSViewController {
         // and the corrected fill is `DaylightPalette.primaryButtonFill`'s job,
         // not a literal: white on the raw amber measures 3.27:1.
         unlockButton.domainHue = currentHue
+        applyOpenStyle(theme, scene: scene)
         applyLayerGeometry()
+    }
+
+    /// C-4 Open sea for `.locked`: no card surface, a round avatar, the
+    /// password as a pill on the scene, and light type that reads on the dusk.
+    /// Every other state keeps the card exactly as `applyCardSurface` drew it.
+    private func applyOpenStyle(_ theme: HelmTheme, scene: SceneColors) {
+        let open = openStyle
+        markTile.isHidden = open
+        avatar.isHidden = !open
+        ribbonView.isHidden = open
+        unlockButton.isHidden = open
+        arrowButton.isHidden = !open
+        if open { footerStack.isHidden = true }
+        formFullWidth?.isActive = !open
+        formOpenWidth?.isActive = open
+        passwordField.wellSurface = open ? .scene(onDark: true) : .inset
+        passwordField.trailingAccessoryWidth = open ? 30 : 0
+        passwordField.applyTheme(theme)
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 12
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        shadow.shadowColor = HelmTheme.nsColor(theme.mode == .dark ? theme.backgroundHex : theme.chromeInkHex).withAlphaComponent(0.6)
+        titleLabel.shadow = open ? shadow : nil
+        subtitleLabel.shadow = open ? shadow : nil
+        guard open else { return }
+        let light = HelmField.sceneLight(theme)
+        HelmMotion.withoutImplicitAnimation {
+            card.layer?.backgroundColor = NSColor.clear.cgColor
+            card.layer?.borderWidth = 0
+            cardShadowHost.layer?.shadowOpacity = 0
+        }
+        titleLabel.textColor = light
+        subtitleLabel.textColor = light.withAlphaComponent(0.84)
+        // The theme's red, lifted toward the scene's light, and then as far
+        // as the text floor needs against the sky the form floats on. The
+        // light register's blue hour is a mid tone, where the plain lift
+        // measured 2.24:1 (`LockScreenSelfTest.checkCorrectedContrast`).
+        errorLabel.textColor = HelmContrast.legible(Self.toward(HelmTheme.nsColor(theme.ansiHex[1]), light, 0.45),
+                                                    over: scene.skyMid)
+        avatar.configure(theme: theme, hue: currentHue)
+        arrowButton.style = .circle(side: 26, fill: light.withAlphaComponent(0.92), glyph: scene.skyTop, border: nil)
     }
 
     private func applyRibbon(theme: HelmTheme) {
@@ -861,14 +1063,20 @@ final class LockScreenController: NSViewController {
         HelmMotion.withoutImplicitAnimation {
             skyLayer.frame = bounds
 
+            daySkyLayer.frame = bounds
             for layer in view.layer?.sublayers ?? [] where layer.value(forKey: "xFrac") != nil {
                 let xFrac = layer.value(forKey: "xFrac") as? CGFloat ?? 0
                 let yFrac = layer.value(forKey: "yFrac") as? CGFloat ?? 0
                 let size = layer.bounds.width
-                layer.position = CGPoint(x: bounds.width * xFrac, y: bounds.height * yFrac)
+                // `yPts` pins a layer to the horizon instead (L-2's setting sun).
+                let y = (layer.value(forKey: "yPts") as? CGFloat) ?? bounds.height * yFrac
+                layer.position = CGPoint(x: bounds.width * xFrac, y: y)
                 layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
             }
         }
+
+        lighthouse.layout(bounds: bounds)
+        lighthouseHotspot.frame = lighthouse.hotspot
 
         waveWidth = bounds.width * 2
         HelmMotion.withoutImplicitAnimation {
@@ -949,6 +1157,8 @@ final class LockScreenController: NSViewController {
     /// the next `showLock` genuinely restarts them, rather than relying on
     /// animations that happened to still be attached.
     func stopAnimations() {
+        removeKeyMonitor()
+        lighthouse.stopAll()
         guard animationsStarted else { return }
         animationsStarted = false
         boatImageView.layer?.removeAnimation(forKey: "bob")
@@ -960,6 +1170,7 @@ final class LockScreenController: NSViewController {
     /// calls `startAnimationsIfNeeded()`, but a re-lock does not necessarily
     /// re-lay-out an already-sized overlay, so `showLock` says so explicitly.
     func restartAnimationsIfNeeded() {
+        installKeyMonitor()
         startAnimationsIfNeeded()
     }
 
@@ -987,6 +1198,7 @@ final class LockScreenController: NSViewController {
             }
         }
 
+        installKeyMonitor()
         guard !Self.prefersReducedMotion else { return }
         addLoopingAnimations()
     }
@@ -997,8 +1209,11 @@ final class LockScreenController: NSViewController {
             boatImageView.layer?.removeAnimation(forKey: "bob")
             waveLayer.removeAnimation(forKey: "drift")
             backWaveLayer.removeAnimation(forKey: "drift")
+            lighthouse.stopAll()
+            if isLit { lighthouse.showLit(reducedMotion: true) }
         } else if animationsStarted, boatImageView.layer?.animation(forKey: "bob") == nil {
             addLoopingAnimations()
+            if isLit { lighthouse.showLit(reducedMotion: false) }
         }
     }
 
@@ -1036,6 +1251,8 @@ final class LockScreenController: NSViewController {
         backDrift.isRemovedOnCompletion = false
         backDrift.fillMode = .forwards
         backWaveLayer.add(backDrift, forKey: "drift")
+
+        lighthouse.startDrift(reducedMotion: false)
     }
 
     #if FM_SELFTESTS
@@ -1092,6 +1309,8 @@ final class LockScreenController: NSViewController {
     func apply(_ state: ContentState) {
         currentHue = state.hue
         currentSymbol = state.symbol
+        if case .locked = state { openStyle = true } else { openStyle = false }
+        resetFlourish()
 
         // Defaults: every state below turns on only what it needs.
         formStack.isHidden = true
@@ -1172,6 +1391,9 @@ final class LockScreenController: NSViewController {
         footerStack.isHidden = footerLeftLabel.stringValue.isEmpty && footerRightLabel.stringValue.isEmpty
         // Re-derive everything the hue drives for the state just applied.
         applyTheme(ThemeManager.shared.theme)
+        // L-2: only `.locked` starts dark. The other states carry setup
+        // commands, Check again and the Touch ID fallback, so they are lit.
+        setLit(!openStyle || Self.startsLit)
     }
 
     /// Focuses the password field - called every time the overlay becomes
@@ -1188,8 +1410,13 @@ final class LockScreenController: NSViewController {
         errorLabel.isHidden = true
         passwordField.isEnabled = false
         unlockButton.isEnabled = false
+        arrowButton.isEnabled = false
+        if !isLit { light(.key) }
+        // The lens turns faster while Automic Vault checks.
+        lighthouse.setTurnSpeed(2.2)
         onAttempt(typed) { [weak self] success in
             guard let self else { return }
+            self.lighthouse.setTurnSpeed(1)
             if success {
                 // Deliberately NOT re-enabling the field/button or hiding
                 // the overlay here - `playUnlockSuccessAnimation` plays out
@@ -1200,10 +1427,12 @@ final class LockScreenController: NSViewController {
             } else {
                 self.passwordField.isEnabled = true
                 self.unlockButton.isEnabled = true
+                self.arrowButton.isEnabled = true
                 self.passwordField.stringValue = ""
                 self.errorLabel.stringValue = "That password didn't match. Try again."
                 self.errorLabel.isHidden = false
                 self.playUnlockFailureAnimation()
+                if !HelmMotion.isReduced { self.lighthouse.foghorn() }
                 self.view.window?.makeFirstResponder(self.passwordField)
             }
         }
@@ -1331,7 +1560,175 @@ final class LockScreenController: NSViewController {
         fade.isRemovedOnCompletion = false
         boatImageView.layer?.add(fade, forKey: "fadeAway")
 
+        // L-2, in the same transaction so the completion still waits for it:
+        // one last flash, the card lifting away, and in the light register the
+        // day breaking - today's sky, sea and sun - as the beams fade.
+        lighthouse.lastFlash()
+        let lift = CABasicAnimation(keyPath: "opacity")
+        lift.fromValue = 1
+        lift.toValue = 0
+        lift.duration = 0.34
+        lift.beginTime = CACurrentMediaTime() + 0.18
+        lift.fillMode = .both
+        lift.isRemovedOnCompletion = false
+        cardShadowHost.layer?.add(lift, forKey: "flourish")
+        if let day = currentScene?.day {
+            func hold(_ layer: CALayer, _ key: String, to value: Any, from: Any?, duration: CFTimeInterval, delay: CFTimeInterval) {
+                let a = CABasicAnimation(keyPath: key)
+                a.fromValue = from
+                a.toValue = value
+                a.duration = duration
+                a.beginTime = CACurrentMediaTime() + delay
+                a.fillMode = .both
+                a.isRemovedOnCompletion = false
+                a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                layer.add(a, forKey: "flourish")
+            }
+            hold(daySkyLayer, "opacity", to: 1, from: 0, duration: 0.6, delay: 0.1)
+            hold(daySunLayer, "opacity", to: 1, from: 0, duration: 0.5, delay: 0.18)
+            hold(sunLayer, "opacity", to: 0, from: 1, duration: 0.36, delay: 0.1)
+            hold(seaGradient, "colors", to: [day.wave, Self.blend(day.wave, into: day.ground, fraction: 0.45)].map(\.cgColor),
+                 from: seaGradient.colors, duration: 0.6, delay: 0.05)
+            hold(backSeaGradient, "colors", to: [day.backWave, Self.blend(day.backWave, into: day.ground, fraction: 0.45)].map(\.cgColor),
+                 from: backSeaGradient.colors, duration: 0.6, delay: 0.05)
+            lighthouse.fadeOutForDay(duration: 0.4, delay: 0.26)
+        }
+
         CATransaction.commit()
+    }
+
+    /// Clears what a success flourish left holding its end state, so the next
+    /// lock opens on the normal dusk.
+    private func resetFlourish() {
+        for layer in [daySkyLayer, daySunLayer, sunLayer, seaGradient, backSeaGradient] as [CALayer] {
+            layer.removeAnimation(forKey: "flourish")
+        }
+        cardShadowHost.layer?.removeAnimation(forKey: "flourish")
+        view.layer?.opacity = 1
+    }
+
+    // MARK: - The lamp (board design L-2)
+
+    enum LightSource { case pointer, key }
+
+    /// Reduce Motion and VoiceOver start lit: there is no gate to work out
+    /// and nothing to pull.
+    private static var startsLit: Bool { HelmMotion.isReduced || NSWorkspace.shared.isVoiceOverEnabled }
+
+    /// "Tap again to dim" never throws away a half-typed password or
+    /// interrupts a check.
+    private var canDim: Bool {
+        isLit && openStyle && passwordField.stringValue.isEmpty && passwordField.isEnabled && !HelmMotion.isReduced
+    }
+
+    /// The lit or dark scene at once, with no animation.
+    private func setLit(_ lit: Bool) {
+        isLit = lit
+        cardShadowHost.layer?.removeAnimation(forKey: "reveal")
+        cardShadowHost.layer?.mask = nil
+        cardShadowHost.alphaValue = lit ? 1 : 0
+        cardShadowHost.isInert = !lit
+        if lit { lighthouse.showLit(reducedMotion: Self.prefersReducedMotion) } else { lighthouse.showUnlit() }
+    }
+
+    /// Lights the lamp. From the pointer the lens spins up and the first beam
+    /// paints the card in as it reaches it; from a key everything is quick,
+    /// because whoever is typing is already halfway through a password.
+    func light(_ source: LightSource) {
+        guard !isLit, openStyle else { return }
+        isLit = true
+        cardShadowHost.isInert = false
+        let reduced = Self.prefersReducedMotion
+        lighthouse.light(reducedMotion: reduced, spinUp: source == .pointer && !reduced,
+                         fadeVeil: source == .key ? 0.3 : 0.9)
+        if source == .pointer && !reduced {
+            revealByBeam()
+        } else {
+            fadeCard(show: true, duration: 0.22)
+        }
+    }
+
+    /// Puts the lamp out again (tap the lighthouse with the field empty).
+    func dim() {
+        guard canDim else { return }
+        isLit = false
+        cardShadowHost.isInert = true
+        fadeCard(show: false, duration: 0.3)
+        lighthouse.dim()
+    }
+
+    private func toggleLamp() {
+        if isLit { dim() } else { light(.pointer) }
+        focusPasswordField()
+    }
+
+    private func fadeCard(show: Bool, duration: CFTimeInterval) {
+        cardShadowHost.layer?.mask = nil
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            cardShadowHost.animator().alphaValue = show ? 1 : 0
+        }
+    }
+
+    /// The card appears where the first beam has been: a mask edge that
+    /// follows the beam's tip leftwards across the card during the spun-up
+    /// first quarter turn. The mask comes off the moment the card is whole,
+    /// because a masked host would clip anything drawn past its bounds.
+    private func revealByBeam() {
+        guard let host = cardShadowHost.layer, host.bounds.width > 0 else { fadeCard(show: true, duration: 0.22); return }
+        let pad: CGFloat = 40
+        let mask = CAGradientLayer()
+        mask.frame = host.bounds.insetBy(dx: -pad, dy: -pad)
+        mask.startPoint = CGPoint(x: 0, y: 0.5)
+        mask.endPoint = CGPoint(x: 1, y: 0.5)
+        mask.colors = [NSColor.clear.cgColor, NSColor.black.cgColor]
+        let originX = cardShadowHost.convert(NSPoint(x: -pad, y: 0), to: view).x
+        let width = mask.frame.width
+        let quarter = LockLighthouseScene.revolution / 4 / 2.1
+        let steps = 24
+        var values: [[NSNumber]] = []
+        for k in 0...steps {
+            let phi = Double.pi / 2 * Double(k) / Double(steps)
+            let tip = lighthouse.lamp.x - LockLighthouseScene.beamLength * CGFloat(sin(phi))
+            let u = Double((tip - originX) / width)
+            values.append([NSNumber(value: min(1.2, u - 0.08)), NSNumber(value: min(1.3, u))])
+        }
+        mask.locations = values.last
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.isLit else { return }
+            self.cardShadowHost.layer?.mask = nil
+        }
+        let sweep = CAKeyframeAnimation(keyPath: "locations")
+        sweep.values = values
+        sweep.duration = quarter
+        sweep.calculationMode = .linear
+        mask.add(sweep, forKey: "reveal")
+        host.mask = mask
+        cardShadowHost.alphaValue = 1
+        CATransaction.commit()
+    }
+
+    /// The first key lights the lamp. A local monitor, so it needs no
+    /// Accessibility grant; it returns every event unchanged, so the field
+    /// editor still receives every key, Return and Tab included.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if let self, event.window === self.view.window { self.noteKeyDown() }
+            return event
+        }
+    }
+
+    /// What a key in this window does: lights the lamp, unless the overlay is down.
+    private func noteKeyDown() {
+        guard !view.isHiddenOrHasHiddenAncestor else { return }
+        light(.key)
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 }
 
@@ -1377,6 +1774,28 @@ extension LockScreenController {
     var debugMoonBite: CALayer { moonBiteLayer }
     var debugCurrentHue: HelmDomainHue { currentHue }
 
+    // L-2 probes. Read-only views onto the lamp, plus the two entry points a
+    // real event takes (the tower's click and the first key), so a check can
+    // drive the wiring rather than the helper behind it.
+    var debugIsLit: Bool { isLit }
+    var debugCardHostAlpha: CGFloat { cardShadowHost.alphaValue }
+    var debugCardHostInert: Bool { cardShadowHost.isInert }
+    var debugCardHostIsHidden: Bool { cardShadowHost.isHidden }
+    var debugOpenStyle: Bool { openStyle }
+    var debugAvatarShown: Bool { !avatar.isHidden }
+    var debugArrowShown: Bool { !arrowButton.isHidden }
+    var debugUnlockShown: Bool { !unlockButton.isHidden }
+    var debugMarkTileShown: Bool { !markTile.isHidden }
+    var debugArrowButton: HelmIconButton { arrowButton }
+    var debugLighthouse: LockLighthouseScene { lighthouse }
+    var debugHotspot: NSView { lighthouseHotspot }
+    var debugKeyMonitorInstalled: Bool { keyMonitor != nil }
+    var debugBoatImageSize: NSSize { boatImageView.frame.size }
+    var debugDaySky: CAGradientLayer { daySkyLayer }
+    func debugClickLighthouse() { lighthouseHotspot.debugClick() }
+    /// The key monitor's own handler, so the check goes through what a key does.
+    func debugKeyDown() { noteKeyDown() }
+
     /// Drives the rejected-password branch without needing a real `av`
     /// subprocess - `submitTapped`'s own failure path, verbatim.
     func debugSimulateFailedAttempt() {
@@ -1413,5 +1832,88 @@ private final class GradientHostView: NSView {
         // slides the ribbon behind the card's own instant relayout (the
         // finding `HelmMotion.withoutImplicitAnimation` exists for).
         HelmMotion.withoutImplicitAnimation { gradient.frame = bounds }
+    }
+}
+
+/// The gate card's shadow host. While the lamp is out it is transparent and
+/// refuses clicks; it is never `isHidden`, because hiding the view that holds
+/// the first responder moves first responder elsewhere, and typing-first is
+/// the one rule this screen cannot break.
+private final class GateHostView: NSView {
+    var isInert = false
+    override func hitTest(_ point: NSPoint) -> NSView? { isInert ? nil : super.hitTest(point) }
+}
+
+/// The lighthouse's tap target. It never takes first responder, so a click on
+/// the tower leaves the password field focused.
+private final class SceneHotspotView: NSView {
+    var onClick: (() -> Void)?
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
+    }
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { "Lighthouse" }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+    #if FM_SELFTESTS
+    func debugClick() { onClick?() }
+    #endif
+}
+
+/// C-4 Open sea's avatar: the app's mark as a round, ringed tile.
+private final class OpenSeaAvatarView: NSView {
+    static let side: CGFloat = 76
+    private let gradient = CAGradientLayer()
+    private let glyph = NSImageView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.masksToBounds = false
+        layer?.cornerRadius = Self.side / 2
+        layer?.borderWidth = 3
+        layer?.shadowOpacity = 0.45
+        layer?.shadowRadius = 15
+        layer?.shadowOffset = CGSize(width: 0, height: -10)
+        gradient.cornerRadius = Self.side / 2
+        gradient.masksToBounds = true
+        gradient.startPoint = CGPoint(x: 0, y: 1)
+        gradient.endPoint = CGPoint(x: 1, y: 0)
+        layer?.addSublayer(gradient)
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        glyph.imageScaling = .scaleNone
+        addSubview(glyph)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.side),
+            heightAnchor.constraint(equalToConstant: Self.side),
+            glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        HelmMotion.withoutImplicitAnimation { gradient.frame = bounds }
+    }
+
+    func configure(theme: HelmTheme, hue: HelmDomainHue) {
+        let pair = hue.pair(in: theme)
+        let light = HelmField.sceneLight(theme)
+        HelmMotion.withoutImplicitAnimation {
+            gradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+            layer?.borderColor = light.withAlphaComponent(0.55).cgColor
+            layer?.shadowColor = HelmTheme.nsColor(theme.mode == .dark ? theme.backgroundHex : theme.chromeInkHex).cgColor
+        }
+        glyph.image = NSImage(systemSymbolName: "sailboat.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 32, weight: .regular))
+        glyph.contentTintColor = light
     }
 }

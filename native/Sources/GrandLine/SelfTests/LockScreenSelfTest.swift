@@ -34,6 +34,12 @@
 //      must not clip and the rounded fill must. Getting this backwards renders
 //      as either a clipped-away shadow or square corners, both of which look
 //      like a design choice rather than a bug.
+//   7. **The lamp gate (board design L-2).** The locked state starts dark with
+//      the form transparent, inert and still first responder; the first key
+//      lights it; the lighthouse lights it and dims it again only while the
+//      field is empty; Reduce Motion and every other state start lit; and
+//      the key monitor goes with the overlay. Typing-first is the one rule
+//      the lamp may never break, so it is asserted on the real responder.
 //   6. **Source guards.** No colour literals crept back in, the shared
 //      components are genuinely used, and the auth flow is untouched - the last
 //      one because this is the one screen where a well-meant "improvement"
@@ -60,7 +66,8 @@ enum LockScreenSelfTest {
                       checkPasswordWellCentringAndMasking,
                       checkSharedComponentsAndNoLiterals,
                       checkAuthFlowUntouched,
-                      checkLoopingAnimationsStopOnUnlock] {
+                      checkLoopingAnimationsStopOnUnlock,
+                      checkTheLampGate] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -189,17 +196,46 @@ enum LockScreenSelfTest {
                 if card.frame.width <= 0 || card.frame.height <= 0 {
                     fail(&ok, "\(tag): card has no size (\(card.frame))")
                 }
-                if (card.layer?.borderWidth ?? 0) <= 0 {
-                    fail(&ok, "\(tag): card has no border - applyCardSurface not applied?")
-                }
-                if card.layer?.backgroundColor == nil {
-                    fail(&ok, "\(tag): card has no fill")
-                }
-                if (controller.debugRibbonLayer.colors?.count ?? 0) != 2 {
-                    fail(&ok, "\(tag): ribbon is not a two-stop gradient")
-                }
-                if controller.debugRibbonLayer.frame.width <= 0 {
-                    fail(&ok, "\(tag): ribbon has no width")
+                if case .locked = state {
+                    // C-4 Open sea (the captain's pick): the locked gate floats
+                    // on the scene with no card surface, a round avatar in place
+                    // of the mark tile, and the arrow inside the pill in place
+                    // of the Unlock button.
+                    if !controller.debugOpenStyle {
+                        fail(&ok, "\(tag): the locked state is not drawn in the C-4 open style")
+                    }
+                    if (card.layer?.borderWidth ?? 0) > 0 {
+                        fail(&ok, "\(tag): C-4 has no card, but the card still has a border")
+                    }
+                    if let fill = card.layer?.backgroundColor, (NSColor(cgColor: fill)?.alphaComponent ?? 0) > 0 {
+                        fail(&ok, "\(tag): C-4 has no card, but the card still has a fill")
+                    }
+                    if !controller.debugAvatarShown || controller.debugMarkTileShown {
+                        fail(&ok, "\(tag): expected the round avatar, not the mark tile")
+                    }
+                    if !controller.debugArrowShown || controller.debugUnlockShown {
+                        fail(&ok, "\(tag): expected the in-field arrow, not the Unlock button")
+                    }
+                } else {
+                    // Every other state keeps the card exactly as it was.
+                    if controller.debugOpenStyle {
+                        fail(&ok, "\(tag): only the locked state may use the open style")
+                    }
+                    if (card.layer?.borderWidth ?? 0) <= 0 {
+                        fail(&ok, "\(tag): card has no border - applyCardSurface not applied?")
+                    }
+                    if card.layer?.backgroundColor == nil {
+                        fail(&ok, "\(tag): card has no fill")
+                    }
+                    if (controller.debugRibbonLayer.colors?.count ?? 0) != 2 {
+                        fail(&ok, "\(tag): ribbon is not a two-stop gradient")
+                    }
+                    if controller.debugRibbonLayer.frame.width <= 0 {
+                        fail(&ok, "\(tag): ribbon has no width")
+                    }
+                    if controller.debugAvatarShown || controller.debugArrowShown {
+                        fail(&ok, "\(tag): the C-4 avatar or arrow leaked into a card state")
+                    }
                 }
             }
 
@@ -220,7 +256,7 @@ enum LockScreenSelfTest {
                 fail(&ok, "\(register.id): locked title is \"\(controller.debugTitle.stringValue)\", expected \"\(LockScreenController.greeting())\"")
             }
         }
-        if ok { print("  6 states x 2 registers: view sets, hues, copy and card chrome all correct") }
+        if ok { print("  6 states x 2 registers: view sets, hues, copy, C-4 on the locked gate and card chrome on the rest") }
     }
 
     // MARK: 3 - contrast
@@ -239,21 +275,36 @@ enum LockScreenSelfTest {
             let controller = LockScreenController()
             let window = mount(controller)
             defer { window.contentView = nil }
-            let card = HelmTheme.nsColor(register.chromeBackgroundHex)
-
-            // The error label, on the card it sits on.
+            // The error label, on what it sits on. C-4 has no card, so that
+            // is the sky behind the form: its top and its middle stop, which
+            // span the band the form floats in.
             controller.apply(.locked(subtitle: "x"))
             controller.debugSimulateFailedAttempt()
             controller.view.layoutSubtreeIfNeeded()
             let errorColor = controller.debugErrorLabel.textColor ?? .black
-            let errorRatio = HelmContrast.ratio(errorColor, card)
+            let sky = (controller.debugSkyLayer.colors as? [CGColor] ?? []).prefix(2).compactMap { NSColor(cgColor: $0) }
+            if sky.count != 2 {
+                fail(&ok, "\(register.id): the sky has no two stops to measure the error label against")
+            }
+            let errorRatio = sky.map { HelmContrast.ratio(errorColor, $0) }.min() ?? 0
             if errorRatio < 4.5 {
-                fail(&ok, "\(register.id): error label \(fmt(errorRatio)):1 on the card - below the 4.5 text floor")
+                fail(&ok, "\(register.id): error label \(fmt(errorRatio)):1 on the sky - below the 4.5 text floor")
             }
             // And the raw hue it corrects genuinely needs correcting on at
             // least one of the two registers, or this branch is decoration.
-            let rawRatio = HelmContrast.ratio(HelmTheme.nsColor(register.ansiHex[1]), card)
-            print("  \(register.id): error label \(fmt(errorRatio)):1 (raw hue \(fmt(rawRatio)):1)")
+            let rawRatio = sky.map { HelmContrast.ratio(HelmTheme.nsColor(register.ansiHex[1]), $0) }.min() ?? 0
+            print("  \(register.id): error label \(fmt(errorRatio)):1 on the sky (raw hue \(fmt(rawRatio)):1)")
+
+            // C-4's in-field arrow: a graphic, so WCAG 1.4.11's 3:1.
+            let arrow = controller.debugArrowButton
+            if let glyph = arrow.debugGlyphColor, let fill = arrow.debugHoverFill {
+                let arrowRatio = HelmContrast.ratio(glyph, fill)
+                if arrowRatio < 3 {
+                    fail(&ok, "\(register.id): the arrow's glyph is \(fmt(arrowRatio)):1 on its fill - below the 3:1 graphics floor")
+                }
+            } else {
+                fail(&ok, "\(register.id): the arrow has no glyph colour or fill to measure")
+            }
 
             // Every state's primary button label, on its own resolved fill.
             for (name, state) in allStates {
@@ -265,6 +316,8 @@ enum LockScreenSelfTest {
                 let button = state.hue == .amber && !controller.debugAvStack.isHidden
                     ? controller.debugCopyButton
                     : controller.debugUnlockButton
+                // C-4's locked gate has no Unlock button; the arrow is measured above.
+                guard !button.isHiddenOrHasHiddenAncestor else { continue }
                 guard let fill = button.layer?.backgroundColor.map({ NSColor(cgColor: $0) ?? .black }),
                       let label = button.attributedTitle.length > 0
                         ? button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
@@ -348,8 +401,13 @@ enum LockScreenSelfTest {
         // display's own profile and the conversion silently disagrees.
         let expectedSky = NSColor(cgColor: (controller.debugSkyLayer.colors?.first as! CGColor))?
             .usingColorSpace(rep.colorSpace)
-        let got = pixel.usingColorSpace(rep.colorSpace)
-        guard let expectedSky, let got else {
+        // ...and the converse half of the same rule: `colorAt` already hands
+        // back the rep's raw components (tagged Generic RGB), so the sample is
+        // read as it is. Re-converting it lifted a dark sky by 0.08 per channel
+        // once the L-2 scene darkened the blue hour, which read as a blank sky.
+        let got = NSColor(srgbRed: pixel.redComponent, green: pixel.greenComponent,
+                          blue: pixel.blueComponent, alpha: pixel.alphaComponent)
+        guard let expectedSky else {
             fail(&ok, "could not convert sampled/expected colours into the rep's colour space")
             return
         }
@@ -360,7 +418,9 @@ enum LockScreenSelfTest {
         // The old failure mode rendered *blank white*, so the tolerance only
         // has to be tight enough to tell the real sky from that.
         if delta > 0.08 {
-            fail(&ok, "sampled sky pixel differs from the resolved sky colour by \(fmt(Double(delta))) per channel - is it rendering blank again?")
+            fail(&ok, "sampled sky pixel differs from the resolved sky colour by \(fmt(Double(delta))) per channel - is it rendering blank again? "
+                 + "sampled \(fmt(Double(got.redComponent))),\(fmt(Double(got.greenComponent))),\(fmt(Double(got.blueComponent))) "
+                 + "expected \(fmt(Double(expectedSky.redComponent))),\(fmt(Double(expectedSky.greenComponent))),\(fmt(Double(expectedSky.blueComponent)))")
         }
         if got.redComponent > 0.98, got.greenComponent > 0.98, got.blueComponent > 0.98 {
             fail(&ok, "sampled sky pixel is blank white - the render probe still cannot see this screen")
@@ -383,7 +443,14 @@ enum LockScreenSelfTest {
         let controller = LockScreenController()
         let window = mount(controller)
         defer { window.contentView = nil }
+        // C-4 floats the locked gate on the scene with no card, so the card's
+        // shadow is measured on a state that still has one.
         controller.apply(.locked(subtitle: "x"))
+        controller.view.layoutSubtreeIfNeeded()
+        if (controller.debugCardShadowHost.layer?.shadowOpacity ?? 0) > 0 {
+            fail(&ok, "the C-4 locked gate has no card, but its shadow host still casts a shadow")
+        }
+        controller.apply(.noPasswordConfigured)
         controller.view.layoutSubtreeIfNeeded()
         controller.viewDidLayout()
 
@@ -534,6 +601,109 @@ enum LockScreenSelfTest {
             fail(&ok, "LockPresenter.showLock no longer restarts them, so a re-lock would show a frozen scene")
         }
         if ok { print("  attached while locked, detached on unlock, re-attached on re-lock, and both call sites present") }
+    }
+
+    // MARK: 7 - the lamp gate (L-2)
+
+    private static func checkTheLampGate(_ ok: inout Bool) {
+        print("LockScreenSelfTest: the lamp gate starts dark, keeps typing first, and lights and dims")
+        if NSWorkspace.shared.isVoiceOverEnabled {
+            print("  SKIP: VoiceOver is on, so the gate starts lit by design")
+            return
+        }
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedReduced }
+
+        let controller = LockScreenController()
+        let window = mount(controller)
+        defer { window.contentView = nil; controller.stopAnimations() }
+        controller.apply(.locked(subtitle: "Grand Line is locked."))
+        controller.restartAnimationsIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        controller.focusPasswordField()
+        let field = controller.debugPasswordField
+        func fieldIsFirstResponder() -> Bool {
+            let responder = window.firstResponder
+            return responder === field || (responder as? NSText)?.delegate === field
+        }
+
+        // Dark: the form is transparent and inert, but never hidden, and the
+        // field still holds first responder - typing-first.
+        if controller.debugIsLit { fail(&ok, "the locked gate starts lit - only Reduce Motion and VoiceOver may") }
+        if controller.debugCardHostAlpha != 0 { fail(&ok, "the form is visible while the lamp is off (alpha \(controller.debugCardHostAlpha))") }
+        if !controller.debugCardHostInert { fail(&ok, "the invisible form still takes clicks") }
+        if controller.debugCardHostIsHidden {
+            fail(&ok, "the form is isHidden while dark - hiding it moves first responder off the field")
+        }
+        if !fieldIsFirstResponder() {
+            fail(&ok, "the password field is not first responder on the dark gate (\(String(describing: window.firstResponder)))")
+        }
+        let host = controller.debugCardShadowHost
+        let centre = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: controller.view)
+        if let hit = controller.view.hitTest(centre), hit.isDescendant(of: host) {
+            fail(&ok, "a click on the invisible form reached \(type(of: hit)) inside it")
+        }
+        if !controller.debugKeyMonitorInstalled { fail(&ok, "no key monitor, so the first key cannot light the lamp") }
+        if controller.debugLighthouse.debugLensTurning { fail(&ok, "the lens turns while the lamp is off") }
+
+        // The first key lights it, through the monitor's own handler.
+        controller.debugKeyDown()
+        if !controller.debugIsLit || controller.debugCardHostAlpha != 1 || controller.debugCardHostInert {
+            fail(&ok, "the first key did not light the gate (lit=\(controller.debugIsLit) alpha=\(controller.debugCardHostAlpha))")
+        }
+        if !controller.debugLighthouse.debugLensTurning { fail(&ok, "the lamp is lit but the lens is not turning") }
+        if !fieldIsFirstResponder() { fail(&ok, "lighting the lamp moved first responder off the field") }
+
+        // The lighthouse dims it while the field is empty, and lights it again.
+        controller.debugClickLighthouse()
+        if controller.debugIsLit || controller.debugCardHostAlpha != 0 || !controller.debugCardHostInert {
+            fail(&ok, "tapping the lit lighthouse with an empty field did not dim the gate")
+        }
+        controller.debugClickLighthouse()
+        if !controller.debugIsLit { fail(&ok, "tapping the dark lighthouse did not light the gate") }
+
+        // Never with something typed: dimming would hide a half-typed password.
+        field.stringValue = "half typed"
+        controller.debugClickLighthouse()
+        if !controller.debugIsLit { fail(&ok, "the lighthouse dimmed the gate over a half-typed password") }
+        field.stringValue = ""
+
+        // Reduce Motion starts lit, and so does every other state.
+        HelmMotion.reducedOverrideForTests = true
+        controller.apply(.locked(subtitle: "x"))
+        if !controller.debugIsLit { fail(&ok, "Reduce Motion should start the gate lit") }
+        controller.debugClickLighthouse()
+        if !controller.debugIsLit { fail(&ok, "Reduce Motion should never dim the gate") }
+        HelmMotion.reducedOverrideForTests = false
+        for (name, state) in allStates where name != "locked" && name != "sessionExpired" {
+            controller.apply(state)
+            if !controller.debugIsLit || controller.debugCardHostAlpha != 1 || controller.debugCardHostInert {
+                fail(&ok, "\(name) must start lit - only the locked state is dark")
+            }
+        }
+
+        // The key monitor and the lens go with the overlay.
+        controller.apply(.locked(subtitle: "x"))
+        controller.debugKeyDown()
+        controller.stopAnimations()
+        if controller.debugKeyMonitorInstalled { fail(&ok, "the key monitor outlived the overlay") }
+        if controller.debugLighthouse.debugLensTurning { fail(&ok, "the lens kept turning after the overlay went") }
+
+        // Source half: the monitor reaches the same handler the check drives,
+        // and returns the event so the field editor still gets every key.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let source = try? String(contentsOf: dir.appendingPathComponent("LockScreenController.swift"), encoding: .utf8) {
+            if !source.contains("if let self, event.window === self.view.window { self.noteKeyDown() }") {
+                fail(&ok, "the key monitor no longer calls noteKeyDown, so debugKeyDown no longer tests it")
+            }
+            if !source.contains("return event") {
+                fail(&ok, "the key monitor no longer returns the event - it would swallow the first key")
+            }
+        } else {
+            print("  SKIP: app sources not reachable for the key monitor guard")
+        }
+        if ok { print("  dark and inert with the field focused, lit by a key and the lighthouse, dimmed only when empty") }
     }
 
     private static func checkSharedComponentsAndNoLiterals(_ ok: inout Bool) {

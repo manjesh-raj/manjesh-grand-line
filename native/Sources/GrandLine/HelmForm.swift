@@ -191,6 +191,22 @@ enum HelmField {
     enum Surface: Equatable {
         case inset
         case raised
+        /// A pill well floating over an illustrated scene rather than sitting
+        /// on a card: the lock screen's Open sea gate and the Secrets page's
+        /// Open gate. Its fill is the theme's light surface at low alpha, so
+        /// the scene shows through, and its text takes the colour that reads
+        /// on that scene. `onDark` says which kind of scene it floats over.
+        case scene(onDark: Bool)
+    }
+
+    /// The radius a scene well uses until it has a height of its own: half of
+    /// the 34pt pill the two gates draw.
+    static let sceneCornerRadius: CGFloat = 17
+
+    /// What a scene well is made of: the card in a light theme and the ink in
+    /// a dark one, near-white in both, so it always reads as light on glass.
+    static func sceneLight(_ theme: HelmTheme) -> NSColor {
+        HelmTheme.nsColor(theme.mode == .dark ? theme.chromeInkHex : theme.chromeBackgroundHex)
     }
 
     /// How far a raised well's hairline steps from `chromeLineHex` toward ink.
@@ -200,6 +216,7 @@ enum HelmField {
     static let raisedDarkLift: CGFloat = 0.05
 
     static func fill(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        if case .scene(let onDark) = surface { return sceneLight(theme).withAlphaComponent(onDark ? 0.2 : 0.62) }
         guard surface == .raised else { return fill(theme) }
         let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
         guard theme.mode == .dark else { return card }
@@ -207,6 +224,9 @@ enum HelmField {
     }
 
     static func border(_ theme: HelmTheme, surface: Surface) -> NSColor {
+        if case .scene(let onDark) = surface {
+            return onDark ? sceneLight(theme).withAlphaComponent(0.38) : HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.16)
+        }
         guard surface == .raised else { return border(theme) }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
@@ -215,11 +235,15 @@ enum HelmField {
     }
 
     static func ink(_ theme: HelmTheme, surface: Surface) -> NSColor {
-        HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: fill(theme, surface: surface))
+        // A scene well's fill is translucent, so contrast is against the
+        // scene behind it, which only the caller knows; it says so in `onDark`.
+        if case .scene(let onDark) = surface { return onDark ? sceneLight(theme) : HelmTheme.nsColor(theme.chromeInkHex) }
+        return HelmContrast.legible(HelmTheme.nsColor(theme.chromeInkHex), over: fill(theme, surface: surface))
     }
 
     static func mutedInk(_ theme: HelmTheme, surface: Surface) -> NSColor {
-        HelmContrast.legible(HelmTheme.mutedInk(theme), over: fill(theme, surface: surface))
+        if case .scene(let onDark) = surface { return onDark ? sceneLight(theme).withAlphaComponent(0.74) : HelmTheme.mutedInk(theme) }
+        return HelmContrast.legible(HelmTheme.mutedInk(theme), over: fill(theme, surface: surface))
     }
 
     /// The same correction for muted text sitting on a field - a placeholder, a
@@ -249,6 +273,10 @@ enum HelmField {
     static func applySunken(to view: NSView, theme: HelmTheme, isRow: Bool = false, surface: Surface = .inset) {
         view.layer?.backgroundColor = fill(theme, surface: surface).cgColor
         view.layer?.borderColor = border(theme, surface: surface).cgColor
+        if case .scene = surface {
+            view.layer?.cornerRadius = view.bounds.height > 0 ? view.bounds.height / 2 : sceneCornerRadius
+            return
+        }
         view.layer?.cornerRadius = isRow ? rowCornerRadius(for: theme) : cornerRadius(for: theme)
     }
 
@@ -375,17 +403,26 @@ final class HelmCenteredTextFieldCell: NSTextFieldCell {
 }
 
 final class HelmCenteredSecureTextFieldCell: NSSecureTextFieldCell {
+    /// Room kept clear at the trailing edge for an accessory drawn inside the
+    /// well (the lock screen's in-field arrow), so typed dots never run under it.
+    var trailingAccessoryWidth: CGFloat = 0
+
+    private func textRect(_ rect: NSRect) -> NSRect {
+        var r = rect
+        r.size.width = max(0, r.width - trailingAccessoryWidth)
+        return HelmFieldCentering.centred(r, in: self)
+    }
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        super.drawingRect(forBounds: HelmFieldCentering.centred(rect, in: self))
+        super.drawingRect(forBounds: textRect(rect))
     }
     override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
                          delegate: Any?, start: Int, length: Int) {
-        super.select(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+        super.select(withFrame: textRect(rect), in: controlView,
                      editor: editor, delegate: delegate, start: start, length: length)
     }
     override func edit(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
                        delegate: Any?, event: NSEvent?) {
-        super.edit(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+        super.edit(withFrame: textRect(rect), in: controlView,
                    editor: editor, delegate: delegate, event: event)
     }
 }
@@ -478,7 +515,13 @@ private final class SunkenFieldTheming {
         // state too. Painting the resting fill here while the layer flipped to
         // `card` is what rendered a focused field as two boxes - see that
         // method's own note.
-        field.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused, surface: surface)
+        // A scene well's fill lives on the layer alone: the cell painting the
+        // same translucent fill again would show as a second, squarer band.
+        if case .scene = surface {
+            field.backgroundColor = .clear
+        } else {
+            field.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused, surface: surface)
+        }
         field.textColor = HelmField.ink(theme, surface: surface)
         if showsIssue {
             field.layer?.borderWidth = HelmInputSurface.focusBorderWidth
@@ -646,6 +689,13 @@ final class HelmSecureTextField: NSSecureTextField {
 
     /// See `HelmTextField.applyTheme(_:)`.
     func applyTheme(_ theme: HelmTheme) { theming.apply(theme) }
+
+    /// Width kept clear of text at the trailing edge, for an accessory placed
+    /// inside the well. See `HelmCenteredSecureTextFieldCell`.
+    var trailingAccessoryWidth: CGFloat {
+        get { (cell as? HelmCenteredSecureTextFieldCell)?.trailingAccessoryWidth ?? 0 }
+        set { (cell as? HelmCenteredSecureTextFieldCell)?.trailingAccessoryWidth = newValue; needsDisplay = true }
+    }
 }
 
 /// A multi-line field: an `NSTextView` inside a scroll view wearing the same

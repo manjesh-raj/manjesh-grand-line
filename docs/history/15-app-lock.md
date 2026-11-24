@@ -63,3 +63,40 @@ This entry corrects two claims above.
   Its reasoning was that nothing inside the app should be able to lengthen the windows.
   Once the lock itself became an opt-in the same page can turn off, a longer window is not a new capability.
   Settings is reachable only while the app is unlocked anyway.
+
+## The lighthouse lock screen (`fm/grandline-login-lamp-design-scout`)
+
+The captain's pick from the lamp lock-screen board: L-2 Lighthouse, with the Going Merry and card style C-4 Open sea.
+Only `.locked` changed.
+The four setup and waiting states keep the Daylight Harbour card described above, and `LockPresenter` and the unlock handshake are untouched.
+
+- **The locked state starts dark, and typing still works from the first frame.**
+  The form's host is hidden by alpha and refuses hit-testing while dark (`GateHostView`), and it is never `isHidden`, because hiding the view that holds the first responder moves first responder elsewhere.
+  Measured by injection on the Secrets gate, which uses the same rule: setting `isHidden` on its form host took first responder off the password field.
+- **The first key lights the lamp** through a local key-down monitor that returns every event unchanged, so the field editor still gets the key, Return and Tab included.
+  The monitor's body is `noteKeyDown()`, and `debugKeyDown()` calls that rather than `light(.key)`, so the check enters where a key does.
+  `stopAnimations()` removes the monitor with the overlay.
+- **A tap on the lighthouse lights it, and a second tap dims it** only while the field is empty, enabled and Reduce Motion is off.
+  Reduce Motion and VoiceOver start lit.
+- **The lens is render-server keyframes, not a timer.**
+  The target is macOS 13, so there is no `NSView.displayLink`.
+  Each beam is `scale.x = sin(phi)` with a discrete `zPosition` that puts it behind the tower while it faces away, and a speed change retimes the container with the `timeOffset` pattern.
+- **The art is drawn in code** (`LockSceneArt.swift`), because this app ships no resource bundles.
+  `SVGPath` parses the board's path strings, and the fog is a tileable noise texture generated off the main thread once and drifted as a replicator mask.
+- **C-4 Open sea** clears the card's fill, border and shadow, swaps the mark tile for a round avatar, and puts the submit arrow inside the pill.
+  The pill is `HelmField.Surface.scene(onDark:)` and the arrow is `HelmIconButton.Style.circle` (Helm 10.3.0).
+  The ship draws at 80% and the form sits 40pt higher (the card's centre offset went from -30 to -70).
+- **The error text needed a real contrast correction.**
+  The light register's blue hour is a mid tone, and the theme's red lifted toward the scene's light measured **2.24:1** against it.
+  It now goes through `HelmContrast.legible` against the sky's middle stop: **4.59:1** on Daylight and 5.78:1 on Dusk.
+- **One probe trap, the converse half of the AGENTS.md rule.**
+  `checkRenderProbeSeesTheScene` converted the sampled pixel into `rep.colorSpace`, which lifted the darker blue-hour sky by 0.08 per channel and read as a blank sky.
+  The sample is now read raw and only the expected colour is converted (0.01 delta).
+
+### Verified
+
+- `swift build` and `swift build -c release` clean, zero warnings.
+- `FM_RUN_LOCK_SCREEN_TESTS` gained `checkTheLampGate` (dark, inert and first responder; lit by the monitor's handler and the lighthouse; dimmed only when empty; Reduce Motion and every other state lit; the monitor and lens gone with the overlay), and the card-chrome, contrast and shadow checks moved to the states that still have a card.
+- Copy-aside injections (never `git stash`): `isHidden` on the host failed the never-hidden case, dropping the empty-field rule from `canDim` failed the half-typed case, and emptying `noteKeyDown()` failed four lighting cases.
+- Off-screen renders were compared against the board in lavender and powder, lit, unlit, Reduce Motion and setup.
+- **Not verified:** the live app on screen (never launched from a worktree), the running animations (`cacheDisplay` draws model values, so beams and halo show only in the Reduce Motion render), and a real keystroke through `NSApp`'s event loop (the monitor's handler is driven directly, with a source guard that the monitor calls it).
