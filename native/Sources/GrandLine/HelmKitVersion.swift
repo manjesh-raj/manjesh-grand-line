@@ -274,6 +274,7 @@ enum HelmKit {
         Component("Capture panel", "1.0.0", file: "ShiftQuickCapture.swift"),
         Component("Task sheet", "1.0.0", file: "ShiftTaskEditorController.swift"),
         Component("Crew (page)", "1.1.0", file: "FleetController.swift"),
+        Component("Reply composer", "1.0.0", file: "FleetReplyCard.swift"),
     ]
 
     struct SourceDigest {

@@ -32,6 +32,12 @@
 //     layout drawing them with its ring, its dimmed failed read and Show
 //     folder path, and the same page in the floating bar drawing no band. The
 //     ring's arc and label clear their floors on every palette too.
+//   - RP-2 Question head (the same board): `ReplyHeroWords` for a decision,
+//     several, a block and a task with none on record, with the whole note
+//     kept. The `FleetReplyCard` head's painted words, glyph and × clear
+//     their floors on every palette in both tones. A real `FleetController`
+//     in the sidebar layout turns the row into the card and keeps what was
+//     typed across a refresh, while the floating bar keeps its composer.
 //
 // The layout in a real shell is `PageHeroColumnsViewSelfTest`.
 //
@@ -63,6 +69,9 @@ enum PageHeroColumnsSelfTest {
             checkCrewReviewWords,
             checkTheReviewBandOnTheRealPage,
             checkTheCrewBandClearsTheFloorOnEveryPalette,
+            checkReplyHeadWords,
+            checkTheReplyHeadClearsTheFloorOnEveryPalette,
+            checkTheReplyCardOnTheRealPage,
         ]
         for check in checks {
             var ok = true
@@ -833,6 +842,220 @@ enum PageHeroColumnsSelfTest {
         check(first.debugHeadline == "No open pull requests right now" && first.debugFootViews.isEmpty
                 && first.debugRing == nil && first.debugPalette == accent && !review.debugAreForgeSectionsVisible,
               "CR-1: an empty Review drew \(first.debugHeadline) and forge cards \(review.debugAreForgeSectionsVisible)", &ok)
+    }
+
+    // MARK: RP-2 Question head
+
+    private static func decision(_ key: String, _ note: String, verb: String = "needs-decision") -> FleetDecision {
+        FleetDecision(key: key, verb: verb, note: note)
+    }
+
+    private static func checkReplyHeadWords(_ ok: inout Bool) {
+        let note = "Which design to build for the notifications panel: N-1, N-2, N-3, N-4, or none yet"
+        let one = ReplyHeroWords.head(taskID: "task-142", repo: "grand-line", status: "needs_decision",
+                                      detail: "waiting on the captain", source: "crew",
+                                      decisions: [decision("board-review", note)])
+        check(one == ReplyHeroWords.Head(symbol: "exclamationmark.triangle",
+                                         kicker: "Needs decision \u{00B7} task-142", headline: note,
+                                         detail: "grand-line \u{00B7} needs-decision \u{201C}board-review\u{201D}",
+                                         tone: .accent, groupLabel: "Answer task-142"),
+              "RP-2: one open decision reads \(one)", &ok)
+        // Several: the newest note is the question, and every key is named.
+        let two = ReplyHeroWords.head(taskID: "task-142", repo: "grand-line", status: "needs_decision", detail: "",
+                                      source: "crew", decisions: [decision("helm-bump", "Bump Helm?"),
+                                                                  decision("board-review", note)])
+        check(two.headline == note && two.detail == "grand-line \u{00B7} 2 open decisions: helm-bump, board-review",
+              "RP-2: two open decisions read \(two.headline) / \(two.detail)", &ok)
+        // A block: the amber tone, the row's own kicker and the octagon.
+        let blocked = ReplyHeroWords.head(taskID: "alerts", repo: "pramata-status", status: "blocked", detail: "",
+                                          source: "crew", decisions: [decision("default", "CI needs a secret", verb: "blocked")])
+        check(blocked.tone == .amber && blocked.kicker == "Blocked \u{00B7} alerts" && blocked.symbol == "xmark.octagon"
+                && blocked.detail == "pramata-status \u{00B7} blocked \u{201C}default\u{201D}",
+              "RP-2: a blocked task reads \(blocked)", &ok)
+        // Nothing on record: the row's own fallbacks, never invented words,
+        // and the id where there is no repo.
+        let none = ReplyHeroWords.head(taskID: "t-9", repo: nil, status: "needs_decision", detail: "waiting on the captain",
+                                       source: "crew", decisions: [])
+        check(none.headline == "waiting on the captain" && none.detail == "t-9",
+              "RP-2: a task with no decision on record reads \(none.headline) / \(none.detail)", &ok)
+        check(ReplyHeroWords.question(decisions: [], detail: "", source: "watcher") == "source: watcher"
+                && ReplyHeroWords.question(decisions: [decision("k", "")], detail: "d", source: "s") == "d",
+              "RP-2: the question's fallbacks are not the row's", &ok)
+        // Never clipped: the whole note, however long, with its URL.
+        let long = LayoutStabilitySelfTest.unbrokenNote + " " + ReviewTourLab.demoDecisionNote
+        let kept = ReplyHeroWords.head(taskID: "t", repo: "r", status: "needs_decision", detail: "", source: "s",
+                                       decisions: [decision("k", long)])
+        check(kept.headline == long && long.count > 600, "RP-2: a \(long.count)-character note did not survive whole", &ok)
+        // The caption is today's, word for word, in all three cases.
+        let base = "Sent as a reply into the firstmate session for this crew, same as answering in a terminal."
+        check(ReplyHeroWords.caption(decisions: []) == base
+                && ReplyHeroWords.caption(decisions: [decision("board-review", note)])
+                    == base + " Closes the open needs-decision \u{201C}board-review\u{201D}."
+                && ReplyHeroWords.caption(decisions: [decision("a", "x"), decision("b", "y")])
+                    == base + " 2 decisions are open on this task, so none is closed automatically - resolve the right one from the crew's session.",
+              "RP-2: the caption is not today's", &ok)
+        check(ReplyHeroWords.kicker(taskID: "x", blocked: false) == "Needs decision \u{00B7} x"
+                && ReplyHeroWords.symbol(blocked: true) == "xmark.octagon.fill"
+                && ReplyHeroWords.placeholder == "Type your answer\u{2026}" && ReplyHeroWords.sendTitle == "Send",
+              "RP-2: the row's words moved and changed", &ok)
+        for name in ["exclamationmark.triangle", "xmark.octagon", "xmark", "paperplane.fill"] {
+            check(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil,
+                  "RP-2: SF Symbol \(name) does not resolve", &ok)
+        }
+    }
+
+    /// The card's head, painted on every palette in both tones: the headline
+    /// in the ink and the kicker and second line at 80% on both stops, the
+    /// tile's glyph at the non-text floor on both, and the ×'s ink on its
+    /// shade. The status and caption are measured on the card's own fill.
+    private static func checkTheReplyHeadClearsTheFloorOnEveryPalette(_ ok: inout Bool) {
+        var seen = Set<String>()
+        let themes = (HelmTheme.appThemes + HelmTheme.allThemes).filter { seen.insert($0.id).inserted }
+        check(themes.count >= 26, "fixture: only \(themes.count) themes", &ok)
+        var failures: [String] = []
+        var worst = Double.infinity
+        var amberDiffers = 0
+        for tone in [ReplyHeroWords.Tone.accent, .amber] {
+            let head = ReplyHeroWords.Head(symbol: ReplyHeroWords.tileSymbol(blocked: tone == .amber), kicker: "Needs decision \u{00B7} t",
+                                           headline: "Which one?", detail: "repo \u{00B7} 2 open decisions: a, b",
+                                           tone: tone, groupLabel: "Answer t")
+            let card = FleetReplyCard(head: head, caption: ReplyHeroWords.caption(decisions: []),
+                                      closeButton: HelmButton(symbol: "xmark", variant: .quiet, size: .small))
+            for theme in themes {
+                card.applyTheme(theme)
+                guard let palette = card.palette, let glyph = card.debugGlyphColor else {
+                    failures.append("\(theme.id): the head is unpainted")
+                    continue
+                }
+                if tone == .amber, palette != FleetReplyCard.palette(for: .accent, in: theme) { amberDiffers += 1 }
+                let tag = "\(theme.id) \(tone)"
+                let darker = palette.start == palette.lighterStop ? palette.end : palette.start
+                func floor(_ name: String, _ color: NSColor?, on ground: (Double, Double, Double), _ target: Double) {
+                    guard let color else { failures.append("\(tag): \(name) has no colour"); return }
+                    let measured = HelmContrast.ratio(composite(color, over: ground), ground)
+                    if target == HelmContrast.textTarget { worst = min(worst, measured) }
+                    if measured < target { failures.append("\(tag): \(name) \(ratio(measured))") }
+                }
+                let kicker = card.debugKickerLabel.attributedStringValue
+                    .attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+                for stop in [palette.lighterStop, darker] {
+                    floor("headline", card.debugHeadlineLabel.textColor, on: stop, HelmContrast.textTarget)
+                    floor("second line", card.debugDetailLabel.textColor, on: stop, HelmContrast.textTarget)
+                    floor("kicker", kicker, on: stop, HelmContrast.textTarget)
+                    floor("glyph", glyph, on: stop, HelmContrast.nonTextTarget)
+                    let ink = HelmContrast.color(palette.ink)
+                    let shade = HelmButton.heroPalette(ink: ink, enabled: true)
+                    floor("\u{00D7}", shade.label, on: composite(shade.fill, over: stop), HelmContrast.nonTextTarget)
+                }
+                let cardFill = HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex))
+                floor("caption", card.debugCaptionLabel.textColor, on: cardFill, HelmContrast.textTarget)
+                for tint in [HelmTint.warn, .critical] {
+                    card.setStatus("status", tint: tint)
+                    floor("\(tint) status", card.debugStatusLabel.textColor, on: cardFill, HelmContrast.textTarget)
+                }
+                card.setStatus(nil, tint: nil)
+            }
+        }
+        // The fixture's own power: the amber tone is a palette of its own.
+        check(amberDiffers >= themes.count - 2, "fixture: the amber head matched the accent's on \(themes.count - amberDiffers) themes", &ok)
+        check(failures.isEmpty, "RP-2: the head misses its floor on \(failures.prefix(12))", &ok)
+        print("  RP-2 head: weakest text \(ratio(worst)):1 over \(themes.count) palettes, accent and amber")
+    }
+
+    /// A real `FleetController` in the sidebar layout, with no window: Reply
+    /// turns its row into the card, and what is typed survives a refresh. The
+    /// floating bar's dashboard, the same controller never adopting the
+    /// layout, still opens today's composer under the row.
+    private static func checkTheReplyCardOnTheRealPage(_ ok: inout Bool) {
+        let saved = FleetActions.stateDirectoryOverrideForTests
+        let state = FileManager.default.temporaryDirectory
+            .appendingPathComponent("reply-card-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        defer {
+            FleetActions.stateDirectoryOverrideForTests = saved
+            try? FileManager.default.removeItem(at: state)
+        }
+        FleetActions.stateDirectoryOverrideForTests = state
+        let note = "Which design to build for the notifications panel: N-1, N-2, N-3, N-4, or none yet"
+        try? "needs-decision [at=1791950800] [key=helm-bump]: Bump Helm?\nneeds-decision [at=1791950801] [key=board-review]: \(note)\n"
+            .write(to: state.appendingPathComponent("rp-wait.status"), atomically: true, encoding: .utf8)
+        func task(_ id: String, _ status: String) -> FleetTask {
+            var task = FleetTask(id: id, repo: "grand-line", kind: "ship", pr: nil)
+            task.status = status
+            task.state = "parked"
+            return task
+        }
+        let tasks = [task("rp-wait", "needs_decision"), task("rp-block", "blocked")]
+        func snapshot(_ tasks: [FleetTask]) -> FleetSnapshot {
+            FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: tasks, queuedCount: 0, doneCount: 0,
+                          projectsCount: 1, watcher: WatcherHealth(status: "healthy"))
+        }
+
+        let fleet = FleetController(shiftStore: ShiftStore())
+        _ = fleet.view
+        fleet.adoptSidebarLayout()
+        fleet.selectModuleTab(named: "Needs you")
+        fleet.debugRender(snapshot: snapshot(tasks), mergedPRs: [])
+        guard let reply = fleet.debugReplyButton(taskID: "rp-wait") else {
+            fail("RP-2: Needs you's row has no Reply", &ok)
+            return
+        }
+        reply.performClick(nil)
+        guard let card = fleet.debugOpenReplyCard else {
+            fail("RP-2: Reply on Needs you opened no card (composer \(String(describing: fleet.debugOpenReplyComposerView)))", &ok)
+            return
+        }
+        check(fleet.debugCardTakesItsRowsPlace(taskID: "rp-wait", at: 0) && fleet.debugNeedsRowCount == 1,
+              "RP-2: the card is not in its row's place (\(fleet.debugNeedsRowCount) rows left)", &ok)
+        check(card.head == ReplyHeroWords.head(taskID: "rp-wait", repo: "grand-line", status: "needs_decision", detail: "",
+                                               source: "none", decisions: FleetActions.openDecisions(taskID: "rp-wait"))
+                && card.head.headline == note && card.debugHeadlineLabel.stringValue == note
+                && card.debugKickerLabel.stringValue == "NEEDS DECISION \u{00B7} RP-WAIT"
+                && card.debugDetailLabel.stringValue == "grand-line \u{00B7} 2 open decisions: helm-bump, board-review"
+                && card.debugCaptionLabel.stringValue.hasSuffix("so none is closed automatically - resolve the right one from the crew's session."),
+              "RP-2: the card reads \(card.debugKickerLabel.stringValue) / \(card.debugHeadlineLabel.stringValue) / "
+                + "\(card.debugDetailLabel.stringValue)", &ok)
+        check(fleet.debugReplyButton(taskID: "rp-wait") === card.debugCloseButton
+                && card.debugCloseButton.accessibilityLabel() == "Cancel",
+              "RP-2: the head's \u{00D7} is not the row's Cancel", &ok)
+        check(card.accessibilityRole() == .group && card.accessibilityLabel() == "Answer rp-wait"
+                && card.debugWell.debugHintLabel.isHidden,
+              "RP-2: the card is not one group named for its task with a hint-free well", &ok)
+        check(card.palette == HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: ThemeManager.shared.theme),
+              "RP-2: a waiting task's head is not on the quiet-ink accent palette", &ok)
+
+        // Typed through the text system, then a refresh that moves the list.
+        card.debugTextView.insertText("Go with N-1.", replacementRange: NSRange(location: NSNotFound, length: 0))
+        check(card.debugSendButton.isEnabled, "RP-2: typing did not enable Send", &ok)
+        fleet.debugRender(snapshot: snapshot([task("rp-new", "needs_decision")] + tasks), mergedPRs: [])
+        check(fleet.debugOpenReplyCard === card && card.text == "Go with N-1."
+                && fleet.debugCardTakesItsRowsPlace(taskID: "rp-wait", at: 1),
+              "RP-2: a refresh lost the card, its text or its place (\(fleet.debugOpenReplyCard?.text ?? "no card"))", &ok)
+
+        // The head's × closes it, and the row comes back with its Reply.
+        card.debugCloseButton.performClick(nil)
+        check(fleet.debugOpenReplyCard == nil && fleet.debugNeedsRowCount == 3
+                && fleet.debugReplyButton(taskID: "rp-wait")?.title == "Reply",
+              "RP-2: the \u{00D7} left \(fleet.debugNeedsRowCount) rows and a Reply titled \(fleet.debugReplyButton(taskID: "rp-wait")?.title ?? "nil")", &ok)
+
+        // A blocked task opens on the amber head.
+        fleet.debugReplyButton(taskID: "rp-block")?.performClick(nil)
+        let warn = HelmContrast.components(HelmTheme.nsColor(ThemeManager.shared.theme.ansiHex[3]))
+        check(fleet.debugOpenReplyCard?.head.tone == .amber
+                && fleet.debugOpenReplyCard?.palette == HelmHeroColumn.palette(
+                    for: .init(colour: .fixed(red: warn.0, green: warn.1, blue: warn.2)), in: ThemeManager.shared.theme),
+              "RP-2: a blocked task's head is not amber", &ok)
+        fleet.debugReplyButton(taskID: "rp-block")?.performClick(nil)
+
+        // The floating bar keeps today's composer under the row.
+        let classic = FleetController(shiftStore: ShiftStore())
+        _ = classic.view
+        classic.debugRender(snapshot: snapshot(tasks), mergedPRs: [])
+        classic.debugReplyButton(taskID: "rp-wait")?.performClick(nil)
+        check(classic.debugOpenReplyCard == nil && classic.debugOpenReplyComposerView != nil
+                && classic.debugComposerFollowsItsRow(taskID: "rp-wait")
+                && classic.debugReplyButton(taskID: "rp-wait")?.title == "Cancel",
+              "RP-2: the floating bar's Reply did not open today's composer under its row", &ok)
     }
 
     private static func composite(_ color: NSColor, over ground: (Double, Double, Double)) -> (Double, Double, Double) {

@@ -2043,3 +2043,57 @@ Sidebar layout only: the floating bar's Review page builds no band and draws wha
 - An off-screen render of the real page (first scan, typical, busy, empty, unreadable folder with and without the path, and a partial scan, in Lavender and Powder) was compared with the board's CR-1 Review tab.
   It was a scratch hook, removed before commit.
 - Not verified: the band in the captain's running app, a spoken VoiceOver pass, a live Reduce Motion toggle (nothing on the band animates, and none was added), and the full window lane.
+
+## The Needs you reply composer (RP-2, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain's pick for the reply composer on the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, stage `stage-reply`): RP-2 Question head.
+Sidebar layout only: the floating bar's dashboard still opens `FleetMessageComposer` under the row.
+
+### What shipped
+
+- **The row becomes the card.**
+  Reply on Needs you swaps the decision row for one `FleetReplyCard` in the same place in the list.
+  The old composer showed the question twice, both times clipped: the row's second line truncates at one line, and the "Replying to" address stopped at three.
+- **The head is the question.**
+  It paints `HelmHeroSurface` through `HelmHeroColumn.palette(for:in:)`, the quiet-ink rule, with the capsule glow the board's `.hero.q` draws.
+  A blocked task takes the theme's amber (`HelmTint.warn`), the colour Dictation's amber tone already uses.
+  The kicker is the row's own ("Needs decision · task-142"), beside a glass tile whose outline glyph is the state's hue lifted by `HelmHeroSurface.signalColor`.
+  The headline is the open decision's note in the rounded face, wrapping to every line it needs.
+  The second line names the repo and the decision or decisions the answer is addressed to ("grand-line · 2 open decisions: helm-bump, board-review").
+  The row's Reply/Cancel button rides on the head as a `heroInk` ghost ×, with the same identifier and the same `replyTapped` action.
+- **The body is the shared prompt well.**
+  `HelmPromptWell` with no hint line, then today's caption, then the status, `HelmKeyHint`s for ⌘↩ and Esc, Cancel and Send.
+  The caption and the status wrap: the old composer built both with `labelWithString`, so they never did (gotcha (22)'s constructor trap), and the floating bar's composer still has that.
+- **Keys and outcomes are today's.**
+  ⌘↩ reaches the card through `performKeyEquivalent`, the route `HelmFormSheet`'s confirm takes, and sends only while the card's own text view has focus.
+  ↩ is the text view's new line and Esc reaches `textView(_:doCommandBy:)` as `cancelOperation:`.
+  Delivered closes the card with a toast, sent but unconfirmed clears the text and keeps the amber line, and failed keeps the text with the red line.
+  While a send is out the × and Cancel wait, as the board draws them, and Esc waits with them.
+- **One defect fixed on the way.**
+  A delivered reply closed whichever composer was open when it landed, so a reply the captain had opened on another task in the meantime was thrown away with what was typed in it.
+  It now closes only its own.
+- **The words are pure.**
+  `ReplyHeroWords` holds the head's words and the row's kicker, glyph, second line and the caption, which `FleetController+Reply` used to spell inline, so the row, both composers and the card read one definition.
+
+### Where the design did not hold as drawn
+
+- **Kit looks, not the board's.**
+  The × is the bordered `heroInk` ghost pill (the board drew a borderless glyph), the kicker tile is the band's 20pt tile (the board drew 22pt), and the keys are `HelmKeyHint` caps: ⌘ and ↩ as two caps and Esc as the ⎋ glyph, where the board drew "⌘↩" and "esc".
+- **The blocked glyph is measured on the amber head.**
+  The board lifted both glyphs on the accent palette.
+  The card lifts each on the gradient it actually sits on, so the blocked octagon is a paler red on amber than the board's.
+- **Powder's amber is the app's own** (`HelmTint.warn`), warmer than the board's Catppuccin Mocha yellow, as DH-2 found for the Dictation HUD.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless) asserts `ReplyHeroWords` for one decision, several, a block and a task with none on record, with a 600-character note kept whole.
+  It paints the card's head on 50 palettes in both tones and measures the headline, the 80% kicker and second line, the glyph, the ×, the caption and both status tints (weakest text 4.50:1).
+  A real `FleetController` in the sidebar layout turns the row into the card, keeps what was typed across a refresh that moves the list, closes through the ×, and opens a blocked task on amber, while the floating bar still opens today's composer under its row.
+- `PageRedesignsSelfTest` (window lane) drives the real Needs you tab in Lavender and Powder.
+  It checks the card in its row's place, focus in the well on open and after a refresh that inserts a task above it, the headline measured from its own words against the space it has, its wrap width from the card's own, and the painted gradient at the head's corner.
+  ↩ through the window inserts a new line, ⌘↩ away from the well sends nothing, and ⌘↩ in the well sends through a fake `fm-send.sh` for each outcome.
+  A slow delivery leaves a reply opened after it alone, the blocked head is amber, an unbroken URL wraps at 1100pt with the window kept at 1100pt and the card's floor under 420pt, and Esc through the window cancels.
+- Confirmed to fail when injected: the card under its row, the headline held to two lines, the wrap width from the label's own frame, a 750 width floor (the window grew from 1100pt to 1613pt), no key equivalent, no Esc, no focus on open, a refresh that re-keys the card (focus lost), a blocked task on the accent, the plain palette (80% lines at 3.49:1 on Daylight), the unconfirmed send keeping its text, the delivery closing any open reply, the floating bar opening the card, and the second line without its repo.
+- An off-screen render of the real Needs you tab (typing on a waiting task, a failed send and a fresh open on a blocked one, in Lavender and Powder) was compared with the board's RP-2.
+  It was a scratch hook, removed before commit.
+- Not verified: the card in the captain's running app, a real ⌘↩ through `NSApplication.sendEvent` (the suite enters at the window's `performKeyEquivalent`, which is where AppKit hands a ⌘ chord first), a spoken VoiceOver pass, and the full window lane.

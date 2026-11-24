@@ -377,11 +377,13 @@ final class FleetController: NSViewController {
 
     /// Which row currently has its inline composer expanded, and the composer
     /// itself - kept across a re-render so a background refresh cannot throw
-    /// away a half-typed answer.
+    /// away a half-typed answer. The floating bar's dashboard opens a
+    /// `FleetMessageComposer` under the row, and the sidebar layout's Needs
+    /// you a `FleetReplyCard` in the row's place (RP-2).
     var openReplyTaskID: String?
-    var openReplyComposer: FleetMessageComposer?
+    var openReplyComposer: FleetReplyInput?
     /// Live composers, so a theme change re-tints them.
-    var liveComposers: [FleetMessageComposer] { [openReplyComposer].compactMap { $0 } }
+    var liveComposers: [FleetReplyInput] { [openReplyComposer].compactMap { $0 } }
 
     /// The needs-decision/blocked set the last `render` produced, so
     /// `FleetController+Reply` can re-lay its rows (open/close a composer)

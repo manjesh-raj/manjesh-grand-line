@@ -28,7 +28,12 @@
 //      opens on the same band: its ring at the band's trailing edge, the
 //      forge cards under it, Show folder path on a scan that reached nothing,
 //      the pull requests a partial scan found kept, and Refresh still in the
-//      toolbar.
+//      toolbar. RP-2 (the same board): Reply turns its row into one card
+//      whose head is the question in full, focus lands in the well and
+//      survives a refresh that moves the list, ⌘↩ and Esc arrive through the
+//      window's own key paths, the three outcomes say what they said, a
+//      blocked task's head is amber, and the card holds no width (gotcha
+//      (13)), in Lavender and Powder.
 //   5. **The floating bar is unchanged**: none of the above happens there,
 //      Review's count line, boxed figures and empty forge cards included.
 //      And one floating-bar defect found on the way stays fixed: the Hosts
@@ -73,8 +78,9 @@ enum PageRedesignsSelfTest {
                 ReviewTourLab.seedDemoKnowledge(shell.workspace)
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
-                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkInFlightBand,
-                              checkReviewBand, checkDevOpsHub,
+                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkReplyQuestionHead,
+                              checkInFlightBand, checkReviewBand,
+                              checkDevOpsHub,
                               ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
                     var ok = true
                     check(shell, window, scratch, &ok)
@@ -956,8 +962,9 @@ enum PageRedesignsSelfTest {
         if let reply = fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID) {
             reply.performClick(nil)
             settle(shell)
-            check(fleet.debugOpenReplyTaskID == ReviewTourLab.demoDecisionTaskID && fleet.debugComposerFollowsItsRow(taskID: ReviewTourLab.demoDecisionTaskID),
-                  "Reply on Needs you did not open its composer under the row", &ok)
+            check(fleet.debugOpenReplyTaskID == ReviewTourLab.demoDecisionTaskID
+                    && fleet.debugCardTakesItsRowsPlace(taskID: ReviewTourLab.demoDecisionTaskID, at: 0),
+                  "RP-2: Reply on Needs you did not turn its row into the reply card", &ok)
             fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID)?.performClick(nil)
             settle(shell)
         } else {
@@ -1382,6 +1389,275 @@ enum PageRedesignsSelfTest {
         check(abs(window.frame.width - 1100) < 0.5 && band.frame.width < 1100,
               "CR-1: at 1100pt Review's window is \(window.frame.width) and its band \(band.frame.width)", &ok)
         resize(window, width: 1512, shell)
+    }
+
+    // MARK: 4b - RP-2, the Needs you reply composer
+
+    private static func keyEvent(_ keyCode: UInt16, _ characters: String, _ modifiers: NSEvent.ModifierFlags,
+                                 _ window: NSWindow) -> NSEvent? {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                         timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                         context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                         isARepeat: false, keyCode: keyCode)
+    }
+
+    /// The head's painted pixel 16pt in from its leading edge and 4pt down,
+    /// next to the gradient's lighter-start corner, in the rep's raw components.
+    private static func headSample(_ card: FleetReplyCard) -> (sample: (Double, Double, Double), space: NSColorSpace)? {
+        let head = card.debugHeadView
+        guard head.bounds.width > 0, let rep = head.bitmapImageRepForCachingDisplay(in: head.bounds) else { return nil }
+        head.cacheDisplay(in: head.bounds, to: rep)
+        // Gotcha: the rep is in pixels, not points.
+        let scale = CGFloat(rep.pixelsWide) / head.bounds.width
+        guard let color = rep.colorAt(x: Int(16 * scale), y: Int(4 * scale)) else { return nil }
+        return ((Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent)), rep.colorSpace)
+    }
+
+    /// How far `sample` is from a palette's start stop, the expected colour
+    /// converted into the rep's own space (never the sample - AGENTS.md's
+    /// "Verifying native UI bugs" rule).
+    private static func distance(_ sample: (Double, Double, Double), toStartOf palette: HelmHeroSurface.Palette,
+                                 in space: NSColorSpace) -> Double {
+        let expected = HelmContrast.color(palette.start).usingColorSpace(space) ?? HelmContrast.color(palette.start)
+        return max(abs(sample.0 - Double(expected.redComponent)), abs(sample.1 - Double(expected.greenComponent)),
+                   abs(sample.2 - Double(expected.blueComponent)))
+    }
+
+    private static func checkReplyQuestionHead(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                               _ ok: inout Bool) {
+        let savedTheme = ThemeManager.shared.theme
+        let wasLocked = AppLockGate.shared.isLocked
+        let savedScript = FleetActions.sendScriptOverrideForTests
+        defer {
+            ThemeManager.shared.setTheme(savedTheme)
+            AppLockGate.shared.setLocked(wasLocked)
+            FleetActions.sendScriptOverrideForTests = savedScript
+            resize(window, width: 1512, shell)
+        }
+        AppLockGate.shared.setLocked(false)
+        let state = scratch.appendingPathComponent("rp2-state", isDirectory: true)
+        try? FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+        FleetActions.stateDirectoryOverrideForTests = state
+        // A stand-in for `fm-send.sh` that exits with each outcome's status,
+        // so no reply is ever sent anywhere.
+        let script = scratch.appendingPathComponent("rp2-fake-fm-send.sh")
+        FleetActions.sendScriptOverrideForTests = script.path
+        func fakeSend(exit status: Int, after seconds: Int = 0) {
+            try? "#!/bin/bash\nsleep \(seconds)\nprintf 'pane\\n'\nexit \(status)\n".write(to: script, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        }
+        let note = "Which design to build for the notifications panel: N-1, N-2, N-3, N-4, or none yet. "
+            + ReviewTourLab.demoDecisionNote + " " + ReviewTourLab.demoDecisionNote
+        try? ("needs-decision [at=1791950800] [key=helm-bump]: Bump Helm?\n"
+              + "needs-decision [at=1791950801] [key=board-review]: \(note)\n")
+            .write(to: state.appendingPathComponent("rp2-wait.status"), atomically: true, encoding: .utf8)
+        // An unbroken URL, the note no word wrap can break (gotcha (13)'s case).
+        try? "blocked [at=1791950802]: \(LayoutStabilitySelfTest.unbrokenNote)\n"
+            .write(to: state.appendingPathComponent("rp2-block.status"), atomically: true, encoding: .utf8)
+        func task(_ id: String, _ repo: String, _ status: String) -> FleetTask {
+            var task = FleetTask(id: id, repo: repo, kind: "ship", pr: nil)
+            task.status = status
+            task.state = "parked"
+            return task
+        }
+        let wait = task("rp2-wait", "grand-line", "needs_decision")
+        let block = task("rp2-block", "pramata-status", "blocked")
+        func snapshot(_ tasks: [FleetTask]) -> FleetSnapshot {
+            FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: tasks, queuedCount: 0, doneCount: 0,
+                          projectsCount: 2, watcher: WatcherHealth(status: "healthy"))
+        }
+        let fleet = shell.workspace.overview
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("Needs you", shell)
+
+        for id in ["lavender", "powder"] {
+            guard let theme = HelmTheme.appThemes.first(where: { $0.id == id }) else {
+                fail("RP-2: no \(id) theme", &ok)
+                continue
+            }
+            ThemeManager.shared.setTheme(theme)
+            resize(window, width: 1512, shell)
+            fleet.debugRender(snapshot: snapshot([wait, block]), mergedPRs: [])
+            settle(shell)
+            let tag = "RP-2 \(id)"
+            // The kit's quiet-ink rule on the theme's hero accent and on its
+            // amber, not re-derived through the card's own function.
+            let accent = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
+            let warn = HelmContrast.components(HelmTheme.nsColor(theme.ansiHex[3]))
+            let amberPalette = HelmHeroColumn.palette(for: .init(colour: .fixed(red: warn.0, green: warn.1, blue: warn.2)),
+                                                      in: theme)
+
+            // Reply: the row becomes the card, and the well takes focus.
+            guard let reply = fleet.debugReplyButton(taskID: wait.id) else {
+                fail("\(tag): the waiting row has no Reply", &ok)
+                continue
+            }
+            reply.performClick(nil)
+            settle(shell)
+            guard let card = fleet.debugOpenReplyCard else {
+                fail("\(tag): Reply opened no card", &ok)
+                continue
+            }
+            check(fleet.debugCardTakesItsRowsPlace(taskID: wait.id, at: 0) && onScreen(card),
+                  "\(tag): the card is not on screen in its row's place", &ok)
+            check(window.firstResponder === card.debugTextView && card.debugWell.debugIsFocused,
+                  "\(tag): focus on open is \(String(describing: window.firstResponder)), not the well", &ok)
+
+            // The question, whole: every line it needs, its wrap width from
+            // the card's own (gotcha (22)).
+            // Measured from the words themselves, not the cell, which would
+            // answer within its own line limit.
+            let headline = card.debugHeadlineLabel
+            let lineHeight = ceil((headline.font ?? HelmType.caption()).boundingRectForFont.height)
+            func needed(_ label: NSTextField) -> CGFloat {
+                let column = label.alignmentRect(forFrame: label.frame).width
+                return ceil(label.attributedStringValue.boundingRect(
+                    with: NSSize(width: column, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
+            }
+            check(needed(headline) > 2.5 * lineHeight, "fixture: the note needs only \(needed(headline))pt", &ok)
+            check(headline.stringValue == note && needed(headline) <= headline.alignmentRect(forFrame: headline.frame).height + 1,
+                  "\(tag): the headline needs \(needed(headline))pt and has \(headline.bounds.height)pt", &ok)
+            let wrap = floor(card.bounds.width) - FleetReplyCard.headInsets.left - FleetReplyCard.headInsets.right - HelmMetrics.s1
+            // Auto Layout pins a field's alignment rect, so that is the
+            // column its words wrap in.
+            let column = headline.alignmentRect(forFrame: headline.frame).width
+            check(abs(headline.preferredMaxLayoutWidth - wrap) < 1 && abs(column - wrap) < 1,
+                  "\(tag): the headline wraps at \(headline.preferredMaxLayoutWidth)pt in a \(column)pt column, "
+                    + "the card's own is \(wrap)pt", &ok)
+            check(card.debugDetailLabel.stringValue == "grand-line \u{00B7} 2 open decisions: helm-bump, board-review"
+                    && card.debugWell.debugHintLabel.isHidden && card.debugStatusText == nil,
+                  "\(tag): the second line reads \(card.debugDetailLabel.stringValue)", &ok)
+
+            // Painted: the quiet-ink accent gradient, where the board puts it.
+            check(card.palette == accent && accent != amberPalette, "\(tag): a waiting task's head is not the accent's", &ok)
+            if let painted = headSample(card) {
+                let near = distance(painted.sample, toStartOf: accent, in: painted.space)
+                let far = distance(painted.sample, toStartOf: amberPalette, in: painted.space)
+                check(near < 0.05 && far > 0.08, "\(tag): the head's corner is \(painted.sample) (accent \(near), amber \(far))", &ok)
+            } else {
+                fail("\(tag): the head has no bitmap", &ok)
+            }
+
+            // ↩ is a new line, typed through the window like a real key.
+            card.debugTextView.insertText("Go with N-1.", replacementRange: NSRange(location: NSNotFound, length: 0))
+            if let plain = keyEvent(36, "\r", [], window) { window.sendEvent(plain) }
+            check(card.text == "Go with N-1.\n" && !card.debugIsBusy,
+                  "\(tag): Return did not insert a new line (\(card.text.debugDescription))", &ok)
+
+            // A refresh that puts a new task above: the same card, its text,
+            // its place under the newcomer, and focus still in the well.
+            fleet.debugRender(snapshot: snapshot([task("rp2-new", "grand-line", "needs_decision"), wait, block]), mergedPRs: [])
+            settle(shell)
+            check(fleet.debugOpenReplyCard === card && card.text == "Go with N-1.\n"
+                    && fleet.debugCardTakesItsRowsPlace(taskID: wait.id, at: 1)
+                    && window.firstResponder === card.debugTextView,
+                  "\(tag): a refresh lost the card, its text, its place or focus "
+                    + "(\(String(describing: window.firstResponder)))", &ok)
+
+            // ⌘↩ elsewhere on the page sends nothing.
+            window.makeFirstResponder(nil)
+            if let chord = keyEvent(36, "\r", .command, window) { _ = window.performKeyEquivalent(with: chord) }
+            check(!card.debugIsBusy && card.text == "Go with N-1.\n", "\(tag): \u{2318}\u{21A9} away from the well sent the reply", &ok)
+            window.makeFirstResponder(card.debugTextView)
+
+            // ⌘↩ in the well, through the window's key-equivalent path. Sent
+            // but unconfirmed: the text clears, the amber line stays, a
+            // warning toast, and the card stays open with focus.
+            // Each toast posts one announcement, recorded in order - a count
+            // of pills on screen would race the 1.8s a plain toast stays.
+            fakeSend(exit: 3)
+            var announced = Toast.debugAnnouncements.count
+            let handled = keyEvent(36, "\r", .command, window).map { window.performKeyEquivalent(with: $0) } ?? false
+            check(handled && card.debugIsBusy && !card.debugSendButton.isEnabled && !card.debugCloseButton.isEnabled,
+                  "\(tag): \u{2318}\u{21A9} did not start a send (handled \(handled))", &ok)
+            check(waitUntil(timeout: 20) { !card.debugIsBusy }, "\(tag): the unconfirmed send never finished", &ok)
+            settle(shell)
+            let unconfirmed = FleetReplyOutcome.sentUnconfirmed("").message
+            check(fleet.debugOpenReplyCard === card && card.text.isEmpty && card.debugStatusText == unconfirmed
+                    && Toast.debugAnnouncements.count == announced + 1
+                    && Toast.debugAnnouncements.last?.contains(unconfirmed) == true
+                    && window.firstResponder === card.debugTextView,
+                  "\(tag): unconfirmed left \(card.text.debugDescription) / \(card.debugStatusText ?? "no status"), "
+                    + "focus \(String(describing: window.firstResponder))", &ok)
+            check(card.debugStatusLabel.textColor == HelmContrast.legibleTintedText(
+                    tintHex: HelmTint.warn.hex(in: theme), over: HelmTheme.nsColor(theme.chromeBackgroundHex), theme: theme),
+                  "\(tag): the unconfirmed line is not in the warn tint", &ok)
+
+            // Failed: the text is kept, the red line says why, and Send can try again.
+            card.debugTextView.insertText("Add the secret.", replacementRange: NSRange(location: NSNotFound, length: 0))
+            fakeSend(exit: 1)
+            if let chord = keyEvent(36, "\r", .command, window) { _ = window.performKeyEquivalent(with: chord) }
+            check(waitUntil(timeout: 20) { !card.debugIsBusy }, "\(tag): the failed send never finished", &ok)
+            settle(shell)
+            check(fleet.debugOpenReplyCard === card && card.text == "Add the secret."
+                    && (card.debugStatusText ?? "").hasPrefix("Reply not sent: ") && card.debugSendButton.isEnabled
+                    && card.debugStatusLabel.textColor == HelmContrast.legibleTintedText(
+                        tintHex: HelmTint.critical.hex(in: theme), over: HelmTheme.nsColor(theme.chromeBackgroundHex), theme: theme),
+                  "\(tag): failed left \(card.text.debugDescription) / \(card.debugStatusText ?? "no status")", &ok)
+
+            // Delivered: the card closes, the row is back with its Reply, and a toast.
+            fakeSend(exit: 0)
+            announced = Toast.debugAnnouncements.count
+            card.debugSendButton.performClick(nil)
+            check(waitUntil(timeout: 20) { fleet.debugOpenReplyCard == nil }, "\(tag): a delivered reply left the card open", &ok)
+            settle(shell)
+            check(fleet.debugOpenReplyTaskID == nil && fleet.debugReplyButton(taskID: wait.id)?.title == "Reply"
+                    && Toast.debugAnnouncements.count == announced + 1
+                    && Toast.debugAnnouncements.last?.contains(FleetReplyOutcome.confirmed.message) == true,
+                  "\(tag): delivered left Reply titled \(fleet.debugReplyButton(taskID: wait.id)?.title ?? "nil")", &ok)
+
+            // A send still out when the captain opens another task's reply:
+            // its delivery closes only its own card, never the one now open.
+            fleet.debugReplyButton(taskID: wait.id)?.performClick(nil)
+            settle(shell)
+            guard let second = fleet.debugOpenReplyCard else {
+                fail("\(tag): Reply did not reopen", &ok)
+                continue
+            }
+            second.debugTextView.insertText("Ship it.", replacementRange: NSRange(location: NSNotFound, length: 0))
+            fakeSend(exit: 0, after: 1)
+            second.debugSendButton.performClick(nil)
+            check(second.debugIsBusy, "\(tag): Send did not start the slow send", &ok)
+            fleet.debugReplyButton(taskID: block.id)?.performClick(nil)
+            settle(shell)
+            let other = fleet.debugOpenReplyCard
+            check(waitUntil(timeout: 20) { !second.debugIsBusy }, "\(tag): the slow send never finished", &ok)
+            settle(shell)
+            check(other != nil && fleet.debugOpenReplyCard === other && fleet.debugOpenReplyTaskID == block.id,
+                  "\(tag): an earlier send's delivery closed the reply opened after it", &ok)
+
+            // A blocked task: the amber head, and an unbroken URL that wraps
+            // at 1100pt without holding the window wider (gotcha (13)).
+            resize(window, width: 1100, shell)
+            guard let blocked = fleet.debugOpenReplyCard else {
+                fail("\(tag): Reply on the blocked task opened no card", &ok)
+                continue
+            }
+            check(blocked.palette == amberPalette, "\(tag): a blocked task's head is not amber", &ok)
+            if let painted = headSample(blocked) {
+                let near = distance(painted.sample, toStartOf: amberPalette, in: painted.space)
+                let far = distance(painted.sample, toStartOf: accent, in: painted.space)
+                check(near < 0.05 && far > 0.08, "\(tag): the amber head's corner is \(painted.sample) (amber \(near), accent \(far))", &ok)
+            }
+            let url = blocked.debugHeadlineLabel
+            let oneLine = url.attributedStringValue.size().width
+            let urlRect = url.convert(url.bounds, to: nil)
+            check(oneLine > 1100, "fixture: the unbroken note fits on one line (\(oneLine)pt)", &ok)
+            check(abs(window.frame.width - 1100) < 0.5 && urlRect.maxX <= (window.contentView?.frame.width ?? 1100) + 0.5
+                    && url.bounds.height > 2 * lineHeight && needed(url) <= url.alignmentRect(forFrame: url.frame).height + 1,
+                  "\(tag): at 1100pt the window is \(window.frame.width) and the URL ends at \(urlRect.maxX), "
+                    + "\(url.bounds.height)pt tall", &ok)
+            let floor = HelmSplitPage.floorWidth(of: blocked)
+            check(floor > 0 && floor < 420, "\(tag): the card's required floor is \(floor)pt", &ok)
+
+            // Esc, through the window to the well's text view, cancels.
+            if let esc = keyEvent(53, "\u{1b}", [], window) { window.sendEvent(esc) }
+            settle(shell)
+            check(fleet.debugOpenReplyCard == nil && fleet.debugReplyButton(taskID: block.id)?.title == "Reply",
+                  "\(tag): Esc did not cancel the reply", &ok)
+        }
     }
 
     // MARK: 5 - the floating bar

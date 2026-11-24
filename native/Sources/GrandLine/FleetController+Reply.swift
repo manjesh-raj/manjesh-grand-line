@@ -20,8 +20,30 @@
 // own words on why the tab is gone at all: he'll watch/drive firstmate's own
 // session in his own terminal, not embedded in this app. The per-task Reply
 // path below is untouched - it never went through the Mirror tab.
+//
+// **Two composers, one path (RP-2).** The sidebar layout's Needs you opens a
+// `FleetReplyCard` in the decision row's place: the question in full on a hero
+// head, over the prompt well the other composers use. The floating bar's
+// dashboard keeps `FleetMessageComposer` under the row, as it was. Both are a
+// `FleetReplyInput`, so opening, sending, the three outcomes and closing are
+// one code path whichever layout drew the composer.
 
 import AppKit
+
+/// What this file needs from an open reply composer, whichever layout drew it.
+protocol FleetReplyInput: NSView {
+    var onSend: ((String) -> Void)? { get set }
+    var onCancel: (() -> Void)? { get set }
+    var text: String { get }
+    func focusInput()
+    func clear()
+    func setBusy(_ busy: Bool)
+    func setStatus(_ message: String?, tint: HelmTint?)
+    func applyTheme(_ theme: HelmTheme)
+}
+
+extension FleetMessageComposer: FleetReplyInput {}
+extension FleetReplyCard: FleetReplyInput {}
 
 extension FleetController {
 
@@ -99,12 +121,16 @@ extension FleetController {
         // under its task. A task still parked keeps its row - and an open
         // composer keeps whatever the captain has typed into it - across a
         // refresh, rather than every row being rebuilt (`HelmKeyedRows`).
+        // RP-2: on Needs you the card takes its row's place instead, so the
+        // question shows once.
         var items: [NeedsItem] = []
         for task in tasks {
-            items.append(.task(task))
-            if task.id == openReplyTaskID, let composer = openReplyComposer {
-                items.append(.composer(taskID: task.id, view: composer))
+            guard task.id == openReplyTaskID, let composer = openReplyComposer else {
+                items.append(.task(task))
+                continue
             }
+            if !(composer is FleetReplyCard) { items.append(.task(task)) }
+            items.append(.composer(taskID: task.id, view: composer))
         }
         needsRows.reconcile(items, key: \.key, make: { [weak self] item in
             switch item {
@@ -127,10 +153,10 @@ extension FleetController {
         var key: String {
             switch self {
             case .task(let task): return "task:\(task.id)"
-            // The view's own identity, not the task's: a composer closed and
+            // The task's, and the view's own identity: a composer closed and
             // reopened between two refreshes is a new view, and a key by task
-            // would hand back the old one.
-            case .composer(_, let view): return "composer:\(ObjectIdentifier(view))"
+            // alone would hand back the old one.
+            case .composer(let taskID, let view): return "composer:\(taskID):\(ObjectIdentifier(view))"
             }
         }
     }
@@ -153,7 +179,7 @@ extension FleetController {
     /// Configure a "needs you" row for `task` - new or reused - including
     /// its Reply / Cancel button, which follows whether its composer is open.
     private func configureNeedsRow(_ row: HelmAccentRow, _ task: FleetTask) {
-        let blocked = task.status == "blocked"
+        let blocked = ReplyHeroWords.isBlocked(status: task.status)
         if let reply = needsReplyButtons[task.id] {
             let open = openReplyTaskID == task.id
             reply.title = open ? "Cancel" : "Reply"
@@ -161,10 +187,10 @@ extension FleetController {
         }
         row.configure(HelmAccentRow.Content(
             tint: blocked ? .critical : .warn,
-            kicker: blocked ? "Blocked \u{00B7} \(task.id)" : "Needs decision \u{00B7} \(task.id)",
+            kicker: ReplyHeroWords.kicker(taskID: task.id, blocked: blocked),
             title: task.repo ?? task.id,
             meta: replyRowMeta(task),
-            badgeSymbol: blocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill",
+            badgeSymbol: ReplyHeroWords.symbol(blocked: blocked),
             chipText: blocked ? "blocked" : "needs you"
         ), theme: currentTheme)
     }
@@ -180,9 +206,8 @@ extension FleetController {
     /// and the key derived from the same fold is what `fm-send` validates
     /// before it will send anything.
     private func replyRowMeta(_ task: FleetTask) -> String {
-        let open = FleetActions.openDecisions(taskID: task.id)
-        if let note = open.last?.note, !note.isEmpty { return note }
-        return task.detail.isEmpty ? "source: \(task.source)" : task.detail
+        ReplyHeroWords.question(decisions: FleetActions.openDecisions(taskID: task.id),
+                                detail: task.detail, source: task.source)
     }
 
     // MARK: The per-row reply composer
@@ -205,11 +230,29 @@ extension FleetController {
         // that closed in between would make `fm-send` refuse the whole send
         // (it validates before typing anything - see `FleetActions.resolveKey`).
         let decisions = FleetActions.openDecisions(taskID: taskID)
-        let composer = FleetMessageComposer(
-            address: replyAddressLine(taskID: taskID, decisions: decisions),
-            caption: replyCaption(decisions: decisions),
-            placeholder: "Type your answer\u{2026}",
-            sendTitle: "Send")
+        let composer: FleetReplyInput
+        if drawsSidebarLayout, let task = currentNeedsTasks.first(where: { $0.id == taskID }) {
+            // RP-2: the row's Reply, now its Cancel, rides on the card's head
+            // as the ghost × - the same identifier and the same action, so a
+            // second press closes it exactly as the row's did.
+            let close = HelmButton(symbol: "xmark", variant: .quiet, size: .small)
+            close.identifier = NSUserInterfaceItemIdentifier("fleet.reply.\(taskID)")
+            close.accessibilityLabelOverride = ReplyHeroWords.cancelTitle
+            close.toolTip = ReplyHeroWords.cancelTitle
+            close.target = self
+            close.action = #selector(replyTapped(_:))
+            composer = FleetReplyCard(
+                head: ReplyHeroWords.head(taskID: taskID, repo: task.repo, status: task.status,
+                                          detail: task.detail, source: task.source, decisions: decisions),
+                caption: ReplyHeroWords.caption(decisions: decisions),
+                closeButton: close)
+        } else {
+            composer = FleetMessageComposer(
+                address: replyAddressLine(taskID: taskID, decisions: decisions),
+                caption: ReplyHeroWords.caption(decisions: decisions),
+                placeholder: ReplyHeroWords.placeholder,
+                sendTitle: ReplyHeroWords.sendTitle)
+        }
         composer.onSend = { [weak self] text in self?.sendReply(taskID: taskID, text: text) }
         composer.onCancel = { [weak self] in
             self?.closeReplyComposer()
@@ -250,23 +293,6 @@ extension FleetController {
         return out
     }
 
-    /// The mockup's caption, plus - only when it is actually true - the fact
-    /// that this answer also closes the captain-facing decision record.
-    private func replyCaption(decisions: [FleetDecision]) -> String {
-        let base = "Sent as a reply into the firstmate session for this crew, same as answering in a terminal."
-        switch decisions.count {
-        case 1:
-            return base + " Closes the open \(decisions[0].verb) \u{201C}\(decisions[0].key)\u{201D}."
-        case let n where n > 1:
-            // Which of several a given answer settles is genuinely ambiguous,
-            // so nothing is closed and the captain is told so rather than
-            // having one picked for them.
-            return base + " \(n) decisions are open on this task, so none is closed automatically - resolve the right one from the crew's session."
-        default:
-            return base
-        }
-    }
-
     private func sendReply(taskID: String, text: String) {
         guard let composer = openReplyComposer else { return }
         composer.setBusy(true)
@@ -279,8 +305,13 @@ extension FleetController {
                 switch outcome {
                 case .confirmed:
                     Toast.show(in: self.view, message: outcome.message)
-                    self.closeReplyComposer()
-                    self.refreshNeedsRows()
+                    // Only if this send's composer is still the open one: the
+                    // captain may have opened another task's reply while it
+                    // was out, and that one is not answered by this.
+                    if self.openReplyComposer === composer {
+                        self.closeReplyComposer()
+                        self.refreshNeedsRows()
+                    }
                     // The crew's state has just changed (an answered decision
                     // is closed by `fm-send` itself), so re-read it rather
                     // than leaving a row saying it still needs a call.
@@ -348,8 +379,26 @@ extension FleetController {
         return find(needsStack)
     }
 
-    /// The composer currently expanded under a row, if any.
-    var debugOpenReplyComposerView: FleetMessageComposer? { openReplyComposer }
+    /// The floating bar's composer currently expanded under a row, if any.
+    var debugOpenReplyComposerView: FleetMessageComposer? { openReplyComposer as? FleetMessageComposer }
+
+    /// RP-2: Needs you's card currently open in a row's place, if any.
+    var debugOpenReplyCard: FleetReplyCard? { openReplyComposer as? FleetReplyCard }
+
+    /// Whether the open card is genuinely an arranged subview of the rows
+    /// stack at `index`, with no row of its own task left anywhere in it -
+    /// the row turned into the card, which a card merely *held* in a
+    /// property, or one stacked under its row, would not satisfy.
+    func debugCardTakesItsRowsPlace(taskID: String, at index: Int) -> Bool {
+        guard let card = openReplyComposer as? FleetReplyCard,
+              needsStack.arrangedSubviews.firstIndex(of: card) == index else { return false }
+        // A row of this task would carry a Reply button with its identifier.
+        func carriesReply(_ view: NSView) -> Bool {
+            if (view as? NSButton)?.identifier?.rawValue == "fleet.reply.\(taskID)" { return true }
+            return view.subviews.contains(where: carriesReply)
+        }
+        return !needsStack.arrangedSubviews.contains { $0 is HelmAccentRow && carriesReply($0) }
+    }
 
     /// Whether that composer is genuinely an arranged subview of the rows
     /// stack, immediately after its own row - the mockup's expand-in-place
