@@ -47,9 +47,32 @@ enum CaptureRouterSelfTest {
         checkPasteboardOffer(check)
         checkConcealedPasteboardIsRefused(check)
         checkDestinationIdentity(check)
+        checkTheHintNamesEveryChord(check)
 
         print(ok ? "CaptureRouterSelfTest: OK" : "CaptureRouterSelfTest: FAILURES")
         return ok
+    }
+
+    // MARK: The hint (CP-1, the board's finding 3)
+
+    /// The panel's hint said "⌘1–⌘5 choose" from F2 until CP-1, while F4's
+    /// Link tile printed ⌘6 above it. The range is derived now, and this pins
+    /// both ends of it: the last chord it names is a real destination, and the
+    /// one after it is not - so the hint cannot fall short of the tiles or run
+    /// past them.
+    private static func checkTheHintNamesEveryChord(_ check: (Bool, String) -> Void) {
+        let count = CaptureDestination.allCases.count
+        // Literal rather than derived, as the chord map above is: six
+        // destinations today, so the range the captain reads is ⌘1–⌘6.
+        check(CaptureHeroWords.chordRange == "\u{2318}1\u{2013}\u{2318}6",
+              "the hint's range is \(CaptureHeroWords.chordRange), want \u{2318}1\u{2013}\u{2318}6")
+        check(CaptureHeroWords.hint == "\u{23CE} file as a task \u{00B7} \u{2318}1\u{2013}\u{2318}6 choose \u{00B7} Esc dismiss",
+              "the hint reads \(CaptureHeroWords.hint)")
+        check(CaptureDestination.forChordDigit(count) != nil,
+              "the hint's last chord, \u{2318}\(count), files somewhere")
+        check(CaptureDestination.forChordDigit(count + 1) == nil,
+              "the chord after the hint's range, \u{2318}\(count + 1), files nowhere")
+        check(!CaptureHeroWords.hint.contains("\u{2318}5 choose"), "the hint still stops at \u{2318}5")
     }
 
     // MARK: A scratch pasteboard

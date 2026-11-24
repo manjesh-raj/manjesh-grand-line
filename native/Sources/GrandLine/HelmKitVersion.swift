@@ -271,6 +271,7 @@ enum HelmKit {
         Component("Toasts", "1.0.0", file: "Toast.swift"),
         Component("Dictation HUD", "1.0.0", file: "DictationHUD.swift"),
         Component("⌘K palette", "1.0.0", file: "UnifiedSearch.swift"),
+        Component("Capture panel", "1.0.0", file: "ShiftQuickCapture.swift"),
     ]
 
     struct SourceDigest {

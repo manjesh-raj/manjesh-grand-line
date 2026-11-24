@@ -18,9 +18,21 @@
 // `ShiftDateParser` and all five destination stores already existed, so the
 // only thing missing was routing - "type text, then ⌘1 task / ⌘2 sticky / ⌘3
 // note / ⌘4 credential / ⌘5 code snippet, with the pasteboard pre-filled and
-// an 'ask the crew to file it' option". The field, the parse, the accent
-// border, the brief confirmation and the lock gate are all unchanged; five
-// tiles, a chip row and a crew button are what is new.
+// an 'ask the crew to file it' option". F4 appended Link as ⌘6.
+//
+// **CP-1, the hero head** (the hero restyle board,
+// `data/grandline-hero-restyle-designs-scout/`, the captain's pick). The
+// panel opens on the hero gradient, as ⌘K's lit row, the notifications panel
+// and the toasts do: a glass bolt tile, "Capture", the captain's chord, and
+// the field in the hero ink, with the date and clipboard chips on the
+// gradient. The field sits on the hero's dark shade, never a white wash -
+// typed words on a 14% white wash measured 4.49:1 on the board and 7.83:1 on
+// the shade. The tile Return files to is lit with the gradient, so the light
+// shows where Return goes, and when the crew answers, the light moves to its
+// pick before it files. A successful file turns the head into the
+// confirmation for the 0.9s it has always stood, then the panel closes. The
+// accent border and the two dividers are gone, and refusals sit at the top of
+// the body, above the tiles, rather than replacing the footer's hint.
 //
 // **⌘1 is Return, deliberately.** The report leaves the default open and the
 // brief asks for a judgment call. Return still files a task, exactly as it has
@@ -52,7 +64,7 @@
 // secret back at the captain. That is the same rule F3's clipboard history
 // enforces, read from the same one place.
 //
-// **Key handling lives on the root view, not the field.** ⌘1-⌘5 arrive while
+// **Key handling lives on the root view, not the field.** ⌘1-⌘6 arrive while
 // the field editor has focus, and a field editor's `doCommandBy` never sees a
 // command-modified digit. AppKit offers `performKeyEquivalent` down the
 // content view's own subtree before the responder chain gets a `keyDown`,
@@ -106,14 +118,19 @@ struct CaptureFiler {
 ///
 /// See this file's header: a command-modified digit never reaches a field
 /// editor's `doCommandBy`, and `performKeyEquivalent` is dispatched down the
-/// content view's subtree before any of that - so this is where ⌘1-⌘5 are
+/// content view's subtree before any of that - so this is where ⌘1-⌘6 are
 /// read from, and the only place they *can* be read from while the captain is
 /// still typing.
 final class CaptureRootView: NSView {
     var onDestinationChord: ((CaptureDestination) -> Bool)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // AGENTS.md gotcha (21): `KeyChord.relevantModifierMask` (⌘⌥⌃⇧), not
+        // `.deviceIndependentFlagsMask`. That mask carries Caps Lock, Fn and
+        // the numeric-pad flag too, so with Caps Lock on - or a digit typed on
+        // the keypad - the exact `== .command` below never matched and every
+        // chord on this panel was dead.
+        let flags = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
         guard flags == .command,
               let characters = event.charactersIgnoringModifiers,
               characters.count == 1,
@@ -124,9 +141,67 @@ final class CaptureRootView: NSView {
     }
 }
 
+// MARK: - A keycap
+
+/// One keycap on the panel: the head's chord on the gradient, and each tile's
+/// ⌘N.
+///
+/// Not `HelmKeyHint`: the board draws a chord as one cap ("⌘1"), where that
+/// component draws one cap per glyph, and it themes itself in the page's
+/// colours, which on the lit tile and the head would be a page-coloured cap on
+/// the gradient. The owner paints this one.
+final class CaptureKeycap: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    init(_ text: String = "") {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = HelmKeyHint.capCornerRadius
+        layer?.borderWidth = HelmField.hairlineBorderWidth
+        label.stringValue = text
+        label.font = HelmType.chip()
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+        for axis in [NSLayoutConstraint.Orientation.horizontal, .vertical] {
+            setContentHuggingPriority(.required, for: axis)
+            setContentCompressionResistancePriority(.required, for: axis)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    var text: String {
+        get { label.stringValue }
+        set { label.stringValue = newValue }
+    }
+
+    func paint(fill: NSColor, border: NSColor, ink: NSColor) {
+        label.font = HelmType.chip()
+        label.textColor = ink
+        HelmMotion.withoutActions {
+            layer?.backgroundColor = fill.cgColor
+            layer?.borderColor = border.cgColor
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugInk: NSColor? { label.textColor }
+    var debugFill: NSColor? { layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    #endif
+}
+
 // MARK: - One destination tile
 
-/// One of the five tiles: symbol, name, chord.
+/// One of the six tiles: a wash tile of the destination's hue, its name, its
+/// chord.
 ///
 /// Built on `HoverHighlightView` for the reason every clickable row in this
 /// app is (GL-16): it supplies the button role, the VoiceOver label, the focus
@@ -134,25 +209,38 @@ final class CaptureRootView: NSView {
 /// any of that being written here. Same shape as
 /// `AllDestinationsOverlay.DestinationTileView`, which is the nearest existing
 /// tile and was read before this one was written.
+///
+/// **CP-1: the tile Return files to is lit.** It paints the hero's quiet-ink
+/// gradient, its name and keycap in the hero's ink and its tile as glass, so
+/// the light shows where Return goes. Every other tile is the card with a
+/// hairline, as the board draws them.
 final class CaptureDestinationTile: HoverHighlightView {
     let destination: CaptureDestination
     var onClick: (() -> Void)?
 
-    private let icon = NSImageView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let chordLabel = NSTextField(labelWithString: "")
+    /// The board's 28pt wash tile.
+    static let iconSide: CGFloat = 28
+    static let glyphPointSize: CGFloat = 13
 
-    /// Whether this tile is the one Return would file to. Drawn as the
-    /// mockup's selected tile - hue border plus a wash - so the default is
-    /// visible rather than only documented.
+    private let hero = HelmHeroSurface()
+    private let icon = IconTileView(size: CaptureDestinationTile.iconSide, cornerRadius: HelmMetrics.rControl)
+    private let glassTile = NSView()
+    private let glassGlyph = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let chordCap: CaptureKeycap
+
+    /// Whether this tile is the one Return would file to - lit, so the
+    /// default is visible rather than only documented.
     var isDefault = false {
         didSet { applyTheme(currentTheme) }
     }
 
     private var currentTheme = ThemeManager.shared.theme
+    private(set) var palette: HelmHeroSurface.Palette?
 
     init(destination: CaptureDestination) {
         self.destination = destination
+        chordCap = CaptureKeycap("\u{2318}\(destination.chordDigit)")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         accessibilityLabelOverride = "File as \(destination.title), command \(destination.chordDigit)"
@@ -164,34 +252,64 @@ final class CaptureDestinationTile: HoverHighlightView {
         wantsLayer = true
         layer?.borderWidth = 1
 
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
+        // The gradient sits under everything and takes no clicks
+        // (`HelmHeroSurface.hitTest`), so a click on the lit tile still lands
+        // on this view's recognizer. The board's glow is sized from the tile
+        // itself, which is `.capsule`'s ellipse, not the card's 220pt circle.
+        hero.glowShape = .capsule
+        hero.isHidden = true
+        hero.layer?.cornerRadius = HelmMetrics.rCard
+        addSubview(hero)
+
+        glassTile.wantsLayer = true
+        glassTile.layer?.cornerRadius = HelmMetrics.rControl
+        glassTile.layer?.borderWidth = 1
+        glassTile.isHidden = true
+        glassTile.translatesAutoresizingMaskIntoConstraints = false
+        glassGlyph.translatesAutoresizingMaskIntoConstraints = false
+        glassGlyph.imageScaling = .scaleNone
+        glassTile.addSubview(glassGlyph)
+
+        let iconBox = NSView()
+        iconBox.translatesAutoresizingMaskIntoConstraints = false
+        iconBox.addSubview(icon)
+        iconBox.addSubview(glassTile)
 
         nameLabel.stringValue = destination.title
         nameLabel.alignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        chordLabel.stringValue = "\u{2318}\(destination.chordDigit)"
-        chordLabel.alignment = .center
-        chordLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(icon)
+        addSubview(iconBox)
         addSubview(nameLabel)
-        addSubview(chordLabel)
+        addSubview(chordCap)
         NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
-            icon.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2 + 1),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
+            hero.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hero.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hero.topAnchor.constraint(equalTo: topAnchor),
+            hero.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            nameLabel.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: HelmMetrics.s1),
+            iconBox.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconBox.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2 + 1),
+            iconBox.widthAnchor.constraint(equalToConstant: Self.iconSide),
+            iconBox.heightAnchor.constraint(equalToConstant: Self.iconSide),
+            icon.centerXAnchor.constraint(equalTo: iconBox.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: iconBox.centerYAnchor),
+            glassTile.centerXAnchor.constraint(equalTo: iconBox.centerXAnchor),
+            glassTile.centerYAnchor.constraint(equalTo: iconBox.centerYAnchor),
+            glassTile.widthAnchor.constraint(equalToConstant: Self.iconSide),
+            glassTile.heightAnchor.constraint(equalToConstant: Self.iconSide),
+            glassGlyph.centerXAnchor.constraint(equalTo: glassTile.centerXAnchor),
+            glassGlyph.centerYAnchor.constraint(equalTo: glassTile.centerYAnchor),
+
+            nameLabel.topAnchor.constraint(equalTo: iconBox.bottomAnchor, constant: HelmMetrics.s1),
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
             nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s1),
 
-            chordLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: HelmMetrics.s1),
-            chordLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            chordLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(HelmMetrics.s2 + 1)),
+            chordCap.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: HelmMetrics.s1),
+            chordCap.centerXAnchor.constraint(equalTo: centerXAnchor),
+            chordCap.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(HelmMetrics.s2 - 1)),
         ])
     }
 
@@ -199,46 +317,79 @@ final class CaptureDestinationTile: HoverHighlightView {
 
     @objc private func clicked() { onClick?() }
 
+    /// The lit tile's palette: the theme's hero colour through the quiet-ink
+    /// rule, the same one the head paints.
+    static func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
+        HelmHeroColumn.palette(for: HelmModuleCard.HeroTone(colour: .themeAccent), in: theme)
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         currentTheme = theme
-        let hue = HelmTheme.nsColor(destination.hue.identityHex(in: theme))
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-
-        // The selected tile paints a wash of its own hue and then has to put
-        // a *label* on it, so the pair comes from `HelmContrast.tintedSurface`
-        // at the 4.5:1 text target rather than from the raw hue - AGENTS.md's
-        // "a `HelmTint` hue is safe as a fill and is NOT automatically safe as
-        // text", which `FM_RUN_CONTRAST_TESTS` sweeps every theme against.
-        let resolved = HelmContrast.tintedSurface(tintHex: destination.hue.identityHex(in: theme),
-                                                  theme: theme,
-                                                  target: HelmContrast.textTarget)
-        let ink = isDefault ? resolved.foreground : HelmTheme.nsColor(theme.chromeInkHex)
-
-        icon.image = HelmSymbol.image(destination.symbol, pointSize: 15, weight: .semibold,
-                                      hierarchicalColor: isDefault ? resolved.foreground : hue,
-                                      accessibilityDescription: destination.title)
+        // The destination's identity colour, as a wash with a glyph that
+        // clears the icon floor on it (`IconTileView`'s literal path, which
+        // routes through `HelmContrast.tintedSurface`). `identityHex` rather
+        // than a semantic tint: a tile says "this is the Sticky Board", never
+        // "this is a warning".
+        icon.configure(symbol: destination.symbol, tint: .accent, pointSize: Self.glyphPointSize)
+        icon.overrideFill(hex: destination.hue.identityHex(in: theme))
+        icon.applyTheme(theme)
         nameLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
-        nameLabel.textColor = ink
-        chordLabel.font = HelmType.code()
-        chordLabel.textColor = isDefault ? ink : HelmTheme.mutedInk(theme)
-
-        layer?.borderColor = (isDefault ? hue : line).cgColor
-        normalColor = isDefault ? resolved.fill : .clear
-        hoverColor = isDefault ? resolved.fill : line.withAlphaComponent(0.35)
+        if isDefault {
+            let palette = Self.palette(in: theme)
+            self.palette = palette
+            let ink = HelmContrast.color(palette.ink)
+            hero.apply(palette)
+            hero.isHidden = false
+            icon.isHidden = true
+            glassTile.isHidden = false
+            HelmMotion.withoutActions {
+                glassTile.layer?.backgroundColor = ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha).cgColor
+                glassTile.layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+                layer?.borderWidth = 0
+            }
+            glassGlyph.image = HelmSymbol.image(destination.symbol, pointSize: Self.glyphPointSize,
+                                                weight: .semibold, hierarchicalColor: ink,
+                                                accessibilityDescription: destination.title)
+            nameLabel.textColor = ink
+            chordCap.paint(fill: ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha),
+                           border: ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha), ink: ink)
+            normalColor = .clear
+            hoverColor = .clear
+        } else {
+            palette = nil
+            hero.isHidden = true
+            icon.isHidden = false
+            glassTile.isHidden = true
+            HelmMotion.withoutActions {
+                layer?.borderWidth = 1
+                layer?.borderColor = line.cgColor
+            }
+            nameLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+            chordCap.paint(fill: HelmTheme.nsColor(theme.chromeBackgroundHex), border: line,
+                           ink: HelmTheme.mutedInk(theme))
+            normalColor = .clear
+            hoverColor = line.withAlphaComponent(0.35)
+        }
     }
 
     #if FM_SELFTESTS
     /// The colour the name label is actually painted in.
     var debugNameColor: NSColor { nameLabel.textColor ?? .labelColor }
 
-    /// What the label is painted *over*: this tile's own wash when it is the
-    /// default, and the panel behind it otherwise. Resolving it here rather
-    /// than in the suite is what keeps the contrast assertion honest - a tile
-    /// with no fill of its own is legible against the panel, not against
-    /// `.clear`.
+    /// What the label is painted *over*: the lit tile's lighter stop, where
+    /// white ink is closest to failing, and the panel's card otherwise.
+    /// Resolving it here rather than in the suite is what keeps the contrast
+    /// assertion honest - a tile with no fill of its own is legible against
+    /// the panel, not against `.clear`.
     func debugFillColor(under theme: HelmTheme) -> NSColor {
-        isDefault ? normalColor : HelmTheme.nsColor(theme.chromeBackgroundHex)
+        if isDefault, let palette { return HelmContrast.color(palette.lighterStop) }
+        return HelmTheme.nsColor(theme.chromeBackgroundHex)
     }
+    var debugIsLit: Bool { !hero.isHidden }
+    var debugHeroGradient: [CGColor] { hero.debugGradientColors }
+    var debugGlassTileHidden: Bool { glassTile.isHidden }
+    var debugChordCap: CaptureKeycap { chordCap }
     #endif
 }
 
@@ -246,20 +397,24 @@ final class CaptureDestinationTile: HoverHighlightView {
 
 /// One of the chips the mockup draws under the field: the parsed due date, and
 /// the pasteboard offer. Clickable, because the pasteboard one inserts.
+///
+/// CP-1 puts them on the head's gradient: a pill on the hero's dark shade with
+/// a glass hairline and the words in the hero's ink, the same recipe as the
+/// field above them, because white words on a white wash fail the text floor.
 final class CaptureChip: HoverHighlightView {
     var onClick: (() -> Void)?
+
+    /// The board's 22pt pill.
+    static let height: CGFloat = 22
 
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let symbolName: String
-    private let isAccent: Bool
 
-    init(symbol: String, accent: Bool) {
+    init(symbol: String) {
         self.symbolName = symbol
-        self.isAccent = accent
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        cornerRadius = HelmMetrics.rChip
         accessibilityRoleOverride = .button
         onAccessibilityPress = { [weak self] in self?.onClick?() }
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
@@ -272,15 +427,14 @@ final class CaptureChip: HoverHighlightView {
         addSubview(icon)
         addSubview(label)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 11),
             icon.heightAnchor.constraint(equalToConstant: 11),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            topAnchor.constraint(equalTo: label.topAnchor, constant: -3),
-            bottomAnchor.constraint(equalTo: label.bottomAnchor, constant: 3),
+            heightAnchor.constraint(equalToConstant: Self.height),
         ])
     }
 
@@ -288,33 +442,48 @@ final class CaptureChip: HoverHighlightView {
 
     @objc private func clicked() { onClick?() }
 
+    /// A pill at any height.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        cornerRadius = newSize.height / 2
+    }
+
     var text: String {
         get { label.stringValue }
         set { label.stringValue = newValue }
     }
 
-    func applyTheme(_ theme: HelmTheme) {
-        let hue = isAccent ? HelmTheme.nsColor(theme.accentHex) : HelmTheme.mutedInk(theme)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        icon.image = HelmSymbol.image(symbolName, pointSize: 10, weight: .semibold,
-                                      hierarchicalColor: hue)
-        label.font = .systemFont(ofSize: HelmType.scaled(11))
-        label.textColor = isAccent
-            ? HelmContrast.legibleTintedText(tintHex: theme.accentHex, over: surface, theme: theme)
-            : HelmTheme.mutedInk(theme)
-        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
-        normalColor = .clear
-        hoverColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.35)
+    /// Paint the chip for a hero whose ink is `ink`: `HelmButton`'s ghost
+    /// recipe, a shade of the ink's opposite under the words, which can only
+    /// add contrast, with the glass hairline the board draws.
+    func paint(heroInk ink: NSColor) {
+        let shade = HelmButton.heroShade(for: ink)
+        icon.image = HelmSymbol.image(symbolName, pointSize: 10, weight: .semibold, hierarchicalColor: ink)
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .semibold)
+        label.textColor = ink
+        HelmMotion.withoutActions {
+            layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+        }
+        normalColor = shade.withAlphaComponent(HelmButton.heroFillAlpha)
+        hoverColor = shade.withAlphaComponent(HelmButton.heroFillAlpha + 0.06)
     }
+
+    #if FM_SELFTESTS
+    var debugTextColor: NSColor? { label.textColor }
+    #endif
 }
 
 // MARK: - The panel
 
-final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate {
+final class ShiftQuickCaptureController: NSWindowController {
 
-    /// The panel's fixed width - the mockup's own 600pt, which is what five
+    /// The panel's fixed width - the mockup's own 600pt, which is what six
     /// tiles need before "Credential" starts truncating.
     static let panelWidth: CGFloat = 600
+
+    /// How long a filed capture's confirmation stands in the head before the
+    /// panel closes. Unchanged from the status line it replaced.
+    static let confirmationHold: TimeInterval = 0.9
 
     /// Installed by the shell. See this file's header for why the panel owns
     /// no store.
@@ -330,29 +499,51 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     /// captain's own", which is what the app does.
     var classifier: ((String, @escaping (CaptureDestination?) -> Void) -> Void)?
 
-    private let inputField = HelmTextField(
+    /// CP-1: the field in the hero's ink on its dark shade
+    /// (`HelmSearchField.heroInk`), led by a plus where a search has its
+    /// magnifying glass, as the board draws it.
+    private let inputField = HelmSearchField(
         placeholder: "Capture anything - try \u{201C}tomorrow 3pm review deploy notes\u{201D}",
-        style: .prominent)
+        size: .prominent, symbol: "plus")
+    private let head = NSView()
+    private let heroSurface = HelmHeroSurface()
+    /// The head's working content (the title row, the field, the chips) and
+    /// the confirmation that takes its place once a capture is filed.
+    private let headContent = NSStackView()
+    private let verdictRow = NSStackView()
+    private let verdictTile = NSView()
+    private let verdictGlyph = NSImageView()
+    private let verdictLabel = NSTextField(labelWithString: "")
+    private let boltTile = NSView()
+    private let boltGlyph = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Capture")
-    private let hotkeyChip = NSTextField(labelWithString: "\u{2325}Space")
-    private let dateChip = CaptureChip(symbol: "calendar", accent: true)
-    private let clipboardChip = CaptureChip(symbol: "doc.on.clipboard", accent: false)
+    private let hotkeyCap = CaptureKeycap("\u{2325}Space")
+    private let dateChip = CaptureChip(symbol: "calendar")
+    private let clipboardChip = CaptureChip(symbol: "doc.on.clipboard")
     private let chipRow = NSStackView()
     private let sectionLabel = NSTextField(labelWithString: "FILE IT AS")
     private let tileRow = NSStackView()
     private var tiles: [CaptureDestinationTile] = []
     // R2-UX-01 (c): what it does, rather than who does it - the crew is an
-    // operator's word, and this panel is everyone's.
+    // operator's word, and this panel is everyone's. CP-1 draws it with the
+    // sparkle the board gives it, for the same reason.
     private let crewButton = HelmButton(title: "Suggest where it goes",
-                                        variant: .quiet, size: .small, symbol: "person.2")
+                                        variant: .quiet, size: .small, symbol: "sparkles")
     private let hintLabel = NSTextField(labelWithString: "")
+    /// The body's status line: a refusal (with its warning glyph), or the
+    /// crew working (with the kit's inline activity bar).
+    private let statusRow = NSStackView()
+    private let statusIcon = NSImageView()
+    private let statusActivity = HelmProgressBar.inlineActivity(hue: .blue)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let topDivider = NSView()
-    private let bottomDivider = NSView()
+    private var statusIsError = false
     private var themeToken: ThemeObservation?
     /// Cleared on every `present()`; set while a crew classification is in
     /// flight so a second click cannot start a second one.
     private var classificationInFlight = false
+    /// Set while a filed capture's confirmation stands in the head. A second
+    /// Return in those 0.9s used to file the same text a second time.
+    private var isConfirming = false
 
     init(filer: CaptureFiler = .unwired) {
         self.filer = filer
@@ -370,6 +561,13 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // The head's gradient has to reach the panel's rounded corners, so the
+        // window draws no square background of its own behind the content -
+        // the palette's arrangement (`UnifiedSearchController.applyTheme`).
+        // The shadow is the window's, which follows the content's shape.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
         super.init(window: panel)
         buildUI(in: panel)
         _ = panel.followHelmTheme()
@@ -391,37 +589,91 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
 
     // MARK: Chrome
 
+    /// The board's head and body insets.
+    static let headInsets = NSEdgeInsets(top: 12, left: 14, bottom: 14, right: 14)
+    static let bodyInsets = NSEdgeInsets(top: 10, left: 14, bottom: 12, right: 14)
+    /// The head's glass bolt tile and the confirmation's glass circle.
+    static let boltSide: CGFloat = 22
+    static let verdictSide: CGFloat = 30
+    static let titleSize: CGFloat = 14
+    static let verdictSize: CGFloat = 16
+
     private func buildUI(in panel: NSPanel) {
         let root = CaptureRootView(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 260))
         root.wantsLayer = true
         root.layer?.cornerRadius = HelmMetrics.dSurface
-        root.layer?.borderWidth = 1.5
+        // The head's gradient is clipped to the panel's rounded top corners.
+        root.layer?.masksToBounds = true
         root.onDestinationChord = { [weak self] destination in
             self?.file(to: destination)
             return true
         }
         panel.contentView = root
 
-        inputField.delegate = self
+        inputField.onTextChanged = { [weak self] _ in
+            self?.refreshChips()
+            self?.resizeToFit()
+        }
+        inputField.onCommand = { [weak self] selector in self?.handle(command: selector) ?? false }
+
+        buildHead()
+        let body = buildBody()
+
+        root.addSubview(head)
+        root.addSubview(body)
+        NSLayoutConstraint.activate([
+            root.widthAnchor.constraint(equalToConstant: Self.panelWidth),
+            head.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            head.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            head.topAnchor.constraint(equalTo: root.topAnchor),
+            body.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.bodyInsets.left),
+            body.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.bodyInsets.right),
+            body.topAnchor.constraint(equalTo: head.bottomAnchor, constant: Self.bodyInsets.top),
+            body.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -Self.bodyInsets.bottom),
+        ])
+
+        applyTheme(ThemeManager.shared.theme)
+        resizeToFit()
+    }
+
+    /// The hero head: the gradient, the working content, and the confirmation
+    /// laid over it (hidden until a capture is filed).
+    private func buildHead() {
+        head.translatesAutoresizingMaskIntoConstraints = false
+        head.wantsLayer = true
+        heroSurface.glowShape = .capsule
+        head.addSubview(heroSurface)
+
+        for tile in [boltTile, verdictTile] {
+            tile.wantsLayer = true
+            tile.layer?.borderWidth = 1
+            tile.translatesAutoresizingMaskIntoConstraints = false
+        }
+        boltTile.layer?.cornerRadius = HelmMetrics.rChip
+        verdictTile.layer?.cornerRadius = Self.verdictSide / 2
+        for (glyph, tile) in [(boltGlyph, boltTile), (verdictGlyph, verdictTile)] {
+            glyph.translatesAutoresizingMaskIntoConstraints = false
+            glyph.imageScaling = .scaleNone
+            glyph.setAccessibilityElement(false)
+            tile.addSubview(glyph)
+            NSLayoutConstraint.activate([
+                glyph.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+                glyph.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            ])
+        }
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        hotkeyChip.translatesAutoresizingMaskIntoConstraints = false
-        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.isHidden = true
-        statusLabel.lineBreakMode = .byTruncatingTail
-
-        let bolt = NSImageView()
-        bolt.translatesAutoresizingMaskIntoConstraints = false
-        bolt.image = HelmSymbol.image("bolt.fill", pointSize: 14, weight: .semibold)
-        boltIcon = bolt
-
-        let header = NSStackView(views: [bolt, titleLabel, NSView(), hotkeyChip])
-        header.orientation = .horizontal
-        header.alignment = .centerY
-        header.spacing = HelmMetrics.s2
-        header.translatesAutoresizingMaskIntoConstraints = false
+        // Gotcha (10)/(12): under `.fill` only the spacer may take the slack.
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let titleRow = NSStackView(views: [boltTile, titleLabel, spacer, hotkeyCap])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.distribution = .fill
+        titleRow.spacing = HelmMetrics.s2
+        titleRow.translatesAutoresizingMaskIntoConstraints = false
 
         chipRow.orientation = .horizontal
         chipRow.alignment = .centerY
@@ -432,17 +684,92 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         clipboardChip.onClick = { [weak self] in self?.insertClipboardText() }
         dateChip.onClick = nil
 
-        for divider in [topDivider, bottomDivider] {
-            divider.wantsLayer = true
-            divider.translatesAutoresizingMaskIntoConstraints = false
-            divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        }
+        // The chip row keeps its height with no chips in it, as the board's
+        // `min-height` does, so the head - and the panel - does not jump by a
+        // row each time a date is typed or the clipboard empties.
+        let chipSlot = NSView()
+        chipSlot.translatesAutoresizingMaskIntoConstraints = false
+        chipSlot.addSubview(chipRow)
+
+        headContent.orientation = .vertical
+        headContent.alignment = .leading
+        headContent.spacing = HelmMetrics.s2
+        headContent.translatesAutoresizingMaskIntoConstraints = false
+        for view in [titleRow, inputField, chipSlot] { headContent.addArrangedSubview(view) }
+        headContent.setCustomSpacing(10, after: titleRow)
+
+        verdictLabel.lineBreakMode = .byTruncatingTail
+        verdictLabel.translatesAutoresizingMaskIntoConstraints = false
+        verdictLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        verdictRow.orientation = .horizontal
+        verdictRow.alignment = .centerY
+        verdictRow.spacing = HelmMetrics.s3
+        verdictRow.translatesAutoresizingMaskIntoConstraints = false
+        verdictRow.addArrangedSubview(verdictTile)
+        verdictRow.addArrangedSubview(verdictLabel)
+        verdictRow.alphaValue = 0
+
+        head.addSubview(headContent)
+        head.addSubview(verdictRow)
+        let insets = Self.headInsets
+        NSLayoutConstraint.activate([
+            heroSurface.leadingAnchor.constraint(equalTo: head.leadingAnchor),
+            heroSurface.trailingAnchor.constraint(equalTo: head.trailingAnchor),
+            heroSurface.topAnchor.constraint(equalTo: head.topAnchor),
+            heroSurface.bottomAnchor.constraint(equalTo: head.bottomAnchor),
+
+            headContent.leadingAnchor.constraint(equalTo: head.leadingAnchor, constant: insets.left),
+            headContent.trailingAnchor.constraint(equalTo: head.trailingAnchor, constant: -insets.right),
+            headContent.topAnchor.constraint(equalTo: head.topAnchor, constant: insets.top),
+            headContent.bottomAnchor.constraint(equalTo: head.bottomAnchor, constant: -insets.bottom),
+            titleRow.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            inputField.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            chipSlot.widthAnchor.constraint(equalTo: headContent.widthAnchor),
+            chipSlot.heightAnchor.constraint(equalToConstant: CaptureChip.height),
+            chipRow.leadingAnchor.constraint(equalTo: chipSlot.leadingAnchor),
+            chipRow.trailingAnchor.constraint(lessThanOrEqualTo: chipSlot.trailingAnchor),
+            chipRow.centerYAnchor.constraint(equalTo: chipSlot.centerYAnchor),
+            boltTile.widthAnchor.constraint(equalToConstant: Self.boltSide),
+            boltTile.heightAnchor.constraint(equalToConstant: Self.boltSide),
+
+            // The confirmation takes the head's place at the head's own
+            // height, so the panel does not jump in the moment before it
+            // closes.
+            verdictRow.leadingAnchor.constraint(equalTo: head.leadingAnchor, constant: insets.left + 2),
+            verdictRow.trailingAnchor.constraint(lessThanOrEqualTo: head.trailingAnchor, constant: -insets.right),
+            verdictRow.centerYAnchor.constraint(equalTo: head.centerYAnchor),
+            verdictTile.widthAnchor.constraint(equalToConstant: Self.verdictSide),
+            verdictTile.heightAnchor.constraint(equalToConstant: Self.verdictSide),
+        ])
+    }
+
+    /// The card under the head: the status line, FILE IT AS, the six tiles,
+    /// and the footer.
+    private func buildBody() -> NSView {
+        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        hintLabel.lineBreakMode = .byTruncatingTail
+        hintLabel.setContentHuggingPriority(.required, for: .horizontal)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.setAccessibilityElement(false)
+
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = HelmMetrics.s2
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+        statusRow.addArrangedSubview(statusIcon)
+        statusRow.addArrangedSubview(statusActivity)
+        statusRow.addArrangedSubview(statusLabel)
+        statusRow.isHidden = true
 
         tileRow.orientation = .horizontal
         tileRow.alignment = .centerY
         tileRow.spacing = HelmMetrics.s2
         // Gotcha (10): `.gravityAreas` is the default and honours no priority
-        // at all, so five equal tiles need `.fillEqually` said out loud.
+        // at all, so six equal tiles need `.fillEqually` said out loud.
         tileRow.distribution = .fillEqually
         tileRow.translatesAutoresizingMaskIntoConstraints = false
         for destination in CaptureDestination.allCases {
@@ -462,69 +789,47 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         crewButton.action = #selector(askTheCrew)
         crewButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let footer = NSStackView(views: [crewButton, NSView(), hintLabel])
+        let footerSpacer = NSView()
+        footerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let footer = NSStackView(views: [crewButton, footerSpacer, hintLabel])
         footer.orientation = .horizontal
         footer.alignment = .centerY
+        footer.distribution = .fill
         footer.spacing = HelmMetrics.s2
         footer.translatesAutoresizingMaskIntoConstraints = false
 
-        for view in [header, inputField, chipRow, topDivider, sectionLabel, tileRow,
-                     bottomDivider, footer, statusLabel] {
-            root.addSubview(view)
-        }
-
-        let gutter = HelmMetrics.s4
+        let body = NSStackView(views: [statusRow, sectionLabel, tileRow, footer])
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = HelmMetrics.s2
+        body.setCustomSpacing(10, after: tileRow)
+        body.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            root.widthAnchor.constraint(equalToConstant: Self.panelWidth),
-
-            header.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            header.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -gutter),
-            header.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
-
-            inputField.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            inputField.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -gutter),
-            inputField.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s2),
-
-            chipRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            chipRow.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -gutter),
-            chipRow.topAnchor.constraint(equalTo: inputField.bottomAnchor, constant: HelmMetrics.s2),
-
-            topDivider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            topDivider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            topDivider.topAnchor.constraint(equalTo: chipRow.bottomAnchor, constant: HelmMetrics.s3),
-
-            sectionLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            sectionLabel.topAnchor.constraint(equalTo: topDivider.bottomAnchor, constant: HelmMetrics.s3),
-
-            tileRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            tileRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -gutter),
-            tileRow.topAnchor.constraint(equalTo: sectionLabel.bottomAnchor, constant: HelmMetrics.s2),
-
-            bottomDivider.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            bottomDivider.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            bottomDivider.topAnchor.constraint(equalTo: tileRow.bottomAnchor, constant: HelmMetrics.s3),
-
-            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: gutter),
-            footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -gutter),
-            footer.topAnchor.constraint(equalTo: bottomDivider.bottomAnchor, constant: HelmMetrics.s2),
-            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s3),
-
-            statusLabel.leadingAnchor.constraint(equalTo: crewButton.trailingAnchor, constant: HelmMetrics.s3),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: hintLabel.leadingAnchor, constant: -HelmMetrics.s2),
-            statusLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            statusRow.widthAnchor.constraint(lessThanOrEqualTo: body.widthAnchor),
+            tileRow.widthAnchor.constraint(equalTo: body.widthAnchor),
+            footer.widthAnchor.constraint(equalTo: body.widthAnchor),
         ])
-
-        applyTheme(ThemeManager.shared.theme)
-        resizeToFit()
+        return body
     }
 
-    private var boltIcon: NSImageView?
-
+    /// Fit the panel to its content, keeping its top edge where it is.
+    ///
+    /// `setContentSize` keeps the window's *bottom* edge, so a status line
+    /// appearing in the body used to push the head up the screen by a row.
+    /// The panel is placed by its top edge (`present`), and that is the edge
+    /// that holds.
     private func resizeToFit() {
         guard let window, let root = window.contentView else { return }
         root.layoutSubtreeIfNeeded()
         let height = root.fittingSize.height
-        window.setContentSize(NSSize(width: Self.panelWidth, height: height))
+        let frame = window.frame
+        let content = window.contentRect(forFrameRect: frame)
+        guard abs(content.height - height) > 0.5 || abs(content.width - Self.panelWidth) > 0.5 else { return }
+        let target = window.frameRect(forContentRect: NSRect(x: frame.minX, y: frame.maxY - height,
+                                                             width: Self.panelWidth, height: height))
+        window.setFrame(NSRect(x: frame.minX, y: frame.maxY - target.height,
+                               width: target.width, height: target.height), display: true)
     }
 
     // MARK: Presenting
@@ -543,8 +848,11 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         inputField.stringValue = ""
         classificationInFlight = false
         crewButton.isEnabled = true
-        statusLabel.isHidden = true
-        hintLabel.isHidden = false
+        hideStatus()
+        resetHead()
+        // The captain's own chord, which Settings > Capture records - the head
+        // names the key that opened it.
+        hotkeyCap.text = AppSettings.shared.quickCaptureShortcut.displayString
         refreshChips()
         resizeToFit()
         if let screen = NSScreen.main {
@@ -561,7 +869,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         isOpen = true
         window.makeKeyAndOrderFront(nil)
         HelmMotion.fadeIn(window: window)
-        window.makeFirstResponder(inputField)
+        inputField.focusEditor()
     }
 
     /// Open as far as this controller is concerned - set at once by
@@ -579,7 +887,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         }
     }
 
-    // MARK: The chips
+    // MARK: The chips and the light
 
     /// Re-read the parsed date and the pasteboard. Called on every `present()`
     /// and on every keystroke, so the date chip tracks what is typed.
@@ -604,9 +912,15 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         chipRow.isHidden = dateChip.isHidden && clipboardChip.isHidden
 
         // F4: the default tile moves with the text, so the captain can see
-        // where Return will file before pressing it.
-        let preferred = CaptureRouter.defaultDestination(for: draft)
-        for tile in tiles { tile.isDefault = tile.destination == preferred }
+        // where Return will file before pressing it. CP-1 lights it.
+        light(CaptureRouter.defaultDestination(for: draft))
+    }
+
+    /// Light the tile for `destination`, and only that one.
+    private func light(_ destination: CaptureDestination) {
+        for tile in tiles where tile.isDefault != (tile.destination == destination) {
+            tile.isDefault = tile.destination == destination
+        }
     }
 
     /// What the pasteboard is offering, as one line - or nil when there is
@@ -633,12 +947,13 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             ? raw
             : existing + (existing.hasSuffix("\n") ? "" : "\n") + raw
         refreshChips()
-        window?.makeFirstResponder(inputField)
+        inputField.focusEditor()
     }
 
     // MARK: Filing
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    /// The field editor's command keys, through `HelmSearchField.onCommand`.
+    private func handle(command commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
             // Return is whichever chord the default tile is showing, not a
@@ -656,14 +971,12 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         }
     }
 
-    func controlTextDidChange(_ obj: Notification) {
-        refreshChips()
-        resizeToFit()
-    }
-
     /// File what is typed to `destination`. The one implementation every entry
     /// point (Return, a chord, a tile click, the crew's answer) goes through.
     func file(to destination: CaptureDestination) {
+        // The confirmation is standing and the panel is about to close: a
+        // second Return here would file the same words twice.
+        guard !isConfirming else { return }
         let draft = CaptureRouter.draft(from: inputField.stringValue)
         guard !draft.isEmpty else {
             NSSound.beep()
@@ -678,24 +991,76 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             dismiss()
         case .refused(let why):
             show(status: why, isError: true)
+            // The light shows where Return files. A refused crew pick hands it
+            // back to the tile Return would use.
+            light(CaptureRouter.defaultDestination(for: draft))
         }
     }
 
+    /// CP-1: the head becomes the confirmation, holds, and the panel closes.
     private func finish(with message: String) {
-        show(status: message, isError: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+        hideStatus()
+        showVerdict(message)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.confirmationHold) { [weak self] in
             self?.dismiss()
         }
     }
 
+    /// Swap the head's content for the confirmation. A short cross-fade, and
+    /// under Reduce Motion the swap alone (`HelmMotion.fade`).
+    private func showVerdict(_ message: String) {
+        isConfirming = true
+        verdictLabel.stringValue = message
+        verdictRow.setAccessibilityLabel(message)
+        HelmMotion.fade(headContent, to: 0, duration: HelmMotion.stateDuration, animated: true)
+        HelmMotion.fade(verdictRow, to: 1, duration: HelmMotion.stateDuration, animated: true)
+    }
+
+    private func resetHead() {
+        isConfirming = false
+        headContent.alphaValue = 1
+        verdictRow.alphaValue = 0
+    }
+
     private func show(status: String, isError: Bool) {
+        statusIsError = isError
         statusLabel.stringValue = status
-        statusLabel.textColor = isError
-            ? HelmTheme.nsColor(ThemeManager.shared.theme.ansiHex[1])
-            : HelmTheme.nsColor(ThemeManager.shared.theme.ansiHex[2])
-        statusLabel.isHidden = false
-        hintLabel.isHidden = true
+        statusRow.isHidden = false
+        paintStatus(ThemeManager.shared.theme)
         resizeToFit()
+    }
+
+    private func hideStatus() {
+        guard !statusRow.isHidden else { return }
+        statusRow.isHidden = true
+        statusActivity.isRunning = false
+        resizeToFit()
+    }
+
+    /// A refusal reads in the theme's critical hue, legible on the card, with
+    /// a warning glyph. The crew working reads muted, with the kit's inline
+    /// activity bar (which holds still under Reduce Motion on its own).
+    private func paintStatus(_ theme: HelmTheme) {
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        statusLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+        if statusIsError {
+            let red = HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: card, theme: theme)
+            statusLabel.textColor = red
+            // One colour, the words' own: a hierarchical symbol draws its
+            // secondary layers lighter, which read as a pale triangle beside
+            // red words in the first render.
+            statusIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: HelmType.scaled(11), weight: .semibold))
+            statusIcon.contentTintColor = red
+            statusIcon.isHidden = false
+            statusActivity.isRunning = false
+            statusActivity.isHidden = true
+        } else {
+            statusLabel.textColor = HelmTheme.mutedInk(theme)
+            statusIcon.isHidden = true
+            statusActivity.isRunning = classificationInFlight
+            statusActivity.isHidden = !classificationInFlight
+        }
     }
 
     // MARK: "Ask the crew to file it"
@@ -722,7 +1087,10 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
                           isError: true)
                 return
             }
-            for tile in self.tiles { tile.isDefault = tile.destination == destination }
+            self.hideStatus()
+            // The light moves to the crew's pick before it files, so the
+            // confirmation stands over the tile it went to.
+            self.light(destination)
             self.file(to: destination)
         }
 
@@ -752,11 +1120,14 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
 
     // MARK: Theme
 
+    /// The head's palette: the theme's hero colour through the quiet-ink rule
+    /// the hero columns, the toasts and the lit tile use.
+    static func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
+        HelmHeroColumn.palette(for: HelmModuleCard.HeroTone(colour: .themeAccent), in: theme)
+    }
+
     private func applyTheme(_ theme: HelmTheme) {
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
         guard let root = window?.contentView else { return }
         // `ThemeManager.swift`'s checklist item 2: force the appearance, or
         // everything resolving a system semantic colour - the shared field
@@ -764,33 +1135,59 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         // the OS rather than the theme.
         root.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         root.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        root.layer?.borderColor = accent.cgColor
 
-        boltIcon?.image = HelmSymbol.image("bolt.fill", pointSize: 14, weight: .semibold,
-                                           hierarchicalColor: accent)
-        titleLabel.font = HelmType.rowTitle()
+        let palette = Self.palette(in: theme)
+        let ink = HelmContrast.color(palette.ink)
+        heroSurface.apply(palette)
+        // A white-ink hero is a dark surface: the field's caret and selection,
+        // and any system colour in the head, take the dark appearance's.
+        let darkInk = HelmContrast.relativeLuminance(palette.ink) < 0.5
+        head.appearance = NSAppearance(named: darkInk ? .aqua : .darkAqua)
+        inputField.heroInk = ink
+        for tile in [boltTile, verdictTile] {
+            tile.layer?.backgroundColor = ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha).cgColor
+            tile.layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+        }
+        boltGlyph.image = HelmSymbol.image("bolt.fill", pointSize: 12, weight: .semibold, hierarchicalColor: ink)
+        verdictGlyph.image = HelmSymbol.image("checkmark", pointSize: 15, weight: .bold, hierarchicalColor: ink)
+        titleLabel.font = HelmType.rounded(HelmType.scaled(Self.titleSize), .bold)
         titleLabel.textColor = ink
-        hotkeyChip.font = HelmType.code()
-        hotkeyChip.textColor = muted
+        verdictLabel.font = HelmType.rounded(HelmType.scaled(Self.verdictSize), .bold)
+        verdictLabel.textColor = ink
+        hotkeyCap.paint(fill: ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha),
+                        border: ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha), ink: ink)
+        dateChip.paint(heroInk: ink)
+        clipboardChip.paint(heroInk: ink)
+
         sectionLabel.attributedStringValue = NSAttributedString(
             string: "FILE IT AS", attributes: HelmType.kickerAttributes(color: muted))
         hintLabel.font = .systemFont(ofSize: HelmType.scaled(11))
         hintLabel.textColor = muted
-        hintLabel.stringValue = "\u{23CE} file as a task \u{00B7} \u{2318}1\u{2013}\u{2318}5 choose \u{00B7} Esc dismiss"
-        statusLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
-        topDivider.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
-        bottomDivider.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
-        dateChip.applyTheme(theme)
-        clipboardChip.applyTheme(theme)
+        hintLabel.stringValue = CaptureHeroWords.hint
+        paintStatus(theme)
         for tile in tiles { tile.applyTheme(theme) }
     }
 
     #if FM_SELFTESTS
-    /// The five real tiles, in display order - so a suite can read what the
+    /// The six real tiles, in display order - so a suite can read what the
     /// panel shows and drive a real click through each tile's own `onClick`.
     var debugTiles: [CaptureDestinationTile] { tiles }
-    var debugInputField: HelmTextField { inputField }
-    var debugStatusText: String? { statusLabel.isHidden ? nil : statusLabel.stringValue }
+    var debugInputField: HelmSearchField { inputField }
+    /// The body's status line, while it shows.
+    var debugStatusText: String? { statusRow.isHidden ? nil : statusLabel.stringValue }
+    var debugStatusIsError: Bool { statusIsError }
+    var debugStatusColor: NSColor? { statusLabel.textColor }
+    /// The confirmation standing in the head, while it does.
+    var debugVerdictText: String? { isConfirming ? verdictLabel.stringValue : nil }
+    var debugHeadContentAlpha: CGFloat { headContent.alphaValue }
+    var debugVerdictAlpha: CGFloat { verdictRow.alphaValue }
+    var debugHintText: String { hintLabel.stringValue }
+    var debugHeadPalette: HelmHeroSurface.Palette? { heroSurface.palette }
+    var debugHeadGradient: [CGColor] { heroSurface.debugGradientColors }
+    var debugHeadView: NSView { head }
+    var debugTitleColor: NSColor? { titleLabel.textColor }
+    var debugHotkeyText: String { hotkeyCap.text }
+    var debugChips: [CaptureChip] { [dateChip, clipboardChip] }
     var debugDateChipText: String? { dateChip.isHidden ? nil : dateChip.text }
     var debugClipboardChipText: String? { clipboardChip.isHidden ? nil : clipboardChip.text }
     var debugRootView: CaptureRootView? { window?.contentView as? CaptureRootView }
@@ -798,6 +1195,9 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         inputField.stringValue = text
         refreshChips()
     }
+    /// Return, through the field's own command path.
+    func debugPressReturn() { _ = handle(command: #selector(NSResponder.insertNewline(_:))) }
+    func debugResetHead() { resetHead() }
 
     /// Drive the crew button's own action, so a suite exercises the real
     /// routing rather than a reimplementation of it.
