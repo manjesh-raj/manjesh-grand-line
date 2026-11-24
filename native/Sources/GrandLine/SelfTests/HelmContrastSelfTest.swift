@@ -91,6 +91,8 @@ enum HelmContrastSelfTest {
         checkStatTileRecipe(&ok)
         checkEmptyStateRecipe(&ok)
         checkSegmentedTabsRecipe(&ok)
+        checkSegmentedTabsOnAHero(&ok)
+        checkSegmentedTabsHeroFocusRing(&ok)
         checkFieldRecipe(&ok)
         checkNoReDerivedFieldChrome(&ok)
         checkNoRawTextInputs(&ok)
@@ -1379,6 +1381,239 @@ enum HelmContrastSelfTest {
             }
         }
         print("  OK - bordered capsule, one pill radius / label size per size, inactive in mutedInk, worst active label contrast \(fmt(worst.ratio)) (\(worst.label))")
+    }
+
+    // MARK: 11b. The strip on a hero (HelmSegmentedTabs 1.3.0, MB-1)
+
+    /// The quiet-ink hero a `PopoverHeroHeader` in the `.verdict` style
+    /// paints on `theme`, and its deeper stop, which is what a caller hands
+    /// `heroSelection`.
+    private static func quietHero(_ theme: HelmTheme) -> (palette: HelmHeroSurface.Palette, deep: NSColor) {
+        let palette = HelmHeroSurface.palette(
+            accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+            quietInk: Double(HelmHeroColumn.quietInkAlpha))
+        let deep = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+            ? palette.start : palette.end
+        return (palette, HelmContrast.color(deep))
+    }
+
+    private static func heroStrip() -> HelmSegmentedTabs {
+        HelmSegmentedTabs(items: [.init(id: "a", title: "Today"), .init(id: "b", title: "Notes"),
+                                  .init(id: "c", title: "Vault"), .init(id: "d", title: "Crew")],
+                          selected: "b", size: .compact, equalWidths: true)
+    }
+
+    /// `heroInk` on every chrome palette's hero: the chosen segment is solid
+    /// ink with its words in the deep stop at 4.5:1 or better, the others
+    /// are shade capsules with an ink hairline and the ink's own words, which
+    /// clear the floor on the shade over the lighter stop. Then the strip
+    /// leaves the hero and is the theme's own recipe again.
+    private static func checkSegmentedTabsOnAHero(_ ok: inout Bool) {
+        print("\n-- segmented tabs on a hero (heroInk, all palettes) --")
+        var worstChosen = (ratio: Double.greatestFiniteMagnitude, label: "")
+        var worstOthers = (ratio: Double.greatestFiniteMagnitude, label: "")
+        func same(_ a: NSColor?, _ b: NSColor) -> Bool {
+            guard let a else { return false }
+            let x = HelmContrast.components(a), y = HelmContrast.components(b)
+            return abs(x.0 - y.0) < 0.01 && abs(x.1 - y.1) < 0.01 && abs(x.2 - y.2) < 0.01
+                && abs(a.alphaComponent - b.alphaComponent) < 0.01
+        }
+        for theme in everyChromePalette {
+            let (palette, deep) = quietHero(theme)
+            let ink = HelmContrast.color(palette.ink)
+            let shade = HelmButton.heroShade(for: ink)
+            let tabs = heroStrip()
+            tabs.applyTheme(theme)
+            tabs.heroInk = ink
+            tabs.heroSelection = deep
+            let g = tabs.debugGeometry()
+            var problems: [String] = []
+            if !same(g.activeFill, ink) { problems.append("the chosen fill is not the ink") }
+            if !same(g.activeInk, deep) { problems.append("the chosen words are not the deep stop") }
+            if let words = g.activeInk {
+                let r = HelmContrast.ratio(words, ink)
+                if r < worstChosen.ratio { worstChosen = (r, theme.id) }
+                if r < HelmContrast.textTarget - 0.01 { problems.append("chosen words \(fmt(r)):1 on the ink") }
+            }
+            if g.capsuleBorderWidth != 0 || (g.capsuleFill?.alphaComponent ?? 0) > 0.001 {
+                problems.append("the capsule still paints a container")
+            }
+            let expectedRadius = HelmSegmentedTabs.Size.compact
+                .daylightPillRadius(for: tabs.debugPillsForAccessibilityTests()[0])
+            if g.pillRadii.contains(where: { abs($0 - expectedRadius) > 0.01 }) {
+                problems.append("pill radii \(g.pillRadii) are not capsules")
+            }
+            let fills = tabs.debugPillFills
+            let borders = tabs.debugPillBorders
+            let words = tabs.debugPillLabelColors
+            for (index, id) in ["a", "b", "c", "d"].enumerated() {
+                if id == "b" {
+                    if fills[index].alphaComponent > 0.001 { problems.append("the chosen pill paints its own fill") }
+                    if borders[index].width != 0 { problems.append("the chosen pill keeps a hairline") }
+                    continue
+                }
+                if !same(fills[index], shade.withAlphaComponent(HelmSegmentedTabs.heroFillAlpha)) {
+                    problems.append("\(id)'s fill is not the shade")
+                }
+                if borders[index].width != 1
+                    || !same(borders[index].color, ink.withAlphaComponent(HelmSegmentedTabs.heroBorderAlpha)) {
+                    problems.append("\(id)'s hairline is not the ink at \(HelmSegmentedTabs.heroBorderAlpha)")
+                }
+                if !same(words[index], ink) { problems.append("\(id)'s words are not the ink") }
+                // What an unchosen word sits on: the shade over the gradient's
+                // lighter stop, the stop white ink is measured against.
+                let ground = HelmContrast.mix(HelmContrast.components(shade), palette.lighterStop,
+                                              Double(HelmSegmentedTabs.heroFillAlpha))
+                let r = HelmContrast.ratio(palette.ink, ground)
+                if r < worstOthers.ratio { worstOthers = (r, theme.id) }
+                if r < HelmContrast.textTarget - 0.01 { problems.append("\(id)'s words \(fmt(r)):1") }
+            }
+            if tabs.debugRowSpacing != HelmMetrics.s1 { problems.append("row spacing \(tabs.debugRowSpacing)") }
+            if tabs.debugRowInset < HelmFocusRing.inset {
+                problems.append("row inset \(tabs.debugRowInset) leaves no room for the ring")
+            }
+
+            // Off the hero again: the theme's own recipe, with nothing left behind.
+            tabs.heroInk = nil
+            let off = tabs.debugGeometry()
+            if tabs.debugPillBorders.contains(where: { $0.width != 0 }) { problems.append("hairlines stayed off the hero") }
+            if tabs.debugRowSpacing != HelmSegmentedTabs.Size.compact.spacing
+                || tabs.debugRowInset != HelmSegmentedTabs.Size.compact.capsuleInset {
+                problems.append("the row kept the hero's spacing or inset")
+            }
+            if let inactive = off.inactiveInk, !same(inactive, HelmTheme.mutedInk(theme)) {
+                problems.append("off the hero the unchosen words are not mutedInk")
+            }
+            if !problems.isEmpty {
+                print("  FAIL \(theme.id): \(problems.joined(separator: ", "))")
+                ok = false
+            }
+        }
+
+        // The fallback is real, not a comment: a selection colour under the
+        // floor on the ink takes the shade, and so does none at all.
+        let white = NSColor.white
+        let paleSelection = NSColor(srgbRed: 0.85, green: 0.88, blue: 0.95, alpha: 1)
+        if HelmContrast.ratio(paleSelection, white) >= HelmContrast.textTarget {
+            print("  FAIL the fallback fixture already clears the floor, so the fallback check proves nothing")
+            ok = false
+        }
+        for (name, selection) in [("a pale selection", Optional(paleSelection)), ("no selection", nil)] {
+            let words = HelmSegmentedTabs.heroSelectionInk(selection, on: white)
+            if !same(words, .black) {
+                print("  FAIL \(name) on white ink did not fall back to the shade (black)")
+                ok = false
+            }
+        }
+        print("  OK - solid ink under the chosen words (worst \(fmt(worstChosen.ratio)):1, \(worstChosen.label)), "
+            + "shade capsules under the others (worst \(fmt(worstOthers.ratio)):1, \(worstOthers.label)), "
+            + "and back to the theme's recipe off the hero")
+    }
+
+    /// `heroInk`'s focus ring, in a real window, with real first-responder
+    /// changes and the arrow keys through the pill's own `keyDown`: an ink
+    /// ring 3pt outside the focused pill and inside the strip's own bounds,
+    /// the system ring off under it, no ring for a click's focus, the ring
+    /// following ← →, and the system ring back when the strip leaves the hero.
+    private static func checkSegmentedTabsHeroFocusRing(_ ok: inout Bool) {
+        print("\n-- segmented tabs on a hero: the focus ring and the arrow keys --")
+        let savedOverride = HelmFocusVisibility.overrideForTests
+        defer { HelmFocusVisibility.overrideForTests = savedOverride }
+        var problems: [String] = []
+        autoreleasepool {
+            let theme = HelmTheme.appThemes.first { $0.id == "lavender" } ?? ThemeManager.shared.theme
+            let (palette, deep) = quietHero(theme)
+            let ink = HelmContrast.color(palette.ink)
+            let window = OffScreenProbe.window(width: 360, height: 80)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 80))
+            window.contentView = host
+            let tabs = heroStrip()
+            host.addSubview(tabs)
+            NSLayoutConstraint.activate([
+                tabs.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 16),
+                tabs.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16),
+                tabs.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+            ])
+            tabs.applyTheme(theme)
+            tabs.heroInk = ink
+            tabs.heroSelection = deep
+            var picked: [String] = []
+            tabs.onSelect = { picked.append($0) }
+            host.layoutSubtreeIfNeeded()
+            let pills = tabs.debugPillsForAccessibilityTests()
+
+            // A key moved focus here.
+            HelmFocusVisibility.overrideForTests = true
+            window.makeFirstResponder(pills[0])
+            var ring = tabs.debugHeroRing
+            if !ring.isShowing { problems.append("no ring on a pill that took focus from a key") }
+            if ring.systemRingIsOn { problems.append("the accent system ring is still on under the ink one") }
+            if let color = ring.color {
+                let (a, b) = (HelmContrast.components(color), HelmContrast.components(ink))
+                if abs(a.0 - b.0) > 0.01 || abs(a.1 - b.1) > 0.01 || abs(a.2 - b.2) > 0.01 || color.alphaComponent < 0.99 {
+                    problems.append("the ring is not the solid ink")
+                }
+            } else {
+                problems.append("the ring has no colour")
+            }
+            if ring.width != HelmSegmentedTabs.heroRingWidth { problems.append("ring width \(ring.width)") }
+            if let pill = ring.pillFrame {
+                let want = pill.insetBy(dx: -HelmFocusRing.inset, dy: -HelmFocusRing.inset)
+                if abs(ring.frame.minX - want.minX) > 0.5 || abs(ring.frame.width - want.width) > 0.5
+                    || abs(ring.frame.minY - want.minY) > 0.5 || abs(ring.frame.height - want.height) > 0.5 {
+                    problems.append("ring \(ring.frame) is not \(HelmFocusRing.inset)pt outside its pill \(pill)")
+                }
+                if pill.width < 1 { problems.append("the pill has no width, so the ring check is vacuous") }
+            }
+            if !tabs.bounds.insetBy(dx: -0.5, dy: -0.5).contains(ring.frame) {
+                problems.append("ring \(ring.frame) runs outside the strip \(tabs.bounds), where it is clipped")
+            }
+
+            // Right arrow, through the pill's real key path.
+            let right = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: window.windowNumber, context: nil, characters: "",
+                                         charactersIgnoringModifiers: "", isARepeat: false, keyCode: 124)
+            if let right { pills[0].keyDown(with: right) } else { problems.append("could not make a right arrow") }
+            if tabs.selected != "b" || picked != ["b"] {
+                problems.append("→ from Today picked \(picked), selected \(tabs.selected)")
+            }
+            if window.firstResponder !== pills[1] { problems.append("→ did not take focus to the next pill") }
+            ring = tabs.debugHeroRing
+            if let pill = ring.pillFrame, abs(ring.frame.midX - pill.midX) > 0.5 || !ring.isShowing {
+                problems.append("the ring did not follow focus to Notes")
+            }
+            if abs((ring.pillFrame?.midX ?? 0) - pills[1].convert(pills[1].bounds, to: tabs).midX) > 0.5 {
+                problems.append("the ring's pill is not the one that has focus")
+            }
+            if tabs.debugGeometry().activeInk.map({ HelmContrast.ratio($0, ink) < HelmContrast.textTarget }) ?? true {
+                problems.append("after → the chosen words do not clear the floor on the ink")
+            }
+
+            // A click moved focus: no ring, as the system ring would show none.
+            HelmFocusVisibility.overrideForTests = false
+            window.makeFirstResponder(pills[3])
+            if tabs.debugHeroRing.isShowing { problems.append("a click's focus drew the ring") }
+
+            // Leaving the hero with a keyed focus hands the ring back to AppKit.
+            HelmFocusVisibility.overrideForTests = true
+            window.makeFirstResponder(pills[2])
+            tabs.heroInk = nil
+            host.layoutSubtreeIfNeeded()
+            ring = tabs.debugHeroRing
+            if ring.isShowing { problems.append("the ink ring stayed after the strip left the hero") }
+            if !ring.systemRingIsOn { problems.append("off the hero the focused pill has no system ring") }
+
+            window.makeFirstResponder(nil)
+            window.contentView = nil
+            window.close()
+        }
+        if problems.isEmpty {
+            print("  OK - ink ring \(HelmFocusRing.inset)pt outside the focused pill, system ring off under it, "
+                + "none for a click, follows → , and hands back to AppKit off the hero")
+        } else {
+            print("  FAIL \(problems.joined(separator: "; "))")
+            ok = false
+        }
     }
 
     // MARK: 12. One sunken-field recipe (audit §3.2 "Sunken form field", §6.3's
