@@ -13,12 +13,13 @@
 //      the finding's own complaint is "every action row wears the same
 //      colored square", and a regression to that renders perfectly and is
 //      invisible to every other check.
-//   2. **H1's material cannot break contrast.** The panel paints its fill at
-//      less than full opacity over a material, so its effective surface is
-//      somewhere between the two - and the ink has to clear the floor against
-//      *both* ends. The material itself cannot be seen from here (the window
-//      server composites it), so the damage is bounded rather than guessed.
-//   3. **H1's footer strip is `HelmKeyHint`**, not a second keycap recipe.
+//   2. **K-2's card surface reads on every app theme.** H1 put the panel on
+//      a material behind a 90% fill, and this case bounded what that could
+//      cost. K-2 took the material away, so it now sweeps all 26 app themes:
+//      the row ink and meta on the card, and the lit row's words on its own
+//      gradient.
+//   3. **H1's footer strip is `HelmKeyHint`**, not a second keycap recipe,
+//      and since K-2 it leads with the arrows.
 //   4. **H2's symbols are template images.** A non-template menu image keeps
 //      its own colour on a highlighted row, which is the "two icon languages"
 //      tell this whole section is about - and it looks fine until the row is
@@ -109,11 +110,10 @@ enum OverlaysModernizationSelfTest {
         _ = makeWindow(destinationRow)
         // I1 narrowed H1 here: a palette row takes the destination's *hue*
         // but never its raster artwork, because I1's policy reserves raster
-        // for page identity (drill header + canvas card tile). See the
-        // `.destination` case in `UnifiedSearchRowView.configure`.
-        if destinationRow.debugTileUsesArtwork {
-            problems.append("a palette row rendered raster artwork - I1 reserves that for page identity")
-        }
+        // for page identity (drill header + canvas card tile). Since K-2 the
+        // row's only tiles are the wash tile and the lit row's glass tile,
+        // both symbol-only, so there is no artwork path left to assert on;
+        // `IconsTypographySelfTest`'s raster sweep still guards the source.
         let destinationFill = destinationRow.debugFlatTileFill
         if destinationFill == nil { problems.append("a destination row has no tile fill") }
 
@@ -163,41 +163,38 @@ enum OverlaysModernizationSelfTest {
         }
     }
 
-    // MARK: 2. H1 - the material's contrast cost is bounded
+    // MARK: 2. K-2 - the card surface, and the lit row, in every app theme
 
     private static func checkPaletteMaterialCannotBreakContrast(_ ok: inout Bool) {
-        print("\n-- H1: the material cannot break the palette's contrast --")
-        // The material itself is composited by the window server and is
-        // invisible to `cacheDisplay`, so this bounds the damage rather than
-        // measuring it: the panel's effective surface lies between its own
-        // fill and whatever that fill is laid over, and the ink must clear the
-        // text floor at both ends. Same shape as B1's own bound for the bar.
+        print("\n-- K-2: H1's material is gone, and the palette reads on every app theme --")
+        // K-2 (the hero restyle board's "Lit selection") took H1's `.menu`
+        // material away, so the bound this case used to draw - the ink against
+        // both ends of a 90% fill over a blur - is now one opaque surface. What
+        // replaces it is the sweep the board itself only drew for Lavender and
+        // Powder: on all 26 app themes, the row ink and the muted meta on the
+        // card, and the lit row's title and 80% meta on its own gradient.
         var problems: [String] = []
-        for theme in HelmTheme.allThemes where theme.isDaylight {
-            let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-            let under = HelmTheme.nsColor(theme.backgroundHex)
-            // Straight sRGB, via the app's own `mix` - not
-            // `NSColor.blended(withFraction:of:)`, which converts into a
-            // *calibrated* space first and drifts from the composite alpha
-            // blending actually performs (the lesson Phase 4's segmented-tab
-            // correction records).
-            let effective = HelmContrast.mix(HelmContrast.components(surface),
-                                             HelmContrast.components(under),
-                                             Double(UnifiedSearchController.daylightFillAlpha))
-            let ink = HelmTheme.nsColor(theme.chromeInkHex)
-            for (name, against) in [("its own fill", HelmContrast.components(surface)),
-                                    ("what it composites over", effective)] {
-                let ratio = HelmContrast.ratio(HelmContrast.components(ink), against)
+        for theme in HelmTheme.appThemes {
+            let card = HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex))
+            for (name, color) in [("ink", HelmTheme.nsColor(theme.chromeInkHex)),
+                                  ("muted meta", HelmTheme.mutedInk(theme))] {
+                let ratio = HelmContrast.ratio(HelmContrast.components(color), card)
                 if ratio < HelmContrast.textTarget {
-                    problems.append("\(theme.id) ink is \(String(format: "%.2f", ratio)):1 against \(name)")
+                    problems.append("\(theme.id) \(name) is \(fmt(CGFloat(ratio))):1 on the card")
                 }
             }
+            let hero = UnifiedSearchRowView.palette(in: theme)
+            let lighter = hero.lighterStop
+            let title = HelmContrast.ratio(hero.ink, lighter)
+            let meta = HelmContrast.ratio(HelmContrast.mix(hero.ink, lighter, Double(HelmHeroColumn.quietInkAlpha)), lighter)
+            if title < HelmContrast.textTarget || meta < HelmContrast.textTarget {
+                problems.append("\(theme.id) lit row \(fmt(CGFloat(title))):1 / meta \(fmt(CGFloat(meta))):1")
+            }
         }
-        if UnifiedSearchController.daylightFillAlpha >= 1 {
-            problems.append("the fill is fully opaque - the material can never read")
-        }
+        let palette = UnifiedSearchController(index: UnifiedSearchIndex())
+        if palette.debugHasMaterial { problems.append("the panel still carries a system material") }
         if problems.isEmpty {
-            print("  OK   ink clears the floor at both ends of the blend, alpha \(fmt(UnifiedSearchController.daylightFillAlpha))")
+            print("  OK   no material; \(HelmTheme.appThemes.count) app themes clear 4.5:1 on the card and on the lit row")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false
@@ -215,12 +212,16 @@ enum OverlaysModernizationSelfTest {
             return
         }
         content.layoutSubtreeIfNeeded()
-        let hints = descendants(HelmKeyHint.self, in: content)
+        let hints = palette.debugFooterHints
         var problems: [String] = []
-        if hints.count != 2 {
-            problems.append("\(hints.count) key hints in the footer, want 2 (run + close)")
+        // K-2's footer: move, run, close.
+        if hints.count != 3 {
+            problems.append("\(hints.count) key hints in the footer, want 3 (move + run + close)")
         }
         let glyphs = hints.flatMap(\.debugCapGlyphs)
+        if !glyphs.contains(UnifiedSearchController.upKey) || !glyphs.contains(UnifiedSearchController.downKey) {
+            problems.append("no arrow keycaps")
+        }
         if !glyphs.contains(HelmKeyHint.returnKey) { problems.append("no Return keycap") }
         if !glyphs.contains(HelmKeyHint.command) { problems.append("no Command keycap") }
         // F2c's own glyph rule reaches here too.

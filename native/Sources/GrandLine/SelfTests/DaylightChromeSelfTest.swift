@@ -29,9 +29,12 @@
 //      this migration has held to that, and this phase's two riskiest edits for
 //      it are `HelmButton.domainHue` (which re-points a `.primary`'s fill in
 //      *every* palette, not just Daylight) and the ghost-Cancel variant swap.
-//   5. **§6.11's palette chrome and rows**, including that the gradient tile
-//      and the flat tinted tile are never both visible, and that the selected
-//      row's `inset` fill and 3px `ink` edge are real.
+//   5. **§6.11's palette chrome, and K-2's lit selection** (the hero
+//      restyle board, the captain's pick) in Lavender and Powder: the card
+//      surface with no system material, the raised well, exactly one lit row
+//      on the quiet-ink gradient with its words clearing 4.5:1, every other
+//      row on the card, the light following the arrows, the gradient really
+//      reaching the bitmap, and a live theme change repainting it.
 //   6. **The palette is a reskin only.** Query -> group -> arrow -> Return ->
 //      the item's own `activate()` still runs, measured by counting a real
 //      activation.
@@ -368,7 +371,7 @@ enum DaylightChromeSelfTest {
         ThemeManager.shared.setTheme(daylight)
     }
 
-    // MARK: 5. §6.11's palette chrome and rows
+    // MARK: 5. §6.11's palette chrome, and K-2's lit selection
 
     private static func makePalette() -> UnifiedSearchController {
         let index = UnifiedSearchIndex()
@@ -379,84 +382,254 @@ enum DaylightChromeSelfTest {
         return UnifiedSearchController(index: index)
     }
 
+    /// `color` laid over an opaque `backdrop`, as alpha compositing does it.
+    private static func over(_ color: NSColor, _ backdrop: (Double, Double, Double)) -> (Double, Double, Double) {
+        HelmContrast.mix(HelmContrast.components(color), backdrop, Double(color.alphaComponent))
+    }
+
+    private static func ratioText(_ r: Double) -> String { String(format: "%.2f", r) }
+
+    /// K-2 (the hero restyle board's "Lit selection", the captain's pick), in
+    /// the two registers the board draws: the palette on the card surface
+    /// with no system material, the field in a raised well, and the selected
+    /// row the one lit thing - the quiet-ink gradient with its words, tile
+    /// and hint drawn for it - while every other row stays on the card.
     private static func checkPaletteChrome(_ ok: inout Bool) {
-        print("\n-- §6.11: the ⌘K palette --")
-        ThemeManager.shared.setTheme(daylight)
+        print("\n-- §6.11 + K-2: the ⌘K palette --")
+        for id in ["lavender", "powder"] {
+            guard let theme = HelmTheme.appTheme(id: id) else {
+                print("  FAIL \(id) is not an app theme any more - the fixture is stale")
+                ok = false
+                continue
+            }
+            ThemeManager.shared.setTheme(theme)
+            let palette = makePalette()
+            palette.debugReload(query: "s")
+            palette.debugLayoutNow()
+            checkPaletteSurface(palette, theme: theme, &ok)
+            checkLitSelection(palette, theme: theme, &ok)
+            checkLitRowReallyPaints(palette, theme: theme, &ok)
+            // The panel is a real `.floating` `NSPanel`; a suite that ordered
+            // it in would put it over the captain's own screen.
+            if palette.window?.isVisible == true {
+                print("  FAIL \(id): the suite put the palette on screen")
+                ok = false
+            }
+        }
+        checkLitRowFollowsTheTheme(&ok)
+
+        // On a pre-Daylight palette the panel keeps its square, opaque chrome,
+        // and the lit selection is the same recipe on that palette's own hero
+        // colour - those themes no longer reach the app since the theme split,
+        // so there is nothing to keep apart.
+        let other = otherThemes[0]
+        ThemeManager.shared.setTheme(other)
         let palette = makePalette()
-        palette.debugApplyTheme(daylight)
         palette.debugReload(query: "s")
-        palette.debugLayoutNow()
+        palette.debugApplyTheme(other)
+        palette.debugRefreshRows(other)
+        let fbChrome = palette.debugPanelChrome
+        let lit = palette.debugRows.first
+        if fbChrome.radius == 0, fbChrome.opaque, lit?.debugIsLit == true,
+           lit?.debugHeroPalette == UnifiedSearchRowView.palette(in: other) {
+            print("  OK   \(other.id): square opaque panel, the lit row on its own hero colour")
+        } else {
+            print("  FAIL \(other.id): radius \(fmt(fbChrome.radius)) opaque \(fbChrome.opaque) lit \(String(describing: lit?.debugIsLit))")
+            ok = false
+        }
+        ThemeManager.shared.setTheme(daylight)
+    }
 
+    private static func checkPaletteSurface(_ palette: UnifiedSearchController, theme: HelmTheme, _ ok: inout Bool) {
+        var problems: [String] = []
         let chrome = palette.debugPanelChrome
-        if abs(chrome.width - UnifiedSearchController.panelWidth) < 0.51 {
-            print("  OK   width \(fmt(chrome.width))")
+        if abs(chrome.width - UnifiedSearchController.panelWidth) > 0.51 {
+            problems.append("width \(fmt(chrome.width)), want \(fmt(UnifiedSearchController.panelWidth))")
+        }
+        if abs(chrome.radius - HelmMetrics.dSurface) > 0.01 || !chrome.masks || chrome.opaque || !chrome.hasShadow {
+            problems.append("radius=\(fmt(chrome.radius)) masks=\(chrome.masks) opaque=\(chrome.opaque) shadow=\(chrome.hasShadow)")
+        }
+        // K-2: the card, opaque, and no system material anywhere under it.
+        if palette.debugHasMaterial { problems.append("a system material is still in the panel") }
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let fill = palette.window?.contentView?.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+        if !sameColor(fill, card) || (fill?.alphaComponent ?? 0) < 0.999 {
+            problems.append("the panel is not the opaque card (\(String(describing: fill)))")
+        }
+        // The field's raised well. Its discriminating power first: in these
+        // registers the inset well really is a different colour, so a field
+        // left on it cannot pass for raised.
+        let field = palette.debugSearchField
+        let raised = HelmField.fill(theme, surface: .raised)
+        if sameColor(HelmField.fill(theme), raised) {
+            problems.append("fixture: the inset and raised wells are the same colour here, the check is vacuous")
+        }
+        let wellFill = field.chromeView.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+        let wellEdge = field.chromeView.layer?.borderColor.flatMap { NSColor(cgColor: $0) }
+        if !sameColor(wellFill, raised) { problems.append("the field is not in the raised well") }
+        if !sameColor(wellEdge, HelmField.border(theme, surface: .raised)) {
+            problems.append("the field's edge is not the raised well's hairline")
+        }
+        let typed = field.debugEditor.textColor ?? .clear
+        let typedRatio = HelmContrast.ratio(typed, raised)
+        if typedRatio < HelmContrast.textTarget {
+            problems.append("typed text is \(ratioText(typedRatio)):1 on the well")
+        }
+        if !field.debugHasShortcutChip { problems.append("the field lost its esc keycap") }
+        if problems.isEmpty {
+            print("  OK   \(theme.id): 600pt card panel, no material, raised well (typed \(ratioText(typedRatio)):1), esc keycap")
         } else {
-            print("  FAIL width \(fmt(chrome.width)), want \(fmt(UnifiedSearchController.panelWidth))")
+            print("  FAIL \(theme.id): \(problems.joined(separator: "; "))")
             ok = false
         }
-        if abs(chrome.radius - HelmMetrics.dSurface) < 0.01 && chrome.masks
-            && !chrome.opaque && chrome.hasShadow {
-            print("  OK   radius \(fmt(chrome.radius)) on a clipped, non-opaque, shadowed panel")
-        } else {
-            print("  FAIL radius=\(fmt(chrome.radius)) masks=\(chrome.masks) opaque=\(chrome.opaque) shadow=\(chrome.hasShadow)")
-            ok = false
-        }
+    }
 
-        guard palette.debugRowCount > 0, let row = palette.debugDaylightRowGeometry(at: 0) else {
-            print("  FAIL no rows to measure (query matched nothing)")
+    private static func checkLitSelection(_ palette: UnifiedSearchController, theme: HelmTheme, _ ok: inout Bool) {
+        let rows = palette.debugRows
+        guard rows.count >= 3 else {
+            print("  FAIL \(theme.id): \(rows.count) rows, the fixture needs three to tell lit from unlit")
             ok = false
             return
         }
         var problems: [String] = []
-        if !row.flatTileHidden { problems.append("flat tinted tile still visible") }
-        if row.gradientTileHidden { problems.append("no gradient tile") }
-        if abs(row.gradientTileSide - 28) > 0.01 { problems.append("tile \(fmt(row.gradientTileSide))pt, want 28") }
-        if abs(row.backgroundRadius - HelmMetrics.dTileSmall) > 0.01 {
-            problems.append("row radius \(fmt(row.backgroundRadius))")
-        }
+        let hero = UnifiedSearchRowView.palette(in: theme)
+        let lighter = hero.lighterStop
+        let ink = HelmContrast.color(hero.ink)
+
         // Row 0 is the selected one after a reload.
-        if row.selectionEdgeHidden { problems.append("selected row has no left edge") }
-        if abs(row.selectionEdgeWidth - 3) > 0.01 { problems.append("edge \(fmt(row.selectionEdgeWidth))pt, want 3") }
-        if !sameColor(row.selectionEdgeColor, HelmTheme.nsColor(DaylightPalette.ink)) {
-            problems.append("edge is not `ink`")
+        let lit = rows[0]
+        if !lit.debugIsLit { problems.append("the selected row is not lit") }
+        if lit.debugHeroPalette != hero { problems.append("the lit row is not the quiet-ink hero palette") }
+        let stops = lit.debugHeroGradient.map { NSColor(cgColor: $0) ?? .clear }
+        if stops.count != 2 || !sameColor(stops.first, HelmContrast.color(hero.start))
+            || !sameColor(stops.last, HelmContrast.color(hero.end)) {
+            problems.append("the gradient layer does not paint the palette's two stops")
         }
-        if !sameColor(row.backgroundFill, HelmTheme.nsColor(DaylightPalette.inset)) {
-            problems.append("selected fill is not `inset`")
+        if lit.debugHeroGlowShape != .capsule { problems.append("the glow is the card's, not the row's") }
+        let titleRatio = HelmContrast.ratio(HelmContrast.components(lit.debugTitleColor ?? .clear), lighter)
+        let metaRatio = HelmContrast.ratio(over(lit.debugMetaColor ?? .clear, lighter), lighter)
+        let hintBackdrop = over(lit.debugHintFill ?? .clear, lighter)
+        let hintRatio = HelmContrast.ratio(HelmContrast.components(lit.debugHintColor ?? .clear), hintBackdrop)
+        if titleRatio < HelmContrast.textTarget { problems.append("title \(ratioText(titleRatio)):1 on the lighter stop") }
+        if metaRatio < HelmContrast.textTarget { problems.append("meta \(ratioText(metaRatio)):1 on the lighter stop") }
+        if hintRatio < HelmContrast.textTarget { problems.append("hint \(ratioText(hintRatio)):1 on its shade") }
+        if !sameColor(lit.debugTitleColor, ink) { problems.append("the title is not the hero's ink") }
+        if lit.debugHintAlpha < 0.999 { problems.append("the lit row hides its hint") }
+        if !lit.debugFlatTileHidden || lit.debugGlassTileHidden {
+            problems.append("the lit row does not swap its wash tile for the glass tile")
         }
-        if row.hintFont?.isFixedPitch != true { problems.append("shortcut hint is not mono") }
+        if !sameColor(lit.debugGlassFill, ink)
+            || abs((lit.debugGlassFill?.alphaComponent ?? 0) - PopoverHeroHeader.glassFillAlpha) > 0.01 {
+            problems.append("the glass tile is not the ink at the glass alpha")
+        }
+
+        // Every other row stays on the card: no gradient, no fill of its own,
+        // its wash tile, its hint out of sight, and ink that reads on the card.
+        let card = HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex))
+        for (n, row) in rows.enumerated().dropFirst() {
+            var rowProblems: [String] = []
+            if row.debugIsLit { rowProblems.append("lit") }
+            if row.debugBackgroundFill.alphaComponent > 0.001 { rowProblems.append("has a fill of its own") }
+            if row.debugFlatTileHidden || !row.debugGlassTileHidden { rowProblems.append("not on its wash tile") }
+            if row.debugHintAlpha > 0.001 { rowProblems.append("shows its hint") }
+            let r = HelmContrast.ratio(HelmContrast.components(row.debugTitleColor ?? .clear), card)
+            if r < HelmContrast.textTarget { rowProblems.append("title \(ratioText(r)):1 on the card") }
+            if !rowProblems.isEmpty { problems.append("row \(n): \(rowProblems.joined(separator: ", "))") }
+        }
+
+        // The light moves with the selection, and only one row ever has it.
+        palette.debugMoveSelection(by: 1)
+        let litAfter = rows.enumerated().filter { $0.element.debugIsLit }.map(\.offset)
+        if litAfter != [1] { problems.append("after one arrow press the lit rows are \(litAfter), want [1]") }
+        palette.debugMoveSelection(by: -1)
+
         if problems.isEmpty {
-            print("  OK   selected row: 28pt gradient tile, `inset` fill, 3pt `ink` edge, mono hint")
+            print("  OK   \(theme.id): one lit row - title \(ratioText(titleRatio)):1, meta \(ratioText(metaRatio)):1, "
+                  + "hint \(ratioText(hintRatio)):1 - and \(rows.count - 1) rows on the card; the light follows the arrows")
         } else {
-            print("  FAIL row: \(problems.joined(separator: "; "))")
+            print("  FAIL \(theme.id): \(problems.joined(separator: "; "))")
             ok = false
         }
+    }
 
-        // A second, unselected row must not carry the edge.
-        if palette.debugRowCount > 1, let second = palette.debugDaylightRowGeometry(at: 1) {
-            if second.selectionEdgeHidden {
-                print("  OK   an unselected row has no edge")
-            } else {
-                print("  FAIL every row is drawing the selection edge")
-                ok = false
-            }
+    /// AGENTS.md's "assert what is painted": the lit row's surface has to
+    /// reach the bitmap as the gradient, and an unlit row's as the card.
+    private static func checkLitRowReallyPaints(_ palette: UnifiedSearchController, theme: HelmTheme, _ ok: inout Bool) {
+        guard let content = palette.window?.contentView, palette.debugRows.count >= 2 else {
+            print("  FAIL \(theme.id): nothing to render")
+            ok = false
+            return
         }
-
-        // And on a pre-Daylight palette the flat tile is back and the panel is
-        // square and opaque again.
-        let other = otherThemes[0]
-        ThemeManager.shared.setTheme(other)
-        palette.debugApplyTheme(other)
-        palette.debugRefreshRows(other)
-        let fallback = palette.debugDaylightRowGeometry(at: 0)
-        let fbChrome = palette.debugPanelChrome
-        if fallback?.gradientTileHidden == true, fallback?.flatTileHidden == false,
-           fbChrome.radius == 0, fbChrome.opaque, fallback?.selectionEdgeHidden == true {
-            print("  OK   \(other.id) unchanged")
+        content.layoutSubtreeIfNeeded()
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else {
+            print("  FAIL \(theme.id): could not build a bitmap rep for the palette")
+            ok = false
+            return
+        }
+        content.cacheDisplay(in: content.bounds, to: rep)
+        // The rep is in pixels and top-down; the content view is not flipped.
+        let scaleX = CGFloat(rep.pixelsWide) / content.bounds.width
+        let scaleY = CGFloat(rep.pixelsHigh) / content.bounds.height
+        func sample(_ row: UnifiedSearchRowView) -> (Double, Double, Double)? {
+            let surface = row.debugSurfaceView
+            // 4pt in from the surface's leading edge, half way down: inside
+            // the rounded surface, clear of the tile and of any text.
+            let rect = surface.convert(surface.bounds, to: content)
+            let x = Int((rect.minX + 4) * scaleX)
+            let y = Int((content.bounds.height - rect.midY) * scaleY)
+            guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
+                  let c = rep.colorAt(x: x, y: y) else { return nil }
+            // The sample's raw components are already in the rep's space.
+            return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
+        }
+        func inRep(_ color: NSColor) -> (Double, Double, Double) {
+            // The expected colour goes into the rep's space; the sample is
+            // left alone (AGENTS.md's probe rules).
+            let converted = color.usingColorSpace(rep.colorSpace) ?? color
+            return (Double(converted.redComponent), Double(converted.greenComponent), Double(converted.blueComponent))
+        }
+        func distance(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Double {
+            abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2)
+        }
+        let rows = palette.debugRows
+        guard let litPixel = sample(rows[0]), let plainPixel = sample(rows[1]) else {
+            print("  FAIL \(theme.id): could not sample both rows")
+            ok = false
+            return
+        }
+        let card = inRep(HelmTheme.nsColor(theme.chromeBackgroundHex))
+        let start = inRep(HelmContrast.color(UnifiedSearchRowView.palette(in: theme).start))
+        let plainOff = distance(plainPixel, card)
+        let litOffCard = distance(litPixel, card)
+        let litOffStart = distance(litPixel, start)
+        // The leading edge of a 135-degree gradient sits near its start stop.
+        if plainOff < 0.03, litOffCard > 0.3, litOffStart < 0.25 {
+            print("  OK   \(theme.id): painted - the lit row's edge is the gradient (\(ratioText(litOffStart)) from its start stop), an unlit row is the card (\(ratioText(plainOff)))")
         } else {
-            print("  FAIL \(other.id) picked up Daylight chrome")
+            print("  FAIL \(theme.id): painted lit \(litPixel) plain \(plainPixel) card \(card) start \(start)")
             ok = false
         }
-        ThemeManager.shared.setTheme(daylight)
+    }
+
+    /// The panel observes the theme: a change repaints the card and the lit
+    /// row in the new register without the panel being rebuilt.
+    private static func checkLitRowFollowsTheTheme(_ ok: inout Bool) {
+        guard let lavender = HelmTheme.appTheme(id: "lavender"),
+              let powder = HelmTheme.appTheme(id: "powder") else { return }
+        ThemeManager.shared.setTheme(lavender)
+        let palette = makePalette()
+        palette.debugReload(query: "s")
+        ThemeManager.shared.setTheme(powder)
+        let fill = palette.window?.contentView?.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+        let lit = palette.debugRows.first
+        if lit?.debugHeroPalette == UnifiedSearchRowView.palette(in: powder),
+           sameColor(fill, HelmTheme.nsColor(powder.chromeBackgroundHex)),
+           UnifiedSearchRowView.palette(in: powder) != UnifiedSearchRowView.palette(in: lavender) {
+            print("  OK   a live theme change repaints the panel and its lit row")
+        } else {
+            print("  FAIL a theme change left the palette in the old register")
+            ok = false
+        }
     }
 
     // MARK: 6. The palette is a reskin only

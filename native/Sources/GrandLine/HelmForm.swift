@@ -939,6 +939,17 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     static let heroBorderAlpha: CGFloat = 0.32
     static let heroPlaceholderAlpha: CGFloat = 0.8
 
+    /// 1.2.0: which well recipe the field paints (`HelmField.Surface`), as
+    /// `HelmTextField.wellSurface` already offers. `.raised` is the ⌘K
+    /// palette's well (K-2 on the hero restyle board): the palette sits on
+    /// the card surface, and the inset well is the Lavender palette's `side`
+    /// colour, which on a white card reads as a tinted hole rather than a
+    /// field. Ignored while `heroInk` is set. `.inset`, the default, changes
+    /// nothing anywhere.
+    var wellSurface: HelmField.Surface = .inset {
+        didSet { if wellSurface != oldValue { applyTheme(lastTheme) } }
+    }
+
     /// - Parameter symbol: 1.1.0: the glyph at the well's leading edge. A
     ///   magnifying glass for a search; a field that does something else says
     ///   what (Quick connect's bolt).
@@ -1081,17 +1092,18 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
             return
         }
         HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue, animated: animated)
-        let ink = HelmField.ink(theme)
+                               focused: isFocused, hue: domainHue, surface: wellSurface, animated: animated)
+        let ink = HelmField.ink(theme, surface: wellSurface)
+        let muted = HelmField.mutedInk(theme, surface: wellSurface)
         editor.textColor = ink
-        placeholderLabel.textColor = HelmField.mutedInk(theme)
+        placeholderLabel.textColor = muted
         // The glyph is decorative next to real text, so it takes the muted
         // token rather than the accent - the accent is reserved for the focus
         // lamp on this same well (audit P1, "the accent is a light, not paint").
-        icon.contentTintColor = isFocused ? HelmTheme.nsColor(theme.accentHex) : HelmField.mutedInk(theme)
+        icon.contentTintColor = isFocused ? HelmTheme.nsColor(theme.accentHex) : muted
         hintChip?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(0.45).cgColor
-        hintLabel?.textColor = HelmField.mutedInk(theme)
+        hintLabel?.textColor = muted
     }
 
     /// The hero recipe - see `heroInk`.

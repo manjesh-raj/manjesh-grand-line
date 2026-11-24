@@ -36,3 +36,39 @@ Foundation dropped `Authorization` on a redirect to the same host (127.0.0.1 to 
 So there is no redirect guard of the app's own, because a guard whose test cannot fail is worse than none.
 `NetworkGateSelfTest.checkTheGitHubTokenStaysOnGitHub` asserts the Foundation behaviour instead, so an OS that starts forwarding the header fails the run by name.
 It also asserts the host table and that `applyAuth` asks the scope (deleting that line fails it).
+
+## K-2 Lit selection (the ⌘K palette, hero restyle board)
+
+The captain picked K-2 from the hero restyle board (`data/grandline-hero-restyle-designs-scout/`), the report's alternative rather than the recommended K-1.
+It is the chrome-light design: the palette is an opaque card, and the selected row is the only hero on it.
+
+**What shipped.**
+`UnifiedSearch.swift` drops H1's `.menu` material and its 90% fill, so the panel is the card surface (`chromeBackgroundHex`) on every palette.
+The field is a `HelmSearchField` in the raised well (`wellSurface = .raised`, new in `HelmSearchField` 1.2.0) with an `esc` keycap, as the board draws it.
+Rows rest on the card with `IconTileView`'s faint wash tile of their own hue, and hover still washes them.
+The selected row paints `HelmHeroColumn.palette` (the quiet-ink gradient the toasts and the notifications head use) with `HelmHeroSurface`'s capsule glow.
+Its title is the hero's ink, its meta line the ink at 80%, its tile a glass tile, and its hint a pill on `HelmButton.heroShade` at 16% with an ink hairline.
+Only the selected row shows its hint, because only that row is what Return runs.
+The hint keeps its place in the row at zero alpha, so a title truncates at the same point whichever row is lit, and VoiceOver reads the same words as before.
+The footer gains "↑ ↓ to move" ahead of "↩ to run" and "⌘K to close", and sits on the card rather than on a strip of the inset well's colour.
+Width, placeholder, groups, the overflow line, the keys, "No matches.", the rows' button role, the lock gate and the H1 height animation are unchanged.
+
+**A defect found on the way.**
+`resizeToFit` added a literal 61pt for everything above the results, which is 14 + 32 + 14 + 1 for a 32pt field.
+The field has been `HelmField.prominentHeight` (40pt) since Phase 0, so the results' scroll view was 8pt shorter than its own rows (366pt for 374pt, measured) and the bottom of the last row needed a scroll.
+`UnifiedSearchController.headerHeight` now derives the figure from the field's real height.
+
+**Where the design did not hold as drawn.**
+- §6.11 gave every Daylight row a full-saturation `HelmGradientTile` and the selected row an `inset` fill with a 3pt ink edge. The board's K-2 draws wash tiles, so the gradient tile and the edge are gone: a column of gradient squares beside one gradient row would be a dozen lit things rather than one.
+- The board's field is 42pt and its dark well is darker than the card. The kit's prominent field is 40pt, and the kit's raised well lifts 5% toward the ink in a dark register, so the Powder well is a step lighter than the card rather than a step darker.
+- The board's keycaps are outlined. `HelmKeyHint` draws filled caps, and the field's `esc` chip is `HelmSearchField`'s own mono chip.
+- The board's hint is 11pt bold. The hint uses `HelmType.chip()` (10.5pt bold), the kit's pill face.
+- The board marks its list `role="listbox"` with an active descendant. The native palette never had either (its rows are `HoverHighlightView` buttons whose label is their words), and K-2 changes nothing there.
+
+**Verification.**
+`DaylightChromeSelfTest`'s palette case now measures K-2 in Lavender and Powder: the opaque card with no material, the raised well and its typed contrast, exactly one lit row on the quiet-ink palette with title 6.14:1 / 6.16:1, meta 4.61:1 / 4.63:1 and hint 7.83:1 / 7.84:1, every other row on the card with its hint out of sight, the light following an arrow press, the gradient really reaching an off-screen bitmap, and a live theme change repainting it.
+`OverlaysModernizationSelfTest`'s material bound became a sweep of all 26 app themes (row ink and meta on the card, the lit row's words on its gradient), and its footer case expects the arrows.
+`UnifiedSearchLayoutSelfTest` asserts that the results' viewport equals its rows' height, and that the panel takes its new height at once under Reduce Motion.
+Each was confirmed to fail on an injection: the old 61pt constant (366pt for 374pt), a row that never lights, the field left on the inset well, the hint on a 14% white wash (4.49:1 / 4.46:1, the report's figure), unlit rows showing their hint, a theme observer that skips the rows, and a height animation that ignores Reduce Motion.
+An off-screen render of the real panel typing "prod" was compared with the board's K-2 in both registers. The first render drew the hint with square corners (the radius was set in the row's `layout()`, before the pill had a frame), and the pill now sets its own radius when its size lands.
+Not verified: the panel in the captain's running app, the window's own shadow, and a real VoiceOver pass.

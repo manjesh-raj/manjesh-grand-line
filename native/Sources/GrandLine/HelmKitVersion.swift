@@ -118,7 +118,7 @@ enum HelmKit {
         Component("HelmFieldCard", "1.1.0", file: "HelmForm.swift"),
         Component("HelmFieldCentering", "1.1.0", file: "HelmForm.swift"),
         Component("HelmFormSheet", "1.1.0", file: "HelmForm.swift"),
-        Component("HelmSearchField", "1.1.0", file: "HelmForm.swift"),
+        Component("HelmSearchField", "1.2.0", file: "HelmForm.swift"),
         Component("HelmSecureTextField", "1.2.0", file: "HelmForm.swift"),
         Component("HelmTextField", "1.1.0", file: "HelmForm.swift"),
         Component("HelmTextView", "1.1.0", file: "HelmForm.swift"),
@@ -270,6 +270,7 @@ enum HelmKit {
         Component("Notifications panel", "1.0.0", file: "NotificationBridgePanel.swift"),
         Component("Toasts", "1.0.0", file: "Toast.swift"),
         Component("Dictation HUD", "1.0.0", file: "DictationHUD.swift"),
+        Component("⌘K palette", "1.0.0", file: "UnifiedSearch.swift"),
     ]
 
     struct SourceDigest {
@@ -304,7 +305,7 @@ enum HelmKit {
         SourceDigest(file: "HelmDesignSystem.swift", stamp: "HelmAccentRow@1.0.0,HelmButton@1.4.0,HelmCard@2.0.0,HelmCountBadge@1.0.0,HelmEmptyState@1.0.1,HelmFocusRing@1.0.0,HelmMetrics@1.1.0,HelmPageToolbar@1.0.0,HelmPopUpButton@1.0.0,HelmResponsiveGrid@1.1.0,HelmSegmentedTabs@1.2.0,HelmType@1.2.0", sha256: "dcd89baeb71a61728b9ef28e4ef5ba8dec6eb2f0eabf679670acf8114b71b05e"),
         SourceDigest(file: "HelmDrillHeader.swift", stamp: "HelmDrillHeader@1.0.0", sha256: "73712c9e058defa127936a03d9b47618e039e031d7713652d471db2c1a29480b"),
         SourceDigest(file: "HelmFocusVisibility.swift", stamp: "HelmFocusVisibility@1.0.0", sha256: "de4eab8dd4eac530b4f2c41fe9a9da80ae8e1665b02c9a4424df5c8dd6f9872f"),
-        SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.1.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.2.0,HelmFieldCard@1.1.0,HelmFieldCentering@1.1.0,HelmFormSheet@1.1.0,HelmSearchField@1.1.0,HelmSecureTextField@1.2.0,HelmTextField@1.1.0,HelmTextView@1.1.0,HelmToggle@1.0.0,HelmToggleRow@1.1.0", sha256: "0b13009691017deb4b45aded6ebfc6bcbcfb8aceeca2ac76c30e9997c2135926"),
+        SourceDigest(file: "HelmForm.swift", stamp: "HelmCenteredSecureTextFieldCell@1.1.0,HelmCenteredTextFieldCell@1.0.0,HelmChipInput@1.0.0,HelmDotAccessory@1.0.0,HelmField@1.2.0,HelmFieldCard@1.1.0,HelmFieldCentering@1.1.0,HelmFormSheet@1.1.0,HelmSearchField@1.2.0,HelmSecureTextField@1.2.0,HelmTextField@1.1.0,HelmTextView@1.1.0,HelmToggle@1.0.0,HelmToggleRow@1.1.0", sha256: "3a298c3ab9d82f52517d2ad7d47c9e20bc390f5cfa1aded192f566beac484dd2"),
         SourceDigest(file: "HelmGradientTile.swift", stamp: "HelmGradientTile@1.0.0", sha256: "b2ec10777e795afde1a07241b6f9991c3fe12616c1b293e63e45dc22bc65f517"),
         SourceDigest(file: "HelmInput.swift", stamp: "HelmFocusRegistration@1.0.0,HelmFocusSensing@1.0.0,HelmInputSurface@1.2.0,HelmSelection@1.0.0", sha256: "3e37c4f1a0919196a9ada15b4e1217721f3d54929be690d589e0990d7de470ff"),
         SourceDigest(file: "HelmKeyHint.swift", stamp: "HelmKeyHint@1.0.0", sha256: "fc81e10be20a16c5bc8fa0074639fbbbe4b9abc73f82cadb6e647c75c703b854"),
