@@ -1974,3 +1974,72 @@ Sidebar layout only: the floating bar's Fleet page builds no band and draws what
 - An off-screen render of the real page (both tabs, typical, failed, empty and not set up, in Lavender and Powder) was compared with the board's CR-1.
   It was a scratch hook, removed before commit.
 - Not verified: the band in the captain's running app, a spoken VoiceOver pass, a live Reduce Motion toggle (the suites pin `HelmMotion.reducedOverrideForTests`), and the full window lane.
+
+## The Crew band on Review (CR-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The second half of CR-1 Crew band, for the Review tab (`ReviewController`).
+Log is still to come, and keeps its header line until it has its own band.
+Sidebar layout only: the floating bar's Review page builds no band and draws what it drew before.
+
+### What shipped
+
+- **The same band.**
+  Review opens on a `HelmHeroColumn` in `.band`, built the way Needs you and In flight build theirs.
+  The AppKit half they share moved out of `FleetController` into `CrewBand` (the figure strip and its leading-edge hug, the figure, pill and ring mapping, the tone, the band's clock), so the three tabs draw their bands one way.
+  It replaces the grey header line (`WorkspaceHeaderLineCollapsing`), the count line and the boxed three-figure strip.
+  The live subtitle is still the page's summary for the crew panel and the floating bar's drill header.
+- **The words.**
+  "2 pull requests are ready to merge" under "Review · 9 open · checked 11:24 AM", over "3 with checks running · 1 failing · across GitHub and Bitbucket."
+  A ring of ready over open sits at the band's top right ("2/9", captioned "ready"), and the figures are Open PRs, Ready to merge, Checks running and Checks failing.
+  Ready to merge is counted by `FleetDataSource.readyToMerge`, the one definition the rows, the bell and Home use.
+  The first scan says "Checking your projects…" over the skeleton, which loses its own loading sentence.
+- **The band is the empty state.**
+  A clean scan with nothing open reads "No open pull requests right now" with a check tile, and the two empty forge cards go, as the board draws it.
+- **A failed scan (GL-14).**
+  A scan that reached nothing paints the dimmed tone and says "Couldn’t read your projects at 11:24 AM" under "Review · last read 11:02 AM".
+  It draws no figure and no ring rather than a zero.
+  Show folder path moves from the failure block onto the band as a ghost pill, and reveals the path as a row on the gradient (a `HelmHeroRow` with a code subtitle, truncated in the middle).
+  A scan that missed some forges is dimmed too, keeps the pull requests it found with their counts and ring, and says they are only part of the picture.
+  The forge cards and their unavailable rows stay under it, as they did.
+- **Unchanged.**
+  The forge cards, their rows, the Review and Merge buttons, the merge gate and confirm, the keys, the VoiceOver roles, and Refresh in the toolbar.
+- **Kit.**
+  `HelmHeroColumn` 1.5.1 puts a band's ring at the band's trailing edge.
+  The words and the ring's caption both hugged at 250 and the engine gave the slack to the caption, so the ring sat right after the words.
+  A band's words now hug at 249 when it has a ring.
+
+### Where the design did not hold as drawn
+
+- **The ring's word is beside it, not inside it.**
+  The board draws "2/9" over "ready" inside the ring.
+  `HelmRingGauge` has one centre label, so "ready" is the ring's caption at its right.
+- **The first fix for the ring's place was the wrong one.**
+  Raising the caption's hug to 251 moved the ring, and grew a 1100pt window to 1463pt on Connections with the inspector open (`PageRedesignsSelfTest`'s inspector check, three cases).
+  A raised hug is a width ceiling, gotcha (13)'s third bullet.
+  Lowering the words' hug to 249 moves the ring and can hold nothing narrower.
+  A stack-level hug of 251 on the ring's row did nothing, because the caption inside it still stretched at 250.
+- **The failure's words carry the time.**
+  The board's failed band says "Couldn't read your projects" under a bare "Review" kicker.
+  The band says when the scan tried, in the headline, and when it last read everything, in the kicker, as Needs you's failed band does.
+- **Today's failure body loses a sentence.**
+  The failure block said "If it has moved, set the firstmate home again in Setup."
+  The band takes the board's two sentences, which fill its two lines, and the path row is one click away.
+- **Not set up is the failed scan.**
+  The board draws the two states alike, and the page cannot tell them apart: with no firstmate home, the projects folder cannot be listed.
+- **The figures carry no signal dots and are equal columns with hairlines**, the inline strip's look, as on Needs you and In flight.
+- **"Keeps what was carried" means what the scan still holds.**
+  Review has never carried an earlier scan's list across a failure.
+  A partial scan keeps what it found and an unreadable projects folder keeps the task-tracked pull requests, both dimmed and counted.
+  A scan that found nothing shows nothing, as today.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless, CI's blocking lane) asserts `CrewHeroWords.review` in every state: the first scan, typical, one ready, none ready, the forge phrases, empty, a scan that reached nothing (with and without an earlier clean read), a partial scan with and without pull requests, and task-tracked pull requests over an unreadable folder.
+  It drives a real `ReviewController` in the sidebar layout through its first scan, a scan, an unreadable folder with Show folder path both ways, a partial scan and an empty one, beside one that never adopted the layout and keeps its line, figures and failure block.
+  Its palette sweep now includes the ring's arc and label and the folder row's words, on 50 palettes in both tones (weakest text 4.50:1, the folder path at the quiet ink, which the palette is deepened to hold at the floor).
+- `PageRedesignsSelfTest` (window lane) opens Review from Crew's toolbar tab in a real off-screen sidebar shell: the band as one group named by its headline, its words and figures, the ring at the band's trailing edge, the header line given up, the count line, boxed figures and failure block gone, Refresh in the toolbar, the forge cards and their rows, the dimmed unreadable folder with no figure and Show folder path putting the path on the band and taking it off, a partial scan keeping its rows, the empty band without forge cards, and gotcha (13) (no width held between 500 and required, a floor under 420pt, and a 1100pt window keeping its width).
+  The floating bar's Review keeps its count line, its three boxed figures, its header line and its empty forge cards.
+- Confirmed to fail when injected: a failed scan on the accent tone (four word checks, two real-page checks, two window checks), the header line kept (the real page and the window), the empty forge cards kept (both), an unreadable folder counting zeros (the words and the window, which printed "0 Open PRs"), the path never reaching the band (both), the floating bar hiding its count line and figures (both), a partial scan hiding its rows (both), the ring's arc at 30% (the sweep, 1.91:1 on Daylight), and the kit without 1.5.1 (the window's ring check, "at x 320.0 of 1199.0").
+- An off-screen render of the real page (first scan, typical, busy, empty, unreadable folder with and without the path, and a partial scan, in Lavender and Powder) was compared with the board's CR-1 Review tab.
+  It was a scratch hook, removed before commit.
+- Not verified: the band in the captain's running app, a spoken VoiceOver pass, a live Reduce Motion toggle (nothing on the band animates, and none was added), and the full window lane.

@@ -132,7 +132,7 @@ enum HelmKit {
         Component("HelmHeroTile", "1.1.0", file: "HelmHeroCard.swift"),
         Component("HelmHeroTileGrid", "1.1.0", file: "HelmHeroCard.swift"),
         // HelmHeroColumn.swift
-        Component("HelmHeroColumn", "1.5.0", file: "HelmHeroColumn.swift"),
+        Component("HelmHeroColumn", "1.5.1", file: "HelmHeroColumn.swift"),
         Component("HelmHeroNavRow", "1.0.0", file: "HelmHeroColumn.swift"),
         Component("HelmHeroRow", "1.0.0", file: "HelmHeroColumn.swift"),
         // HelmHeroSplitCard.swift
@@ -273,7 +273,7 @@ enum HelmKit {
         Component("⌘K palette", "1.0.0", file: "UnifiedSearch.swift"),
         Component("Capture panel", "1.0.0", file: "ShiftQuickCapture.swift"),
         Component("Task sheet", "1.0.0", file: "ShiftTaskEditorController.swift"),
-        Component("Crew (page)", "1.0.0", file: "FleetController.swift"),
+        Component("Crew (page)", "1.1.0", file: "FleetController.swift"),
     ]
 
     struct SourceDigest {
@@ -290,7 +290,7 @@ enum HelmKit {
         SourceDigest(file: "HelmPromptWell.swift", stamp: "HelmPromptTextView@1.0.0,HelmPromptWell@1.0.0", sha256: "f63de288d5cb52389445855414c463ea6dd9edee7d4b6db6aa7ce0668017e26c"),
         SourceDigest(file: "HelmPageScaffold.swift", stamp: "HelmPageScaffold@1.0.0", sha256: "cb99965fc36bd64fa45b76f8321efa195f4b3e1e6539271ae776408206fb4134"),
         SourceDigest(file: "HelmDensity.swift", stamp: "HelmDensity@1.0.0", sha256: "c725fb34b3438a1b7bd2ee9a3ba69a52d05b328e9a09b365bd4a468611d61983"),
-        SourceDigest(file: "HelmHeroColumn.swift", stamp: "HelmHeroColumn@1.5.0,HelmHeroNavRow@1.0.0,HelmHeroRow@1.0.0", sha256: "35368a3f4ebf309376a114b5c42f19c65ba1bf2922cb359a0e1f4b53f80931f8"),
+        SourceDigest(file: "HelmHeroColumn.swift", stamp: "HelmHeroColumn@1.5.1,HelmHeroNavRow@1.0.0,HelmHeroRow@1.0.0", sha256: "577c536b28327a8d351f64f8c665e44acf34def4cda86996135c54395df8b2ac"),
         SourceDigest(file: "HelmHeroSplitCard.swift", stamp: "HelmHeroSplitCard@1.0.0", sha256: "97051bf0f9e67923946b5f2c9c33bff0cb9dd03506d027f1540bc9e01dbf7bef"),
         SourceDigest(file: "HelmHeroSurface.swift", stamp: "HelmHeroSurface@1.3.0", sha256: "41ae8e8154001e27470f163fc9300d007551dba31e6c55b070778b8b80907895"),
         SourceDigest(file: "HelmHeroCard.swift", stamp: "HelmHeroCard@2.1.0,HelmHeroStatusPill@1.0.0,HelmHeroTile@1.1.0,HelmHeroTileGrid@1.1.0", sha256: "0e283ed6b2ea573a876ff60777fe01eb7335e83097192b8e2a4e05f9463cd82d"),

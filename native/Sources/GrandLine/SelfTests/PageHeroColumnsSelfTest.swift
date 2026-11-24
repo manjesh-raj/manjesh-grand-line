@@ -26,6 +26,12 @@
 //     sidebar layout drawing the first read, a good read and a failed one with
 //     its rows carried, and the band's painted words, pill, tiles and figures
 //     clearing their floors on every palette.
+//   - CR-1 on Crew › Review: `CrewHeroWords.review` in every state (first
+//     read, typical, busy, empty, a scan that reached nothing, a partial one
+//     with its pull requests kept), a real `ReviewController` in the sidebar
+//     layout drawing them with its ring, its dimmed failed read and Show
+//     folder path, and the same page in the floating bar drawing no band. The
+//     ring's arc and label clear their floors on every palette too.
 //
 // The layout in a real shell is `PageHeroColumnsViewSelfTest`.
 //
@@ -54,6 +60,8 @@ enum PageHeroColumnsSelfTest {
             checkCrewInFlightWords,
             checkTheBandsNewOptions,
             checkTheCrewBandOnTheRealPage,
+            checkCrewReviewWords,
+            checkTheReviewBandOnTheRealPage,
             checkTheCrewBandClearsTheFloorOnEveryPalette,
         ]
         for check in checks {
@@ -635,6 +643,198 @@ enum PageHeroColumnsSelfTest {
               "CR-1: In flight keeps its header line over the band", &ok)
     }
 
+    /// CR-1 on Review: the board's words in every state the page can be in.
+    private static func checkCrewReviewWords(_ ok: inout Bool) {
+        typealias Reading = CrewHeroWords.ReviewReading
+        let earlier = crewNow.addingTimeInterval(-22 * 60)
+        let first = CrewHeroWords.review(Reading(hasRead: false), time: crewTime)
+        check(first.kicker == "Review" && first.headline == "Checking your projects\u{2026}"
+                && first.body == "Reading open pull requests from every clone in your firstmate home."
+                && first.figures.isEmpty && first.ring == nil && first.tone == .accent
+                && first.symbol == CrewHeroWords.reviewSymbol,
+              "CR-1: Review before its first scan is \(first)", &ok)
+
+        let typical = Reading(hasRead: true, checkedAt: crewNow, cleanReadAt: crewNow, github: 7, bitbucket: 2,
+                              ready: 2, running: 3, failing: 1)
+        let band = CrewHeroWords.review(typical, time: crewTime)
+        check(band.kicker == "Review \u{00B7} 9 open \u{00B7} checked 11:24 AM"
+                && band.headline == "2 pull requests are ready to merge"
+                && band.body == "3 with checks running \u{00B7} 1 failing \u{00B7} across GitHub and Bitbucket."
+                && band.tone == .accent && !band.offersFolderPath && !band.offersSetup && band.status == nil,
+              "CR-1: Review's typical band is \(band)", &ok)
+        check(band.figures.map(\.caption) == ["Open PRs", "Ready to merge", "Checks running", "Checks failing"]
+                && band.figures.map(\.value) == ["9", "2", "3", "1"] && band.figures.allSatisfy { !$0.opensReview },
+              "CR-1: Review's figures are \(band.figures)", &ok)
+        if let ring = band.ring {
+            check(ring.label == "2/9" && abs(ring.fraction - 2.0 / 9.0) < 0.0001 && ring.caption == "ready"
+                    && ring.spoken == "2 of 9 open pull requests ready to merge",
+                  "CR-1: Review's ring is \(ring)", &ok)
+        } else {
+            fail("CR-1: Review's typical band has no ring", &ok)
+        }
+        var one = typical
+        one.ready = 1
+        one.running = 0
+        one.failing = 0
+        one.bitbucket = 0
+        let single = CrewHeroWords.review(one, time: crewTime)
+        check(single.headline == "1 pull request is ready to merge"
+                && single.body == "No checks running or failing \u{00B7} on GitHub." && single.ring?.label == "1/7",
+              "CR-1: one ready PR on GitHub reads \(single.headline) / \(single.body ?? "-")", &ok)
+        var none = typical
+        none.ready = 0
+        check(CrewHeroWords.review(none, time: crewTime).headline == "No pull requests are ready to merge"
+                && CrewHeroWords.review(none, time: crewTime).ring?.fraction == 0,
+              "CR-1: no ready PR reads \(CrewHeroWords.review(none, time: crewTime).headline)", &ok)
+        var stray = Reading(hasRead: true, checkedAt: crewNow, other: 2)
+        check(CrewHeroWords.forgePlace(stray) == "on no known forge", "CR-1: task PRs on no forge are \(CrewHeroWords.forgePlace(stray))", &ok)
+        stray.github = 1
+        stray.bitbucket = 1
+        check(CrewHeroWords.forgePlace(stray) == "across GitHub, Bitbucket and elsewhere",
+              "CR-1: three kinds of forge read \(CrewHeroWords.forgePlace(stray))", &ok)
+
+        let empty = CrewHeroWords.review(Reading(hasRead: true, checkedAt: crewNow, cleanReadAt: crewNow), time: crewTime)
+        check(empty.symbol == CrewHeroWords.calmSymbol && empty.kicker == "Review \u{00B7} checked 11:24 AM"
+                && empty.headline == "No open pull requests right now"
+                && empty.body == "Every clone was read. Nothing is waiting on a review or a merge."
+                && empty.figures.isEmpty && empty.ring == nil && empty.tone == .accent,
+              "CR-1: Review's empty band is \(empty)", &ok)
+
+        // GL-14: a scan that reached nothing is dimmed, says when it tried and
+        // when it last read everything, and draws no count at all.
+        let unread = Reading(hasRead: true, checkedAt: crewNow, cleanReadAt: earlier,
+                             failure: "Couldn't read your projects", failureIsTotal: true)
+        let blind = CrewHeroWords.review(unread, time: crewTime)
+        check(blind.tone == .dimmed && blind.headline == "Couldn\u{2019}t read your projects at 11:24 AM"
+                && blind.kicker == "Review \u{00B7} last read 11:02 AM"
+                && blind.body == "Open pull requests are read from the clones in your firstmate home\u{2019}s projects folder. "
+                    + "None could be read, so no count is shown."
+                && blind.figures.isEmpty && blind.ring == nil && blind.offersFolderPath,
+              "CR-1: Review over an unreadable projects folder is \(blind)", &ok)
+        var never = unread
+        never.cleanReadAt = nil
+        check(CrewHeroWords.review(never, time: crewTime).kicker == "Review",
+              "CR-1: a first scan that failed claims a last read: \(CrewHeroWords.review(never, time: crewTime).kicker)", &ok)
+        // A scan that missed some forges keeps what it found, dimmed and said.
+        var partial = typical
+        partial.bitbucket = 0
+        partial.failure = "Couldn't reach the forge for 2 repositories."
+        partial.cleanReadAt = earlier
+        let kept = CrewHeroWords.review(partial, time: crewTime)
+        check(kept.tone == .dimmed && kept.headline == "Couldn\u{2019}t reach the forge for 2 repositories at 11:24 AM"
+                && kept.body == "Showing the 7 pull requests found in the repositories that answered, 2 ready to merge. "
+                    + "The others are not counted."
+                && kept.figures.map(\.value) == ["7", "2", "3", "1"] && kept.ring?.label == "2/7" && !kept.offersFolderPath,
+              "CR-1: a partial scan with PRs is \(kept)", &ok)
+        var partialEmpty = Reading(hasRead: true, checkedAt: crewNow, failure: "Couldn't reach the forge for grand-line.")
+        partialEmpty.cleanReadAt = nil
+        let gap = CrewHeroWords.review(partialEmpty, time: crewTime)
+        check(gap.tone == .dimmed && gap.figures.isEmpty && gap.ring == nil
+                && gap.headline == "Couldn\u{2019}t reach the forge for grand-line at 11:24 AM"
+                && (gap.body ?? "").hasSuffix("so no count is shown."),
+              "CR-1: a partial scan that found nothing is \(gap)", &ok)
+        // Task-tracked PRs survive an unreadable projects folder: counted,
+        // said to be only those, and the folder path still offered.
+        var tracked = unread
+        tracked.github = 2
+        tracked.ready = 1
+        let tasks = CrewHeroWords.review(tracked, time: crewTime)
+        check(tasks.tone == .dimmed && tasks.offersFolderPath && tasks.figures.map(\.value) == ["2", "1", "0", "0"]
+                && tasks.body == "Showing the 2 pull requests your crew\u{2019}s tasks point at, 1 ready to merge. "
+                    + "Your clones could not be read, so theirs are not counted.",
+              "CR-1: task PRs over an unreadable folder are \(tasks)", &ok)
+    }
+
+    /// The real page: a `ReviewController` in the sidebar layout, headless,
+    /// beside one that never adopted it (the floating bar's).
+    private static func checkTheReviewBandOnTheRealPage(_ ok: inout Bool) {
+        func pr(_ n: Int, _ forge: String, _ checks: String, task: String? = nil) -> MergedPR {
+            MergedPR(source: task == nil ? "forge" : "work", taskID: task, repo: "grand-line",
+                     url: "https://\(forge == "github" ? "github.com" : "bitbucket.org")/o/grand-line/pull/\(n)",
+                     number: n, title: "PR \(n)", checks: checks, forge: forge)
+        }
+        let prs = [pr(1, "github", "green", task: "crew-a"), pr(2, "github", "green", task: "crew-b"),
+                   pr(3, "github", "pending"), pr(4, "github", "red"), pr(5, "bitbucket", "green")]
+        let theme = ThemeManager.shared.theme
+        let dimmed = HelmHeroColumn.palette(for: .init(colour: .themeAccent, isDimmed: true), in: theme)
+        let accent = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
+        check(dimmed != accent, "fixture: the dimmed tone is the accent's own palette", &ok)
+
+        // The floating bar's page: no band, its line, figures and block as before.
+        let floating = ReviewController()
+        _ = floating.view
+        floating.debugRender(prs)
+        check(floating.debugReviewBand == nil && floating.debugIsStatsRowVisible && floating.debugIsBodySubtitleVisible
+                && floating.debugStatTiles.map(\.caption) == ["Open PRs", "Ready to merge", "Checks running"]
+                && !floating.collapsesEmptyHeaderLine && floating.drawsSubtitleOnHeaderLine,
+              "CR-1: the floating bar's Review drew the band or lost its line and figures", &ok)
+        floating.debugRender([], scan: OpenPRsSource.FetchResult(projectsUnreadable: true))
+        check(floating.debugReviewBand == nil && floating.debugIsFailureStateVisible,
+              "CR-1: the floating bar's Review lost its failure block", &ok)
+
+        let review = ReviewController()
+        _ = review.view
+        review.adoptSidebarLayout()
+        guard let first = review.debugReviewBand else {
+            fail("CR-1: Review has no band before its first scan", &ok)
+            return
+        }
+        check(first.debugHeadline == "Checking your projects\u{2026}" && first.debugFootViews.isEmpty
+                && review.debugIsLoadingSkeletonVisible && !review.debugIsLoadingLabelVisible
+                && review.collapsesEmptyHeaderLine && !review.drawsSubtitleOnHeaderLine,
+              "CR-1: Review's first scan reads \(first.debugHeadline) with skeleton \(review.debugIsLoadingSkeletonVisible)", &ok)
+
+        review.debugRender(prs)
+        let stamp = CrewBand.time(Date())
+        check(first.debugHeadline == "2 pull requests are ready to merge"
+                && first.debugBody == "1 with checks running \u{00B7} 1 failing \u{00B7} across GitHub and Bitbucket."
+                && (first.debugKicker.contains(stamp) || first.debugKicker.contains(CrewBand.time(Date().addingTimeInterval(-60))))
+                && first.debugPalette == accent,
+              "CR-1: Review after a scan reads \(first.debugKicker) / \(first.debugHeadline) / \(first.debugBody ?? "-")", &ok)
+        let strip = review.debugBandFigures
+        check(first.debugFootViews.first === strip && zip(strip.debugValues, strip.debugCaptions).map { "\($0) \($1)" }
+                == ["5 Open PRs", "2 Ready to merge", "1 Checks running", "1 Checks failing"]
+                && (0..<4).allSatisfy { strip.debugActionCell(at: $0) == nil },
+              "CR-1: Review's figures are \(strip.debugValues) \(strip.debugCaptions)", &ok)
+        check(first.debugRing?.centreLabelForTests == "2/5" && abs((first.debugRing?.fractionForTests ?? 0) - 0.4) < 0.001,
+              "CR-1: Review's ring reads \(first.debugRing?.centreLabelForTests ?? "nothing")", &ok)
+        check(!review.debugIsStatsRowVisible && !review.debugIsBodySubtitleVisible && review.debugAreForgeSectionsVisible
+                && review.debugGithubRowCount == 4 && review.debugBitbucketRowCount == 1,
+              "CR-1: Review kept its boxed figures or count line, or lost its forge cards", &ok)
+
+        // GL-14: a scan that reached nothing is dimmed, says when, counts
+        // nothing, and offers the folder path on the band.
+        review.debugRender([], scan: OpenPRsSource.FetchResult(projectsUnreadable: true))
+        check(first.debugPalette == dimmed && first.debugHeadline.hasPrefix("Couldn\u{2019}t read your projects at ")
+                && first.debugKicker.hasPrefix("Review \u{00B7} last read ")
+                && first.debugFootViews.count == 1 && first.debugFootViews.first === review.debugBandFolderButton
+                && first.debugRing == nil && !review.debugAreForgeSectionsVisible && !review.debugIsFailureStateVisible,
+              "CR-1: an unreadable projects folder drew \(first.debugHeadline) with foot \(first.debugFootViews), "
+                + "dimmed \(first.debugPalette == dimmed)", &ok)
+        review.debugBandFolderButton.performClick(nil)
+        check(first.debugBandViews.first === review.debugBandFolderRow
+                && review.debugBandFolderRow.subtitleLabel.stringValue == FirstmateHome.projects.path
+                && review.debugBandFolderButton.title == "Hide folder path",
+              "CR-1: Show folder path did not show the path on the band", &ok)
+        review.debugBandFolderButton.performClick(nil)
+        check(first.debugBandViews.isEmpty && review.debugBandFolderButton.title == "Show folder path",
+              "CR-1: Hide folder path left the path on the band", &ok)
+
+        // A partial scan keeps the pull requests it found, under them.
+        review.debugRender(Array(prs.prefix(4)),
+                           scan: OpenPRsSource.FetchResult(prs: [], failedRepos: ["pramata-status", "pramata-hive"]))
+        check(first.debugPalette == dimmed && first.debugHeadline.hasPrefix("Couldn\u{2019}t reach the forge for 2 repositories at ")
+                && strip.debugValues == ["4", "2", "1", "1"] && review.debugGithubRowCount == 4
+                && review.debugAreForgeSectionsVisible && first.debugRing != nil,
+              "CR-1: a partial scan drew \(first.debugHeadline) over \(review.debugGithubRowCount) rows", &ok)
+
+        // A clean scan with nothing open: the band is the empty state.
+        review.debugRender([])
+        check(first.debugHeadline == "No open pull requests right now" && first.debugFootViews.isEmpty
+                && first.debugRing == nil && first.debugPalette == accent && !review.debugAreForgeSectionsVisible,
+              "CR-1: an empty Review drew \(first.debugHeadline) and forge cards \(review.debugAreForgeSectionsVisible)", &ok)
+    }
+
     private static func composite(_ color: NSColor, over ground: (Double, Double, Double)) -> (Double, Double, Double) {
         let alpha = Double((color.usingColorSpace(.sRGB) ?? color).alphaComponent)
         return HelmContrast.mix(HelmContrast.components(color), ground, alpha)
@@ -657,6 +857,12 @@ enum PageHeroColumnsSelfTest {
         grid.tiles = [tile]
         let strip = HelmKPIStrip(density: .inline)
         strip.configure([.init(.value("2"), caption: "Ready to merge", isAction: true), .init(.unread, caption: "Watcher stale")])
+        // Review's band: the ring of ready over open, the folder path's row.
+        let ringed = HelmHeroColumn()
+        ringed.setArrangement(.band)
+        let review = CrewHeroWords.review(.init(hasRead: true, github: 9, ready: 2, running: 3, failing: 1), time: crewTime)
+        let pathRow = HelmHeroRow(leading: .symbol("folder"), title: "Projects folder", subtitle: "/a/projects",
+                                  subtitleIsCode: true)
         var failures: [String] = []
         var worst = Double.infinity
         for theme in themes {
@@ -666,6 +872,10 @@ enum PageHeroColumnsSelfTest {
                                                body: "1 decision waiting", ring: nil, status: .init(text: "Watcher stale", tint: .warn)),
                                  sections: [], foot: [strip], tone: tone, bandViews: [grid], footRule: true)
                 column.applyTheme(theme)
+                ringed.configure(header: .init(symbol: review.symbol, kicker: review.kicker, headline: review.headline,
+                                               body: review.body, ring: CrewBand.ring(review.ring)),
+                                 sections: [], foot: [], tone: tone, bandViews: [pathRow])
+                ringed.applyTheme(theme)
                 guard let palette = column.debugPalette, let pill = column.debugStatusPill else {
                     failures.append("\(theme.id): the band is unpainted")
                     continue
@@ -693,6 +903,16 @@ enum PageHeroColumnsSelfTest {
                     }
                     // A dash is a 19pt figure: the large-text floor.
                     floor("unknown figure", strip.debugValueColors.last ?? nil, on: stop, HelmContrast.nonTextTarget)
+                    // Review: the ring's arc and its centre label, and the
+                    // folder path's row, on the same palette.
+                    if let ring = ringed.debugRing, ringed.debugPalette == palette {
+                        floor("ring arc", ring.debugArcColor.flatMap { NSColor(cgColor: $0) }, on: stop, HelmContrast.nonTextTarget)
+                        floor("ring label", ring.labelColorOverride, on: stop, HelmContrast.textTarget)
+                    } else {
+                        failures.append("\(tag): Review's band has no ring on its palette")
+                    }
+                    floor("path title", pathRow.titleLabel.textColor, on: stop, HelmContrast.textTarget)
+                    floor("path", pathRow.subtitleLabel.textColor, on: stop, HelmContrast.textTarget)
                 }
             }
         }

@@ -224,21 +224,13 @@ final class FleetController: NSViewController {
     /// The band's strip: In flight's six figures, or Needs you's three.
     /// Ready to merge is its one button, into Review.
     private lazy var bandFigures: HelmKPIStrip = {
-        let strip = HelmKPIStrip(density: .inline)
+        // Packed at the band's leading edge (`CrewBand.figureStrip`).
+        let strip = CrewBand.figureStrip()
         strip.onActivate = { [weak self] index in
             guard let self, self.bandFigureWords.indices.contains(index),
                   self.bandFigureWords[index].opensReview else { return }
             self.onNavigateToReview?()
         }
-        // The strip keeps its figures' own width at the band's leading edge
-        // rather than spreading six columns over the whole band. A zero is a
-        // maximum, never a floor, so it can neither widen the band nor the
-        // window (gotcha (13)). It sits at the fitting-size level, under every
-        // priority the strip's own stacks and columns hold (250 to 252), so it
-        // only packs them and never decides a width they care about.
-        let hug = strip.widthAnchor.constraint(equalToConstant: 0)
-        hug.priority = .fittingSizeCompression
-        hug.isActive = true
         return strip
     }()
     private var bandFigureWords: [CrewHeroWords.Figure] = []
@@ -1750,7 +1742,8 @@ extension FleetController: SidebarLayoutAdopting {
 // Needs you and In flight. One `HelmHeroColumn` in `.band` at the top of the
 // page, reconfigured for whichever tab is showing from what the page already
 // read - nothing is fetched for it. The Log tab has no band yet and keeps its
-// header line (the second half of CR-1).
+// header line (the last of CR-1). Review's band is `ReviewController`'s own,
+// drawn through the same `CrewBand` helpers.
 
 extension FleetController {
 
@@ -1801,14 +1794,13 @@ extension FleetController {
         var bandViews: [NSView] = []
         var briefingKey = ""
         if needsYouShowing {
-            words = CrewHeroWords.needsYou(needsYouWordsReading()) { Self.needsYouTimeFormatter.string(from: $0) }
+            words = CrewHeroWords.needsYou(needsYouWordsReading(), time: CrewBand.time)
         } else {
             let reading = inFlightReading ?? CrewHeroWords.InFlightReading(
                 hasRead: false, homeOk: true, verdictHeadline: "", verdictBody: "", working: 0, queued: 0,
                 doneToday: 0, projects: 0, ready: .scanning, watcher: "")
-            words = CrewHeroWords.inFlight(reading, day: CrewHeroWords.dayFormatter.string(from: Date())) {
-                Self.needsYouTimeFormatter.string(from: $0)
-            }
+            words = CrewHeroWords.inFlight(reading, day: CrewHeroWords.dayFormatter.string(from: Date()),
+                                           time: CrewBand.time)
             // The board shows the briefing once the crew has been read, and
             // never over the setup prompt.
             if reading.hasRead, reading.homeOk, reading.tasksRead, bandBriefing != nil || bandBriefingBusy {
@@ -1823,33 +1815,11 @@ extension FleetController {
         if words.offersSetup {
             foot = [needsYouSetupButton]
         } else if !words.figures.isEmpty {
-            configureBandFigures(words.figures)
+            bandFigureWords = words.figures
+            bandFigures.configure(CrewBand.items(words.figures), theme: theme)
             foot = [bandFigures]
         }
-        let status = words.status.map { status -> HelmHeroColumn.Status in
-            let tint: HelmTint?
-            switch status.state {
-            case .good: tint = .good
-            case .warn: tint = .warn
-            case .idle: tint = nil
-            }
-            return HelmHeroColumn.Status(text: status.text, tint: tint)
-        }
-        crewBand.configure(header: .init(symbol: words.symbol, kicker: words.kicker, headline: words.headline,
-                                         body: words.body, ring: nil, status: status),
-                           sections: [], foot: foot,
-                           tone: .init(colour: .themeAccent, isDimmed: words.tone == .dimmed),
-                           bandViews: bandViews, footRule: !foot.isEmpty)
-    }
-
-    private func configureBandFigures(_ figures: [CrewHeroWords.Figure]) {
-        bandFigureWords = figures
-        bandFigures.configure(figures.map { figure in
-            HelmKPIStrip.Item(figure.value.map { .value($0) } ?? .unread, caption: figure.caption,
-                              emphasis: figure.value == "0" ? .quiet : .normal,
-                              isAction: figure.opensReview,
-                              toolTip: figure.opensReview ? "View in \(PlaceName.short(.review))" : nil)
-        }, theme: theme)
+        CrewBand.configure(crewBand, words: words, foot: foot, bandViews: bandViews)
     }
 
     /// The briefing's line and its tiles: "Generated 6:58 AM from ..." (or

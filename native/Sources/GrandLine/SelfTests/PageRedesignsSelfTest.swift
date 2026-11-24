@@ -24,8 +24,13 @@
 //      each open on the Crew band: its words per state, the dimmed tone over
 //      a failed read with the rows carried, the briefing's tiles opening
 //      their pages, Ready to merge still opening Review, the header line
-//      given up, and no width held above gotcha (13)'s 499.
-//   5. **The floating bar is unchanged**: none of the above happens there.
+//      given up, and no width held above gotcha (13)'s 499. Crew › Review
+//      opens on the same band: its ring at the band's trailing edge, the
+//      forge cards under it, Show folder path on a scan that reached nothing,
+//      the pull requests a partial scan found kept, and Refresh still in the
+//      toolbar.
+//   5. **The floating bar is unchanged**: none of the above happens there,
+//      Review's count line, boxed figures and empty forge cards included.
 //      And one floating-bar defect found on the way stays fixed: the Hosts
 //      column's footer stays at the column's bottom after a tab round trip
 //      (`HelmPageSidebar.setFooter`).
@@ -69,7 +74,7 @@ enum PageRedesignsSelfTest {
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
                               checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkInFlightBand,
-                              checkDevOpsHub,
+                              checkReviewBand, checkDevOpsHub,
                               ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
                     var ok = true
                     check(shell, window, scratch, &ok)
@@ -886,6 +891,31 @@ enum PageRedesignsSelfTest {
         return zip(strip.debugValues, strip.debugCaptions).map { "\($0) \($1)" }
     }
 
+    /// Gotcha (13): every horizontal constraint in `root`'s tree held between
+    /// 500 and required, any of which can resize the window, and every
+    /// horizontal stack clipping at that level.
+    private static func widthsHeldAbove499(_ root: NSView) -> [String] {
+        var offenders: [String] = []
+        func scan(_ view: NSView) {
+            for constraint in view.constraints where constraint.isActive && constraint.priority.rawValue >= 500
+                && constraint.priority < .required {
+                switch constraint.firstAttribute {
+                case .width, .leading, .trailing, .left, .right, .centerX:
+                    offenders.append("\(type(of: view)) \(constraint.priority.rawValue)")
+                default: break
+                }
+            }
+            if let stack = view as? NSStackView, stack.orientation == .horizontal,
+               stack.clippingResistancePriority(for: .horizontal).rawValue >= 500,
+               stack.clippingResistancePriority(for: .horizontal) < .required {
+                offenders.append("clipping \(stack.clippingResistancePriority(for: .horizontal).rawValue)")
+            }
+            view.subviews.forEach(scan)
+        }
+        scan(root)
+        return offenders
+    }
+
     private static func checkNeedsYou(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                       _ ok: inout Bool) {
         resize(window, width: 1512, shell)
@@ -1218,30 +1248,139 @@ enum PageRedesignsSelfTest {
 
         // Gotcha (13): the band holds no width above 499, so a window narrower
         // than everything it says still keeps the width it was given.
-        var offenders: [String] = []
-        func scan(_ view: NSView) {
-            for constraint in view.constraints where constraint.isActive && constraint.priority.rawValue >= 500
-                && constraint.priority < .required {
-                switch constraint.firstAttribute {
-                case .width, .leading, .trailing, .left, .right, .centerX:
-                    offenders.append("\(type(of: view)) \(constraint.priority.rawValue)")
-                default: break
-                }
-            }
-            if let stack = view as? NSStackView, stack.orientation == .horizontal,
-               stack.clippingResistancePriority(for: .horizontal).rawValue >= 500,
-               stack.clippingResistancePriority(for: .horizontal) < .required {
-                offenders.append("clipping \(stack.clippingResistancePriority(for: .horizontal).rawValue)")
-            }
-            view.subviews.forEach(scan)
-        }
-        if let flight = band(fleet) { scan(flight) }
+        let offenders = band(fleet).map(widthsHeldAbove499) ?? []
         check(offenders.isEmpty, "CR-1: the band holds a width between 500 and required: \(offenders)", &ok)
         let floor = band(fleet).map { HelmSplitPage.floorWidth(of: $0) } ?? 0
         check(floor > 0 && floor < 420, "CR-1: the band's required floor is \(floor)pt, wider than any narrow window", &ok)
         resize(window, width: 1100, shell)
         check(abs(window.frame.width - 1100) < 0.5 && (band(fleet)?.frame.width ?? 0) < 1100,
               "CR-1: at 1100pt the window is \(window.frame.width) and the band \(band(fleet)?.frame.width ?? 0)", &ok)
+        resize(window, width: 1512, shell)
+    }
+
+    /// The PRs Review's checks draw: the board's nine, two of them ready to
+    /// merge, three with checks running and one failing, on two forges.
+    private static func reviewFixture() -> [MergedPR] {
+        func pr(_ n: Int, _ forge: String, _ checks: String, task: String? = nil) -> MergedPR {
+            MergedPR(source: task == nil ? "forge" : "work", taskID: task, repo: "grand-line",
+                     url: "https://\(forge == "github" ? "github.com" : "bitbucket.org")/o/grand-line/pull/\(n)",
+                     number: n, title: "PR \(n)", checks: checks, forge: forge)
+        }
+        return [pr(631, "github", "green", task: "crew-a"), pr(88, "github", "green", task: "crew-b"),
+                pr(632, "github", "pending", task: "crew-c"), pr(214, "github", "pending"), pr(212, "github", "red"),
+                pr(86, "github", "green"), pr(57, "github", "pending"), pr(41, "bitbucket", "none"),
+                pr(19, "bitbucket", "green")]
+    }
+
+    /// Review's own refresh scans every clone on a visit. A stub keeps it
+    /// offline and quick, and the wait lets it land before a fixture is
+    /// drawn, so the fixture is what stays on screen.
+    private static func settleReview(_ review: ReviewController) {
+        _ = waitUntil(timeout: 10) { !review.debugIsLoading }
+    }
+
+    /// CR-1 on Crew › Review: the band in every state the page can be in, the
+    /// forge cards under it, the header line given up, Refresh still in the
+    /// toolbar and no width held above gotcha (13)'s 499.
+    private static func checkReviewBand(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                        _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        OpenPRsSource.debugFetcher = { OpenPRsSource.FetchResult() }
+        defer { OpenPRsSource.debugFetcher = nil }
+        let review = shell.workspace.review
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        check(clickTab("Review", shell) && shell.debugCurrentDestination == .review,
+              "CR-1: Crew's Review tab opened \(String(describing: shell.debugCurrentDestination))", &ok)
+        settleReview(review)
+        review.debugRender(reviewFixture())
+        settle(shell)
+        guard let band = review.debugReviewBand, onScreen(band) else {
+            fail("CR-1: Review opens on no band", &ok)
+            return
+        }
+        check(band.accessibilityRole() == .group && (band.accessibilityLabel() ?? "").contains(band.debugHeadline),
+              "CR-1: Review's band is not one group named by its headline (\(band.accessibilityLabel() ?? "nothing"))", &ok)
+        check(band.debugKicker.hasPrefix("Review \u{00B7} 9 open \u{00B7} checked ")
+                && band.debugHeadline == "2 pull requests are ready to merge"
+                && band.debugBody == "3 with checks running \u{00B7} 1 failing \u{00B7} across GitHub and Bitbucket."
+                && !isDimmed(band),
+              "CR-1: Review's band reads \(band.debugKicker) / \(band.debugHeadline) / \(band.debugBody ?? "-")", &ok)
+        check(figures(band) == ["9 Open PRs", "2 Ready to merge", "3 Checks running", "1 Checks failing"],
+              "CR-1: Review's figures are \(figures(band))", &ok)
+        // The ring sits at the band's trailing edge, as the board draws it
+        // (HelmHeroColumn 1.5.1), not wherever the words happen to end.
+        if let ring = band.debugRing, onScreen(ring) {
+            let frame = ring.convert(ring.bounds, to: band)
+            check(ring.centreLabelForTests == "2/9" && abs(ring.fractionForTests - 2.0 / 9.0) < 0.001
+                    && frame.minX > band.bounds.width * 0.6,
+                  "CR-1: Review's ring reads \(ring.centreLabelForTests) at x \(frame.minX) of \(band.bounds.width)", &ok)
+        } else {
+            fail("CR-1: Review's band has no ring on screen", &ok)
+        }
+        check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor && shell.debugHeader == nil
+                && !(review.drillHeaderSubtitle ?? "").isEmpty,
+              "CR-1: Review keeps the grey header line over its band, or lost its summary", &ok)
+        check(!review.debugIsStatsRowVisible && !review.debugIsBodySubtitleVisible && !review.debugIsFailureStateVisible,
+              "CR-1: Review still draws its boxed figures, its count line or its failure block beside the band", &ok)
+        // Refresh stays in the toolbar, never on the band.
+        if let refresh = review.drillHeaderActions.first {
+            check(onScreen(refresh) && !refresh.isDescendant(of: band) && !refresh.isDescendant(of: review.view),
+                  "CR-1: Refresh left the toolbar", &ok)
+        } else {
+            fail("CR-1: Review has no Refresh", &ok)
+        }
+        // The forge cards stay under the band, their rows and Merge gate as they were.
+        check(review.debugAreForgeSectionsVisible && review.debugGithubRowCount == 7 && review.debugBitbucketRowCount == 2,
+              "CR-1: Review's forge cards hold \(review.debugGithubRowCount) and \(review.debugBitbucketRowCount) rows", &ok)
+        let row = review.debugGitHubRowButtonState(at: 0)
+        check(review.debugGitHubRowChipText(at: 0) == "Checks running" && (row?.reviewFrame.width ?? 0) > 0
+                && row?.mergeHidden == true,
+              "CR-1: Review's first row reads \(review.debugGitHubRowChipText(at: 0) ?? "nothing") with \(String(describing: row))", &ok)
+
+        // GL-14: a scan that reached nothing is dimmed, counts nothing, keeps
+        // no empty forge card, and offers the folder path on the band.
+        review.debugRender([], scan: OpenPRsSource.FetchResult(projectsUnreadable: true))
+        settle(shell)
+        let folder = review.debugBandFolderButton
+        check(isDimmed(band) && band.debugHeadline.hasPrefix("Couldn\u{2019}t read your projects at ")
+                && figures(band).isEmpty && band.debugRing == nil && onScreen(folder) && folder.heroInk != nil
+                && !review.debugAreForgeSectionsVisible && !review.debugIsFailureStateVisible,
+              "CR-1: an unreadable projects folder reads \(band.debugHeadline), dimmed \(isDimmed(band)), "
+                + "figures \(figures(band))", &ok)
+        folder.performClick(nil)
+        settle(shell)
+        check(onScreen(review.debugBandFolderRow) && folder.title == "Hide folder path"
+                && review.debugBandFolderRow.subtitleLabel.stringValue == FirstmateHome.projects.path,
+              "CR-1: Show folder path did not put the path on the band", &ok)
+        folder.performClick(nil)
+        settle(shell)
+        check(!onScreen(review.debugBandFolderRow) && folder.title == "Show folder path",
+              "CR-1: Hide folder path left the path on the band", &ok)
+        // A scan that missed some forges keeps the rows it found, dimmed.
+        review.debugRender(Array(reviewFixture().prefix(7)),
+                           scan: OpenPRsSource.FetchResult(prs: [], failedRepos: ["pramata-status", "pramata-hive"]))
+        settle(shell)
+        check(isDimmed(band) && figures(band).first == "7 Open PRs" && review.debugGithubRowCount == 7
+                && review.debugAreForgeSectionsVisible,
+              "CR-1: a partial scan reads \(figures(band)) over \(review.debugGithubRowCount) rows, dimmed \(isDimmed(band))", &ok)
+        // Nothing open after a clean scan: the band is the empty state.
+        review.debugRender([])
+        settle(shell)
+        check(band.debugHeadline == "No open pull requests right now" && figures(band).isEmpty && !isDimmed(band)
+                && !review.debugAreForgeSectionsVisible && onScreen(band),
+              "CR-1: an empty Review reads \(band.debugHeadline) with forge cards \(review.debugAreForgeSectionsVisible)", &ok)
+        review.debugRender(reviewFixture())
+        settle(shell)
+
+        // Gotcha (13), as on In flight.
+        let offenders = widthsHeldAbove499(band)
+        check(offenders.isEmpty, "CR-1: Review's band holds a width between 500 and required: \(offenders)", &ok)
+        let floor = HelmSplitPage.floorWidth(of: band)
+        check(floor > 0 && floor < 420, "CR-1: Review's band's required floor is \(floor)pt", &ok)
+        resize(window, width: 1100, shell)
+        check(abs(window.frame.width - 1100) < 0.5 && band.frame.width < 1100,
+              "CR-1: at 1100pt Review's window is \(window.frame.width) and its band \(band.frame.width)", &ok)
         resize(window, width: 1512, shell)
     }
 
@@ -1288,6 +1427,27 @@ enum PageRedesignsSelfTest {
         check(!(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine
                 && (fleet as WorkspaceHeaderLineCollapsing).drawsSubtitleOnHeaderLine,
               "CR-1: the floating bar's Fleet page gives up a header line", &ok)
+        // Review's band is the sidebar layout's too: the floating bar's Review
+        // keeps its count line, its boxed figures and its two forge cards.
+        OpenPRsSource.debugFetcher = { OpenPRsSource.FetchResult() }
+        defer { OpenPRsSource.debugFetcher = nil }
+        let review = shell.workspace.review
+        shell.workspace.navigator.show(.review)
+        settle(shell)
+        settleReview(review)
+        review.debugRender(reviewFixture())
+        settle(shell)
+        check(!review.drawsSidebarLayout && review.debugReviewBand == nil && review.debugIsStatsRowVisible
+                && review.debugIsBodySubtitleVisible
+                && review.debugStatTiles.map(\.caption) == ["Open PRs", "Ready to merge", "Checks running"],
+              "CR-1: the floating bar's Review drew the band or lost its line and figures: "
+                + "\(review.debugStatTiles.map(\.caption))", &ok)
+        check(!review.collapsesEmptyHeaderLine && review.drawsSubtitleOnHeaderLine,
+              "CR-1: the floating bar's Review gives up a header line", &ok)
+        review.debugRender([])
+        settle(shell)
+        check(review.debugAreForgeSectionsVisible && review.debugReviewBand == nil,
+              "CR-1: the floating bar's empty Review lost its forge cards", &ok)
     }
 
     /// Found on the way, on the floating bar's Hosts page: after a tab round

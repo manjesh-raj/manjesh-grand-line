@@ -77,6 +77,11 @@
 // hairline in the ink across the band above the foot (`footRule`). A band
 // given none of them draws exactly as 1.4.0 did, and `.column` and `.panel`
 // draw none of them.
+//
+// **1.5.1, for Crew › Review's ring (CR-1).** A band's ring sits at the
+// band's trailing edge: its words hug at 249 (`bandWordsHug`), so they take
+// the slack, rather than the engine breaking a 250-to-250 tie between the
+// words and the ring's caption.
 
 import AppKit
 
@@ -159,6 +164,9 @@ final class HelmHeroColumn: NSView {
     /// figure, as the board draws them.
     static let quietInkAlpha: CGFloat = 0.8
     static let ruleAlpha: CGFloat = 0.14
+    /// 1.5.1: a band's words hug one step under a stack's default, so they
+    /// and not the ring's caption take the band's slack.
+    static let bandWordsHug = NSLayoutConstraint.Priority(249)
     static let tileFillAlpha: CGFloat = 0.2
     /// The column's colours for `tone` in `theme`: the hero's palette rule,
     /// deepened until the second lines clear the text floor too
@@ -467,7 +475,19 @@ final class HelmHeroColumn: NSView {
             // then any band views, then the foot under all of them.
             let words = Self.column([kickerRow, headlineLabel, bodyLabel], spacing: HelmMetrics.s1 + 2)
             var top: [NSView] = [words]
-            if let ringRow { top.append(ringRow) }
+            if let ringRow {
+                // 1.5.1: the words take the band's slack, so the ring sits at
+                // its trailing edge as the boards draw it. The words and the
+                // ring's caption both hugged at 250 and the engine broke the
+                // tie toward the caption: measured on Crew › Review, the ring
+                // sat right after the words with the rest of the band behind
+                // its caption. The words step down rather than the caption up,
+                // because a raised hug is a width ceiling (gotcha (13)): at
+                // 251 on the caption, Connections' band grew a 1100pt window
+                // to 1463pt with the inspector open.
+                words.setHuggingPriority(Self.bandWordsHug, for: .horizontal)
+                top.append(ringRow)
+            }
             if let status = header.status {
                 statusPill.configure(text: status.text)
                 top.append(statusPill)

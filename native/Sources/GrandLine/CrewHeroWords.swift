@@ -7,14 +7,15 @@
 //
 // **Pure, and Foundation only.** Every input is a value `FleetController`
 // already holds - the verdict `FleetGreeting.answer` computed, the counts its
-// refresh read, Needs you's own read times - so the words are asserted in
-// CI's blocking lane (`PageHeroColumnsSelfTest`) without a window or a store.
-// Times and the day come in as strings or a formatter, so a suite pins them.
+// refresh read, Needs you's own read times, the PR counts `ReviewController`
+// rendered - so the words are asserted in CI's blocking lane
+// (`PageHeroColumnsSelfTest`) without a window or a store. Times and the day
+// come in as strings or a formatter, so a suite pins them.
 //
-// **Each tab is one function returning one `Band`.** Needs you and In flight
-// are here. Review and Log are the second half of CR-1 and take the same
-// shape: a kicker naming the tab and when, a headline that says what is true
-// now, a quiet second line, a tone, and the figures in the band's strip.
+// **Each tab is one function returning one `Band`.** Needs you, In flight and
+// Review are here. Log is the last of CR-1 and takes the same shape: a kicker
+// naming the tab and when, a headline that says what is true now, a quiet
+// second line, a tone, and the figures in the band's strip.
 //
 // **GL-14 throughout.** A read that has not landed says it is reading, a
 // figure that is not known is `nil` (drawn as a dash), and a failed read
@@ -44,6 +45,20 @@ enum CrewHeroWords {
         let state: State
     }
 
+    /// A ring at the band's top right: Review's ready over open.
+    struct Ring: Equatable {
+        let value: Int
+        let total: Int
+        /// The centre label: "2/9".
+        var label: String { "\(value)/\(total)" }
+        /// 0...1 of the arc. An empty total draws an empty arc.
+        var fraction: Double { total > 0 ? min(1, Double(value) / Double(total)) : 0 }
+        /// The words beside the ring.
+        let caption: String
+        /// What VoiceOver reads for the ring.
+        let spoken: String
+    }
+
     /// One tab's band.
     struct Band: Equatable {
         /// The kicker tile's glyph: the crew, or a check for a calm verdict.
@@ -57,10 +72,17 @@ enum CrewHeroWords {
         var status: Status? = nil
         /// No firstmate home: the band's foot is Open Setup (GL-31).
         var offersSetup = false
+        /// Review's ring of ready over open. `nil` draws none.
+        var ring: Ring? = nil
+        /// Review's projects folder could not be read: the band's foot is
+        /// Show folder path, which reveals the path the scan tried.
+        var offersFolderPath = false
     }
 
     static let crewSymbol = "person.2.fill"
     static let calmSymbol = "checkmark"
+    /// Review's kicker glyph: its own sidebar row's (`ModuleTable`).
+    static let reviewSymbol = "arrow.triangle.branch"
 
     /// "Reading the crew's state…", the first-read headline of every tab.
     static let readingHeadline = "Reading the crew\u{2019}s state\u{2026}"
@@ -227,5 +249,119 @@ enum CrewHeroWords {
         case "stale": return Status(text: "Watcher stale", state: .warn)
         default: return Status(text: "Watcher off", state: .idle)
         }
+    }
+
+    // MARK: Review
+
+    /// What Review's last PR scan found, as the counts its forge cards show.
+    struct ReviewReading: Equatable {
+        /// The first scan has landed.
+        var hasRead: Bool
+        /// When the last scan finished, whether or not it reached every forge.
+        var checkedAt: Date? = nil
+        /// When the last scan that reached every forge finished.
+        var cleanReadAt: Date? = nil
+        /// The open pull requests on each forge card: GitHub, Bitbucket, and
+        /// the task-tracked ones on no known forge.
+        var github = 0
+        var bitbucket = 0
+        var other = 0
+        /// Of those: ready to merge (`FleetDataSource.readyToMerge`, the one
+        /// definition every surface counts), checks running, checks failing.
+        var ready = 0
+        var running = 0
+        var failing = 0
+        /// The scan did not fully succeed: its one short sentence, never a
+        /// path (`ReviewController.ScanFailure.headline`).
+        var failure: String? = nil
+        /// The projects folder itself could not be listed, so no forge was
+        /// asked anything.
+        var failureIsTotal = false
+
+        var open: Int { github + bitbucket + other }
+    }
+
+    /// "2 pull requests are ready to merge", the board's headline, over the
+    /// checks still running and failing and where the pull requests are.
+    ///
+    /// GL-14: a scan that did not reach every forge paints the dimmed tone and
+    /// says when it tried. What it did find stays counted, and says it is
+    /// only part of the picture. A scan that found nothing it could trust
+    /// draws no figure and no ring rather than a zero.
+    static func review(_ reading: ReviewReading, time: (Date) -> String) -> Band {
+        guard reading.hasRead else {
+            return Band(symbol: reviewSymbol, kicker: "Review", headline: "Checking your projects\u{2026}",
+                        body: "Reading open pull requests from every clone in your firstmate home.")
+        }
+        let open = reading.open
+        let found = open == 1 ? "1 pull request" : "\(open) pull requests"
+        if let failure = reading.failure {
+            // The scan's own sentence, set as the band's other headlines are.
+            let sentence = (failure.hasSuffix(".") ? String(failure.dropLast()) : failure)
+                .replacingOccurrences(of: "'", with: "\u{2019}")
+            let headline = sentence + (reading.checkedAt.map { " at \(time($0))" } ?? "")
+            let kicker = reading.cleanReadAt.map { "Review \u{00B7} last read \(time($0))" } ?? "Review"
+            guard open > 0 else {
+                let body = reading.failureIsTotal
+                    ? "Open pull requests are read from the clones in your firstmate home\u{2019}s projects folder. "
+                        + "None could be read, so no count is shown."
+                    : "The forges that answered have no open pull requests. "
+                        + "The others are unknown until the next read, so no count is shown."
+                return Band(symbol: reviewSymbol, kicker: kicker, headline: headline, body: body, tone: .dimmed,
+                            offersFolderPath: reading.failureIsTotal)
+            }
+            let body = reading.failureIsTotal
+                ? "Showing the \(found) your crew\u{2019}s tasks point at, \(reading.ready) ready to merge. "
+                    + "Your clones could not be read, so theirs are not counted."
+                : "Showing the \(found) found in the repositories that answered, \(reading.ready) ready to merge. "
+                    + "The others are not counted."
+            return Band(symbol: reviewSymbol, kicker: kicker, headline: headline, body: body, tone: .dimmed,
+                        figures: reviewFigures(reading), ring: reviewRing(reading),
+                        offersFolderPath: reading.failureIsTotal)
+        }
+        let checked = reading.checkedAt.map { " \u{00B7} checked \(time($0))" } ?? ""
+        guard open > 0 else {
+            return Band(symbol: calmSymbol, kicker: "Review" + checked, headline: "No open pull requests right now",
+                        body: "Every clone was read. Nothing is waiting on a review or a merge.")
+        }
+        let headline: String
+        switch reading.ready {
+        case 0: headline = "No pull requests are ready to merge"
+        case 1: headline = "1 pull request is ready to merge"
+        default: headline = "\(reading.ready) pull requests are ready to merge"
+        }
+        var parts: [String] = []
+        if reading.running > 0 { parts.append("\(reading.running) with checks running") }
+        if reading.failing > 0 { parts.append("\(reading.failing) failing") }
+        if parts.isEmpty { parts.append("No checks running or failing") }
+        parts.append(forgePlace(reading))
+        return Band(symbol: reviewSymbol, kicker: "Review \u{00B7} \(open) open" + checked, headline: headline,
+                    body: parts.joined(separator: " \u{00B7} ") + ".",
+                    figures: reviewFigures(reading), ring: reviewRing(reading))
+    }
+
+    /// Where the open pull requests are, as the page's forge cards group
+    /// them: "on GitHub", "across GitHub and Bitbucket", "and elsewhere" for
+    /// the task-tracked ones on no known forge.
+    static func forgePlace(_ reading: ReviewReading) -> String {
+        var known: [String] = []
+        if reading.github > 0 { known.append("GitHub") }
+        if reading.bitbucket > 0 { known.append("Bitbucket") }
+        if reading.other > 0 {
+            return known.isEmpty ? "on no known forge" : "across \(known.joined(separator: ", ")) and elsewhere"
+        }
+        return known.count == 1 ? "on \(known[0])" : "across \(known.joined(separator: " and "))"
+    }
+
+    private static func reviewFigures(_ reading: ReviewReading) -> [Figure] {
+        [Figure(value: "\(reading.open)", caption: "Open PRs"),
+         Figure(value: "\(reading.ready)", caption: "Ready to merge"),
+         Figure(value: "\(reading.running)", caption: "Checks running"),
+         Figure(value: "\(reading.failing)", caption: "Checks failing")]
+    }
+
+    private static func reviewRing(_ reading: ReviewReading) -> Ring {
+        Ring(value: reading.ready, total: reading.open, caption: "ready",
+             spoken: "\(reading.ready) of \(reading.open) open pull request\(reading.open == 1 ? "" : "s") ready to merge")
     }
 }
