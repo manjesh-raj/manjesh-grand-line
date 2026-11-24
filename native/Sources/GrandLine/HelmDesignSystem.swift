@@ -1205,9 +1205,11 @@ final class HelmButton: NSButton {
     /// The one legitimate exception to "a page must not set `attributedTitle`
     /// on a `HelmButton`" (`restyle()` owns that property and overwrites it on
     /// the next theme change, which is why setting it from outside does not
-    /// survive). Exists for §6.14's Daylight toast: an ink capsule is not a
-    /// page surface, so a `.quiet` button's `muted` label - correct everywhere
-    /// else - disappears on it. `nil`, the default, changes nothing anywhere.
+    /// survive). Added for §6.14's Daylight toast, which TO-1 (Helm 10.4.0)
+    /// replaced with a hero capsule and a `heroInk` Undo pill. It stays for any
+    /// ink surface that is not a page, where a `.quiet` button's `muted` label
+    /// - correct everywhere else - disappears. `nil`, the default, changes
+    /// nothing anywhere.
     var labelColorOverride: NSColor? {
         didSet { if labelColorOverride != oldValue { restyle() } }
     }
