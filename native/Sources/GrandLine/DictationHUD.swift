@@ -445,7 +445,8 @@ final class DictationHUDController {
         let words = NSStackView(views: [kicker, label])
         words.orientation = .vertical
         words.alignment = .leading
-        words.spacing = 1
+        // A kicker over its headline is one text block: the half step.
+        words.spacing = HelmMetrics.s0
         words.translatesAutoresizingMaskIntoConstraints = false
 
         let meter = DictationHUDMeter()
