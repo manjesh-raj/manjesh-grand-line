@@ -36,6 +36,21 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 10.3.0 - The lighthouse lock screen and the treasure chest gate
+
+The captain's picks from the lamp lock-screen board (`data/grandline-login-lamp-design-scout/`): L-2 Lighthouse with the Going Merry and card style C-4 Open sea for the lock screen, and S-1 Treasure chest with card style V-4 Open for the Secrets page.
+Both gates float a cardless form on an illustrated scene, so the field, its focus and the round buttons gained a scene variant.
+It is a minor release: five components gained an option, one surface is new, and no existing call site changed.
+
+- `HelmField` 1.1.0 → 1.2.0 (minor): `Surface.scene(onDark:)` is a pill well floating over an illustration rather than sitting on a card. Its fill is the theme's light surface at low alpha, its text takes the colour that reads on the scene the caller names, and `applySunken` rounds it to a pill. The cell paints no fill of its own for it, which would show as a second, squarer band.
+- `HelmCenteredSecureTextFieldCell` 1.0.0 → 1.1.0 (minor): `trailingAccessoryWidth` keeps room clear at the trailing edge for an accessory drawn inside the well, so typed dots never run under it.
+- `HelmSecureTextField` 1.1.0 → 1.2.0 (minor): exposes the cell's `trailingAccessoryWidth`. The lock screen's and the Secrets gate's in-field arrows use it.
+- `HelmInputSurface` 1.1.0 → 1.2.0 (minor): a focused scene well over a dark scene rings in the scene's own light rather than the accent, which read as a hole in a dusk sky.
+- `HelmIconButton` 1.0.1 → 1.1.0 (minor): `Style.circle(side:fill:glyph:border:)` draws a solid round button for an action on a scene rather than a card, with a hover step, a halved disabled fill and an oval focus ring. `.plain` is the resting card action, as before.
+
+- `Lock screen` none → 1.0.0 (new): L-2 Lighthouse. The locked state starts dark with the form transparent, inert and still first responder. Any key or a tap on the lighthouse lights the lamp, and a second tap dims it while the field is empty. The lens turns as render-server keyframes, the fog is a drifting noise texture, the Going Merry sails at 80% and the form sits 40pt higher in the C-4 Open sea style: a round avatar, a pill field and an arrow inside it. Reduce Motion, VoiceOver and every other state start lit.
+- `Secrets (page)` 1.0.0 → 1.1.0 (minor): the unlock gate is S-1 Treasure chest with V-4 Open. While the chest is shut the page is dark and the form is not there. A key or a tap opens it (side by side from 900pt, stacked below), and the padlock reaches Touch ID even while it is shut. The create and unreadable states keep their card.
+
 ## 10.2.0 - Home, Tasks, Calendar and the Sticky Board, from the five-screen board
 
 The captain's picks from the five-screen redesign board (`data/grandline-page-redesign-options/`): Hg-2 for Home, Tf-2 for Tasks, Cf-4 for Calendar and Sk-1 for the Sticky Board.

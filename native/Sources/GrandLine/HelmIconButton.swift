@@ -29,6 +29,24 @@ final class HelmIconButton: NSButton {
     /// for the muted ink a resting card action wears.
     var tint: HelmTint? { didSet { if tint != oldValue { restyle() } } }
 
+    /// How the button is drawn. `.plain` is the resting card action: a glyph
+    /// that only shows a fill on hover. `.circle` is a solid round button of
+    /// the given side, for an action that sits on a scene rather than a card
+    /// (the lock screen's in-field arrow, the Secrets page's round Touch ID).
+    /// The caller derives the colours from its theme.
+    enum Style: Equatable {
+        case plain
+        case circle(side: CGFloat, fill: NSColor, glyph: NSColor, border: NSColor?)
+    }
+
+    var style: Style = .plain {
+        didSet {
+            guard style != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            restyle()
+        }
+    }
+
     private(set) var symbolName: String
     private var isHovering = false
     private var tracking: NSTrackingArea?
@@ -61,7 +79,10 @@ final class HelmIconButton: NSButton {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: Self.minimumSide, height: Self.minimumSide) }
+    override var intrinsicContentSize: NSSize {
+        if case .circle(let side, _, _, _) = style { return NSSize(width: side, height: side) }
+        return NSSize(width: Self.minimumSide, height: Self.minimumSide)
+    }
 
     /// The tooltip and the accessibility label are one string.
     func setLabel(_ label: String) {
@@ -81,6 +102,19 @@ final class HelmIconButton: NSButton {
     }
 
     private func restyle() {
+        if case .circle(let side, let fill, let glyph, let border) = style {
+            image = HelmSymbol.image(symbolName, pointSize: min(Self.glyphPointSize, side * 0.48), weight: .semibold)
+            contentTintColor = glyph
+            layer?.cornerRadius = side / 2
+            // A press or hover darkens the fill a step, the way a HelmButton does.
+            let shown = isHovering && isEnabled ? (fill.blended(withFraction: 0.12, of: glyph) ?? fill) : fill
+            layer?.backgroundColor = shown.withAlphaComponent(isEnabled ? fill.alphaComponent : fill.alphaComponent * 0.5).cgColor
+            layer?.borderWidth = border == nil ? 0 : 1
+            layer?.borderColor = border?.cgColor
+            return
+        }
+        layer?.cornerRadius = HelmMetrics.rControl
+        layer?.borderWidth = 0
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let glyph: NSColor = tint.map {
             HelmContrast.legibleTintedText(tintHex: $0.hex(in: theme), over: surface, theme: theme)
@@ -116,7 +150,12 @@ final class HelmIconButton: NSButton {
     override var focusRingMaskBounds: NSRect { bounds }
 
     override func drawFocusRingMask() {
+        if case .circle = style { NSBezierPath(ovalIn: bounds).fill(); return }
         NSBezierPath(roundedRect: bounds, xRadius: HelmMetrics.rControl, yRadius: HelmMetrics.rControl).fill()
+    }
+
+    override var isEnabled: Bool {
+        didSet { if isEnabled != oldValue { restyle() } }
     }
 
     #if FM_SELFTESTS

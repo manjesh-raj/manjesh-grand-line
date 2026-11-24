@@ -568,7 +568,10 @@ enum HelmInputSurface {
         // the page's own domain hue, and the glow is that hue at 15%. `hue` is opt-in, so a well on a page that has not claimed
         // one still lights in the theme's accent exactly as it did before
         // Phase 4.
-        let accent = hue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
+        var accent = hue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
+        // A scene well over a dark scene focuses in its own light: a blue
+        // ring on a dusk sky reads as a hole rather than as focus.
+        if case .scene(onDark: true) = surface { accent = HelmField.sceneLight(theme) }
         chrome.layer?.borderWidth = focusBorderWidth
         chrome.layer?.borderColor = accent.withAlphaComponent(focusBorderAlpha).cgColor
         guard let host = shadowHost else { return }
