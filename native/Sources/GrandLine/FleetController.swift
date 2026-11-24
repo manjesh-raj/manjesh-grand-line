@@ -62,8 +62,12 @@ final class FleetController: NSViewController {
     /// `command_search` tool, the other three for their proposal kinds - and
     /// they moved to `StrawHatController` with the chat. This page never
     /// listed, searched or wrote a command, a sticky note or a schedule.
-    init(shiftStore: ShiftStore) {
+    /// `logStore` is the Log tab's own file, `FleetLogStore.shared` in the
+    /// app. A suite hands in one on a scratch folder, so the page reads a log
+    /// it wrote (or broke) through the same read the app does.
+    init(shiftStore: ShiftStore, logStore: FleetLogStore = .shared) {
         self.shiftStore = shiftStore
+        self.logStore = logStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -289,6 +293,10 @@ final class FleetController: NSViewController {
                                                size: .compact)
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
+    private var logStore: FleetLogStore
+    /// CR-1: what the Log tab last read, counted for its band. Read with the
+    /// list, so the band counts exactly what the list shows.
+    private var logReading = CrewHeroWords.LogReading()
 
     // MARK: Straw Hat Pirates - reaching the crew from here
 
@@ -806,19 +814,34 @@ final class FleetController: NSViewController {
     /// on `viewWillAppear` while it is showing, and by Refresh - never on a
     /// timer (F6 adds no polling).
     private func renderLog() {
-        let all = FleetLogFeed.events(store: FleetLogStore.shared, shift: shiftStore)
+        let read = FleetLogFeed.read(store: logStore, shift: shiftStore)
+        let all = read.events
         let shown = FleetLogFeed.filtered(all, kind: logFilterKind)
-        let emptyTitle: String
-        let emptyBody: String
+        var emptyTitle: String
+        var emptyBody: String
         if all.isEmpty {
             emptyTitle = "Nothing logged yet"
-            emptyBody = "Merges, completed tasks, resolved sync conflicts and saved investigations land here as they happen."
+            emptyBody = CrewHeroWords.emptyLogBody
         } else {
             emptyTitle = "Nothing here"
             emptyBody = "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
         }
+        logReading = CrewHeroWords.LogReading(read)
+        // CR-1, the sidebar layout's band: an empty list under a kind that
+        // could not be read is unknown, not "Nothing here" (GL-14).
+        if drawsSidebarLayout,
+           let unknown = CrewHeroWords.logListUnknown(logReading, kind: logFilterKind, time: CrewBand.time) {
+            emptyTitle = unknown.title
+            emptyBody = unknown.body
+        }
         logList.setRows(FleetLogFeed.rows(for: shown), theme: theme,
                         emptyTitle: emptyTitle, emptyBody: emptyBody)
+        guard drawsSidebarLayout else { return }
+        // The band is the empty state of a log with nothing in it, and of
+        // one that could not be read at all, so the list goes as the board
+        // draws it rather than saying the same thing again under it.
+        logContainer.isHidden = needsYouShowing || activeTab != .log || logReading.total == 0
+        renderCrewBand()
     }
 
     // MARK: Refresh
@@ -1740,12 +1763,12 @@ extension FleetController: SidebarLayoutAdopting {
 
 // MARK: - CR-1 - the Crew band
 
-// The board's CR-1 for the two tabs this page draws that have a band so far:
-// Needs you and In flight. One `HelmHeroColumn` in `.band` at the top of the
-// page, reconfigured for whichever tab is showing from what the page already
-// read - nothing is fetched for it. The Log tab has no band yet and keeps its
-// header line (the last of CR-1). Review's band is `ReviewController`'s own,
-// drawn through the same `CrewBand` helpers.
+// The board's CR-1 for the three tabs this page draws: Needs you, In flight
+// and Log. One `HelmHeroColumn` in `.band` at the top of the page,
+// reconfigured for whichever tab is showing from what the page already read -
+// nothing is fetched for it. Log's filter moves onto the band's foot, the same
+// `HelmSegmentedTabs` in the hero ink with its counts. Review's band is
+// `ReviewController`'s own, drawn through the same `CrewBand` helpers.
 
 extension FleetController {
 
@@ -1762,11 +1785,17 @@ extension FleetController {
         }
         loadingTilesRow?.isHidden = true
         bandTiles.translatesAutoresizingMaskIntoConstraints = false
+        // Log's filter leaves the list's column for the band's foot
+        // (`renderCrewBand`), so the feed sits straight under the band.
+        logContainer.removeArrangedSubview(logFilters)
+        logFilters.removeFromSuperview()
+        if activeTab == .log { renderLog() }
         renderCrewBand()
     }
 
-    /// The band has a tab of its own to say: Needs you or In flight.
-    fileprivate var crewBandShows: Bool { drawsSidebarLayout && (needsYouShowing || activeTab == .overview) }
+    /// Every tab this page draws opens on the band in the sidebar layout:
+    /// Needs you, In flight and Log.
+    fileprivate var crewBandShows: Bool { drawsSidebarLayout }
 
     /// Fold one read into In flight's band: the verdict `FleetGreeting` has
     /// always said, and the counts the boxed figures showed.
@@ -1792,11 +1821,19 @@ extension FleetController {
         guard drawsSidebarLayout else { return }
         crewBand.isHidden = !crewBandShows
         guard crewBandShows else { return }
+        // Log's feed opens on its first day header, whose row already holds
+        // its own space above the day's name, so it sits closer under the
+        // band than the other tabs' rows do, as the board draws it.
+        contentStack.setCustomSpacing(activeTab == .log && !needsYouShowing ? 0 : NSStackView.useDefaultSpacing,
+                                      after: crewBand)
         let words: CrewHeroWords.Band
         var bandViews: [NSView] = []
         var briefingKey = ""
         if needsYouShowing {
             words = CrewHeroWords.needsYou(needsYouWordsReading(), time: CrewBand.time)
+        } else if activeTab == .log {
+            words = CrewHeroWords.log(logReading, day: CrewHeroWords.dayFormatter.string(from: logReading.readAt ?? Date()),
+                                      time: CrewBand.time)
         } else {
             let reading = inFlightReading ?? CrewHeroWords.InFlightReading(
                 hasRead: false, homeOk: true, verdictHeadline: "", verdictBody: "", working: 0, queued: 0,
@@ -1816,6 +1853,15 @@ extension FleetController {
         var foot: [NSView] = []
         if words.offersSetup {
             foot = [needsYouSetupButton]
+        } else if !words.filter.isEmpty {
+            // Log's filter, its counts in its titles. The band hands it the
+            // hero ink and the chosen segment's words (`HelmHeroColumn`
+            // 1.6.0). Its radio roles, ← → and what it filters are the
+            // strip's own and unchanged.
+            for segment in words.filter {
+                logFilters.setTitle(segment.label, forID: segment.kind?.rawValue ?? FleetLogListView.allFilterID)
+            }
+            foot = [logFilters]
         } else if !words.figures.isEmpty {
             bandFigureWords = words.figures
             bandFigures.configure(CrewBand.items(words.figures), theme: theme)
@@ -1869,8 +1915,21 @@ extension FleetController {
     @objc fileprivate func bandDismissTapped() { dismissBriefing() }
 
     #if FM_SELFTESTS
-    /// The band as drawn, or `nil` with none showing (the floating bar, Log).
+    /// The band as drawn, or `nil` with none showing (the floating bar).
     var debugCrewBand: HelmHeroColumn? { crewBandShows && !crewBand.isHidden ? crewBand : nil }
+    /// CR-1 on Log: the filter (on the band's foot in the sidebar layout, in
+    /// the list's column in the floating bar), the list, and what was read.
+    var debugLogFilters: HelmSegmentedTabs { logFilters }
+    var debugLogList: FleetLogListView { logList }
+    var debugLogListShowing: Bool { !logList.isHiddenOrHasHiddenAncestor }
+    var debugLogReading: CrewHeroWords.LogReading { logReading }
+    /// A suite in a real shell, whose page the workspace built, points the
+    /// Log tab at a log it wrote (or broke). The page still reads it through
+    /// `renderLog`, the same read the app does.
+    func debugUseLogStore(_ store: FleetLogStore) {
+        logStore = store
+        if activeTab == .log { renderLog() }
+    }
     var debugBandFigures: HelmKPIStrip { bandFigures }
     var debugBandTiles: [HelmHeroTile] { bandTiles.tiles }
     var debugBandBriefingRow: HelmHeroRow? {
@@ -1890,9 +1949,9 @@ extension FleetController {
 }
 
 /// CR-1: the band says what the grey line under the toolbar said, so in the
-/// sidebar layout Needs you and In flight give up that line as Tasks does
-/// (`WorkspaceHeaderLineCollapsing`). The live subtitle is still the page's
-/// summary for the crew panel. Log keeps its line until its own band lands.
+/// sidebar layout Needs you, In flight and Log give up that line as Tasks
+/// does (`WorkspaceHeaderLineCollapsing`). The live subtitle is still the
+/// page's summary for the crew panel.
 extension FleetController: WorkspaceHeaderLineCollapsing {
     var collapsesEmptyHeaderLine: Bool { crewBandShows }
     var drawsSubtitleOnHeaderLine: Bool { !crewBandShows }

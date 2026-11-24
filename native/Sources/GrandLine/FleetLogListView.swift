@@ -128,6 +128,10 @@ final class FleetLogListView: NSView {
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
+        // `.plain`, as `HelmDataTable`'s: the default style resolves to
+        // `.inset` and pads the rows with 10pt the height below never knew
+        // about (see `recomputeHeight`).
+        tableView.style = .plain
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .none
         tableView.gridStyleMask = []
@@ -166,27 +170,34 @@ final class FleetLogListView: NSView {
         // makes a fixed-height list actually grow with the setting instead of
         // clipping its descenders at "Larger".
         tableView.rowHeight = Self.eventRowHeight
+        recomputeHeight()
         tableView.reloadData()
     }
 
+    /// The table is exactly as tall as its rows. Each row's rect is its
+    /// height plus the intercell spacing, with the cell centred in it, so
+    /// the sum counts one spacing per row. Measured under CR-1's band: the
+    /// height counted one spacing fewer and the `.inset` style added 10pt
+    /// above the first row, so the last card was cut 13pt short (a table of
+    /// six rows laid out 328pt of rows in 312pt).
     private func recomputeHeight() {
-        guard !rows.isEmpty else {
-            tableHeight.constant = Self.emptyRowHeight
-            return
-        }
-        let total = rows.reduce(CGFloat(0)) { sum, row in
+        let heights: [CGFloat] = rows.isEmpty ? [Self.emptyRowHeight] : rows.map { row in
             switch row {
-            case .header: return sum + Self.headerRowHeight
-            case .event: return sum + Self.eventRowHeight
+            case .header: return Self.headerRowHeight
+            case .event: return Self.eventRowHeight
             }
         }
-        tableHeight.constant = total + max(0, CGFloat(rows.count) - 1) * Self.rowSpacing
+        tableHeight.constant = heights.reduce(0) { $0 + $1 + Self.rowSpacing }
     }
 
     // MARK: Probe / self-test surface
 
     var debugRowCount: Int { rows.count }
     var debugTableHeight: CGFloat { tableHeight.constant }
+    #if FM_SELFTESTS
+    /// What the empty state says when no row matches.
+    var debugEmptyText: (title: String, body: String) { (emptyTitle, emptyBody) }
+    #endif
 }
 
 extension FleetLogListView: NSTableViewDataSource, NSTableViewDelegate {

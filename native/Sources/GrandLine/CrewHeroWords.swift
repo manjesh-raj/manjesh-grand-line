@@ -12,10 +12,11 @@
 // (`PageHeroColumnsSelfTest`) without a window or a store. Times and the day
 // come in as strings or a formatter, so a suite pins them.
 //
-// **Each tab is one function returning one `Band`.** Needs you, In flight and
-// Review are here. Log is the last of CR-1 and takes the same shape: a kicker
-// naming the tab and when, a headline that says what is true now, a quiet
-// second line, a tone, and the figures in the band's strip.
+// **Each tab is one function returning one `Band`.** Needs you, In flight,
+// Review and Log, each in the same shape: a kicker naming the tab and when, a
+// headline that says what is true now, a quiet second line, a tone, and the
+// figures in the band's strip - or, on Log, the filter's segments with their
+// counts.
 //
 // **GL-14 throughout.** A read that has not landed says it is reading, a
 // figure that is not known is `nil` (drawn as a dash), and a failed read
@@ -77,6 +78,10 @@ enum CrewHeroWords {
         /// Review's projects folder could not be read: the band's foot is
         /// Show folder path, which reveals the path the scan tried.
         var offersFolderPath = false
+        /// Log's filter on the band's foot, one segment per kind with its
+        /// count. Empty draws none: a log with nothing in it has nothing to
+        /// filter, and the band is its empty state.
+        var filter: [LogSegment] = []
     }
 
     static let crewSymbol = "person.2.fill"
@@ -363,5 +368,184 @@ enum CrewHeroWords {
     private static func reviewRing(_ reading: ReviewReading) -> Ring {
         Ring(value: reading.ready, total: reading.open, caption: "ready",
              spoken: "\(reading.ready) of \(reading.open) open pull request\(reading.open == 1 ? "" : "s") ready to merge")
+    }
+
+    // MARK: Log
+
+    /// Log's kicker glyph: the feed's own (`FleetLogListView`'s empty state),
+    /// the board's clock turning back.
+    static let logSymbol = "clock.arrow.circlepath"
+
+    /// What the log holds when it holds nothing - the words the feed's own
+    /// empty state has always said, and now the band's.
+    static let emptyLogBody = "Merges, completed tasks, resolved sync conflicts and saved investigations land here as they happen."
+
+    /// One segment of Log's filter on the band.
+    struct LogSegment: Equatable {
+        /// `nil` is All.
+        let kind: FleetLogEventKind?
+        /// The floating bar's own title for it (`FleetLogListView.filterItems`).
+        let title: String
+        /// How many events the feed holds of this kind. `nil` is not known:
+        /// the half of the log that holds it could not be read (GL-14), and
+        /// the segment says its title alone rather than a zero.
+        let count: Int?
+        /// "Merges 3", with an en space, as Hosts' and DevOps Hub's counted
+        /// segments say it.
+        var label: String { count.map { "\(title)\u{2002}\($0)" } ?? title }
+    }
+
+    /// What the last read of the log found, as counts. Built from the feed's
+    /// own read (`FleetLogFeed.read`), so the band counts exactly the events
+    /// the list below it shows.
+    struct LogReading: Equatable {
+        var hasRead = false
+        var readAt: Date?
+        /// Every event the feed holds, by kind.
+        var counts: [FleetLogEventKind: Int] = [:]
+        /// Of those, the ones on `readAt`'s day.
+        var today: [FleetLogEventKind: Int] = [:]
+        /// Today's newest event.
+        var latestToday: Date?
+        /// The newest event of all, and its day as the feed's own header says
+        /// it ("Yesterday", "Saturday 22 November").
+        var newest: Date?
+        var newestDay: String?
+        /// The log file is there and could not be read: merges, sync fixes,
+        /// investigations and incidents are unknown.
+        var logUnreadable = false
+        /// Part of Shift's activity could not be read: some task updates are
+        /// unknown.
+        var activityUnreadable = false
+
+        /// Not read yet.
+        init() {}
+
+        init(_ read: FleetLogFeed.Read, calendar: Calendar = .current) {
+            hasRead = true
+            readAt = read.readAt
+            for event in read.events {
+                counts[event.kind, default: 0] += 1
+                guard calendar.isDate(event.date, inSameDayAs: read.readAt) else { continue }
+                today[event.kind, default: 0] += 1
+                latestToday = max(latestToday ?? event.date, event.date)
+            }
+            newest = read.events.map(\.date).max()
+            newestDay = newest.map { FleetLogFeed.dayLabel(for: $0, reference: read.readAt, calendar: calendar) }
+            logUnreadable = read.logUnreadable
+            activityUnreadable = read.activityUnreadable
+        }
+
+        var total: Int { counts.values.reduce(0, +) }
+        var todayTotal: Int { today.values.reduce(0, +) }
+        /// Some of the log could not be read.
+        var isPartial: Bool { logUnreadable || activityUnreadable }
+
+        /// Whether `kind`'s count is known. Task updates come from Shift's
+        /// activity and every other kind from the log file (`FleetLogFeed`'s
+        /// header), so each half's failure leaves only its own kinds unknown.
+        /// All is known only when both halves were read.
+        func knows(_ kind: FleetLogEventKind?) -> Bool {
+            guard let kind else { return !isPartial }
+            return kind == .task ? !activityUnreadable : !logUnreadable
+        }
+    }
+
+    /// "5 events today", the board's headline, over what they were and when
+    /// the latest was, with the filter and its counts on the band's foot.
+    ///
+    /// GL-14: a read that could not read part of the log paints the dimmed
+    /// tone, says when it tried and what is unknown, and counts only what it
+    /// read. A segment whose kind is unknown carries no count, never a zero.
+    static func log(_ reading: LogReading, day: String, time: (Date) -> String) -> Band {
+        guard reading.hasRead else {
+            return Band(symbol: logSymbol, kicker: "Log", headline: "Reading the log\u{2026}", body: nil)
+        }
+        let kicker = "Log \u{00B7} \(day)"
+        let filter = reading.total > 0 ? logSegments(reading) : []
+        if reading.isPartial {
+            let at = reading.readAt.map { " at \(time($0))" } ?? ""
+            let unknown = logUnknownPhrase(reading)
+            let body: String
+            if reading.total > 0 {
+                let shown = reading.total == 1 ? "the 1 event" : "the \(reading.total) events"
+                let today = reading.todayTotal == 0 ? "none" : "\(reading.todayTotal)"
+                body = "Showing \(shown) that could be read, \(today) today. "
+                    + "\(unknown) could not be read, so they are not counted."
+            } else {
+                body = "\(unknown) could not be read, so no count is shown."
+            }
+            let headline = reading.total > 0 ? "Couldn\u{2019}t read all of the log" : "Couldn\u{2019}t read the log"
+            return Band(symbol: logSymbol, kicker: kicker, headline: headline + at, body: body, tone: .dimmed,
+                        filter: filter)
+        }
+        guard reading.total > 0 else {
+            return Band(symbol: calmSymbol, kicker: "Log", headline: "Nothing logged yet", body: emptyLogBody)
+        }
+        guard reading.todayTotal > 0, let latest = reading.latestToday else {
+            var body: String?
+            if let newest = reading.newest, let newestDay = reading.newestDay {
+                let when = newestDay == "Yesterday" ? "yesterday" : "on \(newestDay)"
+                body = "The last event was \(when) at \(time(newest))."
+            }
+            return Band(symbol: logSymbol, kicker: kicker, headline: "Quiet so far today", body: body, filter: filter)
+        }
+        let headline = reading.todayTotal == 1 ? "1 event today" : "\(reading.todayTotal) events today"
+        let parts = logTodayOrder.compactMap { kind, words -> String? in
+            guard let count = reading.today[kind], count > 0 else { return nil }
+            return words(count)
+        }
+        return Band(symbol: logSymbol, kicker: kicker, headline: headline,
+                    body: parts.joined(separator: " \u{00B7} ") + ". Latest at \(time(latest)).", filter: filter)
+    }
+
+    /// Today's events by kind, in the board's order, as the band's second
+    /// line says them. Task updates rather than the board's "tasks done":
+    /// Shift logs every task change into the feed (created, completed, a due
+    /// date moved), so not every one of them is a task done.
+    private static let logTodayOrder: [(FleetLogEventKind, (Int) -> String)] = [
+        (.merge, { $0 == 1 ? "1 merge" : "\($0) merges" }),
+        (.task, { $0 == 1 ? "1 task update" : "\($0) task updates" }),
+        (.investigation, { $0 == 1 ? "1 investigation saved" : "\($0) investigations saved" }),
+        (.incident, { $0 == 1 ? "1 incident update" : "\($0) incident updates" }),
+        (.sync, { $0 == 1 ? "1 sync fix" : "\($0) sync fixes" }),
+    ]
+
+    /// The filter's segments: All, then one per kind in the feed's own order,
+    /// each with its count when that count is known.
+    static func logSegments(_ reading: LogReading) -> [LogSegment] {
+        let kinds: [FleetLogEventKind?] = [nil] + FleetLogEventKind.allCases.map { $0 }
+        return kinds.map { kind in
+            let count = kind.map { reading.counts[$0] ?? 0 } ?? reading.total
+            return LogSegment(kind: kind, title: kind?.pluralTitle ?? "All", count: reading.knows(kind) ? count : nil)
+        }
+    }
+
+    /// What could not be read, as the start of a sentence.
+    private static func logUnknownPhrase(_ reading: LogReading) -> String {
+        switch (reading.logUnreadable, reading.activityUnreadable) {
+        case (true, true): return "Merges, sync fixes, investigations, incidents and some task updates"
+        case (true, false): return "Merges, sync fixes, investigations and incidents"
+        default: return "Some task updates"
+        }
+    }
+
+    /// The list's empty state under a filter whose kind could not be read:
+    /// unknown, not "Nothing here" (GL-14). `nil` when the kind is known, and
+    /// the list keeps its own words.
+    static func logListUnknown(_ reading: LogReading, kind: FleetLogEventKind?,
+                               time: (Date) -> String) -> (title: String, body: String)? {
+        guard reading.hasRead, !reading.knows(kind) else { return nil }
+        let at = reading.readAt.map { " at \(time($0))" } ?? ""
+        let what: String
+        switch kind {
+        case .none: what = "The log"
+        case .merge?: what = "Merges"
+        case .task?: what = "Some task updates"
+        case .sync?: what = "Sync fixes"
+        case .investigation?: what = "Saved investigations"
+        case .incident?: what = "Incident updates"
+        }
+        return ("Couldn\u{2019}t read the log", "\(what) could not be read\(at), so none are shown.")
     }
 }

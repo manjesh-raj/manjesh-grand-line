@@ -42,14 +42,40 @@ enum FleetLogFeed {
     static func events(store: FleetLogStore,
                        shift: ShiftStore?,
                        reference: Date = Date()) -> [FleetLogEvent] {
-        var all = store.events()
+        read(store: store, shift: shift, reference: reference).events
+    }
+
+    /// One read of the feed, and which half of it could not be read.
+    ///
+    /// GL-14: the Crew band's Log tab counts this feed, and an unreadable
+    /// file is not an empty one. The two halves hold different kinds - the
+    /// log file merges, sync fixes, investigations and incidents, Shift's
+    /// activity the task updates - so each half's failure leaves exactly
+    /// its own kinds unknown, and the rest still counted.
+    struct Read: Equatable {
+        /// Newest first, capped at `displayLimit`: what the list renders.
+        var events: [FleetLogEvent]
+        /// The log file is there and could not be read.
+        var logUnreadable = false
+        /// At least one of Shift's activity months in the window is there
+        /// and could not be read.
+        var activityUnreadable = false
+        /// When this read was taken.
+        var readAt: Date
+    }
+
+    static func read(store: FleetLogStore, shift: ShiftStore?, reference: Date = Date()) -> Read {
+        let logged = store.eventsChecked()
+        var all = logged.events
+        var activityUnreadable = false
         if let shift {
-            all.append(contentsOf: shift
-                .recentActivity(monthsBack: shiftMonthsBack, reference: reference)
-                .compactMap(taskEvent(from:)))
+            let activity = shift.recentActivityChecked(monthsBack: shiftMonthsBack, reference: reference)
+            all.append(contentsOf: activity.entries.compactMap(taskEvent(from:)))
+            activityUnreadable = !activity.unreadableMonths.isEmpty
         }
         all.sort { $0.date > $1.date }
-        return Array(all.prefix(displayLimit))
+        return Read(events: Array(all.prefix(displayLimit)), logUnreadable: logged.unreadable,
+                    activityUnreadable: activityUnreadable, readAt: reference)
     }
 
     /// One Shift activity entry as a feed event. Every activity kind Shift

@@ -79,7 +79,7 @@ enum PageRedesignsSelfTest {
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
                               checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkReplyQuestionHead,
-                              checkInFlightBand, checkReviewBand,
+                              checkInFlightBand, checkReviewBand, checkLogBand,
                               checkDevOpsHub,
                               ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
                     var ok = true
@@ -1246,12 +1246,14 @@ enum PageRedesignsSelfTest {
         fleet.debugRender(snapshot: snapshot, mergedPRs: prs)
         settle(shell)
 
-        // Log has no band yet, and keeps its header line until it does.
+        // Log opens on its own band now (`checkLogBand`), and back on In
+        // flight the band says In flight's words again.
         clickTab("Log", shell)
-        check(band(fleet) == nil && !shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
-              "CR-1: Log drew the band or lost its header line before its own band", &ok)
+        check(band(fleet)?.debugKicker.hasPrefix("Log") == true && shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
+              "CR-1: Log drew no band of its own or kept its header line", &ok)
         clickTab("In flight", shell)
-        check(band(fleet) != nil, "CR-1: back on In flight the band did not return", &ok)
+        check(band(fleet)?.debugKicker.hasPrefix("In flight") == true && figures(band(fleet)!).count == 6,
+              "CR-1: back on In flight the band did not say In flight's words", &ok)
 
         // Gotcha (13): the band holds no width above 499, so a window narrower
         // than everything it says still keeps the width it was given.
@@ -1263,6 +1265,226 @@ enum PageRedesignsSelfTest {
         check(abs(window.frame.width - 1100) < 0.5 && (band(fleet)?.frame.width ?? 0) < 1100,
               "CR-1: at 1100pt the window is \(window.frame.width) and the band \(band(fleet)?.frame.width ?? 0)", &ok)
         resize(window, width: 1512, shell)
+    }
+
+    /// The words on each of a segmented strip's pills, in order.
+    private static func pillTitles(_ tabs: HelmSegmentedTabs) -> [String] {
+        tabs.debugPillsForAccessibilityTests().map { pill in
+            pill.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ?? "?"
+        }
+    }
+
+    /// CR-1 on Log: the page opens on the same band, "5 events today" over
+    /// what they were, with the filter on the band's foot as the same
+    /// `HelmSegmentedTabs` in the hero ink and with its counts. It keeps its
+    /// radio roles and ← →, and filters the feed exactly as it did. The
+    /// header line goes, the band is the empty state of an empty log, a log
+    /// that could not be read is dimmed and says when (GL-14), and the band
+    /// holds no width above 499 (gotcha (13)).
+    private static func checkLogBand(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                     _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let fleet = shell.workspace.overview
+        defer { fleet.debugUseLogStore(.shared) }
+        let folder = scratch.appendingPathComponent("log-band", isDirectory: true)
+        // Shift's activity is the feed's other half. The suite's own Shift
+        // store must hold none, or the counts below are not this fixture's.
+        let none = FleetLogFeed.read(store: FleetLogStore(directory: folder.appendingPathComponent("none")),
+                                     shift: shell.workspace.shiftStore)
+        check(none.events.isEmpty && !none.activityUnreadable,
+              "fixture: the suite's Shift store already holds \(none.events.count) activity entries", &ok)
+
+        // The board's typical log: five events today, three yesterday, two
+        // on an older day.
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        func at(_ day: Int, _ hour: Int, _ minute: Int) -> Date {
+            calendar.date(byAdding: .minute, value: hour * 60 + minute,
+                          to: calendar.date(byAdding: .day, value: day, to: today)!)!
+        }
+        let store = FleetLogStore(directory: folder.appendingPathComponent("typical"))
+        for event in [FleetLogEvent(date: at(-3, 9, 3), kind: .task, title: "Completed \u{201C}Weekly review\u{201D}"),
+                      FleetLogEvent(date: at(-3, 11, 20), kind: .merge, title: "Merged PR #628"),
+                      FleetLogEvent(date: at(-1, 14, 47), kind: .task, title: "Completed \u{201C}Renew the Grafana API token\u{201D}"),
+                      FleetLogEvent(date: at(-1, 16, 2), kind: .sync, title: "Shift sync conflict resolved"),
+                      FleetLogEvent(date: at(-1, 18, 18), kind: .merge, title: "Merged PR #629"),
+                      FleetLogEvent(date: at(0, 8, 34), kind: .incident, title: "Started incident INC-7"),
+                      FleetLogEvent(date: at(0, 9, 12), kind: .incident, title: "Ended incident INC-7"),
+                      FleetLogEvent(date: at(0, 9, 41), kind: .investigation, title: "Saved investigation"),
+                      FleetLogEvent(date: at(0, 10, 5), kind: .task, title: "Completed \u{201C}Rotate the staging certificate\u{201D}"),
+                      FleetLogEvent(date: at(0, 10, 32), kind: .merge, title: "Merged PR #630")] {
+            store.append(event)
+        }
+        fleet.debugUseLogStore(store)
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("Log", shell)
+        guard let logBand = band(fleet) else {
+            fail("CR-1: Log opens on no band", &ok)
+            return
+        }
+        let day = CrewHeroWords.dayFormatter.string(from: Date())
+        check(logBand.debugKicker == "Log \u{00B7} \(day)" && logBand.debugHeadline == "5 events today"
+                && logBand.debugBody == "1 merge \u{00B7} 1 task update \u{00B7} 1 investigation saved \u{00B7} 2 incident updates. "
+                    + "Latest at \(CrewBand.time(at(0, 10, 32)))."
+                && !isDimmed(logBand),
+              "CR-1: Log's band reads \(logBand.debugKicker) / \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
+        check(logBand.accessibilityRole() == .group && (logBand.accessibilityLabel() ?? "").contains("5 events today"),
+              "CR-1: Log's band reads \(logBand.accessibilityLabel() ?? "-") to VoiceOver", &ok)
+        check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor && shell.debugHeader == nil,
+              "CR-1: Log keeps the grey header line over its band", &ok)
+
+        // The filter is on the band's foot, the same strip, in the hero ink
+        // with the chosen segment solid ink and the gradient's deep stop for
+        // its words, and with its counts.
+        let tabs = fleet.debugLogFilters
+        let palette = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: ThemeManager.shared.theme)
+        let navInk = HelmHeroColumn.NavInk(palette: palette)
+        check(logBand.debugFootViews.count == 1 && logBand.debugFootViews.first === tabs
+                && tabs.isDescendant(of: logBand) && onScreen(tabs),
+              "CR-1: Log's filter is not on the band's foot (foot \(logBand.debugFootViews))", &ok)
+        check(tabs.heroInk == logBand.ink && tabs.heroSelection == navInk.selectedInk,
+              "CR-1: the filter is not in the band's ink: \(String(describing: tabs.heroInk)) for \(logBand.ink)", &ok)
+        check(pillTitles(tabs) == ["All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
+                                   "Investigations\u{2002}1", "Incidents\u{2002}2"],
+              "CR-1: the filter's segments read \(pillTitles(tabs))", &ok)
+        let pills = tabs.debugPillsForAccessibilityTests()
+        check(pills.count == 6 && pills.allSatisfy { $0.accessibilityRole() == .radioButton }
+                && pills.map { $0.accessibilityLabel() ?? "" } == ["All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
+                && pills.map { ($0.accessibilityValue() as? String) ?? "" }.first == "selected",
+              "CR-1: the filter's segments are not six radio buttons named as before", &ok)
+        let colors = tabs.debugPillLabelColors
+        if colors.count == 6 {
+            let chosen = HelmContrast.ratio(colors[0], logBand.ink)
+            check(colors[0] == navInk.selectedInk && colors.dropFirst().allSatisfy { $0 == logBand.ink }
+                    && chosen >= HelmContrast.textTarget,
+                  "CR-1: the chosen segment's words are \(colors[0]) (\(String(format: "%.2f", chosen)):1 on the ink)", &ok)
+        }
+        // The feed sits straight under the band, as it always read.
+        let list = fleet.debugLogList
+        check(fleet.debugLogListShowing && list.debugRowCount == 13 && onScreen(list),
+              "CR-1: the feed under Log's band has \(list.debugRowCount) rows, showing \(fleet.debugLogListShowing)", &ok)
+        let bandBottom = logBand.convert(NSPoint(x: 0, y: logBand.isFlipped ? logBand.bounds.height : 0), to: nil).y
+        let listTop = list.convert(NSPoint(x: 0, y: list.isFlipped ? 0 : list.bounds.height), to: nil).y
+        // The first day sits right under the band (its header row holds its
+        // own space above the day's name), and the last card is whole: the
+        // table is as tall as its rows. It was 16pt short before CR-1, and
+        // the last card was cut 13pt.
+        check(bandBottom >= listTop - 0.5 && bandBottom - listTop < HelmMetrics.s1,
+              "CR-1: the feed starts \(bandBottom - listTop)pt under the band", &ok)
+        func feedIsWhole() -> Bool {
+            let rows = list.tableView.numberOfRows
+            return rows > 0 && list.tableView.rect(ofRow: rows - 1).maxY <= list.tableView.bounds.height + 0.5
+        }
+        check(feedIsWhole(), "CR-1: the feed's last row ends at \(list.tableView.rect(ofRow: list.tableView.numberOfRows - 1).maxY) "
+                + "in a \(list.tableView.bounds.height)pt table", &ok)
+
+        // ← → through the pill's own keyDown, as a key press reaches it: the
+        // selection and focus move, and the feed filters exactly as before.
+        HelmFocusVisibility.overrideForTests = true
+        defer { HelmFocusVisibility.overrideForTests = nil }
+        func arrow(_ code: UInt16, on pill: HoverHighlightView) {
+            guard let event = keyEvent(code, "", [], window) else { return }
+            pill.keyDown(with: event)
+            settle(shell)
+        }
+        window.makeFirstResponder(pills[0])
+        arrow(124, on: pills[0])
+        check(tabs.selected == "merge" && window.firstResponder === pills[1] && list.debugRowCount == 6
+                && band(fleet) === logBand && logBand.debugHeadline == "5 events today" && feedIsWhole(),
+              "CR-1: → from All moved to \(tabs.selected) with \(list.debugRowCount) rows", &ok)
+        check(tabs.debugHeroRing.isShowing && !tabs.debugHeroRing.systemRingIsOn,
+              "CR-1: a keyed focus on the filter draws no ink ring", &ok)
+        // Reduce Motion (pinned on for this suite): the thumb is already
+        // under the chosen pill, with nothing sliding.
+        let pillFrame = pills[1].convert(pills[1].bounds, to: tabs)
+        check(abs(tabs.debugThumbFrame.width - pillFrame.width) < 0.5,
+              "CR-1: under Reduce Motion the filter's thumb is \(tabs.debugThumbFrame) for \(pillFrame)", &ok)
+        arrow(124, on: pills[1])
+        check(tabs.selected == "task" && list.debugRowCount == 6, "CR-1: → to Tasks shows \(list.debugRowCount) rows", &ok)
+        arrow(123, on: pills[2])
+        arrow(123, on: pills[1])
+        check(tabs.selected == "all" && window.firstResponder === pills[0] && list.debugRowCount == 13,
+              "CR-1: ← back to All shows \(list.debugRowCount) rows on \(tabs.selected)", &ok)
+        tabs.debugClickTab(id: "incident")
+        settle(shell)
+        check(list.debugRowCount == 3 && pills.map { ($0.accessibilityValue() as? String) ?? "" }[5] == "selected",
+              "CR-1: Incidents shows \(list.debugRowCount) rows", &ok)
+        tabs.debugClickTab(id: "all")
+        window.makeFirstResponder(nil)
+        settle(shell)
+
+        // Gotcha (13): the band holds no width above 499 of its own. The
+        // strip's pill row is the kit's unchanged `.gravityAreas` stack, whose
+        // own spacing constraints sit at 749.95 to 750 between pills inside a
+        // capsule of required edges, so they are left out of the scan and the
+        // band's floor and the narrow windows below are the measurement: the
+        // band's own floor is far under the strip, and the window keeps every
+        // width it is given, down to the app's smallest, with the whole strip
+        // inside the band.
+        let offenders = widthsHeldAbove499(logBand).filter { !$0.hasPrefix("NSStackView 7") }
+        let inStrip = widthsHeldAbove499(tabs)
+        check(offenders.isEmpty && inStrip.count == widthsHeldAbove499(logBand).count - offenders.count,
+              "CR-1: Log's band holds a width between 500 and required outside its filter: \(offenders)", &ok)
+        let floor = HelmSplitPage.floorWidth(of: logBand)
+        check(floor > 0 && floor < 420, "CR-1: Log's band's required floor is \(floor)pt", &ok)
+        for width in [1100, AppDelegate.minContentSize.width] as [CGFloat] {
+            resize(window, width: width, shell)
+            let stripFrame = tabs.convert(tabs.bounds, to: logBand)
+            check(abs(window.frame.width - width) < 0.5 && stripFrame.minX >= HelmHeroColumn.bandInsets.left - 0.5
+                    && stripFrame.maxX <= logBand.bounds.width - HelmHeroColumn.bandInsets.right + 0.5,
+                  "CR-1: at \(width)pt the window is \(window.frame.width) and the filter spans \(stripFrame) "
+                    + "of a \(logBand.bounds.width)pt band", &ok)
+        }
+        resize(window, width: 1512, shell)
+
+        // Nothing today: quiet, with when the last event was.
+        let quiet = FleetLogStore(directory: folder.appendingPathComponent("quiet"))
+        quiet.append(FleetLogEvent(date: at(-1, 18, 18), kind: .merge, title: "Merged PR #629"))
+        fleet.debugUseLogStore(quiet)
+        settle(shell)
+        check(logBand.debugHeadline == "Quiet so far today"
+                && logBand.debugBody == "The last event was yesterday at \(CrewBand.time(at(-1, 18, 18)))."
+                && pillTitles(tabs).first == "All\u{2002}1" && fleet.debugLogListShowing,
+              "CR-1: a quiet log reads \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
+
+        // An empty log: the band is the empty state, with no filter and no
+        // second empty card under it.
+        fleet.debugUseLogStore(FleetLogStore(directory: folder.appendingPathComponent("empty")))
+        settle(shell)
+        check(logBand.debugHeadline == "Nothing logged yet" && logBand.debugBody == CrewHeroWords.emptyLogBody
+                && logBand.debugKicker == "Log" && logBand.debugFootViews.isEmpty && !tabs.isDescendant(of: logBand)
+                && !fleet.debugLogListShowing && !isDimmed(logBand),
+              "CR-1: an empty log drew \(logBand.debugHeadline) with foot \(logBand.debugFootViews), "
+                + "list \(fleet.debugLogListShowing)", &ok)
+
+        // GL-14: a log file that is there and cannot be read is not an empty
+        // log. Dimmed, said with the time, no filter and no count.
+        let brokenFolder = folder.appendingPathComponent("broken", isDirectory: true)
+        try? FileManager.default.createDirectory(at: brokenFolder, withIntermediateDirectories: true)
+        let broken = FleetLogStore(directory: brokenFolder)
+        try? Data([0xFF, 0xFE, 0xC3, 0x28, 0x0A]).write(to: broken.debugFileURL)
+        fleet.debugUseLogStore(broken)
+        settle(shell)
+        check(isDimmed(logBand) && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read the log at ")
+                && logBand.debugHeadline.hasSuffix(CrewBand.time(fleet.debugLogReading.readAt ?? Date()))
+                && logBand.debugBody == "Merges, sync fixes, investigations and incidents could not be read, so no count is shown."
+                && logBand.debugFootViews.isEmpty && !fleet.debugLogListShowing,
+              "CR-1: an unreadable log drew \(logBand.debugHeadline) / \(logBand.debugBody ?? "-"), dimmed \(isDimmed(logBand))", &ok)
+        // What this session appended to it since is shown and counted, and
+        // the kinds the file holds say no count rather than a zero.
+        broken.append(FleetLogEvent(date: at(0, 10, 32), kind: .merge, title: "Merged PR #630"))
+        tabs.debugClickTab(id: "investigation")
+        settle(shell)
+        check(isDimmed(logBand) && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read all of the log at ")
+                && pillTitles(tabs) == ["All", "Merges", "Tasks\u{2002}0", "Sync", "Investigations", "Incidents"]
+                && list.debugEmptyText.title == "Couldn\u{2019}t read the log"
+                && list.debugEmptyText.body.hasPrefix("Saved investigations could not be read at "),
+              "CR-1: a partly read log drew \(logBand.debugHeadline), segments \(pillTitles(tabs)), "
+                + "list \(list.debugEmptyText)", &ok)
+        tabs.debugClickTab(id: "all")
+        settle(shell)
+        clickTab("In flight", shell)
     }
 
     /// The PRs Review's checks draw: the board's nine, two of them ready to
@@ -1703,6 +1925,18 @@ enum PageRedesignsSelfTest {
         check(!(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine
                 && (fleet as WorkspaceHeaderLineCollapsing).drawsSubtitleOnHeaderLine,
               "CR-1: the floating bar's Fleet page gives up a header line", &ok)
+        // Its Log keeps the filter over the feed, in the theme's own recipe
+        // and with no counts, and draws no band.
+        fleet.debugSwitchTab("log")
+        settle(shell)
+        let logTabs = fleet.debugLogFilters
+        check(fleet.debugCrewBand == nil && logTabs.heroInk == nil && logTabs.superview != nil && onScreen(logTabs)
+                && pillTitles(logTabs) == ["All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
+                && fleet.debugLogListShowing
+                && !(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine,
+              "CR-1: the floating bar's Log drew the band or changed its filter: \(pillTitles(logTabs))", &ok)
+        fleet.debugSwitchTab("overview")
+        settle(shell)
         // Review's band is the sidebar layout's too: the floating bar's Review
         // keeps its count line, its boxed figures and its two forge cards.
         OpenPRsSource.debugFetcher = { OpenPRsSource.FetchResult() }

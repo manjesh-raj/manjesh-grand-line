@@ -26,6 +26,10 @@
 //    second copy (see `FleetLogFeed`'s header), so "a real task completion
 //    shows up in the log" is a property of that merge, not of any write this
 //    feature performs.
+//  - **An unreadable half is not an empty one** (GL-01, GL-14, for the Crew
+//    band's Log tab). A log file that is there and cannot be read, and a
+//    month of Shift's activity that will not parse, are each reported by the
+//    feed's read, while a missing file and a missing month are not.
 
 // GL-27: compiled into debug builds only.
 #if FM_SELFTESTS
@@ -199,6 +203,49 @@ enum FleetLogSelfTest {
         check(FleetLogFeed.taskEvent(from: ShiftActivityEntry(
             id: "x", timestamp: "not a date", kind: "task_completed", summary: "s", targetID: nil)) == nil,
               "an undated activity entry should be dropped, not dated now")
+
+        // MARK: An unreadable half is not an empty one
+
+        // A missing log file is an empty log, not a failed read.
+        let missing = FleetLogStore(directory: scratch.appendingPathComponent("missing", isDirectory: true))
+        check(missing.eventsChecked().events.isEmpty && !missing.eventsChecked().unreadable,
+              "a log with no file yet should read as empty, not unreadable")
+        // A file that is there and is not UTF-8 is a failed read.
+        let brokenDir = scratch.appendingPathComponent("broken", isDirectory: true)
+        try? FileManager.default.createDirectory(at: brokenDir, withIntermediateDirectories: true)
+        let broken = FleetLogStore(directory: brokenDir)
+        try? Data([0xFF, 0xFE, 0xC3, 0x28, 0x0A]).write(to: broken.debugFileURL)
+        check(broken.eventsChecked().unreadable && broken.eventsChecked().events.isEmpty,
+              "a log file that cannot be read should say so rather than read as empty")
+        check(!feedStore.eventsChecked().unreadable && feedStore.eventsChecked().events == feedStore.events(),
+              "a readable log's checked read should be its plain read")
+        let brokenRead = FleetLogFeed.read(store: broken, shift: shift)
+        check(brokenRead.logUnreadable && !brokenRead.activityUnreadable
+                && brokenRead.events.contains { $0.kind == .task },
+              "the feed should report the unreadable log file and still read Shift's half")
+        // A month of Shift's activity that will not parse is unknown, while a
+        // month with no file at all is an empty month.
+        check(shift.recentActivityChecked().unreadableMonths.isEmpty,
+              "months with no activity file should not count as unreadable")
+        let monthFormatter = DateFormatter()
+        monthFormatter.dateFormat = "yyyy-MM"
+        monthFormatter.calendar = Calendar(identifier: .gregorian)
+        monthFormatter.timeZone = TimeZone.current
+        let lastMonth = monthFormatter.string(from: Calendar(identifier: .gregorian)
+            .date(byAdding: .month, value: -1, to: Date())!)
+        let activityDir = shiftRoot.appendingPathComponent("activity", isDirectory: true)
+        try? FileManager.default.createDirectory(at: activityDir, withIntermediateDirectories: true)
+        try? "- not\n- a mapping\n".write(to: activityDir.appendingPathComponent("\(lastMonth).yaml"),
+                                         atomically: true, encoding: .utf8)
+        let damaged = shift.recentActivityChecked()
+        check(damaged.unreadableMonths == [lastMonth] && damaged.entries.contains { $0.targetID == task.id },
+              "a month that will not parse should be named, and the readable months kept - got \(damaged.unreadableMonths)")
+        check(shift.recentActivity().count == damaged.entries.count,
+              "the plain activity read should be the checked read's entries, unchanged")
+        let damagedRead = FleetLogFeed.read(store: feedStore, shift: shift)
+        check(damagedRead.activityUnreadable && !damagedRead.logUnreadable
+                && damagedRead.events.contains { $0.kind == .merge },
+              "the feed should report the unreadable month and still read the log file")
 
         if failures.isEmpty {
             print("FleetLogSelfTest: all checks passed")

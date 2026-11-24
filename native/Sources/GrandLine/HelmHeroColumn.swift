@@ -82,6 +82,14 @@
 // band's trailing edge: its words hug at 249 (`bandWordsHug`), so they take
 // the slack, rather than the engine breaking a 250-to-250 tie between the
 // words and the ring's caption.
+//
+// **1.6.0, for Crew › Log's filter (CR-1).** A `HelmSegmentedTabs` handed in
+// takes the hero ink like the other kit controls: its `heroInk` is the ink and
+// its `heroSelection` the nav rows' selected words (`NavInk.selectedInk`), so
+// the chosen segment is solid ink with the gradient's deep stop for words, as
+// the board's `.hsegh` and a selected `HelmHeroNavRow` draw it. The column
+// re-hands both on every theme pass, so a page never paints the strip from a
+// stale ink.
 
 import AppKit
 
@@ -693,15 +701,17 @@ final class HelmHeroColumn: NSView {
             ringGauge.valueColorOverride = ring.isDimmed ? quiet : arc
             ringGauge.applyTheme(theme, hue: .blue)
         }
-        for section in sections { for view in section.views { Self.applyInk(ink, to: view) } }
-        for view in footViews { Self.applyInk(ink, to: view) }
+        // 1.6.0: a segmented strip's chosen words are the nav rows' pill words.
+        let pillWords = NavInk(palette: palette).selectedInk
+        for section in sections { for view in section.views { Self.applyInk(ink, to: view, selection: pillWords) } }
+        for view in footViews { Self.applyInk(ink, to: view, selection: pillWords) }
         // 1.5.0: a tile grid takes the hero card's tile recipe on this
         // palette, and any other band view takes the ink as the foot does.
         for view in bandViews {
             if let grid = view as? HelmHeroTileGrid {
                 grid.paint(palette: palette, theme: theme)
             } else {
-                Self.applyInk(ink, to: view)
+                Self.applyInk(ink, to: view, selection: pillWords)
             }
         }
         footRuleView.layer?.backgroundColor = ink.withAlphaComponent(Self.ruleAlpha).cgColor
@@ -711,7 +721,6 @@ final class HelmHeroColumn: NSView {
         let statusDot = header.status?.tint.map { HelmHeroSurface.signalColor(tintHex: $0.hex(in: theme), on: palette) }
         statusPill.apply(ink: ink, fill: HelmContrast.color(wash.rgb).withAlphaComponent(wash.alpha),
                          dot: statusDot ?? ink.withAlphaComponent(0.55))
-        let pillWords = NavInk(palette: palette).selectedInk
         for section in sections {
             for case let row as HelmHeroNavRow in section.views { row.applyInk(ink, selectedInk: pillWords) }
         }
@@ -789,8 +798,10 @@ final class HelmHeroColumn: NSView {
     }
 
     /// Hand the ink to the kit controls a page put on the gradient, and to
-    /// the rows. Anything else is left as the page built it.
-    static func applyInk(_ ink: NSColor, to view: NSView) {
+    /// the rows. Anything else is left as the page built it. `selection` is
+    /// a segmented strip's chosen words on the solid ink (1.6.0), and `nil`
+    /// lets the strip take its shade.
+    static func applyInk(_ ink: NSColor, to view: NSView, selection: NSColor? = nil) {
         switch view {
         case let row as HelmHeroRow:
             row.applyInk(ink)
@@ -802,8 +813,11 @@ final class HelmHeroColumn: NSView {
             field.heroInk = ink
         case let strip as HelmKPIStrip:
             strip.heroInk = ink
+        case let tabs as HelmSegmentedTabs:
+            tabs.heroSelection = selection
+            tabs.heroInk = ink
         default:
-            for sub in view.subviews { applyInk(ink, to: sub) }
+            for sub in view.subviews { applyInk(ink, to: sub, selection: selection) }
         }
     }
 

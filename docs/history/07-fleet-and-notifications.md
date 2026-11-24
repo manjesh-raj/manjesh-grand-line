@@ -2097,3 +2097,74 @@ Sidebar layout only: the floating bar's dashboard still opens `FleetMessageCompo
 - An off-screen render of the real Needs you tab (typing on a waiting task, a failed send and a fresh open on a blocked one, in Lavender and Powder) was compared with the board's RP-2.
   It was a scratch hook, removed before commit.
 - Not verified: the card in the captain's running app, a real ⌘↩ through `NSApplication.sendEvent` (the suite enters at the window's `performKeyEquivalent`, which is where AppKit hands a ⌘ chord first), a spoken VoiceOver pass, and the full window lane.
+
+## The Crew band on Log (CR-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The last piece of CR-1 Crew band, for the Log tab (`FleetController`'s second tab).
+Sidebar layout only: the floating bar's Log keeps its filter over the feed, in the theme's recipe and without counts, and draws no band.
+
+### What shipped
+
+- **The same band.**
+  Log opens on the band Needs you and In flight already share, drawn through `CrewBand`, so all four Crew tabs now open on one.
+  It gives up the grey header line as the other tabs did (`WorkspaceHeaderLineCollapsing`), which is now every tab this page draws in the sidebar layout.
+- **The words.**
+  "5 events today" under "Log · Tue, 24 Nov", over what they were: "1 merge · 1 task update · 1 investigation saved · 2 incident updates. Latest at 10:32 AM."
+  A day with nothing yet reads "Quiet so far today" over "The last event was yesterday at 6:18 PM." (or "on Saturday 22 November", the feed's own day header).
+  An empty log reads "Nothing logged yet" with a check tile and the feed's own empty sentence, and the band is the empty state: no filter, and no second empty card under it.
+  The words are `CrewHeroWords.log`, built from the same read the list renders (`FleetLogFeed.read`), so the band counts exactly what the list shows.
+- **The filter is on the band.**
+  The same `HelmSegmentedTabs` moves to the band's foot under a hairline, in the hero ink, with the chosen segment solid ink and the gradient's deep stop for its words.
+  Each segment carries its count ("Merges 3"), with an en space, as Hosts' and DevOps Hub's counted segments do.
+  Its radio roles, its VoiceOver labels and values, ← →, the sliding selection (instant under Reduce Motion) and what it filters are unchanged.
+- **A log that could not be read (GL-14).**
+  The feed has two halves: the log file holds merges, sync fixes, investigations and incidents, and Shift's activity holds the task updates.
+  Neither read could fail before: an unreadable log file and a month of activity that would not parse both read as empty.
+  `FleetLogStore.eventsChecked()` and `ShiftStore.recentActivityChecked()` now say when a file is there and cannot be read, and a missing file is still an empty one (GL-01's two states).
+  The band then paints the dimmed tone, says when it tried ("Couldn’t read the log at 11:24 AM", or "all of the log" when part was read), says what is unknown, and counts only what it read.
+  A segment whose kind could not be read carries its title alone rather than a zero, and an empty list under it says the kind could not be read rather than "Nothing here".
+- **The feed sits closer under the band.**
+  Its first day header's row holds its own space above the day's name, so Log sets no stack spacing after the band, as the board draws the feed 6px under it.
+- **Kit.**
+  `HelmHeroColumn` 1.6.0 hands a `HelmSegmentedTabs` on a column its `heroInk` and its `heroSelection` (the nav rows' selected words) on every theme pass, as it already did for a ghost pill, a field and a figure strip.
+  The page never paints the strip itself, so a theme change cannot leave it on the previous ink.
+
+### Found on the way
+
+- **The feed's last card was cut 13pt short, in both layouts.**
+  `FleetLogListView` sized its table as the rows' heights plus one spacing fewer than the rows, and the table's default style resolves to `.inset`, which pads the rows with 10pt above the first.
+  Measured under the band: six rows laid out 328pt of rows in a 312pt table.
+  The table is now `.plain` (as `HelmDataTable`'s) and as tall as its rows, each row counting its spacing.
+  The floating bar's feed changes with it: its cards now run to the column's edges, level with the filter, and its last card is whole.
+- `ReviewPRListView` sizes its forge tables with the same formula and was not looked at here.
+
+### Where the design did not hold as drawn
+
+- **"Task updates", not the board's "tasks done".**
+  Shift logs every task change into the feed (created, completed, a due date moved), so not every task event is a task done.
+- **The counts are the segment's own words.**
+  The board draws a count smaller and quieter than its title, and `HelmSegmentedTabs` has one label per segment, so "Merges 3" is one string in one colour.
+  VoiceOver still reads the segment's title alone, as `setTitle(_:forID:)` leaves its label, which is how every counted segment in the app reads.
+- **Kit differences kept, as on the other tabs:** the 17pt band headline (board 20), the localised "Tue, 24 Nov", and the compact segments at 11.5pt.
+- **No first-read or not-set-up state of its own.**
+  The log is a local read on the main thread when the tab shows, so the band never waits on it, and it does not read the firstmate home, so Open Setup does not apply.
+  "Reading the log…" exists for a band drawn before the first read and is asserted, but nothing reaches it today.
+- **Nothing is carried across a failed read.**
+  The log is re-read in full each time, so a read that fails shows what it read now rather than an earlier list.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless, CI's blocking lane) asserts `CrewHeroWords.log` in every state: before the first read, typical, one event, two of each kind, quiet since yesterday and since an older day, empty, an unreadable log file alone and over Shift's task updates, an unreadable month of activity, and both.
+  It checks the band's segments are the floating bar's, in its order, and that the list's empty state under an unknown kind says so.
+  It drives a real `FleetController` on scratch stores (a real `ShiftStore` and a real `FleetLogStore`): the floating bar's Log with no band and its filter unchanged, then the sidebar layout's band, its counts, a filter click, a month of activity broken on disk (dimmed, Tasks uncounted, the rows kept) and the same month readable again.
+  Its palette sweep now includes the filter: an unchosen segment's words on its shade over both stops and the chosen segment's words on the solid ink, on 50 palettes in both tones (weakest band text still 4.50:1).
+- `FleetLogSelfTest` (headless) asserts the two new reads: a missing log file and a missing month are empty, a log file that is not UTF-8 and a month that will not parse are reported, the readable half is still read, and Shift's plain activity read is unchanged.
+- `PageRedesignsSelfTest` (window lane) opens Log from Crew's toolbar tab in a real off-screen sidebar shell, pointed at a log the suite wrote (`debugUseLogStore`): the band as one group named by its headline, the words, the header line given up, the filter on the band's foot in the band's ink and chosen words, its counts, six radio buttons with their labels and values unchanged, the feed under the band with its first day right under it and its last card whole, ← and → through the pill's own `keyDown` moving the selection, the focus, the ink ring and the rows, the thumb under the chosen pill at once under Reduce Motion, a click filtering to Incidents, and gotcha (13).
+  The band holds no width between 500 and required outside the strip (the strip's own pill row is the kit's unchanged `.gravityAreas` stack, whose spacing sits at 749.95 to 750 between pills inside a capsule of required edges), its floor is 36pt against a 502.5pt strip, and at 1100pt and at the app's 960pt minimum the window keeps its width with the whole strip inside the band.
+  Then a quiet log, an empty one (no filter and no list), an unreadable one (dimmed, the time, no filter and no list) and one read only in part (uncounted segments, and the list saying the kind could not be read).
+  The floating bar's Log keeps its filter over the feed with no counts and no hero ink, and its header line.
+- Confirmed to fail when injected: Log left out of the band (both suites), the strip not handed the ink (every palette in the sweep, and the window's ink, chosen words and focus ring), the counts left off (both), a failed read on the accent tone (the words and both pages), an unknown count drawn as zero (the words and both pages), the log file never reported unreadable (`FleetLogSelfTest` and the window), a broken month never reported (`FleetLogSelfTest` and the real page), the list kept under an empty band, the old table height and style (the window: "the feed's last row ends at 790.0 in a 774.0pt table"), the default gap under the band, the floating bar giving up its header line, the filter's ink at 45% (the sweep, 2.95:1 on Daylight), and the list's own words over an unknown kind.
+- An off-screen render of the real page (typical, Merges chosen, a keyed focus, busy, quiet, empty, unreadable and partly read, in Lavender and Powder) was compared with the board's CR-1 Log tab.
+  The gradient matched by sampling (Lavender `#3e6197` against the board's `#3f6298`, Powder `#4d627c` against `#4e637d`), and the render is what found the clipped card and the wide gap under the band.
+  It was a scratch hook, removed before commit.
+- Not verified: the band in the captain's running app, a spoken VoiceOver pass, the filter at the Larger text scale at the 960pt minimum (measured at the default scale only), and the full window lane.

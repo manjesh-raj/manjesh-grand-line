@@ -26,6 +26,15 @@
 //     sidebar layout drawing the first read, a good read and a failed one with
 //     its rows carried, and the band's painted words, pill, tiles and figures
 //     clearing their floors on every palette.
+//   - CR-1 on Crew › Log: `CrewHeroWords.log` in every state (first read,
+//     typical, one event, quiet since yesterday or longer, empty, a log file
+//     or a month of Shift's activity that could not be read, and both), the
+//     filter's segments and which counts are unknown, and a real
+//     `FleetController` on scratch stores reading a real log, filtering it,
+//     and going dimmed over a month of activity it could not read. The
+//     floating bar's Log keeps its filter in the list's column with no
+//     counts. The filter's chosen and unchosen words clear the floor on
+//     every palette, on both tones.
 //   - CR-1 on Crew › Review: `CrewHeroWords.review` in every state (first
 //     read, typical, busy, empty, a scan that reached nothing, a partial one
 //     with its pull requests kept), a real `ReviewController` in the sidebar
@@ -68,6 +77,8 @@ enum PageHeroColumnsSelfTest {
             checkTheCrewBandOnTheRealPage,
             checkCrewReviewWords,
             checkTheReviewBandOnTheRealPage,
+            checkCrewLogWords,
+            checkTheLogBandOnTheRealPage,
             checkTheCrewBandClearsTheFloorOnEveryPalette,
             checkReplyHeadWords,
             checkTheReplyHeadClearsTheFloorOnEveryPalette,
@@ -645,11 +656,243 @@ enum PageHeroColumnsSelfTest {
         check(fleet.debugCrewBand?.debugHeadline == "2 tasks need your call" && fleet.debugCrewBand?.debugStatusPill != nil,
               "CR-1: In flight on a real page reads \(fleet.debugCrewBand?.debugHeadline ?? "-")", &ok)
         fleet.selectModuleTab(named: "Log")
-        check(fleet.debugCrewBand == nil && !fleet.collapsesEmptyHeaderLine && fleet.drawsSubtitleOnHeaderLine,
-              "CR-1: Log drew the band or gave up its header line before its own band", &ok)
+        check(fleet.debugCrewBand?.debugKicker.hasPrefix("Log") == true && fleet.collapsesEmptyHeaderLine
+                && !fleet.drawsSubtitleOnHeaderLine,
+              "CR-1: Log drew no band of its own or kept its header line", &ok)
         fleet.selectModuleTab(named: "In flight")
         check(fleet.collapsesEmptyHeaderLine && !fleet.drawsSubtitleOnHeaderLine,
               "CR-1: In flight keeps its header line over the band", &ok)
+    }
+
+    // MARK: CR-1 on Log
+
+    /// A pinned clock for Log's words, in the board's format, so a time a
+    /// fixture made reads the same on every runner.
+    private static let logClock: (Date) -> String = { date in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: date)
+    }
+
+    /// The board's log as a read at 11:24 AM local: five events today, three
+    /// yesterday, two three days back. Local days, because "today" is the
+    /// captain's (`FleetLogFeed.dayLabel` reads `Calendar.current`).
+    private static func boardLog() -> (read: FleetLogFeed.Read, at: (Int, Int, Int) -> Date) {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: crewNow)
+        let at: (Int, Int, Int) -> Date = { day, hour, minute in
+            calendar.date(byAdding: .minute, value: hour * 60 + minute,
+                          to: calendar.date(byAdding: .day, value: day, to: today)!)!
+        }
+        let events = [FleetLogEvent(date: at(0, 10, 32), kind: .merge, title: "Merged PR #630"),
+                      FleetLogEvent(date: at(0, 10, 5), kind: .task, title: "Completed a task"),
+                      FleetLogEvent(date: at(0, 9, 41), kind: .investigation, title: "Saved investigation"),
+                      FleetLogEvent(date: at(0, 9, 12), kind: .incident, title: "Ended incident INC-7"),
+                      FleetLogEvent(date: at(0, 8, 34), kind: .incident, title: "Started incident INC-7"),
+                      FleetLogEvent(date: at(-1, 18, 18), kind: .merge, title: "Merged PR #629"),
+                      FleetLogEvent(date: at(-1, 16, 2), kind: .sync, title: "Shift sync conflict resolved"),
+                      FleetLogEvent(date: at(-1, 14, 47), kind: .task, title: "Completed another"),
+                      FleetLogEvent(date: at(-3, 11, 20), kind: .merge, title: "Merged PR #628"),
+                      FleetLogEvent(date: at(-3, 9, 3), kind: .task, title: "Completed the weekly review")]
+        return (FleetLogFeed.Read(events: events, readAt: at(0, 11, 24)), at)
+    }
+
+    /// CR-1 on Log: the board's words in every state the tab can be in.
+    private static func checkCrewLogWords(_ ok: inout Bool) {
+        typealias Reading = CrewHeroWords.LogReading
+        let (board, at) = boardLog()
+        let first = CrewHeroWords.log(Reading(), day: "Tue 24 Nov", time: logClock)
+        check(first.kicker == "Log" && first.headline == "Reading the log\u{2026}" && first.body == nil
+                && first.filter.isEmpty && first.figures.isEmpty && first.tone == .accent
+                && first.symbol == CrewHeroWords.logSymbol,
+              "CR-1: Log before its first read is \(first)", &ok)
+
+        let typical = CrewHeroWords.log(Reading(board), day: "Tue 24 Nov", time: logClock)
+        check(typical.kicker == "Log \u{00B7} Tue 24 Nov" && typical.headline == "5 events today"
+                && typical.body == "1 merge \u{00B7} 1 task update \u{00B7} 1 investigation saved \u{00B7} 2 incident updates. "
+                    + "Latest at 10:32 AM."
+                && typical.tone == .accent && typical.symbol == CrewHeroWords.logSymbol && typical.figures.isEmpty
+                && !typical.offersSetup && typical.status == nil && typical.ring == nil,
+              "CR-1: Log's typical band is \(typical)", &ok)
+        check(typical.filter.map(\.label) == ["All\u{2002}10", "Merges\u{2002}3", "Tasks\u{2002}3", "Sync\u{2002}1",
+                                              "Investigations\u{2002}1", "Incidents\u{2002}2"]
+                && typical.filter.map(\.kind) == [nil, .merge, .task, .sync, .investigation, .incident],
+              "CR-1: Log's filter is \(typical.filter.map(\.label))", &ok)
+        // The band's segments are the floating bar's, in its order.
+        check(typical.filter.map(\.title) == FleetLogListView.filterItems.map(\.title)
+                && typical.filter.map { $0.kind?.rawValue ?? FleetLogListView.allFilterID }
+                    == FleetLogListView.filterItems.map(\.id),
+              "CR-1: the band's segments are not the floating bar's", &ok)
+
+        // Plurals, one at a time and two at a time.
+        func read(_ events: [FleetLogEvent], log: Bool = false, activity: Bool = false) -> Reading {
+            Reading(FleetLogFeed.Read(events: events, logUnreadable: log, activityUnreadable: activity,
+                                      readAt: board.readAt))
+        }
+        let one = CrewHeroWords.log(read([FleetLogEvent(date: at(0, 9, 0), kind: .sync, title: "s")]),
+                                    day: "Tue 24 Nov", time: logClock)
+        check(one.headline == "1 event today" && one.body == "1 sync fix. Latest at 9:00 AM.",
+              "CR-1: one event reads \(one.headline) / \(one.body ?? "-")", &ok)
+        let pairs = [FleetLogEventKind.merge, .task, .investigation, .incident, .sync].flatMap { kind in
+            [FleetLogEvent(date: at(0, 9, 0), kind: kind, title: "a"), FleetLogEvent(date: at(0, 8, 0), kind: kind, title: "b")]
+        }
+        let two = CrewHeroWords.log(read(pairs), day: "Tue 24 Nov", time: logClock)
+        check(two.headline == "10 events today"
+                && two.body == "2 merges \u{00B7} 2 task updates \u{00B7} 2 investigations saved \u{00B7} 2 incident updates "
+                    + "\u{00B7} 2 sync fixes. Latest at 9:00 AM.",
+              "CR-1: two of each read \(two.body ?? "-")", &ok)
+
+        // Nothing today: when the last event was, said as the feed says the day.
+        let quiet = CrewHeroWords.log(read(Array(board.events.dropFirst(5))), day: "Tue 24 Nov", time: logClock)
+        check(quiet.headline == "Quiet so far today" && quiet.body == "The last event was yesterday at 6:18 PM."
+                && quiet.tone == .accent && quiet.filter.first?.label == "All\u{2002}5",
+              "CR-1: a quiet day reads \(quiet.headline) / \(quiet.body ?? "-")", &ok)
+        let older = CrewHeroWords.log(read(Array(board.events.suffix(2))), day: "Tue 24 Nov", time: logClock)
+        let label = FleetLogFeed.dayLabel(for: at(-3, 11, 20), reference: board.readAt)
+        check(label != "Yesterday" && older.body == "The last event was on \(label) at 11:20 AM.",
+              "CR-1: a quiet few days read \(older.body ?? "-")", &ok)
+
+        let empty = CrewHeroWords.log(read([]), day: "Tue 24 Nov", time: logClock)
+        check(empty.kicker == "Log" && empty.headline == "Nothing logged yet" && empty.body == CrewHeroWords.emptyLogBody
+                && empty.symbol == CrewHeroWords.calmSymbol && empty.filter.isEmpty && empty.tone == .accent,
+              "CR-1: Log's empty band is \(empty)", &ok)
+
+        // GL-14: a log file that could not be read is not an empty log.
+        let blind = CrewHeroWords.log(read([], log: true), day: "Tue 24 Nov", time: logClock)
+        check(blind.tone == .dimmed && blind.headline == "Couldn\u{2019}t read the log at 11:24 AM"
+                && blind.body == "Merges, sync fixes, investigations and incidents could not be read, so no count is shown."
+                && blind.filter.isEmpty && blind.kicker == "Log \u{00B7} Tue 24 Nov" && blind.headline != empty.headline,
+              "CR-1: an unreadable log file over nothing else is \(blind)", &ok)
+        // The task updates Shift's activity holds are still read and counted.
+        let tasks = board.events.filter { $0.kind == .task }
+        let partly = CrewHeroWords.log(read(tasks, log: true), day: "Tue 24 Nov", time: logClock)
+        check(partly.tone == .dimmed && partly.headline == "Couldn\u{2019}t read all of the log at 11:24 AM"
+                && partly.body == "Showing the 3 events that could be read, 1 today. "
+                    + "Merges, sync fixes, investigations and incidents could not be read, so they are not counted."
+                && partly.filter.map(\.count) == [nil, nil, 3, nil, nil, nil]
+                && partly.filter.map(\.label) == ["All", "Merges", "Tasks\u{2002}3", "Sync", "Investigations", "Incidents"],
+              "CR-1: an unreadable log file over Shift's tasks is \(partly)", &ok)
+        let noTasks = CrewHeroWords.log(read(board.events.filter { $0.kind != .task }, activity: true),
+                                        day: "Tue 24 Nov", time: logClock)
+        check(noTasks.tone == .dimmed && noTasks.headline == "Couldn\u{2019}t read all of the log at 11:24 AM"
+                && (noTasks.body ?? "").hasSuffix("Some task updates could not be read, so they are not counted.")
+                && noTasks.filter.map(\.count) == [nil, 3, nil, 1, 1, 2],
+              "CR-1: a month of activity that could not be read is \(noTasks)", &ok)
+        let both = CrewHeroWords.log(read([FleetLogEvent(date: at(-1, 9, 0), kind: .merge, title: "m")],
+                                          log: true, activity: true), day: "Tue 24 Nov", time: logClock)
+        check(both.body == "Showing the 1 event that could be read, none today. Merges, sync fixes, investigations, "
+                + "incidents and some task updates could not be read, so they are not counted."
+                && both.filter.allSatisfy { $0.count == nil },
+              "CR-1: both halves unreadable read \(both.body ?? "-")", &ok)
+
+        // The list's own empty state under a kind that could not be read.
+        let partlyRead = read(tasks, log: true)
+        let merges = CrewHeroWords.logListUnknown(partlyRead, kind: .merge, time: logClock)
+        check(merges?.title == "Couldn\u{2019}t read the log"
+                && merges?.body == "Merges could not be read at 11:24 AM, so none are shown."
+                && CrewHeroWords.logListUnknown(partlyRead, kind: .task, time: logClock) == nil
+                && CrewHeroWords.logListUnknown(partlyRead, kind: nil, time: logClock)?.body
+                    == "The log could not be read at 11:24 AM, so none are shown."
+                && CrewHeroWords.logListUnknown(Reading(board), kind: .merge, time: logClock) == nil
+                && CrewHeroWords.logListUnknown(Reading(), kind: .merge, time: logClock) == nil,
+              "CR-1: the list under an unknown kind says \(String(describing: merges))", &ok)
+    }
+
+    /// The real page: a `FleetController` on scratch stores, headless, in the
+    /// sidebar layout and in the floating bar's.
+    private static func checkTheLogBandOnTheRealPage(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("crew-log-band-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        let shiftRoot = scratch.appendingPathComponent("shift", isDirectory: true)
+        try? FileManager.default.createDirectory(at: shiftRoot, withIntermediateDirectories: true)
+        let savedShift = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", shiftRoot.path, 1)
+        defer {
+            if let savedShift { setenv("FM_SHIFT_DIR", savedShift, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let shift = ShiftStore()
+        let task = ShiftTask(id: "task-log-1", title: "Rotate the staging certificate", description: "",
+                             status: .todo, priority: .normal, dueDate: nil, dueTime: nil, projectID: nil,
+                             tags: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+                             completedAt: nil, notes: nil, subtasks: [], hasAttachment: false)
+        shift.addTask(task)
+        shift.setTaskCompleted(id: task.id, completed: true)
+        let log = FleetLogStore(directory: scratch.appendingPathComponent("log", isDirectory: true))
+        log.append(FleetLogEvent(date: Date(), kind: .merge, title: "Merged PR #630"))
+        let fixture = FleetLogFeed.read(store: log, shift: shift)
+        check(fixture.events.map(\.kind).sorted { $0.rawValue < $1.rawValue } == [.merge, .task, .task]
+                && Calendar.current.isDateInToday(fixture.events.last?.date ?? .distantPast),
+              "fixture: the scratch log reads \(fixture.events.map(\.kind))", &ok)
+
+        // The floating bar's Log: no band, its filter in the list's column
+        // with the titles it always had.
+        let floating = FleetController(shiftStore: shift, logStore: log)
+        _ = floating.view
+        floating.debugSwitchTab("log")
+        let floatingTabs = floating.debugLogFilters
+        check(floating.debugCrewBand == nil && floatingTabs.heroInk == nil && floatingTabs.superview != nil
+                && floatingTabs.debugPillsForAccessibilityTests().map { $0.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ?? "" }
+                    == FleetLogListView.filterItems.map(\.title)
+                && !floating.collapsesEmptyHeaderLine && floating.drawsSubtitleOnHeaderLine
+                && floating.debugLogList.debugRowCount == 4,
+              "CR-1: the floating bar's Log drew the band or changed its filter", &ok)
+
+        let fleet = FleetController(shiftStore: shift, logStore: log)
+        _ = fleet.view
+        fleet.adoptSidebarLayout()
+        fleet.selectModuleTab(named: "Log")
+        guard let logBand = fleet.debugCrewBand else {
+            fail("CR-1: Log opens on no band", &ok)
+            return
+        }
+        let tabs = fleet.debugLogFilters
+        func titles() -> [String] {
+            tabs.debugPillsForAccessibilityTests().map { $0.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ?? "" }
+        }
+        check(logBand.debugHeadline == "3 events today"
+                && (logBand.debugBody ?? "").hasPrefix("1 merge \u{00B7} 2 task updates. Latest at ")
+                && fleet.collapsesEmptyHeaderLine && !fleet.drawsSubtitleOnHeaderLine
+                && logBand.debugFootViews.first === tabs && tabs.heroInk == logBand.ink,
+              "CR-1: Log on a real page reads \(logBand.debugHeadline) / \(logBand.debugBody ?? "-")", &ok)
+        check(titles() == ["All\u{2002}3", "Merges\u{2002}1", "Tasks\u{2002}2", "Sync\u{2002}0",
+                           "Investigations\u{2002}0", "Incidents\u{2002}0"],
+              "CR-1: the real filter reads \(titles())", &ok)
+        // The filter on the band filters the feed under it, as it always did.
+        check(fleet.debugLogList.debugRowCount == 4 && fleet.debugLogListShowing,
+              "CR-1: the feed under the band has \(fleet.debugLogList.debugRowCount) rows", &ok)
+        tabs.debugClickTab(id: "merge")
+        check(fleet.debugLogList.debugRowCount == 2 && tabs.selected == "merge" && fleet.debugCrewBand === logBand
+                && logBand.debugHeadline == "3 events today",
+              "CR-1: Merges on the band left \(fleet.debugLogList.debugRowCount) rows", &ok)
+        tabs.debugClickTab(id: "all")
+
+        // GL-14: a month of Shift's activity that is there and cannot be
+        // read. Dimmed, the time said, Tasks without a count, the rest kept.
+        let calendar = Calendar(identifier: .gregorian)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        formatter.calendar = calendar
+        formatter.timeZone = TimeZone.current
+        let lastMonth = formatter.string(from: calendar.date(byAdding: .month, value: -1, to: Date())!)
+        let activity = shiftRoot.appendingPathComponent("activity", isDirectory: true)
+        try? FileManager.default.createDirectory(at: activity, withIntermediateDirectories: true)
+        try? "- not\n- a mapping\n".write(to: activity.appendingPathComponent("\(lastMonth).yaml"),
+                                         atomically: true, encoding: .utf8)
+        fleet.selectModuleTab(named: "In flight")
+        fleet.selectModuleTab(named: "Log")
+        let dimmed = HelmHeroColumn.palette(for: .init(colour: .themeAccent, isDimmed: true), in: ThemeManager.shared.theme)
+        check(logBand.debugPalette == dimmed && logBand.debugHeadline.hasPrefix("Couldn\u{2019}t read all of the log at ")
+                && (logBand.debugBody ?? "").hasPrefix("Showing the 3 events that could be read, 3 today. ")
+                && titles() == ["All", "Merges\u{2002}1", "Tasks", "Sync\u{2002}0", "Investigations\u{2002}0", "Incidents\u{2002}0"]
+                && fleet.debugLogList.debugRowCount == 4,
+              "CR-1: an unreadable month drew \(logBand.debugHeadline) with \(titles()), "
+                + "dimmed \(logBand.debugPalette == dimmed)", &ok)
+        try? FileManager.default.removeItem(at: activity.appendingPathComponent("\(lastMonth).yaml"))
+        fleet.selectModuleTab(named: "Log")
+        check(logBand.debugPalette != dimmed && logBand.debugHeadline == "3 events today",
+              "CR-1: the band stayed dimmed once the month could be read", &ok)
     }
 
     /// CR-1 on Review: the board's words in every state the page can be in.
@@ -1086,6 +1329,11 @@ enum PageHeroColumnsSelfTest {
         let review = CrewHeroWords.review(.init(hasRead: true, github: 9, ready: 2, running: 3, failing: 1), time: crewTime)
         let pathRow = HelmHeroRow(leading: .symbol("folder"), title: "Projects folder", subtitle: "/a/projects",
                                   subtitleIsCode: true)
+        // Log's band: the filter on its foot, the second segment chosen.
+        let logged = HelmHeroColumn()
+        logged.setArrangement(.band)
+        let filter = HelmSegmentedTabs(items: FleetLogListView.filterItems, selected: "merge", size: .compact)
+        filter.setTitle("Merges\u{2002}3", forID: "merge")
         var failures: [String] = []
         var worst = Double.infinity
         for theme in themes {
@@ -1099,6 +1347,10 @@ enum PageHeroColumnsSelfTest {
                                                body: review.body, ring: CrewBand.ring(review.ring)),
                                  sections: [], foot: [], tone: tone, bandViews: [pathRow])
                 ringed.applyTheme(theme)
+                logged.configure(header: .init(symbol: CrewHeroWords.logSymbol, kicker: "Log", headline: "5 events today",
+                                               body: "1 merge", ring: nil),
+                                 sections: [], foot: [filter], tone: tone, footRule: true)
+                logged.applyTheme(theme)
                 guard let palette = column.debugPalette, let pill = column.debugStatusPill else {
                     failures.append("\(theme.id): the band is unpainted")
                     continue
@@ -1136,6 +1388,23 @@ enum PageHeroColumnsSelfTest {
                     }
                     floor("path title", pathRow.titleLabel.textColor, on: stop, HelmContrast.textTarget)
                     floor("path", pathRow.subtitleLabel.textColor, on: stop, HelmContrast.textTarget)
+                    // Log: an unchosen segment's words on its shade over the
+                    // gradient, and its hairline.
+                    if logged.debugPalette == palette, filter.heroInk != nil {
+                        let colors = filter.debugPillLabelColors
+                        let fills = filter.debugPillFills
+                        for index in [0, 2] where colors.indices.contains(index) && fills.indices.contains(index) {
+                            floor("filter words \(index)", colors[index], on: composite(fills[index], over: stop),
+                                  HelmContrast.textTarget)
+                        }
+                    } else {
+                        failures.append("\(tag): Log's filter is not in the band's ink")
+                    }
+                }
+                // The chosen segment's words on the solid ink.
+                if let ink = filter.heroInk, filter.debugPillLabelColors.indices.contains(1) {
+                    floor("chosen filter words", filter.debugPillLabelColors[1], on: HelmContrast.components(ink),
+                          HelmContrast.textTarget)
                 }
             }
         }
