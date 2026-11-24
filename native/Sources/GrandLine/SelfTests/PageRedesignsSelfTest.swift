@@ -20,7 +20,11 @@
 //      list their items, and the toolbar's Search finds all three kinds.
 //   4. **Crew › Needs you** is a real tab: the parked tasks and their open
 //      decisions, with Reply, an honest summary, and the bell's and Home's
-//      ways in.
+//      ways in. Since CR-1 (the hero restyle board) Needs you and In flight
+//      each open on the Crew band: its words per state, the dimmed tone over
+//      a failed read with the rows carried, the briefing's tiles opening
+//      their pages, Ready to merge still opening Review, the header line
+//      given up, and no width held above gotcha (13)'s 499.
 //   5. **The floating bar is unchanged**: none of the above happens there.
 //      And one floating-bar defect found on the way stays fixed: the Hosts
 //      column's footer stays at the column's bottom after a tab round trip
@@ -64,7 +68,8 @@ enum PageRedesignsSelfTest {
                 ReviewTourLab.seedDemoKnowledge(shell.workspace)
                 settle(shell)
                 for check in [checkConnectionsTables, checkTheInspectorKeepsTheWindow, checkPoneglyphTable,
-                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkDevOpsHub,
+                              checkAutomicVaultTables, checkKnowledgeHasNoTree, checkNeedsYou, checkInFlightBand,
+                              checkDevOpsHub,
                               ConnectionFormsWindowChecks.checkForms, ConsoleFixesWindowChecks.checkConsole] {
                     var ok = true
                     check(shell, window, scratch, &ok)
@@ -869,6 +874,18 @@ enum PageRedesignsSelfTest {
         print("PageRedesignsSelfTest: DevOps Hub renders written to \(dir)")
     }
 
+    /// The band as drawn on the showing tab, its words, and whether it is in
+    /// the dimmed tone (GL-14).
+    private static func band(_ fleet: FleetController) -> HelmHeroColumn? { fleet.debugCrewBand }
+    private static func isDimmed(_ band: HelmHeroColumn) -> Bool {
+        band.debugPalette == HelmHeroColumn.palette(for: .init(colour: .themeAccent, isDimmed: true),
+                                                     in: ThemeManager.shared.theme)
+    }
+    private static func figures(_ band: HelmHeroColumn) -> [String] {
+        guard let strip = band.debugFootViews.first as? HelmKPIStrip, strip.superview != nil else { return [] }
+        return zip(strip.debugValues, strip.debugCaptions).map { "\($0) \($1)" }
+    }
+
     private static func checkNeedsYou(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
                                       _ ok: inout Bool) {
         resize(window, width: 1512, shell)
@@ -885,9 +902,26 @@ enum PageRedesignsSelfTest {
 
         ReviewTourLab.seedDemoDecision(fleet, scratch: scratch)
         settle(shell)
-        check(fleet.debugNeedsYouSummary.hasPrefix("1 task is waiting on you, with 1 open decision."),
-              "the summary reads \"\(fleet.debugNeedsYouSummary)\"", &ok)
-        check(!fleet.debugNeedsYouEmptyShowing, "Nothing needs you shows beside a parked task", &ok)
+        // CR-1: the band is the tab's summary, its empty state and its
+        // failure, in place of the grey line and the boxed empty card.
+        guard let needsBand = band(fleet) else {
+            fail("CR-1: Needs you opens on no band", &ok)
+            return
+        }
+        check(needsBand.arrangement == .band && needsBand.debugHeadline == "1 task is waiting on you"
+                && needsBand.debugKicker.hasPrefix("Needs you \u{00B7} checked ")
+                && needsBand.debugBody == "1 open decision \u{00B7} 1 waiting on a decision. The crew is holding for you.",
+              "CR-1: Needs you's band reads \(needsBand.debugKicker) / \(needsBand.debugHeadline) / \(needsBand.debugBody ?? "-")", &ok)
+        check(figures(needsBand) == ["1 Open decisions", "1 Need a decision", "0 Blocked"] && needsBand.debugFootRule != nil,
+              "CR-1: Needs you's figures are \(figures(needsBand))", &ok)
+        check(!isDimmed(needsBand), "CR-1: a good read painted the dimmed tone", &ok)
+        check(needsBand.accessibilityRole() == .group && (needsBand.accessibilityLabel() ?? "").contains(needsBand.debugHeadline),
+              "CR-1: the band is not one group named by its headline (\(needsBand.accessibilityLabel() ?? "nothing"))", &ok)
+        check(!fleet.debugNeedsHeadingShown, "CR-1: the Needs your call heading still repeats the band's count", &ok)
+        check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor && shell.debugHeader == nil
+                && !(fleet.drillHeaderSubtitle ?? "").isEmpty,
+              "CR-1: Needs you keeps the grey header line over its band (\(String(describing: shell.debugHeader)))", &ok)
+        check(!fleet.debugNeedsYouSkeletonShowing, "CR-1: the skeleton rows stay after the first read", &ok)
         check(fleet.debugNeedsRowCount == 1, "Needs you lists \(fleet.debugNeedsRowCount) rows for one parked task", &ok)
         if let reply = fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID) {
             reply.performClick(nil)
@@ -905,18 +939,23 @@ enum PageRedesignsSelfTest {
         check(!fleet.debugNeedsYouShowing && !onScreen(fleet.debugReplyButton(taskID: ReviewTourLab.demoDecisionTaskID)),
               "In flight still shows the Needs your call list", &ok)
 
-        // Nothing waiting is said plainly, with when it was checked.
+        // Nothing waiting is said plainly by the band, with when it was
+        // checked, and with no second empty card under it.
         let quiet = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [], queuedCount: 0, doneCount: 0,
                                   projectsCount: 0, watcher: WatcherHealth(status: "healthy"))
         fleet.debugRender(snapshot: quiet, mergedPRs: [])
         clickTab("Needs you", shell)
-        check(fleet.debugNeedsYouEmptyShowing && fleet.debugNeedsYouSummary.hasPrefix("Checked at"),
-              "with nothing parked Needs you says \"\(fleet.debugNeedsYouSummary)\" and the empty state is "
-                + (fleet.debugNeedsYouEmptyShowing ? "shown" : "hidden"), &ok)
+        if let calm = band(fleet) {
+            check(calm.debugHeadline == "Nothing needs you" && calm.debugKicker.hasPrefix("Needs you \u{00B7} checked ")
+                    && calm.debugFootViews.isEmpty && fleet.debugNeedsRowCount == 0 && fleet.debugNeedsSectionHidden,
+                  "CR-1: with nothing parked the band says \(calm.debugHeadline) with \(calm.debugFootViews.count) foot views "
+                    + "and \(fleet.debugNeedsRowCount) rows", &ok)
+        } else {
+            fail("CR-1: Needs you lost its band with nothing parked", &ok)
+        }
 
         // A read that fails keeps the last good list and says when it was
-        // read (GL-14). Needs you never says nothing is waiting over a failed
-        // read, and a task it cannot read this time stays listed with its age.
+        // read (GL-14): the dimmed tone, the time, and the carried rows.
         var parked = FleetTask(id: "needs-you-probe", repo: "grand-line", kind: "ship", pr: nil)
         parked.state = "parked"
         parked.source = "crew"
@@ -927,36 +966,63 @@ enum PageRedesignsSelfTest {
         }
         fleet.debugRender(snapshot: reading([parked]), mergedPRs: [])
         settle(shell)
-        check(fleet.debugNeedsRowCount == 1 && fleet.debugNeedsYouSummary.hasPrefix("1 task is waiting on you"),
-              "a parked task reads \(fleet.debugNeedsRowCount) rows and \"\(fleet.debugNeedsYouSummary)\"", &ok)
+        check(fleet.debugNeedsRowCount == 1 && band(fleet)?.debugHeadline == "1 task is waiting on you",
+              "a parked task reads \(fleet.debugNeedsRowCount) rows and \"\(band(fleet)?.debugHeadline ?? "-")\"", &ok)
         fleet.debugRender(snapshot: reading([], listRead: false), mergedPRs: [])
         settle(shell)
-        let failed = fleet.debugNeedsYouSummary
-        check(fleet.debugNeedsRowCount == 1 && !fleet.debugNeedsYouEmptyShowing
-                && failed.hasPrefix("Couldn\u{2019}t read the crew\u{2019}s state at") && failed.contains("Showing what was read at"),
-              "after a failed read Needs you lists \(fleet.debugNeedsRowCount) rows and says \"\(failed)\"", &ok)
+        if let failed = band(fleet) {
+            check(fleet.debugNeedsRowCount == 1 && isDimmed(failed)
+                    && failed.debugHeadline.hasPrefix("Couldn\u{2019}t read the crew\u{2019}s state at")
+                    && (failed.debugBody ?? "").hasPrefix("Showing what was read at")
+                    && failed.debugKicker.hasPrefix("Needs you \u{00B7} last read "),
+                  "CR-1: after a failed read Needs you lists \(fleet.debugNeedsRowCount) rows under \(failed.debugKicker) / "
+                    + "\(failed.debugHeadline) / \(failed.debugBody ?? "-"), dimmed \(isDimmed(failed))", &ok)
+        } else {
+            fail("CR-1: a failed read took Needs you's band away", &ok)
+        }
         var unread = parked
         unread.state = "unknown"
         unread.source = "none"
         unread.status = "unknown"
         fleet.debugRender(snapshot: reading([unread]), mergedPRs: [])
         settle(shell)
-        check(fleet.debugNeedsRowCount == 1 && fleet.debugNeedsYouSummary.contains("could not be read just now"),
+        check(fleet.debugNeedsRowCount == 1 && (band(fleet)?.debugBody ?? "").contains("could not be read just now")
+                && !(band(fleet).map(isDimmed) ?? true),
               "a parked task whose state could not be read reads \(fleet.debugNeedsRowCount) rows and "
-                + "\"\(fleet.debugNeedsYouSummary)\"", &ok)
+                + "\"\(band(fleet)?.debugBody ?? "-")\"", &ok)
         var working = parked
         working.state = "working"
         working.status = "working"
         fleet.debugRender(snapshot: reading([working]), mergedPRs: [])
         settle(shell)
-        check(fleet.debugNeedsRowCount == 0 && fleet.debugNeedsYouEmptyShowing,
+        check(fleet.debugNeedsRowCount == 0 && band(fleet)?.debugHeadline == "Nothing needs you",
               "a task that went back to work is still on Needs you", &ok)
         fleet.debugRender(snapshot: reading([], listRead: false), mergedPRs: [])
         settle(shell)
-        check(!fleet.debugNeedsYouEmptyShowing
-                && fleet.debugNeedsYouSummary.contains("Nothing was waiting on you when it was last read"),
-              "a failed read after an empty one says \"\(fleet.debugNeedsYouSummary)\" with the empty state "
-                + (fleet.debugNeedsYouEmptyShowing ? "shown" : "hidden"), &ok)
+        check((band(fleet)?.debugBody ?? "").contains("Nothing was waiting on you when it was last read")
+                && (band(fleet).map(isDimmed) ?? false) && band(fleet)?.debugHeadline != "Nothing needs you",
+              "a failed read after an empty one says \"\(band(fleet)?.debugBody ?? "-")\"", &ok)
+
+        // No firstmate home: the band says so and its foot is Open Setup.
+        let unset = FleetSnapshot(homeOk: false, captain: "Manjesh", tasks: [], queuedCount: 0, doneCount: 0,
+                                  projectsCount: 0, watcher: WatcherHealth(status: "off"))
+        fleet.debugRender(snapshot: unset, mergedPRs: [])
+        settle(shell)
+        if let setup = band(fleet) {
+            check(setup.debugHeadline == "Grand Line isn\u{2019}t pointed at a firstmate home yet"
+                    && setup.debugFootViews.first === fleet.debugBandSetupButton
+                    && fleet.debugBandSetupButton.heroInk != nil && onScreen(fleet.debugBandSetupButton),
+                  "CR-1: Needs you without a home reads \(setup.debugHeadline) with foot \(setup.debugFootViews)", &ok)
+            fleet.debugBandSetupButton.performClick(nil)
+            settle(shell)
+            check(shell.debugCurrentDestination == .bootstrap, "CR-1: the band's Open Setup did not open Setup", &ok)
+        } else {
+            fail("CR-1: Needs you without a home has no band", &ok)
+        }
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        fleet.debugRender(snapshot: quiet, mergedPRs: [])
+        settle(shell)
 
         // Home's fleet row and the bell's entry land on Needs you.
         clickTab("In flight", shell)
@@ -967,6 +1033,216 @@ enum PageRedesignsSelfTest {
         check(shell.debugCurrentDestination == .overview && fleet.debugNeedsYouShowing
                 && shell.debugCurrentTab?.name == "Needs you",
               "Home's fleet row did not land on Crew › Needs you", &ok)
+    }
+
+    /// CR-1 on In flight: the verdict, the watcher's pill, the briefing as
+    /// tiles that open their pages, the six figures with Ready to merge still
+    /// the one that opens Review, the dimmed tone for a failed PR scan, and
+    /// Log keeping its header line until its own band lands.
+    private static func checkInFlightBand(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL,
+                                          _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let settings = AppSettings.shared
+        let savedEnabled = settings.morningBriefingEnabled
+        let savedRecord = settings.morningBriefingRecord
+        defer {
+            settings.morningBriefingEnabled = savedEnabled
+            settings.morningBriefingRecord = savedRecord
+        }
+        let fleet = shell.workspace.overview
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("In flight", shell)
+
+        func task(_ id: String, _ status: String) -> FleetTask {
+            var task = FleetTask(id: id, repo: "grand-line", kind: "ship", pr: nil)
+            task.status = status
+            task.state = status == "working" ? "working" : "parked"
+            task.source = "crew"
+            return task
+        }
+        let tasks = [task("crew-a", "working"), task("crew-b", "working"), task("crew-c", "working"),
+                     task("crew-d", "needs_decision"), task("crew-e", "blocked")]
+        let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: tasks, queuedCount: 2, doneCount: 4,
+                                     projectsCount: 6, watcher: WatcherHealth(status: "healthy"))
+        func pr(_ n: Int, checks: String, task: String?) -> MergedPR {
+            MergedPR(source: task == nil ? "forge" : "work", taskID: task, repo: "grand-line",
+                     url: "https://github.com/o/grand-line/pull/\(n)", number: n, title: "PR \(n)",
+                     checks: checks, forge: "github")
+        }
+        let prs = [pr(1, checks: "green", task: "crew-a"), pr(2, checks: "green", task: "crew-b"),
+                   pr(3, checks: "pending", task: nil)]
+        fleet.debugRender(snapshot: snapshot, mergedPRs: prs)
+        settle(shell)
+        guard let flight = band(fleet) else {
+            fail("CR-1: In flight opens on no band", &ok)
+            return
+        }
+        let answer = FleetGreeting.answer(tasks: tasks, prs: .value(2), homeOk: true)
+        check(flight.debugKicker.hasPrefix("In flight \u{00B7} ") && flight.debugHeadline == answer.title
+                && flight.debugBody == answer.meta && flight.debugHeadline == "2 tasks need your call",
+              "CR-1: In flight's band reads \(flight.debugKicker) / \(flight.debugHeadline) / \(flight.debugBody ?? "-")", &ok)
+        check(figures(flight) == ["3 Working", "2 Ready to merge", "2 Queued", "4 Done today", "6 Projects", "OK Watcher healthy"],
+              "CR-1: In flight's figures are \(figures(flight))", &ok)
+        let theme = ThemeManager.shared.theme
+        let palette = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
+        if let pill = flight.debugStatusPill {
+            let good = HelmHeroSurface.signalColor(tintHex: HelmTint.good.hex(in: theme), on: palette)
+            let dot = pill.debugDotColor.map { HelmContrast.components($0) } ?? (0, 0, 0)
+            let want = HelmContrast.components(good)
+            let off = max(abs(dot.0 - want.0), abs(dot.1 - want.1), abs(dot.2 - want.2))
+            check(pill.debugText == "Watcher healthy" && off < 0.01 && onScreen(pill),
+                  "CR-1: the watcher pill reads \(pill.debugText) with dot \(String(describing: pill.debugDotColor))", &ok)
+            // Level with the kicker, at the band's top right.
+            let pillFrame = pill.convert(pill.bounds, to: flight)
+            check(abs(pillFrame.maxX - (flight.bounds.width - HelmHeroColumn.bandInsets.right)) < 1.5,
+                  "CR-1: the watcher pill ends at \(pillFrame.maxX), want the band's trailing inset", &ok)
+        } else {
+            fail("CR-1: In flight has no watcher pill", &ok)
+        }
+        check(!fleet.debugDashboardChromeShown.banner && !fleet.debugDashboardChromeShown.stats
+                && !fleet.debugDashboardChromeShown.briefing,
+              "CR-1: the sidebar layout still draws the answer banner, the boxed figures or the briefing card", &ok)
+        check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor && shell.debugHeader == nil,
+              "CR-1: In flight keeps the grey header line over its band", &ok)
+        check(onScreen(fleet.debugInFlightRowViews.first), "CR-1: the working rows left In flight", &ok)
+        // The band sits at the top of the page, above the working rows.
+        if let row = fleet.debugInFlightRowViews.first {
+            let bandBottom = flight.convert(NSPoint(x: 0, y: flight.isFlipped ? flight.bounds.height : 0), to: nil).y
+            let rowTop = row.convert(NSPoint(x: 0, y: row.isFlipped ? 0 : row.bounds.height), to: nil).y
+            check(bandBottom > rowTop, "CR-1: the band is not above the working rows (\(bandBottom) vs \(rowTop))", &ok)
+        }
+
+        // Ready to merge is still the one figure that is a button, into Review.
+        let strip = fleet.debugBandFigures
+        let actions = (0..<6).filter { strip.debugActionCell(at: $0) != nil }
+        check(actions == [1] && strip.debugCaptionIsUnderlined(at: 1) && !strip.debugCaptionIsUnderlined(at: 0),
+              "CR-1: the figures that are buttons are \(actions)", &ok)
+        if let ready = strip.debugActionCell(at: 1) {
+            check(ready.accessibilityRole() == .button && ready.accessibilityLabel() == "Ready to merge, 2"
+                    && ready.canBecomeKeyView,
+                  "CR-1: Ready to merge reads \(String(describing: ready.accessibilityRole())) "
+                    + "\(ready.accessibilityLabel() ?? "-") to VoiceOver", &ok)
+            ready.debugSetPressed(true)
+            check((ready.layer?.animationKeys() ?? []).isEmpty, "CR-1: under Reduce Motion pressing a figure animates", &ok)
+            ready.debugSetPressed(false)
+            ready.performPrimaryAction()
+            settle(shell)
+            check(shell.debugCurrentDestination == .review, "CR-1: Ready to merge did not open Review", &ok)
+        }
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("In flight", shell)
+
+        // The Morning briefing: its line with Regenerate and Dismiss as ghost
+        // icons, and one Br-3 tile per sentence that opens its page.
+        let clauses = [BriefingClause(text: "2 PRs ready to merge", target: .review),
+                       BriefingClause(text: "3 tasks due or overdue", target: .tasks),
+                       BriefingClause(text: "2 forks behind upstream", target: .githubSync),
+                       BriefingClause(text: "A quiet morning otherwise", target: .none)]
+        settings.morningBriefingEnabled = true
+        settings.morningBriefingRecord = MorningBriefing.record(inputs: BriefingInputs(), clauses: clauses,
+                                                                isDegraded: false, degradedReason: nil)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("In flight", shell)
+        guard let briefed = band(fleet), let line = fleet.debugBandBriefingRow else {
+            fail("CR-1: today's briefing did not reach In flight's band", &ok)
+            return
+        }
+        let tiles = fleet.debugBandTiles
+        check(tiles.map(\.debugText) == clauses.map(\.text) && briefed.debugBandViews.count == 2
+                && tiles.allSatisfy(onScreen),
+              "CR-1: the band's tiles read \(tiles.map(\.debugText))", &ok)
+        check(tiles.map(\.isActivatable) == [true, true, true, false],
+              "CR-1: the tiles that open a page are \(tiles.map(\.isActivatable))", &ok)
+        check(tiles.first?.debugLabel == PlaceName.short(.review).uppercased() && tiles.last?.debugLabel == "NOTE",
+              "CR-1: the tiles are labelled \(tiles.map { $0.debugLabel ?? "-" })", &ok)
+        check(line.subtitleLabel.stringValue.hasPrefix("Generated ")
+                && fleet.debugBandRegenerateButton.heroInk != nil && fleet.debugBandDismissButton.heroInk != nil
+                && onScreen(fleet.debugBandRegenerateButton) && onScreen(fleet.debugBandDismissButton),
+              "CR-1: the briefing line reads \(line.subtitleLabel.stringValue) without its two ghost icons", &ok)
+        check(!fleet.debugDashboardChromeShown.briefing, "CR-1: the briefing card came back beside the band", &ok)
+        if let tile = tiles.first {
+            tile.debugSetPressed(true)
+            check((tile.layer?.animationKeys() ?? []).isEmpty, "CR-1: under Reduce Motion pressing a tile animates", &ok)
+            tile.debugSetPressed(false)
+            tile.performPrimaryAction()
+            settle(shell)
+            check(shell.debugCurrentDestination == .review, "CR-1: the Review tile did not open Review", &ok)
+        }
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("In flight", shell)
+        fleet.debugBandTiles.dropFirst(2).first?.performPrimaryAction()
+        settle(shell)
+        check(shell.debugCurrentDestination == .githubSync, "CR-1: the GitHub Sync tile did not open GitHub Sync", &ok)
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        clickTab("In flight", shell)
+        fleet.debugBandDismissButton.performClick(nil)
+        settle(shell)
+        check(fleet.debugBandBriefingRow == nil && band(fleet)?.debugBandViews.isEmpty == true
+                && settings.morningBriefingRecord?.dismissed == true,
+              "CR-1: Dismiss until tomorrow did not take the briefing off the band", &ok)
+
+        // A PR scan that failed leaves the verdict partly unknown: dimmed.
+        fleet.debugRender(snapshot: snapshot, mergedPRs: [], prFetchFailure: "gh failed")
+        settle(shell)
+        if let partly = band(fleet) {
+            check(isDimmed(partly) && figures(partly).contains("\u{2014} PRs unavailable")
+                    && fleet.debugBandFigures.debugActionCell(at: 1) != nil,
+                  "CR-1: a failed PR scan reads \(figures(partly)), dimmed \(isDimmed(partly))", &ok)
+        }
+        // No home: the verdict's setup prompt, and Open Setup in the foot.
+        let unset = FleetSnapshot(homeOk: false, captain: "Manjesh", tasks: [], queuedCount: 0, doneCount: 0,
+                                  projectsCount: 0, watcher: WatcherHealth(status: "off"))
+        fleet.debugRender(snapshot: unset, mergedPRs: [])
+        settle(shell)
+        if let setup = band(fleet) {
+            check(setup.debugHeadline == "Point Grand Line at your firstmate home"
+                    && setup.debugFootViews.first === fleet.debugBandSetupButton && setup.debugStatusPill == nil,
+                  "CR-1: In flight without a home reads \(setup.debugHeadline) with foot \(setup.debugFootViews)", &ok)
+        }
+        fleet.debugRender(snapshot: snapshot, mergedPRs: prs)
+        settle(shell)
+
+        // Log has no band yet, and keeps its header line until it does.
+        clickTab("Log", shell)
+        check(band(fleet) == nil && !shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
+              "CR-1: Log drew the band or lost its header line before its own band", &ok)
+        clickTab("In flight", shell)
+        check(band(fleet) != nil, "CR-1: back on In flight the band did not return", &ok)
+
+        // Gotcha (13): the band holds no width above 499, so a window narrower
+        // than everything it says still keeps the width it was given.
+        var offenders: [String] = []
+        func scan(_ view: NSView) {
+            for constraint in view.constraints where constraint.isActive && constraint.priority.rawValue >= 500
+                && constraint.priority < .required {
+                switch constraint.firstAttribute {
+                case .width, .leading, .trailing, .left, .right, .centerX:
+                    offenders.append("\(type(of: view)) \(constraint.priority.rawValue)")
+                default: break
+                }
+            }
+            if let stack = view as? NSStackView, stack.orientation == .horizontal,
+               stack.clippingResistancePriority(for: .horizontal).rawValue >= 500,
+               stack.clippingResistancePriority(for: .horizontal) < .required {
+                offenders.append("clipping \(stack.clippingResistancePriority(for: .horizontal).rawValue)")
+            }
+            view.subviews.forEach(scan)
+        }
+        if let flight = band(fleet) { scan(flight) }
+        check(offenders.isEmpty, "CR-1: the band holds a width between 500 and required: \(offenders)", &ok)
+        let floor = band(fleet).map { HelmSplitPage.floorWidth(of: $0) } ?? 0
+        check(floor > 0 && floor < 420, "CR-1: the band's required floor is \(floor)pt, wider than any narrow window", &ok)
+        resize(window, width: 1100, shell)
+        check(abs(window.frame.width - 1100) < 0.5 && (band(fleet)?.frame.width ?? 0) < 1100,
+              "CR-1: at 1100pt the window is \(window.frame.width) and the band \(band(fleet)?.frame.width ?? 0)", &ok)
+        resize(window, width: 1512, shell)
     }
 
     // MARK: 5 - the floating bar
@@ -996,6 +1272,22 @@ enum PageRedesignsSelfTest {
               "the floating bar's Fleet page grew a Needs you", &ok)
         fleet.revealNeedsYou()
         check(!fleet.debugNeedsYouShowing, "revealNeedsYou switched the floating bar's Fleet page", &ok)
+        // CR-1 is the sidebar layout's: the floating bar's dashboard keeps its
+        // answer banner and boxed figures, and draws no band.
+        shell.workspace.navigator.show(.overview)
+        settle(shell)
+        let quiet = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [], queuedCount: 1, doneCount: 2,
+                                  projectsCount: 3, watcher: WatcherHealth(status: "healthy"))
+        fleet.debugRender(snapshot: quiet, mergedPRs: [])
+        settle(shell)
+        check(fleet.debugCrewBand == nil && fleet.debugDashboardChromeShown.banner && fleet.debugDashboardChromeShown.stats,
+              "CR-1: the floating bar's Fleet page drew the band or lost its banner and figures", &ok)
+        check(fleet.debugStatTiles.map(\.caption) == ["Working", "Ready to merge", "Queued", "Done today", "Projects",
+                                                      "Watcher healthy"],
+              "CR-1: the floating bar's figures moved: \(fleet.debugStatTiles.map(\.caption))", &ok)
+        check(!(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine
+                && (fleet as WorkspaceHeaderLineCollapsing).drawsSubtitleOnHeaderLine,
+              "CR-1: the floating bar's Fleet page gives up a header line", &ok)
     }
 
     /// Found on the way, on the floating bar's Hosts page: after a tab round

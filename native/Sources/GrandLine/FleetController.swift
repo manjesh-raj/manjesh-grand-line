@@ -24,6 +24,13 @@
 // tiles, plus the shared `ShiftStore`, `BackgroundSignalsPoller.lastCounts`
 // (counts that poller already computed) and one `QuotaSource.fetch()`.
 
+// CR-1 Crew band (the hero restyle board, `data/grandline-hero-restyle-
+// designs-scout/`): in the sidebar layout every Crew tab this page draws opens
+// on one band, a `HelmHeroColumn` in `.band`, which says what the briefing
+// card, the answer banner, the boxed figures and Needs you's summary line and
+// empty state said. The words are `CrewHeroWords`. The floating bar's Fleet
+// page builds no band and draws exactly what it drew before.
+
 import AppKit
 
 final class FleetController: NSViewController {
@@ -186,9 +193,8 @@ final class FleetController: NSViewController {
     /// floating bar's own two segments.
     private var needsYouShowing = false
     private let needsYouContainer = NSStackView()
-    private let needsYouSummary = NSTextField(wrappingLabelWithString: "")
-    private let needsYouEmpty = HelmEmptyState(symbol: "checkmark.circle", title: "Nothing needs you",
-                                               body: "", size: .standard, boxed: true)
+    /// CR-1: Open Setup on the band's foot, on Needs you and In flight alike,
+    /// when no firstmate home is set (GL-31).
     private let needsYouSetupButton = HelmButton(title: "Open \(PlaceName.of(.bootstrap))", variant: .secondary, size: .small,
                                                  symbol: "hammer")
     /// When the crew's state was last read, which the summary says - never a
@@ -205,6 +211,77 @@ final class FleetController: NSViewController {
     private var needsYouKnown: [String: (task: FleetTask, readAt: Date)] = [:]
     /// How many tasks the last read's Needs you list holds.
     private var needsYouListedCount = 0
+    /// Two skeleton rows under Needs you's band until the first read lands.
+    private let needsYouSkeleton = HelmCard()
+    private let needsYouSkeletonRows = HelmSkeletonList(rows: 2)
+
+    // MARK: CR-1 - the Crew band (the sidebar layout's, at the end of this file)
+
+    /// The band every tab this page draws opens on in the sidebar layout.
+    /// Lazy, and only ever touched behind `drawsSidebarLayout`, so the
+    /// floating bar never builds one.
+    private lazy var crewBand = HelmHeroColumn()
+    /// The band's strip: In flight's six figures, or Needs you's three.
+    /// Ready to merge is its one button, into Review.
+    private lazy var bandFigures: HelmKPIStrip = {
+        let strip = HelmKPIStrip(density: .inline)
+        strip.onActivate = { [weak self] index in
+            guard let self, self.bandFigureWords.indices.contains(index),
+                  self.bandFigureWords[index].opensReview else { return }
+            self.onNavigateToReview?()
+        }
+        // The strip keeps its figures' own width at the band's leading edge
+        // rather than spreading six columns over the whole band. A zero is a
+        // maximum, never a floor, so it can neither widen the band nor the
+        // window (gotcha (13)). It sits at the fitting-size level, under every
+        // priority the strip's own stacks and columns hold (250 to 252), so it
+        // only packs them and never decides a width they care about.
+        let hug = strip.widthAnchor.constraint(equalToConstant: 0)
+        hug.priority = .fittingSizeCompression
+        hug.isActive = true
+        return strip
+    }()
+    private var bandFigureWords: [CrewHeroWords.Figure] = []
+    /// What In flight read last, so a tab switch re-draws the band with no
+    /// fetch. `nil` until the first read lands.
+    private var inFlightReading: CrewHeroWords.InFlightReading?
+    /// The Morning briefing on the band: the record shown, whether one is
+    /// being composed, its line with Regenerate and Dismiss until tomorrow as
+    /// ghost icons, and its sentences as Home's Br-3 tiles.
+    private var bandBriefing: MorningBriefingRecord?
+    private var bandBriefingBusy = false
+    private lazy var bandRegenerateButton: HelmButton = {
+        let button = HelmPageToolbar.iconButton(
+            symbol: "clock", tooltip: "Regenerate the briefing. "
+                + AITransparency.willSendToClaude("today's counts, never a title or a note,"),
+            target: self, action: #selector(bandRegenerateTapped))
+        button.setAccessibilityLabel("Regenerate the briefing")
+        return button
+    }()
+    private lazy var bandDismissButton: HelmButton = {
+        let button = HelmPageToolbar.iconButton(symbol: "xmark", tooltip: "Dismiss until tomorrow",
+                                                target: self, action: #selector(bandDismissTapped))
+        button.setAccessibilityLabel("Dismiss until tomorrow")
+        return button
+    }()
+    private lazy var bandBriefingRow: HelmHeroRow = {
+        let actions = NSStackView(views: [bandRegenerateButton, bandDismissButton])
+        actions.orientation = .horizontal
+        actions.spacing = HelmMetrics.s1
+        // Gotcha (12): a stack's own hugging, one step over the row's words
+        // (250), so the words take the slack and the two icons sit at the
+        // band's trailing edge as the board draws them. Under 500.
+        actions.setHuggingPriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        // A placeholder second line: a row built without one hides its label.
+        return HelmHeroRow(leading: .symbol("sun.max"), title: "Morning briefing", subtitle: " ", trailing: actions)
+    }()
+    private let bandTiles = HelmHeroTileGrid()
+    /// The clauses the tiles were built for, so a render that changes nothing
+    /// keeps the tiles it has (and their hover).
+    private var bandTileClauses: [BriefingClause] = []
+    /// The band's last configuration, so a refresh that changes nothing does
+    /// not rebuild it.
+    private var bandSignature = ""
     private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
                                          selected: OverviewTab.overview.rawValue)
 
@@ -599,6 +676,7 @@ final class FleetController: NSViewController {
         }
         listSkeletonCard.setBody(loadingSkeleton, insets: HelmCard.contentInsets)
 
+        loadingTilesRow = tiles
         let stack = NSStackView(views: [loadingLabel, bannerSkeletonCard, tiles, listSkeletonCard])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -621,6 +699,8 @@ final class FleetController: NSViewController {
 
     private let bannerSkeletonCard = HelmCard()
     private var tileSkeletonCards: [HelmCard] = []
+    /// The six tile skeletons' row, which the sidebar layout's band replaces.
+    private var loadingTilesRow: NSView?
     private let listSkeletonCard = HelmCard()
 
     /// The "In flight" section: a plain heading (round glyph + title + count
@@ -723,6 +803,7 @@ final class FleetController: NSViewController {
         overviewContainer.isHidden = tab != .overview
         logContainer.isHidden = tab != .log
         if tab == .log { renderLog() }
+        renderCrewBand()
         applyTheme()
         onModuleTabChanged?()
     }
@@ -756,7 +837,7 @@ final class FleetController: NSViewController {
         guard isLoading else { return }
         refreshGeneration += 1
         setLoading(false)
-        briefingCard.setBusy(false)
+        setBriefingBusy(false)
         if let lastRenderedSnapshot {
             render(snapshot: lastRenderedSnapshot, mergedPRs: [], prFetchFailure: Self.stoppedScanSummary)
         }
@@ -871,7 +952,7 @@ final class FleetController: NSViewController {
         refreshGeneration += 1
         let generation = refreshGeneration
         setLoading(true)
-        if forceBriefing { briefingCard.setBusy(true) }
+        if forceBriefing { setBriefingBusy(true) }
         // snapshot() (~0.5s: task/backlog counts, watcher health) and
         // OpenPRsSource.fetch() (the slow, network-bound per-clone PR scan)
         // are independent - render the fast fields the moment snapshot()
@@ -938,8 +1019,9 @@ final class FleetController: NSViewController {
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadingContainer.isHidden = true
-            bannerRow.isHidden = false
-            statsRow.isHidden = false
+            // CR-1: the sidebar layout's band says what these two said.
+            bannerRow.isHidden = drawsSidebarLayout
+            statsRow.isHidden = drawsSidebarLayout
             inFlightSectionView.isHidden = false
         }
 
@@ -968,6 +1050,7 @@ final class FleetController: NSViewController {
         let ready = FleetDataSource.PRReadyReading(mergedPRs: mergedPRs, failure: prFetchFailure)
         renderBanner(needs: needs, working: working, ready: ready, homeOk: snapshot.homeOk)
         rebuildStats(working: working.count, ready: ready, snapshot: snapshot)
+        noteInFlightRead(snapshot, needs: needs, working: working, ready: ready)
         // Needs you keeps a task it cannot read this time (see
         // `noteNeedsYouRead`). The floating bar lists this read as it is. The
         // bookkeeping runs in both layouts, because the sidebar layout's
@@ -981,6 +1064,7 @@ final class FleetController: NSViewController {
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
         inFlightHeader.stringValue = "In flight"
         inFlightCountLabel.stringValue = "\(working.count)"
+        renderCrewBand()
 
         applyTheme()
         onSnapshotChanged?(snapshot, mergedPRs, prFetchFailure)
@@ -1191,7 +1275,7 @@ final class FleetController: NSViewController {
               let record = AppSettings.shared.morningBriefingRecord,
               record.day == MorningBriefing.dayKey(),
               !record.dismissed else {
-            briefingCard.isHidden = true
+            hideBriefing()
             return
         }
         show(record)
@@ -1203,15 +1287,15 @@ final class FleetController: NSViewController {
         guard AppSettings.shared.morningBriefingEnabled else {
             // Off by default, and off means nothing happens: no inputs are
             // read, no quota fetch, no `claude` call.
-            briefingCard.isHidden = true
-            briefingCard.setBusy(false)
+            hideBriefing()
+            setBriefingBusy(false)
             return
         }
         if !force, let record = AppSettings.shared.morningBriefingRecord,
            record.day == MorningBriefing.dayKey() {
             // Already briefed today - render it (or stay hidden if the captain
             // dismissed it) rather than spending a second `claude` call.
-            if record.dismissed { briefingCard.isHidden = true } else { show(record) }
+            if record.dismissed { hideBriefing() } else { show(record) }
             return
         }
         guard !isGeneratingBriefing else { return }
@@ -1220,8 +1304,8 @@ final class FleetController: NSViewController {
 
     private func generateBriefing(snapshot: FleetSnapshot, prReadyCount: Int?) {
         isGeneratingBriefing = true
-        briefingCard.isHidden = false
-        briefingCard.setBusy(true)
+        setBriefingCardShown(true)
+        setBriefingBusy(true)
 
         var inputs = BriefingInputs()
         inputs.homeOk = snapshot.homeOk
@@ -1268,7 +1352,7 @@ final class FleetController: NSViewController {
                                                 degradedReason: degradedReason)
             AppSettings.shared.morningBriefingRecord = record
             self.isGeneratingBriefing = false
-            self.briefingCard.setBusy(false)
+            self.setBriefingBusy(false)
             self.show(record)
         }
 
@@ -1290,12 +1374,34 @@ final class FleetController: NSViewController {
 
     private func show(_ record: MorningBriefingRecord) {
         briefingCard.render(record, theme: theme)
-        briefingCard.isHidden = false
+        setBriefingCardShown(true)
+        bandBriefing = record
+        renderCrewBand()
+    }
+
+    /// CR-1: the card is the floating bar's. In the sidebar layout the
+    /// briefing is the band's line and tiles, and the card stays hidden.
+    private func setBriefingCardShown(_ shown: Bool) {
+        briefingCard.isHidden = !shown || drawsSidebarLayout
+    }
+
+    private func hideBriefing() {
+        setBriefingCardShown(false)
+        bandBriefing = nil
+        renderCrewBand()
+    }
+
+    /// A briefing being composed: the card's busy row, and the band's line
+    /// saying so with Regenerate off, over the tiles it already has.
+    private func setBriefingBusy(_ busy: Bool) {
+        briefingCard.setBusy(busy)
+        bandBriefingBusy = busy
+        renderCrewBand()
     }
 
     private func dismissBriefing() {
-        briefingCard.isHidden = true
-        briefingCard.setBusy(false)
+        hideBriefing()
+        setBriefingBusy(false)
         guard var record = AppSettings.shared.morningBriefingRecord else { return }
         record.dismissed = true
         AppSettings.shared.morningBriefingRecord = record
@@ -1304,7 +1410,7 @@ final class FleetController: NSViewController {
     /// The deep links. Every branch is a real destination - `.none` clauses are
     /// never rendered as links in the first place, so there is no case here
     /// that silently does nothing.
-    private func activateBriefingClause(_ target: BriefingTarget) {
+    private func activateBriefingClause(_ target: BriefingTarget, anchor: NSView? = nil) {
         switch target {
         case .none:
             break
@@ -1323,7 +1429,7 @@ final class FleetController: NSViewController {
         case .setup:
             onNavigateToSetup?()
         case .quota:
-            quotaUsage.toggle(relativeTo: briefingCard.quotaAnchor)
+            quotaUsage.toggle(relativeTo: anchor ?? briefingCard.quotaAnchor)
         case .fleet:
             // The tasks this clause is about are rows on this very page.
             if let section = inFlightSectionView { section.scrollToVisible(section.bounds) }
@@ -1414,7 +1520,12 @@ final class FleetController: NSViewController {
     /// Drive the real `render` with caller-supplied data, bypassing
     /// `refresh()`'s background fetch and its real `gh`/`git` calls.
     func debugRender(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
+        // Gets through a pinned page too (`debugRendersPinned`), so a suite
+        // that seeded a fixture can still render a failed scan over it.
+        let wasInProgress = debugRenderInProgress
+        debugRenderInProgress = true
         render(snapshot: snapshot, mergedPRs: mergedPRs, prFetchFailure: prFetchFailure)
+        debugRenderInProgress = wasInProgress
     }
 
     /// R4-UX-08: the toolbar's Stop, and the in-flight state it ends. A
@@ -1496,29 +1607,29 @@ extension FleetController: SidebarLayoutAdopting {
         // already the toolbar's (`ModuleTabHosting`), so the row is empty.
         toolbarRow.isHidden = true
 
-        needsYouSummary.font = HelmType.body()
-        needsYouSummary.maximumNumberOfLines = 0
         needsYouSetupButton.target = self
         needsYouSetupButton.action = #selector(needsYouSetupTapped)
-        needsYouSetupButton.isHidden = true
-        needsYouEmpty.translatesAutoresizingMaskIntoConstraints = false
+        needsYouSkeleton.setBody(needsYouSkeletonRows, insets: HelmCard.contentInsets)
+        needsYouSkeleton.translatesAutoresizingMaskIntoConstraints = false
 
         needsYouContainer.orientation = .vertical
         needsYouContainer.alignment = .leading
         needsYouContainer.spacing = HelmMetrics.s4
         needsYouContainer.translatesAutoresizingMaskIntoConstraints = false
-        // The Needs your call section leaves the dashboard for this tab.
+        // The Needs your call section leaves the dashboard for this tab. CR-1:
+        // the band counts it, so its heading goes and the rows sit straight
+        // under the band, as the board draws them.
         overviewContainer.removeArrangedSubview(needsSectionView)
         needsSectionView.removeFromSuperview()
-        for view in [needsYouSummary, needsYouSetupButton, needsSectionView!, needsYouEmpty] as [NSView] {
+        needsGlyph.superview?.isHidden = true
+        for view in [needsYouSkeleton, needsSectionView!] as [NSView] {
             needsYouContainer.addArrangedSubview(view)
-        }
-        for view in [needsYouSummary, needsSectionView!, needsYouEmpty] as [NSView] {
             view.widthAnchor.constraint(equalTo: needsYouContainer.widthAnchor).isActive = true
         }
         contentStack.addArrangedSubview(needsYouContainer)
         needsYouContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         needsYouContainer.isHidden = true
+        adoptCrewBand()
         renderNeedsYou(currentNeedsTasks)
         applyNeedsYouTheme()
     }
@@ -1530,6 +1641,7 @@ extension FleetController: SidebarLayoutAdopting {
         overviewContainer.isHidden = true
         logContainer.isHidden = true
         needsYouContainer.isHidden = false
+        renderCrewBand()
         applyTheme()
         onModuleTabChanged?()
     }
@@ -1580,64 +1692,37 @@ extension FleetController: SidebarLayoutAdopting {
         return snapshot.tasks.compactMap { needsYouKnown[$0.id]?.task }
     }
 
-    /// The summary line and the empty state, from the same list the rows
-    /// were just built from. Before the first read lands it says it is
-    /// reading - never "nothing needs you" for a state it has not seen, and
-    /// never after a read that failed.
+    /// The skeleton, from the same read the rows were just built from. The
+    /// band itself is drawn by `renderCrewBand()`, which `render` and the tab
+    /// switches call: before the first read lands it says it is reading over
+    /// these two skeleton rows - never "nothing needs you" for a state it has
+    /// not seen, and never after a read that failed.
     fileprivate func renderNeedsYou(_ shown: [FleetTask]) {
         guard drawsSidebarLayout else { return }
-        needsYouSetupButton.isHidden = true
-        needsYouEmpty.isHidden = true
-        guard hasLoadedOnce, let checkedAt = needsYouCheckedAt else {
-            needsYouSummary.stringValue = "\u{2014} Reading the crew\u{2019}s state\u{2026}"
-            return
-        }
-        let time = Self.needsYouTimeFormatter
-        let checked = "Checked at \(time.string(from: checkedAt))."
-        guard needsYouHomeOk else {
-            needsYouSummary.stringValue = "Grand Line is not pointed at a firstmate home yet, so the crew\u{2019}s state cannot be read. \(checked)"
-            needsYouSetupButton.isHidden = false
-            return
-        }
-        let count = shown.isEmpty ? "" : " " + Self.needsYouCount(shown)
-        if needsYouReadFailed {
-            let failed = "Couldn\u{2019}t read the crew\u{2019}s state at \(time.string(from: checkedAt))."
-            guard let readAt = needsYouReadAt else {
-                needsYouSummary.stringValue = "\u{2014} \(failed)"
-                return
-            }
-            needsYouSummary.stringValue = shown.isEmpty
-                ? "\(failed) Nothing was waiting on you when it was last read, at \(time.string(from: readAt))."
-                : "\(failed) Showing what was read at \(time.string(from: readAt)):\(count)"
-            return
-        }
-        guard !shown.isEmpty else {
-            needsYouSummary.stringValue = checked
-            needsYouEmpty.setText(title: "Nothing needs you",
-                                  body: "No crewmate is waiting on a decision, and none is blocked.")
-            needsYouEmpty.isHidden = false
-            return
-        }
-        let readAt = needsYouReadAt ?? checkedAt
-        let carried = shown.compactMap { needsYouKnown[$0.id]?.readAt }.filter { $0 < readAt }
-        var summary = "\(Self.needsYouCount(shown)) \(checked)"
-        if let oldest = carried.min() {
-            summary += carried.count == 1
-                ? " One of them could not be read just now, so it shows as read at \(time.string(from: oldest))."
-                : " \(carried.count) of them could not be read just now, so they show as read at \(time.string(from: oldest))."
-        }
-        needsYouSummary.stringValue = summary
+        needsYouSkeleton.isHidden = hasLoadedOnce && needsYouCheckedAt != nil
     }
 
-    /// "2 tasks are waiting on you, with 3 open decisions."
-    private static func needsYouCount(_ shown: [FleetTask]) -> String {
-        let decisions = shown.reduce(0) { $0 + FleetActions.openDecisions(taskID: $1.id).count }
-        let tasks = shown.count == 1 ? "1 task is waiting on you" : "\(shown.count) tasks are waiting on you"
-        let open = decisions == 1 ? "1 open decision" : "\(decisions) open decisions"
-        return "\(tasks), with \(open)."
+    /// Needs you's reading as `CrewHeroWords` counts it: the listed tasks,
+    /// their open decisions, and any carried from an earlier read.
+    fileprivate func needsYouWordsReading() -> CrewHeroWords.NeedsYouReading {
+        let shown = currentNeedsTasks
+        var reading = CrewHeroWords.NeedsYouReading(
+            hasRead: hasLoadedOnce && needsYouCheckedAt != nil, homeOk: needsYouHomeOk,
+            readFailed: needsYouReadFailed, checkedAt: needsYouCheckedAt, readAt: needsYouReadAt,
+            waiting: shown.count,
+            openDecisions: shown.reduce(0) { $0 + FleetActions.openDecisions(taskID: $1.id).count },
+            needDecision: shown.filter { $0.status == "needs_decision" }.count,
+            blocked: shown.filter { $0.status == "blocked" }.count)
+        if !needsYouReadFailed, let checkedAt = needsYouCheckedAt {
+            let readAt = needsYouReadAt ?? checkedAt
+            let carried = shown.compactMap { needsYouKnown[$0.id]?.readAt }.filter { $0 < readAt }
+            reading.carried = carried.count
+            reading.carriedSince = carried.min()
+        }
+        return reading
     }
 
-    private static let needsYouTimeFormatter: DateFormatter = {
+    static let needsYouTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         formatter.dateStyle = .none
@@ -1646,17 +1731,199 @@ extension FleetController: SidebarLayoutAdopting {
 
     fileprivate func applyNeedsYouTheme() {
         guard drawsSidebarLayout else { return }
-        needsYouSummary.textColor = HelmTheme.mutedInk(theme)
-        needsYouEmpty.applyTheme(theme)
+        needsYouSkeleton.applyTheme(theme)
+        needsYouSkeletonRows.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
     var debugNeedsYouShowing: Bool { needsYouShowing && !needsYouContainer.isHidden }
-    var debugNeedsYouSummary: String { needsYouSummary.stringValue }
-    var debugNeedsYouEmptyShowing: Bool { !needsYouEmpty.isHidden && !needsYouContainer.isHidden }
     var debugNeedsSectionIsOnNeedsYou: Bool { needsSectionView.superview === needsYouContainer }
-    var debugNeedsYouSetupShowing: Bool { !needsYouSetupButton.isHidden }
+    /// CR-1: the two skeleton rows under the band before the first read.
+    var debugNeedsYouSkeletonShowing: Bool { !needsYouSkeleton.isHidden && !needsYouContainer.isHidden }
+    var debugNeedsHeadingShown: Bool { !(needsGlyph.superview?.isHiddenOrHasHiddenAncestor ?? true) }
     #endif
+}
+
+// MARK: - CR-1 - the Crew band
+
+// The board's CR-1 for the two tabs this page draws that have a band so far:
+// Needs you and In flight. One `HelmHeroColumn` in `.band` at the top of the
+// page, reconfigured for whichever tab is showing from what the page already
+// read - nothing is fetched for it. The Log tab has no band yet and keeps its
+// header line (the second half of CR-1).
+
+extension FleetController {
+
+    /// Mount the band at the top of the page, once, when the page adopts the
+    /// sidebar layout. The band says what the answer banner, the boxed
+    /// figures, the briefing card and their loading stand-ins said, so those
+    /// stay hidden in this layout.
+    fileprivate func adoptCrewBand() {
+        crewBand.setArrangement(.band)
+        contentStack.insertArrangedSubview(crewBand, at: 0)
+        crewBand.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        for view in [loadingLabel, bannerSkeletonCard, bannerRow, statsRow, briefingCard] as [NSView] {
+            view.isHidden = true
+        }
+        loadingTilesRow?.isHidden = true
+        bandTiles.translatesAutoresizingMaskIntoConstraints = false
+        renderCrewBand()
+    }
+
+    /// The band has a tab of its own to say: Needs you or In flight.
+    fileprivate var crewBandShows: Bool { drawsSidebarLayout && (needsYouShowing || activeTab == .overview) }
+
+    /// Fold one read into In flight's band: the verdict `FleetGreeting` has
+    /// always said, and the counts the boxed figures showed.
+    fileprivate func noteInFlightRead(_ snapshot: FleetSnapshot, needs: [FleetTask], working: [FleetTask],
+                                      ready: FleetDataSource.PRReadyReading) {
+        let answer = FleetGreeting.answer(tasks: needs + working, prs: ready, homeOk: snapshot.homeOk)
+        let readyWords: CrewHeroWords.Ready
+        switch ready {
+        case .value(let count): readyWords = .count(count)
+        case .scanning: readyWords = .scanning
+        case .failed: readyWords = .failed
+        }
+        inFlightReading = CrewHeroWords.InFlightReading(
+            hasRead: true, homeOk: snapshot.homeOk, verdictHeadline: answer.title, verdictBody: answer.meta,
+            working: working.count, queued: snapshot.queuedCount, doneToday: snapshot.doneCount,
+            projects: snapshot.projectsCount, ready: readyWords, watcher: snapshot.watcher.status,
+            tasksRead: snapshot.tasksRead, checkedAt: Date())
+    }
+
+    /// Draw the band for the tab that is showing. Cheap when nothing changed:
+    /// the band is only rebuilt when its words, its briefing or its foot do.
+    func renderCrewBand() {
+        guard drawsSidebarLayout else { return }
+        crewBand.isHidden = !crewBandShows
+        guard crewBandShows else { return }
+        let words: CrewHeroWords.Band
+        var bandViews: [NSView] = []
+        var briefingKey = ""
+        if needsYouShowing {
+            words = CrewHeroWords.needsYou(needsYouWordsReading()) { Self.needsYouTimeFormatter.string(from: $0) }
+        } else {
+            let reading = inFlightReading ?? CrewHeroWords.InFlightReading(
+                hasRead: false, homeOk: true, verdictHeadline: "", verdictBody: "", working: 0, queued: 0,
+                doneToday: 0, projects: 0, ready: .scanning, watcher: "")
+            words = CrewHeroWords.inFlight(reading, day: CrewHeroWords.dayFormatter.string(from: Date())) {
+                Self.needsYouTimeFormatter.string(from: $0)
+            }
+            // The board shows the briefing once the crew has been read, and
+            // never over the setup prompt.
+            if reading.hasRead, reading.homeOk, reading.tasksRead, bandBriefing != nil || bandBriefingBusy {
+                bandViews = briefingBandViews()
+                briefingKey = "\(bandBriefingBusy)|\(bandBriefing?.generatedAt.timeIntervalSince1970 ?? 0)|\(bandTileClauses.count)"
+            }
+        }
+        let signature = "\(words)|\(bandViews.count)|\(briefingKey)"
+        guard signature != bandSignature else { return }
+        bandSignature = signature
+        var foot: [NSView] = []
+        if words.offersSetup {
+            foot = [needsYouSetupButton]
+        } else if !words.figures.isEmpty {
+            configureBandFigures(words.figures)
+            foot = [bandFigures]
+        }
+        let status = words.status.map { status -> HelmHeroColumn.Status in
+            let tint: HelmTint?
+            switch status.state {
+            case .good: tint = .good
+            case .warn: tint = .warn
+            case .idle: tint = nil
+            }
+            return HelmHeroColumn.Status(text: status.text, tint: tint)
+        }
+        crewBand.configure(header: .init(symbol: words.symbol, kicker: words.kicker, headline: words.headline,
+                                         body: words.body, ring: nil, status: status),
+                           sections: [], foot: foot,
+                           tone: .init(colour: .themeAccent, isDimmed: words.tone == .dimmed),
+                           bandViews: bandViews, footRule: !foot.isEmpty)
+    }
+
+    private func configureBandFigures(_ figures: [CrewHeroWords.Figure]) {
+        bandFigureWords = figures
+        bandFigures.configure(figures.map { figure in
+            HelmKPIStrip.Item(figure.value.map { .value($0) } ?? .unread, caption: figure.caption,
+                              emphasis: figure.value == "0" ? .quiet : .normal,
+                              isAction: figure.opensReview,
+                              toolTip: figure.opensReview ? "View in \(PlaceName.short(.review))" : nil)
+        }, theme: theme)
+    }
+
+    /// The briefing's line and its tiles: "Generated 6:58 AM from ..." (or
+    /// that a new one is being composed), Regenerate and Dismiss until
+    /// tomorrow, and one Br-3 tile per sentence, labelled with its page.
+    private func briefingBandViews() -> [NSView] {
+        let record = bandBriefing
+        var line = ""
+        if bandBriefingBusy {
+            line = "Composing your briefing\u{2026}"
+        } else if let record {
+            line = MorningBriefing.subtitle(for: record) + (record.isDegraded ? " \u{00B7} offline" : "")
+        }
+        bandBriefingRow.subtitleLabel.stringValue = line
+        // The card's footnote, for a briefing made without the AI half.
+        let reason = record?.degradedReason.map { " (\($0))" } ?? ""
+        bandBriefingRow.subtitleLabel.toolTip = record?.isDegraded == true
+            ? "Plain summary - no AI call was made\(reason). Every number in it came from this machine." : line
+        bandBriefingRow.setAccessibilityLabel("Morning briefing, \(line)")
+        bandRegenerateButton.isEnabled = !bandBriefingBusy
+        let clauses = record?.clauses ?? []
+        if clauses != bandTileClauses { rebuildBandTiles(clauses) }
+        return clauses.isEmpty ? [bandBriefingRow] : [bandBriefingRow, bandTiles]
+    }
+
+    /// One tile per clause, as Home draws them (`HomeBriefingHero.tile`):
+    /// the page it came from as its label, its hue as the dot. A tile that
+    /// points somewhere opens it through this page's own deep links, the ones
+    /// the paragraph's clauses used.
+    private func rebuildBandTiles(_ clauses: [BriefingClause]) {
+        bandTileClauses = clauses
+        bandTiles.tiles = clauses.map { clause in
+            let words = HomeBriefingHero.tile(clause, pageName: PlaceName.short)
+            let tile = HelmHeroTile(ringSide: nil)
+            tile.tint = words.tint
+            if words.isLink {
+                tile.setAction { [weak self, weak tile] in self?.activateBriefingClause(clause.target, anchor: tile) }
+            }
+            tile.configure(label: words.label, text: words.text)
+            return tile
+        }
+    }
+
+    @objc fileprivate func bandRegenerateTapped() { refresh(forceBriefing: true) }
+    @objc fileprivate func bandDismissTapped() { dismissBriefing() }
+
+    #if FM_SELFTESTS
+    /// The band as drawn, or `nil` with none showing (the floating bar, Log).
+    var debugCrewBand: HelmHeroColumn? { crewBandShows && !crewBand.isHidden ? crewBand : nil }
+    var debugBandFigures: HelmKPIStrip { bandFigures }
+    var debugBandTiles: [HelmHeroTile] { bandTiles.tiles }
+    var debugBandBriefingRow: HelmHeroRow? {
+        debugCrewBand?.debugBandViews.contains(bandBriefingRow) == true ? bandBriefingRow : nil
+    }
+    var debugBandRegenerateButton: HelmButton { bandRegenerateButton }
+    var debugBandDismissButton: HelmButton { bandDismissButton }
+    var debugBandSetupButton: HelmButton { needsYouSetupButton }
+    /// The views the floating bar draws and the sidebar layout's band
+    /// replaces: the answer banner, the boxed figures, the briefing card.
+    var debugDashboardChromeShown: (banner: Bool, stats: Bool, briefing: Bool) {
+        (!bannerRow.isHiddenOrHasHiddenAncestor, !statsRow.isHiddenOrHasHiddenAncestor,
+         !briefingCard.isHiddenOrHasHiddenAncestor)
+    }
+    var debugBriefingCard: MorningBriefingCard { briefingCard }
+    #endif
+}
+
+/// CR-1: the band says what the grey line under the toolbar said, so in the
+/// sidebar layout Needs you and In flight give up that line as Tasks does
+/// (`WorkspaceHeaderLineCollapsing`). The live subtitle is still the page's
+/// summary for the crew panel. Log keeps its line until its own band lands.
+extension FleetController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { crewBandShows }
+    var drawsSubtitleOnHeaderLine: Bool { !crewBandShows }
 }
 
 /// What Crew › Needs you last read, without its rows - the sidebar layout's

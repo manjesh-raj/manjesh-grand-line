@@ -769,6 +769,16 @@ extension HelmReading: Equatable where Value: Equatable {}
 /// repo on the Updates page), so the hero's own verdict cannot carry it. With
 /// `heroPalette` set it takes `HelmHeroSurface.signalColor`, which clears the
 /// non-text floor on both stops - the large-text floor a 26pt figure needs.
+///
+/// **1.4.0: an `.inline` figure can be a button.** CR-1's Crew band draws the
+/// fleet's six figures as an inline strip on the hero, and Ready to merge is
+/// still the one that opens Review, as its boxed tile did. An `isAction`
+/// item's column is an `InlineActionCell`, a `HoverHighlightView`, so it is a
+/// real button to VoiceOver and the keyboard with a focus ring and Return and
+/// Space (GL-16). Its caption is underlined, the board's sign that a figure
+/// goes somewhere, and it takes a shade on hover - the ghost pill's shade on
+/// a hero, the page's hover wash elsewhere. Nothing on it moves, so Reduce
+/// Motion has nothing to stop. A strip with no action item draws as before.
 final class HelmKPIStrip: NSView {
 
     enum Density: Equatable { case inline, boxed }
@@ -796,7 +806,7 @@ final class HelmKPIStrip: NSView {
         let caption: String
         let emphasis: Emphasis
         var detail: Detail? = nil
-        /// `.boxed` only: the cell is a button that calls `onActivate`.
+        /// The cell is a button that calls `onActivate`. `.inline` since 1.4.0.
         var isAction = false
         /// Shown on hover. A failed reading's reason is the default.
         var toolTip: String? = nil
@@ -848,7 +858,8 @@ final class HelmKPIStrip: NSView {
     static let boxedDetailHeight: CGFloat = 108
 
     let density: Density
-    /// `.boxed`: called with the index of an `isAction` cell that was pressed.
+    /// Called with the index of an `isAction` cell that was pressed - a
+    /// `.boxed` tile, or since 1.4.0 an `.inline` column.
     var onActivate: ((Int) -> Void)?
     private var cells: [BoxedCell] = []
 
@@ -868,6 +879,10 @@ final class HelmKPIStrip: NSView {
     private var valueLabels: [NSTextField] = []
     private var captionLabels: [NSTextField] = []
     private var separators: [NSView] = []
+    /// 1.4.0: the `.inline` columns that are buttons, by item index.
+    private var actionCells: [Int: InlineActionCell] = [:]
+    /// The caption underline's share of its ink, as the board draws it.
+    static let actionUnderlineAlpha: CGFloat = 0.45
     private let topRule = NSView()
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -962,6 +977,7 @@ final class HelmKPIStrip: NSView {
         valueLabels.removeAll()
         captionLabels.removeAll()
         separators.removeAll()
+        actionCells.removeAll()
 
         var columns: [NSView] = []
         for (index, item) in newItems.enumerated() {
@@ -999,17 +1015,40 @@ final class HelmKPIStrip: NSView {
             // above stays `.defaultLow`, so the strip is never the card's floor.
             column.setClippingResistancePriority(Self.labelFloorPriority, for: .horizontal)
             column.setHuggingPriority(.defaultLow, for: .horizontal)
-            row.addArrangedSubview(column)
+            // 1.4.0: the trailing inset holds at the labels' own floor. A
+            // stack keeps its edge insets only at its hugging priority (250,
+            // read off the live constraints), under the equal-column tie, so
+            // the widest caption gave up its inset and ran into the hairline
+            // after it - "Need a decision" 2.5pt from it on CR-1's band.
+            for label in [value, caption] {
+                let inset = label.trailingAnchor.constraint(lessThanOrEqualTo: column.trailingAnchor,
+                                                            constant: -HelmMetrics.s2)
+                inset.priority = Self.labelFloorPriority
+                inset.isActive = true
+            }
+            // 1.4.0: an action item's column is wrapped in a button that
+            // takes the column's place in the row, so the equal-width tie
+            // and the separators are unchanged.
+            var cell: NSView = column
+            if item.isAction {
+                let button = InlineActionCell(column: column)
+                button.onPress = { [weak self] in self?.onActivate?(index) }
+                button.toolTip = item.toolTip
+                button.accessibilityLabelOverride = "\(item.caption), \(item.reading.isKnown ? item.reading.text { $0 } : "not known yet")"
+                actionCells[index] = button
+                cell = button
+            }
+            row.addArrangedSubview(cell)
             if let first = columns.first {
                 // Equal columns where every label fits, at `columnHug`: above
                 // the stacks' own 250, below `labelFloorPriority`, so a
                 // caption that needs more takes it from its neighbours rather
                 // than truncating (R4-UI-02).
-                let equal = column.widthAnchor.constraint(equalTo: first.widthAnchor)
+                let equal = cell.widthAnchor.constraint(equalTo: first.widthAnchor)
                 equal.priority = HelmDaylightPriority.columnHug
                 equal.isActive = true
             }
-            columns.append(column)
+            columns.append(cell)
         }
         setAccessibilityLabel(newItems.map { "\($0.caption) \($0.reading.text { $0 })" }
             .joined(separator: ", "))
@@ -1095,7 +1134,21 @@ final class HelmKPIStrip: NSView {
             }
             valueLabels[index].textColor = color
             valueLabels[index].font = HelmType.metric(figureSize)
-            captionLabels[index].textColor = heroInk ?? muted
+            let captionColor = heroInk ?? muted
+            captionLabels[index].textColor = captionColor
+            if let cell = actionCells[index] {
+                // 1.4.0: the caption underlined in its own colour, and a
+                // shade under the column on hover.
+                let caption = captionLabels[index]
+                caption.attributedStringValue = NSAttributedString(string: caption.stringValue, attributes: [
+                    .font: caption.font ?? NSFont.systemFont(ofSize: HelmType.scaled(Self.captionSize), weight: .medium),
+                    .foregroundColor: captionColor,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .underlineColor: captionColor.withAlphaComponent(Self.actionUnderlineAlpha),
+                ])
+                cell.hoverColor = heroInk.map { HelmButton.heroShade(for: $0).withAlphaComponent(HelmButton.heroFillAlpha) }
+                    ?? ink.withAlphaComponent(0.06)
+            }
         }
         let line = heroInk?.withAlphaComponent(Self.heroRuleAlpha) ?? HelmFlatList.hairRowColor(theme)
         for separator in separators { separator.layer?.backgroundColor = line.cgColor }
@@ -1109,9 +1162,45 @@ final class HelmKPIStrip: NSView {
     var debugCaptionLabels: [NSTextField] { captionLabels }
     var debugValueColors: [NSColor?] { valueLabels.map(\.textColor) }
     var debugSeparatorCount: Int { separators.count }
+    /// 1.4.0: the `.inline` column that is a button for item `index`, if any.
+    func debugActionCell(at index: Int) -> InlineActionCell? { actionCells[index] }
+    /// Whether item `index`'s caption is drawn underlined.
+    func debugCaptionIsUnderlined(at index: Int) -> Bool {
+        guard captionLabels.indices.contains(index), captionLabels[index].attributedStringValue.length > 0 else { return false }
+        return captionLabels[index].attributedStringValue.attribute(.underlineStyle, at: 0, effectiveRange: nil) != nil
+    }
     var debugHasBorder: Bool { (layer?.borderWidth ?? 0) > 0 }
     var debugCells: [BoxedCell] { cells }
     #endif
+
+    /// 1.4.0: an `.inline` column that is a button. A `HoverHighlightView`
+    /// for the role, the focus ring, the keys and the hover shade. The press
+    /// goes through its own click recognizer, so a real click and VoiceOver's
+    /// press take one path. Nested so it is the strip's implementation, not a
+    /// second figure component.
+    final class InlineActionCell: HoverHighlightView {
+        var onPress: (() -> Void)?
+
+        init(column: NSView) {
+            super.init(frame: .zero)
+            translatesAutoresizingMaskIntoConstraints = false
+            cornerRadius = HelmMetrics.rControl
+            column.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(column)
+            NSLayoutConstraint.activate([
+                column.leadingAnchor.constraint(equalTo: leadingAnchor),
+                column.trailingAnchor.constraint(equalTo: trailingAnchor),
+                column.topAnchor.constraint(equalTo: topAnchor),
+                column.bottomAnchor.constraint(equalTo: bottomAnchor),
+            ])
+            addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(pressed)))
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+        @objc private func pressed() { onPress?() }
+    }
 
     /// One `.boxed` cell: the caption above the figure on the card surface,
     /// an optional detail line or pill, and a press when the item is an

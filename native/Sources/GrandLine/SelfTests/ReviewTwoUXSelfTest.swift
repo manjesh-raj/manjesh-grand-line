@@ -603,13 +603,15 @@ enum ReviewTwoUXSelfTest {
             check(!shell.debugContentPaneHeader.debugDrawsTitle,
                   "\(module.title)'s content header still draws its name under the crumb", &ok)
         }
-        // Crew: no greeting, and its live line is the module line.
+        // Crew: no greeting, and its live line is still the page's summary.
+        // CR-1 put what the line said on the Crew band, so the line itself
+        // is given up over the band, as Tasks gives up its own.
         shell.workspace.navigator.show(.overview)
         settle(shell)
         let fleet = shell.workspace.overview
         check(!fleet.debugGreetingIsShown, "Crew still opens with its greeting", &ok)
-        check(shell.debugHeader?.subtitle == fleet.drillHeaderSubtitle && !(fleet.drillHeaderSubtitle ?? "").isEmpty,
-              "Crew's module line is \(shell.debugHeader?.subtitle ?? "nothing"), not its live line \(fleet.drillHeaderSubtitle ?? "nothing")", &ok)
+        check(shell.debugHeader == nil && fleet.debugCrewBand != nil && !(fleet.drillHeaderSubtitle ?? "").isEmpty,
+              "Crew's module line is \(shell.debugHeader?.subtitle ?? "nothing") over its band, live line \(fleet.drillHeaderSubtitle ?? "nothing")", &ok)
         // Settings: no hero, and the category's description is the line.
         shell.workspace.navigator.show(.settings)
         settle(shell)

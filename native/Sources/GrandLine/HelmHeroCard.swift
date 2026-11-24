@@ -554,6 +554,23 @@ final class HelmHeroTileGrid: NSView {
         needsLayout = true
     }
 
+    /// 1.1.0: paint every tile for a hero drawn in `palette`, for a grid that
+    /// sits on a hero other than `HelmHeroCard` (CR-1's Crew band, through
+    /// `HelmHeroColumn`). The card's own recipe: the ink, the wash away from
+    /// the ink and its hover step, and each tile's `tint` as a dot lifted onto
+    /// the gradient by `HelmHeroSurface.signalColor`.
+    func paint(palette: HelmHeroSurface.Palette, theme: HelmTheme) {
+        let ink = HelmContrast.color(palette.ink)
+        let wash = HelmHeroCard.tileWash(for: palette)
+        let hover = HelmHeroCard.tileWash(for: palette, hovered: true)
+        let fill = HelmContrast.color(wash.rgb).withAlphaComponent(wash.alpha)
+        let hoverFill = HelmContrast.color(hover.rgb).withAlphaComponent(hover.alpha)
+        for tile in tiles {
+            let dot = tile.tint.map { HelmHeroSurface.signalColor(tintHex: $0.hex(in: theme), on: palette) }
+            tile.apply(ink: ink, fill: fill, hoverFill: hoverFill, dot: dot, theme: theme)
+        }
+    }
+
     override func layout() {
         super.layout()
         let placed = arrangement(width: bounds.width > 1 ? bounds.width : layoutWidth)
@@ -608,6 +625,10 @@ final class HelmHeroTile: HoverHighlightView {
     private var action: (() -> Void)?
     private var ink: NSColor = .white
     private var hasDot = false
+    /// 1.1.0: the fact's hue, drawn as the dot before the label by
+    /// `HelmHeroTileGrid.paint`. `HelmHeroCard` passes its dots itself and
+    /// leaves this `nil`.
+    var tint: HelmTint?
 
     init(ringSide: CGFloat?) {
         ring = ringSide.map { HelmRingGauge(side: $0) }

@@ -66,6 +66,17 @@
 // its disclosure, keyboard navigation, context menus and VoiceOver tree, so it
 // cannot hold `HelmHeroNavRow`s; it paints its cells from the same values the
 // column hands its nav rows, so there is still one recipe.
+//
+// **1.5.0, for the Crew band (CR-1).** A `.band` can carry three more things
+// the board draws on it: a `status` - a glass `HelmHeroStatusPill` at the
+// band's top right, its dot the state's hue lifted onto the gradient, which
+// is the watcher on Crew's In flight - then `bandViews`, each on a line of its
+// own across the band between the words and the foot (a `HelmHeroTileGrid`
+// among them is laid out at the band's width and painted with the hero's
+// tile recipe, which is the Morning briefing's sentence tiles), and a
+// hairline in the ink across the band above the foot (`footRule`). A band
+// given none of them draws exactly as 1.4.0 did, and `.column` and `.panel`
+// draw none of them.
 
 import AppKit
 
@@ -100,7 +111,14 @@ final class HelmHeroColumn: NSView {
         var headline: String
         var body: String?
         var ring: Ring?
+        /// 1.5.0, `.band` only: a verdict as a glass pill at the band's top
+        /// right, in place of a ring. `nil` draws none.
+        var status: Status? = nil
     }
+
+    /// 1.5.0: the status pill's words and its dot's hue - the hero card's own
+    /// verdict pill (`HelmHeroStatusPill`).
+    typealias Status = HelmHeroCard.Content.Status
 
     /// 1.3.0: a page's own view in the ring's place on a `.panel`, with a
     /// caption under it in the quiet ink. The page paints the view and the
@@ -157,6 +175,12 @@ final class HelmHeroColumn: NSView {
     private(set) var header = Header(symbol: "circle", kicker: "", headline: "", body: nil, ring: nil)
     private(set) var sections: [Section] = []
     private(set) var footViews: [NSView] = []
+    /// 1.5.0, `.band` only: views between the words and the foot, each on a
+    /// line of its own across the band.
+    private(set) var bandViews: [NSView] = []
+    /// 1.5.0, `.band` only: a hairline in the ink across the band above its
+    /// foot.
+    private(set) var footRule = false
     private(set) var accessory: Accessory?
     private(set) var tone = HelmModuleCard.HeroTone(colour: .themeAccent)
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -180,6 +204,9 @@ final class HelmHeroColumn: NSView {
     private var ringGauge = HelmRingGauge(side: HelmHeroColumn.ringSide)
     private let ringCaption = NSTextField(wrappingLabelWithString: "")
     private let accessoryCaption = NSTextField(wrappingLabelWithString: "")
+    /// 1.5.0: the header's status pill and the band's foot rule.
+    private let statusPill = HelmHeroStatusPill()
+    private let footRuleView = NSView()
     /// Labels painted in the ink at full strength, and at `quietInkAlpha`.
     private var inkLabels: [NSTextField] = []
     private var quietLabels: [NSTextField] = []
@@ -221,12 +248,14 @@ final class HelmHeroColumn: NSView {
     /// The column's words, its sections and its foot, in one call - a page
     /// re-renders the whole column from its state, the way every hero does.
     func configure(header: Header, sections: [Section], foot: [NSView], tone: HelmModuleCard.HeroTone,
-                   accessory: Accessory? = nil) {
+                   accessory: Accessory? = nil, bandViews: [NSView] = [], footRule: Bool = false) {
         self.header = header
         self.sections = sections
         self.footViews = foot
         self.tone = tone
         self.accessory = accessory
+        self.bandViews = bandViews
+        self.footRule = footRule
         rebuild()
     }
 
@@ -286,6 +315,9 @@ final class HelmHeroColumn: NSView {
         }
         ringCaption.setAccessibilityElement(false)
         accessoryCaption.setAccessibilityElement(false)
+        footRuleView.wantsLayer = true
+        footRuleView.translatesAutoresizingMaskIntoConstraints = false
+        footRuleView.heightAnchor.constraint(equalToConstant: 1).isActive = true
     }
 
     private func buildColumnContainer() {
@@ -431,13 +463,23 @@ final class HelmHeroColumn: NSView {
             if let trailing = ringRow ?? accessory.map(makeAccessoryColumn) { top.append(trailing) }
             add(Self.row(top, spacing: HelmMetrics.s5, alignment: .top), to: bandStack)
         } else if isBand {
-            // Words on the left, the ring on the right, the foot under both.
+            // Words on the left, the ring or the status pill on the right,
+            // then any band views, then the foot under all of them.
             let words = Self.column([kickerRow, headlineLabel, bodyLabel], spacing: HelmMetrics.s1 + 2)
             var top: [NSView] = [words]
             if let ringRow { top.append(ringRow) }
-            let headerRow = Self.row(top, spacing: HelmMetrics.s5, alignment: .centerY)
+            if let status = header.status {
+                statusPill.configure(text: status.text)
+                top.append(statusPill)
+            }
+            // A pill sits level with the kicker, as the hero card's does. A
+            // ring is centred against the words.
+            let headerRow = Self.row(top, spacing: HelmMetrics.s5,
+                                     alignment: header.status != nil && ringRow == nil ? .top : .centerY)
             add(headerRow, to: bandStack)
+            for view in bandViews { add(view, to: bandStack) }
             if !footViews.isEmpty {
+                if footRule { add(footRuleView, to: bandStack) }
                 let foot = Self.row(footViews, spacing: HelmMetrics.s2, alignment: .centerY)
                 add(foot, to: bandStack, fills: false)
             }
@@ -468,6 +510,7 @@ final class HelmHeroColumn: NSView {
             }
             for view in footViews { add(view, to: footStack, fills: !(view is HelmButton)) }
         }
+        statusPill.isHidden = !(isBand && header.status != nil)
         setAccessibilityLabel([header.kicker, header.headline, header.body].compactMap { $0 }
             .filter { !$0.isEmpty }.joined(separator: ". "))
         applyTheme(theme)
@@ -632,6 +675,22 @@ final class HelmHeroColumn: NSView {
         }
         for section in sections { for view in section.views { Self.applyInk(ink, to: view) } }
         for view in footViews { Self.applyInk(ink, to: view) }
+        // 1.5.0: a tile grid takes the hero card's tile recipe on this
+        // palette, and any other band view takes the ink as the foot does.
+        for view in bandViews {
+            if let grid = view as? HelmHeroTileGrid {
+                grid.paint(palette: palette, theme: theme)
+            } else {
+                Self.applyInk(ink, to: view)
+            }
+        }
+        footRuleView.layer?.backgroundColor = ink.withAlphaComponent(Self.ruleAlpha).cgColor
+        // The pill's wash is the tiles', so its words never read worse than
+        // on the gradient, and its dot is the state's hue lifted onto it.
+        let wash = HelmHeroCard.tileWash(for: palette)
+        let statusDot = header.status?.tint.map { HelmHeroSurface.signalColor(tintHex: $0.hex(in: theme), on: palette) }
+        statusPill.apply(ink: ink, fill: HelmContrast.color(wash.rgb).withAlphaComponent(wash.alpha),
+                         dot: statusDot ?? ink.withAlphaComponent(0.55))
         let pillWords = NavInk(palette: palette).selectedInk
         for section in sections {
             for case let row as HelmHeroNavRow in section.views { row.applyInk(ink, selectedInk: pillWords) }
@@ -740,8 +799,16 @@ final class HelmHeroColumn: NSView {
         case .column: insets = Self.insets
         }
         var width = bounds.width - insets.left - insets.right
+        // 1.5.0: a band's tile grid is as wide as the band's content, and
+        // measures its rows from that width rather than its own frame.
+        if arrangement == .band, width > 0 {
+            for case let grid as HelmHeroTileGrid in bandViews { grid.layoutWidth = floor(width) }
+        }
         if arrangement == .band, header.ring != nil {
             width -= Self.bandRingSide + HelmMetrics.s3 + 120 + HelmMetrics.s5
+        } else if arrangement == .band, header.status != nil {
+            statusPill.maxWidth = min(HelmHeroCard.statusMaxWidth, floor(width * 0.45))
+            width -= statusPill.fittingSize.width + HelmMetrics.s5
         }
         if arrangement == .panel, header.ring != nil || accessory != nil {
             width -= max(Self.panelRingSide, Self.panelRingCaptionWidth) + HelmMetrics.s5
@@ -774,6 +841,11 @@ final class HelmHeroColumn: NSView {
     var debugSectionTitles: [String] { sections.map(\.title) }
     var debugScroll: NSScrollView { scroll }
     var debugFootButtons: [HelmButton] { footViews.compactMap { $0 as? HelmButton } }
+    /// 1.5.0: the status pill as drawn, the band views and the foot rule.
+    var debugStatusPill: HelmHeroStatusPill? { statusPill.isHidden || statusPill.superview == nil ? nil : statusPill }
+    var debugBandViews: [NSView] { arrangement == .band ? bandViews : [] }
+    var debugFootRule: NSView? { footRuleView.superview == nil ? nil : footRuleView }
+    var debugFootViews: [NSView] { footViews }
     /// 1.3.0: the accessory's caption as drawn, or nil when none is drawn.
     var debugAccessoryCaption: NSTextField? {
         arrangement == .panel && header.ring == nil && accessory != nil ? accessoryCaption : nil
