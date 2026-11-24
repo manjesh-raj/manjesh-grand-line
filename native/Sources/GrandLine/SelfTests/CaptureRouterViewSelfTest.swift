@@ -134,7 +134,7 @@ enum CaptureRouterViewSelfTest {
         }
     }
 
-    // MARK: ⌘1-⌘5
+    // MARK: ⌘1-⌘6
 
     /// A real command-modified digit, dispatched through the real root view's
     /// `performKeyEquivalent` - the same path AppKit uses while the field
