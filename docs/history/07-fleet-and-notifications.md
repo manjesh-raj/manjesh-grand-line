@@ -1870,3 +1870,46 @@ The five-screen redesign board (`data/grandline-page-redesign-options/`) offered
 
 `FeelPassSelfTest` asserts the verdict's colours and a hero with and without a greeting, headless. `MainSplitShellNavigationSelfTest` asserts the greeting is the hero's title and is not drawn twice.
 Injecting an always-green verdict fails six of the colour cases.
+
+## The notifications panel's hero head (`fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain asked for the notifications panel in the app's hero style.
+A design scout drew four directions on a Lavish board (`data/grandline-notifications-hero-design-scout/`), one per hero family the app already had, and the captain picked N-1 Hero head.
+
+### What shipped
+
+- **The panel opens on the hero gradient.**
+  The head is a `PopoverHeroHeader` with a glass bell tile, the same view Compose, Claude usage and SRE Lead open on.
+  Its kicker keeps "Waiting for you" and the date, the headline is the verdict ("4 things need you", "1 update for you", "All caught up"), and the second line says how much is unread ("4 unread · 3 when you have a minute").
+  A 48pt `HelmRingGauge` of unread items sits in the trailing slot: its label is the unread count and its arc the unread share of what is waiting.
+- **The panel's own controls share one row.**
+  Inbox and Snoozed are `HelmButton.heroInk` pills, the shown list drawn `heroSelection`, with Mark all read beside them.
+  `HelmSegmentedTabs` left this panel, and Mark all read left the footer, which also eases the footer's crowding at the Larger text size.
+  Open Home stays in the footer.
+- **The words are pure.**
+  `NotificationHeroWords.make` takes the counts the panel already has (`NotificationBridgeSections`, the store's read state, the Snoozed list) and returns the kicker, the verdict, the second line and the ring.
+  `GrandLineNotificationCenterSelfTest` asserts every sentence in CI's blocking lane.
+- **Everything below the head is unchanged.**
+  The triage cards, their order, the snooze menu, Hide, Mute, read state, Undo, the keys and the VoiceOver actions are as they were.
+  The bell's badge still counts every item waiting, read or not (`badgeCount = entries.count`).
+- **The empty cards no longer repeat the head.**
+  With the verdict in the head, the inbox's empty card says "Nothing waiting" and the Snoozed one "No snoozes yet", each with what happens next.
+
+### Where the design did not hold as drawn
+
+- **The plain hero palette fails the head's second line.**
+  `PopoverHeroHeader` painted `HelmHeroSurface.palette(for:)`, and its subtitle is the ink at 86%.
+  Against the lighter stop that measured 3.78:1 on Daylight, 3.91:1 on Dusk, and 4.20:1 and 3.93:1 on Lavender and Powder (the scout's port of the rule).
+  The header gained a `quietInk` option that paints `palette(accent:quietInk:)`, as the hero columns do, and the panel passes `HelmHeroColumn.quietInkAlpha`.
+  Compose, Claude usage and SRE Lead pass nothing and still draw the plain palette, so their subtitles keep the gap. That is a follow-up.
+- **The header had no kicker.**
+  It gained a `.verdict` title style: a kicker over a 21pt rounded heavy headline, with the row top-aligned so the tile and the ring sit level with the kicker.
+- **The board drew Mark all read borderless.**
+  `heroInk` always draws the ghost pill's hairline, and the kit is canonical, so it ships bordered.
+
+### Verification
+
+- `NotificationBridgePanelSelfTest` asserts the head's words, the ring, the pills and their selection, that each pill sits inside the head (at 1.0x and 1.3x), that the headline is never cut at 1.3x, that Mark all read moved to the head with its Undo intact, the Snoozed and empty heads, and that the badge still counts read items.
+  A new sweep reads the painted gradient in every palette and checks it is the quiet-ink palette, with the headline, the 86% line and the chosen pill's words over the floor.
+- Confirmed to fail when injected: the panel on the plain palette (the sweep fails on Daylight, Dusk and every other palette below the floor), a wrong verdict rule (three pure checks), and a 462pt headline in a 256pt column at 1.3x.
+- An off-screen render of the real panel (one item, many, Snoozed and empty, in Lavender and Powder) was compared with the board's N-1. It was a scratch hook, removed before commit.

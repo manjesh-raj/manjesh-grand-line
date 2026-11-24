@@ -494,6 +494,52 @@ enum GrandLineNotificationCenterSelfTest {
         NotificationSources.setGitHubSync(count: 0, navigate: {})
         PlaceName.layout = savedLayout
 
+        // MARK: the hero head's words (N-1, `NotificationHeroWords`)
+
+        // The panel's own counts in, the head's sentences out. Pure, so the
+        // verdict is asserted here in CI's blocking lane; the window-backed
+        // `NotificationBridgePanelSelfTest` asserts the panel paints them.
+        let busy = NotificationHeroWords.make(segment: .inbox, needs: 4, informational: 3, unread: 4,
+                                              snoozed: 2, dateText: "Tue 24 Nov")
+        check("the kicker keeps the panel's title and the date: \(busy.kicker)",
+              busy.kicker == "Waiting for you \u{00B7} Tue 24 Nov")
+        check("needs-you items lead the verdict: \(busy.title)", busy.title == "4 things need you")
+        check("the second line counts the new and the rest: \(busy.subtitle)",
+              busy.subtitle == "4 unread \u{00B7} 3 when you have a minute")
+        check("the ring is the unread share of what is waiting: \(busy.ringText ?? "none") at \(busy.ringFraction)",
+              busy.ringText == "4" && abs(busy.ringFraction - 4.0 / 7.0) < 1e-9)
+        check("the ring reads as one sentence: \(busy.ringSpoken)", busy.ringSpoken == "4 unread of 7 waiting")
+        let one = NotificationHeroWords.make(segment: .inbox, needs: 1, informational: 0, unread: 1,
+                                             snoozed: 0, dateText: "Tue 24 Nov")
+        check("one item is singular: \(one.title) / \(one.subtitle)",
+              one.title == "1 thing needs you" && one.subtitle == "1 unread")
+        let updates = NotificationHeroWords.make(segment: .inbox, needs: 0, informational: 1, unread: 1,
+                                                 snoozed: 0, dateText: "Tue 24 Nov")
+        check("only informational items read as updates: \(updates.title)", updates.title == "1 update for you")
+        let several = NotificationHeroWords.make(segment: .inbox, needs: 0, informational: 3, unread: 0,
+                                                 snoozed: 0, dateText: "Tue 24 Nov")
+        check("read items say so, and the ring empties: \(several.title) / \(several.subtitle)",
+              several.title == "3 updates for you" && several.subtitle == "All read"
+                && several.ringText == "0" && several.ringFraction == 0)
+        let empty = NotificationHeroWords.make(segment: .inbox, needs: 0, informational: 0, unread: 0,
+                                               snoozed: 3, dateText: "Tue 24 Nov")
+        check("an empty inbox is caught up, with no ring: \(empty.title)",
+              empty.title == "All caught up" && empty.subtitle == "Nothing needs you right now." && empty.ringText == nil)
+        let snoozedList = NotificationHeroWords.make(segment: .snoozed, needs: 2, informational: 1, unread: 2,
+                                                     snoozed: 2, dateText: "Tue 24 Nov")
+        check("the Snoozed list counts what is snoozed, with no ring: \(snoozedList.title)",
+              snoozedList.title == "2 snoozed" && snoozedList.subtitle == "Each one comes back on its own."
+                && snoozedList.ringText == nil)
+        let nothingSnoozed = NotificationHeroWords.make(segment: .snoozed, needs: 0, informational: 0, unread: 0,
+                                                        snoozed: 0, dateText: "Tue 24 Nov")
+        check("an empty Snoozed list says so: \(nothingSnoozed.title)", nothingSnoozed.title == "Nothing snoozed")
+        // GL-14's spirit: a count the store cannot reach is never shown as more
+        // than what is waiting.
+        let clamped = NotificationHeroWords.make(segment: .inbox, needs: 1, informational: 1, unread: 9,
+                                                 snoozed: 0, dateText: "")
+        check("unread never exceeds what is waiting: \(clamped.subtitle), \(clamped.ringFraction)",
+              clamped.subtitle.hasPrefix("2 unread") && clamped.ringFraction == 1 && clamped.kicker == "Waiting for you")
+
         center.debugReset()
 
         if failures.isEmpty {

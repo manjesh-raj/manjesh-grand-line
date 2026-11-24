@@ -52,6 +52,7 @@ enum NotificationBridgePanelSelfTest {
                       checkVoiceOver,
                       checkCardsNeverSwallowAButtonClick,
                       checkHeaderAndFooter,
+                      checkTheHeroHeadInEveryPalette,
                       checkSnoozeMenuAndTheSnoozedList,
                       checkEmptyStates,
                       checkManyItems,
@@ -350,6 +351,20 @@ enum NotificationBridgePanelSelfTest {
                   "\(card.primary.title) did not scale with the text (\(card.primary.fittingSize.height)pt)", &ok)
             check(showsAllOf(card.debugTitleLabel), "\(card.entryID)'s title is clipped at 1.3x", &ok)
         }
+        // The hero head: its pills stay inside it, and the verdict shows whole,
+        // including the longest one a busy day can produce.
+        let head = content.debugHeader
+        head.layoutSubtreeIfNeeded()
+        for pill in content.debugHeroButtons {
+            let frame = pill.convert(pill.bounds, to: head)
+            check(head.bounds.contains(frame), "the head's \(pill.title) runs out of the head at 1.3x (\(frame))", &ok)
+        }
+        check(showsAllOf(head.titleLabel) && head.titleLabel.frame.width >= head.titleLabel.intrinsicContentSize.width - 0.5,
+              "the headline \"\(head.titleLabel.stringValue)\" is clipped at 1.3x", &ok)
+        head.set(kicker: "Waiting for you", title: "12 updates for you", subtitle: "12 unread")
+        head.layoutSubtreeIfNeeded()
+        check(head.titleLabel.frame.width >= head.titleLabel.intrinsicContentSize.width - 0.5,
+              "a long verdict is cut at 1.3x: \(head.titleLabel.frame.width)pt of \(head.titleLabel.intrinsicContentSize.width)pt", &ok)
         ChromeTextScale.shared.setScale(1.0)
     }
 
@@ -453,30 +468,106 @@ enum NotificationBridgePanelSelfTest {
         }
     }
 
-    // MARK: 9. Header and footer
+    // MARK: 9. The hero head and the footer
 
     private static func checkHeaderAndFooter(_ ok: inout Bool) {
-        print("\n-- the header's segment and the footer --")
+        print("\n-- the hero head (N-1) says the verdict, its pills hold the lists, the footer keeps Open Home --")
         seed()
         let (content, _) = mount()
-        check(content.debugHeaderTitle == "Waiting for you", "header title is \(content.debugHeaderTitle)", &ok)
-        check(content.debugSegmentTitles == ["Inbox 5", "Snoozed"], "the segment reads \(content.debugSegmentTitles)", &ok)
+        // The seed: three action-needed items and two informational ones, all unread.
+        let kicker = "Waiting for you \u{00B7} \(NotificationBridgeTimeText.headerDate(now))".uppercased()
+        check(content.debugHeaderKicker == kicker, "the kicker reads \(content.debugHeaderKicker)", &ok)
+        check(content.debugHeaderTitle == "3 things need you", "the headline is \(content.debugHeaderTitle)", &ok)
+        check(content.debugHeaderSubtitle == "5 unread \u{00B7} 2 when you have a minute",
+              "the second line is \(content.debugHeaderSubtitle)", &ok)
+        check(!content.debugRing.isHidden && content.debugRing.debugLabel == "5"
+                && abs((content.heroWords?.ringFraction ?? -1) - 1) < 0.001,
+              "the ring shows \(content.debugRing.debugLabel) at \((content.heroWords?.ringFraction ?? -1))", &ok)
+        let heroTitles = content.debugHeroButtons.map(\.title)
+        check(heroTitles == ["Inbox 5", "Snoozed", "Mark all read"], "the head's pills are \(heroTitles)", &ok)
+        check(content.debugHeroButtons.allSatisfy { $0.heroInk != nil }, "a head pill is not drawn on the hero", &ok)
+        let pills = content.debugSegmentPills
+        check(pills[0].heroSelection != nil && pills[1].heroSelection == nil,
+              "only the shown list is the chosen pill", &ok)
+        check(content.debugSegmentTitles == ["Inbox 5", "Snoozed"], "the pills read \(content.debugSegmentTitles)", &ok)
+        // Each pill sits inside the head, under its words.
+        let head = content.debugHeader
+        head.layoutSubtreeIfNeeded()
+        for pill in content.debugHeroButtons {
+            let frame = pill.convert(pill.bounds, to: head)
+            check(head.bounds.contains(frame) && frame.width >= 20,
+                  "\(pill.title) is drawn at \(frame) outside the head \(head.bounds)", &ok)
+        }
         // F7: no fixed "Up to date" beside open items.
         check(content.debugFooterText.isEmpty, "the resting footer reads \"\(content.debugFooterText)\"", &ok)
         let titles = content.debugFooterButtons.map(\.title)
-        check(titles == ["Mark all read", "Open Home"], "footer buttons are \(titles)", &ok)
+        check(titles == ["Open Home"], "footer buttons are \(titles), want Mark all read moved to the head", &ok)
         check(content.debugFooterButtons.allSatisfy { $0.variant == .quiet },
               "Open Home must not be the panel's one filled button any more", &ok)
         check(content.debugMarkAllReadEnabled, "Mark all read is enabled with unread cards", &ok)
         content.debugClickMarkAllRead()
         check(GrandLineNotificationCenter.shared.unreadCount == 0, "Mark all read left cards unread", &ok)
         check(content.debugCards.allSatisfy { !$0.debugUnreadDotVisible }, "a dot is still painted after Mark all read", &ok)
+        check(content.debugHeaderSubtitle == "All read \u{00B7} 2 when you have a minute"
+                && content.debugRing.debugLabel == "0" && (content.heroWords?.ringFraction ?? -1) == 0,
+              "after Mark all read the head says \(content.debugHeaderSubtitle), ring \(content.debugRing.debugLabel)", &ok)
+        check(!content.debugMarkAllReadEnabled, "Mark all read stays enabled with nothing unread", &ok)
         check(content.debugFooterText == "Marked 5 as read" && content.debugFooterButtons.map(\.title).contains("Undo"),
               "the footer offers Undo after Mark all read: \(content.debugFooterText)", &ok)
         content.debugClickUndo()
         check(GrandLineNotificationCenter.shared.unreadCount == 5, "Undo put the dots back", &ok)
+        check(content.debugHeaderSubtitle.hasPrefix("5 unread"), "Undo left the head saying \(content.debugHeaderSubtitle)", &ok)
+        // The badge is not the head's words: it still counts every item waiting.
+        GrandLineNotificationCenter.shared.markAllRead()
+        check(GrandLineNotificationCenter.shared.badgeCount == 5,
+              "the bell's badge dropped to \(GrandLineNotificationCenter.shared.badgeCount) when items were read", &ok)
         content.debugClickOpenHome()
         check(performed.last == "home", "Open Home performed \(performed)", &ok)
+    }
+
+    /// The head is painted on the quiet-ink palette in every palette, so its
+    /// 86% kicker and second line clear the text floor, and the chosen pill's
+    /// words clear it against the ink. Reads the painted gradient, not the
+    /// palette the code meant to paint.
+    private static func checkTheHeroHeadInEveryPalette(_ ok: inout Bool) {
+        print("\n-- the hero head paints the quiet-ink palette, and its words clear the floor in every palette --")
+        seed()
+        let (content, _) = mount()
+        let themes = HelmTheme.allThemes + HelmTheme.appThemes.filter { app in
+            !HelmTheme.allThemes.contains { $0.id == app.id }
+        }
+        let alpha = Double(PopoverHeroHeader.subtitleAlpha)
+        func lighter(_ palette: HelmHeroSurface.Palette) -> (Double, Double, Double) { palette.lighterStop }
+        func quietLine(_ palette: HelmHeroSurface.Palette) -> Double {
+            HelmContrast.ratio(HelmContrast.mix(palette.ink, lighter(palette), alpha), lighter(palette))
+        }
+        // The check's own power: on the plain palette the same line fails
+        // somewhere, so a head that fell back to it would be caught.
+        let plainFails = themes.contains { quietLine(HelmHeroSurface.palette(for: $0)) < HelmContrast.textTarget }
+        check(plainFails, "no palette fails on the plain hero, so this sweep cannot tell the two apart", &ok)
+        for theme in themes {
+            ThemeManager.shared.setTheme(theme)
+            content.reload()
+            let head = content.debugHeader
+            guard let palette = head.palette else { fail("\(theme.id): the head has no palette", &ok); continue }
+            let quiet = HelmHeroSurface.palette(
+                accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+                quietInk: Double(HelmHeroColumn.quietInkAlpha))
+            check(palette == quiet, "\(theme.id): the head is not on the quiet-ink palette", &ok)
+            let painted = head.debugGradientColors.compactMap { NSColor(cgColor: $0) }.map(HelmContrast.components)
+            let expected = [quiet.start, quiet.end]
+            let drift = zip(painted, expected).map { max(abs($0.0 - $1.0), abs($0.1 - $1.1), abs($0.2 - $1.2)) }.max() ?? 1
+            check(painted.count == 2 && drift < 0.01, "\(theme.id): the painted gradient is not the palette (\(drift))", &ok)
+            check(HelmContrast.ratio(palette.ink, lighter(palette)) >= HelmContrast.textTarget,
+                  "\(theme.id): the headline is \(HelmContrast.ratio(palette.ink, lighter(palette))):1", &ok)
+            check(quietLine(palette) >= HelmContrast.textTarget,
+                  "\(theme.id): the 86% second line is \(quietLine(palette)):1", &ok)
+            let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+                ? palette.start : palette.end
+            check(HelmContrast.ratio(darker, palette.ink) >= HelmContrast.textTarget,
+                  "\(theme.id): the chosen pill's words are \(HelmContrast.ratio(darker, palette.ink)):1 on the ink", &ok)
+        }
+        ThemeManager.shared.setTheme(HelmTheme.theme(id: "dusk")!)
     }
 
     // MARK: 10. Snooze menu, the Snoozed list, and mutes
@@ -526,8 +617,13 @@ enum NotificationBridgePanelSelfTest {
 
         // A muted source must survive the Snoozed list's unsnooze (F3).
         center.setMuted(true, source: "Schedules")
-        content.debugSegmentTabs?.debugClickTab(id: NotificationBridgeSegment.snoozed.rawValue)
+        content.debugClickSegmentPill(.snoozed)
         check(content.segment == .snoozed && content.debugCards.isEmpty, "the segment switches to the Snoozed list", &ok)
+        check(content.debugHeaderTitle == "1 snoozed" && content.debugRing.isHidden,
+              "the Snoozed head says \(content.debugHeaderTitle), ring hidden \(content.debugRing.isHidden)", &ok)
+        check(content.debugHeroButtons.map(\.title) == ["Inbox 4", "Snoozed 1"]
+                && content.debugSegmentPills[1].heroSelection != nil,
+              "the Snoozed head's pills are \(content.debugHeroButtons.map(\.title))", &ok)
         guard let row = content.debugSnoozedRows.first else {
             fail("the Snoozed list is empty", &ok); return
         }
@@ -544,7 +640,7 @@ enum NotificationBridgePanelSelfTest {
         row.unsnoozeButton.performClick(nil)
         check(center.entries.contains { $0.id == "tool-updates" }, "Unsnooze brought the card back", &ok)
         check(center.isMuted(source: "Schedules"), "Unsnooze must leave a Settings mute alone (F3)", &ok)
-        check(content.debugSnoozedRows.isEmpty && content.debugEmptyState?.debugTitle == "Nothing snoozed",
+        check(content.debugSnoozedRows.isEmpty && content.debugEmptyState?.debugTitle == "No snoozes yet",
               "an empty Snoozed list says so", &ok)
         center.setMuted(false, source: "Schedules")
         // The row menu offers the same presets.
@@ -559,10 +655,13 @@ enum NotificationBridgePanelSelfTest {
         print("\n-- the empty states --")
         GrandLineNotificationCenter.shared.debugReset()
         let (content, _) = mount()
-        check(content.debugCards.isEmpty && content.debugEmptyState?.debugTitle == "You\u{2019}re all caught up",
+        check(content.debugCards.isEmpty && content.debugEmptyState?.debugTitle == "Nothing waiting",
               "an empty inbox shows \(content.debugEmptyState?.debugTitle ?? "no empty state")", &ok)
         check(content.debugFooterButtons.map(\.title) == ["Open Home"], "an empty panel offers \(content.debugFooterButtons.map(\.title))", &ok)
         check(content.debugSegmentTitles == ["Inbox", "Snoozed"], "an empty segment shows no counts: \(content.debugSegmentTitles)", &ok)
+        check(content.debugHeaderTitle == "All caught up" && content.debugRing.isHidden
+                && content.debugHeroButtons.map(\.title) == ["Inbox", "Snoozed"],
+              "an empty head says \(content.debugHeaderTitle) with \(content.debugHeroButtons.map(\.title))", &ok)
         check(content.debugListHeight > 60, "the empty state has room (\(content.debugListHeight)pt)", &ok)
     }
 

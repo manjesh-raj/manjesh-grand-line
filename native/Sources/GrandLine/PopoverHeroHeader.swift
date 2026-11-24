@@ -19,6 +19,20 @@
 // `applyTheme(_:)` to paint them (a `HelmButton.heroInk`, a
 // `HelmStatusPill.heroInk`, a ring's arc). `body` is an optional view under
 // the title row, inside the gradient (Claude usage's three rings).
+//
+// **The verdict style** (Helm 10.4.0, the notifications panel's N-1 head,
+// `data/grandline-notifications-hero-design-scout/`). A popover that leads
+// with what is true now, as every page hero does, draws a kicker over the
+// title and sets the title in the rounded display face. With a kicker the
+// row is top-aligned, so the tile and the trailing slot sit level with the
+// kicker rather than floating beside three lines.
+//
+// **The quiet-ink palette** is an option, `quietInk`. A header whose quiet
+// lines must clear the text floor paints `palette(accent:quietInk:)`, as the
+// hero columns do. On the plain palette the 86% subtitle falls under 4.5:1
+// against the lighter stop (3.78:1 on Daylight and 3.91:1 on Dusk, measured
+// by `NotificationBridgePanelSelfTest`'s sweep). `nil`, the default, keeps
+// the plain palette, so the three Console surfaces draw exactly as they did.
 
 import AppKit
 
@@ -26,15 +40,24 @@ final class PopoverHeroHeader: NSView {
 
     enum TileStyle { case white, glass }
 
+    /// `.standard` is the Console surfaces' 15pt semibold title. `.verdict`
+    /// is a page hero's headline: a kicker above it, and the title in the
+    /// rounded display face.
+    enum TitleStyle { case standard, verdict }
+
     static let titleSize: CGFloat = 15
     static let subtitleSize: CGFloat = 11.5
     static let subtitleAlpha: CGFloat = 0.86
     static let glassFillAlpha: CGFloat = 0.2
     static let glassBorderAlpha: CGFloat = 0.3
+    /// `.verdict`'s headline size, in the rounded heavy face.
+    static let verdictTitleSize: CGFloat = 21
+    static let verdictSubtitleSize: CGFloat = 12
 
     private let hero = HelmHeroSurface()
     private let tile = NSView()
     private let glyph = NSImageView()
+    let kickerLabel = NSTextField(labelWithString: "")
     let titleLabel = NSTextField(labelWithString: "")
     let subtitleLabel = NSTextField(labelWithString: "")
     /// Trailing controls, right-aligned on the title row.
@@ -42,6 +65,9 @@ final class PopoverHeroHeader: NSView {
     private let tileStyle: TileStyle
     private let symbol: String
     private let tileSide: CGFloat
+    private let titleStyle: TitleStyle
+    private let quietInk: CGFloat?
+    private var kickerText = ""
     private(set) var palette: HelmHeroSurface.Palette?
 
     /// The hero's text colour after the last `applyTheme(_:)`.
@@ -58,10 +84,13 @@ final class PopoverHeroHeader: NSView {
 
     init(symbol: String, tileStyle: TileStyle, tileSide: CGFloat = 32,
          insets: NSEdgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 13, right: 14),
-         body: NSView? = nil, bodySpacing: CGFloat = 12) {
+         body: NSView? = nil, bodySpacing: CGFloat = 12,
+         titleStyle: TitleStyle = .standard, quietInk: CGFloat? = nil) {
         self.symbol = symbol
         self.tileStyle = tileStyle
         self.tileSide = tileSide
+        self.titleStyle = titleStyle
+        self.quietInk = quietInk
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -75,18 +104,23 @@ final class PopoverHeroHeader: NSView {
         glyph.imageScaling = .scaleProportionallyDown
         tile.addSubview(glyph)
 
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.titleSize), weight: .semibold)
+        applyFonts()
         titleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.subtitleSize))
         subtitleLabel.lineBreakMode = .byTruncatingTail
-        for label in [titleLabel, subtitleLabel] {
+        kickerLabel.lineBreakMode = .byTruncatingTail
+        kickerLabel.isHidden = titleStyle == .standard
+        for label in [kickerLabel, titleLabel, subtitleLabel] {
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
-        let words = NSStackView(views: [titleLabel, subtitleLabel])
+        let words = NSStackView(views: [kickerLabel, titleLabel, subtitleLabel])
         words.orientation = .vertical
         words.alignment = .leading
         words.spacing = 0
+        if titleStyle == .verdict {
+            words.setCustomSpacing(2, after: kickerLabel)
+            words.setCustomSpacing(3, after: titleLabel)
+        }
         words.setClippingResistancePriority(.defaultLow, for: .horizontal)
         words.setHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -99,7 +133,7 @@ final class PopoverHeroHeader: NSView {
         // Gotcha (10): `.fill`, with only the words free to give way.
         let row = NSStackView(views: [tile, words, trailing])
         row.orientation = .horizontal
-        row.alignment = .centerY
+        row.alignment = titleStyle == .verdict ? .top : .centerY
         row.distribution = .fill
         row.spacing = HelmMetrics.s3
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -146,9 +180,44 @@ final class PopoverHeroHeader: NSView {
         setAccessibilityLabel(subtitle.isEmpty ? title : "\(title), \(subtitle)")
     }
 
+    /// `.verdict`'s three lines. The kicker is drawn in capitals, as every
+    /// kicker in the app is, and read in its own case.
+    func set(kicker: String, title: String, subtitle: String) {
+        kickerText = kicker
+        paintKicker()
+        set(title: title, subtitle: subtitle)
+        setAccessibilityLabel([kicker, title, subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+
+    private func paintKicker() {
+        kickerLabel.attributedStringValue = NSAttributedString(
+            string: kickerText.uppercased(),
+            attributes: HelmType.kickerAttributes(color: ink.withAlphaComponent(Self.subtitleAlpha)))
+    }
+
+    /// Read again on every theme pass, so the interface text size reaches a
+    /// header that outlives a change of it.
+    private func applyFonts() {
+        switch titleStyle {
+        case .standard:
+            titleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.titleSize), weight: .semibold)
+            subtitleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.subtitleSize))
+        case .verdict:
+            titleLabel.font = HelmType.rounded(HelmType.scaled(Self.verdictTitleSize), .heavy)
+            subtitleLabel.font = .systemFont(ofSize: HelmType.scaled(Self.verdictSubtitleSize))
+        }
+    }
+
     func applyTheme(_ theme: HelmTheme) {
-        let palette = HelmHeroSurface.palette(for: theme)
+        let palette: HelmHeroSurface.Palette
+        if let quietInk {
+            palette = HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+                                              quietInk: Double(quietInk))
+        } else {
+            palette = HelmHeroSurface.palette(for: theme)
+        }
         self.palette = palette
+        applyFonts()
         hero.apply(palette)
         let ink = HelmContrast.color(palette.ink)
         // A white-ink hero is a dark surface, so a control on it resolves the
@@ -157,6 +226,7 @@ final class PopoverHeroHeader: NSView {
         appearance = NSAppearance(named: darkInk ? .aqua : .darkAqua)
         titleLabel.textColor = ink
         subtitleLabel.textColor = ink.withAlphaComponent(Self.subtitleAlpha)
+        paintKicker()
         let glyphColor: NSColor
         switch tileStyle {
         case .white:

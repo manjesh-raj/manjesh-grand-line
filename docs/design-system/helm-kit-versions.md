@@ -36,6 +36,16 @@ Each bullet starts with the component name in backticks, the two versions and th
 
 A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
 
+## 10.4.0 - The notifications panel's hero head (N-1)
+
+The captain's pick from the notifications hero board (`data/grandline-notifications-hero-design-scout/`): N-1 Hero head for the panel the sidebar layout's bell opens.
+The panel now opens on the hero gradient, as the sidebar, Home's hero cards and the Console's three popovers do.
+It is a minor release: one surface is new and no kit file changed.
+
+- `Notifications panel` none → 1.0.0 (new): N-1 Hero head. The head is a `PopoverHeroHeader` with a glass bell tile on the quiet-ink palette. Its kicker keeps "Waiting for you" and the date, the headline is the verdict ("4 things need you", "1 update for you", "All caught up"), the second line says how much is unread, and a 48pt ring of unread items sits in the trailing slot. Inbox, Snoozed and Mark all read are `heroInk` ghost pills on the gradient, the chosen list `heroSelection`. Open Home stays in the footer. The triage cards, their order, the snooze menu, Hide, Mute, read state, Undo, the keys and the VoiceOver actions are unchanged, and the bell's badge still counts every item waiting. The words are `NotificationHeroWords`, pure and asserted in CI's blocking lane.
+
+`PopoverHeroHeader` (not a kit file) gains two options, both off by default: the `.verdict` title style (a kicker above a rounded heavy headline, the row top-aligned) and `quietInk`, which paints `HelmHeroSurface.palette(accent:quietInk:)`. Compose, Claude usage and SRE Lead pass neither and draw as before.
+
 ## 10.3.0 - The lighthouse lock screen and the treasure chest gate
 
 The captain's picks from the lamp lock-screen board (`data/grandline-login-lamp-design-scout/`): L-2 Lighthouse with the Going Merry and card style C-4 Open sea for the lock screen, and S-1 Treasure chest with card style V-4 Open for the Secrets page.
