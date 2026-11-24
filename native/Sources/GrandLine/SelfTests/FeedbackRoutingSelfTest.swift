@@ -14,9 +14,20 @@
 // by *reading the bell back*, not by trusting the table.
 //
 // The toast half needs a real `NSView` to mount into, which needs no window
-// server - but `Toast.show` is not observable, so the toast side is asserted
-// through `surfaces` plus the one thing that is observable: passing no view
-// must not crash and must still reach the bell.
+// server. It used to be asserted only through `surfaces`, because a toast was
+// a plain view with nothing to read. Since TO-1 (the hero capsule) a pill is a
+// `ToastPill` that knows its kind, and `Toast` records each VoiceOver
+// announcement it posts, so the toast half is read back too:
+//
+//   - **The kind reaches the toast.** `report` used to drop it, so a failure
+//     drew the same green check as a save. Each kind is reported and the
+//     newest pill's kind and glyph are read back.
+//   - **Each toast is announced once**, with "Undo available" when it has
+//     Undo. A VoiceOver announcement cannot be read back from the system, so
+//     this reads `Toast.debugAnnouncements`, which `announce` appends to on
+//     the same path that posts.
+//   - **The capsule's colours hold in every app theme**: white words at 4.5:1
+//     on the lighter stop, and each kind's glyph at 3:1 on both stops.
 //
 // GL-27: debug builds only.
 #if FM_SELFTESTS
@@ -29,6 +40,10 @@ enum FeedbackRoutingSelfTest {
         ok = checkTheRule() && ok
         ok = checkReportAgreesWithTheRule() && ok
         ok = checkKindMapping() && ok
+        ok = checkTheKindReachesTheToast() && ok
+        ok = checkEachToastIsAnnouncedOnce() && ok
+        ok = checkTheToastWords() && ok
+        ok = checkTheCapsuleColoursInEveryTheme() && ok
         return ok
     }
 
@@ -136,6 +151,106 @@ enum FeedbackRoutingSelfTest {
         // The three tints are distinct, or the tint carries no information.
         let tints = Set([Feedback.Kind.done, .warning, .failure].map(\.tint))
         check(tints.count == 3, "UX14: the three kinds do not have three distinct tints", &ok)
+        return ok
+    }
+
+    // MARK: TO-1 - the hero capsule
+
+    /// Finding 1 of the hero restyle report: `report` dropped its kind before
+    /// `Toast.show`, so "Docs sync failed" drew a green check.
+    private static func checkTheKindReachesTheToast() -> Bool {
+        var ok = true
+        let kinds: [Feedback.Kind] = [.done, .warning, .failure]
+        // Discriminating power first: three kinds, three glyphs.
+        check(Set(kinds.map(ToastHeroWords.symbol(for:))).count == 3,
+              "TO-1: the three kinds do not have three glyphs - the checks below could not tell them apart", &ok)
+        for kind in kinds {
+            let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+            let message = "report \(kind)"
+            Feedback.report(message, kind: kind, persistence: .transient, in: view)
+            guard let pill = Toast.debugPills(in: view).last else {
+                fail("TO-1: a \(kind) report put no toast on its page", &ok)
+                continue
+            }
+            check(pill.message == message, "TO-1: the \(kind) toast reads \"\(pill.message)\"", &ok)
+            check(pill.kind == kind, "TO-1: a \(kind) report drew a \(pill.kind) toast - Feedback dropped its kind", &ok)
+            check(pill.glyphSymbol == ToastHeroWords.symbol(for: kind),
+                  "TO-1: a \(kind) toast wears \(pill.glyphSymbol)", &ok)
+        }
+        // A plain `Toast.show` is still a done, as every caller drew before.
+        let plain = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        Toast.show(in: plain, message: "Saved")
+        check(Toast.debugPills(in: plain).last?.kind == .done, "TO-1: a plain toast is no longer a done", &ok)
+        return ok
+    }
+
+    /// Finding 2: toasts were never announced. One announcement per toast,
+    /// posted from the real `show` path.
+    private static func checkEachToastIsAnnouncedOnce() -> Bool {
+        var ok = true
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        Toast.debugAnnouncements.removeAll()
+        Toast.show(in: view, message: "Copied to clipboard")
+        check(Toast.debugAnnouncements == ["Copied to clipboard"],
+              "TO-1: a toast was announced as \(Toast.debugAnnouncements), want it once, as written", &ok)
+        Toast.showUndo(in: view, message: "Note deleted") {}
+        check(Toast.debugAnnouncements.last == "Note deleted, Undo available",
+              "TO-1: an Undo toast was announced as \(Toast.debugAnnouncements.last ?? "nothing")", &ok)
+        Feedback.report("Docs sync failed", kind: .failure, persistence: .transient, in: view)
+        check(Toast.debugAnnouncements.count == 3 && Toast.debugAnnouncements.last == "Docs sync failed",
+              "TO-1: a report's toast was not announced exactly once (\(Toast.debugAnnouncements))", &ok)
+        // No page, no toast, and so nothing to announce.
+        Feedback.report("a background pass failed", kind: .failure, persistence: .transient, in: nil)
+        check(Toast.debugAnnouncements.count == 3, "TO-1: a report with no page announced a toast nobody can see", &ok)
+        Toast.debugAnnouncements.removeAll()
+        return ok
+    }
+
+    private static func checkTheToastWords() -> Bool {
+        var ok = true
+        for kind in [Feedback.Kind.done, .warning, .failure] {
+            let symbol = ToastHeroWords.symbol(for: kind)
+            check(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil,
+                  "TO-1: \(symbol) is not an SF Symbol on this system - the glyph would be blank", &ok)
+        }
+        check(ToastHeroWords.symbol(for: .done) == "checkmark"
+                && ToastHeroWords.symbol(for: .warning) == "exclamationmark.triangle"
+                && ToastHeroWords.symbol(for: .failure) == "xmark",
+              "TO-1: the glyphs are not the board's check, triangle and cross", &ok)
+        check(ToastHeroWords.announcement(message: "Saved", hasUndo: false) == "Saved",
+              "TO-1: a plain toast's announcement is not its message", &ok)
+        check(ToastHeroWords.announcement(message: "Deleted \u{201C}prod\u{201D}", hasUndo: true)
+                == "Deleted \u{201C}prod\u{201D}, Undo available",
+              "TO-1: an Undo toast's announcement does not say Undo is there", &ok)
+        check(ToastHeroWords.announcement(message: "Task moved.", hasUndo: true) == "Task moved. Undo available.",
+              "TO-1: a message ending a sentence got a comma after its full stop", &ok)
+        return ok
+    }
+
+    /// Pure maths over every app theme, so CI's blocking lane holds the
+    /// capsule's two contrast floors in all 26 palettes rather than the two
+    /// the board drew.
+    private static func checkTheCapsuleColoursInEveryTheme() -> Bool {
+        var ok = true
+        var failures: [String] = []
+        for theme in HelmTheme.appThemes {
+            let palette = ToastPill.palette(in: theme)
+            let words = HelmContrast.ratio(palette.ink, palette.lighterStop)
+            if words < HelmContrast.textTarget {
+                failures.append("\(theme.id) words \(String(format: "%.2f", words))")
+            }
+            let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+                ? palette.start : palette.end
+            for kind in [Feedback.Kind.done, .warning, .failure] {
+                let mark = HelmContrast.components(HelmHeroSurface.signalColor(tintHex: kind.tint.hex(in: theme), on: palette))
+                let worst = min(HelmContrast.ratio(mark, palette.lighterStop), HelmContrast.ratio(mark, darker))
+                if worst < HelmContrast.nonTextTarget {
+                    failures.append("\(theme.id) \(kind) glyph \(String(format: "%.2f", worst))")
+                }
+            }
+        }
+        check(HelmTheme.appThemes.count >= 2, "TO-1: no app themes to sweep - the sweep would be vacuous", &ok)
+        check(failures.isEmpty, "TO-1: the capsule misses a contrast floor: \(failures)", &ok)
         return ok
     }
 }

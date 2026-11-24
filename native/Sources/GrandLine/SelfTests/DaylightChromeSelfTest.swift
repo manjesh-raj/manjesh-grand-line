@@ -39,10 +39,11 @@
 //      read.** It was a label in a `HoverHighlightView` predating `HelmButton`;
 //      swapping the control is exactly the kind of change that silently drops
 //      a target/action.
-//   8. **§6.14's toast recipe**, measured off the real pill the real
-//      `Toast.show` put in a real container - and the undo pill's action word
-//      taking the hue's light stop, which a `.quiet` button's own `muted` label
-//      would not.
+//   8. **The toast recipe**, measured off the real pill the real
+//      `Toast.show` put in a real container. Since TO-1 that is the hero
+//      capsule in Lavender and Powder: the quiet-ink gradient, white words,
+//      the kind's glyph in its lifted hue, Undo as a ghost pill whose ring
+//      drains (none under Reduce Motion), and G1's bottom-centre stacking.
 //   9. **§6.14's empty state is still the Daylight plate.** Phase 4 shipped it;
 //      this phase touches the same file, so it is pinned rather than assumed.
 //  10. **§6.10's attachment well** is dashed on radius 14 with a link-coloured
@@ -553,67 +554,149 @@ enum DaylightChromeSelfTest {
     }
 
     private static func checkToastRecipe(_ ok: inout Bool) {
-        print("\n-- §6.14 + G1: the toast --")
-        // G1 inverted most of this check, deliberately rather than by
-        // deletion. §6.14 shipped a fixed white-on-`ink` capsule pinned to the
-        // container's **top** edge, and the audit's finding is exactly that:
-        // the fixed ink "ignores the theme's own surfaces" and top-centre
-        // "collides with the chrome" - it sat under the floating bar and
-        // across its search pill. So what is asserted now is the opposite of
-        // what was asserted before, on purpose, and the assertion that
-        // survives unchanged is the one that matters most: Undo still
-        // restores.
-        let theme = daylight
-        ThemeManager.shared.setTheme(theme)
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        Toast.show(in: container, message: "Saved")
-        container.layoutSubtreeIfNeeded()
-        guard let pill = toastPill(in: container, message: "Saved") else {
-            print("  FAIL no toast pill in the container")
+        print("\n-- §6.14 + G1 + TO-1: the toast --")
+        // TO-1 inverted most of G1's recipe, as G1 inverted §6.14's, and on
+        // purpose: the capsule is the hero gradient with white words now, not
+        // the card surface with the theme's ink. What survives unchanged is
+        // where it lands, how it stacks, and that Undo still restores.
+        let savedMotion = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedMotion }
+        guard let lavender = HelmTheme.appTheme(id: "lavender"),
+              let powder = HelmTheme.appTheme(id: "powder") else {
+            print("  FAIL Lavender or Powder is missing - the checks below would be vacuous")
             ok = false
             return
         }
-        var problems: [String] = []
-        let radius = pill.layer?.cornerRadius ?? 0
-        if abs(radius - pill.bounds.height / 2) > 0.51 {
-            problems.append("radius \(fmt(radius)) on a \(fmt(pill.bounds.height))pt pill - not a capsule")
+        for theme in [lavender, powder] {
+            checkToastCapsule(theme, &ok)
         }
-        // G1: the app's own card surface, not a literal ink capsule.
-        if !sameColor(pill.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
-                      HelmTheme.nsColor(theme.chromeBackgroundHex)) {
-            problems.append("fill is not the card surface")
+        checkToastStackAndUndo(lavender, &ok)
+        ThemeManager.shared.setTheme(daylight)
+    }
+
+    /// One theme: the gradient, the words, the capsule, the shadow, where it
+    /// lands, and the three kinds' glyphs.
+    private static func checkToastCapsule(_ theme: HelmTheme, _ ok: inout Bool) {
+        ThemeManager.shared.setTheme(theme)
+        // The quiet-ink rule from the kit's own primitives, not through
+        // `ToastPill.palette`, so a toast that drifts off the hero rule fails.
+        let accent = HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex))
+        let palette = HelmHeroSurface.palette(accent: accent, quietInk: Double(HelmHeroColumn.quietInkAlpha))
+        let ink = HelmContrast.color(palette.ink)
+        let card = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        // Discriminating power first: the gradient must not be the card the
+        // capsule used to be, or the gradient check could not tell them apart.
+        guard !sameColor(HelmContrast.color(palette.start), card) else {
+            print("  FAIL \(theme.id): the hero's start stop is the card surface - the check would be vacuous")
+            ok = false
+            return
         }
-        let raised = HelmCard.elevation(for: theme, level: .raised)
-        if abs((pill.layer?.shadowRadius ?? 0) - raised.shadowBlurRadius / 2) > 0.01
-            || (pill.layer?.shadowOpacity ?? 0) == 0 {
-            problems.append("no raised shadow")
+        let kinds: [(Feedback.Kind, String)] = [(.done, "Saved"), (.warning, "Startup command held back"),
+                                                (.failure, "Docs sync failed")]
+        var glyphColors: [NSColor] = []
+        for (kind, message) in kinds {
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+            Toast.show(in: container, message: message, kind: kind)
+            container.layoutSubtreeIfNeeded()
+            guard let pill = Toast.debugPills(in: container).first(where: { $0.message == message }) else {
+                print("  FAIL \(theme.id): no toast pill for \"\(message)\"")
+                ok = false
+                continue
+            }
+            var problems: [String] = []
+            let stops = pill.debugSurface.debugGradientColors.compactMap { NSColor(cgColor: $0) }
+            if stops.count != 2 || !sameColor(stops[0], HelmContrast.color(palette.start))
+                || !sameColor(stops[1], HelmContrast.color(palette.end)) {
+                problems.append("the capsule does not paint the hero's quiet-ink gradient")
+            }
+            if abs(pill.bounds.height - Toast.pillHeight) > 0.51 {
+                problems.append("height \(fmt(pill.bounds.height)), want \(fmt(Toast.pillHeight))")
+            }
+            // The capsule glow, centred on the top-right corner and no taller
+            // than the pill: the card's 220pt glow washed the pill's right half.
+            let glow = pill.debugSurface.debugGlowFrame
+            if pill.debugSurface.glowShape != .capsule || abs(glow.midX - pill.bounds.maxX) > 0.51
+                || abs(glow.midY - pill.bounds.maxY) > 0.51 || glow.height > pill.bounds.height * 1.2 {
+                problems.append("the glow is not the capsule's (\(glow))")
+            }
+            let radius = pill.debugSurface.layer?.cornerRadius ?? 0
+            if abs(radius - pill.bounds.height / 2) > 0.51 || pill.debugSurface.layer?.masksToBounds != true {
+                problems.append("the gradient is not clipped to a capsule (radius \(fmt(radius)))")
+            }
+            let raised = HelmCard.elevation(for: theme, level: .raised)
+            if abs((pill.layer?.shadowRadius ?? 0) - raised.shadowBlurRadius / 2) > 0.01
+                || (pill.layer?.shadowOpacity ?? 0) == 0 {
+                problems.append("no raised shadow")
+            }
+            let label = pill.debugLabel
+            if label.stringValue != message { problems.append("the label reads \"\(label.stringValue)\"") }
+            if !sameColor(label.textColor, ink) { problems.append("the words are not the hero's ink") }
+            let font = label.font
+            if font?.pointSize != HelmType.scaled(ToastPill.messageSize)
+                || font?.fontName != NSFont.systemFont(ofSize: HelmType.scaled(ToastPill.messageSize), weight: .semibold).fontName {
+                problems.append("label font \(font.map { "\($0.fontName) \(fmt($0.pointSize))" } ?? "nil"), want 12 semibold")
+            }
+            // The words on the lighter stop - the worse of the two.
+            let wordsRatio = HelmContrast.ratio(palette.ink, palette.lighterStop)
+            if wordsRatio < HelmContrast.textTarget {
+                problems.append("the words measure \(String(format: "%.2f", wordsRatio)):1 on the lighter stop")
+            }
+            // The kind's glyph: its own symbol, in its own lifted hue, on a
+            // glass circle, clearing the non-text floor on both stops.
+            if pill.glyphSymbol != ToastHeroWords.symbol(for: kind) || pill.debugGlyph.image == nil {
+                problems.append("the glyph is \(pill.glyphSymbol), want \(ToastHeroWords.symbol(for: kind))")
+            }
+            let want = HelmHeroSurface.signalColor(tintHex: kind.tint.hex(in: theme), on: palette)
+            guard let painted = pill.debugGlyph.contentTintColor else {
+                problems.append("the glyph has no colour")
+                report(problems, theme: theme, kind: kind, &ok)
+                continue
+            }
+            if !sameColor(painted, want) { problems.append("the glyph is not the kind's signal colour") }
+            glyphColors.append(painted)
+            let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
+                ? palette.start : palette.end
+            let glyphRGB = HelmContrast.components(painted)
+            let glyphRatio = min(HelmContrast.ratio(glyphRGB, palette.lighterStop), HelmContrast.ratio(glyphRGB, darker))
+            if glyphRatio < HelmContrast.nonTextTarget {
+                problems.append("the glyph measures \(String(format: "%.2f", glyphRatio)):1 on a stop")
+            }
+            let tile = pill.debugGlyphTile
+            if abs(tile.frame.width - ToastPill.glyphSide) > 0.51 || abs((tile.layer?.cornerRadius ?? 0) - ToastPill.glyphSide / 2) > 0.01
+                || (tile.layer?.borderWidth ?? 0) == 0 {
+                problems.append("the glyph's glass circle is \(fmt(tile.frame.width))pt with no ring")
+            }
+            // G1's headline, unchanged: bottom-centre.
+            let fromBottom = pill.frame.minY - container.bounds.minY
+            if abs(fromBottom - Toast.bottomInset) > 0.51 || abs(pill.frame.midX - container.bounds.midX) > 0.51 {
+                problems.append("the pill is not \(fmt(Toast.bottomInset))pt off the bottom centre")
+            }
+            if pill.debugDrainShape != nil { problems.append("a plain toast drew Undo's drain") }
+            report(problems, theme: theme, kind: kind, &ok)
         }
-        let label = descendants(NSTextField.self, in: pill).first { $0.stringValue == "Saved" }
-        // G1: "the theme's ink". White was only ever right on the ink capsule.
-        if !sameColor(label?.textColor, HelmTheme.nsColor(theme.chromeInkHex)) {
-            problems.append("label is not the theme's ink")
+        // The three kinds must look different, or the glyph says nothing.
+        if glyphColors.count == 3 {
+            let distinct = (0..<3).allSatisfy { i in ((i + 1)..<3).allSatisfy { !sameColor(glyphColors[i], glyphColors[$0]) } }
+            if !distinct {
+                print("  FAIL \(theme.id): two kinds share a glyph colour")
+                ok = false
+            }
         }
-        if label?.font?.pointSize != HelmType.scaled(12) {
-            problems.append("label \(label?.font.map { fmt($0.pointSize) } ?? "nil"), want 12")
-        }
-        // G1's headline: **bottom**-centre. Measured against the container's
-        // own edges rather than asserted as a constant, because which edge it
-        // is pinned to is the entire finding.
-        let fromBottom = pill.frame.minY - container.bounds.minY
-        let fromTop = container.bounds.maxY - pill.frame.maxY
-        if fromBottom > fromTop {
-            problems.append("pill is \(fmt(fromBottom))pt off the bottom and \(fmt(fromTop))pt off the top - still top-anchored")
-        }
-        if abs(fromBottom - Toast.bottomInset) > 0.51 {
-            problems.append("bottom inset \(fmt(fromBottom))pt, want \(fmt(Toast.bottomInset))")
-        }
+    }
+
+    private static func report(_ problems: [String], theme: HelmTheme, kind: Feedback.Kind, _ ok: inout Bool) {
         if problems.isEmpty {
-            print("  OK   card capsule on a raised shadow, theme ink, \(fmt(fromBottom))pt off the bottom")
+            print("  OK   \(theme.id) \(kind): hero capsule, white words, \(ToastHeroWords.symbol(for: kind)) in its signal colour")
         } else {
-            print("  FAIL \(problems.joined(separator: "; "))")
+            print("  FAIL \(theme.id) \(kind): \(problems.joined(separator: "; "))")
             ok = false
         }
+    }
 
+    /// Stacking, the Undo ghost pill and its drain, and Reduce Motion.
+    private static func checkToastStackAndUndo(_ theme: HelmTheme, _ ok: inout Bool) {
+        ThemeManager.shared.setTheme(theme)
         // G1: "stackable". Two plain confirmations must both be on screen, and
         // the newer one must be the lower of the two - the stack grows upward,
         // away from the content.
@@ -638,55 +721,58 @@ enum DaylightChromeSelfTest {
             ok = false
         }
 
-        // The undo variant: a capsule button, and it still restores.
+        // TO-1: Undo is a ghost pill in the hero's ink, ringed by a hairline
+        // that drains over exactly the six seconds the offer stands.
         var undone = 0
         let undoContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         Toast.showUndo(in: undoContainer, message: "Deleted host") { undone += 1 }
         undoContainer.layoutSubtreeIfNeeded()
-        guard let undoPill = toastPill(in: undoContainer, message: "Deleted host"),
-              let undoButton = descendants(HelmButton.self, in: undoPill).first else {
+        guard let undoPill = Toast.debugPills(in: undoContainer).first(where: { $0.message == "Deleted host" }),
+              let undoButton = undoPill.undoButton else {
             print("  FAIL no Undo button in the undo pill")
             ok = false
             return
         }
-        // G1: "the Undo affordance styled as a capsule button inside". On the
-        // old ink capsule it was a `.quiet` word with a hand-set label colour;
-        // on a card surface that no longer reads as a control.
-        if undoButton.variant == .secondary {
-            print("  OK   \"Undo\" is a bordered capsule button")
+        var problems: [String] = []
+        let ink = HelmContrast.color(undoPill.palette.ink)
+        if undoButton.heroInk.map({ !sameColor($0, ink) }) ?? true {
+            problems.append("Undo is not a ghost pill in the hero's ink")
+        }
+        if let ring = undoPill.debugDrainView {
+            let want = undoButton.frame.insetBy(dx: -ToastPill.drainOutset, dy: -ToastPill.drainOutset)
+            let got = ring.convert(ring.bounds, to: undoButton.superview)
+            if abs(got.minX - want.minX) > 0.51 || abs(got.width - want.width) > 0.51 || abs(got.height - want.height) > 0.51 {
+                problems.append("the drain's ring is not \(fmt(ToastPill.drainOutset))pt around Undo")
+            }
+            let drain = undoPill.debugDrainShape?.animation(forKey: ToastPill.drainKey) as? CABasicAnimation
+            if drain?.keyPath != "strokeEnd" || drain?.duration != Toast.undoDuration {
+                problems.append("the ring is not draining over \(Toast.undoDuration)s")
+            }
+            if ring.hitTest(NSPoint(x: ring.bounds.midX, y: ring.bounds.midY)) != nil {
+                problems.append("the drain's ring takes clicks meant for Undo")
+            }
         } else {
-            print("  FAIL Undo is \(String(describing: undoButton.variant)), want .secondary")
-            ok = false
+            problems.append("Undo has no draining ring")
         }
         undoButton.performClick(nil)
-        if undone == 1 {
-            print("  OK   Undo still restores (fired once)")
-        } else {
-            print("  FAIL undo fired \(undone) times, want 1")
-            ok = false
-        }
+        if undone != 1 { problems.append("undo fired \(undone) times, want 1") }
 
-        // G1 unified the recipe across all fourteen palettes - the split this
-        // used to assert existed because a fixed dark ink capsule would have
-        // been worse than the bordered pill on `helm-dark`, and the card
-        // surface is the theme's own on every palette, so there is nothing
-        // left to split.
-        let other = otherThemes[0]
-        ThemeManager.shared.setTheme(other)
-        let otherContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        Toast.show(in: otherContainer, message: "Saved")
-        otherContainer.layoutSubtreeIfNeeded()
-        if let otherPill = toastPill(in: otherContainer, message: "Saved"),
-           sameColor(otherPill.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
-                     HelmTheme.nsColor(other.chromeBackgroundHex)),
-           otherPill.frame.minY - otherContainer.bounds.minY < otherContainer.bounds.height / 2 {
-            print("  OK   \(other.id) gets the same card capsule, also bottom-anchored")
+        // Reduce Motion: no drain at all.
+        HelmMotion.reducedOverrideForTests = true
+        let stillContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        Toast.showUndo(in: stillContainer, message: "Deleted key") {}
+        if let still = Toast.debugPills(in: stillContainer).first, still.debugDrainShape != nil || still.debugDrainView != nil {
+            problems.append("Reduce Motion still drew the draining ring")
+        }
+        HelmMotion.reducedOverrideForTests = false
+        if problems.isEmpty {
+            print("  OK   Undo is a hero ghost pill, its ring drains over \(Toast.undoDuration)s, none under Reduce Motion, it restores once")
         } else {
-            print("  FAIL \(other.id) does not get G1's recipe")
+            print("  FAIL \(problems.joined(separator: "; "))")
             ok = false
         }
-        ThemeManager.shared.setTheme(daylight)
     }
+
 
     // MARK: 9. §6.14's empty state (Phase 4's, pinned)
 

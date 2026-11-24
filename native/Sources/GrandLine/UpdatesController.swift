@@ -479,7 +479,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
         // R2-BUG-03: "updates available" counts updates, and the rest is
         // stated separately, from the one summary the header and strip read.
-        showToastIfOnScreen(summary.completionMessage)
+        showToastIfOnScreen(summary.completionMessage, kind: summary.completionKind)
         // Anything the notification popover asked for while this sweep was
         // running now has a real, current status to act on.
         runPendingNotificationUpdates()
@@ -503,12 +503,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     /// Drive the real gate - B8's whole defect was *where* a toast was shown,
     /// so a test that called `Toast.show` itself would assert nothing.
-    func debugShowCompletionToast(_ message: String) { showToastIfOnScreen(message) }
+    func debugShowCompletionToast(_ message: String, kind: Feedback.Kind = .done) {
+        showToastIfOnScreen(message, kind: kind)
+    }
     #endif
 
-    private func showToastIfOnScreen(_ message: String) {
+    private func showToastIfOnScreen(_ message: String, kind: Feedback.Kind = .done) {
         guard !view.isHidden, let container = view.window?.contentView else { return }
-        Toast.show(in: container, message: message)
+        Toast.show(in: container, message: message, kind: kind)
     }
 
     // MARK: Stats strip

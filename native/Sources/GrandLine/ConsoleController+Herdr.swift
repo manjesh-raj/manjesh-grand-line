@@ -232,10 +232,10 @@ extension ConsoleController {
         switch result {
         case .notInstalled:
             setHerdrRestartStatus(.notInstalled)
-            Toast.show(in: view, message: "Herdr isn't installed on this Mac.")
+            Toast.show(in: view, message: "Herdr isn't installed on this Mac.", kind: .warning)
         case .failed(let reason):
             setHerdrRestartStatus(.unknown)
-            Toast.show(in: view, message: "Couldn't confirm Herdr's status: \(reason)")
+            Toast.show(in: view, message: "Couldn't confirm Herdr's status: \(reason)", kind: .failure)
         case .ok(let status):
             guard status.actionableRestartNeeded else {
                 // A race, not an error: the server was already restarted (by

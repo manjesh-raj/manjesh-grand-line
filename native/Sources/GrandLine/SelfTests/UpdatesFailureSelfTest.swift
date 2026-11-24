@@ -113,6 +113,15 @@ enum UpdatesFailureSelfTest {
         guard UpdatesSummary([.upToDate, .upToDate]).completionMessage == "Checked 2 tools - all up to date" else {
             return "an all-clear sweep lost its sentence"
         }
+        // TO-1: the toast's glyph. A check that could not run, or an update
+        // that failed, is a warning. An update waiting is not.
+        guard mixed.completionKind == .warning, unreachable.completionKind == .warning,
+              UpdatesSummary([.upToDate, .updateFailed]).completionKind == .warning else {
+            return "a sweep with failed checks or failed updates still wears the done check"
+        }
+        guard two.completionKind == .done, UpdatesSummary([.upToDate, .notInstalled]).completionKind == .done else {
+            return "a sweep that found updates or a tool not installed reads as a warning"
+        }
         guard !UpdatesSummary([.upToDate, .checking]).isKnown,
               !UpdatesSummary([.unknown, .unknown]).isKnown else {
             return "GL-14: a sweep still running or never run reads as known"
@@ -130,8 +139,8 @@ enum UpdatesFailureSelfTest {
               let runner = try? String(contentsOf: dir.appendingPathComponent("ScheduleRunner.swift"), encoding: .utf8) else {
             return "could not read UpdatesController.swift or ScheduleRunner.swift - the guard would silently pass"
         }
-        guard page.contains("showToastIfOnScreen(summary.completionMessage)") else {
-            return "the sweep's toast no longer renders UpdatesSummary"
+        guard page.contains("showToastIfOnScreen(summary.completionMessage, kind: summary.completionKind)") else {
+            return "the sweep's toast no longer renders UpdatesSummary, its words and its kind"
         }
         guard page.contains("summary.subtitle") else { return "the drill header no longer renders UpdatesSummary" }
         guard page.contains("summary.needsAttention, caption: \"Need attention\"") else {

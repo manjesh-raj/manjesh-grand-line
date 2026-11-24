@@ -40,11 +40,17 @@ A change that is not a kit component (a private list retired inside a page, for 
 
 The captain's pick from the notifications hero board (`data/grandline-notifications-hero-design-scout/`): N-1 Hero head for the panel the sidebar layout's bell opens.
 The panel now opens on the hero gradient, as the sidebar, Home's hero cards and the Console's three popovers do.
-It is a minor release: one surface is new and no kit file changed.
+It is a minor release: the panel is a new surface, and no kit file changed for it.
 
 - `Notifications panel` none → 1.0.0 (new): N-1 Hero head. The head is a `PopoverHeroHeader` with a glass bell tile on the quiet-ink palette. Its kicker keeps "Waiting for you" and the date, the headline is the verdict ("4 things need you", "1 update for you", "All caught up"), the second line says how much is unread, and a 48pt ring of unread items sits in the trailing slot. Inbox, Snoozed and Mark all read are `heroInk` ghost pills on the gradient, the chosen list `heroSelection`. Open Home stays in the footer. The triage cards, their order, the snooze menu, Hide, Mute, read state, Undo, the keys and the VoiceOver actions are unchanged, and the bell's badge still counts every item waiting. The words are `NotificationHeroWords`, pure and asserted in CI's blocking lane.
 
 `PopoverHeroHeader` (not a kit file) gains two options, both off by default: the `.verdict` title style (a kicker above a rounded heavy headline, the row top-aligned) and `quietInk`, which paints `HelmHeroSurface.palette(accent:quietInk:)`. Compose, Claude usage and SRE Lead pass neither and draw as before.
+
+The same release carries TO-1 Hero capsule, the captain's toast pick from the hero restyle board (`data/grandline-hero-restyle-designs-scout/`).
+One kit component gained an option for it, and no existing call site changed.
+
+- `HelmHeroSurface` 1.2.0 → 1.3.0 (minor): `glowShape`. `.capsule` sizes the glow from the surface's own bounds, as an ellipse on its top-right corner, the way the board's radial gradient draws it on a surface far wider than it is tall. The card's 220pt glow lay across the right half of a 36pt toast as a grey wash (`#3d567b` against the board's `#2b4267` on Lavender). `.card`, the default, is unchanged, so every existing hero draws as before.
+- `Toasts` none → 1.0.0 (new): TO-1 Hero capsule. The capsule paints the hero's quiet-ink gradient with the message in its white ink, through `HelmType`'s scaled 12pt semibold rather than a literal system font. Its glass circle holds the kind's glyph, a check for done, a triangle for a warning and a cross for a failure, each in that state's hue lifted by `HelmHeroSurface.signalColor`. `Toast.show` takes a `Feedback.Kind` (done by default), `Feedback.report` passes its own through, and the plain callers whose message is a failure or a refusal now say so: before this every toast drew a green check, "Docs sync failed" included. Undo is a `heroInk` ghost pill ringed by a hairline that drains over the six seconds the offer stands, with no ring under Reduce Motion. Each toast posts one VoiceOver announcement, with "Undo available" when it has Undo. The words are `ToastHeroWords`, pure and asserted in CI's blocking lane. Timings, stacking and the single Undo slot are unchanged, and the pill is 36pt tall rather than 34pt.
 
 ## 10.3.0 - The lighthouse lock screen and the treasure chest gate
 

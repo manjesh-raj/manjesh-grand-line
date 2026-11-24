@@ -201,8 +201,8 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     /// (separate) editor window immediately, so the confirmation has to live
     /// somewhere that's still around afterward - the main window, regardless
     /// of which destination happens to be showing."
-    func showToast(_ message: String) {
-        Toast.show(in: view, message: message)
+    func showToast(_ message: String, kind: Feedback.Kind = .done) {
+        Toast.show(in: view, message: message, kind: kind)
     }
 
     /// The account menu's Log Out, and the Hosts sidebar's user row: one

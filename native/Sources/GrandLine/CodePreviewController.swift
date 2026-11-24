@@ -1459,7 +1459,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             opened += 1
         }
         if !refused.isEmpty {
-            Toast.show(in: view, message: refused.joined(separator: " \u{00B7} "))
+            Toast.show(in: view, message: refused.joined(separator: " \u{00B7} "), kind: .warning)
         } else if opened > 0 {
             onDrillSubtitleChanged?()
         }
@@ -1545,7 +1545,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard let snippet = currentSnippet else { return }
         let content = snippet.content
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "There is nothing in this snippet to run")
+            Toast.show(in: view, message: "There is nothing in this snippet to run", kind: .warning)
             return
         }
         let languageID = snippet.language.id
@@ -1614,12 +1614,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard let snippet = currentSnippet else { return }
         let before = snippet.content
         guard !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "There is nothing in this snippet to format")
+            Toast.show(in: view, message: "There is nothing in this snippet to format", kind: .warning)
             return
         }
         let languageID = snippet.language.id
         guard runner.formatter(for: languageID) != nil else {
-            Toast.show(in: view, message: CodeRunner.noFormatterMessage(for: languageID))
+            Toast.show(in: view, message: CodeRunner.noFormatterMessage(for: languageID), kind: .warning)
             return
         }
 

@@ -868,7 +868,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     func finishRecheck(_ name: String, _ fresh: VaultTool?) {
         isRecheckingTool = false
         guard let fresh else {
-            Toast.show(in: view, message: "Couldn\u{2019}t re-check \u{201c}\(name)\u{201d} - the page still shows the last reading")
+            Toast.show(in: view, message: "Couldn\u{2019}t re-check \u{201c}\(name)\u{201d} - the page still shows the last reading", kind: .failure)
             return
         }
         if var current = tools, let index = current.firstIndex(where: { $0.name == name }) {
@@ -877,7 +877,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
             renderAll()
         }
         if case .needsAttention = fresh.status {
-            Toast.show(in: view, message: "\u{201c}\(name)\u{201d} still needs attention: \(fresh.status.label)")
+            Toast.show(in: view, message: "\u{201c}\(name)\u{201d} still needs attention: \(fresh.status.label)", kind: .warning)
         } else {
             Toast.show(in: view, message: "\u{201c}\(name)\u{201d} is hardened - no issues")
         }

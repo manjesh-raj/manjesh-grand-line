@@ -1233,3 +1233,41 @@ It stands in for the attention banner and the Verified Launchers table in the si
 The Secrets and Recipe Backup cards stay full width under it, rather than side by side as the board drew them, because the Recipe card's two header buttons would squeeze its title at half width.
 
 **Not done.** The Tasks band and the Secrets column have no colour choice; both are the theme's accent, as the Health and Connections columns are.
+
+## TO-1 Hero capsule: the toast on the hero gradient (Helm 10.4.0, `fm/grandline-notifications-hero-design-scout`)
+
+The captain picked TO-1 for toasts on the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, stage `stage-toasts`).
+The capsule is a `ToastPill` now: `HelmHeroSurface` on the quiet-ink palette (`HelmHeroColumn.palette(for:in:)` with the theme's accent), the message in its white ink at `HelmType`'s scaled 12pt semibold, and a 22pt glass circle holding the kind's glyph.
+The glyph is a check, a triangle or a cross (`ToastHeroWords.symbol(for:)`), in the kind's `HelmTint` lifted by `HelmHeroSurface.signalColor`, so it clears 3:1 on both stops.
+Undo is a `HelmButton.heroInk` ghost pill, and a `CAShapeLayer` ring 3pt around it drains its `strokeEnd` linearly over `Toast.undoDuration`.
+Under Reduce Motion the ring is never built.
+Timings, the bottom-centre stacking and the single Undo slot (GL-33) are unchanged.
+The pill is 36pt tall rather than 34pt, and `Toast.pillHeight` (which `reservedBottomSpace` reads) moved with it.
+
+**Two defects from the board's findings are fixed with it.**
+`Toast.show` had no kind and always drew `checkmark.circle.fill` in the good tint, and `Feedback.report(_:kind:persistence:in:)` dropped its kind on the way in.
+So "Docs sync failed", "Herdr restart failed" and "Couldn't write the incident record" all looked like successes.
+`Toast.show(in:message:kind:)` takes a `Feedback.Kind`, done by default, and `Feedback.report` passes its own through.
+Every plain `Toast.show` caller was read and decided by one rule.
+An attempt that failed is a failure ("Couldn't", "Could not", "failed", an error's message).
+A refusal or a missing prerequisite is a warning ("Nothing to copy yet", "Run an analysis first", a size limit, a calendar move that is not allowed), and so is a partial result.
+Everything else stays done.
+Sixty-six call sites moved to a warning or a failure, and every save, copy and Undo confirmation stayed done.
+Three summaries choose at run time: the Updates sweep (`UpdatesSummary.completionKind`), GitHub Sync's Sync all and Automation's re-check.
+`WorkspaceShellController.showToast` gained the same `kind:` for the store-load failure notices that reach it.
+Toasts also posted no VoiceOver announcement.
+`Toast.announce` posts one `announcementRequested` per toast, with "Undo available" when it has Undo, the same shape as the dictation HUD's.
+
+**Where the design did not hold as drawn.**
+- The kit's glow is a 220pt circle sized for a card, and on a 36pt capsule it lay across the pill's right half as a grey wash (`#3d567b` at the right end of a Lavender toast against the board's `#2b4267`).
+  `HelmHeroSurface` 1.3.0 adds `glowShape = .capsule`, the board's own radial gradient sized from the surface's bounds, and the right end then sampled `#2f4a71`.
+- The board draws an opacity fade for a toast under Reduce Motion.
+  The app's rule is the end state, instantly (`HelmMotion`'s header), and the toast already appeared and left at once under Reduce Motion, so it still does.
+- The board's capsule shadow is darker than the kit's raised elevation, and the toast keeps the kit's.
+- The board's glass circle is 18% ink with a 30% ring, and the kit's glass tile (`PopoverHeroHeader.glassFillAlpha`) is 20%, which the toast reuses.
+
+**Verification.**
+`FeedbackRoutingSelfTest` (headless) reads the kind back off the pill `Feedback.report` put on the page, reads `Toast.debugAnnouncements`, which `announce` appends to on the path that posts, and sweeps every app theme for 4.5:1 words and 3:1 glyphs.
+`DaylightChromeSelfTest`'s toast case now measures the hero capsule in Lavender and Powder: the gradient against the kit's quiet-ink rule, the capsule glow, the words, the three glyphs and their colours, the ghost Undo and its draining ring, and no ring under Reduce Motion.
+`UpdatesFailureSelfTest` asserts `completionKind`.
+An off-screen render of four held toasts was compared with the board in both themes, and the colours at the left, middle and right of each pill match the board's within a few steps.

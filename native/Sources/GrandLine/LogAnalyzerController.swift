@@ -1413,7 +1413,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
         // R2-SEC-12: the redaction sweep below runs on the main thread, so
         // an uncapped paste was a beachball. Refused before anything reads it.
         if let refusal = InputSizeLimit.refusal(forText: raw, what: label) {
-            Toast.show(in: view, message: refusal)
+            Toast.show(in: view, message: refusal, kind: .warning)
             return false
         }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1527,12 +1527,12 @@ extension LogAnalyzerController: NSTextViewDelegate {
     /// secrets").
     private func clipboardTextForEvidence() -> String? {
         guard !CredentialVaultClipboard.isConcealed(clipboard) else {
-            Toast.show(in: view, message: "That clipboard entry came from Poneglyph, so it was not read")
+            Toast.show(in: view, message: "That clipboard entry came from Poneglyph, so it was not read", kind: .warning)
             return nil
         }
         guard let text = clipboard.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Clipboard is empty")
+            Toast.show(in: view, message: "Clipboard is empty", kind: .warning)
             return nil
         }
         return text
@@ -1550,7 +1550,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
     @objc func addCurrentInputAsEvidence() {
         let text = inputTextView.string
         guard addEvidence(raw: text, label: "Pasted output", origin: .pasted) else {
-            Toast.show(in: view, message: "Nothing to add")
+            Toast.show(in: view, message: "Nothing to add", kind: .warning)
             return
         }
         inputTextView.string = ""
@@ -1597,10 +1597,10 @@ extension LogAnalyzerController: NSTextViewDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 for name in unreadable {
-                    Toast.show(in: self.view, message: "Could not read \(name) as text")
+                    Toast.show(in: self.view, message: "Could not read \(name) as text", kind: .failure)
                 }
                 for refusal in tooLarge {
-                    Toast.show(in: self.view, message: refusal)
+                    Toast.show(in: self.view, message: refusal, kind: .warning)
                 }
                 var added = 0
                 for (result, url) in loaded
@@ -1625,7 +1625,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
 
     @objc func goToConsole() {
         guard let onOpenConsole else {
-            Toast.show(in: view, message: "No console is available")
+            Toast.show(in: view, message: "No console is available", kind: .warning)
             return
         }
         onOpenConsole()
@@ -1664,7 +1664,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
     /// `LogAnalyzerModels.swift`'s header for why the two are kept apart.
     func runAnalysis() {
         guard !investigation.evidence.isEmpty else {
-            Toast.show(in: view, message: "Nothing to analyze yet")
+            Toast.show(in: view, message: "Nothing to analyze yet", kind: .warning)
             return
         }
         guard !isAnalyzing else { return }
@@ -1769,7 +1769,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
 
     @objc func investigateFurther() {
         guard !investigation.evidence.isEmpty else {
-            Toast.show(in: view, message: "Add some output first")
+            Toast.show(in: view, message: "Add some output first", kind: .warning)
             return
         }
         // If the analysis already carries a needed-evidence list, show it
@@ -1781,7 +1781,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
             return
         }
         guard LogAnalyzerAI.isAvailable else {
-            Toast.show(in: view, message: "claude is not available for this step")
+            Toast.show(in: view, message: "claude is not available for this step", kind: .warning)
             return
         }
         guard !isAnalyzing else { return }
@@ -1796,7 +1796,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
             self.setAnalyzing(false, message: "")
             switch result {
             case .failure(let error):
-                Toast.show(in: self.view, message: error.message)
+                Toast.show(in: self.view, message: error.message, kind: .failure)
             case .success(let needed):
                 if self.investigation.analysis?.ai != nil {
                     self.investigation.analysis?.ai?.neededEvidence = needed
@@ -1816,7 +1816,7 @@ extension LogAnalyzerController {
 
     private func copy(_ text: String, what: String) {
         guard !text.isEmpty else {
-            Toast.show(in: view, message: "Nothing to copy yet")
+            Toast.show(in: view, message: "Nothing to copy yet", kind: .warning)
             return
         }
         NSPasteboard.general.clearContents()
@@ -1830,7 +1830,7 @@ extension LogAnalyzerController {
 
     @objc func copyFullAnalysis() {
         guard investigation.analysis != nil else {
-            Toast.show(in: view, message: "Run an analysis first")
+            Toast.show(in: view, message: "Run an analysis first", kind: .warning)
             return
         }
         copy(LogAnalyzerArtifacts.fullAnalysisText(investigation), what: "Full analysis")
@@ -1838,7 +1838,7 @@ extension LogAnalyzerController {
 
     @objc func copyComparison() {
         guard let comparison else {
-            Toast.show(in: view, message: "Run a comparison first")
+            Toast.show(in: view, message: "Run a comparison first", kind: .warning)
             return
         }
         copy(LogAnalyzerArtifacts.comparisonText(comparison, beforeLabel: "Before", afterLabel: "After"),
@@ -1848,7 +1848,7 @@ extension LogAnalyzerController {
     /// Spec §24's ⌘⇧T - the top suggested command, sent to the console.
     @objc func sendTopCommandToTerminal() {
         guard let command = investigation.analysis?.ai?.suggestedCommands.first else {
-            Toast.show(in: view, message: "No suggested command yet")
+            Toast.show(in: view, message: "No suggested command yet", kind: .warning)
             return
         }
         sendToTerminal(command.command)
@@ -1866,7 +1866,7 @@ extension LogAnalyzerController {
     /// was the app's least-vouched-for command and had no gate at all.
     private func sendToTerminal(_ command: String) {
         guard let onSendCommandToTerminal else {
-            Toast.show(in: view, message: "No terminal is available")
+            Toast.show(in: view, message: "No terminal is available", kind: .warning)
             return
         }
         CommandRiskConfirmation.confirmAIAuthored(command: command,
@@ -1881,7 +1881,7 @@ extension LogAnalyzerController {
 
     @objc func createIncident() {
         guard investigation.analysis != nil else {
-            Toast.show(in: view, message: "Run an analysis first")
+            Toast.show(in: view, message: "Run an analysis first", kind: .warning)
             return
         }
         let body = LogAnalyzerArtifacts.incidentMarkdown(investigation)
@@ -1900,7 +1900,7 @@ extension LogAnalyzerController {
 
     @objc func createRunbook() {
         guard investigation.analysis != nil else {
-            Toast.show(in: view, message: "Run an analysis first")
+            Toast.show(in: view, message: "Run an analysis first", kind: .warning)
             return
         }
         let body = LogAnalyzerArtifacts.runbookMarkdown(investigation)
@@ -1924,7 +1924,7 @@ extension LogAnalyzerController {
     /// tracker client anywhere in this feature.
     @objc func createTicket() {
         guard investigation.analysis != nil else {
-            Toast.show(in: view, message: "Run an analysis first")
+            Toast.show(in: view, message: "Run an analysis first", kind: .warning)
             return
         }
         let body = LogAnalyzerArtifacts.ticketMarkdown(investigation)
@@ -1992,7 +1992,7 @@ extension LogAnalyzerController {
         let after = compareAfter.string
         guard !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !after.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            Toast.show(in: view, message: "Provide both a Before and an After")
+            Toast.show(in: view, message: "Provide both a Before and an After", kind: .warning)
             return
         }
         // T3: two full redaction passes plus `DiffEngine.lineDiff` - a full
@@ -2156,7 +2156,7 @@ extension LogAnalyzerController {
     func openSavedInvestigation(id: String) {
         reloadHistory(forcingDiskRescan: true)
         guard let index = historyEntries.firstIndex(where: { $0.id == id }) else {
-            Toast.show(in: view, message: "That investigation is no longer saved")
+            Toast.show(in: view, message: "That investigation is no longer saved", kind: .warning)
             return
         }
         openHistoryEntry(at: index)
@@ -2166,7 +2166,7 @@ extension LogAnalyzerController {
         guard index >= 0, index < historyEntries.count else { return }
         let entry = historyEntries[index]
         guard let loaded = store.load(id: entry.id) else {
-            Toast.show(in: view, message: "Could not reopen that investigation")
+            Toast.show(in: view, message: "Could not reopen that investigation", kind: .failure)
             return
         }
         investigation = loaded
@@ -2177,7 +2177,7 @@ extension LogAnalyzerController {
         // to re-analyze - say so rather than showing an empty raw pane with
         // no explanation.
         if loaded.evidence.allSatisfy({ $0.text.isEmpty }) {
-            Toast.show(in: view, message: "Metadata only - the log content wasn't saved")
+            Toast.show(in: view, message: "Metadata only - the log content wasn't saved", kind: .warning)
         } else {
             investigation.analysis = LogAnalysis(
                 local: Self.buildLocalAnalysis(text: loaded.combinedText, override: sourceOverride),
@@ -2810,7 +2810,7 @@ extension LogAnalyzerController {
     /// evidence and analyze.
     func importTerminalCapture(_ capture: LogTerminalCapture, hostLabel: String) {
         guard !capture.isEmpty else {
-            Toast.show(in: view, message: "There was nothing to capture from that tab")
+            Toast.show(in: view, message: "There was nothing to capture from that tab", kind: .warning)
             return
         }
         importSourceLabel = hostLabel

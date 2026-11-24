@@ -289,7 +289,7 @@ extension FleetController {
                     // Delivered but unproven: say exactly that, and clear the
                     // box so nothing invites a blind resend - which is the one
                     // thing `fm-send.sh`'s own header warns against here.
-                    Toast.show(in: self.view, message: outcome.message)
+                    Toast.show(in: self.view, message: outcome.message, kind: .warning)
                     composer.clear()
                     composer.setStatus(outcome.message, tint: .warn)
                 case .failed:

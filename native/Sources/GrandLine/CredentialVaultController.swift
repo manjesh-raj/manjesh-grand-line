@@ -819,7 +819,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         noteInteraction()
         guard let credential = store.credential(id: id) else { return }
         guard !credential.secret.isEmpty else {
-            Toast.show(in: view, message: "That credential has no value stored")
+            Toast.show(in: view, message: "That credential has no value stored", kind: .warning)
             return
         }
         CredentialVaultClipboard.shared.copy(credential.secret,
@@ -846,7 +846,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         guard let credential = store.credential(id: id), let config = credential.totp else { return }
         let now = TOTPTicker.shared.now
         guard let code = TOTP.code(config, at: now) else {
-            Toast.show(in: view, message: "That credential's 2FA seed is not readable - edit it to fix")
+            Toast.show(in: view, message: "That credential's 2FA seed is not readable - edit it to fix", kind: .failure)
             return
         }
         let remaining = TOTP.secondsRemaining(config, at: now)
@@ -904,7 +904,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private func copyAccount(id: String) {
         noteInteraction()
         guard let credential = store.credential(id: id), !credential.account.isEmpty else {
-            Toast.show(in: view, message: "No account recorded for that credential")
+            Toast.show(in: view, message: "No account recorded for that credential", kind: .warning)
             return
         }
         CredentialVaultClipboard.writeConcealed(credential.account, to: NSPasteboard.general)
@@ -923,7 +923,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         // (`RevealAuthentication`), and refuses only on a Mac that cannot
         // authenticate its owner in any way.
         guard let policy = RevealAuthentication.livePolicy else {
-            Toast.show(in: view, message: "This Mac cannot confirm it is you, so the item stays hidden")
+            Toast.show(in: view, message: "This Mac cannot confirm it is you, so the item stays hidden", kind: .warning)
             completion(false)
             return
         }

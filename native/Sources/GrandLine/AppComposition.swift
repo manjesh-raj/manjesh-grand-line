@@ -425,7 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // an empty list with no other signal - surface that once here rather
         // than letting the captain mistake it for "nothing saved yet".
         if let notice = StoreLoadFailure.notice(for: hostStore.loadStatus, what: "saved hosts") {
-            appShell.showToast(notice)
+            appShell.showToast(notice, kind: .failure)
         }
         // GL-01: the same treatment for the three stores that used to fail
         // *silently*. Backing the file up is the durability half; saying so is
@@ -461,7 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         for (index, notice) in storeFailureNotices.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(index) * 4) { [weak self] in
-                self?.appShell.showToast(notice)
+                self?.appShell.showToast(notice, kind: .failure)
             }
         }
         // Finding 4.3: a Recents `.host` row whose session has since ended
@@ -1539,7 +1539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // `{{token}}`) - the button refuses before the picker even opens,
             // so this is the second check of the same rule, not the first.
             guard let outcome = executor.send(command: command, values: values, to: hosts) else {
-                self.appShell.showToast("Fill in this command's parameters before sending it.")
+                self.appShell.showToast("Fill in this command's parameters before sending it.", kind: .warning)
                 return
             }
             if !outcome.sent.isEmpty {
@@ -1637,7 +1637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .appendingPathComponent("MANUAL-CHECKS.md")
         guard FileManager.default.fileExists(atPath: manualChecks.path) else {
             // GL-30: a transient "that is not here" is a toast, not an alert.
-            appShell.showToast("MANUAL-CHECKS.md is not in this build\u{2019}s checkout.")
+            appShell.showToast("MANUAL-CHECKS.md is not in this build\u{2019}s checkout.", kind: .warning)
             return
         }
         NSWorkspace.shared.open(manualChecks)

@@ -138,7 +138,7 @@ enum HelmKit {
         // HelmHeroSplitCard.swift
         Component("HelmHeroSplitCard", "1.0.0", file: "HelmHeroSplitCard.swift"),
         // HelmHeroSurface.swift
-        Component("HelmHeroSurface", "1.2.0", file: "HelmHeroSurface.swift"),
+        Component("HelmHeroSurface", "1.3.0", file: "HelmHeroSurface.swift"),
         // HelmInput.swift
         Component("HelmFocusRegistration", "1.0.0", file: "HelmInput.swift"),
         Component("HelmFocusSensing", "1.0.0", file: "HelmInput.swift"),
@@ -268,6 +268,7 @@ enum HelmKit {
         Component("DevOps Hub (page)", "2.0.0", file: "DevOpsHubController.swift"),
         Component("Lock screen", "1.0.0", file: "LockScreenController.swift"),
         Component("Notifications panel", "1.0.0", file: "NotificationBridgePanel.swift"),
+        Component("Toasts", "1.0.0", file: "Toast.swift"),
     ]
 
     struct SourceDigest {
@@ -286,7 +287,7 @@ enum HelmKit {
         SourceDigest(file: "HelmDensity.swift", stamp: "HelmDensity@1.0.0", sha256: "c725fb34b3438a1b7bd2ee9a3ba69a52d05b328e9a09b365bd4a468611d61983"),
         SourceDigest(file: "HelmHeroColumn.swift", stamp: "HelmHeroColumn@1.4.0,HelmHeroNavRow@1.0.0,HelmHeroRow@1.0.0", sha256: "c731441f02be60fd5623bfb53fefafce6cf1addfeffe958cf56a42a0a034baca"),
         SourceDigest(file: "HelmHeroSplitCard.swift", stamp: "HelmHeroSplitCard@1.0.0", sha256: "97051bf0f9e67923946b5f2c9c33bff0cb9dd03506d027f1540bc9e01dbf7bef"),
-        SourceDigest(file: "HelmHeroSurface.swift", stamp: "HelmHeroSurface@1.2.0", sha256: "8b9dc46c07e78d857cf4ac57f91ac43a2c6c50a4fc4008e528b7f38a8d0f6526"),
+        SourceDigest(file: "HelmHeroSurface.swift", stamp: "HelmHeroSurface@1.3.0", sha256: "41ae8e8154001e27470f163fc9300d007551dba31e6c55b070778b8b80907895"),
         SourceDigest(file: "HelmHeroCard.swift", stamp: "HelmHeroCard@2.1.0,HelmHeroStatusPill@1.0.0,HelmHeroTile@1.0.0,HelmHeroTileGrid@1.0.0", sha256: "f9700de1da7bda6475bedea5584075f6192606e267f336e6eeaa9cf1868ff174"),
         SourceDigest(file: "HelmIconButton.swift", stamp: "HelmIconButton@1.1.0", sha256: "3c6f7a325c59b4768ba3484955c00bd9c810d40d62a1636daf8553f16409e83a"),
         SourceDigest(file: "HelmChoiceCard.swift", stamp: "HelmChoiceCard@1.0.0", sha256: "61392738ce874320cc5c6e4b261921f969545e264122a1094f6be6eb6fdc676b"),

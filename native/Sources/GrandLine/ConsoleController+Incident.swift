@@ -129,7 +129,7 @@ extension ConsoleController {
         announcedIncidentIDs.insert(incident.id)
 
         Toast.show(in: view,
-                   message: "\(incident.id) is still active on \(hostIdentity.label)")
+                   message: "\(incident.id) is still active on \(hostIdentity.label)", kind: .warning)
         showIncidentCard()
         #if FM_SELFTESTS
         debugResumeAnnouncements.append(incident.id)
@@ -193,16 +193,16 @@ extension ConsoleController {
         case .failure(.alreadyActive(let existingID)):
             // The store refuses even if a UI path ever forgets to check - see
             // `IncidentStore.StartFailure`.
-            Toast.show(in: view, message: "\(existingID) is already active on this host")
+            Toast.show(in: view, message: "\(existingID) is already active on this host", kind: .warning)
             updateIncidentControls()
             showIncidentCard()
         case .failure(.couldNotWrite):
-            Toast.show(in: view, message: "Couldn't write the incident record")
+            Toast.show(in: view, message: "Couldn't write the incident record", kind: .failure)
         case .failure(.couldNotRead):
             // GL-21: the store refused rather than issuing an id it could not
             // prove was free. Says so plainly - a silently-not-started
             // incident would leave every later attach going nowhere.
-            Toast.show(in: view, message: "Couldn't read the incident records - not starting one")
+            Toast.show(in: view, message: "Couldn't read the incident records - not starting one", kind: .failure)
         }
     }
 
@@ -334,7 +334,7 @@ extension ConsoleController {
     @objc func endIncidentClicked() {
         guard let incident = activeIncident() else { return }
         guard let ended = incidentStore.end(id: incident.id) else {
-            Toast.show(in: view, message: "Couldn't write the incident record")
+            Toast.show(in: view, message: "Couldn't write the incident record", kind: .failure)
             return
         }
         FleetLogStore.shared.append(FleetLogSources.incidentEnded(id: ended.id,
@@ -356,7 +356,7 @@ extension ConsoleController {
                 let saved = self.docsRunbookStore.createPostmortem(title: title, content: markdown)
                 Toast.show(in: self.view, message: "Postmortem saved: \(saved.title)")
             case .failure(let error):
-                Toast.show(in: self.view, message: "Couldn't generate the postmortem: \(error.message)")
+                Toast.show(in: self.view, message: "Couldn't generate the postmortem: \(error.message)", kind: .failure)
             }
             self.renderIncidentCard()
         }

@@ -33,6 +33,15 @@
 // on whatever is behind it - the module card's own surface, which is the
 // card's one click target (gotcha (20)).
 //
+// **1.3.0, the capsule glow** (TO-1's toast and DH-2's dictation HUD on the
+// hero restyle board). The glow is a 220pt circle sized for a card, and on a
+// 36pt capsule its lower half lay across the right of the pill as a grey
+// wash: the toast's right end sampled `#3d567b` against the board's
+// `#2b4267` on Lavender. `GlowShape.capsule` draws the board's
+// `radial-gradient(120% 140% at 100% 0%, ink 26%, transparent 42%)` instead,
+// an ellipse sized from the surface's own bounds at its top-right corner.
+// `.card`, the default, is unchanged.
+//
 // **Every layer is a standalone sublayer**, so a colour write goes through
 // `HelmMotion.withoutImplicitAnimation` (the app's one gradient gate) and a
 // frame write through `HelmMotion.withoutActions`.
@@ -73,6 +82,26 @@ final class HelmHeroSurface: NSView {
     /// How much of a dimmed colour is the grey of its own lightness.
     static let dimmedGrey = 0.72
 
+    /// 1.3.0: where the glow sits. `.card` is the 220pt circle off the
+    /// top-right corner every hero card draws. `.capsule` is an ellipse sized
+    /// from the surface's own bounds, centred on its top-right corner, for a
+    /// surface far wider than it is tall.
+    enum GlowShape: Equatable { case card, capsule }
+
+    /// The board's capsule glow: an ellipse 120% by 140% of the surface,
+    /// faded out at 42% of that, in the ink at 26%.
+    static let capsuleGlowWidth: CGFloat = 1.2 * 0.42
+    static let capsuleGlowHeight: CGFloat = 1.4 * 0.42
+    static let capsuleGlowAlpha: CGFloat = 0.26
+
+    var glowShape: GlowShape = .card {
+        didSet {
+            guard glowShape != oldValue else { return }
+            if let palette { apply(palette) }
+            needsLayout = true
+        }
+    }
+
     private let gradient = CAGradientLayer()
     private let glow = CAGradientLayer()
     private(set) var palette: Palette?
@@ -96,13 +125,15 @@ final class HelmHeroSurface: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Paint `palette`. The glow is the ink at `glowAlpha`, fading out.
+    /// Paint `palette`. The glow is the ink at `glowAlpha` (`capsuleGlowAlpha`
+    /// for `.capsule`), fading out.
     func apply(_ palette: Palette) {
         self.palette = palette
         let ink = HelmContrast.color(palette.ink)
+        let alpha = glowShape == .capsule ? Self.capsuleGlowAlpha : Self.glowAlpha
         HelmMotion.withoutImplicitAnimation {
             gradient.colors = [HelmContrast.color(palette.start).cgColor, HelmContrast.color(palette.end).cgColor]
-            glow.colors = [ink.withAlphaComponent(Self.glowAlpha).cgColor, ink.withAlphaComponent(0).cgColor]
+            glow.colors = [ink.withAlphaComponent(alpha).cgColor, ink.withAlphaComponent(0).cgColor]
         }
     }
 
@@ -110,8 +141,18 @@ final class HelmHeroSurface: NSView {
         super.layout()
         HelmMotion.withoutActions {
             gradient.frame = bounds
-            let side = Self.glowSide
-            glow.frame = CGRect(x: bounds.maxX - side + 40, y: bounds.maxY - side + 60, width: side, height: side)
+            switch glowShape {
+            case .card:
+                let side = Self.glowSide
+                glow.frame = CGRect(x: bounds.maxX - side + 40, y: bounds.maxY - side + 60, width: side, height: side)
+            case .capsule:
+                // A radial `CAGradientLayer` from its centre to (1, 1) fills
+                // the ellipse inscribed in its frame, so the frame is the
+                // ellipse's box around the top-right corner.
+                let rx = bounds.width * Self.capsuleGlowWidth
+                let ry = bounds.height * Self.capsuleGlowHeight
+                glow.frame = CGRect(x: bounds.maxX - rx, y: bounds.maxY - ry, width: 2 * rx, height: 2 * ry)
+            }
         }
     }
 
@@ -211,5 +252,7 @@ final class HelmHeroSurface: NSView {
 
     #if FM_SELFTESTS
     var debugGradientColors: [CGColor] { (gradient.colors as? [CGColor]) ?? [] }
+    var debugGlowFrame: CGRect { glow.frame }
+    var debugGlowColors: [CGColor] { (glow.colors as? [CGColor]) ?? [] }
     #endif
 }

@@ -391,7 +391,7 @@ final class ToolInstance: NSObject {
 
     @objc private func scratchpadCopyAllClicked() {
         guard scratchpad?.copyAllResults() == false, let host = toastHost else { return }
-        Toast.show(in: host, message: "Nothing to copy yet")
+        Toast.show(in: host, message: "Nothing to copy yet", kind: .warning)
     }
 
     /// Debounced, because this runs on every keystroke and the write is a

@@ -664,7 +664,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
             }
         case .failed(let message):
             AppLog.ai.error("straw hat: a confirmed proposal failed: \(message, privacy: .public)")
-            Toast.show(in: view, message: message)
+            Toast.show(in: view, message: message, kind: .failure)
         case .openedForReview:
             // Unreachable: `execute` never returns this case - the guard above
             // already diverted every kind that could.

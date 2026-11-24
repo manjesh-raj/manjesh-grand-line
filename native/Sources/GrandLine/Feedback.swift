@@ -21,8 +21,8 @@
 //
 // A caller states two facts about what happened and never names a surface:
 //
-//   - `Kind` - what it is (done / warning / failure). This picks the wording's
-//     tint and, for the bell, the notification kind.
+//   - `Kind` - what it is (done / warning / failure). This picks the toast's
+//     glyph (TO-1) and, for the bell, the tint and the notification kind.
 //   - `Persistence` - whether it is **still true after a toast would have
 //     faded**. That single question is GL-30's own dividing line, and it is
 //     the one a call site can actually answer about its own situation.
@@ -112,8 +112,11 @@ enum Feedback {
         // the bell for something that just happened would be worse feedback,
         // not better. GL-30's rule is about what survives, not about
         // suppressing the immediate signal.
+        //
+        // TO-1: the kind travels with it. It used to stop here, so every
+        // report drew `Toast`'s one green check, "Docs sync failed" included.
         if let view {
-            Toast.show(in: view, message: message)
+            Toast.show(in: view, message: message, kind: kind)
         }
 
         guard persistence == .lasting else { return }

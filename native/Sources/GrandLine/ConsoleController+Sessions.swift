@@ -330,7 +330,7 @@ extension ConsoleController {
             case .refuse(let reason):
                 AppLog.ui.error("startup snippet held back: \(reason, privacy: .public)")
                 if let view = self?.view {
-                    Toast.show(in: view, message: "Startup command held back - \(reason).")
+                    Toast.show(in: view, message: "Startup command held back - \(reason).", kind: .warning)
                 }
             case .stage(let text):
                 tab.terminal.send(txt: text)
