@@ -649,9 +649,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
                                  sections: [], foot: [foot], tone: heroTone(words.tone))
     }
 
-    /// The board's one second tone: the theme's own amber while the captain
-    /// has to grant something, the accent otherwise.
     private func heroTone(_ tone: DictationHeroWords.Tone) -> HelmModuleCard.HeroTone {
+        Self.heroTone(tone, in: theme)
+    }
+
+    /// The board's one second tone: the theme's own amber while the captain
+    /// has to grant something, the accent otherwise. Static so the floating
+    /// HUD (DH-2) paints the same two tones from the same rule.
+    static func heroTone(_ tone: DictationHeroWords.Tone, in theme: HelmTheme) -> HelmModuleCard.HeroTone {
         switch tone {
         case .accent:
             return HelmModuleCard.HeroTone(colour: .themeAccent)

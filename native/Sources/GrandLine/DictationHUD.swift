@@ -52,39 +52,48 @@
 // via Accessibility) is explicitly out of scope for this pass, per the task
 // brief.
 //
-// Deliberately NOT theme-aware (unlike almost everything else in this app -
-// see `ThemeManager.swift`'s own checklist): this HUD floats over arbitrary
-// other apps' windows, not over Grand Line's own chrome, so a fixed
-// "system HUD" look reads correctly against any background regardless of
-// which Helm theme Grand Line itself is currently using - there is no
-// "background" of this app's own for it to blend with.
+// ## DH-2: the HUD is themed now, and why that reverses review #3 section 7
 //
-// ## Review #3 §7: a flat dark fill is not what makes a HUD read as one
+// This HUD used to be deliberately NOT theme-aware. It floats over other
+// apps' windows, not over Grand Line's own chrome, so a fixed "system HUD"
+// look was meant to read correctly against any background. Review #3 section
+// 7 then found that a flat dark fill rendered in Dusk's own tones, and made
+// the pill an `NSVisualEffectView` (`.hudWindow` material, `.behindWindow`
+// blending, pinned `.vibrantDark`), translucent over whatever was behind it.
 //
-// The premise above is still right; the *execution* stopped working when
-// Dusk became the app's default theme. The pill was a flat
-// `NSColor(calibratedWhite: 0.08, alpha: 0.92)` layer fill, which is within
-// a few percent of Dusk's own card and page surfaces - so a HUD whose whole
-// job is to say "this is the system talking, not the app" rendered in the
-// app's own tones and read as one more Grand Line card that happened to be
-// floating.
+// The captain then picked DH-2 Hero pill on the hero restyle board
+// (`data/grandline-hero-restyle-designs-scout/`, stage `stage-hud`), and the
+// premise both of those rested on no longer holds. That premise was that
+// legibility depends on what is behind the pill, so the pill must adapt to
+// it. The hero pill does not depend on what is behind it at all: it is
+// opaque, it paints the Dictation hero gradient (`HelmHeroColumn.palette(for:
+// in:)` on `DictationController.heroTone`, the Dic-1 panel's two tones), and
+// its white words clear 4.5:1 against the gradient's own lighter stop in every
+// theme (`OverlaysModernizationSelfTest` measures it). What separates it from
+// whatever is underneath is a window shadow and a white hairline, which hold
+// over a light document and a dark editor alike. So it now follows the theme
+// like everything else in the app (`ThemeManager.shared.observe`, with the
+// appearance forced to the ink's), and it reads as Grand Line over any app,
+// which was the mismatch the audit named: half system, half app.
 //
-// What actually separates macOS's own volume/brightness HUD from an app's
-// chrome is not its darkness, it is that it is **translucent over whatever
-// is genuinely behind it**: an `NSVisualEffectView` with the `.hudWindow`
-// material and `.behindWindow` blending, so the desktop, the browser or the
-// editor underneath shows through, live, and moves when they do. No flat
-// fill can imitate that, because the thing that makes it read as an overlay
-// is precisely that it is not a solid colour. So `ensurePanel` builds the
-// pill as that view instead, pinned to `.vibrantDark` so the material's own
-// light/dark choice is this HUD's and not the OS appearance setting's.
+// The pill is the Dic-1 panel in miniature. A glass glyph tile, a constant
+// kicker ("Dictation · Grand Line", `DictationHeroWords.hudKicker`) that says
+// whose pill this is, the state's own words as the headline
+// (`DictationHUDVisualState.text`, unchanged), and a level meter while
+// listening or a sweep while transcribing. It is the accent while dictation
+// is going right, and the theme's amber for "Copied" and the failures, where
+// the old HUD's orange was. It grew from 44pt to 52pt for the kicker, and its
+// width follows its words.
 //
-// **This is the one legitimate `.behindWindow` case in this app**, and it is
-// the exact inverse of AGENTS.md gotcha (8): that trap is a full-size
-// destination or window root using `.behindWindow` and compositing against
-// the *desktop* when it meant to blend with its own window. Here the desktop
-// (and whatever app is over it) is genuinely what is behind this borderless,
-// clear-backgrounded panel, and compositing against it is the whole point.
+// The meter and the sweep are Core Animation loops on the render server, and
+// they hold still under Reduce Motion. They replace H3's variable-colour
+// waveform, which stepped a symbol's frames on a 0.14s main-thread timer.
+// Neither is wired to the microphone: like the waveform before them, they
+// show that something is happening rather than measure it.
+//
+// Unchanged: the non-activating, never-key, click-through panel, its
+// bottom-centre position on the screen under the mouse, the auto-hide delays
+// (1.1s, 2.2s, 1.8s), and one VoiceOver announcement per new state.
 import AppKit
 
 enum DictationHUDVisualState: Equatable {
@@ -104,14 +113,16 @@ enum DictationHUDVisualState: Equatable {
     case copiedOnly
     case failure(String)
 
+    /// The glyph in the glass tile. DH-2 draws line glyphs, as the board
+    /// does: a filled circle glyph inside a glass circle read as a white disc.
     var symbol: String {
         switch self {
         case .listening: return "waveform"
-        case .transcribing: return "ellipsis.circle.fill"
+        case .transcribing: return "ellipsis"
         case .cleaningUp: return "sparkles"
-        case .success: return "checkmark.circle.fill"
-        case .copiedOnly: return "doc.on.clipboard.fill"
-        case .failure: return "questionmark.circle.fill"
+        case .success: return "checkmark"
+        case .copiedOnly: return "clipboard"
+        case .failure: return "questionmark.circle"
         }
     }
 
@@ -123,14 +134,6 @@ enum DictationHUDVisualState: Equatable {
         case .success: return "Pasted"
         case .copiedOnly: return "Copied - press \u{2318}V to paste"
         case .failure(let message): return message
-        }
-    }
-
-    var tintHex: String {
-        switch self {
-        case .listening, .transcribing, .cleaningUp: return "#5AC8FA"
-        case .success: return "#34C759"
-        case .copiedOnly, .failure: return "#FF9F0A"
         }
     }
 
@@ -153,22 +156,40 @@ enum DictationHUDVisualState: Equatable {
 
 final class DictationHUDController {
     private var panel: NSPanel?
-    private var iconView: NSImageView!
-    private var titleLabel: NSTextField!
     private var pill: NSView!
+    private var surface: HelmHeroSurface!
+    private var glyphTile: NSView!
+    private var iconView: NSImageView!
+    private var kickerLabel: NSTextField!
+    private var titleLabel: NSTextField!
+    private var meter: DictationHUDMeter!
+    private var sweep: DictationHUDSweep!
 
     private var hideWorkItem: DispatchWorkItem?
 
     /// What the HUD is currently showing, so a live Reduce Motion change can
-    /// re-decide the pulse without a state change of its own.
+    /// re-decide the meter and the sweep without a state change of its own.
     private var currentState: DictationHUDVisualState?
+    /// The state the pill was last painted for. Unlike `currentState` it
+    /// survives the fade-out, so a theme change while the pill leaves keeps
+    /// its tone.
+    private var paintedState: DictationHUDVisualState = .listening
     private var reduceMotionObserver: NSObjectProtocol?
+    /// DH-2: the pill follows the theme. Kept, because a HUD can be released
+    /// before the app quits (every suite builds its own).
+    private var themeObservation: ThemeObservation?
 
     init() {
         // P7: on `NSWorkspace`'s notification center, which is where macOS
         // posts this - registered on the default center it never fired.
         reduceMotionObserver = HelmDisplayAccessibility.observeChanges { [weak self] in
-            self?.applyPulseAnimation()
+            self?.applyLiveAnimation()
+        }
+        // Fires at once, before the panel exists, and does nothing then:
+        // `ensurePanel` paints the pill itself once it has built it
+        // (`ThemeManager.swift`'s checklist, item 4).
+        themeObservation = ThemeManager.shared.observe { [weak self] theme in
+            self?.applyTheme(theme)
         }
     }
 
@@ -176,9 +197,9 @@ final class DictationHUDController {
         if let reduceMotionObserver {
             HelmDisplayAccessibility.stopObserving(reduceMotionObserver)
         }
-        // REL-30: the waveform's frame timer is only stopped by a state
-        // change, so a HUD released mid-dictation left it running.
-        variableTimer?.invalidate()
+        if let themeObservation {
+            ThemeManager.shared.unobserve(themeObservation)
+        }
     }
 
     /// Set the moment a real `.recording` status is seen, cleared the moment
@@ -258,12 +279,17 @@ final class DictationHUDController {
 
         let panel = ensurePanel()
         iconView.image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
-        iconView.contentTintColor = HelmTheme.nsColor(state.tintHex)
+            .withSymbolConfiguration(.init(pointSize: Self.glyphPointSize, weight: .semibold))
         titleLabel.stringValue = state.text
         let isNewState = currentState?.text != state.text
         currentState = state
-        applyPulseAnimation()
+        paintedState = state
+        // The meter only while listening, the sweep only while transcribing.
+        // Set before the pill is measured, because each changes its width.
+        meter.isHidden = state != .listening
+        sweep.isHidden = state != .transcribing
+        applyTheme(ThemeManager.shared.theme)
+        applyLiveAnimation()
 
         // A2: this panel is borderless, `ignoresMouseEvents`, and deliberately
         // never key - so nothing about it reaches VoiceOver on its own, and a
@@ -282,6 +308,7 @@ final class DictationHUDController {
                                             .priority: NSAccessibilityPriorityLevel.high.rawValue])
         }
 
+        sizePanel(panel)
         positionPanel(panel)
         let wasVisible = panel.isVisible
         panel.alphaValue = wasVisible ? panel.alphaValue : 0
@@ -326,7 +353,7 @@ final class DictationHUDController {
         hideWorkItem?.cancel()
         hideWorkItem = nil
         currentState = nil
-        stopPulsing()
+        applyLiveAnimation()
         guard let panel, panel.isVisible else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = HelmMotion.moveDuration
@@ -338,19 +365,36 @@ final class DictationHUDController {
 
     // MARK: Window construction
 
+    /// DH-2's pill: 52pt for the kicker over the headline (the old HUD was
+    /// 44pt), as wide as its words.
+    static let pillHeight: CGFloat = 52
+    static let glyphTileSide: CGFloat = 36
+    static let glyphPointSize: CGFloat = 15
+    static let headlineSize: CGFloat = 14
+    static let leadingInset: CGFloat = 8
+    static let trailingInset: CGFloat = 16
+    static let spacing: CGFloat = 10
+    /// The board's 6pt margin before the meter or the sweep.
+    static let liveGap: CGFloat = 6
+    /// The white hairline that separates the pill from a dark editor behind
+    /// it. Kept at the old HUD's strength, which was measured against a light
+    /// document.
+    static let hairlineAlpha: CGFloat = 0.22
+
     private func ensurePanel() -> NSPanel {
         if let panel { return panel }
 
-        let width: CGFloat = 220
-        let height: CGFloat = 44
+        let height = Self.pillHeight
         let newPanel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            contentRect: NSRect(x: 0, y: 0, width: 220, height: height),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         newPanel.isOpaque = false
         newPanel.backgroundColor = .clear
+        // The window's own shadow follows the capsule's alpha, and it is the
+        // shadow every floating panel over another app has.
         newPanel.hasShadow = true
         newPanel.level = .floating
         newPanel.ignoresMouseEvents = true
@@ -359,63 +403,81 @@ final class DictationHUDController {
         newPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         newPanel.alphaValue = 0
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: height))
         content.wantsLayer = true
 
-        // Review #3 §7 - see this file's header. A real system HUD material
-        // rather than a flat dark fill, so the HUD is translucent over
-        // whatever app the captain is dictating into instead of matching
-        // Dusk's own surfaces.
-        let pillView = NSVisualEffectView()
-        pillView.material = .hudWindow
-        pillView.blendingMode = .behindWindow
-        // `.active` rather than `.followsWindowActiveState`: this panel is a
-        // `.nonactivatingPanel` that must never become key, so the
-        // window-state default would leave the material permanently inactive
-        // (i.e. a flat fill again, which is the defect).
-        pillView.state = .active
-        // The material picks light or dark from the effective appearance, and
-        // this HUD's identity is fixed - a captain on an OS set to Light must
-        // still get the dark system-HUD look, exactly as Apple's own does.
-        pillView.appearance = NSAppearance(named: .vibrantDark)
+        let pillView = NSView()
         pillView.wantsLayer = true
-        pillView.layer?.cornerRadius = height / 2
-        // Without this the material draws square corners behind the rounded
-        // border, which reads as a rectangle with a ring painted on it.
-        pillView.layer?.masksToBounds = true
-        // Kept, and brighter than before: the hairline is what gives the
-        // capsule an edge against a light document underneath, where the
-        // material alone is nearly the same value as the page.
-        pillView.layer?.borderWidth = 1
-        pillView.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.22).cgColor
         pillView.translatesAutoresizingMaskIntoConstraints = false
         self.pill = pillView
 
+        // The Dictation hero gradient, clipped to the capsule. The capsule
+        // glow (`HelmHeroSurface` 1.3.0): the card's 220pt glow washed the
+        // right of a 52pt pill grey.
+        let surface = HelmHeroSurface()
+        surface.glowShape = .capsule
+        surface.layer?.cornerRadius = height / 2
+        surface.layer?.borderWidth = 1
+        pillView.addSubview(surface)
+        self.surface = surface
+
+        let tile = NSView()
+        tile.wantsLayer = true
+        tile.translatesAutoresizingMaskIntoConstraints = false
+        tile.layer?.cornerRadius = Self.glyphTileSide / 2
+        tile.layer?.borderWidth = 1
+        self.glyphTile = tile
+
         let icon = NSImageView()
-        icon.wantsLayer = true
-        icon.symbolConfiguration = .init(pointSize: 15, weight: .semibold)
-        icon.contentTintColor = .white
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.setAccessibilityElement(false)
+        tile.addSubview(icon)
         self.iconView = icon
 
+        let kicker = NSTextField(labelWithString: "")
+        kicker.translatesAutoresizingMaskIntoConstraints = false
+        self.kickerLabel = kicker
+
         let label = NSTextField(labelWithString: "")
-        label.setScaledFont(ofSize: 12.5, weight: .semibold)
-        label.textColor = .white
         label.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = label
 
-        let stack = NSStackView(views: [icon, label])
+        let words = NSStackView(views: [kicker, label])
+        words.orientation = .vertical
+        words.alignment = .leading
+        words.spacing = 1
+        words.translatesAutoresizingMaskIntoConstraints = false
+
+        let meter = DictationHUDMeter()
+        self.meter = meter
+        let sweep = DictationHUDSweep()
+        self.sweep = sweep
+
+        let stack = NSStackView(views: [tile, words, meter, sweep])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 8
+        stack.distribution = .fill
+        stack.spacing = Self.spacing
+        stack.setCustomSpacing(Self.spacing + Self.liveGap, after: words)
         stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in [tile, meter, sweep] as [NSView] {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
 
         pillView.addSubview(stack)
         content.addSubview(pillView)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -16),
+            surface.leadingAnchor.constraint(equalTo: pillView.leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: pillView.trailingAnchor),
+            surface.topAnchor.constraint(equalTo: pillView.topAnchor),
+            surface.bottomAnchor.constraint(equalTo: pillView.bottomAnchor),
+            tile.widthAnchor.constraint(equalToConstant: Self.glyphTileSide),
+            tile.heightAnchor.constraint(equalToConstant: Self.glyphTileSide),
+            icon.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: tile.centerYAnchor),
+            stack.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: Self.leadingInset),
+            stack.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -Self.trailingInset),
             stack.centerYAnchor.constraint(equalTo: pillView.centerYAnchor),
             pillView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             pillView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -425,7 +487,54 @@ final class DictationHUDController {
 
         newPanel.contentView = content
         self.panel = newPanel
+        applyTheme(ThemeManager.shared.theme)
         return newPanel
+    }
+
+    /// Paint the pill in `theme`, in the tone of the state it shows.
+    ///
+    /// `ThemeManager.swift`'s checklist: the appearance is forced too, to the
+    /// ink's, as every hero surface does - a white-ink gradient is a dark
+    /// surface, so anything resolving a system colour on it takes the dark
+    /// one, whatever the OS is set to.
+    private func applyTheme(_ theme: HelmTheme) {
+        guard panel != nil else { return }
+        let tone = DictationController.heroTone(DictationHeroWords.hudTone(paintedState), in: theme)
+        let palette = HelmHeroColumn.palette(for: tone, in: theme)
+        surface.apply(palette)
+        let ink = HelmContrast.color(palette.ink)
+        let darkInk = HelmContrast.relativeLuminance(palette.ink) < 0.5
+        panel?.contentView?.appearance = NSAppearance(named: darkInk ? .aqua : .darkAqua)
+        surface.layer?.borderColor = ink.withAlphaComponent(
+            HelmDisplayAccessibility.edgeAlpha(Self.hairlineAlpha)).cgColor
+        glyphTile.layer?.backgroundColor = ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha).cgColor
+        glyphTile.layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+        iconView.contentTintColor = ink
+        // Read again on every pass, so the interface text size reaches a HUD
+        // built before it changed.
+        kickerLabel.attributedStringValue = NSAttributedString(
+            string: DictationHeroWords.hudKicker.uppercased(),
+            attributes: HelmType.kickerAttributes(color: ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)))
+        titleLabel.font = HelmType.rounded(HelmType.scaled(Self.headlineSize), .bold)
+        titleLabel.textColor = ink
+        meter.applyInk(ink)
+        sweep.applyInk(ink)
+        if let panel, panel.isVisible {
+            sizePanel(panel)
+            positionPanel(panel)
+        }
+    }
+
+    /// As wide as the pill's words, at the pill's height.
+    private func sizePanel(_ panel: NSPanel) {
+        guard let content = panel.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let width = ceil(pill.fittingSize.width)
+        if abs(panel.frame.width - width) > 0.5 || abs(panel.frame.height - Self.pillHeight) > 0.5 {
+            panel.setContentSize(NSSize(width: width, height: Self.pillHeight))
+            content.layoutSubtreeIfNeeded()
+            panel.invalidateShadow()
+        }
     }
 
     /// Bottom-center of whichever screen currently has the mouse cursor
@@ -434,6 +543,17 @@ final class DictationHUDController {
     /// Fixed position, not cursor-tracked (out of scope for this pass, see
     /// this file's header).
     private func positionPanel(_ panel: NSPanel) {
+        #if FM_SELFTESTS
+        // A suite drives the real panel through the real `present`, and a
+        // panel at the bottom centre of the screen is on the captain's
+        // display (the stray-window class `OffScreenProbeWindow.swift`
+        // closed for every other suite). A borderless panel is not
+        // constrained to a screen, so parking it holds.
+        if ProcessMode.current == .selfTest {
+            panel.setFrameOrigin(OffScreenProbe.parkedOrigin)
+            return
+        }
+        #endif
         let mouseLocation = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouseLocation) } ?? NSScreen.main
         guard let screen else { return }
@@ -444,115 +564,41 @@ final class DictationHUDController {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    // MARK: Pulsing (listening state only)
+    // MARK: The meter and the sweep
 
     static let popInScale: CGFloat = 0.88
-    private static let pulseAnimationKey = "dictationHUD.pulse"
-    private var variableTimer: Timer?
-    private var variableFrames: [NSImage] = []
-    private var variableIndex = 0
 
-    /// GL-16: this pulse was the one looping animation in the app the earlier
-    /// Reduce Motion pass missed (the lock screen's boat/wave and the rail
-    /// mark's bob were both covered), and it is the most intrusive of the
-    /// three - it appears unprompted, over whatever app the captain is
-    /// dictating into. The icon still changes and the text still says
-    /// "Listening…", so nothing is lost by holding it still.
+    /// GL-16: the HUD's two loops appear unprompted over whatever app the
+    /// captain is dictating into, so Reduce Motion holds both still. The
+    /// meter keeps its bars and the sweep its arc, so nothing is lost but the
+    /// movement.
     ///
-    /// Driven from one place (rather than gated inside `startPulsing`) so the
-    /// live `accessibilityDisplayOptionsDidChangeNotification` observer and a
-    /// state change both reach the same decision - the same shape
-    /// `IconRailController.applyMarkAnimation` uses.
-    private func applyPulseAnimation() {
-        stopPulsing()
-        guard currentState == .listening,
-              !HelmMotion.isReduced else { return }
-        startPulsing()
-    }
-
-    private func startPulsing() {
-        // H3: "adopt SF Symbol variable-color animation for the waveform".
-        //
-        // `NSImageView.addSymbolEffect(.variableColor)` is macOS 14 and this
-        // package targets 13 (`Package.swift`), so this is the same *effect*
-        // built from the API that does exist there:
-        // `NSImage(systemSymbolName:variableValue:)`. `waveform` is a
-        // variable-value symbol, so stepping that value lights its bars in
-        // sequence - which is precisely what `.variableColor` animates.
-        //
-        // Stepped by a timer rather than by Core Animation because the frames
-        // are *different images*, not a property CA can interpolate. It is
-        // bounded: it only runs while the captain is physically holding the
-        // dictation key, and `stopPulsing` is reached from every exit.
-        if let frames = Self.waveformFrames(tintedLike: currentState), frames.count > 1 {
-            variableFrames = frames
-            variableIndex = 0
-            let timer = Timer.scheduledTimer(withTimeInterval: Self.variableFrameInterval,
-                                             repeats: true) { [weak self] _ in
-                self?.stepVariableFrame()
-            }
-            timer.tolerance = Self.variableFrameInterval / 4
-            RunLoop.main.add(timer, forMode: .common)
-            variableTimer = timer
-            return
-        }
-        // Fallback: a symbol with no variable-value rendering keeps the
-        // opacity pulse this shipped with. `NSImage(systemSymbolName:...)`
-        // returns nil silently, so this branch is reachable and must not
-        // leave the HUD looking static.
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = 1.0
-        animation.toValue = 0.35
-        animation.duration = 0.55
-        animation.autoreverses = true
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        iconView.layer?.add(animation, forKey: Self.pulseAnimationKey)
-    }
-
-    /// How fast the waveform's bars travel. Slow enough to read as a level
-    /// meter rather than a flicker, and cheap enough that it is a handful of
-    /// wake-ups over the couple of seconds a dictation actually lasts.
-    private static let variableFrameInterval: TimeInterval = 0.14
-
-    private static func waveformFrames(tintedLike state: DictationHUDVisualState?) -> [NSImage]? {
-        guard let symbol = state?.symbol else { return nil }
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-        let steps: [Double] = [0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25]
-        let frames = steps.compactMap {
-            NSImage(systemSymbolName: symbol, variableValue: $0, accessibilityDescription: nil)?
-                .withSymbolConfiguration(config)
-        }
-        return frames.count == steps.count ? frames : nil
-    }
-
-    private func stepVariableFrame() {
-        guard !variableFrames.isEmpty else { return }
-        variableIndex = (variableIndex + 1) % variableFrames.count
-        iconView.image = variableFrames[variableIndex]
-    }
-
-    private func stopPulsing() {
-        variableTimer?.invalidate()
-        variableTimer = nil
-        variableFrames = []
-        iconView.layer?.removeAnimation(forKey: Self.pulseAnimationKey)
-        iconView.layer?.opacity = 1
+    /// Driven from one place so the live
+    /// `accessibilityDisplayOptionsDidChangeNotification` observer and a state
+    /// change both reach the same decision - the same shape
+    /// `IconRailController.applyMarkAnimation` used.
+    private func applyLiveAnimation() {
+        guard panel != nil else { return }
+        let moving = !HelmMotion.isReduced
+        meter.setAnimating(currentState == .listening && moving)
+        sweep.setAnimating(currentState == .transcribing && moving)
     }
 
     #if FM_SELFTESTS
-    /// Whether the waveform is animating, either way it can.
-    var debugIsAnimatingIcon: Bool {
-        variableTimer != nil || iconView.layer?.animation(forKey: Self.pulseAnimationKey) != nil
-    }
-    var debugUsesVariableColor: Bool { variableTimer != nil }
-    /// REL-30: the waveform's frame timer, so a suite can watch its lifetime.
-    var debugVariableTimer: Timer? { variableTimer }
+    /// Whether the level meter is moving.
+    var debugIsAnimatingMeter: Bool { meter?.isAnimating ?? false }
+    /// Whether the transcribing sweep is turning.
+    var debugIsAnimatingSweep: Bool { sweep?.isAnimating ?? false }
+    var debugMeter: DictationHUDMeter? { meter }
+    var debugSweep: DictationHUDSweep? { sweep }
 
-    /// Review #3 §7: the pill, so a test can assert it is a real system-HUD
-    /// material rather than a flat fill in the app's own tones. Building the
-    /// panel is what creates it, so a caller must have driven a state first.
+    /// The capsule, so a suite can measure the hero pill. Building the panel
+    /// is what creates it, so a caller must have driven a state first.
     var debugPill: NSView? { pill }
+    var debugSurface: HelmHeroSurface? { surface }
+    var debugGlyphTile: NSView? { glyphTile }
+    var debugIconView: NSImageView? { iconView }
+    var debugPanel: NSPanel? { panel }
 
     /// `fm/grandline-dictation-autopaste-not-firing`: the actual painted
     /// title text - the surface a captain watching only this floating HUD
@@ -563,6 +609,187 @@ final class DictationHUDController {
     /// painted, not what was computed (this file's own AGENTS.md
     /// convention).
     var debugTitleText: String? { titleLabel?.stringValue }
+    var debugTitleLabel: NSTextField? { titleLabel }
+    /// DH-2: the kicker as painted, in capitals.
+    var debugKickerText: String? { kickerLabel?.stringValue }
+    var debugKickerLabel: NSTextField? { kickerLabel }
     var debugCurrentState: DictationHUDVisualState? { currentState }
+    #endif
+}
+
+// MARK: - DH-2's live marks
+
+/// The level meter while listening: seven bars in the ink, each rising and
+/// falling on its own phase, as the board draws them. A Core Animation loop
+/// on the render server, so listening costs the main thread nothing.
+///
+/// Under Reduce Motion the bars hold the board's still pattern, alternately
+/// 12pt and 7pt.
+final class DictationHUDMeter: NSView {
+
+    static let barCount = 7
+    static let barWidth: CGFloat = 3
+    static let barGap: CGFloat = 2.5
+    static let height: CGFloat = 22
+    /// A bar's two heights while moving, and its two still heights.
+    static let lowBar: CGFloat = 5
+    static let highBar: CGFloat = 20
+    static let stillTall: CGFloat = 12
+    static let stillShort: CGFloat = 7
+    static let barAlpha: CGFloat = 0.9
+    /// The board's period, an ambient loop.
+    static let meterLoopDuration: TimeInterval = 0.9
+    /// Each bar's place in that period, the board's own delays.
+    static let phases: [TimeInterval] = [0, 0.2, 0.45, 0.1, 0.6, 0.3, 0.75]
+    static let animationKey = "dictationHUD.meter"
+
+    private var bars: [CALayer] = []
+    private(set) var isAnimating = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        setAccessibilityElement(false)
+        for _ in 0..<Self.barCount {
+            let bar = CALayer()
+            bar.cornerRadius = Self.barWidth / 2
+            layer?.addSublayer(bar)
+            bars.append(bar)
+        }
+        let width = CGFloat(Self.barCount) * Self.barWidth + CGFloat(Self.barCount - 1) * Self.barGap
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: width),
+            heightAnchor.constraint(equalToConstant: Self.height),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func applyInk(_ ink: NSColor) {
+        HelmMotion.withoutActions {
+            for bar in bars { bar.backgroundColor = ink.withAlphaComponent(Self.barAlpha).cgColor }
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        HelmMotion.withoutActions {
+            for (index, bar) in bars.enumerated() {
+                let still = index.isMultiple(of: 2) ? Self.stillTall : Self.stillShort
+                bar.bounds = CGRect(x: 0, y: 0, width: Self.barWidth, height: still)
+                bar.position = CGPoint(x: CGFloat(index) * (Self.barWidth + Self.barGap) + Self.barWidth / 2,
+                                       y: bounds.midY)
+            }
+        }
+    }
+
+    /// Start or stop the bars. Stopped, they hold the still pattern.
+    func setAnimating(_ on: Bool) {
+        guard on != isAnimating else { return }
+        isAnimating = on
+        guard on else {
+            for bar in bars { bar.removeAnimation(forKey: Self.animationKey) }
+            return
+        }
+        let now = CACurrentMediaTime()
+        for (index, bar) in bars.enumerated() {
+            let animation = CAKeyframeAnimation(keyPath: "bounds.size.height")
+            animation.values = [Self.lowBar, Self.highBar, Self.lowBar]
+            animation.keyTimes = [0, 0.5, 1]
+            animation.timingFunctions = [CAMediaTimingFunction(name: .easeInEaseOut),
+                                         CAMediaTimingFunction(name: .easeInEaseOut)]
+            animation.duration = Self.meterLoopDuration
+            animation.repeatCount = .infinity
+            // A negative start puts each bar part-way through its loop at
+            // once, as the board's negative delays do.
+            animation.beginTime = now - Self.phases[index % Self.phases.count]
+            bar.add(animation, forKey: Self.animationKey)
+        }
+    }
+
+    #if FM_SELFTESTS
+    var debugBars: [CALayer] { bars }
+    #endif
+}
+
+/// The sweep while transcribing: a quarter arc turning on a faint ring, as
+/// the board draws it. Under Reduce Motion it holds still, with the arc at
+/// three quarters so it still reads as a ring that is working rather than as
+/// a gap.
+final class DictationHUDSweep: NSView {
+
+    static let side: CGFloat = 22
+    static let lineWidth: CGFloat = 2.5
+    static let trackAlpha: CGFloat = 0.3
+    static let movingArc: CGFloat = 0.25
+    static let stillArc: CGFloat = 0.75
+    /// The board's period, an ambient loop.
+    static let sweepLoopDuration: TimeInterval = 0.9
+    static let animationKey = "dictationHUD.sweep"
+
+    private let track = CAShapeLayer()
+    private let arc = CAShapeLayer()
+    private(set) var isAnimating = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        setAccessibilityElement(false)
+        for ring in [track, arc] {
+            ring.fillColor = nil
+            ring.lineWidth = Self.lineWidth
+            ring.lineCap = .round
+            layer?.addSublayer(ring)
+        }
+        arc.strokeEnd = Self.stillArc
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.side),
+            heightAnchor.constraint(equalToConstant: Self.side),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func applyInk(_ ink: NSColor) {
+        HelmMotion.withoutActions {
+            track.strokeColor = ink.withAlphaComponent(Self.trackAlpha).cgColor
+            arc.strokeColor = ink.cgColor
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        let inset = Self.lineWidth / 2
+        let path = CGPath(ellipseIn: bounds.insetBy(dx: inset, dy: inset), transform: nil)
+        HelmMotion.withoutActions {
+            for ring in [track, arc] {
+                ring.bounds = bounds
+                ring.position = CGPoint(x: bounds.midX, y: bounds.midY)
+                ring.path = path
+            }
+        }
+    }
+
+    func setAnimating(_ on: Bool) {
+        guard on != isAnimating else { return }
+        isAnimating = on
+        HelmMotion.withoutActions { arc.strokeEnd = on ? Self.movingArc : Self.stillArc }
+        guard on else {
+            arc.removeAnimation(forKey: Self.animationKey)
+            return
+        }
+        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+        animation.fromValue = 0
+        animation.toValue = -2 * Double.pi
+        animation.duration = Self.sweepLoopDuration
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        arc.add(animation, forKey: Self.animationKey)
+    }
+
+    #if FM_SELFTESTS
+    var debugArc: CAShapeLayer { arc }
     #endif
 }

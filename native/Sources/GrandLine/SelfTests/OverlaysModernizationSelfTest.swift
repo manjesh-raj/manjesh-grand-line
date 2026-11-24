@@ -24,7 +24,10 @@
 //      tell this whole section is about - and it looks fine until the row is
 //      highlighted.
 //   5. **H3's waveform animates and stops**, and Reduce Motion gets neither
-//      the animation nor a slower one.
+//      the animation nor a slower one. Since DH-2 that is the HUD's level
+//      meter while listening and its sweep while transcribing, and 5b is the
+//      hero pill itself: every state's words and tone, 4.5:1 on its own
+//      gradient in Lavender and Powder, and the theme followed live.
 //   6. **H4's sea is a gradient and the unlock field has a glow host.** Those
 //      are the two halves of that finding not already shipped; the rest of it
 //      (sky gradient, celestial glow, parallax) predates this and is pinned
@@ -55,7 +58,7 @@ enum OverlaysModernizationSelfTest {
                       checkPaletteFooterStrip,
                       checkMenuSymbolsAreTemplates,
                       checkDictationWaveform,
-                      checkDictationHUDIsASystemMaterial,
+                      checkDictationHUDIsAHeroPill,
                       checkLockScreenSeaAndField] {
             var ok = true
             check(&ok)
@@ -274,104 +277,202 @@ enum OverlaysModernizationSelfTest {
         }
     }
 
-    // MARK: 5. H3 - the waveform
+    // MARK: 5. H3 and DH-2 - the meter and the sweep
 
     private static func checkDictationWaveform(_ ok: inout Bool) {
-        print("\n-- H3: the waveform animates while listening and stops after --")
+        print("\n-- H3 + DH-2: the meter moves while listening, the sweep while transcribing, and both stop --")
         HelmMotion.reducedOverrideForTests = false
         let hud = DictationHUDController()
         var problems: [String] = []
 
         hud.handle(.recording)
-        if !hud.debugIsAnimatingIcon { problems.append("not animating while listening") }
-        // The macOS-13 equivalent of `.variableColor`: `waveform` is a
-        // variable-value symbol, so stepping that value lights its bars in
-        // sequence. If that ever stops resolving the opacity pulse still runs,
-        // which is why `debugIsAnimatingIcon` and this are separate reads.
-        if !hud.debugUsesVariableColor {
-            print("  NOTE the waveform fell back to the opacity pulse (variable value unavailable)")
+        let moving = hud.debugMeter?.debugBars.filter { $0.animation(forKey: DictationHUDMeter.animationKey) != nil } ?? []
+        if !hud.debugIsAnimatingMeter || moving.count != DictationHUDMeter.barCount {
+            problems.append("\(moving.count) of \(DictationHUDMeter.barCount) bars move while listening")
+        }
+        if hud.debugMeter?.isHidden != false || hud.debugSweep?.isHidden != true {
+            problems.append("listening does not show the meter alone")
+        }
+        hud.handle(.transcribing)
+        if hud.debugIsAnimatingMeter || hud.debugMeter?.isHidden != true {
+            problems.append("the meter still runs while transcribing")
+        }
+        if !hud.debugIsAnimatingSweep || hud.debugSweep?.isHidden != false
+            || hud.debugSweep?.debugArc.animation(forKey: DictationHUDSweep.animationKey) == nil {
+            problems.append("the sweep is not turning while transcribing")
         }
         hud.handle(.ready)
-        if hud.debugIsAnimatingIcon { problems.append("still animating after it stopped listening") }
+        if hud.debugIsAnimatingMeter || hud.debugIsAnimatingSweep {
+            problems.append("still moving after it stopped listening")
+        }
 
-        // Reduce Motion gets neither the animation nor a slower one.
+        // Reduce Motion gets neither, and the board's still pattern.
         HelmMotion.reducedOverrideForTests = true
         hud.handle(.recording)
-        if hud.debugIsAnimatingIcon { problems.append("Reduce Motion still animates") }
+        let still = hud.debugMeter?.debugBars.map(\.bounds.height) ?? []
+        if hud.debugIsAnimatingMeter
+            || hud.debugMeter?.debugBars.contains(where: { $0.animation(forKey: DictationHUDMeter.animationKey) != nil }) == true {
+            problems.append("Reduce Motion still moves the meter")
+        }
+        if still.count != DictationHUDMeter.barCount || still.first != DictationHUDMeter.stillTall
+            || still.dropFirst().first != DictationHUDMeter.stillShort {
+            problems.append("Reduce Motion's meter is \(still), not the still pattern")
+        }
+        hud.handle(.transcribing)
+        if hud.debugIsAnimatingSweep || hud.debugSweep?.debugArc.animation(forKey: DictationHUDSweep.animationKey) != nil {
+            problems.append("Reduce Motion still turns the sweep")
+        }
         hud.handle(.ready)
         HelmMotion.reducedOverrideForTests = nil
 
         if problems.isEmpty {
-            print("  OK   animates, stops, and holds still under Reduce Motion")
+            print("  OK   the meter and the sweep move, stop, and hold still under Reduce Motion")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false
         }
     }
 
-    // MARK: 5b. Review #3 §7 - the HUD reads as a system overlay, not as a card
+    // MARK: 5b. DH-2 - the HUD is the Dictation hero pill
 
-    /// The dictation HUD is a real system-HUD material, not a flat dark fill.
+    /// The dictation HUD is the Dictation hero pill in the app's theme, and
+    /// its words are legible on its own gradient.
     ///
-    /// The HUD is deliberately the one fixed-look surface in the app, and that
-    /// was fine while the app itself was light. Dusk is the default now, and a
-    /// flat `calibratedWhite: 0.08` pill sits within a few percent of Dusk's
-    /// own card and page surfaces - so the one overlay whose whole job is to
-    /// say "this is the system, not Grand Line" rendered in Grand Line's own
-    /// tones.
+    /// This reverses review #3 section 7's check, which asserted a system
+    /// material and a HUD that never read the theme. The reason is in
+    /// `DictationHUD.swift`'s header: the pill is opaque now, so its words are
+    /// measured against its own gradient rather than against whatever is
+    /// behind it, and that is what this asserts, in Lavender and Powder, for
+    /// every state's headline and tone.
     ///
-    /// What separates macOS's own volume/brightness HUD from an app's chrome
-    /// is translucency over whatever is genuinely behind it, which no flat
-    /// colour can imitate. So the assertions are about the mechanism that
-    /// produces that - the material, the blending mode, the state and the
-    /// pinned appearance - rather than about a sampled pixel, which in an
-    /// off-screen probe with nothing behind the panel would tell us nothing
-    /// about the property that matters.
-    ///
-    /// **Discriminating power first**: the pill only exists once a real state
-    /// has built the panel, so this asserts it is there before asserting
-    /// anything about it.
-    private static func checkDictationHUDIsASystemMaterial(_ ok: inout Bool) {
-        print("\n-- §7: the dictation HUD reads as a system overlay under any theme --")
-        let hud = DictationHUDController()
-        var problems: [String] = []
-
-        hud.handle(.recording)
-        guard let pill = hud.debugPill else {
-            print("  FAIL the HUD built no pill at all")
+    /// **Discriminating power first**: the accent and the amber palettes must
+    /// differ, or the tone checks could not tell them apart.
+    private static func checkDictationHUDIsAHeroPill(_ ok: inout Bool) {
+        print("\n-- DH-2: the dictation HUD is the Dictation hero pill, in the theme, legible on its own gradient --")
+        guard let lavender = HelmTheme.appTheme(id: "lavender"),
+              let powder = HelmTheme.appTheme(id: "powder") else {
+            print("  FAIL Lavender or Powder is missing - the checks below would be vacuous")
             ok = false
             return
         }
-        guard let effect = pill as? NSVisualEffectView else {
-            problems.append("the pill is a \(type(of: pill)), not an NSVisualEffectView - a flat fill cannot read as a system HUD")
-            for p in problems { print("  FAIL \(p)") }
-            ok = false
+        // Every state, driven through the real entry point. `wasActive` arms
+        // only on a real `.recording`, so each terminal state follows one.
+        let script: [(status: DictationStatus, words: String, amber: Bool)] = [
+            (.recording, "Listening\u{2026}", false),
+            (.transcribing, "Transcribing\u{2026}", false),
+            (.cleaningUp, "Cleaning up\u{2026}", false),
+            (.ready, "Pasted", false),
+            (.copiedOnly, "Copied - press \u{2318}V to paste", true),
+            (.didNotCatchThat, "Didn't catch that", true),
+            (.systemDictationDisabled, "System Dictation is off", true),
+        ]
+        for theme in [lavender, powder] {
+            ThemeManager.shared.setTheme(theme)
+            // The two tones from the kit's own primitives, not through
+            // `DictationController.heroTone`, so a HUD that drifts off the
+            // Dic-1 rule fails.
+            let quiet = Double(HelmHeroColumn.quietInkAlpha)
+            let accentPalette = HelmHeroSurface.palette(
+                accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)), quietInk: quiet)
+            let amberPalette = HelmHeroSurface.palette(
+                accent: HelmContrast.components(HelmTheme.nsColor(theme.ansiHex[3])), quietInk: quiet)
+            guard !sameColor(HelmContrast.color(accentPalette.start), HelmContrast.color(amberPalette.start)) else {
+                print("  FAIL \(theme.id): the accent and the amber are one colour - the tone checks would be vacuous")
+                ok = false
+                continue
+            }
+            let hud = DictationHUDController()
+            var problems: [String] = []
+            for step in script {
+                if step.status != .recording && step.status != .transcribing && step.status != .cleaningUp {
+                    hud.handle(.recording)
+                }
+                hud.handle(step.status)
+                let palette = step.amber ? amberPalette : accentPalette
+                if hud.debugTitleText != step.words {
+                    problems.append("\(step.status) reads \"\(hud.debugTitleText ?? "nil")\"")
+                }
+                if hud.debugKickerText != DictationHeroWords.hudKicker.uppercased() {
+                    problems.append("\(step.status)'s kicker reads \"\(hud.debugKickerText ?? "nil")\"")
+                }
+                let stops = hud.debugSurface?.debugGradientColors.compactMap { NSColor(cgColor: $0) } ?? []
+                if stops.count != 2 || !sameColor(stops[0], HelmContrast.color(palette.start))
+                    || !sameColor(stops[1], HelmContrast.color(palette.end)) {
+                    problems.append("\(step.status) is not on the \(step.amber ? "amber" : "accent") gradient")
+                }
+                // The words on the lighter stop, the worse of the two: the
+                // headline in the ink, the kicker at the quiet ink.
+                let ink = HelmContrast.color(palette.ink)
+                if !sameColor(hud.debugTitleLabel?.textColor, ink) {
+                    problems.append("\(step.status)'s headline is not the hero's ink")
+                }
+                let headline = HelmContrast.ratio(palette.ink, palette.lighterStop)
+                let kicker = HelmContrast.ratio(HelmContrast.mix(palette.ink, palette.lighterStop, quiet),
+                                                palette.lighterStop)
+                if headline < HelmContrast.textTarget || kicker < HelmContrast.textTarget {
+                    problems.append(String(format: "\(step.status): headline %.2f:1, kicker %.2f:1 on the lighter stop",
+                                           headline, kicker))
+                }
+            }
+            hud.handle(.recording)
+            if let pill = hud.debugPill, let surface = hud.debugSurface, let panel = hud.debugPanel {
+                if abs(pill.bounds.height - DictationHUDController.pillHeight) > 0.51 {
+                    problems.append("the pill is \(fmt(pill.bounds.height))pt tall, want \(fmt(DictationHUDController.pillHeight))")
+                }
+                if abs((surface.layer?.cornerRadius ?? 0) - DictationHUDController.pillHeight / 2) > 0.01
+                    || surface.layer?.masksToBounds != true {
+                    problems.append("the gradient is not clipped to a capsule")
+                }
+                // The white hairline that separates it from a dark editor.
+                let edge = surface.layer?.borderColor.flatMap { NSColor(cgColor: $0) }
+                if (surface.layer?.borderWidth ?? 0) < 1 || edge.map({ $0.alphaComponent < 0.15 }) ?? true {
+                    problems.append("no white hairline round the pill")
+                }
+                if surface.glowShape != .capsule { problems.append("the pill draws the card's glow") }
+                if hud.debugGlyphTile.map({ abs($0.frame.width - DictationHUDController.glyphTileSide) > 0.51 }) ?? true {
+                    problems.append("no \(fmt(DictationHUDController.glyphTileSide))pt glass glyph tile")
+                }
+                // The panel the HUD has always been: non-activating, never
+                // key, click-through, floating, with a window shadow.
+                if !panel.styleMask.contains(.nonactivatingPanel) || panel.canBecomeKey || !panel.ignoresMouseEvents
+                    || panel.level != .floating || !panel.hasShadow {
+                    problems.append("the panel is no longer a non-activating, click-through floating panel")
+                }
+                if abs(panel.frame.width - ceil(pill.fittingSize.width)) > 0.51 {
+                    problems.append("the panel is \(fmt(panel.frame.width))pt for a \(fmt(pill.fittingSize.width))pt pill")
+                }
+                // ThemeManager's checklist, item 2: a white-ink gradient is a
+                // dark surface, whatever the OS is set to.
+                if panel.contentView?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) != .darkAqua {
+                    problems.append("the pill does not force the dark appearance under its white ink")
+                }
+                // A self-test never puts the HUD on the captain's display.
+                if !OffScreenProbe.isInvisible(panel) {
+                    problems.append("the HUD panel is on a display during a self-test: \(panel.frame)")
+                }
+            } else {
+                problems.append("the HUD built no pill")
+            }
+            // It follows the theme while it is up.
+            let other = theme.id == lavender.id ? powder : lavender
+            ThemeManager.shared.setTheme(other)
+            let followed = HelmHeroSurface.palette(
+                accent: HelmContrast.components(HelmTheme.nsColor(other.heroAccentHex)), quietInk: quiet)
+            let live = hud.debugSurface?.debugGradientColors.compactMap { NSColor(cgColor: $0) } ?? []
+            if live.first.map({ !sameColor($0, HelmContrast.color(followed.start)) }) ?? true {
+                problems.append("a theme change did not repaint the HUD")
+            }
+            ThemeManager.shared.setTheme(theme)
             hud.handle(.ready)
-            return
+            if problems.isEmpty {
+                print("  OK   \(theme.id): every state's words on the accent or the amber gradient, 4.5:1, "
+                      + "a 52pt capsule with a hairline, follows the theme, off every display")
+            } else {
+                for p in problems { print("  FAIL \(theme.id): \(p)") }
+                ok = false
+            }
         }
-        if effect.material != .hudWindow {
-            problems.append("material is \(effect.material.rawValue), expected .hudWindow")
-        }
-        if effect.blendingMode != .behindWindow {
-            problems.append("blending is \(effect.blendingMode.rawValue) - only .behindWindow composites against the app underneath")
-        }
-        if effect.state != .active {
-            problems.append("state is \(effect.state.rawValue) - a nonactivating panel never becomes key, so .followsWindowActiveState leaves the material inactive")
-        }
-        if effect.appearance?.name != .vibrantDark {
-            problems.append("appearance is \(effect.appearance?.name.rawValue ?? "nil"), expected vibrantDark so the HUD looks the same on a Light OS")
-        }
-        // The capsule has to clip the material, or it draws square corners
-        // behind the rounded border.
-        if effect.layer?.masksToBounds != true {
-            problems.append("the material is not clipped to the capsule")
-        }
-        if (effect.layer?.cornerRadius ?? 0) <= 0 {
-            problems.append("no corner radius on the pill")
-        }
-        // And it is still not theme-aware: nothing in this file reaches
-        // `ThemeManager`, which is what keeps the HUD identical over every
-        // app the captain dictates into.
+        // And the file says so: it observes the theme and draws no material.
         if let dir = SelfTestSources.appSourceDirectory(),
            let raw = try? String(contentsOf: dir.appendingPathComponent("DictationHUD.swift"), encoding: .utf8) {
             let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
@@ -379,18 +480,16 @@ enum OverlaysModernizationSelfTest {
                     guard let slashes = line.range(of: "//") else { return line }
                     return line[line.startIndex..<slashes.lowerBound]
                 }.joined(separator: "\n")
-            if code.contains("ThemeManager") {
-                problems.append("the HUD must not follow the app's theme - it floats over other apps")
+            if !code.contains("ThemeManager.shared.observe") {
+                print("  FAIL the HUD no longer observes the theme")
+                ok = false
+            }
+            if code.contains("NSVisualEffectView") {
+                print("  FAIL the HUD draws a system material again - its words would depend on what is behind it")
+                ok = false
             }
         } else {
-            problems.append("could not read DictationHUD.swift - this half of the check silently passes otherwise")
-        }
-        hud.handle(.ready)
-
-        if problems.isEmpty {
-            print("  OK   .hudWindow material, behind-window blending, active, vibrantDark, clipped, theme-free")
-        } else {
-            for p in problems { print("  FAIL \(p)") }
+            print("  FAIL could not read DictationHUD.swift - this half of the check silently passes otherwise")
             ok = false
         }
     }

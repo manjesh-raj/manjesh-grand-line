@@ -269,6 +269,7 @@ enum HelmKit {
         Component("Lock screen", "1.0.0", file: "LockScreenController.swift"),
         Component("Notifications panel", "1.0.0", file: "NotificationBridgePanel.swift"),
         Component("Toasts", "1.0.0", file: "Toast.swift"),
+        Component("Dictation HUD", "1.0.0", file: "DictationHUD.swift"),
     ]
 
     struct SourceDigest {

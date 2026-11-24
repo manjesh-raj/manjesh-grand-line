@@ -107,33 +107,45 @@ enum DictationAutopasteHUDSelfTest {
         hud.handle(.ready) // Let it settle back to a real terminal state before teardown.
     }
 
-    /// REL-30: the waveform's frame timer is stopped only by a state change,
+    /// REL-30: the waveform's frame timer was stopped only by a state change,
     /// so a HUD released mid-dictation left it firing for the rest of the
-    /// process. Its `deinit` invalidates it now.
+    /// process. DH-2 replaced that waveform with a level meter that runs on the
+    /// render server, so the strongest form of the old check is that listening
+    /// schedules no timer at all, and that a released HUD still deallocates.
     private static func checkAReleasedHUDStopsItsWaveformTimer(_ ok: inout Bool) {
-        print("\n-- REL-30: a HUD released while listening stops its waveform timer --")
+        print("\n-- REL-30: listening runs no timer, and a HUD released while listening deallocates --")
         let saved = HelmMotion.reducedOverrideForTests
         HelmMotion.reducedOverrideForTests = false
         defer { HelmMotion.reducedOverrideForTests = saved }
-        var timer: Timer?
         weak var released: DictationHUDController?
+        var wasMoving = false
         autoreleasepool {
             let hud = DictationHUDController()
             hud.handle(.recording)
-            timer = hud.debugVariableTimer
+            wasMoving = hud.debugIsAnimatingMeter
             released = hud
         }
-        guard let timer, released == nil else {
-            print("  FAIL REL-30: the fixture needs a running waveform timer and a HUD that deallocates "
-                  + "(timer: \(timer != nil), released: \(released == nil))")
-            ok = false
-            return
-        }
-        if timer.isValid {
-            print("  FAIL REL-30: the waveform timer is still scheduled after its HUD was released")
-            ok = false
+        var problems: [String] = []
+        if !wasMoving { problems.append("the fixture needs a moving meter - the check would be vacuous") }
+        if released != nil { problems.append("a HUD released while listening did not deallocate") }
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let raw = try? String(contentsOf: dir.appendingPathComponent("DictationHUD.swift"), encoding: .utf8) {
+            let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { line -> Substring in
+                    guard let slashes = line.range(of: "//") else { return line }
+                    return line[line.startIndex..<slashes.lowerBound]
+                }.joined(separator: "\n")
+            if code.contains("Timer.scheduledTimer") || code.contains("Timer(") {
+                problems.append("the HUD schedules a timer again - a released HUD would leave it running")
+            }
         } else {
-            print("  OK   the waveform timer was invalidated with its HUD")
+            problems.append("could not read DictationHUD.swift - the timer guard would silently pass")
+        }
+        if problems.isEmpty {
+            print("  OK   the meter is a render-server loop, no timer, and the HUD deallocates")
+        } else {
+            for p in problems { print("  FAIL REL-30: \(p)") }
+            ok = false
         }
     }
 

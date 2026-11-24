@@ -173,6 +173,28 @@ enum DictationDataSelfTest {
         check(DictationHeroWords.libraryLine(words: 0, dictations: 0)
                 == "No words in your vocabulary yet, no dictations kept yet.",
               "Dic-1: an empty library reads \"\(DictationHeroWords.libraryLine(words: 0, dictations: 0))\"", &ok)
+
+        // DH-2: the floating HUD's kicker, its headline per state and its tone.
+        // The kicker is constant and never repeats the headline, which is what
+        // the captain caught in the board's first draft.
+        check(DictationHeroWords.hudKicker == "Dictation \u{00B7} Grand Line",
+              "DH-2: the HUD's kicker reads \"\(DictationHeroWords.hudKicker)\"", &ok)
+        let hudStates: [(DictationHUDVisualState, String, DictationHeroWords.Tone)] = [
+            (.listening, "Listening\u{2026}", .accent),
+            (.transcribing, "Transcribing\u{2026}", .accent),
+            (.cleaningUp, "Cleaning up\u{2026}", .accent),
+            (.success, "Pasted", .accent),
+            (.copiedOnly, "Copied - press \u{2318}V to paste", .amber),
+            (.failure("Didn't catch that"), "Didn't catch that", .amber),
+            (.failure("System Dictation is off"), "System Dictation is off", .amber),
+        ]
+        for (state, words, tone) in hudStates {
+            check(state.text == words, "DH-2: the HUD's headline for \(state) reads \"\(state.text)\"", &ok)
+            check(DictationHeroWords.hudTone(state) == tone,
+                  "DH-2: \(state) is \(DictationHeroWords.hudTone(state)), want \(tone)", &ok)
+            check(!DictationHeroWords.hudKicker.lowercased().contains(words.lowercased().prefix(6)),
+                  "DH-2: the kicker repeats \(state)'s headline", &ok)
+        }
     }
 
     /// `.command.rawValue | .shift.rawValue`, spelled out as a plain

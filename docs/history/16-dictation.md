@@ -220,3 +220,39 @@
 
   **Not verified here.**
   The page was not opened in the captain's running app, and no real permission was requested or granted. The permission states were driven through `debugSetStatus`.
+
+- **DH-2 Hero pill: the floating HUD is the Dictation hero gradient in miniature (Helm 10.4.0, PR 631).**
+  The captain picked DH-2 from the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, stage `stage-hud`).
+  The pill paints `HelmHeroColumn.palette(for:in:)` on `DictationController.heroTone`, the Dic-1 panel's two tones, now static so both surfaces read one rule.
+  It is the accent while dictation is going right, and the theme's amber (`ansiHex[3]`) for "Copied - press ⌘V to paste" and the two failures, where the old HUD's orange was (`DictationHeroWords.hudTone`).
+  A 36pt glass tile holds the state's glyph, now line glyphs (a filled circle glyph inside a glass circle read as a white disc).
+  The kicker is the constant "Dictation · Grand Line" (`DictationHeroWords.hudKicker`), and the headline is `DictationHUDVisualState.text`, unchanged.
+  The pill grew from 44pt to 52pt for the kicker, and the panel is as wide as the pill's words, re-centred on every state.
+  A level meter of seven bars runs while listening and a sweep turns while transcribing, both Core Animation loops on the render server, both still under Reduce Motion.
+  They replace H3's variable-colour waveform, which stepped a symbol's frames on a 0.14s main-thread timer, so REL-30's timer leak cannot recur.
+  Neither is wired to the microphone: like the waveform, they show that something is happening rather than measure it.
+
+  **It reverses review #3 section 7, deliberately.**
+  Section 7 kept the HUD out of the theme and made it an `NSVisualEffectView` (`.hudWindow`, `.behindWindow`, pinned `.vibrantDark`), because a flat dark fill read as one more Dusk card, and because a pill whose words sit on what is behind it must adapt to that.
+  The hero pill is opaque, so its words are measured against its own gradient: white clears 4.5:1 on the lighter stop, and the 80% kicker does too, in every state, in Lavender and Powder (asserted).
+  A window shadow and a white hairline (22%, the old HUD's measured strength) separate it from a light document or a dark editor.
+  So it follows the theme (`ThemeManager.shared.observe`, kept and released in `deinit`), with the appearance forced to the ink's, and it reads as Grand Line over any app.
+  AGENTS.md gotcha (8) still names this HUD as the one legitimate `.behindWindow` case, and that sentence is now out of date.
+
+  **Where the design did not hold as drawn.**
+  - The board's kicker is 10pt, and the kit's kicker is 11pt, the floor every scaled size is clamped to, so the pill is about 20pt wider than the board's.
+  - The kit's card-sized glow washed the right of a 52pt pill grey, so the pill uses `HelmHeroSurface`'s new capsule glow (TO-1's toast needed the same).
+  - The board's Powder amber is Catppuccin Mocha's pale yellow, and the app's is the theme's own `ansiHex[3]`, as Dic-1 paints it, so the Powder failure pill is a warmer brown than the board's.
+  - The board's pill shadow is a CSS box-shadow, and the app's is the window's own shadow, which follows the capsule and is not in an off-screen render.
+
+  **The self-test panel is parked off every display.**
+  The two HUD suites drive the real panel through the real `present`, and that put a HUD at the bottom centre of the captain's screen on every run (the stray-window class `OffScreenProbeWindow.swift` closed for every other suite).
+  In a self-test process `positionPanel` parks it at `OffScreenProbe.parkedOrigin`, and `OverlaysModernizationSelfTest` asserts `OffScreenProbe.isInvisible` on it.
+
+  **Verified.**
+  `DictationDataSelfTest` (headless) asserts the kicker, every state's headline and its tone.
+  `OverlaysModernizationSelfTest` replaces section 7's material check with the hero pill in Lavender and Powder: every state's words, its accent or amber gradient against the kit's own quiet-ink rule, 4.5:1 for the headline and the kicker, the 52pt capsule, the hairline, the capsule glow, the glass tile, the panel still non-activating and click-through, the panel as wide as the pill, the dark appearance, a live theme change repainting it, and the panel off every display.
+  Its H3 check now drives the meter and the sweep, and holds both still under Reduce Motion.
+  `DictationAutopasteHUDSelfTest`'s REL-30 check asserts that a released HUD deallocates and that the file schedules no timer.
+  Off-screen renders of all seven states in Lavender and Powder were compared with the board, and the copied glyph moved from `doc.on.clipboard` to `clipboard` to match the board's.
+  Not verified: the HUD over a real other app, and the window shadow, which an off-screen render does not draw.
