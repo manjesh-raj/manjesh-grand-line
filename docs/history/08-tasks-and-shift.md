@@ -241,3 +241,46 @@ From the five-screen redesign board they picked Tf-2: the band's figures are the
 Two layout traps were found in the renders. A figure button is a plain view with no intrinsic size, so it took the band's slack until it reported its words' width (gotcha (12)). The ring's caption is wider than the ring, and a vertical stack held it to the ring's width, so the ring column became a plain view at least as wide as either.
 
 `TasksSecretsHeroViewSelfTest` drives the figures and pills through their own click paths. Unwiring the band's scope callback fails five of its cases, and putting the grey line back fails one.
+
+## The task sheet opens on its record preview (TK-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain picked TK-1 "Record preview sheet" for the New Task and Edit Task sheet from the hero restyle board (`data/grandline-hero-restyle-designs-scout/`).
+It brings the sheet into the hero language the host and key forms already speak (Host-1).
+
+- The sheet opens on the task's own card, as the board will draw it, on the quiet-ink hero gradient.
+  It is `RecordPreviewHeader` in a new `.sheet` style, mounted through `HelmFormSheet.setHeroHeader` (Helm `HelmFormSheet` 1.2.0).
+- The kicker is "New task · not saved yet", or "Edit task · Board › In Progress" with the task's real column.
+  The card shows the title, a High badge, the due date and the project, and the facts under it are the priority, project, repeat, reminder and tags.
+- The card is drawn from the task Save would write right now (`assembledTask()`), on every keystroke and every pick.
+  So its title is the title as it will be saved, without the date words Save lifts out (U16), and they come back the moment the Detected line is dismissed.
+  `TaskHeroWords.savedTitle` is the one copy of that rule, and Save calls it too.
+- The title is still the first field and the first responder, now a raised prominent well set in the rounded face.
+- The five sections are numbered cards with raised wells on the page's ground, the Host-1 recipe.
+  The tag well needed the raised option too (`HelmChipInput` 1.1.0).
+- The tip, the Detected line, every control, the keys, the validation, the focus order, the 520 by 760 sheet and every outcome are unchanged.
+  "Something to do." went with the heading block the hero replaced.
+
+Where the design did not hold as drawn:
+
+- The hero stays put while the fields scroll, as the panel's header does, where the board's mock scrolls it away with them.
+  The card is the point of the design, and it is the thing that would scroll out of sight while the captain edits Tags or Description.
+- The hero first took the whole sheet: nothing tied its height, and Auto Layout handed it all 640pt between the top and the footer, leaving the fields 0pt tall.
+  `setHeroHeader` holds it to its content at a low priority, the fix the panel's empty header slot already needed.
+- The card's subtitle words the date as the Detected line does ("Tomorrow at 3:00 PM"), not the board's "Wed 25 Nov, 3:00 PM".
+- The title well is the kit's prominent 40pt well, not the board's 46pt, and the section numbers are the kit's accent chips, not bare mono digits.
+  The kicker is the kit's 11pt, the badge keeps Host-1's chip, and Powder's raised well lifts toward ink where the board's is darker than the card.
+- The When panel's date field, pop-ups and steppers keep their inset wells.
+  They have no raised option and the panel is shared with the calendar's popover, so the spec's "When stays as today" won over the board's raised `.selb`.
+- The card's facts wrap through `ChipFlowView`, which gained its spacing as options and clamps a chip wider than the line.
+
+Two things found while reading, both left alone and both older than TK-1:
+
+- Host-1's and Key-1's panel header paints its kicker at 85% ink on the plain palette, which measures under 4.5:1 on 18 of the 26 app themes (3.73:1 on Daylight).
+  The `.sheet` style uses the quiet-ink palette for that reason. The panel style is unchanged here.
+- A sticky note promoted to a task opens this sheet with the prefill passed as `task`, so it says Edit task, Save and Delete for a task that does not exist yet.
+
+Verification: `ReviewUIUXSelfTest` asserts `TaskHeroWords`, drives the real sheet headless (typing, the menus' item actions, a tag, the When panel's Tomorrow button, Save, the dismissal) and sweeps the painted hero ink over every app theme.
+`DaylightChromeSelfTest` mounts the sheet in a window in Lavender and Powder: the title is first responder once the window is ordered in, the hero spans the top with the title well 14pt under it, the palette and contrast (kicker 4.96:1 and 4.99:1, facts 7.83:1 and 7.84:1), the raised wells, the page's ground in the bitmap, a theme change, and a long title, project and nine facts keeping the sheet at 520pt.
+Its nine-sheet recipe check asserts the hero on the task sheet and its absence on the other eight.
+Each check was confirmed against an injected regression.
+Removing the explicit first-responder call did not fail, because AppKit's own key-view pick lands on the title too, so that check was confirmed by taking the responder away instead.

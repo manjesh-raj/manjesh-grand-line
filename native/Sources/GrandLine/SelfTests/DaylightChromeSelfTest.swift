@@ -79,7 +79,8 @@ enum DaylightChromeSelfTest {
                       checkNotificationPanelGhostAction,
                       checkToastRecipe,
                       checkEmptyStatePlate,
-                      checkAttachmentWell] {
+                      checkAttachmentWell,
+                      checkTaskSheetRecordPreview] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -186,33 +187,29 @@ enum DaylightChromeSelfTest {
             let g = form.debugDaylightGeometry
 
             var problems: [String] = []
-            if !sameColor(form.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }, card) {
-                problems.append("ground is not `card`")
+            // TK-1: the task sheet opens on a hero (`setHeroHeader`), which
+            // takes the heading block's place and the ribbon's, and puts its
+            // cards on the page's ground. Every other sheet keeps §6.10's
+            // header, which is also what proves the hero is opt-in.
+            let wantsHero = name == "Task"
+            if wantsHero != (form.heroHeader != nil) {
+                problems.append(wantsHero ? "no hero header" : "a hero header it never asked for")
             }
-            if g.ribbonHidden { problems.append("no domain ribbon") }
-            if abs(g.ribbonHeight - HelmFormSheet.ribbonHeight) > 0.01 {
-                problems.append("ribbon \(fmt(g.ribbonHeight))pt, want \(fmt(HelmFormSheet.ribbonHeight))")
-            }
-            let expectedPair = g.hue.pair(in: theme)
-            if g.ribbonColors.count != 2
-                || !sameColor(g.ribbonColors.first, expectedPair.h1)
-                || !sameColor(g.ribbonColors.last, expectedPair.h2) {
-                problems.append("ribbon is not \(g.hue)'s own pair")
-            }
-            if g.headingFont?.pointSize != HelmType.scaled(20) {
-                problems.append("heading \(g.headingFont.map { fmt($0.pointSize) } ?? "nil"), want 20")
-            }
-            if g.subtitleText.isEmpty || g.subtitleHidden { problems.append("no header subtitle") }
-            if !sameColor(g.subtitleColor, muted) { problems.append("subtitle is not `muted`") }
-            if g.closeHidden { problems.append("no close square") }
-            if abs(g.closeSide - HelmFormSheet.closeSquareSide) > 0.51 {
-                problems.append("close square \(fmt(g.closeSide))pt, want \(fmt(HelmFormSheet.closeSquareSide))")
-            }
-            if abs(g.closeRadius - HelmMetrics.dTileSmall) > 0.01 {
-                problems.append("close radius \(fmt(g.closeRadius)), want \(fmt(HelmMetrics.dTileSmall))")
-            }
-            if !sameColor(g.closeFill, HelmField.fill(theme)) {
-                problems.append("close square is not an `inset` fill")
+            if form.heroHeader != nil {
+                if !sameColor(form.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
+                              HelmTheme.nsColor(theme.backgroundHex)) {
+                    problems.append("ground under the cards is not the page's")
+                }
+                if !g.ribbonHidden || g.ribbonHeight != 0 { problems.append("the ribbon still shows over the hero") }
+                if !g.closeHidden { problems.append("the close square still shows under the hero") }
+                if form.accessibilityLabel() != "New Task" {
+                    problems.append("the sheet is labelled \(String(describing: form.accessibilityLabel())), want New Task")
+                }
+            } else {
+                if !sameColor(form.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }, card) {
+                    problems.append("ground is not `card`")
+                }
+                headerChecks(g, theme: theme, muted: muted, into: &problems)
             }
             // F2c inverted this. The hint used to be one mono label holding
             // "⌘⏎ to save"; it is `HelmKeyHint` keycaps plus a caption now, so
@@ -264,6 +261,38 @@ enum DaylightChromeSelfTest {
             ok = false
         } else {
             print("  OK   \(sheetsWithKeycaps) sheets render the shortcut as keycaps")
+        }
+    }
+
+    /// §6.10's header block, for a sheet that has one (every sheet but a
+    /// hero-headed one): the ribbon, the heading, the subtitle and the close
+    /// square.
+    private static func headerChecks(_ g: HelmFormSheet.DaylightGeometry, theme: HelmTheme, muted: NSColor,
+                                     into problems: inout [String]) {
+        if g.ribbonHidden { problems.append("no domain ribbon") }
+        if abs(g.ribbonHeight - HelmFormSheet.ribbonHeight) > 0.01 {
+            problems.append("ribbon \(fmt(g.ribbonHeight))pt, want \(fmt(HelmFormSheet.ribbonHeight))")
+        }
+        let expectedPair = g.hue.pair(in: theme)
+        if g.ribbonColors.count != 2
+            || !sameColor(g.ribbonColors.first, expectedPair.h1)
+            || !sameColor(g.ribbonColors.last, expectedPair.h2) {
+            problems.append("ribbon is not \(g.hue)'s own pair")
+        }
+        if g.headingFont?.pointSize != HelmType.scaled(20) {
+            problems.append("heading \(g.headingFont.map { fmt($0.pointSize) } ?? "nil"), want 20")
+        }
+        if g.subtitleText.isEmpty || g.subtitleHidden { problems.append("no header subtitle") }
+        if !sameColor(g.subtitleColor, muted) { problems.append("subtitle is not `muted`") }
+        if g.closeHidden { problems.append("no close square") }
+        if abs(g.closeSide - HelmFormSheet.closeSquareSide) > 0.51 {
+            problems.append("close square \(fmt(g.closeSide))pt, want \(fmt(HelmFormSheet.closeSquareSide))")
+        }
+        if abs(g.closeRadius - HelmMetrics.dTileSmall) > 0.01 {
+            problems.append("close radius \(fmt(g.closeRadius)), want \(fmt(HelmMetrics.dTileSmall))")
+        }
+        if !sameColor(g.closeFill, HelmField.fill(theme)) {
+            problems.append("close square is not an `inset` fill")
         }
     }
 
@@ -1015,6 +1044,242 @@ enum DaylightChromeSelfTest {
             ok = false
         }
         ThemeManager.shared.setTheme(daylight)
+    }
+
+    // MARK: 10. TK-1: the task sheet opens on its record preview
+
+    /// The hero restyle board's TK-1, the captain's pick for the New Task and
+    /// Edit Task sheet, on the real sheet in a real window and in the board's
+    /// two registers: the hero across the top on the quiet-ink rule, the
+    /// title still the first responder in a raised well under it, the
+    /// sections as cards on the page's ground, and nothing in the hero able
+    /// to widen the window (gotcha (13)).
+    private static func checkTaskSheetRecordPreview(_ ok: inout Bool) {
+        print("\n-- TK-1: the task sheet opens on its record preview --")
+        for id in ["lavender", "powder"] {
+            guard let theme = HelmTheme.appTheme(id: id) else {
+                print("  FAIL \(id) is not an app theme any more - the fixture is stale")
+                ok = false
+                continue
+            }
+            ThemeManager.shared.setTheme(theme)
+            autoreleasepool { checkTaskSheet(in: theme, &ok) }
+        }
+        autoreleasepool { checkTaskSheetHoldsItsWidth(&ok) }
+        autoreleasepool { checkTaskSheetFollowsTheTheme(&ok) }
+        ThemeManager.shared.setTheme(daylight)
+    }
+
+    /// Lets AppKit finish what ordering a window in starts (`viewDidAppear`,
+    /// the first responder) and lays the sheet out.
+    private static func settle(_ view: NSView) {
+        for _ in 0..<3 {
+            view.layoutSubtreeIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+    }
+
+    private static func checkTaskSheet(in theme: HelmTheme, _ ok: inout Bool) {
+        let editor = ShiftTaskEditorController(task: nil, projects: [])
+        let window = OffScreenProbe.window(width: HelmFormSheet.width, height: ShiftTaskEditorController.sheetHeight)
+        defer { window.orderOut(nil) }
+        window.contentViewController = editor
+        // Ordering the window in is what runs `viewDidAppear`, where the
+        // sheet has always put the title field first.
+        window.orderFront(nil)
+        guard let form = editor.view as? HelmFormSheet else {
+            print("  FAIL \(theme.id): the task editor's root is not a HelmFormSheet")
+            ok = false
+            return
+        }
+        settle(form)
+        var problems: [String] = []
+
+        let responder = window.firstResponder
+        let title = editor.debugTitleField
+        let titleFirst = responder === title
+            || ((responder as? NSText)?.delegate as? NSTextField) === title
+        if !titleFirst { problems.append("the first responder on open is \(String(describing: responder)), not the title") }
+
+        // The hero: the sheet's own head, edge to edge at the top.
+        let hero = editor.debugPreview
+        if form.heroHeader !== hero { problems.append("the sheet's hero is not the task's preview card") }
+        let heroRect = hero.convert(hero.bounds, to: form)
+        if abs(heroRect.minX) > 0.5 || abs(heroRect.width - form.bounds.width) > 0.5
+            || abs(heroRect.maxY - form.bounds.maxY) > 0.5 {
+            problems.append("the hero sits at \(heroRect) in a \(form.bounds.size) sheet, not across its top")
+        }
+        if hero.debugCornerRadius != 0 { problems.append("the hero is rounded (\(hero.debugCornerRadius)) at the sheet's edge") }
+        // The scrolling fields still get the sheet: the title well sits the
+        // board's 14pt under the hero (measured, an unheld hero took all
+        // 640pt and left the fields 0pt tall).
+        let titleRect = title.convert(title.bounds, to: form)
+        let gap = heroRect.minY - titleRect.maxY
+        if abs(gap - HelmFormSheet.heroGap) > 1 || titleRect.height < 1 {
+            problems.append("the title well is \(fmt(gap))pt under the hero (want \(fmt(HelmFormSheet.heroGap))), "
+                            + "\(fmt(titleRect.height))pt tall")
+        }
+        if heroRect.height > 200 { problems.append("the hero is \(fmt(heroRect.height))pt tall for one line of facts") }
+
+        // The palette is the kit's quiet-ink rule on the theme's hero colour.
+        let quiet = HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+                                            quietInk: Double(HelmHeroColumn.quietInkAlpha))
+        let stops = hero.debugGradientColors.compactMap { NSColor(cgColor: $0) }
+        if stops.count != 2 || !sameColor(stops.first, HelmContrast.color(quiet.start))
+            || !sameColor(stops.last, HelmContrast.color(quiet.end)) {
+            problems.append("the hero is not on the quiet-ink palette")
+        }
+        let lighter = quiet.lighterStop
+        var kickerRatio = 0.0
+        if let kicker = hero.debugKickerColor {
+            kickerRatio = HelmContrast.ratio(over(kicker, lighter), lighter)
+        }
+        if kickerRatio < HelmContrast.textTarget { problems.append("the kicker measures \(ratioText(kickerRatio)):1") }
+        var factRatio = Double.infinity
+        for (text, fill, _) in hero.debugFactPaint {
+            guard let text, let fill else { factRatio = 0; continue }
+            let ground = over(fill, lighter)
+            factRatio = min(factRatio, HelmContrast.ratio(over(text, ground), ground))
+        }
+        if hero.debugFactPaint.isEmpty || factRatio < HelmContrast.textTarget {
+            problems.append("a fact measures \(ratioText(factRatio)):1 on its capsule")
+        }
+        if hero.debugKickerTileHidden { problems.append("the kicker has no glass tile") }
+        // The sheet is a labelled group now that its heading is gone, and a
+        // group must still hand VoiceOver its fields.
+        let children = form.accessibilityChildren() ?? []
+        if form.accessibilityLabel() != "New Task" || children.isEmpty {
+            problems.append("the sheet's group is \(String(describing: form.accessibilityLabel())) "
+                            + "with \(children.count) children")
+        }
+        if hero.debugSubtitleGlyphHidden { problems.append("the card's date line has no calendar glyph") }
+        if hero.debugCardShadowAlpha <= 0 { problems.append("the card is not raised off the gradient") }
+
+        // The title: a raised prominent well in the rounded face.
+        if let field = title as? HelmTextField, field.wellSurface != .raised {
+            problems.append("the title is not a raised well")
+        }
+        if abs(titleRect.height - HelmField.prominentHeight) > 0.5 {
+            problems.append("the title well is \(fmt(titleRect.height))pt, want the prominent \(fmt(HelmField.prominentHeight))")
+        }
+        if title.font?.pointSize != HelmType.scaled(17) { problems.append("the title is not set at 17pt") }
+        // Five numbered section cards, every well raised.
+        if form.debugSectionCards.count != 5 { problems.append("\(form.debugSectionCards.count) section cards, want 5") }
+        if editor.debugTagsInput.wellSurface != .raised { problems.append("the tag well is not raised") }
+
+        // Painted: the hero's top-left is the gradient, and the strip beside
+        // the first card is the page's ground.
+        if let rep = form.bitmapImageRepForCachingDisplay(in: form.bounds), let card = form.debugSectionCards.first {
+            form.cacheDisplay(in: form.bounds, to: rep)
+            let scaleX = CGFloat(rep.pixelsWide) / form.bounds.width
+            let scaleY = CGFloat(rep.pixelsHigh) / form.bounds.height
+            func sample(_ point: NSPoint) -> (Double, Double, Double)? {
+                let x = Int(point.x * scaleX), y = Int((form.bounds.height - point.y) * scaleY)
+                guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh, let c = rep.colorAt(x: x, y: y) else { return nil }
+                return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
+            }
+            func inRep(_ color: NSColor) -> (Double, Double, Double) {
+                let converted = color.usingColorSpace(rep.colorSpace) ?? color
+                return (Double(converted.redComponent), Double(converted.greenComponent), Double(converted.blueComponent))
+            }
+            func distance(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Double {
+                abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2)
+            }
+            let cardRect = card.convert(card.bounds, to: form)
+            let heroPixel = sample(NSPoint(x: heroRect.minX + 3, y: heroRect.maxY - 3))
+            let groundPixel = sample(NSPoint(x: cardRect.minX / 2, y: cardRect.midY))
+            let ground = inRep(HelmTheme.nsColor(theme.backgroundHex))
+            let start = inRep(HelmContrast.color(quiet.start))
+            if let heroPixel, let groundPixel, distance(heroPixel, start) < 0.25, distance(heroPixel, ground) > 0.3,
+               distance(groundPixel, ground) < 0.03 {
+                print("  OK   \(theme.id): painted - the hero's corner is the gradient "
+                    + "(\(ratioText(distance(heroPixel, start))) from its start), the cards sit on the page's ground")
+            } else {
+                problems.append("painted hero \(String(describing: heroPixel)) ground \(String(describing: groundPixel)) "
+                                + "want start \(start) ground \(ground)")
+            }
+        } else {
+            problems.append("could not render the sheet")
+        }
+
+        if problems.isEmpty {
+            print("  OK   \(theme.id): hero across the top, title first responder in a raised well \(fmt(gap))pt under it, "
+                + "kicker \(ratioText(kickerRatio)):1, facts \(ratioText(factRatio)):1")
+        } else {
+            print("  FAIL \(theme.id): \(problems.joined(separator: "; "))")
+            ok = false
+        }
+    }
+
+    /// Gotcha (13): nothing the hero holds may set a width floor on the
+    /// window. A sheet at its 520pt keeps 520pt with a title, a project and
+    /// a run of tags far wider than it, and the facts wrap inside the hero.
+    private static func checkTaskSheetHoldsItsWidth(_ ok: inout Bool) {
+        guard let theme = HelmTheme.appTheme(id: "lavender") else { return }
+        ThemeManager.shared.setTheme(theme)
+        var project = ShiftProject.fresh()
+        project.id = "p-long"
+        project.name = String(repeating: "Platform migration ", count: 8)
+        let editor = ShiftTaskEditorController(task: nil, projects: [project])
+        let window = OffScreenProbe.window(width: HelmFormSheet.width, height: ShiftTaskEditorController.sheetHeight)
+        defer { window.orderOut(nil) }
+        window.contentViewController = editor
+        let form = editor.view
+        settle(form)
+        let before = window.frame.width
+        editor.debugTypeTitle(String(repeating: "Rotate every staging and production certificate ", count: 6))
+        editor.debugChoosePriority(.high)
+        editor.debugChooseProject(id: "p-long")
+        for tag in ["kubernetes-ingress-controller", "certificate-authority", "staging-environment",
+                    "production-environment", "security-review", "on-call-handover", "quarterly"] {
+            editor.debugTagsInput.debugType(tag)
+            editor.debugTagsInput.debugPressReturn()
+        }
+        settle(form)
+        let hero = editor.debugPreview
+        let frames = hero.debugFactFrames
+        let lines = Set(frames.map { Int($0.minY.rounded()) }).count
+        let widest = frames.map(\.maxX).max() ?? 0
+        var problems: [String] = []
+        // Discriminating: the fixture really is wider than the sheet.
+        if frames.count < 9 || lines < 2 { problems.append("the fixture did not wrap (\(frames.count) facts on \(lines) lines)") }
+        if abs(window.frame.width - before) > 0.5 || abs(form.bounds.width - HelmFormSheet.width) > 0.5 {
+            problems.append("the window went from \(fmt(before))pt to \(fmt(window.frame.width))pt "
+                            + "(sheet \(fmt(form.bounds.width))pt)")
+        }
+        let heroWidth = hero.bounds.width
+        if widest > heroWidth - 2 * HelmFormSheet.gutter + 0.5 {
+            problems.append("a fact reaches \(fmt(widest))pt in a \(fmt(heroWidth - 2 * HelmFormSheet.gutter))pt column")
+        }
+        if problems.isEmpty {
+            print("  OK   a long title, project and \(frames.count) facts keep the sheet at \(fmt(form.bounds.width))pt; "
+                + "the facts wrap onto \(lines) lines")
+        } else {
+            print("  FAIL \(problems.joined(separator: "; "))")
+            ok = false
+        }
+    }
+
+    /// The hero and the ground follow a theme change without the sheet
+    /// being rebuilt.
+    private static func checkTaskSheetFollowsTheTheme(_ ok: inout Bool) {
+        guard let lavender = HelmTheme.appTheme(id: "lavender"),
+              let powder = HelmTheme.appTheme(id: "powder") else { return }
+        ThemeManager.shared.setTheme(lavender)
+        let editor = ShiftTaskEditorController(task: nil, projects: [])
+        _ = editor.view
+        ThemeManager.shared.setTheme(powder)
+        let quiet = HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(powder.heroAccentHex)),
+                                            quietInk: Double(HelmHeroColumn.quietInkAlpha))
+        let stops = editor.debugPreview.debugGradientColors.compactMap { NSColor(cgColor: $0) }
+        let ground = (editor.view as? HelmFormSheet)?.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+        if sameColor(stops.first, HelmContrast.color(quiet.start)),
+           sameColor(ground, HelmTheme.nsColor(powder.backgroundHex)) {
+            print("  OK   a theme change repaints the hero and the ground in the new register")
+        } else {
+            print("  FAIL a theme change left the task sheet's hero or ground in the old register")
+            ok = false
+        }
     }
 }
 

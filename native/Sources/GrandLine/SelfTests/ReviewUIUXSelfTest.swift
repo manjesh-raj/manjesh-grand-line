@@ -16,6 +16,9 @@
 //   U10  an Updates row that needs nothing carries no action
 //   U11  a primary action is disabled until the thing it acts on is ready
 //   U16  the task editor strips the parsed date phrase out of the title
+//   TK-1 the task sheet's record preview (the hero restyle board): its words,
+//        the card following every edit and agreeing with Save, and the hero's
+//        ink on every app theme
 //   X1   the lock screen has a local fallback when the vault helper is down
 //   X4   Bootstrap and Automation read one progress source
 //   X7   the daily review no longer carries the "habits aren't in this build" row
@@ -54,6 +57,9 @@ enum ReviewUIUXSelfTest {
             ("U14_allDestinationsOverlayFitsEveryName", test_u14OverlayWidth),
             ("U15_cardsHugTheContentTheyActuallyHold", test_u15CardHeights),
             ("U16_taskEditorLiftsTheDatePhraseAndEnablesTheRepeatPickers", test_u16TaskEditor),
+            ("TK1_taskSheetHeroWordsAreTheBoardsOwn", test_tk1Words),
+            ("TK1_taskSheetPreviewFollowsEveryEditAndAgreesWithSave", test_tk1PreviewFollowsEdits),
+            ("TK1_taskSheetHeroInkClearsTheFloorOnEveryAppTheme", test_tk1HeroContrast),
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
             ("X3_theGoMenuNamesEachDestinationOnce", test_x3GoMenu),
@@ -1054,6 +1060,253 @@ enum ReviewUIUXSelfTest {
             return nil
         }
     }
+
+    // MARK: TK-1 - the task sheet's record preview
+
+    /// The hero restyle board's TK-1: the words the task sheet's preview card
+    /// prints, from `TaskHeroWords` alone.
+    private static func test_tk1Words() -> String? {
+        let dot = "\u{00B7}"
+        guard TaskHeroWords.kicker(editing: nil) == "New task \(dot) not saved yet" else {
+            return "a new task's kicker reads \(TaskHeroWords.kicker(editing: nil).debugDescription)"
+        }
+        let columns: [(ShiftTaskStatus, String)] = [(.todo, "Backlog"), (.inProgress, "In Progress"), (.completed, "Done")]
+        for (status, column) in columns {
+            let want = "Edit task \(dot) Board \u{203A} \(column)"
+            guard TaskHeroWords.kicker(editing: status) == want else {
+                return "a \(status) task's kicker reads \(TaskHeroWords.kicker(editing: status).debugDescription), "
+                     + "want \(want.debugDescription) - the kicker names the task's real board column"
+            }
+        }
+        guard TaskHeroWords.kicker(editing: .cancelled) == "Edit task" else {
+            return "a cancelled task has no board column, yet its kicker reads "
+                 + "\(TaskHeroWords.kicker(editing: .cancelled).debugDescription)"
+        }
+        guard TaskHeroWords.titlePlaceholder == "What needs to be done?" else {
+            return "the card's placeholder is no longer the title field's own"
+        }
+
+        // The title as Save writes it: the detected phrase leaves only while
+        // it is in force and the task has a date.
+        let typed = "  Buy milk tomorrow at 5pm "
+        guard let parsed = ShiftDateParser.parse(typed) else { return "the fixture phrase no longer parses" }
+        let lifted = TaskHeroWords.savedTitle(typed, detected: parsed, hasDueDate: true)
+        guard lifted == "Buy milk" else { return "the saved title is \(lifted.debugDescription), want \"Buy milk\"" }
+        let kept = TaskHeroWords.savedTitle(typed, detected: nil, hasDueDate: true)
+        guard kept == "Buy milk tomorrow at 5pm" else {
+            return "a dismissed detection still changed the title: \(kept.debugDescription)"
+        }
+        guard TaskHeroWords.savedTitle(typed, detected: parsed, hasDueDate: false) == "Buy milk tomorrow at 5pm" else {
+            return "the phrase left the title of a task with no due date, which would lose the date entirely"
+        }
+
+        guard TaskHeroWords.subtitle(dueDate: nil, dueTime: nil, projectName: nil) == "No date \(dot) No project" else {
+            return "a bare task's card says \(TaskHeroWords.subtitle(dueDate: nil, dueTime: nil, projectName: nil).debugDescription)"
+        }
+        let dated = TaskHeroWords.subtitle(dueDate: "2031-03-14", dueTime: "15:00", projectName: "Grand Line")
+        let when = ShiftDateFormatting.friendly("2031-03-14", time: "15:00")
+        guard dated == "\(when) \(dot) Grand Line", when != "2031-03-14" else {
+            return "a dated task's card says \(dated.debugDescription), want the Detected line's wording then the project"
+        }
+        guard TaskHeroWords.badge(for: .high) == "High", TaskHeroWords.badge(for: .normal) == nil,
+              TaskHeroWords.badge(for: .low) == nil else {
+            return "only High earns a badge on the board's card"
+        }
+
+        var task = ShiftTask.fresh()
+        task.priority = .high
+        task.dueDate = "2031-03-14"
+        task.dueTime = "10:00"
+        task.recurrence = ShiftRecurrence(frequency: .monthly, interval: 3)
+        task.reminderMinutesBefore = 1440
+        task.tags = ["security", "staging"]
+        let facts = TaskHeroWords.facts(for: task, projectName: "Release", allDayReminderAt: "09:00")
+        let want = ["High priority", "Release", "Every 3 months", "Remind 1 day before", "#security", "#staging"]
+        guard facts == want else { return "the facts read \(facts), want the board's \(want)" }
+
+        var bare = ShiftTask.fresh()
+        bare.dueDate = "2031-03-14"
+        bare.reminderMinutesBefore = 0
+        let bareFacts = TaskHeroWords.facts(for: bare, projectName: nil, allDayReminderAt: "09:00")
+        guard bareFacts.prefix(2) == ["Normal priority", "No project"],
+              bareFacts.last?.hasPrefix("Remind on the day at ") == true else {
+            return "an all-day task's facts read \(bareFacts) - the reminder should say when it fires, after the verb"
+        }
+        bare.dueTime = "10:00"
+        guard TaskHeroWords.facts(for: bare, projectName: nil, allDayReminderAt: "09:00").last == "Remind at the due time" else {
+            return "a timed reminder at the due time reads \(String(describing: TaskHeroWords.facts(for: bare, projectName: nil, allDayReminderAt: "09:00").last))"
+        }
+        bare.reminderMinutesBefore = nil
+        guard !TaskHeroWords.facts(for: bare, projectName: nil, allDayReminderAt: "09:00").contains(where: { $0.hasPrefix("Remind") }) else {
+            return "a task with no reminder gained a reminder fact"
+        }
+        return nil
+    }
+
+    /// The card follows every edit the sheet makes, and always shows what
+    /// Save would write. Drives the sheet through its real paths: the title
+    /// field's change notification, the menus' item actions, the When
+    /// panel's own buttons and the tag well.
+    private static func test_tk1PreviewFollowsEdits() -> String? {
+        autoreleasepool { () -> String? in
+            var release = ShiftProject.fresh()
+            release.id = "p-release"
+            release.name = "Release"
+            let editor = ShiftTaskEditorController(task: nil, projects: [release])
+            _ = editor.view
+            let card = editor.debugPreview
+            guard card.debugKickerText == TaskHeroWords.kicker(editing: nil).uppercased() else {
+                return "a new task's preview kicker reads \(card.debugKickerText.debugDescription)"
+            }
+            guard card.debugTitleText == TaskHeroWords.titlePlaceholder else {
+                return "an empty sheet's card reads \(card.debugTitleText.debugDescription), want the placeholder"
+            }
+
+            editor.debugTypeTitle("Buy milk")
+            guard card.debugTitleText == "Buy milk" else {
+                return "typing did not reach the card: it reads \(card.debugTitleText.debugDescription)"
+            }
+            editor.debugTypeTitle("Buy milk tomorrow at 5pm")
+            // Discriminating: the field still holds the date words, so a card
+            // copying the field would fail here.
+            guard editor.debugTitleText == "Buy milk tomorrow at 5pm" else {
+                return "the title field was rewritten while typing (U16 lifts the phrase only on Save)"
+            }
+            guard card.debugTitleText == "Buy milk" else {
+                return "the card shows \(card.debugTitleText.debugDescription) - it should show the title as it "
+                     + "will be saved, without the detected date words"
+            }
+            let tomorrow = ShiftDateFormatting.friendly(
+                ShiftDateFormatting.components(from: Date().addingTimeInterval(86_400)).dateStr)
+            guard card.debugSubtitleText.hasPrefix(tomorrow), card.debugSubtitleText.hasSuffix("No project") else {
+                return "the detected date did not reach the card: \(card.debugSubtitleText.debugDescription)"
+            }
+
+            editor.debugChoosePriority(.high)
+            guard card.debugBadgeText == "HIGH", card.debugFacts.first == "High priority" else {
+                return "a priority pick did not reach the card: badge \(String(describing: card.debugBadgeText)), "
+                     + "facts \(card.debugFacts)"
+            }
+            editor.debugChooseProject(id: "p-release")
+            guard card.debugSubtitleText.hasSuffix("Release"), card.debugFacts.contains("Release") else {
+                return "a project pick did not reach the card: \(card.debugSubtitleText.debugDescription), \(card.debugFacts)"
+            }
+            editor.debugTagsInput.debugType("deploy")
+            editor.debugTagsInput.debugPressReturn()
+            guard card.debugFacts.last == "#deploy" else {
+                return "a new tag did not reach the card's facts: \(card.debugFacts)"
+            }
+
+            // Save writes what the card shows.
+            var saved: ShiftTask?
+            editor.onSave = { task, _ in saved = task }
+            editor.debugTriggerSave()
+            guard let saved, saved.title == card.debugTitleText else {
+                return "Save wrote \(String(describing: saved?.title)) while the card showed \(card.debugTitleText.debugDescription)"
+            }
+
+            // Dismissing the detection puts the words back on the card, as Save
+            // will keep them.
+            let kept = ShiftTaskEditorController(task: nil, projects: [])
+            _ = kept.view
+            kept.debugTypeTitle("Buy milk tomorrow at 5pm")
+            guard kept.debugPreview.debugTitleText == "Buy milk" else { return "the second sheet did not detect the date" }
+            kept.debugDismissDetected()
+            guard kept.debugPreview.debugTitleText == "Buy milk tomorrow at 5pm" else {
+                return "after dismissing the detection the card reads \(kept.debugPreview.debugTitleText.debugDescription)"
+            }
+
+            // A When edit by hand reaches the card: Tomorrow's own button.
+            let when = ShiftTaskEditorController(task: nil, projects: [])
+            _ = when.view
+            guard when.debugPreview.debugSubtitleText.hasPrefix(TaskHeroWords.noDate) else {
+                return "a bare task's card does not start \"No date\""
+            }
+            guard let tomorrowButton = when.debugScheduleEditor.debugQuickButtons.first(where: { $0.title == "Tomorrow" }) else {
+                return "the When panel has no Tomorrow button to drive"
+            }
+            tomorrowButton.performClick(nil)
+            guard when.debugPreview.debugSubtitleText.hasPrefix(tomorrow) else {
+                return "picking Tomorrow in the When panel left the card at \(when.debugPreview.debugSubtitleText.debugDescription)"
+            }
+
+            // An edit names the task's column.
+            var task = ShiftTask.fresh()
+            task.title = "Rotate the staging certificate"
+            task.status = .inProgress
+            let edit = ShiftTaskEditorController(task: task, projects: [])
+            _ = edit.view
+            guard edit.debugPreview.debugKickerText == "EDIT TASK \u{00B7} BOARD \u{203A} IN PROGRESS" else {
+                return "an In Progress task's kicker reads \(edit.debugPreview.debugKickerText.debugDescription)"
+            }
+            guard edit.debugPreview.debugTitleText == task.title else {
+                return "an edit's card opens on \(edit.debugPreview.debugTitleText.debugDescription)"
+            }
+            return nil
+        }
+    }
+
+    /// The hero's ink, as painted, clears the text floor on every app theme:
+    /// the kicker (the ink at 85%) against the lighter stop, and each fact's
+    /// words against its capsule composited over that stop.
+    private static func test_tk1HeroContrast() -> String? {
+        autoreleasepool { () -> String? in
+            let header = RecordPreviewHeader(tileSize: 34, style: .sheet, kickerSymbol: "checklist")
+            header.update(.init(kicker: TaskHeroWords.newKicker, title: "Review deploy notes",
+                                titlePlaceholder: TaskHeroWords.titlePlaceholder, subtitle: "Tomorrow",
+                                facts: ["Normal priority", "#deploy"], subtitleSymbol: "calendar"))
+            var plainKickerFailures = 0
+            var washFailures = 0
+            var worstKicker = Double.infinity
+            var worstFact = Double.infinity
+            for theme in HelmTheme.appThemes {
+                header.applyTheme(theme)
+                let stops = header.debugGradientColors.compactMap { NSColor(cgColor: $0) }.map(HelmContrast.components)
+                guard stops.count == 2 else { return "\(theme.id): the hero painted \(stops.count) stops" }
+                let lighter = HelmContrast.relativeLuminance(stops[0]) >= HelmContrast.relativeLuminance(stops[1])
+                    ? stops[0] : stops[1]
+                guard let kicker = header.debugKickerColor else { return "\(theme.id): the kicker has no colour" }
+                let kickerRatio = HelmContrast.ratio(composite(kicker, over: lighter), lighter)
+                worstKicker = min(worstKicker, kickerRatio)
+                guard kickerRatio >= HelmContrast.textTarget else {
+                    return "\(theme.id): the kicker measures \(fmt(kickerRatio)):1 on the lighter stop"
+                }
+                for (text, fill, border) in header.debugFactPaint {
+                    guard let text, let fill, border != nil else { return "\(theme.id): a fact capsule is unpainted" }
+                    let ground = composite(fill, over: lighter)
+                    let ratio = HelmContrast.ratio(composite(text, over: ground), ground)
+                    worstFact = min(worstFact, ratio)
+                    guard ratio >= HelmContrast.textTarget else {
+                        return "\(theme.id): a fact's words measure \(fmt(ratio)):1 on their capsule"
+                    }
+                    // The trap the board measured: the same words on a wash of
+                    // the ink itself.
+                    let wash = HelmContrast.mix(HelmContrast.components(text), lighter, 0.16)
+                    if HelmContrast.ratio(HelmContrast.components(text), wash) < HelmContrast.textTarget { washFailures += 1 }
+                }
+                // Discriminating: Host-1's plain palette, which the `.sheet`
+                // style moved off, would put this kicker under the floor.
+                let plain = HelmHeroSurface.palette(for: theme)
+                let plainKicker = HelmContrast.mix(plain.ink, plain.lighterStop, Double(RecordPreviewHeader.kickerAlpha))
+                if HelmContrast.ratio(plainKicker, plain.lighterStop) < HelmContrast.textTarget { plainKickerFailures += 1 }
+            }
+            guard plainKickerFailures > 0, washFailures > 0 else {
+                return "neither the plain palette nor a white wash fails anywhere (\(plainKickerFailures), \(washFailures)), "
+                     + "so this check cannot tell the TK-1 recipe from the one it replaced"
+            }
+            print("  TK-1 hero over \(HelmTheme.appThemes.count) app themes: kicker >= \(fmt(worstKicker)):1, "
+                + "facts >= \(fmt(worstFact)):1 (plain palette would fail \(plainKickerFailures), white wash \(washFailures))")
+            return nil
+        }
+    }
+
+    /// `color` (with its alpha) over an opaque `ground`.
+    private static func composite(_ color: NSColor, over ground: (Double, Double, Double)) -> (Double, Double, Double) {
+        let alpha = Double(color.usingColorSpace(.sRGB)?.alphaComponent ?? 1)
+        return HelmContrast.mix(HelmContrast.components(color), ground, alpha)
+    }
+
+    private static func fmt(_ value: Double) -> String { String(format: "%.2f", value) }
 
     // MARK: U17 - the lock screen's pre-filled-looking password field
 

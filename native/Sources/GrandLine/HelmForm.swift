@@ -1181,6 +1181,15 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
         didSet { if domainHue != oldValue { applyTheme(lastTheme) } }
     }
 
+    /// 1.1.0: which well recipe this input paints (`HelmField.Surface`), as
+    /// `HelmTextField` and `HelmTextView` already take it. `.raised` is a
+    /// chip well on a section card (TK-1's Tags, where the inset well read
+    /// as a lavender hole beside the raised Description). `.inset`, the
+    /// default, is unchanged.
+    var wellSurface: HelmField.Surface = .inset {
+        didSet { if wellSurface != oldValue { applyTheme(lastTheme) } }
+    }
+
     private(set) var tokens: [String] = []
 
     private let well = NSView()
@@ -1344,11 +1353,11 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
     func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue, animated: animated)
-        editor.textColor = HelmField.ink(theme)
+                               focused: isFocused, hue: domainHue, surface: wellSurface, animated: animated)
+        editor.textColor = HelmField.ink(theme, surface: wellSurface)
         editor.placeholderAttributedString = NSAttributedString(
             string: placeholderText,
-            attributes: [.font: HelmType.body(), .foregroundColor: HelmField.mutedInk(theme)])
+            attributes: [.font: HelmType.body(), .foregroundColor: HelmField.mutedInk(theme, surface: wellSurface)])
         chips.forEach { $0.applyTheme(theme) }
         needsLayout = true
     }
@@ -1840,6 +1849,9 @@ final class HelmFormSheet: NSView {
     /// footer it needs (`setPanelHeader`, `setPanelFooter`), and the column
     /// takes the panel's narrower gutter. Everything between - the sections,
     /// fields and their theming - is the one scaffold both use.
+    ///
+    /// 1.2.0: a `.sheet` can take a hero header too (`setHeroHeader`), in
+    /// place of its heading block.
     enum Chrome {
         case sheet
         case panel
@@ -1885,6 +1897,17 @@ final class HelmFormSheet: NSView {
 
     /// The caller's header, in a panel - where a sheet has its heading.
     private let panelHeaderSlot = NSView()
+
+    /// 1.2.0: the hero a `.sheet` was given in place of its heading block
+    /// (`setHeroHeader`), or `nil` for a sheet drawn as before.
+    private(set) var heroHeader: NSView?
+    private var heroConstraints: [NSLayoutConstraint] = []
+    /// What `setHeroHeader` takes the heading block out of: the scrolling
+    /// layout's pinned header box and the column inside it, or the fixed
+    /// layout's one stack.
+    private weak var sheetHeaderBox: NSView?
+    private weak var sheetHeaderColumn: NSView?
+    private weak var fixedOuterStack: NSStackView?
 
     /// §6.10's domain ribbon weight.
     static let ribbonHeight: CGFloat = 6
@@ -2128,6 +2151,7 @@ final class HelmFormSheet: NSView {
         outer.spacing = HelmMetrics.s3 + 2
         outer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(outer)
+        fixedOuterStack = outer
         let outerTop = outer.topAnchor.constraint(equalTo: topAnchor, constant: Self.headerTopInset)
         headerTopConstraint = outerTop
         NSLayoutConstraint.activate([
@@ -2172,6 +2196,8 @@ final class HelmFormSheet: NSView {
         // words "New Host" in the window while every field below stayed
         // left-aligned in its capped column.
         let headerColumn = cappedColumn(in: headerBox)
+        sheetHeaderBox = headerBox
+        sheetHeaderColumn = headerColumn
         let headerContent: NSView = chrome == .panel ? panelHeaderSlot : headerBlock
         headerContent.translatesAutoresizingMaskIntoConstraints = false
         if chrome == .panel {
@@ -2394,6 +2420,7 @@ final class HelmFormSheet: NSView {
         case let field as HelmTextView: field.wellSurface = surface
         case let card as HelmFieldCard: card.wellSurface = surface
         case let row as HelmToggleRow: row.wellSurface = surface
+        case let input as HelmChipInput: input.wellSurface = surface
         default: break
         }
         view.subviews.forEach { setWellSurface(surface, under: $0) }
@@ -2478,6 +2505,82 @@ final class HelmFormSheet: NSView {
             view.topAnchor.constraint(equalTo: column.topAnchor),
             view.bottomAnchor.constraint(equalTo: column.bottomAnchor),
         ])
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    // MARK: Sheet hero (1.2.0)
+
+    /// The gap from a hero header's bottom edge to the first row under it:
+    /// the board's 14pt between TK-1's hero and its title well.
+    static let heroGap: CGFloat = HelmMetrics.s3 + HelmMetrics.s0
+
+    /// Whether a carded form sits under a hero, which is what paints the
+    /// page's ground between the cards and the card surface under the footer.
+    private var heroOverCards: Bool { heroHeader != nil && sectionStyle == .cards }
+
+    /// 1.2.0: a hero across the top of a `.sheet`, where `.panel` chrome has
+    /// `setPanelHeader` (TK-1 of the hero restyle board: the New Task and Edit
+    /// Task sheet opens on the task's own card).
+    ///
+    /// The hero spans the sheet edge to edge and stays put while the fields
+    /// scroll, as a panel's header does. It replaces the heading block - the
+    /// title, the subtitle and the close square, where Cancel and Esc still
+    /// dismiss - and the Daylight ribbon, whose band of colour the hero now
+    /// is. The title's words become the sheet's accessibility label, so
+    /// VoiceOver still names the sheet. A carded form (`SectionStyle.cards`)
+    /// under a hero paints the page's own ground between its cards, so they
+    /// read as cards rather than as a hairline on white, and keeps the card
+    /// surface under its footer, as the board draws it. Both layouts take a
+    /// hero, so the short sheets can adopt one without another kit change.
+    ///
+    /// A sheet that never calls this draws exactly as before. In a `.panel`
+    /// it is `setPanelHeader`.
+    func setHeroHeader(_ view: NSView) {
+        guard chrome == .sheet else {
+            setPanelHeader(view)
+            return
+        }
+        heroHeader?.removeFromSuperview()
+        NSLayoutConstraint.deactivate(heroConstraints)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        heroHeader = view
+        if let box = sheetHeaderBox {
+            // Removing the column takes its pins to the box with it, so the
+            // hero is the box's only content and decides its height.
+            sheetHeaderColumn?.removeFromSuperview()
+            box.addSubview(view)
+            heroConstraints = [
+                view.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+                view.topAnchor.constraint(equalTo: box.topAnchor),
+                // The scrolled column already starts `s2` down its document.
+                box.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: Self.heroGap - HelmMetrics.s2),
+            ]
+        } else if let outer = fixedOuterStack {
+            headerBlock.removeFromSuperview()
+            headerTopConstraint?.isActive = false
+            addSubview(view)
+            heroConstraints = [
+                view.leadingAnchor.constraint(equalTo: leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: trailingAnchor),
+                view.topAnchor.constraint(equalTo: topAnchor),
+                outer.topAnchor.constraint(equalTo: view.bottomAnchor, constant: Self.heroGap),
+            ]
+        }
+        // A hero is only as tall as its content. Nothing else ties its
+        // height, so without this the layout is free to hand it the fields'
+        // height instead: measured, a task hero took all 640pt between the
+        // top and the footer and left the scrolling fields 0pt tall, the
+        // same thing an empty panel header slot did. Real content outranks
+        // a low-priority zero.
+        let collapsed = view.heightAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        heroConstraints.append(collapsed)
+        NSLayoutConstraint.activate(heroConstraints)
+        footerContainer.wantsLayer = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(headingLabel.stringValue)
         applyTheme(ThemeManager.shared.theme)
     }
 
@@ -2838,14 +2941,18 @@ final class HelmFormSheet: NSView {
         // A panel paints nothing of its own: the inspector's surface (the
         // system's on macOS 14 and later) is its ground.
         layer?.backgroundColor = chrome == .panel ? nil
-            : theme.isDaylight
-                ? HelmTheme.nsColor(theme.daylightTokens.card).cgColor
-                : HelmTheme.nsColor(theme.backgroundHex).cgColor
+            : heroOverCards || !theme.isDaylight
+                ? HelmTheme.nsColor(theme.backgroundHex).cgColor
+                : HelmTheme.nsColor(theme.daylightTokens.card).cgColor
+        // 1.2.0: under a hero the cards sit on the page's ground, and the
+        // footer keeps the card surface the sheet used to be.
+        footerContainer.layer?.backgroundColor = heroOverCards
+            ? HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor : nil
         // The ribbon shows only under Daylight, and `isHidden` alone is not
         // enough - an ordinary hidden `NSView`'s constraints still hold its
         // 6pt of layout (AGENTS.md gotcha (11)), which would leave a gap above
         // the heading in every other theme. A panel never draws one.
-        let showsRibbon = theme.isDaylight && chrome == .sheet
+        let showsRibbon = theme.isDaylight && chrome == .sheet && heroHeader == nil
         ribbon.isHidden = !showsRibbon
         ribbonHeightConstraint?.constant = showsRibbon ? Self.ribbonHeight : 0
         let pair = domainHue.pair(in: theme)
@@ -2862,7 +2969,7 @@ final class HelmFormSheet: NSView {
         // §6.10's header block, close square and footer, Daylight-only so the
         // twelve pre-Daylight palettes render exactly what they always did.
         subtitleLabel.font = theme.isDaylight ? HelmType.body() : HelmType.caption()
-        closeSquare.isHidden = !(theme.isDaylight && closeButton.action != nil)
+        closeSquare.isHidden = heroHeader != nil || !(theme.isDaylight && closeButton.action != nil)
         let insetFill = HelmField.fill(theme)
         closeSquare.normalColor = insetFill
         closeSquare.hoverColor = HelmTheme.nsColor(theme.chromeLineHex)

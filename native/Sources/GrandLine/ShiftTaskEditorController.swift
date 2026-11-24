@@ -39,6 +39,27 @@
 // The mockup's Attachments drag-and-drop section is deliberately NOT part of
 // this - that is a different (already-shipped) attachment mechanism in this
 // app; these passes restructure presentation, not the attachment model.
+//
+// **TK-1 "Record preview sheet"** (the hero restyle board,
+// `data/grandline-hero-restyle-designs-scout/`) gave the sheet the hero
+// language the host and key forms already speak (Host-1):
+//
+//   - It opens on the task's own card as the board will draw it, on the hero
+//     gradient (`RecordPreviewHeader`'s `.sheet` style, in
+//     `HelmFormSheet.setHeroHeader`). The card is redrawn on every keystroke
+//     and every pick, from the task Save would write right now - so its
+//     title is the title as it will be saved, without the date words Save
+//     lifts out of it (U16), and they come back the moment the detection is
+//     dismissed. The kicker says whether the task is new or which board
+//     column it is in, and the facts are its priority, project, repeat,
+//     reminder and tags. The words are `TaskHeroWords`.
+//   - The title is still the first field and the first responder, now a
+//     raised well under the hero rather than a borderless heading.
+//   - Each section is a numbered card and every field a raised well
+//     (`SectionStyle.cards`, `wellSurface: .raised`), on the page's ground.
+//
+// The tip and its Detected line, every section, the keys, the validation,
+// the focus order, the 520 by 760 sheet and every outcome are unchanged.
 
 import AppKit
 import UniformTypeIdentifiers
@@ -88,7 +109,18 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// edit that never touches the attachment never rewrites the image file.
     private var attachmentChange: ShiftAttachmentChange?
 
-    private let titleField = HelmTextField(placeholder: "What needs to be done?", style: .lead)
+    /// TK-1: a raised well under the hero. Prominent, the kit's one step up
+    /// from a form field, and set in the rounded display face because it
+    /// still names the record.
+    private let titleField = HelmTextField(placeholder: TaskHeroWords.titlePlaceholder, style: .prominent)
+    /// The task's card as the board will draw it, redrawn on every change.
+    private let preview = RecordPreviewHeader(tileSize: ShiftTaskEditorController.previewTileSide, style: .sheet,
+                                              kickerSymbol: "checklist")
+    static let previewTileSide: CGFloat = 34
+    /// The title well's face: the board's 17pt semibold, rounded.
+    static func titleFont() -> NSFont { HelmType.rounded(HelmType.scaled(17), .semibold) }
+    /// Settings' all-day reminder clock, for the preview's reminder fact.
+    private let allDayReminderAt: String
     private var hintLabel: NSTextField?
     private let detectedRow = NSStackView()
     private let detectedIcon = NSImageView(image: HelmSymbol.image("calendar.badge.checkmark", pointSize: 11,
@@ -164,6 +196,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                                       recurrence: task?.recurrence,
                                       reminderMinutes: task?.reminderMinutesBefore),
             allDayReminderAt: allDayReminderAt)
+        self.allDayReminderAt = allDayReminderAt
         self.selectedPriority = task?.priority ?? .normal
         let candidateProjectID = task?.projectID ?? defaultProjectID
         self.selectedProjectID = projects.contains { $0.id == candidateProjectID } ? candidateProjectID : nil
@@ -181,15 +214,22 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // 750, over the window's 500 hold - AGENTS.md gotcha (13)) widened the
         // sheet to 564pt, measured.
         let form = HelmFormSheet(title: editing == nil ? "New Task" : "Edit Task", scrolls: true,
-                                 maxContentWidth: HelmFormSheet.width - 2 * HelmFormSheet.gutter)
+                                 maxContentWidth: HelmFormSheet.width - 2 * HelmFormSheet.gutter,
+                                 sectionStyle: .cards, wellSurface: .raised)
         form.setFrameSize(NSSize(width: HelmFormSheet.width, height: Self.sheetHeight))
         self.form = form
         view = form
         form.onApplyTheme = { [weak self] theme in self?.applyExtraTheme(theme) }
 
+        // MARK: The hero (TK-1)
+
+        preview.tile.configure(symbol: "checkmark.circle", tint: .info, pointSize: HelmType.scaled(15))
+        form.setHeroHeader(preview)
+
         // MARK: Title + natural-language date hint
 
         titleField.stringValue = editing?.title ?? prefillTitle ?? ""
+        titleField.font = Self.titleFont()
         titleField.delegate = self
         form.addLead(titleField)
         hintLabel = form.addLeadHint(hintAttributedString(muted: .labelColor, emphasis: .labelColor))
@@ -208,7 +248,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
         // MARK: Details - Priority / Project field cards
 
-        form.addSection("Details")
+        form.addSection("Details", number: "01")
         priorityCard.onClick = { [weak self] in self?.priorityCardClicked() }
         projectIconTile.configure(symbol: "folder.fill", tint: .info, pointSize: 11)
         projectCard.onClick = { [weak self] in self?.projectCardClicked() }
@@ -218,24 +258,25 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
         // MARK: When
 
-        form.addSection("When")
+        form.addSection("When", number: "02")
         scheduleEditor.onChange = { [weak self] _ in self?.scheduleEdited() }
         form.addRow(scheduleEditor)
 
         // MARK: Tags
 
-        form.addSection("Tags")
+        form.addSection("Tags", number: "03")
         tagChips = editing?.tags ?? []
         tagsInput.setTokens(tagChips)
         tagsInput.onTokensChanged = { [weak self] tokens in
             guard let self else { return }
             self.tagChips = tokens
+            self.refreshPreview()
         }
         form.addRow(tagsInput)
 
         // MARK: Description
 
-        form.addSection("Description")
+        form.addSection("Description", number: "04")
         descriptionView.string = editing?.description ?? prefillDescription ?? ""
         form.addRow(descriptionView)
 
@@ -244,7 +285,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         chooseImageButton.target = self
         chooseImageButton.action = #selector(chooseImageClicked)
         chooseImageButton.controlSize = .small
-        form.addSection("Attachment", actions: [chooseImageButton])
+        form.addSection("Attachment", number: "05", actions: [chooseImageButton])
         attachmentWell.onImageChosen = { [weak self] data in self?.attachmentChange = .set(data) }
         attachmentWell.onRemove = { [weak self] in self?.attachmentChange = .removed }
         if let existingAttachmentData {
@@ -272,7 +313,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                        // shared confirmation.
                        delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteTask)))
 
-        form.setSubtitle("Something to do.")
+        // The hero replaced the heading block, and "Something to do." with
+        // it: the card says what the task is.
+        refreshPreview()
         form.refreshTheme()
     }
 
@@ -283,6 +326,46 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeFirstResponder(titleField)
+    }
+
+    // MARK: The preview (TK-1)
+
+    /// The task Save would write right now, built exactly as Save builds it.
+    /// The preview is drawn from this, so the card can only ever show what
+    /// Save would store.
+    private func assembledTask() -> ShiftTask {
+        var task = editing ?? ShiftTask.fresh()
+        task.title = TaskHeroWords.savedTitle(titleField.stringValue, detected: detectedPhrase,
+                                              hasDueDate: scheduleEditor.draft.day != nil)
+        task.description = descriptionView.string
+        task.priority = selectedPriority
+        // The date, the time, the rule and the reminder, through the one
+        // mapping the calendar's popover also writes with. A rule or a
+        // reminder with no date to anchor on is dropped there.
+        task = scheduleEditor.draft.applied(to: task)
+        task.projectID = selectedProjectID
+        task.tags = tagChips
+        return task
+    }
+
+    /// Redraw the card from what the sheet holds. Called after every change
+    /// the card shows: a keystroke in the title, a priority or project pick,
+    /// a When edit, a tag, and the Detected line's dismissal.
+    private func refreshPreview() {
+        let task = assembledTask()
+        let projectName = projects.first { $0.id == task.projectID }?.name
+        preview.tile.configure(symbol: "checkmark.circle", tint: priorityTint(task.priority),
+                               pointSize: HelmType.scaled(15))
+        preview.update(.init(kicker: TaskHeroWords.kicker(editing: editing?.status),
+                             title: task.title,
+                             titlePlaceholder: TaskHeroWords.titlePlaceholder,
+                             subtitle: TaskHeroWords.subtitle(dueDate: task.dueDate, dueTime: task.dueTime,
+                                                              projectName: projectName),
+                             badge: TaskHeroWords.badge(for: task.priority),
+                             badgeTint: .critical,
+                             facts: TaskHeroWords.facts(for: task, projectName: projectName,
+                                                        allDayReminderAt: allDayReminderAt),
+                             subtitleSymbol: "calendar"))
     }
 
     // MARK: Theming
@@ -353,6 +436,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         guard let raw = sender.representedObject as? String, let priority = ShiftPriority(rawValue: raw) else { return }
         selectedPriority = priority
         updatePriorityCard()
+        refreshPreview()
     }
 
     private func projectCardClicked() {
@@ -374,6 +458,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     @objc private func projectItemSelected(_ sender: NSMenuItem) {
         selectedProjectID = sender.representedObject as? String
         updateProjectCard()
+        refreshPreview()
     }
 
     // MARK: Live date detection
@@ -383,6 +468,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // `HelmChipInput` owns its own editor and its own delegate, so the tag
         // row no longer routes through here at all.
         guard field === titleField else { return }
+        // Every keystroke redraws the card, on whichever path below returns.
+        defer { refreshPreview() }
         guard !dueManuallyEdited else { return }
         guard let parsed = ShiftDateParser.parse(titleField.stringValue) else {
             restoreRuleBeforeDetection()
@@ -425,6 +512,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // keeps the words, and Save must not lift them out of it.
         detectedPhrase = nil
         restoreRuleBeforeDetection()
+        refreshPreview()
     }
 
     /// Puts back the rule the When panel held before a repeat phrase in the
@@ -451,6 +539,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // retyped phrase has nothing of its own to put back.
         ruleBeforeDetection = nil
         detectedRow.isHidden = true
+        refreshPreview()
     }
 
     // MARK: Attachment
@@ -471,14 +560,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Save
 
     @objc private func save() {
-        var titleText = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         // U16: the detected phrase has become structured data in the due
         // field, so it comes out of the prose. `titleWithoutDatePhrase`
         // returns the title unchanged when the phrase *was* the whole title.
-        if scheduleEditor.draft.day != nil, let detectedPhrase {
-            titleText = ShiftDateParser.titleWithoutDatePhrase(titleText, parsed: detectedPhrase)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        // The preview's card shows the title through the same function.
+        let titleText = TaskHeroWords.savedTitle(titleField.stringValue, detected: detectedPhrase,
+                                                 hasDueDate: scheduleEditor.draft.day != nil)
         guard !titleText.isEmpty else {
             view.window?.makeFirstResponder(titleField)
             NSSound.beep()
@@ -487,18 +574,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // Commit anything typed but not yet committed, or a captain who typed
         // a tag and went straight for Save would silently lose it.
         tagsInput.commitPendingText()
-
-        var task = editing ?? ShiftTask.fresh()
-        task.title = titleText
-        task.description = descriptionView.string
-        task.priority = selectedPriority
-        // The date, the time, the rule and the reminder, through the one
-        // mapping the calendar's popover also writes with. A rule or a
-        // reminder with no date to anchor on is dropped there.
-        task = scheduleEditor.draft.applied(to: task)
-        task.projectID = selectedProjectID
-        task.tags = tagChips
-        onSave?(task, attachmentChange ?? .unchanged)
+        onSave?(assembledTask(), attachmentChange ?? .unchanged)
         dismissIfPresented()
     }
 
@@ -563,5 +639,23 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
     /// Drives the real "that is not a date" button's action.
     func debugDismissDetected() { dismissDetected() }
+
+    /// TK-1: the hero card and the title well, read off the real views.
+    var debugPreview: RecordPreviewHeader { preview }
+    var debugTitleField: NSTextField { titleField }
+    var debugTagsInput: HelmChipInput { tagsInput }
+    /// A pick from the Priority or Project menu, entering where the menu
+    /// item's own action does - the card's menu is built per click, so the
+    /// item is the one thing a suite cannot reach.
+    func debugChoosePriority(_ priority: ShiftPriority) {
+        let item = NSMenuItem()
+        item.representedObject = priority.rawValue
+        priorityItemSelected(item)
+    }
+    func debugChooseProject(id: String?) {
+        let item = NSMenuItem()
+        item.representedObject = id
+        projectItemSelected(item)
+    }
     #endif
 }

@@ -7,6 +7,8 @@
 //     the record as its card will look on the Connections page - tile, name,
 //     address, environment, key and tags - and the form updates it on every
 //     change, so a host is visibly being built rather than described.
+//     TK-1 of the hero restyle board puts the same header across the top of
+//     the New Task and Edit Task sheet, in its `.sheet` style.
 //   - `HostKeyPicker`: the SSH key as a list of real choices (the system
 //     agent, then every saved key with its type, how many hosts use it and
 //     whether Touch ID guards it), with New Key and Import beside it. It
@@ -33,37 +35,89 @@ final class RecordPreviewHeader: NSView {
         var badge: String?
         var badgeTint: HelmTint = .info
         var facts: [String] = []
+        /// A glyph before the subtitle (TK-1's calendar before the due date).
+        /// Only the `.sheet` style draws it.
+        var subtitleSymbol: String?
     }
 
+    /// How the header is drawn.
+    ///
+    /// `.panel` is Host-1's, and the default: a rounded hero inside the
+    /// inspector's gutter, the plain hero palette, the record's address in
+    /// mono under its name, and one row of facts.
+    ///
+    /// `.sheet` is TK-1's: the head of an editor sheet
+    /// (`HelmFormSheet.setHeroHeader`), square and edge to edge, its content
+    /// on the sheet's own gutter. It paints the quiet-ink palette, because
+    /// its kicker is the ink at less than full strength: on the plain palette
+    /// that line sits under the text floor, as `PopoverHeroHeader`'s 86% line
+    /// does (4.20:1 on Lavender, the board's measurement). A glass tile leads
+    /// the kicker, the card is raised, the subtitle is prose after an
+    /// optional glyph, and the facts wrap as shade capsules: white on a wash
+    /// of white fails the floor (4.49:1), and a shade can only add contrast.
+    enum Style {
+        case panel
+        case sheet
+    }
+
+    let style: Style
     private let hero = HelmHeroSurface()
     private let kickerLabel = NSTextField(labelWithString: "")
+    private let kickerTile = NSView()
+    private let kickerGlyph = NSImageView()
+    private let kickerSymbol: String?
     private let card = NSView()
     let tile: IconTileView
     private let titleLabel = NSTextField(labelWithString: "")
     private let badgeLabel = NSTextField(labelWithString: "")
     private let badgeBox = NSView()
     private let subtitleLabel = NSTextField(labelWithString: "")
+    private let subtitleGlyph = NSImageView()
     private let extras = NSStackView()
     private let factsRow = NSStackView()
+    /// The `.sheet` style's facts, which wrap rather than truncate: a task
+    /// with a repeat, a reminder and two tags carries six.
+    private let factsFlow = ChipFlowView()
     private var factLabels: [NSTextField] = []
+    private var factChips: [NSView] = []
     private(set) var content = Content(kicker: "", title: "", titlePlaceholder: "", subtitle: "")
     private var observation: ThemeObservation?
 
     static let cornerRadius: CGFloat = 14
+    /// The `.sheet` style's kicker tile, the board's 22pt glass square.
+    static let kickerTileSide: CGFloat = 22
+    /// The `.sheet` style's insets: 16pt above, 14pt below, and the sheet's
+    /// own gutter at the sides so the card lines up with the fields under it.
+    static let sheetTopInset: CGFloat = HelmMetrics.s4
+    static let sheetBottomInset: CGFloat = HelmMetrics.s3 + HelmMetrics.s0
+    /// The gap between the facts in the `.sheet` style, across and down.
+    static let factSpacing: CGFloat = HelmMetrics.s1 + HelmMetrics.s0
 
     /// `extraViews` sit under the subtitle inside the card - a live status
     /// pill, a connection-test pill - and keep their own theming.
-    init(tileSize: CGFloat = 40, extraViews: [NSView] = []) {
+    /// `kickerSymbol` names the glyph in the `.sheet` style's kicker tile.
+    init(tileSize: CGFloat = 40, extraViews: [NSView] = [], style: Style = .panel, kickerSymbol: String? = nil) {
+        self.style = style
+        self.kickerSymbol = style == .sheet ? kickerSymbol : nil
         tile = IconTileView(size: tileSize, cornerRadius: 10)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = Self.cornerRadius
+        layer?.cornerRadius = style == .panel ? Self.cornerRadius : 0
         layer?.masksToBounds = true
+        // The board's glow on a band far wider than it is tall: an ellipse
+        // from the band's own bounds rather than a card's 220pt circle.
+        if style == .sheet { hero.glowShape = .capsule }
         addSubview(hero)
 
         kickerLabel.translatesAutoresizingMaskIntoConstraints = false
         kickerLabel.lineBreakMode = .byTruncatingTail
+        if style == .sheet {
+            // Gotcha (13): a label resists compression at 750 by default,
+            // over the 500 a window holds its size at, so a long kicker would
+            // widen the sheet rather than truncate.
+            kickerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         card.wantsLayer = true
         card.layer?.cornerRadius = HelmMetrics.rCard
         card.translatesAutoresizingMaskIntoConstraints = false
@@ -90,14 +144,34 @@ final class RecordPreviewHeader: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = HelmMetrics.s1 + 2
         titleRow.distribution = .fill
-        subtitleLabel.font = HelmType.code()
-        subtitleLabel.lineBreakMode = .byTruncatingMiddle
+        subtitleLabel.font = style == .sheet ? HelmType.caption() : HelmType.code()
+        subtitleLabel.lineBreakMode = style == .sheet ? .byTruncatingTail : .byTruncatingMiddle
         subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        subtitleGlyph.translatesAutoresizingMaskIntoConstraints = false
+        subtitleGlyph.setContentHuggingPriority(.required, for: .horizontal)
+        subtitleGlyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+        subtitleGlyph.isHidden = true
+        // The `.sheet` style's glyph sits before the subtitle, centred on the
+        // label rather than on its baseline: it is hidden until a record has
+        // a symbol, and a baseline constraint in a view a stack detaches
+        // throws (gotcha (23)). The `.panel` style keeps its bare label.
+        let subtitleView: NSView
+        if style == .sheet {
+            let row = NSStackView(views: [subtitleGlyph, subtitleLabel])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = HelmMetrics.s1
+            row.distribution = .fill
+            row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            subtitleView = row
+        } else {
+            subtitleView = subtitleLabel
+        }
         extras.orientation = .vertical
         extras.alignment = .leading
         extras.spacing = HelmMetrics.s0
         extraViews.forEach { extras.addArrangedSubview($0) }
-        let text = NSStackView(views: [titleRow, subtitleLabel, extras])
+        let text = NSStackView(views: [titleRow, subtitleView, extras])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 2
@@ -114,33 +188,78 @@ final class RecordPreviewHeader: NSView {
         factsRow.spacing = HelmMetrics.s1
         factsRow.translatesAutoresizingMaskIntoConstraints = false
         factsRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        factsFlow.horizontalSpacing = Self.factSpacing
+        factsFlow.rowSpacing = Self.factSpacing
 
-        let column = NSStackView(views: [kickerLabel, card, factsRow])
+        let kickerView: NSView
+        if style == .sheet {
+            kickerTile.wantsLayer = true
+            kickerTile.layer?.cornerRadius = HelmMetrics.rChip
+            kickerTile.layer?.borderWidth = 1
+            kickerTile.translatesAutoresizingMaskIntoConstraints = false
+            kickerGlyph.translatesAutoresizingMaskIntoConstraints = false
+            kickerTile.addSubview(kickerGlyph)
+            NSLayoutConstraint.activate([
+                kickerTile.widthAnchor.constraint(equalToConstant: Self.kickerTileSide),
+                kickerTile.heightAnchor.constraint(equalToConstant: Self.kickerTileSide),
+                kickerGlyph.centerXAnchor.constraint(equalTo: kickerTile.centerXAnchor),
+                kickerGlyph.centerYAnchor.constraint(equalTo: kickerTile.centerYAnchor),
+            ])
+            kickerTile.setContentHuggingPriority(.required, for: .horizontal)
+            kickerTile.setContentCompressionResistancePriority(.required, for: .horizontal)
+            kickerTile.isHidden = self.kickerSymbol == nil
+            let row = NSStackView(views: [kickerTile, kickerLabel])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.distribution = .fill
+            row.spacing = HelmMetrics.s2 - 1
+            row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            kickerView = row
+        } else {
+            kickerView = kickerLabel
+        }
+        let facts: NSView = style == .sheet ? factsFlow : factsRow
+        let column = NSStackView(views: [kickerView, card, facts])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s2
+        // The board's 10pt between the card and the wrapping facts.
+        if style == .sheet { column.setCustomSpacing(HelmMetrics.s2 + 2, after: card) }
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
-        let pad = HelmMetrics.s3
+        let side = style == .sheet ? HelmFormSheet.gutter : HelmMetrics.s3
+        let top = style == .sheet ? Self.sheetTopInset : HelmMetrics.s3
+        let bottom = style == .sheet ? Self.sheetBottomInset : HelmMetrics.s3
+        // The card's own inset: Host-1's 10pt all round, and the board's
+        // 10pt by 12pt in the `.sheet` style.
+        let cardSide: CGFloat = style == .sheet ? HelmMetrics.s3 : 10
         NSLayoutConstraint.activate([
             hero.leadingAnchor.constraint(equalTo: leadingAnchor),
             hero.trailingAnchor.constraint(equalTo: trailingAnchor),
             hero.topAnchor.constraint(equalTo: topAnchor),
             hero.bottomAnchor.constraint(equalTo: bottomAnchor),
-            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            column.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: side),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -side),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: top),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottom),
             card.widthAnchor.constraint(equalTo: column.widthAnchor),
-            tile.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            tile.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: cardSide),
             tile.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             text.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: 10),
-            text.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            text.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -cardSide),
             text.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             text.bottomAnchor.constraint(lessThanOrEqualTo: card.bottomAnchor, constant: -10),
             tile.bottomAnchor.constraint(lessThanOrEqualTo: card.bottomAnchor, constant: -10),
-            factsRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor),
         ])
+        if style == .sheet {
+            // The flow wraps against the width it is given, so it is given
+            // the column's: a width it decided for itself would be the
+            // circular derivation gotcha (22) describes.
+            factsFlow.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+            kickerView.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        } else {
+            factsRow.widthAnchor.constraint(lessThanOrEqualTo: column.widthAnchor).isActive = true
+        }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
@@ -158,14 +277,36 @@ final class RecordPreviewHeader: NSView {
         applyTheme(ThemeManager.shared.theme)
     }
 
+    /// The hero's colours in `theme`: the plain rule for `.panel`, and the
+    /// quiet-ink rule for `.sheet`, whose kicker is the ink at 85%.
+    func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
+        guard style == .sheet else { return HelmHeroSurface.palette(for: theme) }
+        return HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
+                                       quietInk: Double(HelmHeroColumn.quietInkAlpha))
+    }
+
+    /// The kicker's share of the ink.
+    static let kickerAlpha: CGFloat = 0.85
+
     func applyTheme(_ theme: HelmTheme) {
-        let palette = HelmHeroSurface.palette(for: theme)
+        let palette = palette(in: theme)
         hero.apply(palette)
         let heroInk = HelmContrast.color(palette.ink)
         kickerLabel.attributedStringValue = NSAttributedString(
             string: content.kicker.uppercased(),
-            attributes: HelmType.kickerAttributes(color: heroInk.withAlphaComponent(0.85)))
+            attributes: HelmType.kickerAttributes(color: heroInk.withAlphaComponent(Self.kickerAlpha)))
+        if let kickerSymbol {
+            kickerTile.layer?.backgroundColor = heroInk.withAlphaComponent(PopoverHeroHeader.glassFillAlpha).cgColor
+            kickerTile.layer?.borderColor = heroInk.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+            kickerGlyph.image = HelmSymbol.image(kickerSymbol, pointSize: 11, weight: .semibold,
+                                                 hierarchicalColor: heroInk)
+        }
         card.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        if style == .sheet, let layer = card.layer {
+            // The board lifts the card off the gradient with a shadow, and
+            // the kit's raised elevation is that shadow, applied once.
+            HelmCard.applyElevation(.raised, to: layer, theme: theme)
+        }
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         if content.title.isEmpty {
@@ -181,6 +322,12 @@ final class RecordPreviewHeader: NSView {
         subtitleLabel.stringValue = content.subtitle
         subtitleLabel.textColor = muted
         subtitleLabel.toolTip = content.subtitle
+        if style == .sheet, let symbol = content.subtitleSymbol {
+            subtitleGlyph.isHidden = false
+            subtitleGlyph.image = HelmSymbol.image(symbol, pointSize: 10, weight: .medium, hierarchicalColor: muted)
+        } else {
+            subtitleGlyph.isHidden = true
+        }
         if let badge = content.badge, !badge.isEmpty {
             badgeBox.isHidden = false
             badgeLabel.stringValue = badge.uppercased()
@@ -192,8 +339,15 @@ final class RecordPreviewHeader: NSView {
             badgeBox.isHidden = true
         }
         tile.applyTheme(theme)
-        renderFacts(ink: heroInk)
-        setAccessibilityLabel(([content.title.isEmpty ? content.titlePlaceholder : content.title, content.subtitle]
+        if style == .sheet {
+            renderFactCapsules(ink: heroInk)
+        } else {
+            renderFacts(ink: heroInk)
+        }
+        // The `.sheet` style reads its kicker too: it is the only place the
+        // sheet still says whether this is a new task or which column it is in.
+        let lead = style == .sheet && !content.kicker.isEmpty ? [content.kicker] : []
+        setAccessibilityLabel((lead + [content.title.isEmpty ? content.titlePlaceholder : content.title, content.subtitle]
             + (content.badge.map { [$0] } ?? []) + content.facts).joined(separator: ", "))
     }
 
@@ -227,6 +381,60 @@ final class RecordPreviewHeader: NSView {
         }
     }
 
+    /// The `.sheet` style's facts: `HelmButton`'s hero ghost recipe (a shade
+    /// of the ink's opposite under the words, with the glass hairline), as
+    /// capsules that wrap onto a second line.
+    private func renderFactCapsules(ink: NSColor) {
+        let shade = HelmButton.heroShade(for: ink)
+        factLabels = []
+        factChips = content.facts.map { fact in
+            let chip = FactCapsule(text: fact)
+            chip.paint(ink: ink, fill: shade.withAlphaComponent(HelmButton.heroFillAlpha),
+                       border: ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha))
+            factLabels.append(chip.label)
+            return chip
+        }
+        factsFlow.isHidden = factChips.isEmpty
+        factsFlow.setChips(factChips)
+    }
+
+    /// One fact in the `.sheet` style: 11pt semibold in a capsule.
+    private final class FactCapsule: NSView {
+        let label: NSTextField
+
+        init(text: String) {
+            label = NSTextField(labelWithString: text)
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer?.borderWidth = 1
+            label.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2 + 1),
+                label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(HelmMetrics.s2 + 1)),
+                label.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s0),
+                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s0),
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+        func paint(ink: NSColor, fill: NSColor, border: NSColor) {
+            label.textColor = ink
+            layer?.backgroundColor = fill.cgColor
+            layer?.borderColor = border.cgColor
+        }
+
+        /// A capsule at whatever height the flow gives it.
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            layer?.cornerRadius = newSize.height / 2
+        }
+    }
+
     #if FM_SELFTESTS
     var debugTitleText: String { titleLabel.stringValue }
     var debugSubtitleText: String { subtitleLabel.stringValue }
@@ -234,6 +442,23 @@ final class RecordPreviewHeader: NSView {
     var debugFacts: [String] { factLabels.map(\.stringValue) }
     var debugGradientColors: [CGColor] { hero.debugGradientColors }
     var debugCardFill: NSColor? { card.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugKickerText: String { kickerLabel.stringValue }
+    var debugKickerColor: NSColor? {
+        kickerLabel.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    }
+    var debugKickerTileHidden: Bool { kickerTile.isHidden || kickerSymbol == nil }
+    var debugSubtitleGlyphHidden: Bool { subtitleGlyph.isHidden }
+    /// The `.sheet` style's fact capsules: their words' colour, fill and edge.
+    var debugFactPaint: [(text: NSColor?, fill: NSColor?, border: NSColor?)] {
+        factChips.compactMap { $0 as? FactCapsule }.map { chip in
+            (chip.label.textColor,
+             chip.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
+             chip.layer?.borderColor.flatMap { NSColor(cgColor: $0) })
+        }
+    }
+    var debugFactFrames: [NSRect] { factChips.map(\.frame) }
+    var debugCardShadowAlpha: CGFloat { card.layer.map(HelmCard.debugEffectiveShadowAlpha(of:)) ?? 0 }
+    var debugCornerRadius: CGFloat { layer?.cornerRadius ?? -1 }
     #endif
 }
 

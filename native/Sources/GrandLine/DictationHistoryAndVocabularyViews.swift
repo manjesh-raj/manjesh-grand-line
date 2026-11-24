@@ -196,6 +196,11 @@ private final class DictationHistoryRowView: NSView {
 final class ChipFlowView: NSView {
     private var chips: [NSView] = []
     private var heightConstraint: NSLayoutConstraint!
+    /// The gap between two chips on a line, and between two lines. The
+    /// defaults are the vocabulary and tag wells' own. TK-1's preview facts
+    /// set the board's 6pt both ways.
+    var horizontalSpacing: CGFloat = 6 { didSet { needsLayout = true } }
+    var rowSpacing: CGFloat = HelmMetrics.s2 { didSet { needsLayout = true } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -220,19 +225,22 @@ final class ChipFlowView: NSView {
 
     override func layout() {
         super.layout()
-        let hSpacing: CGFloat = 6
-        let vSpacing: CGFloat = 8
+        let hSpacing = horizontalSpacing
+        let vSpacing = rowSpacing
         let width = max(bounds.width, 1)
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
         for v in chips {
-            let size = v.fittingSize
+            var size = v.fittingSize
             if x > 0 && x + size.width > width {
                 x = 0
                 y += rowHeight + vSpacing
                 rowHeight = 0
             }
+            // A chip wider than the whole line gets the line and truncates,
+            // rather than drawing past the view's edge.
+            size.width = min(size.width, width)
             v.frame = NSRect(x: x, y: y, width: size.width, height: size.height)
             x += size.width + hSpacing
             rowHeight = max(rowHeight, size.height)
