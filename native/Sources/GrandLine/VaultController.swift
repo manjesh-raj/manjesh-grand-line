@@ -557,7 +557,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
         applyTheme()
         onDrillSubtitleChanged?()
         publishVaultSignal()
-        view.layoutSubtreeIfNeeded()
+        // A read can land before the page is in a window (a page built and
+        // read off screen). Its layout then runs in a throwaway engine, which
+        // AppKit refuses for this page's hidden, detached views ("unable to
+        // find variable ... in engine 0x0"), and the page lays out anyway
+        // when it reaches a window.
+        if view.window != nil { view.layoutSubtreeIfNeeded() }
         scrollToTop()
     }
 
