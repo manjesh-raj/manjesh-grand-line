@@ -970,13 +970,13 @@ enum MainSplitShellPanesSelfTest {
               "Tf-2: at 1512 the band's figures dropped under its words", &ok)
         check(tasks.followUpLane.debugMenuTitles(at: 0).contains("Mark Done"),
               "R4-UI-09: a lane card's menu reads \(tasks.followUpLane.debugMenuTitles(at: 0))", &ok)
-        // S08: four lanes, one chrome. The page's first render runs before
-        // the shell adopts the sidebar layout, which used to leave this lane
-        // in the floating bar's classic shape beside three washed lanes.
+        // S08: four lanes, one chrome - the wash and a band, as the status
+        // lanes draw them, with the lane's amber for its identity.
         let lane = tasks.followUpLane
-        check(!lane.debugUsesClassicStyle && lane.debugLaneWashShown,
-              "S08: the sidebar layout's Follow-ups lane is not washed like the status lanes", &ok)
-        check(lane.debugHeaderMark == .dot(.warn), "S08: the lane lost its amber identity dot", &ok)
+        check(lane.debugLaneWashShown,
+              "S08: the Follow-ups lane is not washed like the status lanes", &ok)
+        check(lane.debugLaneBand.tone == .amber && !lane.debugLaneBand.isHiddenOrHasHiddenAncestor,
+              "S08: the lane lost its amber band", &ok)
         let foot = lane.debugAddRow
         check(foot.inLane && foot.outlined && foot.button.title == "Add follow-up",
               "S08: the lane has no dashed \"Add follow-up\" row (in lane \(foot.inLane), outlined \(foot.outlined))", &ok)

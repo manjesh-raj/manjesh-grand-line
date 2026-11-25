@@ -168,9 +168,10 @@ enum UIUXProposalsSelfTest {
 
     // MARK: - S04
 
-    /// The band is the default surface and paints Settings' two colours; the
-    /// pages the proposal moved hold their column in it; Tasks, Hosts and
-    /// Poneglyph keep the plain column on purpose.
+    /// The band is the default surface and paints Settings' two colours, and
+    /// the pages the proposal moved hold their column in it. Tasks', Hosts'
+    /// and Poneglyph's plain columns went with their floating-bar
+    /// presentations (P-03 of the 2026-11-25 review).
     private static func checkOneSidebarSurface(_ ok: inout Bool) {
         check(HelmPageSidebar().debugSurface == .band, "S04: a new page sidebar is a band by default", &ok)
         check(HelmPageSidebar.bandPaneWidth == HelmPageSidebar.width + 2 * HelmMetrics.pageGutter,
@@ -202,11 +203,8 @@ enum UIUXProposalsSelfTest {
         let workbench = source("CodePreviewWorkbench.swift")
         check(workbench.contains("HelmPageSidebar.Band()") && !workbench.contains("quickActionsCard"),
               "S04: Code's snippets and quick actions are one band, not two cards", &ok)
-        // Hosts' and Poneglyph's plain columns went with their floating-bar
-        // presentations (P-03 of the 2026-11-25 review); each split pane holds
-        // its hero column.
-        check(source("ShiftController.swift").contains("HelmPageSidebar(surface: .plain)"),
-              "S04: ShiftController.swift keeps its plain column", &ok)
+        // Hosts' and Poneglyph's split panes hold their hero columns now,
+        // and Tasks' filters are its band's.
     }
 
     // MARK: - S12
@@ -444,8 +442,12 @@ enum UIUXProposalsSelfTest {
         for page in ["UpdatesController.swift", "LogAnalyzerController.swift", "CredentialVaultController.swift"] {
             check(source(page).contains("HelmFilterBar("), "S16: \(page) builds its filter row with HelmFilterBar", &ok)
         }
-        check(source("ShiftController+Calendar.swift").contains("HelmPopUpButton()"),
-              "S16: Calendar's Colour by is a pop-up in the trailing slot", &ok)
+        // S16 made Colour by a pop-up rather than a second set of tabs; Cf-4
+        // moved it onto the month head as a menu, beside the scope and the
+        // project.
+        check(source("ShiftController.swift").contains(
+                  "colour: { [weak self] view in self?.popUp(self?.colourMenu(), from: view) }"),
+              "S16/Cf-4: Calendar's Colour by is a menu on the month head", &ok)
     }
 
     // MARK: - S25

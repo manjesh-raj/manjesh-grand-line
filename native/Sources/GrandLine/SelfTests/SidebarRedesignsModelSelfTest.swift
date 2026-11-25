@@ -366,10 +366,14 @@ enum SidebarRedesignsModelSelfTest {
                        "heroBand.onFollowUps = { [weak self] in self?.followUpsJumpClicked() }",
                        "heroBand.onShowProjectMenu = { [weak self] view in self?.popUp(self?.projectMenu(), from: view) }",
                        "scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) }",
-                       "splitPage?.pageForcesCollapse = true",
                        "var workspacePrimaryAction: NSView? { newTaskButton }",
                        "boardView.adoptWorkspaceStyle()"] {
             check(shift.contains(needle), "Tasks' sidebar presentation lost `\(needle)`", &ok)
+        }
+        // The band is the page's filters, so the page draws no column of its
+        // own to hold them (P-03 of the 2026-11-25 review removed it).
+        for needle in ["HelmPageSidebar(", "HelmSplitPage("] {
+            check(!shift.contains(needle), "Tasks builds a page column again: `\(needle)`", &ok)
         }
     }
 

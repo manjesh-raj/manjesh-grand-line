@@ -322,19 +322,16 @@ enum MainSplitShellNavigationSelfTest {
     private static func checkAPageColumnNeverGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
                                                             _ ok: inout Bool) {
         resize(window, width: 1100, shell)
-        // Stage 7: Tasks' column is its filter row in this layout, so no tab
-        // brings a column out at all.
+        // Stage 7: Tasks' column became the band's filters, and P-03 removed
+        // the column itself, so no tab brings a column out at all.
         shell.workspace.navigator.show(.shift)
         settle(shell)
-        if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
-            for tab in ["Board", "Weekly review", "List", "Board"] {
-                clickTab(tab, shell)
-                check(split.isSidebarCollapsed, "Tasks' \(tab) tab brought its page column out", &ok)
-            }
+        check(!(shell.debugSlotController(.shift) is HelmSplitPageHosting),
+              "Tasks has a page column of its own again", &ok)
+        for tab in ["Board", "Weekly review", "List", "Board"] {
+            clickTab(tab, shell)
             check(abs(window.frame.width - 1100) < 0.5,
-                  "Tasks' tabs grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
-        } else {
-            fail("Tasks has no split page to keep its column in", &ok)
+                  "Tasks' \(tab) tab grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         }
         // A column that does come back - Notebook's Pages, put away and
         // brought back through `pageForcesCollapse`, the switch Tasks' own
@@ -528,9 +525,9 @@ enum MainSplitShellNavigationSelfTest {
             check(host.moduleTabNames == module.tabs.filter(\.isPageTab).map(\.name),
                   "\(route.rawValue)'s own tabs are \(host.moduleTabNames), \(module.title)'s are \(module.tabs.map(\.name))", &ok)
         }
-        // The page's own control is put away while the toolbar draws it...
+        // The toolbar's tabs are the page's only switcher...
         if let shift = shell.debugSlotController(.shift) as? ShiftController {
-            check(shift.debugViewTabs.isHidden, "Tasks still draws its own view switcher under the toolbar's tabs", &ok)
+            check(!shift.debugHasOwnViewSwitcher, "Tasks draws a view switcher of its own under the toolbar's tabs", &ok)
             // ...and a switch the page makes by itself moves the toolbar's tab.
             shell.workspace.navigator.show(.shift)
             settle(shell)

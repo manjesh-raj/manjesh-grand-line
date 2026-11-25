@@ -876,35 +876,38 @@ enum ReviewUIUXSelfTest {
 
         // 2. The Tasks page's Follow-ups card at 480pt while empty. The
         //    shared panel height was the four-row *ceiling* used as a fixed
-        //    height; it is the content's own height clamped to that ceiling
-        //    now, and both panels still share one number.
+        //    height. The card's body is the Follow-ups table now, which
+        //    grows to fit its rows - so with no follow-ups it is the height
+        //    of the one empty row it draws.
         return withScratchShiftStore { store in
             autoreleasepool {
+                // One task, so the page is not the start-here state and the
+                // List tab draws its cards.
+                var task = ShiftTask.fresh()
+                task.title = "Anything"
+                store.addTask(task)
+                // Pure layout, no window: this suite runs headless.
                 let controller = ShiftController(store: store)
                 controller.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
-                // The panel heights are re-derived on every render, and a
-                // controller whose view was merely loaded has not rendered.
+                controller.debugSelectTasksView(ShiftController.ShiftTasksView.list.rawValue)
                 controller.debugRender()
                 controller.view.layoutSubtreeIfNeeded()
-                let ceiling = ShiftController.debugTaskFollowUpPanelBodyHeight
-                guard ceiling > 200 else {
-                    return "the four-row ceiling measured \(ceiling)pt, so this case cannot tell a "
-                         + "hugging panel from a fixed one"
+                let table = controller.debugFollowUpsTable
+                guard !table.card.isHiddenOrHasHiddenAncestor else {
+                    return "the List tab does not show the Follow-ups card, so this case is measuring nothing"
                 }
-                let empty = controller.debugTaskFollowUpBodyHeight
-                guard empty > 0 else {
-                    return "the panels have no height constraint, so this case is measuring nothing"
+                guard table.debugRows.count == 1, case .empty = table.debugRows[0].kind else {
+                    return "the Follow-ups table holds \(table.debugRows.count) rows, not its one empty row, "
+                         + "so this case cannot tell a hugging card from a fixed one"
                 }
-                guard empty < ceiling else {
-                    return "both panels are still \(empty)pt tall - the four-row ceiling - around one "
-                         + "empty-state line each (review U15)"
+                let body = table.debugTable.enclosingScrollView?.frame.height ?? 0
+                guard abs(body - HelmDataTable.fittedEmptyRowHeight) < 1 else {
+                    return "an empty Follow-ups card's body is \(body)pt, not the "
+                         + "\(HelmDataTable.fittedEmptyRowHeight)pt its one empty row draws (review U15)"
                 }
-                // UI-30: the page opens on the Board, where the task panel is
-                // hidden, so the follow-ups panel stands alone and hugs its
-                // *own* placeholder - not the hidden task list's.
-                guard abs(empty - ShiftFollowUpListView.emptyRowHeight) < 1 else {
-                    return "an empty panel is \(empty)pt, not the \(ShiftFollowUpListView.emptyRowHeight)pt "
-                         + "its one placeholder row actually draws"
+                let card = table.card.frame.height
+                guard card < 300 else {
+                    return "an empty Follow-ups card is still \(card)pt tall around one empty row (review U15)"
                 }
                 return nil
             }

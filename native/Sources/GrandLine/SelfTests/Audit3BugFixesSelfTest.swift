@@ -32,7 +32,6 @@ enum Audit3BugFixesSelfTest {
                       checkEmptyStateWatermarkIsNeverASlab,
                       checkUpdatesToastStaysOnItsOwnPage,
                       checkDictationChipIsContentSized,
-                      checkTaskPanelShowsWholeRows,
                       checkStickyFirstNoteClearsTheHeader,
                       checkCrewHandoffRefusesARestoredPage,
                       checkStaleTouchIDKeyIsNotAWrongPassword] {
@@ -275,33 +274,6 @@ enum Audit3BugFixesSelfTest {
                 if pill.width > width / 2 {
                     fail("@\(width): review #3's B10 is back - the chip is \(pill.width)pt", &ok)
                 }
-            }
-        }
-    }
-
-    // MARK: B11 - the panel shows whole rows
-
-    private static func checkTaskPanelShowsWholeRows(_ ok: inout Bool) {
-        print("\n-- B11: the My Tasks panel is a whole number of rows tall --")
-        let box = ShiftController.debugTaskFollowUpPanelBodyHeight
-        let row = ShiftTaskListView.rowHeight
-        let rows = box / row
-        check(abs(rows - rows.rounded()) < 0.01,
-              "the box (\(box)) is exactly \(rows.rounded()) rows of \(row)", &ok)
-        if abs(rows - rows.rounded()) >= 0.01 {
-            fail("review #3's B11 is back: \(rows) rows, so the last one renders sliced", &ok)
-        }
-
-        // At every chrome text scale, not just the captain's current one - a
-        // literal could not have stayed whole across them, which is why the
-        // fix derives it.
-        let saved = AppSettings.shared.uiTextScale
-        defer { ChromeTextScale.shared.setScale(saved) }
-        for step in ChromeTextScale.steps {
-            ChromeTextScale.shared.setScale(step.scale)
-            let scaledRows = ShiftController.debugTaskFollowUpPanelBodyHeight / ShiftTaskListView.rowHeight
-            if abs(scaledRows - scaledRows.rounded()) >= 0.01 {
-                fail("at \(step.title) the panel is \(scaledRows) rows tall", &ok)
             }
         }
     }

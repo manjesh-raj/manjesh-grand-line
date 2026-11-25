@@ -35,6 +35,8 @@ Home's own floating-bar parts went in P-03's second part: the hand-placed dashbo
 So did the Hosts page's: its nav column (the Workspace and Tools rows, the keychain card and the user row), its Workspace panel and shortcut hints, its detail column and its accent-row lists, so the rows for that column, those hints and those lists' controls are gone.
 Poneglyph's went too: its plain Vault, Kinds and Collections column (the hero column holds those rows) and its grouped credential list with that list's Reveal, Copy, 2FA code, menu and drag reorder (the credential table has every one of them), so the rows for that column and that list are gone.
 So did Automic Vault's: its attention banner with View Fix (S-1's split card says it and has View Fix), and its Secrets and Verified Launchers accent-row cards.
+Tasks' went too: its page column (the Workspace, Projects and Smart views groups, the Follow-ups row and the Settings and Shortcuts footer), the view switcher, sort pop-up and Colour by pop-up row under the band, and the flat My Tasks and Follow-ups lists with their row controls.
+The band's figures, Smart views pills and project and sort menus, the calendar head's menus, the toolbar's tabs and the List and Follow-ups tables carry all of it, so the rows for that column, that row and those lists are gone, and the scope rows say where each scope is picked now.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.
@@ -598,10 +600,6 @@ Every `HelmSegmentedTabs` built from literal titles, plus the Hosts column, the 
 | `tab.SettingsTerminalColors.All` | Terminal scheme filter: All | Settings > Appearance's theme grid filter, which listed the same 26 palettes | Settings › Terminal (Terminal colours › Schemes) |  |
 | `tab.SettingsTerminalColors.Dark` | Terminal scheme filter: Dark | Settings > Appearance's theme grid filter | Settings › Terminal (Terminal colours › Schemes) |  |
 | `tab.SettingsTerminalColors.Light` | Terminal scheme filter: Light | Settings > Appearance's theme grid filter | Settings › Terminal (Terminal colours › Schemes) |  |
-| `tab.ShiftController.Board` | Tasks view: Board | Tasks page view tabs | Tasks › Board |  |
-| `tab.ShiftController.List` | Tasks view: List | Tasks page view tabs | Tasks › List |  |
-| `tab.ShiftController.Calendar` | Tasks view: Calendar | new (tasks-calendar plan PR 4; the Calendar page before it) | Tasks › Calendar (the Calendar sidebar row and the toolbar's calendar button open it) |  |
-| `tab.ShiftController.Review` | Tasks view: Review | Tasks page view tabs | Tasks › Weekly review |  |
 | `tab.TerminalHighlightSettings.Pattern` | Custom rule editor: match a pattern | Settings › Terminal's Custom rules card, while a rule is being edited | Settings › Terminal (T3: the rule editor inside the Custom rules card) |  |
 | `tab.TerminalHighlightSettings.Words` | Custom rule editor: match words | Settings › Terminal's Custom rules card, while a rule is being edited | Settings › Terminal (T3: the rule editor inside the Custom rules card) |  |
 | `tab.ToolKind.base64` | Tool: base64 | Tools page tab | Tools (tool tab, unchanged) |  |
@@ -643,17 +641,11 @@ The rows and headers of every page's own column (`HelmPageSidebar`): literal one
 | `nav.ScheduleStatusFilter.needsYou` | Schedules page column: Needs you | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
 | `nav.ScheduleStatusFilter.paused` | Schedules page column: Paused | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
 | `nav.ScheduleStatusFilter.worthALook` | Schedules page column: Worth a look | Schedules page column | Schedules (the module's own filter column, unchanged) |  |
-| `nav.ShiftController.Follow-ups` | Tasks page column: Follow-ups | Tasks page column | Tasks (the filter row's Follow-ups button in the sidebar layout, with the pending count, scrolls to the follow-ups panel; the floating bar keeps the column) |  |
-| `nav.ShiftController.Projects` | Tasks page column: Projects | Tasks page column | Tasks (the filter row's project menu in the sidebar layout, each project with its dot, filters the views to one project; the floating bar keeps the column) |  |
-| `nav.ShiftController.Settings` | Tasks page column: Settings | Tasks page column | Sidebar (Settings is its own sidebar item) |  |
-| `nav.ShiftController.Shortcuts` | Tasks page column: Shortcuts | Tasks page column | Toolbar (the search field opens the same ⌘K palette) |  |
-| `nav.ShiftController.Smart views` | Tasks page column: Smart views | Tasks page column | Tasks (My priorities and Recently updated are segments of the filter row's scope control in the sidebar layout) |  |
-| `nav.ShiftController.Workspace` | Tasks page column: Workspace | Tasks page column | Tasks (All tasks, Due today and Overdue are segments of the filter row's scope control in the sidebar layout, with their counts) |  |
-| `nav.ShiftTaskScope.all` | Tasks page column: All tasks | Tasks page column | Tasks (a segment of the filter row's scope control in the sidebar layout) |  |
-| `nav.ShiftTaskScope.due_today` | Tasks page column: Due today | Tasks page column | Tasks (a segment of the filter row's scope control in the sidebar layout) |  |
-| `nav.ShiftTaskScope.my_priorities` | Tasks page column: My priorities | Tasks page column | Tasks (a segment of the filter row's scope control in the sidebar layout) |  |
-| `nav.ShiftTaskScope.overdue` | Tasks page column: Overdue | Tasks page column | Tasks (a segment of the filter row's scope control in the sidebar layout) |  |
-| `nav.ShiftTaskScope.recently_updated` | Tasks page column: Recently updated | Tasks page column | Tasks (a segment of the filter row's scope control in the sidebar layout) |  |
+| `nav.ShiftTaskScope.all` | Tasks page column: All tasks | Tasks page column | Tasks (a figure on the Tasks band with its count since Tf-2, and an item of the calendar head's scope menu since Cf-4) |  |
+| `nav.ShiftTaskScope.due_today` | Tasks page column: Due today | Tasks page column | Tasks (a figure on the Tasks band with its count since Tf-2, and an item of the calendar head's scope menu since Cf-4) |  |
+| `nav.ShiftTaskScope.my_priorities` | Tasks page column: My priorities | Tasks page column | Tasks (a Smart views pill on the Tasks band since Tf-2, and an item of the calendar head's scope menu since Cf-4) |  |
+| `nav.ShiftTaskScope.overdue` | Tasks page column: Overdue | Tasks page column | Tasks (a figure on the Tasks band with its count since Tf-2, and an item of the calendar head's scope menu since Cf-4) |  |
+| `nav.ShiftTaskScope.recently_updated` | Tasks page column: Recently updated | Tasks page column | Tasks (a Smart views pill on the Tasks band since Tf-2, and an item of the calendar head's scope menu since Cf-4) |  |
 
 ## Toolbar actions
 
@@ -853,12 +845,10 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.SettingsThemeCard` | SettingsThemeCard controls | `cardClicked` | Settings › Appearance |  |
 | `action.ShiftBoardViews` | ShiftBoardViews controls | `addTapped`, `cardClicked`, `chipClicked`, `clearFilterTapped`, `fire`, `menuDelete`, `menuFocus`, `menuMove`, `menuOpen`, `menuPush` | Tasks › Board |  |
 | `action.ShiftConflictController` | ShiftConflictController controls | `applyClicked`, `cancelClicked`, `choiceClicked` | Tasks (sync conflict sheet) |  |
-| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `calendarTodayClicked`, `colourMenuPicked`, `detailBackClicked`, `detailSaveClicked`, `followUpTableCheckClicked`, `newTaskClicked`, `openFailedFile`, `projectMenuPicked`, `scopeMenuPicked`, `sortChanged`, `sortMenuPicked`, `syncPillClicked`, `tableCheckClicked` | Tasks (the scope, project, sort and Colour by menus the band and the calendar's month head open - Tf-2 and Cf-4 - and the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
-| `action.ShiftController+Calendar` | ShiftController+Calendar controls | `colourPicked` | Calendar (the filter bar's Colour by pop-up, S16) |  |
+| `action.ShiftController` | ShiftController controls | `addExampleTaskTapped`, `calendarTodayClicked`, `colourMenuPicked`, `detailBackClicked`, `detailSaveClicked`, `followUpTableCheckClicked`, `newTaskClicked`, `openFailedFile`, `projectMenuPicked`, `scopeMenuPicked`, `sortMenuPicked`, `syncPillClicked`, `tableCheckClicked` | Tasks (the scope, project, sort and Colour by menus the band and the calendar's month head open - Tf-2 and Cf-4 - and the List table's check and the Follow-ups table's check are the sidebar layout's) |  |
 | `action.ShiftProjectHuePicker` | ShiftProjectHuePicker controls | `picked` | Tasks (the project sheet's and project detail's colour row, S13) |  |
 | `action.ShiftFollowUpEditorController` | ShiftFollowUpEditorController controls | `deleteFollowUp` | Tasks (follow-up editor; also opened from Calendar) |  |
 | `action.ShiftImageAttachmentWell` | ShiftImageAttachmentWell controls | `removeClicked` | Tasks (task editor attachments) |  |
-| `action.ShiftListViews` | ShiftListViews controls | `checkboxClicked`, `deleteClicked`, `doneClicked`, `editClicked`, `focusClicked`, `openClicked`, `pushClicked`, `reopenClicked`, `snooze30`, `snoozeCustom`, `snoozeHour`, `snoozeNextWeek`, `snoozeTomorrow`, `stopFocusClicked` | Tasks › List |  |
 | `action.ShiftMenuBar` | ShiftMenuBar controls | `iconClicked`, `quickAddSubmitted` | Menu bar extra (Tasks: the icon and the quick-add field are unchanged; the popover's own actions are `action.TasksBridgeView`) |  |
 | `action.ShiftProjectDetailView` | ShiftProjectDetailView controls | `checkboxClicked`, `chevronClicked` | Tasks (the project page, unchanged) |  |
 | `action.ShiftCalendarHero` | ShiftCalendarHero controls | `colourMenuTapped`, `nextTapped`, `previousTapped`, `projectMenuTapped`, `scopeMenuTapped`, `todayTapped`, `toggleTapped` | Calendar (Cal-8, sidebar layout: the month head's previous, next and Today pills, its Cf-4 scope, project and Colour by menus, and the Unscheduled head's fold and expand buttons) |  |

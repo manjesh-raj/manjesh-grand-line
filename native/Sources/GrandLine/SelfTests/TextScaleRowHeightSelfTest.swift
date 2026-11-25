@@ -61,8 +61,6 @@ enum TextScaleRowHeightSelfTest {
 
     /// Every fixed row height in the app, with the base it was measured at.
     private static let heights: [(name: String, base: CGFloat, current: () -> CGFloat)] = [
-        ("ShiftTaskListView", ShiftTaskListView.baseRowHeight, { ShiftTaskListView.rowHeight }),
-        ("ShiftFollowUpListView", ShiftFollowUpListView.baseRowHeight, { ShiftFollowUpListView.rowHeight }),
         ("ReviewPRListView", ReviewPRListView.baseRowHeight, { ReviewPRListView.rowHeight }),
         ("DictationHistoryListView", DictationHistoryListView.baseRowHeight, { DictationHistoryListView.rowHeight }),
         ("FleetLogListView", FleetLogListView.baseEventRowHeight, { FleetLogListView.eventRowHeight }),
@@ -119,13 +117,11 @@ enum TextScaleRowHeightSelfTest {
             row.applyTheme(theme)
             // A real width, or a wrapping label reports a single-line height
             // and the whole measurement is meaningless.
-            row.frame = NSRect(x: 0, y: 0, width: 520, height: ShiftTaskListView.rowHeight)
+            row.frame = NSRect(x: 0, y: 0, width: 520, height: DictationHistoryListView.rowHeight)
             row.layoutSubtreeIfNeeded()
 
             let needed = row.fittingSize.height
             check(needed > 0, "the measured row had no height at all at \(step.title)")
-            // The two Tasks lists draw the revamp's `.flat` row and are
-            // measured in their own shapes below (`accentRowShapes`).
             for entry in heights where entry.name == "DictationHistoryListView" {
                 check(needed <= entry.current(),
                       "at \(step.title) a real row needs \(needed)pt but \(entry.name) gives it "
@@ -193,28 +189,6 @@ enum TextScaleRowHeightSelfTest {
             // The UI/UX revamp's board card: `.cardFlat`, the chip on the meta
             // line. Two shapes, because the lane plan costs a card with no
             // meta line and one with it differently.
-            // The Tasks lists' flat rows (UI-24, UI-30), each in its own
-            // tallest real shape.
-            ("ShiftTaskListView", .trailing, .flat,
-             HelmAccentRow.Content(
-                tint: .warn,
-                kicker: "GRAND LINE",
-                title: "Re-measure every accent row after the type bump",
-                meta: "1/2 subtasks",
-                chipText: "High",
-                metaLead: "Due today",
-                metaLeadTint: .warn),
-             { ShiftTaskListView.rowHeight }),
-            ("ShiftFollowUpListView", .trailing, .flat,
-             HelmAccentRow.Content(
-                tint: .critical,
-                kicker: "",
-                title: "Follow up with Nithin on SRE bot response reviews",
-                meta: "6 Oct at 9:00 AM",
-                chipText: "High",
-                trailingCaption: "Overdue 8 days",
-                trailingCaptionTint: .critical),
-             { ShiftFollowUpListView.rowHeight }),
             ("ShiftBoardView card", .metaLine, .cardFlat,
              HelmAccentRow.Content(
                 tint: .warn,
@@ -258,7 +232,6 @@ enum TextScaleRowHeightSelfTest {
         let tableRounding: CGFloat = 0.5
 
         ChromeTextScale.shared.setScale(1.0)
-        let tasks = ShiftTaskListView()
         let history = DictationHistoryListView()
         let log = FleetLogListView(frame: .zero)
         let reviews = ReviewPRListView(
@@ -266,8 +239,7 @@ enum TextScaleRowHeightSelfTest {
             actionTarget: NSObject(), reviewAction: #selector(NSObject.description),
             mergeAction: #selector(NSObject.description),
             checksVisuals: { _ in (.good, "Passing") })
-        for (name, built) in [("ShiftTaskListView", tasks.tableView.rowHeight),
-                              ("ReviewPRListView", reviews.tableView.rowHeight),
+        for (name, built) in [("ReviewPRListView", reviews.tableView.rowHeight),
                               ("DictationHistoryListView", history.tableView.rowHeight),
                               ("FleetLogListView", log.tableView.rowHeight)] {
             check(built > 0, "\(name) built with no row height")
@@ -277,17 +249,13 @@ enum TextScaleRowHeightSelfTest {
         // Nothing has re-themed yet, so the *tables* should still be stale -
         // which is what proves the assertions below are measuring the
         // re-derivation rather than a value that was already right.
-        check(abs(tasks.tableView.rowHeight - ShiftTaskListView.baseRowHeight) <= tableRounding,
+        check(abs(reviews.tableView.rowHeight - ReviewPRListView.baseRowHeight) <= tableRounding,
               "the table changed height without a theme re-fire, so this check proves nothing")
 
-        tasks.applyTheme(theme)
         reviews.applyTheme(theme)
         history.applyTheme(theme)
         log.applyTheme(theme)
 
-        check(abs(tasks.tableView.rowHeight - ShiftTaskListView.rowHeight) <= tableRounding,
-              "ShiftTaskListView did not re-derive its row height on a theme re-fire "
-              + "(\(tasks.tableView.rowHeight) vs \(ShiftTaskListView.rowHeight))")
         check(abs(reviews.tableView.rowHeight - ReviewPRListView.rowHeight) <= tableRounding,
               "ReviewPRListView did not re-derive its row height on a theme re-fire "
               + "(\(reviews.tableView.rowHeight) vs \(ReviewPRListView.rowHeight))")
