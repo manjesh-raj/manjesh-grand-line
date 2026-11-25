@@ -1229,7 +1229,7 @@ enum DaylightModuleSelfTest {
 
     private static func checkCanvasConstructsNoStores(_ ok: inout Bool) {
         print("\n-- canvas: reads already-owned state, never constructs a store --")
-        guard let dir = SelfTestSources.appSourceDirectory() else {
+        guard SelfTestSources.appSourceDirectory() != nil else {
             print("  SKIP - app sources are not next to this binary")
             return
         }
@@ -2158,7 +2158,7 @@ enum DaylightModuleSelfTest {
     /// `checkLiveModuleWiring` (the live path really is a subscription).
     private static func checkNoNewPolling(_ ok: inout Bool) {
         print("\n-- Phase 3's rule: the hub subscribes, it never polls --")
-        guard let dir = SelfTestSources.appSourceDirectory() else {
+        guard SelfTestSources.appSourceDirectory() != nil else {
             print("  SKIP - app sources are not next to this binary")
             return
         }
