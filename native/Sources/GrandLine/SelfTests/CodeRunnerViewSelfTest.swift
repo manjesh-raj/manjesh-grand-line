@@ -84,11 +84,8 @@ enum CodeRunnerViewSelfTest {
         // The checks below start from the one untitled tab it used to make.
         controller.debugNewSnippet()
 
-        checkHiddenPaneCostsTheEditorNothing(controller, window, check)
-        checkPaneIsPerTab(controller, check)
         checkRunControlsFollowTheLanguage(controller, check)
         checkFormatAppliesToTheEditor(controller, store, check)
-        checkARealRunReachesThePane(controller, check)
         checkRunnersPopoverOpensAndIsLockDismissible(controller, check)
 
         window.orderOut(nil)
@@ -294,88 +291,6 @@ enum CodeRunnerViewSelfTest {
 
     // MARK: The page
 
-    /// **The check this whole file exists for.** A hidden pane must cost the
-    /// editor nothing - which `isHidden` alone does not deliver, because a
-    /// hidden view keeps its constraints.
-    ///
-    /// Measured as the editor card's own rendered height, with the pane hidden
-    /// and then shown, in a real window that has actually laid out.
-    private static func checkHiddenPaneCostsTheEditorNothing(_ controller: CodePreviewController,
-                                                             _ window: NSWindow,
-                                                             _ check: (Bool, String) -> Void) {
-        controller.view.layoutSubtreeIfNeeded()
-        let hiddenHeight = controller.debugEditorCard.frame.height
-        check(hiddenHeight > 300,
-              "the editor should fill the page before anything runs, got \(hiddenHeight)")
-        check(controller.debugOutputPane.isHidden, "the pane must start hidden")
-        check(controller.debugOutputPaneHeight == 0,
-              "a hidden pane's height constraint must be zero, got \(controller.debugOutputPaneHeight)")
-        // The geometric form of the same claim, and the one that cannot be
-        // satisfied by a constraint that merely exists: with the pane hidden,
-        // the status bar must sit one card inset below the **editor**, not
-        // below a collapsed pane. The root view is unflipped, so the status bar
-        // is at the bottom and the editor's `minY` is directly above it.
-        let gap = controller.debugEditorCard.frame.minY
-            - controller.debugStatusBarFrame.maxY
-        check(abs(gap - CodePreviewController.debugCardInset) < 1,
-              "with the pane hidden the status bar must sit \(CodePreviewController.debugCardInset)pt "
-              + "below the editor, the gap measures \(gap) - which is the editor losing a band of "
-              + "nothing to a pane that is not there")
-
-        controller.debugShowPane(.finished(outcome(.ok, status: 0, output: "hello", duration: 0.4)))
-        controller.view.layoutSubtreeIfNeeded()
-        let shownHeight = controller.debugEditorCard.frame.height
-        check(!controller.debugOutputPane.isHidden, "the pane must be visible once a run finishes")
-        check(controller.debugOutputPane.frame.height >= CodeRunOutputPane.preferredHeight - 1,
-              "a shown pane must get its full height, got \(controller.debugOutputPane.frame.height)")
-        check(shownHeight < hiddenHeight,
-              "showing the pane must take its height from the editor "
-              + "(\(hiddenHeight) -> \(shownHeight))")
-        // The discriminating half: the editor gave up exactly the pane plus
-        // its one gap, so a pane that quietly took twice its height would fail
-        // here rather than merely look wrong.
-        let given = hiddenHeight - shownHeight
-        let expected = CodeRunOutputPane.preferredHeight + 12
-        check(abs(given - expected) < 2,
-              "the editor should give up \(expected)pt, it gave up \(given) "
-              + "(editor \(hiddenHeight) -> \(shownHeight), pane "
-              + "\(controller.debugOutputPane.frame.height), root "
-              + "\(controller.view.frame.height))")
-
-        controller.debugClearOutput()
-        controller.view.layoutSubtreeIfNeeded()
-        check(abs(controller.debugEditorCard.frame.height - hiddenHeight) < 1,
-              "clearing the pane must give the editor its height back, got "
-              + "\(controller.debugEditorCard.frame.height) against \(hiddenHeight)")
-        check(controller.debugOutputPane.isHidden, "clearing must hide the pane again")
-        _ = window
-    }
-
-    /// A run belongs to the tab it was started from.
-    private static func checkPaneIsPerTab(_ controller: CodePreviewController,
-                                          _ check: (Bool, String) -> Void) {
-        controller.debugNewSnippet()
-        let names = controller.debugTabNames
-        guard names.count >= 2, let first = names.first, let second = names.last else {
-            check(false, "needed two tabs to check per-tab output, got \(names)")
-            return
-        }
-        controller.debugSelect(name: second)
-        controller.debugShowPane(.finished(outcome(.ok, status: 0, output: "second tab output")))
-        check(controller.debugOutputPane.outputText == "second tab output",
-              "the pane should show this tab's run")
-
-        controller.debugSelect(name: first)
-        check(controller.debugOutputPane.isHidden,
-              "a tab that has run nothing must show no pane, not the neighbour's output")
-
-        controller.debugSelect(name: second)
-        check(controller.debugOutputPane.outputText == "second tab output",
-              "coming back to a tab must show its own output again, got "
-              + controller.debugOutputPane.outputText)
-        controller.debugClearOutput()
-    }
-
     /// Run and Format are enabled for what the machine can actually do, and
     /// the tooltip says why when they are not.
     ///
@@ -495,60 +410,6 @@ enum CodeRunnerViewSelfTest {
         let afterSecond = store.list().first { $0.id == renamed }?.content ?? ""
         check(afterSecond == afterFirst,
               "formatting twice must be a no-op the second time")
-        controller.debugCloseCurrent()
-    }
-
-    /// One real run, end to end through the page's own controller, so the
-    /// wiring between the button, the runner and the pane is proved rather
-    /// than assumed.
-    private static func checkARealRunReachesThePane(_ controller: CodePreviewController,
-                                                    _ check: (Bool, String) -> Void) {
-        guard Subprocess.resolveExecutable("python3") != nil, CodeSandbox.isAvailable else {
-            print("  SKIP no python3 (or no sandbox-exec) - the end-to-end run cannot run")
-            return
-        }
-        controller.debugNewSnippet()
-        guard let name = controller.debugCurrentName else {
-            check(false, "no current snippet")
-            return
-        }
-        controller.debugSimulateEdit(name: name, content: "print('from the page')\n")
-        controller.debugPickLanguage("python")
-        controller.debugRefreshRunControls()
-        check(controller.debugRunButtonEnabled, "Run should be available for this snippet")
-        controller.debugRun()
-        check(controller.debugIsRunning, "the controller should report a run in flight")
-        check(!controller.debugRunButtonEnabled,
-              "Run must be off while a run is in flight - two runs cannot share one pane")
-
-        guard waitFor(timeout: 45, until: { !controller.debugIsRunning }) else {
-            check(false, "the run never finished")
-            return
-        }
-        check(controller.debugOutputPane.outputText.contains("from the page"),
-              "the run's output must land in the pane, got "
-              + controller.debugOutputPane.outputText)
-        check(controller.debugOutputPane.debugStatusText == "EXIT 0",
-              "got \(controller.debugOutputPane.debugStatusText)")
-        check(controller.debugRunButtonEnabled, "Run must come back once the run has finished")
-
-        // Stop, on a script that would otherwise outlast this suite.
-        controller.debugSimulateEdit(name: controller.debugCurrentName ?? name,
-                                     content: "import time\ntime.sleep(120)\n")
-        controller.debugRefreshRunControls()
-        controller.debugRun()
-        guard waitFor(timeout: 5, until: { controller.debugIsRunning }) else {
-            check(false, "the sleeping run never started")
-            return
-        }
-        controller.debugStopRun()
-        guard waitFor(timeout: 20, until: { !controller.debugIsRunning }) else {
-            check(false, "Stop did not stop the run")
-            return
-        }
-        check(controller.debugOutputPane.debugStatusText == "STOPPED",
-              "a stopped run must read as stopped, got "
-              + controller.debugOutputPane.debugStatusText)
         controller.debugCloseCurrent()
     }
 

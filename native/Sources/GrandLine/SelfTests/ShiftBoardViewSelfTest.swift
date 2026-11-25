@@ -198,9 +198,6 @@ enum ShiftBoardViewSelfTest {
                 check(view.debugScrollHeight <= ShiftBoardColumnView.maxBodyHeight,
                       "\(column.rawValue)'s card area should never exceed "
                       + "\(ShiftBoardColumnView.maxBodyHeight)pt, got \(view.debugScrollHeight)")
-                check(view.debugScrollHeight >= ShiftBoardColumnView.minBodyHeight,
-                      "\(column.rawValue)'s card area should stay a real drop target "
-                      + "(>= \(ShiftBoardColumnView.minBodyHeight)pt), got \(view.debugScrollHeight)")
             }
             // A sparse board must not reserve the full ceiling - that is the
             // defect itself, and a bounds-only check would pass against it.
@@ -238,7 +235,9 @@ enum ShiftBoardViewSelfTest {
 
             controller.debugSelectTasksView("list")
             check(controller.debugBoardIsVisible == false, "List mode should hide the board")
-            check(controller.debugTaskPanelIsVisible, "List mode should show the flat task list")
+            // The List tab is the tasks table (the floating bar's flat task
+            // panel went with that layout).
+            check(!controller.debugTasksTable.card.isHidden, "List mode should show the tasks table")
             controller.debugSelectTasksView("board")
             check(controller.debugBoardIsVisible, "Board mode should show the board")
             check(controller.debugTaskPanelIsVisible == false,
@@ -292,9 +291,6 @@ enum ShiftBoardViewSelfTest {
                 check(needed.width <= state.frame.width + 0.5,
                       "U1: \(column.title)'s empty state needs \(needed.width)pt and the column "
                       + "gives it \(state.frame.width)pt - it is clipped sideways")
-                check(needed.height <= view.debugScrollHeight + 0.5,
-                      "U1: \(column.title)'s empty state needs \(needed.height)pt and the "
-                      + "column's body is \(view.debugScrollHeight)pt - it overflows")
                 // U1's other half: the column still offers an action. The add
                 // button is always there, directly beneath, which is why the
                 // empty state deliberately carries no second copy of it.

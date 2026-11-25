@@ -127,8 +127,21 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
         return (controller, store)
     }
 
-    private static func firstRecordRow(_ list: CredentialVaultListSection) -> Int? {
-        (0..<list.debugRowCount).first { list.debugItem($0)?.isRecord == true }
+    /// The first credential row of the page's table - the rows are
+    /// interleaved with category group headers, so a test must not assume
+    /// row 0. P-03 of the 2026-11-25 review removed the floating bar, whose
+    /// accent-row list these cases first read; the table is the page now.
+    private static func firstRecord(_ controller: CredentialVaultController) -> HelmDataTable.Row? {
+        controller.debugCredentialTable.debugRows.first(where: \.isRecord)
+    }
+
+    /// The live 2FA cell on the first credential row, which is the view the
+    /// table hosts in that row's 2FA column.
+    private static func firstTOTPCell(_ controller: CredentialVaultController) -> CredentialTOTPCell? {
+        guard let row = firstRecord(controller), let key = row.key,
+              case .view(let view)? = row.cells["twofa"],
+              let cell = view as? CredentialTOTPCell else { return nil }
+        return controller.debugTOTPCell(key) === cell ? cell : nil
     }
 
     // MARK: F16 - the row
@@ -141,15 +154,16 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
             credential.totp = VaultTOTP(secret: seed)
             _ = store.add(credential)
         }
-        let list = controller.debugList
-        guard let row = firstRecordRow(list) else {
+        guard firstRecord(controller) != nil else {
             check(false, "the page needs a record row")
             return
         }
-        guard let ring = list.debugTOTPRing(row), let codeButton = list.debugTOTPCodeButton(row) else {
+        guard let cell = firstTOTPCell(controller) else {
             check(false, "a credential with a 2FA seed must render a ring and a code button")
             return
         }
+        let ring = cell.debugRing
+        let codeButton = cell.debugCodeButton
         let expected = TOTP.code(VaultTOTP(secret: seed), at: instant)
         check(expected != nil, "the fixture's own seed must produce a code")
         check(codeButton.title == TOTP.grouped(expected ?? ""),
@@ -180,11 +194,12 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
         let (plain, _) = mounted(scratch, name: "row-plain", window: window) { store in
             _ = store.add(VaultCredential(title: "No 2FA", secret: "x"))
         }
-        if let plainRow = firstRecordRow(plain.debugList) {
-            check(plain.debugList.debugTOTPRing(plainRow) == nil,
-                  "a credential with no 2FA seed must draw no ring")
-            check(plain.debugList.debugTOTPCodeButton(plainRow) == nil,
-                  "...and no code button")
+        if let plainRow = firstRecord(plain) {
+            if case .view? = plainRow.cells["twofa"] {
+                check(false, "a credential with no 2FA seed must draw no ring")
+            }
+            check(plain.debugTOTPCellIDs.isEmpty,
+                  "...and no code button, got cells for \(plain.debugTOTPCellIDs)")
         } else {
             check(false, "the second fixture needs a record row")
         }
@@ -197,12 +212,12 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
             credential.totp = VaultTOTP(secret: seed)
             _ = store.add(credential)
         }
-        guard let row = firstRecordRow(controller.debugList),
-              let ring = controller.debugList.debugTOTPRing(row),
-              let button = controller.debugList.debugTOTPCodeButton(row) else {
+        guard let cell = firstTOTPCell(controller) else {
             check(false, "the page needs a 2FA row")
             return
         }
+        let ring = cell.debugRing
+        let button = cell.debugCodeButton
         let firstCode = button.title
         check(ring.secondsText == "30", "setup: the window starts full")
 
@@ -237,16 +252,14 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
             note.kind = .secureNote
             _ = store.add(note)
         }
-        let list = controller.debugList
-        guard let row = firstRecordRow(list), let item = list.debugItem(row) else {
-            check(false, "the page needs a note row")
+        guard let row = firstRecord(controller), let controls = row.accessory as? CredentialRowControls else {
+            check(false, "the page needs a note row with its row controls")
             return
         }
-        check(item.reveal == nil, "a note must not offer Reveal - six lines do not fit a row")
-        check(item.copy == nil, "a note must not offer Copy - prose on the pasteboard is the defect")
-        check(list.debugRevealButton(row) == nil, "...and the Reveal button must not be rendered")
-        check(list.debugCopyButton(row) == nil, "...nor the Copy button")
-        let meta = item.content.meta ?? ""
+        check(controls.debugRevealButton == nil, "a note must not offer Reveal - six lines do not fit a row")
+        check(controls.debugCopyButton == nil, "a note must not offer Copy - prose on the pasteboard is the defect")
+        var meta = ""
+        if case .title(_, let subtitle, _, _, _, _)? = row.cells["name"] { meta = subtitle ?? "" }
         check(meta.contains("3 lines"),
               "the row must say how long the note is without showing it, got \(meta)")
         check(!meta.contains("Step 1"),
@@ -679,8 +692,7 @@ enum PoneglyphTOTPRecoveryViewSelfTest {
                 _ = store.add(credential)
             }
             controller.view.layoutSubtreeIfNeeded()
-            guard let row = firstRecordRow(controller.debugList),
-                  let ring = controller.debugList.debugTOTPRing(row) else {
+            guard let ring = firstTOTPCell(controller)?.debugRing else {
                 check(false, "\(theme.id): the 2FA row must render")
                 continue
             }

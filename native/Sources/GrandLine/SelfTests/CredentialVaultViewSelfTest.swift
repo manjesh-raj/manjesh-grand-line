@@ -1127,6 +1127,24 @@ enum CredentialVaultViewSelfTest {
                                                "03 \u{00B7} Notes", "04 \u{00B7} History"],
               "the numbered sections should read in order, got \(inspector.debugSectionTitles)")
 
+        // The panel is the shell's inspector pane now, not a column of this
+        // page (P-03 of the 2026-11-25 review removed the floating bar, whose
+        // page drew it). So the widths below are measured where the captain
+        // sees them: the page's own inspector content, in the real
+        // `WorkspaceInspectorController`, at that pane's fixed width.
+        guard let content = controller.inspectorContent else {
+            check(false, "a selected credential should hand the shell inspector content")
+            return
+        }
+        check(content.view === inspector, "the shell's inspector should host this same panel")
+        let pane = WorkspaceInspectorController()
+        let paneWindow = OffScreenProbe.window(width: WorkspaceInspectorController.width, height: 700)
+        paneWindow.contentView = pane.view
+        pane.setContent(content)
+        paneWindow.displayIfNeeded()
+        pane.view.layoutSubtreeIfNeeded()
+        defer { pane.setContent(nil) }
+
         // The values themselves, whole.
         let rendered = inspector.debugValueLabels
         check(rendered.contains { $0.stringValue == account },

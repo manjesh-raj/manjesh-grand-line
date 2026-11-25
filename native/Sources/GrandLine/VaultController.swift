@@ -994,6 +994,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// The path a real finished re-check takes into the page, minus the subprocess.
     func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
+    /// The secrets table's own empty row, which is where the sidebar
+    /// layout says "still reading", "could not read" or "none".
+    var debugSecretsTablePlaceholderText: String? {
+        for row in secretsTable.debugRows { if case .empty(_, _, let body) = row.kind { return body } }
+        return nil
+    }
     var debugToolsTable: HelmDataTable { toolsTable }
     var debugHeroSplit: VaultHeroSplitView? { heroSplit }
     #endif

@@ -1786,9 +1786,6 @@ enum SelfTestDispatch {
         if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS"] == "1" {
             exit(CodePreviewSidebarSelfTest.run() ? 0 : 1)
         }
-        if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"] == "1" {
-            exit(CodePreviewSidebarViewSelfTest.run() ? 0 : 1)
-        }
         if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_WORKBENCH_TESTS"] == "1" {
             exit(CodePreviewWorkbenchSelfTest.run() ? 0 : 1)
         }

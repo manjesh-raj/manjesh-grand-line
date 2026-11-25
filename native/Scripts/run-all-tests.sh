@@ -225,7 +225,6 @@ FM_RUN_SHIFT_TASKS_PAGE_TESTS 34
 FM_RUN_STRAW_HAT_HANDOFF_TESTS 33
 FM_RUN_WORKSPACE_TOOLBAR_TESTS 32
 FM_RUN_CONNECTIONS_CARDS_TESTS 28
-FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 26
 FM_RUN_PAGE_REDESIGNS_TESTS 24
 FM_RUN_CODE_PREVIEW_VIEW_TESTS 22
 FM_RUN_DAYLIGHT_MODULE_TESTS 19
@@ -601,7 +600,6 @@ NEEDS_SESSION=(
   # drives the list's rows, keyboard, hide/show and resize handle, and measures
   # the editor's width with the list shown and hidden. FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS
   # covers the logic half (order, filter, icons, preferences) and does run in CI.
-  "FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS"
   # The Code page's sidebar-layout presentation (the Workbench concept):
   # mounts the real page in a real window, adopts the layout, runs real
   # sandboxed shell fixtures into the Run results dock, reads Monaco's own

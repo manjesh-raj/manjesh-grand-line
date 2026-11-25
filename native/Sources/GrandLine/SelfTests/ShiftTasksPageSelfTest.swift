@@ -169,29 +169,12 @@ enum ShiftTasksPageSelfTest {
                   "a jump row must not become the selection, got \(controller.debugSidebar.selection ?? "nil")")
         }
 
-        // MARK: Weekly Review takes the column with it, gap and all
-
-        withScratchStore { store in
-            _ = seed(store, title: "Anything", status: .todo, due: nil)
-            let (controller, window) = mount(store: store)
-            defer { window.orderOut(nil) }
-
-            check(controller.debugSidebarIsVisible, "the column should show on My Tasks")
-            check(controller.debugContentStartsAfterSidebar,
-                  "the content should start after the column on My Tasks")
-
-            controller.showWeeklyReview()
-            controller.view.layoutSubtreeIfNeeded()
-            check(!controller.debugSidebarIsVisible,
-                  "the column's rows are all about the board, so it goes with it")
-            check(!controller.debugContentStartsAfterSidebar,
-                  "hiding the column must also close the gap it left - an ordinary hidden view keeps its constraints")
-
-            controller.showDashboard()
-            controller.view.layoutSubtreeIfNeeded()
-            check(controller.debugSidebarIsVisible && controller.debugContentStartsAfterSidebar,
-                  "coming back to My Tasks should restore the column and its gap")
-        }
+        // MARK: The page's own column
+        //
+        // The sidebar holds Tasks' scopes, so the page's own column stays
+        // collapsed on every view (`pageForcesCollapse`). The floating bar's
+        // column, which Weekly Review took away and My Tasks brought back,
+        // went with that layout in P-03 of the 2026-11-25 review.
 
         // MARK: One page-level primary action, the same instance every read
 
@@ -243,11 +226,6 @@ enum ShiftTasksPageSelfTest {
                   "the column body is \(fmt(column.debugScrollHeight))pt for \(fmt(content))pt of cards - "
                   + "the last card is sliced by \(fmt(content - column.debugScrollHeight))pt")
 
-            // ...and all three columns stay level with each other.
-            let heights = [ShiftBoardColumn.backlog, .inProgress, .done]
-                .compactMap { controller.debugBoardView?.debugColumn($0)?.debugScrollHeight }
-            check(Set(heights.map { fmt($0) }).count == 1,
-                  "the three columns must never be ragged, got \(heights.map(fmt))")
         }
 
 
@@ -474,11 +452,11 @@ enum ShiftTasksPageSelfTest {
             drainMainQueue(turns: 5)
             controller.showWeeklyReview()
             drainMainQueue(turns: 5)
-            check(!controller.debugSidebarIsVisible, "the column hides on Weekly Review")
             controller.debugRender()
             controller.showDashboard()
             drainMainQueue(turns: 5)
-            check(controller.debugSidebarIsVisible, "and comes back on My Tasks")
+            // The column stays collapsed in the sidebar layout, but the
+            // filter it set has to survive the round trip.
             check(controller.debugProjectFilter == alpha,
                   "a re-render must not silently drop the captain's project filter")
             check(controller.debugSidebar.debugSelectedRowIDs

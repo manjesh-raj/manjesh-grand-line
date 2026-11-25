@@ -71,6 +71,7 @@ final class CredentialTOTPCell: NSView {
 
     #if FM_SELFTESTS
     var debugCodeButton: HelmButton { codeButton }
+    var debugRing: TOTPRingView { ring }
     #endif
 }
 

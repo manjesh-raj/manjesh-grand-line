@@ -368,5 +368,6 @@ final class VaultLauncherRowView: NSView {
 
     #if FM_SELFTESTS
     var debugState: String { stateLabel.stringValue }
+    var debugDetail: String { detailLabel.stringValue }
     #endif
 }

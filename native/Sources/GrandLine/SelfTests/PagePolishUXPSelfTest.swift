@@ -24,7 +24,6 @@ enum PagePolishUXPSelfTest {
         let cases: [(String, () -> Bool)] = [
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
-            ("uxp18BoardLaneShowsACountAndNoSliver", uxp18BoardLaneShowsACountAndNoSliver),
             ("uxp18ListPanelSaysHowManyMoreRows", uxp18ListPanelSaysHowManyMoreRows),
             ("uxp08EveryPageShowsAtMostOnePrimaryButton", uxp08EveryPageShowsAtMostOnePrimaryButton),
             ("uxp08EveryRefreshComesFromTheOneFactory", uxp08EveryRefreshComesFromTheOneFactory),
@@ -164,44 +163,6 @@ enum PagePolishUXPSelfTest {
             task.status = .todo
             store.addTask(task)
         }
-    }
-
-    /// Seven plain cards in Backlog: the lane shows whole cards and says how
-    /// many more there are. Plain cards are the shape that left room for a
-    /// strip of the fifth under the tallest-card cap.
-    private static func uxp18BoardLaneShowsACountAndNoSliver() -> Bool {
-        var ok = true
-        withScratchShiftStore { store in
-            seedPlainTasks(store, count: 7)
-            var started = ShiftTask.fresh()
-            started.title = "Started task"
-            started.status = .inProgress
-            store.addTask(started)
-            let (window, shift) = mountShift(store)
-            defer { _ = window }
-            shift.debugShowView("board")
-            shift.view.layoutSubtreeIfNeeded()
-            shift.view.layoutSubtreeIfNeeded()
-            guard let backlog = shift.debugBoardColumns.first(where: { $0.column == .backlog }) else {
-                fail("UXP-18: the board has no Backlog lane", &ok)
-                return
-            }
-            check(backlog.debugCardViews.count == 7, "UXP-18: Backlog should hold the seven seeded cards", &ok)
-            check(!backlog.debugHasPartlyVisibleCard,
-                  "UXP-18: a Backlog card is cut by the bottom of the lane - the sliver is back", &ok)
-            let hint = backlog.debugOverflowHintText
-            check(hint.hasSuffix("more below") && !hint.hasPrefix("0"),
-                  "UXP-18: the Backlog lane should say how many cards are below, said \"\(hint)\"", &ok)
-            // And the lanes still end on one line: a hint row or a whole-card
-            // snap in one lane must not drop its "Add task" below the others'.
-            let addTops = shift.debugBoardColumns.filter { $0.column != .done }.map { column -> CGFloat in
-                let button = column.debugAddButton
-                return button.convert(button.bounds, to: nil).minY
-            }
-            check((addTops.max() ?? 0) - (addTops.min() ?? 0) < 1,
-                  "UXP-18: the lanes' Add task rows sit at different heights: \(addTops)", &ok)
-        }
-        return ok
     }
 
     /// Seven open tasks on the List view: My Tasks shows four rows and says

@@ -5,14 +5,18 @@
 //
 // **Why this is window-backed and separate from `SnippetExpansionSelfTest`.**
 // Everything here is a question about a render or about real laid-out
-// geometry: whether the Accessibility card is actually *on* the column when
-// the Snippets tab is showing and actually takes no height when it is not
-// (AGENTS.md gotcha (11) - an ordinary hidden `NSView` keeps its height, which
-// is why the card is an arranged subview), whether a row's kicker really
-// carries the trigger and its chip the scope, whether the detail panel's
-// fields follow the selection, and whether the card re-themes in both
-// registers. The grammar and the policy run in CI's *blocking* lane in the
-// sibling suite; this one sits in `run-all-tests.sh`'s `NEEDS_SESSION` list.
+// geometry: whether the expansion strip is actually *on* the Snippets tab,
+// above the table, and gone with that tab on the other two; whether a row's
+// Trigger and Expands-in cells carry the trigger and the scope; whether the
+// inspector's fields follow the selection; and whether the strip re-themes in
+// both registers. The grammar and the policy run in CI's *blocking* lane in
+// the sibling suite. This one sits in `run-all-tests.sh`'s `NEEDS_SESSION`
+// list.
+//
+// P-03 of the 2026-11-25 review removed the floating-bar layout, and with it
+// the side column's Accessibility card and the accent-row list this suite
+// first measured. The same questions are asked of the sidebar presentation's
+// strip, table and inspector now.
 //
 // Run with `FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS=1 .build/debug/GrandLine`.
 
@@ -90,48 +94,36 @@ enum SnippetExpanderViewSelfTest {
         return (controller, window)
     }
 
-    // MARK: The card is on the column, and only on this tab
+    // MARK: The strip is on the Snippets tab, and only on that tab
 
     private static func checkCardVisibility(_ check: (Bool, String) -> Void) {
         autoreleasepool {
             let (controller, window) = page([signature, drain])
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let card = controller.debugSideStack.expansion
+            let strip = controller.debugExpansionStrip
+            let table = controller.debugSnippetsTable.card
 
-            // The column's own content stack - the thing whose height the card
-            // is supposed to stop contributing to.
-            let column = card.superview
-
-            check(!card.isHidden, "the Accessibility card is on the column on the Snippets tab")
-            let shownHeight = card.frame.height
-            check(shownHeight > 60,
-                  "and it is genuinely laid out, not a zero-height stub - got \(fmt(shownHeight))")
-            let shownColumnHeight = column?.frame.height ?? 0
+            check(!strip.isHiddenOrHasHiddenAncestor, "the expansion strip is on the Snippets tab")
+            let shown = strip.convert(strip.bounds, to: nil)
+            check(shown.height > 20,
+                  "and it is genuinely laid out, not a zero-height stub - got \(fmt(shown.height))")
+            // Window coordinates are unflipped, so "below" is a smaller y.
+            let tableTop = table.convert(table.bounds, to: nil).maxY
+            check(tableTop <= shown.minY - HelmMetrics.s3 + 0.5,
+                  "the snippets table starts under the strip, not over it - table top \(fmt(tableTop)), "
+                    + "strip bottom \(fmt(shown.minY))")
 
             controller.select(tab: .hosts)
             controller.view.layoutSubtreeIfNeeded()
-            check(card.isHidden, "it leaves on the Hosts tab")
-            // Gotcha (11)/(15): `isHidden` is not the claim, and measuring the
-            // hidden card's own frame would not be either - `NSStackView`
-            // takes a hidden arranged subview out of its layout but leaves the
-            // view's last frame on it, so `card.frame.height` still reads its
-            // old \(fmt(shownHeight))pt. What actually has to be true is that
-            // the column gives the height back, so this measures the *stack
-            // the card sits in* getting shorter. An ordinary hidden `NSView`
-            // would leave that stack exactly as tall as it was.
-            let hiddenColumnHeight = column?.frame.height ?? 0
-            check(hiddenColumnHeight < shownColumnHeight - 60,
-                  "the card's height comes back to the column - it was "
-                    + "\(fmt(shownColumnHeight)) tall and should now be at least 60pt shorter, got "
-                    + "\(fmt(hiddenColumnHeight))")
+            check(strip.isHiddenOrHasHiddenAncestor, "it leaves with the Snippets tab")
 
             controller.select(tab: .snippets)
             controller.view.layoutSubtreeIfNeeded()
-            check(!card.isHidden, "and it comes back on the way back")
-            check(abs((column?.frame.height ?? 0) - shownColumnHeight) < 1,
-                  "putting the column back exactly as tall as it was, got "
-                    + "\(fmt(column?.frame.height ?? 0)) against \(fmt(shownColumnHeight))")
+            check(!strip.isHiddenOrHasHiddenAncestor, "and it comes back on the way back")
+            let back = strip.convert(strip.bounds, to: nil)
+            check(abs(back.minY - shown.minY) < 1 && abs(back.height - shown.height) < 1,
+                  "where it was, got \(back) against \(shown)")
         }
     }
 
@@ -142,7 +134,7 @@ enum SnippetExpanderViewSelfTest {
             let (off, offWindow) = page([signature], state: (false, true, true, 2))
             offWindow.orderFront(nil)
             defer { offWindow.orderOut(nil) }
-            let offCard = off.debugSideStack.expansion
+            let offCard = off.debugExpansionStrip
             check(offCard.debugStatusText == "Turned off",
                   "off reads as off, got \u{201c}\(offCard.debugStatusText)\u{201d}")
             check(!offCard.debugToggleIsOn, "and the switch agrees")
@@ -151,7 +143,7 @@ enum SnippetExpanderViewSelfTest {
             let (untrusted, window) = page([signature], state: (true, false, false, 2))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let card = untrusted.debugSideStack.expansion
+            let card = untrusted.debugExpansionStrip
             check(card.debugStatusText.contains("not granted"),
                   "on-but-untrusted says so rather than claiming it is armed, got "
                     + "\u{201c}\(card.debugStatusText)\u{201d}")
@@ -162,7 +154,7 @@ enum SnippetExpanderViewSelfTest {
             let (armed, window) = page([signature, drain], state: (true, true, true, 2))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let card = armed.debugSideStack.expansion
+            let card = armed.debugExpansionStrip
             check(card.debugStatusText == "Granted \u{00b7} 2 triggers armed",
                   "armed names the real count, got \u{201c}\(card.debugStatusText)\u{201d}")
             check(card.debugGrantButtonIsHidden, "and stops asking for a permission it already has")
@@ -172,9 +164,9 @@ enum SnippetExpanderViewSelfTest {
             let (other, otherWindow) = page([signature], state: (true, true, true, 1))
             otherWindow.orderFront(nil)
             defer { otherWindow.orderOut(nil) }
-            check(other.debugSideStack.expansion.debugStatusText == "Granted \u{00b7} 1 trigger armed",
+            check(other.debugExpansionStrip.debugStatusText == "Granted \u{00b7} 1 trigger armed",
                   "and one trigger is singular, got "
-                    + "\u{201c}\(other.debugSideStack.expansion.debugStatusText)\u{201d}")
+                    + "\u{201c}\(other.debugExpansionStrip.debugStatusText)\u{201d}")
         }
         // B20: granted, but the monitor predates the grant. macOS never arms
         // an already-registered global monitor retroactively, so this is a
@@ -184,7 +176,7 @@ enum SnippetExpanderViewSelfTest {
             let (stale, window) = page([signature, drain], state: (true, true, false, 2))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let card = stale.debugSideStack.expansion
+            let card = stale.debugExpansionStrip
             check(!card.debugStatusText.contains("armed"),
                   "granted-but-not-armed must not claim the triggers will fire (B20), got "
                     + "\u{201c}\(card.debugStatusText)\u{201d}")
@@ -195,55 +187,68 @@ enum SnippetExpanderViewSelfTest {
         }
     }
 
-    // MARK: Rows and the detail panel
+    // MARK: Rows and the inspector
+
+    /// A cell's words, or `nil` for an empty cell.
+    private static func words(_ cell: HelmDataTable.Cell?) -> String? {
+        switch cell {
+        case .text(let text)?, .muted(let text)?, .code(let text)?, .status(let text, _)?: return text
+        default: return nil
+        }
+    }
 
     private static func checkRowsAndDetail(_ check: (Bool, String) -> Void) {
         autoreleasepool {
             let (controller, window) = page([signature, drain, plain])
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let list = controller.debugList(.snippets)
+            let table = controller.debugSnippetsTable
             controller.view.layoutSubtreeIfNeeded()
 
-            check(list.debugRowCount == 3, "all three snippets render, got \(list.debugRowCount)")
-
-            guard let systemRow = list.debugAccentRow(0),
-                  let consoleRow = list.debugAccentRow(1),
-                  let plainRow = list.debugAccentRow(2) else {
-                check(false, "the three rows should have real accent-row views")
+            let rows = table.debugRows.filter(\.isRecord)
+            check(rows.count == 3, "all three snippets render, got \(rows.count)")
+            func row(_ snippet: Snippet) -> HelmDataTable.Row? {
+                rows.first { $0.key == snippet.id.uuidString }
+            }
+            guard let systemRow = row(signature), let consoleRow = row(drain), let plainRow = row(plain) else {
+                check(false, "the three rows should be keyed by their snippets' ids")
                 return
             }
-            check(systemRow.debugKickerText.uppercased() == ";SIG",
-                  "a triggered row leads with its trigger, got "
-                    + "\u{201c}\(systemRow.debugKickerText)\u{201d}")
-            check(systemRow.debugChipText == "system-wide",
-                  "and its chip says it will fire elsewhere, got "
-                    + "\(systemRow.debugChipText.debugDescription)")
-            check(consoleRow.debugChipText == "Console only",
-                  "a Console-only trigger reads differently (GL-14), got "
-                    + "\(consoleRow.debugChipText.debugDescription)")
-            check(plainRow.debugChipText == nil,
-                  "and an untriggered snippet has no scope chip at all, got "
-                    + "\(plainRow.debugChipText.debugDescription)")
-            check(plainRow.debugKickerText.uppercased() == "SNIPPET",
-                  "falling back to the old kicker, got \u{201c}\(plainRow.debugKickerText)\u{201d}")
+            check(words(systemRow.cells["trigger"]) == ";sig",
+                  "a triggered row states its trigger, got \(words(systemRow.cells["trigger"]).debugDescription)")
+            if case .status(let text, let tint)? = systemRow.cells["where"] {
+                check(text == SnippetScope.systemWide.title && tint == .good,
+                      "and says it will fire elsewhere, got \(text) in \(tint)")
+            } else {
+                check(false, "a system-wide row's Expands-in cell should be a status, got "
+                        + "\(String(describing: systemRow.cells["where"]))")
+            }
+            if case .muted(let text)? = consoleRow.cells["where"] {
+                check(text == SnippetScope.consoleOnly.title,
+                      "a Console-only trigger reads differently (GL-14), got \(text)")
+            } else {
+                check(false, "a Console-only row's Expands-in cell should be muted, not a status (GL-14), got "
+                        + "\(String(describing: consoleRow.cells["where"]))")
+            }
+            check(words(plainRow.cells["trigger"]) == nil && words(plainRow.cells["where"]) == nil,
+                  "and an untriggered snippet has neither a trigger nor a scope")
 
-            list.debugSelect(0)
+            check(table.debugSelect(titled: signature.label), "the signature row can be selected")
             controller.view.layoutSubtreeIfNeeded()
-            let fields = controller.debugSideStack.detail.debugFields
-            let labels = fields.map(\.0)
-            check(labels.contains("Trigger"), "the detail panel states the trigger, got \(labels)")
-            check(labels.contains("Where"), "and where it may fire")
+            let fields = controller.debugInspectorDetail.debugDetail?.fields ?? []
+            let labels = fields.map(\.label)
+            check(labels.contains("Trigger"), "the inspector states the trigger, got \(labels)")
+            check(labels.contains("Expands in"), "and where it may fire")
             check(labels.contains("Never in"),
                   "and the exclusion, which is the answer to \u{201c}why did it not fire there\u{201d}")
-            check(fields.first(where: { $0.0 == "Trigger" })?.1 == ";sig",
+            check(fields.first(where: { $0.label == "Trigger" })?.value == ";sig",
                   "with the trigger as typed, got "
-                    + "\(fields.first(where: { $0.0 == "Trigger" })?.1.debugDescription ?? "none")")
+                    + "\(fields.first(where: { $0.label == "Trigger" })?.value.debugDescription ?? "none")")
 
-            list.debugSelect(2)
+            check(table.debugSelect(titled: plain.label), "the plain row can be selected")
             controller.view.layoutSubtreeIfNeeded()
-            let plainLabels = controller.debugSideStack.detail.debugFields.map(\.0)
-            check(plainLabels.contains("Trigger") && !plainLabels.contains("Where"),
+            let plainLabels = (controller.debugInspectorDetail.debugDetail?.fields ?? []).map(\.label)
+            check(plainLabels.contains("Trigger") && !plainLabels.contains("Expands in"),
                   "an untriggered snippet says it has none and stops there, got \(plainLabels)")
 
             check(controller.drillHeaderSubtitle?.contains("1 expand system-wide") == true,
@@ -259,7 +264,7 @@ enum SnippetExpanderViewSelfTest {
             let (controller, window) = page([signature], state: (true, true, true, 1))
             window.orderFront(nil)
             defer { window.orderOut(nil) }
-            let card = controller.debugSideStack.expansion
+            let card = controller.debugExpansionStrip
 
             guard let daylight = HelmTheme.allThemes.first(where: { $0.isDaylight }),
                   let dusk = HelmTheme.allThemes.first(where: { $0.id == "dusk" }) else {
