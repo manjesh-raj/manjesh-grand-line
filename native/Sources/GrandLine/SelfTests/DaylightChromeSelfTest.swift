@@ -1227,6 +1227,14 @@ enum DaylightChromeSelfTest {
         let form = editor.view
         settle(form)
         let before = window.frame.width
+        let sheetBefore = form.bounds.width
+        // The sheet opens at 520pt plus a legacy scroller's track when one is
+        // shown: a GitHub runner shows scroll bars always, and there the same
+        // sheet opened at 535pt before TK-1 too (measured at f0c6f97e with
+        // `-AppleShowScrollBars Always`). So the width it must keep is the one
+        // it opened at, never a literal 520 (AGENTS.md "Writing a self-test").
+        let track = NSScroller.preferredScrollerStyle == .legacy
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
         editor.debugTypeTitle(String(repeating: "Rotate every staging and production certificate ", count: 6))
         editor.debugChoosePriority(.high)
         editor.debugChooseProject(id: "p-long")
@@ -1243,9 +1251,13 @@ enum DaylightChromeSelfTest {
         var problems: [String] = []
         // Discriminating: the fixture really is wider than the sheet.
         if frames.count < 9 || lines < 2 { problems.append("the fixture did not wrap (\(frames.count) facts on \(lines) lines)") }
-        if abs(window.frame.width - before) > 0.5 || abs(form.bounds.width - HelmFormSheet.width) > 0.5 {
+        if abs(sheetBefore - (HelmFormSheet.width + track)) > 0.5 {
+            problems.append("the sheet opened at \(fmt(sheetBefore))pt, not \(fmt(HelmFormSheet.width))pt plus a "
+                            + "\(fmt(track))pt scroller track")
+        }
+        if abs(window.frame.width - before) > 0.5 || abs(form.bounds.width - sheetBefore) > 0.5 {
             problems.append("the window went from \(fmt(before))pt to \(fmt(window.frame.width))pt "
-                            + "(sheet \(fmt(form.bounds.width))pt)")
+                            + "(sheet \(fmt(sheetBefore))pt to \(fmt(form.bounds.width))pt)")
         }
         let heroWidth = hero.bounds.width
         if widest > heroWidth - 2 * HelmFormSheet.gutter + 0.5 {

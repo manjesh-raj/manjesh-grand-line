@@ -1650,10 +1650,12 @@ enum PageRedesignsSelfTest {
         let savedTheme = ThemeManager.shared.theme
         let wasLocked = AppLockGate.shared.isLocked
         let savedScript = FleetActions.sendScriptOverrideForTests
+        let savedHome = FleetActions.homeOverrideForTests
         defer {
             ThemeManager.shared.setTheme(savedTheme)
             AppLockGate.shared.setLocked(wasLocked)
             FleetActions.sendScriptOverrideForTests = savedScript
+            FleetActions.homeOverrideForTests = savedHome
             resize(window, width: 1512, shell)
         }
         AppLockGate.shared.setLocked(false)
@@ -1664,6 +1666,10 @@ enum PageRedesignsSelfTest {
         // so no reply is ever sent anywhere.
         let script = scratch.appendingPathComponent("rp2-fake-fm-send.sh")
         FleetActions.sendScriptOverrideForTests = script.path
+        // The stand-in runs in the scratch directory, never the firstmate
+        // home: a CI runner has none, and a missing working directory fails
+        // the launch before the script can report its outcome.
+        FleetActions.homeOverrideForTests = scratch
         func fakeSend(exit status: Int, after seconds: Int = 0) {
             try? "#!/bin/bash\nsleep \(seconds)\nprintf 'pane\\n'\nexit \(status)\n".write(to: script, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
