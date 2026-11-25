@@ -1,6 +1,6 @@
 // Grand Line - native macOS app.
 //
-// Connections' hero column on the Keys tab, in the sidebar layout only.
+// Connections' hero column on the Keys tab.
 //
 // C-4 put a `HelmHeroColumn` beside the host cards. The column is the page's,
 // not the Hosts tab's, so before this it went on talking about live sessions

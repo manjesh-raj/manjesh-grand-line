@@ -291,7 +291,6 @@ enum PageHeroColumnsViewSelfTest {
         }
         check(hosts.heroColumnShowing && column.superview === split.sidebarPane && !column.isHidden,
               "C-4: the hero column is not showing in the split's pane", &ok)
-        check(hosts.sidebar.isHidden, "C-4: the nav column shows beside the hero column", &ok)
         let page = hosts.view
         let columnFrame = frame(of: column, in: page)
         let gridFrame = frame(of: hosts.hostsGrid, in: page)

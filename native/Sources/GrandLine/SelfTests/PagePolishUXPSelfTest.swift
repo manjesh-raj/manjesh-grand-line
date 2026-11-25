@@ -314,9 +314,9 @@ enum PagePolishUXPSelfTest {
 
     // MARK: UXP-10
 
-    /// An empty Hosts list: no card header restating "Hosts", the empty
-    /// state directly under the built-in row with its own Add Host button,
-    /// and the Keychain card's "Empty" in muted ink rather than amber.
+    /// An empty Hosts list: no card header restating "Hosts", and the empty
+    /// state directly under the built-in row with its own Add Host button -
+    /// in the table, and over the cards.
     private static func uxp10HostsEmptyStateAndName() -> Bool {
         var ok = true
         let dir = FileManager.default.temporaryDirectory
@@ -338,26 +338,20 @@ enum PagePolishUXPSelfTest {
         hosts.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 860)
         hosts.view.layoutSubtreeIfNeeded()
 
-        check(hosts.debugHostsList.card.debugHeaderTitle == nil,
+        let table = hosts.debugHostsTable
+        check(table.card.debugHeaderTitle == nil,
               "UXP-10: the hosts card still carries its own header "
-              + "\"\(hosts.debugHostsList.card.debugHeaderTitle ?? "")\"", &ok)
+              + "\"\(table.card.debugHeaderTitle ?? "")\"", &ok)
 
-        let items = hosts.debugHostItems
-        guard let emptyIndex = items.firstIndex(where: { if case .empty = $0.kind { return true }; return false }) else {
+        let rows = table.debugRows
+        guard let emptyIndex = rows.firstIndex(where: { if case .empty = $0.kind { return true }; return false }) else {
             fail("UXP-10: an empty Hosts list built no empty state", &ok)
             return ok
         }
-        let empty = items[emptyIndex]
-        check(empty.primary?.title == "Add Host", "UXP-10: the empty state should carry its own Add Host", &ok)
-        check(!empty.emptyFillsCard, "UXP-10: the empty state should sit under the rows, not fill the card", &ok)
-        let row = hosts.debugHostsList.debugRowFrame(emptyIndex)
-        check(row.height <= HostsListSection.inlineEmptyRowHeight + 0.5,
-              "UXP-10: the empty row is \(row.height)pt tall - it is centring itself in the card again", &ok)
-
-        let muted = HelmTheme.mutedInk(theme)
-        check(hosts.debugKeychainCard.debugVerdict == "Empty", "UXP-10: a new install's keychain should read Empty", &ok)
-        check(sameColor(hosts.debugKeychainCard.debugVerdictColor, muted),
-              "UXP-10: \"Empty\" should be muted ink, not a warning tint", &ok)
+        check(emptyIndex == 1 && rows.first?.key == HostsController.firstmateRowKey,
+              "UXP-10: the empty state should sit directly under the built-in row, not at row \(emptyIndex)", &ok)
+        check(rows[emptyIndex].emptyAction?.title == "Add Host", "UXP-10: the empty state should carry its own Add Host", &ok)
+        check(hosts.hostsGrid.debugEmptyState != nil, "UXP-10: the host cards show no empty state", &ok)
         return ok
     }
 

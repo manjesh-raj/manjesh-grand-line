@@ -65,7 +65,6 @@ enum TextScaleRowHeightSelfTest {
         ("ShiftFollowUpListView", ShiftFollowUpListView.baseRowHeight, { ShiftFollowUpListView.rowHeight }),
         ("ReviewPRListView", ReviewPRListView.baseRowHeight, { ReviewPRListView.rowHeight }),
         ("DictationHistoryListView", DictationHistoryListView.baseRowHeight, { DictationHistoryListView.rowHeight }),
-        ("HostsListSection", HostsListSection.baseRecordRowHeight, { HostsListSection.recordRowHeight }),
         ("FleetLogListView", FleetLogListView.baseEventRowHeight, { FleetLogListView.eventRowHeight }),
         // Audit #2 §1.2 - the tables #333's own sweep missed. Five of these
         // genuinely clip today (their cells are scaled `HelmType` roles); the

@@ -202,7 +202,9 @@ enum UIUXProposalsSelfTest {
         let workbench = source("CodePreviewWorkbench.swift")
         check(workbench.contains("HelmPageSidebar.Band()") && !workbench.contains("quickActionsCard"),
               "S04: Code's snippets and quick actions are one band, not two cards", &ok)
-        for page in ["ShiftController.swift", "HostsController.swift", "CredentialVaultSidebar.swift"] {
+        // Hosts' plain column went with its floating-bar presentation (P-03 of
+        // the 2026-11-25 review); its split pane holds the hero column.
+        for page in ["ShiftController.swift", "CredentialVaultSidebar.swift"] {
             check(source(page).contains("HelmPageSidebar(surface: .plain)"), "S04: \(page) keeps its plain column", &ok)
         }
     }

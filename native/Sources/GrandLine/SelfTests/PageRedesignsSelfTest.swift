@@ -87,11 +87,6 @@ enum PageRedesignsSelfTest {
                     allOK = allOK && ok
                 }
             }
-            do {
-                var ok = true
-                checkTheHostsFooterStaysDown(scratch, &ok)
-                allOK = allOK && ok
-            }
             return allOK
         }
         var storesOK = true
@@ -178,7 +173,6 @@ enum PageRedesignsSelfTest {
         settle(shell)
         let table = hosts.debugHostsTable
         check(onScreen(table.card), "the host table is not on screen", &ok)
-        check(!onScreen(hosts.debugHostsList.card), "the floating bar's host list still shows in the sidebar layout", &ok)
         check(table.debugHeaderTitles.starts(with: ["Host", "Address"]),
               "the host table's header reads \(table.debugHeaderTitles)", &ok)
         let keys = table.debugRows.compactMap(\.key)
@@ -190,7 +184,7 @@ enum PageRedesignsSelfTest {
             return nil
         }
         check(groups == ["Observability", "Production", "Staging", "Ungrouped"],
-              "the host groups are \(groups), the floating bar's list groups the same hosts the same way", &ok)
+              "the host groups are \(groups), want one header per group", &ok)
         checkFits(table, "the host table at 1512", &ok)
 
         // A selection fills the shell's inspector with the host's details.
@@ -214,9 +208,8 @@ enum PageRedesignsSelfTest {
         check(panel?.debugFooterTitles == ["Connect", "Test", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
         check(panel?.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"],
               "the host form's menu is \(panel?.debugPanelMenuTitles ?? [])", &ok)
-        check(hosts.debugSideStackIsHidden, "the page's own detail column shows beside the inspector", &ok)
 
-        // The row's menu is the floating bar's overflow, and runs it.
+        // The row's menu carries the host's other actions, and runs them.
         let menu = table.debugMenuTitles(key: edge.id.uuidString)
         check(menu == ["Connect", "Edit\u{2026}", "Duplicate\u{2026}", "Delete\u{2026}"], "the host row's menu is \(menu)", &ok)
         let before = shell.workspace.hostStore.hosts.count
@@ -267,11 +260,10 @@ enum PageRedesignsSelfTest {
         }
         clickTab("Snippets", shell)
         check(onScreen(hosts.debugSnippetsTable.card), "the snippet table is not on screen on Snippets", &ok)
-        // Stage 6 made the strip a plain row (`.inline`), still over the
-        // table; `SidebarPageFixesSelfTest` checks its placement and wiring.
-        check(onScreen(hosts.debugExpansionStrip) && hosts.debugExpansionStrip.style == .inline,
+        // Stage 6 made the strip a plain row, still over the table;
+        // `SidebarPageFixesSelfTest` checks its placement and wiring.
+        check(onScreen(hosts.debugExpansionStrip),
               "the snippet expansion switch is not the row over the Snippets table", &ok)
-        check(hosts.debugSideStackIsHidden, "the floating bar's right column shows on Snippets in the sidebar layout", &ok)
         clickTab("Hosts", shell)
     }
 
@@ -1891,73 +1883,6 @@ enum PageRedesignsSelfTest {
             check(fleet.debugOpenReplyCard == nil && fleet.debugReplyButton(taskID: block.id)?.title == "Reply",
                   "\(tag): Esc did not cancel the reply", &ok)
         }
-    }
-
-    // MARK: 5 - the Hosts column
-
-    /// Found on the way, on the floating bar's Hosts page: after a tab round
-    /// trip the column's footer stack took the column's spare height, so its
-    /// keychain card rode up under the nav rows (measured 501pt above where it
-    /// belongs). See `HelmPageSidebar.setFooter`.
-    private static func checkTheHostsFooterStaysDown(_ scratchDirectory: URL, _ ok: inout Bool) {
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoHosts(shell.workspace)
-        settle(shell)
-        let hosts = shell.workspace.hostsPanel
-        // Driven through the tour lab's own steps - page tabs, selections and
-        // real waits - because the move needed the round trip's animations
-        // to run to the end; short settles never produced it.
-        HelmMotion.reducedOverrideForTests = false
-        defer { HelmMotion.reducedOverrideForTests = true }
-        let roundTrip = """
-        theme dusk
-        resize 1512x950
-        goto hosts
-        tab Hosts
-        wait 500
-        select edge-proxy-01
-        wait 300
-        goto hosts
-        tab Keys
-        wait 500
-        select ops-ed25519
-        wait 300
-        goto hosts
-        tab Snippets
-        wait 500
-        select Tail nginx errors
-        wait 300
-        goto hosts
-        tab Hosts
-        wait 300
-        """
-        let parsed = ReviewTourLab.parse(tour: roundTrip)
-        check(parsed.errors.isEmpty, "the round trip's steps do not parse: \(parsed.errors)", &ok)
-        let log = ReviewTourLab.run(steps: parsed.steps, shell: shell, window: window, outputDirectory: scratchDirectory)
-        check(!log.contains { $0.contains("FAILED") }, "a round-trip step failed: \(log.filter { $0.contains("FAILED") })", &ok)
-        shell.view.layoutSubtreeIfNeeded()
-        // The deterministic half. Before the footer kept its own height, the
-        // spare height had two equally cheap homes (the rows' stack and the
-        // footer stack), and which one took it depended on the solver's
-        // history. With the fix reverted, the frame check below passed three
-        // runs in a row on one build of this suite and failed four in a row
-        // on the next, whose only change was timing in an earlier case. The
-        // ambiguity does not depend on history: both views were flagged on
-        // every run without the fix, and neither with it.
-        // (`CredentialVaultViewSelfTest` records a `HelmCard` tie this API did
-        // not flag, so the frame check stays as well.)
-        let footer = hosts.debugKeychainCard.superview
-        check(footer?.hasAmbiguousLayout == false && !hosts.debugKeychainCard.hasAmbiguousLayout,
-              "the Hosts column's footer has an ambiguous height, so the solver is free to give it the column's "
-                + "spare height", &ok)
-        let column = hosts.debugSidebar.convert(hosts.debugSidebar.bounds, to: nil)
-        let user = hosts.debugUserRow.convert(hosts.debugUserRow.bounds, to: nil)
-        let card = hosts.debugKeychainCard.convert(hosts.debugKeychainCard.bounds, to: nil)
-        check(abs(user.minY - column.minY) <= 1 && abs(card.minY - (user.maxY + HelmMetrics.s2)) <= 1,
-              "after a Hosts tab round trip the column's footer is not at its bottom: the keychain card sits "
-                + "\(card.minY - column.minY)pt above the column's foot, its user row \(user.minY - column.minY)pt", &ok)
     }
 }
 

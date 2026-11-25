@@ -569,12 +569,11 @@ enum FeatureInventorySelfTest {
             #"appendRow\(id:[^)]*?title: "([^"]+)""#,
             #"\.init\(header: "([^"]+)""#,
             #"(?s)indicator: .{0,160}?title: "([^"]+)""#,
-            #"\.init\(shortcut: "[^"]+", title: "([^"]+)"\)"#,
         ]
         // The component's own file declares the API rather than using it.
         let users = appSources().filter { stem, text in
             stem != "HelmPageSidebar"
-                && (text.contains("HelmPageSidebar") || text.contains("appendRow(") || text.contains("quickActionsPanel"))
+                && (text.contains("HelmPageSidebar") || text.contains("appendRow("))
         }
         for (stem, text) in users {
             var titles = patterns.flatMap { matches($0, in: text) }

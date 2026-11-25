@@ -168,7 +168,6 @@ enum HelmKitSourceGuardSelfTest {
         "HelmSkeleton.swift": 1,
         "HelmUIComponents.swift": 1,
         "HostEditorController.swift": 2,
-        "HostsSidebar.swift": 1,
         "IncidentCardView.swift": 1,
         "KeyChordRecorderView.swift": 1,
         "KeyboardShortcutsSheetController.swift": 1,
