@@ -551,6 +551,9 @@ final class HomeCanvasController: NSViewController {
         // runs; the card says when it ends rather than counting down, so it
         // re-renders only when that answer changes.
         focusTimerToken = sources.focusTimer?.observe { [weak self] in self?.focusTimerDidChange() }
+        // Full review 2026-11-25, B-01: the greeting's date and the day's
+        // due counts turn over at midnight with no store change.
+        dayRolloverToken = DayRollover.observe { [weak self] _, _ in self?.dayDidChange() }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -559,6 +562,14 @@ final class HomeCanvasController: NSViewController {
     /// that changes nothing it shows asks for no render.
     private var focusCardKey: String?
     private var focusTimerToken: UUID?
+    private var dayRolloverToken: NSObjectProtocol?
+
+    /// B-01: one render while Home can be seen; a hidden Home renders when
+    /// it is shown again.
+    private func dayDidChange() {
+        guard isViewLoaded, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
+        setNeedsRender()
+    }
 
     private func focusTimerDidChange() {
         let session = sources.focusTimer?.session
@@ -571,6 +582,7 @@ final class HomeCanvasController: NSViewController {
 
     deinit {
         if let focusTimerToken { sources.focusTimer?.unobserve(focusTimerToken) }
+        if let dayRolloverToken { NotificationCenter.default.removeObserver(dayRolloverToken) }
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
         if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
@@ -1034,7 +1046,7 @@ final class HomeCanvasController: NSViewController {
     /// its pill, so the page-ground header is not drawn. Without the hero -
     /// the briefing hidden by the captain's layout, or nothing to say, or
     /// Customize drawing it as a card - the greeting keeps its own row.
-    private func renderFeelPass(now: Date = Date()) {
+    private func renderFeelPass(now: Date = DayRollover.now()) {
         let on = showsArrangedCards
         let greetingOnGround = on && !briefingIsHero
         greetingHeader.isHidden = !greetingOnGround

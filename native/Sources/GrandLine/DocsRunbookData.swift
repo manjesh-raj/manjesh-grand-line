@@ -520,12 +520,24 @@ final class DocsRunbookStore {
     #if FM_SELFTESTS
     /// PERF-02: how many of these this process has built, so a suite can
     /// assert the shell builds one and hands it down.
-    static var debugInitCount = 0
+    ///
+    /// Behind a lock (full review 2026-11-25, T-01): SRE Lead builds one on
+    /// a worker thread while another is built elsewhere, and the nightly
+    /// ThreadSanitizer run reported the bare counter as a race (GL-28).
+    static var debugInitCount: Int {
+        debugInitCountLock.lock()
+        defer { debugInitCountLock.unlock() }
+        return debugInitCountStorage
+    }
+    private static let debugInitCountLock = NSLock()
+    private static var debugInitCountStorage = 0
     #endif
 
     init() {
         #if FM_SELFTESTS
-        Self.debugInitCount += 1
+        Self.debugInitCountLock.lock()
+        Self.debugInitCountStorage += 1
+        Self.debugInitCountLock.unlock()
         #endif
         let env = ProcessInfo.processInfo.environment
         if let override = env["FM_DOCS_RUNBOOKS_DIR"], !override.isEmpty {

@@ -76,7 +76,7 @@ enum ShiftCalendarHeroWords {
     /// caption (`ShiftCalendarView.subtitle`).
     static func head(scale: ShiftCalendarScale, focusedDay: String?, range: (start: String, end: String)?,
                      tasks: [ShiftTask], followUps: [ShiftFollowUp], tray: ShiftCalendarTray,
-                     summary: ShiftStore.Summary?, now: Date = Date(), calendar: Calendar = .current,
+                     summary: ShiftStore.Summary?, now: Date = DayRollover.now(), calendar: Calendar = .current,
                      locale: Locale = .current) -> Head {
         let kicker = "Calendar \u{00B7} \(ShiftHeroWords.kickerFormatter.string(from: now))"
         let open = tasks.filter { $0.status != .completed && $0.status != .cancelled }
@@ -109,7 +109,7 @@ enum ShiftCalendarHeroWords {
     /// a month grid's range spans the weeks either side, so it never names
     /// the month.
     static func title(scale: ShiftCalendarScale, focusedDay: String?, range: (start: String, end: String)?,
-                      now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
+                      now: Date = DayRollover.now(), calendar: Calendar = .current, locale: Locale = .current) -> String {
         let focus = focusedDay.flatMap(ShiftDateFormatting.date(from:)) ?? now
         func formatter(_ template: String) -> DateFormatter {
             let formatter = DateFormatter()

@@ -284,3 +284,37 @@ Verification: `ReviewUIUXSelfTest` asserts `TaskHeroWords`, drives the real shee
 Its nine-sheet recipe check asserts the hero on the task sheet and its absence on the other eight.
 Each check was confirmed against an injected regression.
 Removing the explicit first-responder call did not fail, because AppKit's own key-view pick lands on the title too, so that check was confirmed by taking the responder away instead.
+
+## The day turns over at midnight (full review 2026-11-25, B-01)
+
+Grand Line is left open for days, and the Tasks page rendered only on a store change or a visit.
+Left open overnight, its kicker kept yesterday's date, a task due yesterday still said "Due today", and nothing moved to Overdue.
+The sidebar's Tasks badge beside it had already turned over, because it was one of three places listening for `NSCalendarDayChanged`.
+
+### What shipped
+
+- `DayRollover.swift` is the app's one day-change signal.
+  It fires on `NSCalendarDayChanged` and a time zone change always, and on `NSSystemClockDidChange` and wake from sleep only when the date moved.
+  A Mac asleep at midnight gets no day-change notification of its own, which is why wake is on the list.
+- Every page that prints a date or a due verdict observes it and re-renders while it can be seen.
+  That covers Tasks (Board, List, Weekly review and the Calendar head), the Calendar's today marker, the Crew band, Home's greeting, Home's subtitle in the shell header, and the notifications panel's head.
+  The sidebar badge and the menu bar's overdue count moved onto it too, so they also turn over on a wake past midnight.
+  A hidden page renders on its next appearance, as it does for a store change.
+- `DayRollover.now()` is the clock the Tasks and Calendar render path reads "today" from.
+  It is `Date()` in the app, and a suite pins it with `nowOverrideForTests`.
+  Write paths (a snooze, the start-here sample task) still read `Date()`.
+- The Calendar's today pill is drawn by Schedule-X as it renders each cell, so yesterday kept it until the cells redrew.
+  `ShiftCalendarView.dayDidChange` sets the page's date through the existing `showDate` bridge call, which redraws them.
+  A calendar on the old today follows the day, and one the captain moved elsewhere stays there (`dateAfterDayChange`).
+  No change to the vendored bundle was needed.
+
+### Verification
+
+- `FM_RUN_DAY_ROLLOVER_TESTS` (new, headless): when the signal fires, each real system notification reaching it from the centre macOS posts it on, the calendar's date rule, and a source guard that every dated page observes the signal and that no other file listens to `NSCalendarDayChanged` on its own.
+- `FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS` gained `checkTasksTurnOverAtMidnight`.
+  It pins the clock to 23:59 on a day in 2031, adds a task due that day, moves the clock two minutes on and posts the system's own notification.
+  It then reads the painted kicker, the card's due caption and the band's Due today and Overdue figures.
+  With the page's observer deleted, the kicker, the caption and both figures fail, exactly as the review described.
+- It is a case in an existing window-backed suite rather than a new suite, because `NEEDS_SESSION` sits at its ceiling of 136.
+- Not verified: the Calendar's today pill moving past a real midnight.
+  The page reads its own clock, which a suite cannot move, so the suite asserts the date the native side asks the page to show.

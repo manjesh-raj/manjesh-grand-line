@@ -180,7 +180,7 @@ enum ShiftTaskSignals {
 
     /// "Overdue 3 days" (red), "Due today" (amber), or the friendly date
     /// (muted). `nil` for no date.
-    static func dueCaption(date yyyyMMdd: String?, time hhmm: String?, now: Date = Date(),
+    static func dueCaption(date yyyyMMdd: String?, time hhmm: String?, now: Date = DayRollover.now(),
                            calendar: Calendar = .current) -> DueCaption? {
         guard let yyyyMMdd, let day = ShiftDateFormatting.date(from: yyyyMMdd) else { return nil }
         if ShiftDue.isOverdue(date: yyyyMMdd, time: hhmm, now: now, calendar: calendar) {

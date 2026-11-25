@@ -178,6 +178,10 @@ final class MainSplitShellController: WorkspaceShellController {
     private var floorScale = ChromeTextScale.shared.scale
     /// The window width `fitPanesToWindow` last fitted the panes to.
     private var lastFittedWindowWidth: CGFloat = .greatestFiniteMagnitude
+    /// B-02: each pane's eased change in flight, and the newest request that
+    /// arrived during it (`PaneMotionQueue`).
+    private var sidebarMotion = PaneMotionQueue()
+    private var inspectorMotion = PaneMotionQueue()
     /// Console's dedicated host page is showing, which is not a route.
     private var showingHostPage = false
     private var hostPageLabel = ""
@@ -328,10 +332,9 @@ final class MainSplitShellController: WorkspaceShellController {
             // R4-UI-01: so does the compact toolbar's breakpoint.
             self.fitPanesToWindow()
         }
-        // Home's subtitle is the date, so it turns over at midnight.
-        dayChangeObserver = NotificationCenter.default.addObserver(
-            forName: .NSCalendarDayChanged, object: nil, queue: .main
-        ) { [weak self] _ in
+        // Home's subtitle is the date, so it turns over at midnight - and,
+        // since B-01, on waking past midnight too (`DayRollover`).
+        dayChangeObserver = DayRollover.observe { [weak self] _, _ in
             guard let self, self.currentModule == .home else { return }
             self.pageSubtitle = Self.homeSubtitle()
             self.refreshModuleChrome()
@@ -350,7 +353,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// Home's header under its title: the day, as the prototype draws it.
     /// Home has no live subtitle of its own - its attention card says what
     /// needs the captain - so the date is the one line that adds something.
-    static func homeSubtitle(_ date: Date = Date()) -> String {
+    static func homeSubtitle(_ date: Date = DayRollover.now()) -> String {
         date.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
 
@@ -716,6 +719,12 @@ final class MainSplitShellController: WorkspaceShellController {
     /// maximum, after a 1100pt window grew back to 1512 - which is not the
     /// width anyone chose.
     private func setSidebarCollapsed(_ collapsed: Bool, animated: Bool) {
+        // B-02: one eased change at a time. A request made while the collapse
+        // eases waits for it, newest wins, and runs from its completion.
+        if sidebarMotion.queue(collapsed: collapsed, animated: animated, current: sidebarItem.isCollapsed) {
+            toolbar.setSidebarShown(!collapsed)
+            return
+        }
         guard sidebarItem.isCollapsed != collapsed else { return }
         toolbar.setSidebarShown(!collapsed)
         let animate = animated && view.window != nil && !HelmMotion.isReduced
@@ -767,7 +776,11 @@ final class MainSplitShellController: WorkspaceShellController {
         // uncollapse left the split's held divider where the animation
         // started) cannot happen any more: the expand takes the plain path
         // above, which sets the divider to the pinned width before it lets go.
-        WorkspaceMotion.setCollapsed(sidebarItem, true, animated: true) {}
+        sidebarMotion.inFlight = true
+        WorkspaceMotion.setCollapsed(sidebarItem, true, animated: true) { [weak self] in
+            guard let self, let next = self.sidebarMotion.finish() else { return }
+            self.setSidebarCollapsed(next.collapsed, animated: next.animated)
+        }
     }
 
     /// Make the pinned width the position the split view holds once the pin
@@ -927,7 +940,19 @@ final class MainSplitShellController: WorkspaceShellController {
     /// for what it now shows. A lower floor goes on before the pane opens and
     /// a higher one after it has closed, so the column never asks for more
     /// than the window has (gotcha (13)).
+    ///
+    /// B-02: one eased change at a time. `isCollapsed` flips the moment the
+    /// animator is asked, so a request made while the pane eases used to
+    /// start a second animation on the same item, and whichever completion
+    /// ran last decided the pane: measured, an eased close and Add Host in one
+    /// turn left the window 475pt narrower and the form not shown. Such a
+    /// request now waits, newest wins, and runs from the completion - with
+    /// its own floor, entrance and settle, as if it had been made then.
     private func setInspectorCollapsed(_ collapsed: Bool, animated: Bool) {
+        if inspectorMotion.queue(collapsed: collapsed, animated: animated, current: inspectorItem.isCollapsed) {
+            toolbar.setInspectorState(shown: !collapsed, wanted: inspectorWanted)
+            return
+        }
         if !collapsed, columnFloor(inspectorShown: true) < contentItem.minimumThickness {
             contentItem.minimumThickness = columnFloor(inspectorShown: true)
         }
@@ -938,8 +963,16 @@ final class MainSplitShellController: WorkspaceShellController {
             self.fitPanesToWindow()
         }
         guard inspectorItem.isCollapsed != collapsed else { settle(); return }
-        let duration = WorkspaceMotion.setCollapsed(inspectorItem, collapsed, animated: animated && view.window != nil,
-                                                    completion: settle)
+        let eases = animated && view.window != nil && !HelmMotion.isReduced
+        inspectorMotion.inFlight = eases
+        let duration = WorkspaceMotion.setCollapsed(inspectorItem, collapsed, animated: eases) { [weak self] in
+            guard let self else { return }
+            if eases, let next = self.inspectorMotion.finish() {
+                self.setInspectorCollapsed(next.collapsed, animated: next.animated)
+                return
+            }
+            settle()
+        }
         #if FM_SELFTESTS
         lastPaneMotionForTests = (pane: "inspector", collapsed: collapsed, duration: duration)
         #endif

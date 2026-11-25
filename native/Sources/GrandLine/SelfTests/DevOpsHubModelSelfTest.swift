@@ -31,10 +31,17 @@
 //      emptied store that stays empty.
 //   8. **The settings sheet's validation**, Add Project's too, and the web
 //      view's same-site rule and stable store identifier.
+//   9. **The site's own dialogs and a site that keeps crashing** (full
+//      review 2026-11-25, B-04 and B-05), on a real `DevOpsHubWebView` with
+//      no window: `confirm`, `prompt` and `alert` reach `HelmConfirm` from
+//      real page script and answer the page, none of them shows under the app
+//      lock, a load that fails after it started ends the wait, and a second
+//      ended content process within a minute stops the reloads and says so.
 
 #if FM_SELFTESTS
 
 import AppKit
+import WebKit
 
 enum DevOpsHubModelSelfTest {
 
@@ -42,7 +49,7 @@ enum DevOpsHubModelSelfTest {
         var ok = true
         for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
-                      checkSettingsAndWebRules] {
+                      checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing] {
             var caseOK = true
             check(&caseOK)
             ok = ok && caseOK
@@ -134,20 +141,30 @@ enum DevOpsHubModelSelfTest {
     // MARK: 2 - over loopback
 
     /// One GET over the real socket, waited for on the run loop.
+    ///
+    /// The answer arrives on URLSession's own queue, so it crosses to this
+    /// thread under a lock. The nightly ThreadSanitizer run reported the bare
+    /// `result` and `done` as a race (full review 2026-11-25, T-01).
     static func fetch(_ url: URL, host: String? = nil, timeout: TimeInterval = 5) -> (Int, Data)? {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         if let host { request.setValue(host, forHTTPHeaderField: "Host") }
-        var result: (Int, Data)?
-        var done = false
+        final class Answer: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value: (Int, Data)?
+            private var finished = false
+            func finish(_ result: (Int, Data)?) { lock.lock(); value = result; finished = true; lock.unlock() }
+            var done: Bool { lock.lock(); defer { lock.unlock() }; return finished }
+            var result: (Int, Data)? { lock.lock(); defer { lock.unlock() }; return value }
+        }
+        let answer = Answer()
         let session = URLSession(configuration: .ephemeral)
         session.dataTask(with: request) { data, response, _ in
-            if let http = response as? HTTPURLResponse { result = (http.statusCode, data ?? Data()) }
-            done = true
+            answer.finish((response as? HTTPURLResponse).map { ($0.statusCode, data ?? Data()) })
         }.resume()
         let deadline = Date().addingTimeInterval(timeout + 1)
-        while !done, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        while !answer.done, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
         session.invalidateAndCancel()
-        return result
+        return answer.result
     }
 
     /// Start `server` and wait for its answer.
@@ -718,6 +735,165 @@ enum DevOpsHubModelSelfTest {
         let a = DevOpsHubWebView.storeIdentifier(for: "devops-atlas")
         check(a == DevOpsHubWebView.storeIdentifier(for: "devops-atlas") && a != DevOpsHubWebView.storeIdentifier(for: "other"),
               "the store identifier is not stable per project", &ok)
+    }
+
+    // MARK: 9 - the site's dialogs, and a site that keeps crashing
+
+    private static func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        return condition()
+    }
+
+    /// Run `script` in the page and hand back what it returned, as a string.
+    private static func evaluate(_ script: String, in web: DevOpsHubWebView) -> String? {
+        var answer: String?
+        var done = false
+        web.webView.evaluateJavaScript(script) { result, error in
+            answer = error.map { "error: \($0.localizedDescription)" } ?? result.map { "\($0)" }
+            done = true
+        }
+        _ = waitUntil(timeout: 10) { done }
+        return answer
+    }
+
+    /// B-04: a site's `alert`, `confirm` and `prompt`, from real page script
+    /// through WebKit's own UI delegate calls. Before the fix WebKit answered
+    /// for the app: false, null, and nothing shown.
+    private static func checkSiteDialogs(_ ok: inout Bool) {
+        print("\n-- B-04: the site's own dialogs --")
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        var asked: [HelmConfirm.Request] = []
+        var answer = HelmConfirm.Response.confirm
+        var typed: String?
+        HelmConfirm.responderForTests = { request in
+            asked.append(request)
+            if let typed, let field = request.accessory as? NSTextField { field.stringValue = typed }
+            return answer
+        }
+        defer {
+            HelmConfirm.responderForTests = nil
+            AppLockGate.shared.setLocked(wasLocked)
+        }
+
+        let web = DevOpsHubWebView(projectID: "atlas-test")
+        web.siteName = "devops-atlas"
+        var loaded = false
+        web.onFinished = { loaded = true }
+        web.webView.loadHTMLString("<html><body><input type=file></body></html>", baseURL: nil)
+        guard waitUntil(timeout: 15, { loaded }) else {
+            return fail("B-04 fixture: the page never loaded into the web view", &ok)
+        }
+
+        answer = .confirm
+        check(evaluate("confirm('Reset your progress?')", in: web) == "1",
+              "B-04: confirm() answered OK did not return true to the page", &ok)
+        check(asked.last?.title == "devops-atlas says" && asked.last?.body == "Reset your progress?"
+                && asked.last?.confirmTitle == "OK" && asked.last?.cancelTitle == "Cancel",
+              "B-04: confirm() asked \(asked.last.map { "\($0.title) / \($0.body)" } ?? "nothing")", &ok)
+        answer = .cancel
+        check(evaluate("confirm('Reset your progress?')", in: web) == "0",
+              "B-04: confirm() answered Cancel did not return false to the page", &ok)
+
+        let before = asked.count
+        answer = .confirm
+        check(evaluate("alert('Progress saved'); 'shown'", in: web) == "shown" && asked.count == before + 1
+                && asked.last?.body == "Progress saved" && asked.last?.cancelTitle == nil,
+              "B-04: alert() showed \(asked.count - before) dialogs, the last \(asked.last?.body ?? "-")", &ok)
+
+        typed = "Grace"
+        check(evaluate("String(prompt('Your name?', 'Ada'))", in: web) == "Grace",
+              "B-04: prompt() did not return what was typed", &ok)
+        check(asked.last?.body == "Your name?" && asked.last?.initialResponder is NSTextField,
+              "B-04: prompt() asked \(asked.last?.body ?? "nothing") with no field to type in", &ok)
+        typed = nil
+        check(evaluate("String(prompt('Your name?', 'Ada'))", in: web) == "Ada",
+              "B-04: prompt()'s field did not start on the page's default text", &ok)
+        answer = .cancel
+        check(evaluate("String(prompt('Your name?', 'Ada'))", in: web) == "null",
+              "B-04: prompt() answered Cancel did not return null", &ok)
+
+        // Under the app lock nothing shows, and WebKit's own answers stand.
+        AppLockGate.shared.setLocked(true)
+        let lockedBefore = asked.count
+        answer = .confirm
+        check(evaluate("confirm('Reset your progress?')", in: web) == "0"
+                && evaluate("String(prompt('Your name?', 'Ada'))", in: web) == "null"
+                && evaluate("alert('x'); 'shown'", in: web) == "shown"
+                && asked.count == lockedBefore,
+              "B-04: \(asked.count - lockedBefore) site dialogs showed under the app lock", &ok)
+        AppLockGate.shared.setLocked(false)
+
+        // A load that fails once it has started ends the wait, as one that
+        // fails before it starts already did.
+        var finishes = 0
+        web.onFinished = { finishes += 1 }
+        let failure = NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost)
+        (web as WKNavigationDelegate).webView?(web.webView, didFail: nil, withError: failure)
+        check(finishes == 1, "B-04: a load that failed after it started did not end the page's wait", &ok)
+    }
+
+    /// B-05: one ended content process is reloaded, a second within the
+    /// window is not, and a Reload by hand starts the count again. Driven
+    /// through the delegate call WebKit makes, with the view's own clock.
+    private static func checkASiteThatKeepsCrashing(_ ok: inout Bool) {
+        print("\n-- B-05: a site that keeps crashing --")
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        check(!DevOpsHubWebView.isRepeatedCrash(at: start, after: nil)
+                && DevOpsHubWebView.isRepeatedCrash(at: start.addingTimeInterval(10), after: start)
+                && !DevOpsHubWebView.isRepeatedCrash(at: start.addingTimeInterval(DevOpsHubWebView.crashWindow), after: start),
+              "B-05: the crash window rule is wrong", &ok)
+
+        let web = DevOpsHubWebView(projectID: "atlas-crash-test")
+        var now = start
+        web.clock = { now }
+        var said = 0
+        web.onKeepsCrashing = { said += 1 }
+        let delegate = web as WKNavigationDelegate
+        func crash(after seconds: TimeInterval) {
+            now = now.addingTimeInterval(seconds)
+            delegate.webViewWebContentProcessDidTerminate?(web.webView)
+        }
+
+        // Port 9 on loopback: nothing serves it, and no fetch leaves the Mac.
+        web.load(origin: LocalStaticServer.origin(port: 9))
+        let loads = web.debugOpenCount
+        check(loads == 1, "B-05 fixture: the first load asked WebKit \(loads) times", &ok)
+        crash(after: 0)
+        check(web.debugOpenCount == 2 && !web.keepsCrashing && said == 0,
+              "B-05: the first ended process was not reloaded once (\(web.debugOpenCount) loads)", &ok)
+        crash(after: 5)
+        check(web.debugOpenCount == 2 && web.keepsCrashing && said == 1,
+              "B-05: a second ended process within a minute was reloaded (\(web.debugOpenCount) loads, said \(said))", &ok)
+        crash(after: 5)
+        check(web.debugOpenCount == 2 && said == 1, "B-05: a third ended process reloaded or said it again", &ok)
+
+        web.reload()
+        check(web.debugOpenCount == 3 && !web.keepsCrashing, "B-05: Reload did not start the site again", &ok)
+        // Crashes far apart are a process the system jettisoned now and then,
+        // and each one is reloaded.
+        crash(after: 600)
+        crash(after: 600)
+        check(web.debugOpenCount == 5 && !web.keepsCrashing && said == 1,
+              "B-05: two ended processes ten minutes apart were not both reloaded (\(web.debugOpenCount) loads)", &ok)
+        web.unload()
+
+        // The page's words for it, and the Reload button's identity.
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = "/tmp/devops-atlas"
+        let words = DevOpsHubWords.make(project: project, phase: .siteKeepsCrashing,
+                                        preflight: .ready(files: 899, bytes: 67_000_000))
+        check(words.headline == "This site keeps crashing" && words.tone == .red && words.progress == nil
+                && words.actions == [.reloadSite, .openInBrowser, .stop] && words.actions.first?.title == "Reload"
+                && words.body.contains("http://127.0.0.1:7420"),
+              "B-05: the crash state reads \(words.headline) / \(words.actions)", &ok)
+        check(DevOpsHubProjectController.action(
+                forIdentifier: DevOpsHubProjectController.identifier(for: .reloadSite)) == .reloadSite,
+              "B-05: the crash state's Reload button does not map back to its action", &ok)
     }
 }
 

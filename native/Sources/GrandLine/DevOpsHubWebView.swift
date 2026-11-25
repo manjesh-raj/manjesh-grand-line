@@ -18,6 +18,19 @@
 //     macOS 13 the default store, which no other web view in this app uses.
 //     A self-test or tour process gets a throwaway one, so a suite never
 //     writes WebKit data anywhere.
+//
+// Full review 2026-11-25 added two more (B-04, B-05):
+//
+//   - **A site's own dialogs work.** `alert`, `confirm` and `prompt` are the
+//     app's `HelmConfirm`, titled with the project's name, and a file input
+//     opens an `NSOpenPanel` sheet. Without these WebKit answered `confirm`
+//     with false and `prompt` with null and showed nothing, so a site asking
+//     "Reset your progress?" silently did nothing. None of them shows over
+//     the app lock (`AppLockedSurface.devopsHubSiteDialog`).
+//   - **A site that keeps crashing stops being reloaded.** One ended content
+//     process is reloaded, as before. A second within `crashWindow` stops
+//     there and the page says the site keeps crashing, with Reload, rather
+//     than starting a new WebContent process forever.
 
 import AppKit
 import CryptoKit
@@ -30,12 +43,26 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     /// The first page finished loading (or failed to, which still ends the
     /// wait: the site then shows WebKit's own error and Reload is there).
     var onFinished: (() -> Void)?
+    /// B-05: the site's content process ended twice within `crashWindow`,
+    /// and this view stopped reloading it. `reload()` starts it again.
+    var onKeepsCrashing: (() -> Void)?
+    /// What the site's own dialogs call it: the project's name.
+    var siteName: String
+
+    /// B-05: when the site's content process last ended, while it has not yet
+    /// been reloaded by hand.
+    private var lastTermination: Date?
+    /// The view gave up reloading a site that keeps crashing.
+    private(set) var keepsCrashing = false
+    /// The clock the crash window is measured on.
+    var clock: () -> Date = Date.init
 
     let webView: WKWebView
     private(set) var origin: URL?
     private var progressObservation: NSKeyValueObservation?
 
     init(projectID: String) {
+        siteName = projectID
         let config = WKWebViewConfiguration()
         config.websiteDataStore = Self.dataStore(for: projectID)
         webView = WKWebView(frame: .zero, configuration: config)
@@ -104,15 +131,25 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     /// Load the site at `origin` from its start page.
     func load(origin: URL) {
         self.origin = origin
+        resetCrashCount()
         open(origin)
     }
 
+    /// Reload by hand (the strip's Reload, ⌘R, the crash state's Reload),
+    /// which also gives a site that kept crashing a fresh count.
     func reload() {
-        if webView.url == nil, let origin {
+        let restarting = keepsCrashing
+        resetCrashCount()
+        if restarting || webView.url == nil, let origin {
             open(origin)
         } else {
             webView.reload()
         }
+    }
+
+    private func resetCrashCount() {
+        lastTermination = nil
+        keepsCrashing = false
     }
 
     /// The one place this view loads a URL. WebKit fetches in its own
@@ -121,12 +158,21 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     /// view ever loads.
     private func open(_ url: URL) {
         guard NetworkGate.allowsOutOfProcessLoad(url) else { return }
+        #if FM_SELFTESTS
+        debugOpenCount += 1
+        #endif
         webView.load(URLRequest(url: url))
     }
+
+    #if FM_SELFTESTS
+    /// How many times this view has asked WebKit to load the site.
+    private(set) var debugOpenCount = 0
+    #endif
 
     /// The server stopped: drop the page so nothing stale is left behind it.
     func unload() {
         origin = nil
+        resetCrashCount()
         webView.stopLoading()
         webView.loadHTMLString("", baseURL: nil)
     }
@@ -173,14 +219,131 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        loadFailed(error)
+    }
+
+    /// B-04: a load can also fail after it has started, and that is a
+    /// different callback. Unhandled, the page never heard the load end, so
+    /// its progress strip could stay up.
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        loadFailed(error)
+    }
+
+    private func loadFailed(_ error: Error) {
         AppLog.ui.error("DevOps Hub site failed to load: \(error.localizedDescription, privacy: .public)")
         onFinished?()
     }
 
+    // MARK: A site that crashes
+
+    /// Two ended content processes this close together are a site that
+    /// crashes on load (a memory blow-up, a broken WebAssembly module), not a
+    /// process the system jettisoned once.
+    static let crashWindow: TimeInterval = 60
+
+    /// Whether a termination at `now`, after one at `last`, is the second
+    /// within `crashWindow`.
+    static func isRepeatedCrash(at now: Date, after last: Date?) -> Bool {
+        guard let last else { return false }
+        return now.timeIntervalSince(last) < crashWindow
+    }
+
     /// A jettisoned content process leaves a blank page: load it again, as
-    /// `CodePreviewWebView` does.
+    /// `CodePreviewWebView` does. B-05: once, not forever.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !keepsCrashing, let origin else { return }
+        let now = clock()
+        if Self.isRepeatedCrash(at: now, after: lastTermination) {
+            AppLog.ui.error("DevOps Hub site's web content process ended twice in \(Int(Self.crashWindow), privacy: .public)s; not reloading")
+            keepsCrashing = true
+            onKeepsCrashing?()
+            return
+        }
         AppLog.ui.error("DevOps Hub site's web content process ended; reloading")
-        if let origin { open(origin) }
+        lastTermination = now
+        open(origin)
+    }
+
+    // MARK: The site's own dialogs (B-04)
+
+    /// None of them shows over the app lock. WebKit's own answers then stand:
+    /// nothing for an alert, false for a confirm, null for a prompt and no
+    /// file for an input.
+    private var mayShowDialog: Bool { AppLockGate.shared.allows(.devopsHubSiteDialog) }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        if mayShowDialog { HelmConfirm.confirm(Self.alertRequest(message, site: siteName)) }
+        completionHandler()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard mayShowDialog else { return completionHandler(false) }
+        completionHandler(HelmConfirm.confirm(Self.confirmRequest(message, site: siteName)) == .confirm)
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        guard mayShowDialog else { return completionHandler(nil) }
+        let (request, field) = Self.promptRequest(prompt, defaultText: defaultText, site: siteName)
+        completionHandler(HelmConfirm.confirm(request) == .confirm ? field.stringValue : nil)
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        guard mayShowDialog, let window = webView.window else { return completionHandler(nil) }
+        let panel = NSOpenPanel()
+        Self.configure(panel, allowsMultipleSelection: parameters.allowsMultipleSelection,
+                       allowsDirectories: parameters.allowsDirectories, site: siteName)
+        panel.beginSheetModal(for: window) { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
+    }
+
+    /// `alert()`: one button, as a browser's.
+    static func alertRequest(_ message: String, site: String) -> HelmConfirm.Request {
+        var request = dialogRequest(message, site: site)
+        request.cancelTitle = nil
+        return request
+    }
+
+    /// `confirm()`: OK and Cancel, Return answering OK, as a browser's.
+    static func confirmRequest(_ message: String, site: String) -> HelmConfirm.Request {
+        dialogRequest(message, site: site)
+    }
+
+    /// `prompt()`: a field holding the page's default text, with the
+    /// keyboard in it. The field is what the answer is read from.
+    static func promptRequest(_ message: String, defaultText: String?, site: String)
+        -> (request: HelmConfirm.Request, field: HelmTextField) {
+        let field = HelmTextField()
+        field.stringValue = defaultText ?? ""
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        var request = dialogRequest(message, site: site)
+        request.accessory = field
+        request.initialResponder = field
+        return (request, field)
+    }
+
+    private static func dialogRequest(_ message: String, site: String) -> HelmConfirm.Request {
+        var request = HelmConfirm.Request(title: "\(site) says", body: message)
+        request.confirmTitle = "OK"
+        request.symbol = "globe"
+        request.hue = RailDestination.devopsHub.domainHue
+        return request
+    }
+
+    /// A file input's panel: files, several only when the input says
+    /// `multiple`, and folders only when it asks for them.
+    static func configure(_ panel: NSOpenPanel, allowsMultipleSelection: Bool, allowsDirectories: Bool,
+                          site: String) {
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = allowsDirectories
+        panel.allowsMultipleSelection = allowsMultipleSelection
+        panel.prompt = "Choose"
+        panel.message = "Choose \(allowsMultipleSelection ? "files" : "a file") for \(site)."
     }
 }

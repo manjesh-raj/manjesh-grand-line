@@ -10,6 +10,8 @@
 //   - T-4: the slim band sits over the filter row and the board starts under
 //     it, each lane wears a toned band with its count and detail, the band's
 //     "+" adds to its own lane, and Weekly review drops the band.
+//   - B-01: the page turns over at midnight - its kicker, a "Due today"
+//     card and the Overdue figure - with no store change.
 //   - S-3: the hero column is the split's sidebar in place of the plain one,
 //     its rows filter the table and the selected one is a pill in the ink,
 //     the auto-lock ring counts down in place, and Lock now locks.
@@ -59,6 +61,7 @@ enum TasksSecretsHeroViewSelfTest {
             settle(shell)
             let checks: [(MainSplitShellController, NSWindow, inout Bool) -> Void] = [
                 checkTasksBand, checkTasksLanes, checkTasksLaneAdd, checkTasksBandLeavesWeeklyReview,
+                checkTasksTurnOverAtMidnight,
                 checkSecretsColumn, checkSecretsRows, checkSecretsRing, checkVaultSplit,
                 writeRenders, checkSecretsLockNow,
             ]
@@ -202,6 +205,84 @@ enum TasksSecretsHeroViewSelfTest {
             }
         }
         resize(window, width: 1512, shell)
+    }
+
+    /// Full review 2026-11-25, B-01: a Tasks page left open over midnight
+    /// turns over with no store change. Before the fix the page rendered only
+    /// on a store change or a visit, so its kicker kept yesterday's date, a
+    /// task due yesterday still said "Due today" and nothing moved to Overdue.
+    ///
+    /// The page's clock is pinned to one minute before midnight, then moved
+    /// two minutes on, and the system's own day-change notification is
+    /// posted: the path the captain's Mac takes at midnight. The day is in
+    /// 2031 so every seeded task is already overdue on both sides of it, and
+    /// only the probe's state changes.
+    private static func checkTasksTurnOverAtMidnight(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                     _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let calendar = Calendar.current
+        guard let day = calendar.date(from: DateComponents(year: 2031, month: 3, day: 14, hour: 12)),
+              let beforeMidnight = calendar.date(bySettingHour: 23, minute: 59, second: 0, of: day),
+              let afterMidnight = calendar.date(byAdding: .minute, value: 2, to: beforeMidnight) else {
+            return fail("B-01 fixture: the calendar could not build the fixture's instants", &ok)
+        }
+        DayRollover.nowOverrideForTests = beforeMidnight
+        let store = shell.workspace.shiftStore
+        var probe = ShiftTask.fresh()
+        probe.title = "Midnight rollover probe"
+        probe.dueDate = ShiftDateFormatting.components(from: beforeMidnight).dateStr
+        store.addTask(probe)
+        defer {
+            DayRollover.nowOverrideForTests = nil
+            _ = store.deleteTask(id: probe.id)
+            settle(shell)
+        }
+        let shift = showTasks(shell)
+
+        func probeDue() -> String? {
+            shift.debugBoardColumns.flatMap(\.debugCardViews)
+                .first { $0.taskID == probe.id }?.debugDue
+        }
+        func kickerNames(_ date: Date) -> Bool {
+            let named = ShiftHeroWords.kickerFormatter.string(from: date).uppercased()
+            return shift.debugHeroBand?.debugKicker.uppercased().contains(named) == true
+        }
+        let dueFigure = { shift.debugHeroBand?.debugFigureButtons[1].debugCount }
+        let overdueFigure = { shift.debugHeroBand?.debugFigureButtons[2].debugCount }
+        /// Waits on what the checks read, never on a fixed pump: the store's
+        /// render after `addTask` is coalesced onto a later turn.
+        func waitUntil(_ condition: () -> Bool) {
+            let deadline = Date().addingTimeInterval(10)
+            while !condition(), Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+                shell.view.layoutSubtreeIfNeeded()
+            }
+        }
+        waitUntil { probeDue() != nil && dueFigure() == "1" }
+
+        // The fixture's discriminating power: the two instants name two days.
+        check(ShiftHeroWords.kickerFormatter.string(from: beforeMidnight)
+                != ShiftHeroWords.kickerFormatter.string(from: afterMidnight),
+              "B-01 fixture: the two instants name the same day", &ok)
+        check(kickerNames(beforeMidnight), "B-01 fixture: the kicker reads \(shift.debugHeroBand?.debugKicker ?? "-")", &ok)
+        check(probeDue()?.hasPrefix("Due today") == true,
+              "B-01 fixture: the probe's card reads \(probeDue() ?? "no card")", &ok)
+        check(dueFigure() == "1", "B-01 fixture: Due today counts \(dueFigure() ?? "-") before midnight", &ok)
+        guard let overdueBefore = overdueFigure().flatMap({ Int($0) }) else {
+            return fail("B-01 fixture: the band shows no overdue figure", &ok)
+        }
+
+        DayRollover.nowOverrideForTests = afterMidnight
+        NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+        waitUntil { kickerNames(afterMidnight) && probeDue()?.hasPrefix("Overdue") == true && dueFigure() == "0" }
+
+        check(kickerNames(afterMidnight),
+              "B-01: after midnight the kicker still reads \(shift.debugHeroBand?.debugKicker ?? "-")", &ok)
+        check(probeDue()?.hasPrefix("Overdue 1 day") == true,
+              "B-01: after midnight yesterday's task reads \(probeDue() ?? "no card")", &ok)
+        check(dueFigure() == "0", "B-01: after midnight Due today still counts \(dueFigure() ?? "-")", &ok)
+        check(overdueFigure() == "\(overdueBefore + 1)",
+              "B-01: after midnight Overdue counts \(overdueFigure() ?? "-"), want \(overdueBefore + 1)", &ok)
     }
 
     /// Whether a `HelmFilterBar` is anywhere under `view`.

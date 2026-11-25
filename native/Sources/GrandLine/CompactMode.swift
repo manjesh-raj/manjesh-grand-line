@@ -372,9 +372,9 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         // A task due today becomes overdue at midnight with no store change,
         // so the overdue count in the title turns over on the day change -
         // the same signal the sidebar's Tasks badge listens for.
-        dayObserver = NotificationCenter.default.addObserver(
-            forName: .NSCalendarDayChanged, object: nil, queue: .main
-        ) { [weak self] _ in self?.refreshBadge() }
+        // B-01: `DayRollover`, so a Mac asleep at midnight turns it over on
+        // waking too.
+        dayObserver = DayRollover.observe { [weak self] _, _ in self?.refreshBadge() }
 
         // Nothing is shown until `refresh()` decides it should be. A fresh
         // install has compact mode off, so this status item is built and

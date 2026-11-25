@@ -1732,3 +1732,24 @@ The expand also widens the window and re-lays out the page on the same turn, and
 The expand now lands at full width at once and fades in (`WorkspaceMotion.fadeIn`), a layer animation that does not wait on the main thread.
 The collapse still eases its width.
 `SidebarPolishSelfTest` checks, on the turn of the click, that the pane is full width, the Tasks label is fully visible and the fade is running; the old eased expand fails all three.
+
+## Pane motions, one at a time (full review 2026-11-25, B-02)
+
+Asking for the inspector while its eased close was still running left the window 475pt narrower and the requested form not shown.
+`isCollapsed` flips the moment the animator is asked, so the second request started a second animation on the same split view item, and whichever completion ran last decided where the pane ended.
+The review tried two simpler fixes in the lab: a `collapseBehavior` change did nothing, and refusing to ease the second request kept the window but still dropped the form.
+
+### What shipped
+
+- `PaneMotionQueue` (`WorkspaceMotion.swift`) holds each pane's state: whether an eased change is in flight, and the newest request made during it.
+- `MainSplitShellController.setInspectorCollapsed` and `setSidebarCollapsed` hold any request made while their pane eases.
+  The in-flight change's completion applies the newest one, with its own floor, entrance and settle, as if it had been made then.
+  A request for the running change's own target cancels an earlier held one.
+
+### Verification
+
+- `FM_RUN_CONNECTIONS_CARDS_TESTS` gained `checkTheInspectorReopensWhileClosing`.
+  With motion on, it closes the inspector over a host's form and calls Add Host in the same turn.
+  It then waits for the pane motions to land and checks the window width, the open pane, the mounted New Host form and the pane's visible width.
+  Before the fix it failed with the window at 1037pt and the pane closed, the lab's measurement.
+- `FM_RUN_MOTION_TABLE_TESTS` asserts the queue's rules headless.

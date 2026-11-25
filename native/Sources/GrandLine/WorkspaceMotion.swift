@@ -102,3 +102,47 @@ enum WorkspaceMotion {
         }
     }
 }
+
+
+/// One pane's eased changes, one at a time (full review 2026-11-25, B-02).
+///
+/// `isCollapsed` flips the moment the animator is asked, so a second request
+/// made while a pane eases started a second animation on the same split view
+/// item, and whichever completion ran last decided where the pane ended up.
+/// Measured in the tour lab: an eased close of the inspector and Add Host in
+/// one turn left the window 475pt narrower and the form not shown. Refusing to
+/// ease the second request kept the window, but still dropped the form.
+///
+/// So a request made while a change is in flight is held, the newest one
+/// wins, and the pane's owner applies it from the in-flight change's
+/// completion. Pure state, asserted headless in `MotionTableSelfTest`.
+struct PaneMotionQueue: Equatable {
+
+    struct Request: Equatable {
+        let collapsed: Bool
+        let animated: Bool
+    }
+
+    /// An eased change of this pane is running.
+    var inFlight = false
+    /// The newest request made while it runs, when that differs from where
+    /// the running change is taking the pane.
+    private(set) var pending: Request?
+
+    /// Hold `collapsed` if a change is in flight, and say so. `current` is
+    /// the pane's `isCollapsed`, which is already the running change's
+    /// target. A request for that same state cancels an earlier held one,
+    /// since the newest request is then what the pane is easing to anyway.
+    mutating func queue(collapsed: Bool, animated: Bool, current: Bool) -> Bool {
+        guard inFlight else { return false }
+        pending = collapsed == current ? nil : Request(collapsed: collapsed, animated: animated)
+        return true
+    }
+
+    /// The running change finished: the held request to apply now, if any.
+    mutating func finish() -> Request? {
+        inFlight = false
+        defer { pending = nil }
+        return pending
+    }
+}

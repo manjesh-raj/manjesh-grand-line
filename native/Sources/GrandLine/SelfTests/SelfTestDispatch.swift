@@ -1150,6 +1150,13 @@ enum SelfTestDispatch {
         // state, the words, the contrast, and the source guards that keep the
         // monitor a listener), then the badges and the motion in a real off-screen
         // sidebar shell.
+        // Full review 2026-11-25, B-01: the one day-change signal - when it
+        // fires, the system notifications that reach it, the calendar's date
+        // after midnight, and a source guard that every dated page listens.
+        // Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_DAY_ROLLOVER_TESTS"] == "1" {
+            exit(DayRolloverSelfTest.run() ? 0 : 1)
+        }
         if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_SIGNALS_TESTS"] == "1" {
             exit(WorkspaceSignalsSelfTest.run() ? 0 : 1)
         }

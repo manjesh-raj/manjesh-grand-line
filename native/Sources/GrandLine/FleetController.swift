@@ -424,10 +424,20 @@ final class FleetController: NSViewController {
     /// this re-reads for real rather than from the coalescing window.
     func refreshAfterReply() { refresh(forceRefresh: true) }
 
+    /// B-01: the band's turn-over at midnight (`DayRollover`).
+    private var dayRolloverToken: NSObjectProtocol?
+
+    deinit {
+        if let dayRolloverToken { NotificationCenter.default.removeObserver(dayRolloverToken) }
+    }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
         root.wantsLayer = true
         view = root
+        // Full review 2026-11-25, B-01: the In flight band's kicker names the
+        // day, and nothing else redraws it after midnight until the next read.
+        dayRolloverToken = DayRollover.observe { [weak self] _, _ in self?.dayDidChange() }
 
         let header = buildHeader()
         buildStatsRow()
@@ -1817,6 +1827,13 @@ extension FleetController {
 
     /// Draw the band for the tab that is showing. Cheap when nothing changed:
     /// the band is only rebuilt when its words, its briefing or its foot do.
+    /// B-01: redraw the band's day while the page can be seen. Its own
+    /// signature skips the redraw when nothing it prints changed.
+    private func dayDidChange() {
+        guard isViewLoaded, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
+        renderCrewBand()
+    }
+
     func renderCrewBand() {
         guard drawsSidebarLayout else { return }
         crewBand.isHidden = !crewBandShows
@@ -1838,7 +1855,7 @@ extension FleetController {
             let reading = inFlightReading ?? CrewHeroWords.InFlightReading(
                 hasRead: false, homeOk: true, verdictHeadline: "", verdictBody: "", working: 0, queued: 0,
                 doneToday: 0, projects: 0, ready: .scanning, watcher: "")
-            words = CrewHeroWords.inFlight(reading, day: CrewHeroWords.dayFormatter.string(from: Date()),
+            words = CrewHeroWords.inFlight(reading, day: CrewHeroWords.dayFormatter.string(from: DayRollover.now()),
                                            time: CrewBand.time)
             // The board shows the briefing once the crew has been read, and
             // never over the setup prompt.

@@ -6,7 +6,7 @@
 #
 # Format: https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
 #
-# Empty on purpose. The first run of the headless selection under TSan
+# Empty until 2026-11-25. The first run of the headless selection under TSan
 # (2026-10-28, macOS 26.7 locally) needed no suppression - including
 # whisper.cpp's ggml thread pool, which the first full review expected to need
 # `race:ggml_*` and `race:whisper_*`. It did find two real races, both in this
@@ -14,3 +14,21 @@
 # git queue while main read it), and those were fixed rather than suppressed
 # (`GitSyncStatusCell`). If a future vendored update brings a third-party race,
 # add the narrowest pattern that matches.
+
+# SwiftTerm's `LocalProcess.running` (Vendor/SwiftTerm/Sources/SwiftTerm/
+# LocalProcess.swift). `childStopped(cancelProcessMonitor:)` writes it from the
+# PTY's dispatch-io read queue when a child's output ends, while the main
+# thread reads it (`CockpitTerminalView.installResizeReflowPolicy`, through
+# `running`'s getter) and writes it again from the process monitor. Found by
+# the nightly run on 2026-11-21 to 11-24 (full review 2026-11-25, T-01), in
+# `FM_RUN_SRE_LEAD_PER_TAB_TESTS` and `FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS`.
+# Upstream has no lock or queue for the flag and no seam to add one from this
+# app; a vendored patch for a one-byte flag the app only reads to decide
+# whether to reflow is not worth an eleventh re-apply on every SwiftTerm sync.
+# The same read handler also sets `childfd = -1` on that queue when output
+# ends, while the main thread reads `childfd` to send a window size
+# (`LocalProcessTerminalView.sizeChanged`) - measured under TSan locally on
+# 2026-11-25 once the first entry was in. Every report so far has one of these
+# two frames as its writer, so they are matched and nothing else in the file.
+race:LocalProcess.childStopped
+race:LocalProcess.childProcessRead

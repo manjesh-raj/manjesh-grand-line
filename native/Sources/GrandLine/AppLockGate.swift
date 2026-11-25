@@ -295,6 +295,12 @@ enum AppLockedSurface {
     /// and `drainPendingActions` refuses to apply a tapped tick while locked
     /// while *keeping* it queued for after the unlock.
     case widgetSnapshot
+    /// Full review 2026-11-25, B-04: a DevOps Hub site's own `alert`,
+    /// `confirm`, `prompt` and file panel. A running site keeps running
+    /// under the lock, and any of its timers may ask, so a themed modal or a
+    /// sheet would otherwise open over the lock screen. Its own case, per
+    /// this file's header rule: nothing else gates on it.
+    case devopsHubSiteDialog
 }
 
 final class AppLockGate {

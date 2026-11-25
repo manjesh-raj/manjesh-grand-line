@@ -1602,7 +1602,7 @@ final class ShiftCalendarView: NSView {
     /// R5-UX-04: the window toolbar's Today, through the page's own
     /// `showDate`, which is the card's Today button's path too. Which day
     /// "today" is belongs to the native clock.
-    func showToday(now: Date = Date()) {
+    func showToday(now: Date = DayRollover.now()) {
         guard isConfigured else { return }
         let today = ShiftDateFormatting.components(from: now).dateStr
         webView.call("showDate", payload: ["date": today]) { result in
@@ -1612,10 +1612,42 @@ final class ShiftCalendarView: NSView {
         }
     }
 
+    /// Full review 2026-11-25, B-01: the day moved on. Schedule-X works out
+    /// which cell is today as it draws each one, so yesterday keeps the today
+    /// pill until the cells redraw, and setting the page's date redraws them.
+    /// A calendar on the old today follows the day, as a calendar app does at
+    /// midnight. One the captain moved elsewhere stays where it is.
+    func dayDidChange(from previousDay: String, now: Date = DayRollover.now()) {
+        guard isConfigured else { return }
+        let date = Self.dateAfterDayChange(focusedDay: focusedDay, previousDay: previousDay,
+                                           today: ShiftDateFormatting.components(from: now).dateStr)
+        #if FM_SELFTESTS
+        debugDayChangeDates.append(date)
+        #endif
+        webView.call("showDate", payload: ["date": date]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("task calendar: showDate after the day changed failed: \(error.message, privacy: .public)")
+            }
+        }
+    }
+
+    /// The date the page shows once the day moved on: today, when it was on
+    /// the old today or had not reported a date yet, and otherwise the date
+    /// it was on, which still redraws its cells.
+    static func dateAfterDayChange(focusedDay: String?, previousDay: String, today: String) -> String {
+        guard let focusedDay, focusedDay != previousDay else { return today }
+        return focusedDay
+    }
+
+    #if FM_SELFTESTS
+    /// The dates `dayDidChange` asked the page to show.
+    private(set) var debugDayChangeDates: [String] = []
+    #endif
+
     // MARK: Data
 
     func configure(tasks: [ShiftTask], followUps: [ShiftFollowUp] = [], projects: [ShiftProject] = [],
-                   today: Date = Date()) {
+                   today: Date = DayRollover.now()) {
         let projectsChanged = projects.map(\.id) != self.projects.map(\.id)
             || projects.map(\.name) != self.projects.map(\.name)
         self.tasks = tasks

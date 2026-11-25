@@ -343,3 +343,13 @@ Only the `.unlock` state changed.
   The last one was also a real slip: `applyGlow()` ran from `layout()` outside any wrapper, so a relayout could cross-fade the glow. Every gradient write in both scene files now goes through one wrapped `setStops`.
   A new scene file should run the source-scanning suites, not only the suites for its own screen.
 - **Found, not fixed (out of scope):** `handleUnlockOutcome(.staleTouchIDKey)` shows its message and then calls `render()`, whose `setMode(.unlock)` clears the message label, so B17's sentence is wiped before it can be read.
+
+## The stale Touch ID key message stays (full review 2026-11-25, B-03)
+
+When the stored Touch ID key no longer opens the vault, the store removes it and the gate is meant to say so.
+The handler showed the message and then re-rendered, and `render()` puts the gate back in its unlock mode, whose `setMode` clears the message.
+So the Touch ID button vanished with no explanation.
+It now renders first and shows the message second.
+
+`FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS` gained `checkAStaleTouchIDKeyIsSaid`, which enters where the store's completion lands (`debugHandleUnlockOutcome`), because a real stale key needs a Keychain item and a Touch ID prompt.
+With the old order, it fails on the empty, hidden label.

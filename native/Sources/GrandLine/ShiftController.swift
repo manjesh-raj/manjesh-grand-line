@@ -564,6 +564,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// affordance, rather than needing a stub one.
     private let focusTimer: FocusTimerController?
     private var focusTimerToken: UUID?
+    /// B-01: the page's turn-over at midnight (`DayRollover`).
+    private var dayRolloverToken: NSObjectProtocol?
 
     init(store: ShiftStore, focusTimer: FocusTimerController? = nil) {
         self.store = store
@@ -833,6 +835,12 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // render has happened since.
         store.observe { [weak self] in self?.scheduleRenderForStoreChange() }
 
+        // Full review 2026-11-25, B-01: the kicker's date, every "Due today"
+        // and the overdue count turn over at midnight with no store change.
+        dayRolloverToken = DayRollover.observe { [weak self] previousDay, _ in
+            self?.dayDidChange(from: previousDay)
+        }
+
         // REL-01: the first paint is the store, not the pre-render state.
         // `ShiftStore.init` already read every file synchronously, but the
         // only path to a render was `viewWillAppear`'s background reload -
@@ -848,6 +856,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let dayRolloverToken { NotificationCenter.default.removeObserver(dayRolloverToken) }
         // F7: this page observes the timer for its row highlight and its
         // Weekly Review tile; an observation is unregistered where it was
         // made, this app's convention everywhere else.
@@ -992,7 +1001,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// tiles that used to say the same thing a third time are gone (UI-16).
     typealias Counts = ShiftStore.Summary
 
-    func counts(now: Date = Date()) -> Counts {
+    func counts(now: Date = DayRollover.now()) -> Counts {
         store.summary(now: now, includingTask: matchesProjectFilter, includingFollowUp: matchesProjectFilter)
     }
 
@@ -1353,7 +1362,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             byColumn[column] = (byColumn[column] ?? []).sorted(by: taskSort.areInOrder)
         }
 
-        let cutoff = Calendar.current.date(byAdding: .day, value: -Self.doneColumnLookbackDays, to: Date())
+        let cutoff = Calendar.current.date(byAdding: .day, value: -Self.doneColumnLookbackDays, to: DayRollover.now())
         byColumn[.done] = store.allCompletedTasks()
             .filter(matchesFilters)
             .filter { task in
@@ -1394,8 +1403,8 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
                   let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
             let cal = Calendar.current
             return taskScope == .dueToday
-                ? cal.isDate(due, inSameDayAs: Date())
-                : due < cal.startOfDay(for: Date())
+                ? cal.isDate(due, inSameDayAs: DayRollover.now())
+                : due < cal.startOfDay(for: DayRollover.now())
         case .myPriorities:
             // Outstanding work the captain themselves marked high - not a
             // ranking this page invented.
@@ -1408,7 +1417,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             guard let updated = ShiftStore.date(fromISO8601: task.updatedAt) else { return false }
             guard let cutoff = Calendar.current.date(byAdding: .day,
                                                      value: -Self.recentlyUpdatedWindowDays,
-                                                     to: Date()) else { return false }
+                                                     to: DayRollover.now()) else { return false }
             return updated >= cutoff
         }
     }
@@ -1795,7 +1804,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             : "start a focus session from any task"
 
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        let today = calendar.startOfDay(for: DayRollover.now())
         let letters = calendar.veryShortStandaloneWeekdaySymbols
         reviewFocusChart.configure(days.map { entry in
             let weekday = calendar.component(.weekday, from: entry.day)
@@ -1886,6 +1895,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Set by a store change, cleared by any render - see `loadView`'s REL-02
     /// note.
     private var renderPendingForStoreChange = false
+
+    /// B-01: the day moved on. Board, List, Weekly review and the calendar's
+    /// head all come from `render()`, and the calendar's own today marker
+    /// needs its cells redrawn. A page nobody can see renders on its next
+    /// `viewWillAppear`, as it does for a store change.
+    private func dayDidChange(from previousDay: String) {
+        guard isViewLoaded, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
+        render()
+        if isShowingCalendar { calendar.dayDidChange(from: previousDay) }
+    }
 
     private func scheduleRenderForStoreChange() {
         guard !renderPendingForStoreChange else { return }
@@ -3561,7 +3580,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
 
     /// The five figures, each from the store's own records.
     fileprivate func renderWorkspaceReview(_ summary: ShiftWeeklySummary) {
-        let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: Date())
+        let lastWeek = Calendar.current.date(byAdding: .day, value: -7, to: DayRollover.now())
             .map { store.weeklySummary(reference: $0).completedCount }
         typealias Item = HelmKPIStrip.Item
         var completedDetail: Item.Detail?
@@ -3574,14 +3593,14 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
         let focusSeconds = focusDays.reduce(0) { $0 + $1.seconds }
         let focusTasks = store.focusTaskCount(days: 7)
         let c = counts()
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Calendar.current.startOfDay(for: DayRollover.now())
         let overdueTasks = store.activeTasks.filter(matchesProjectFilter).filter { task in
             guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
             return due < today
         }.sorted(by: Self.byDueDateThenCreated)
         let pending = store.followUps.filter { $0.status == .pending }
         let dueToday = pending.filter { fu in
-            fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: Date()) }
+            fu.followUpAt.flatMap(ShiftDateFormatting.date(from:)).map { Calendar.current.isDate($0, inSameDayAs: DayRollover.now()) }
                 ?? false
         }.count
         reviewCardsRow.configure([

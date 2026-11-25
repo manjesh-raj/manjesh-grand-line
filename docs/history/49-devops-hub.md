@@ -116,3 +116,35 @@ The recommended answers were confirmed:
 - `FM_RUN_DEVOPS_HUB_MODEL_TESTS` (headless) adds the column's words in every state and their precedence, each card's lines, the filter, add and remove, the emptied store, and Add Project's validation.
 - `FM_RUN_PAGE_REDESIGNS_TESTS` drives one row with no children, a real click that opens the cards, a real Start through a card that opens the course, the strip's Projects button, the window's Back, the row's click back to the cards, Stop, a busy port, the pencil's sheet, the band at 1100, and a missing folder.
 - `FM_DEVOPS_HUB_RENDER_DIR` now writes ten states per theme: no projects, not started, starting, running with the course, running on the cards, a busy port, a missing folder, three projects, and the narrowest window on the cards and on the course.
+
+## A site's own dialogs, and a site that keeps crashing (full review 2026-11-25, B-04 and B-05)
+
+### B-04
+
+The web view named itself the UI delegate but handled only new-window requests.
+WebKit then answered `confirm()` with false and `prompt()` with null, showed nothing for `alert()`, and ignored a file input.
+A load that failed after it had started was not handled either, so the page never heard the load end.
+
+- `alert`, `confirm` and `prompt` are `HelmConfirm`, titled "<project> says" with the hub's hue.
+  A prompt is a field holding the page's default text.
+- A file input opens an `NSOpenPanel` sheet over the window, with files, several only for `multiple`, and folders only when asked for.
+- None of them shows under the app lock (`AppLockedSurface.devopsHubSiteDialog`), because a running site keeps running and any of its timers may ask.
+  WebKit's own answers then stand.
+- `webView(_:didFail:withError:)` ends the wait as the provisional failure does.
+
+### B-05
+
+`webViewWebContentProcessDidTerminate` reloaded the site unconditionally, so a site that crashes its content process on load was reloaded forever.
+One ended process is still reloaded.
+A second within a minute stops there, and the page shows "This site keeps crashing" in the hero card the hub already uses for its other recoverable states, with Reload, Open in Browser and Stop.
+Reload, the strip's Reload and ⌘R start a fresh count, and so does a stop.
+
+### Verification
+
+- `FM_RUN_DEVOPS_HUB_MODEL_TESTS` (headless) drives a real `DevOpsHubWebView` with no window.
+  Page script calls `confirm`, `prompt` and `alert`, and the suite reads what the page got back.
+  Under the lock nothing shows.
+  The `didFail` delegate call ends the wait.
+  Terminations are driven through the delegate call WebKit makes, with the view's own clock.
+- With the delegate methods renamed away and the reload made unconditional, ten checks fail by name.
+- Not verified by a test: the open panel itself, which needs a window and a real file input click.
