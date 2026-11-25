@@ -496,9 +496,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     // MARK: The sidebar layout's state (stage 7)
 
-    /// Set once, the first time the sidebar shell shows this page
-    /// (`adoptSidebarLayout`). The floating bar never sets it.
-    private(set) var drawsSidebarLayout = false
     /// T-4 on the page-redesign board: the page's hero as a slim band
     /// (`ShiftHeroBand.swift`). Board and List show it; Calendar (which fills
     /// the page), Weekly review and a project's own page do not.
@@ -852,6 +849,10 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // up an edit made outside this page, the contract
         // `HelmBackgroundReload` states for the other pages.
         render()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     deinit {
@@ -963,7 +964,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // the sidebar layout, where the card leaves its own Today to it. The
         // floating bar's card keeps its own, so the drill header does not
         // repeat it.
-        let today: [NSView] = tasksView == .calendar && drawsSidebarLayout ? [calendarTodayButton] : []
+        let today: [NSView] = tasksView == .calendar ? [calendarTodayButton] : []
         return today + (store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton])
     }
 
@@ -1331,7 +1332,6 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             // scrolled down would otherwise open it part-way off screen.
             if !wasCalendar { scrollToTop() }
         }
-        applyTabRowAccessories()
         render()
         onModuleTabChanged?()
         if wasCalendar != (view == .calendar) { onDrillActionsChanged?() }
@@ -1688,17 +1688,16 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         dashboardContainer.isHidden = view != .dashboard
         weeklyReviewContainer.isHidden = view != .weeklyReview
         if view != .weeklyReview { weeklyReviewWidthTie?.isActive = false }
-        applyTabRowAccessories()
         // The column's rows are all about the task board, so it goes with it.
         // Both halves are needed: hiding the view alone would leave its gap
         // behind, since an ordinary hidden `NSView` keeps its constraints.
         // P9: the split collapses the column, which takes its gap and its
         // hairline with it, and restores the captain's own choice on return.
-        splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard
+        splitPage?.pageForcesCollapse = true
         applyContentLeadingInset()
         // Tf-2: the band is the board's and the list's filters, so it leaves
         // with them when Weekly review shows.
-        if drawsSidebarLayout { heroBand.isHidden = view != .dashboard || isProjectDetailFullPage || tasksView == .calendar }
+        heroBand.isHidden = view != .dashboard || isProjectDetailFullPage || tasksView == .calendar
         if view == .weeklyReview { renderWeeklyReview() }
         applyCalendarVisibility()
         applyTheme()
@@ -1849,7 +1848,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
             }
             reviewPushedBackListWidth?.isActive = true
         }
-        if drawsSidebarLayout { renderWorkspaceReview(summary) }
+        renderWorkspaceReview(summary)
         applyTheme()
     }
 
@@ -1982,7 +1981,7 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         if topLevelView == .weeklyReview { renderWeeklyReview() }
         let projectsByID = Dictionary(store.projects.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         followUpLane.setFollowUps(followUpLaneItems(), projects: projectsByID, theme: theme)
-        if drawsSidebarLayout { renderWorkspaceChrome() }
+        renderWorkspaceChrome()
         // The calendar redraws only while it shows; switching to it renders it.
         if isShowingCalendar { calendar.render() }
 
@@ -2034,63 +2033,42 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         // against a blank left half in board mode (caught in a real render,
         // not by reading the constraints).
         tasksLeftColumn?.isHidden = hideTasks
-        // S08: in the sidebar layout the lane wears the status lanes' wash;
-        // in the floating bar their classic shape. Set on every render, so
-        // the first render (which runs before `adoptSidebarLayout`) cannot
-        // fix the wrong one.
-        followUpLane.setClassicStyle(!drawsSidebarLayout)
-        if !drawsSidebarLayout {
-            // The calendar fills the page under the tab row.
-            //
-            // R4-UX-09: on Board, Follow-ups is a lane on the board while four
-            // lanes fit, and Projects leaves the page - the column's Projects
-            // group filters by them, and the List tab keeps their cards. The
-            // board used to stack both as full-width cards under its lanes.
-            // The Projects section is also what a project's detail hides
-            // (`applyProjectDetailFullPage`), so it stays hidden for that too.
-            // The lane takes the classic board's untinted shape here.
+        // S08: the lane wears the status lanes' wash.
+        followUpLane.setClassicStyle(false)
+        // The table is the List tab; the floating bar's My Tasks card
+        // and its column are not drawn, so Follow-ups spans the row.
+        taskPanel.isHidden = true
+        tasksLeftColumn?.isHidden = true
+        tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
+        // The calendar fills the page, so it keeps the band's height; its
+        // month head carries the filters instead (Cf-4).
+        heroBand.isHidden = isProjectDetailFullPage || topLevelView != .dashboard || calendarShowing
+        // R2-UX-07: an empty Tasks page was three empty states (the
+        // board's lanes, Follow-ups and Projects) under a filter row of
+        // zeros. With nothing at all it is one invitation instead. The
+        // calendar is the exception: an empty month is still the
+        // calendar the captain opened, and a double-click on a day there
+        // adds the first task.
+        let startHere = showsStartHere && !failed && !isProjectDetailFullPage && !calendarShowing
+        startHereState.isHidden = !startHere
+        if startHere {
+            for view in [boardSection, tasksTable.card, heroBand] + startHereReplaces {
+                view.isHidden = true
+            }
+        } else {
+            for view in startHereReplaces { view.isHidden = false }
+            // R4-UI-09: on Board, Follow-ups is a lane on the board while
+            // four lanes fit, and Projects is the filter row's pop-up. The
+            // List tab keeps both under its table.
             let board = tasksView == .board && !isProjectDetailFullPage && !failed
             let laneOnBoard = board && boardFitsFollowUpLane
             boardView.trailingLaneShown = laneOnBoard
+            // The calendar draws follow-ups on their day and fills the
+            // page, so neither card sits under it.
             followUpsRow?.isHidden = laneOnBoard || calendarShowing
-            projectsSectionView?.isHidden = board || calendarShowing || isProjectDetailFullPage
-        }
-        if drawsSidebarLayout {
-            // The table is the List tab; the floating bar's My Tasks card
-            // and its column are not drawn, so Follow-ups spans the row.
-            taskPanel.isHidden = true
-            tasksLeftColumn?.isHidden = true
-            tasksTable.card.isHidden = isProjectDetailFullPage || failed || tasksView != .list
-            // The calendar fills the page, so it keeps the band's height; its
-            // month head carries the filters instead (Cf-4).
-            heroBand.isHidden = isProjectDetailFullPage || topLevelView != .dashboard || calendarShowing
-            // R2-UX-07: an empty Tasks page was three empty states (the
-            // board's lanes, Follow-ups and Projects) under a filter row of
-            // zeros. With nothing at all it is one invitation instead. The
-            // calendar is the exception: an empty month is still the
-            // calendar the captain opened, and a double-click on a day there
-            // adds the first task.
-            let startHere = showsStartHere && !failed && !isProjectDetailFullPage && !calendarShowing
-            startHereState.isHidden = !startHere
-            if startHere {
-                for view in [boardSection, tasksTable.card, heroBand] + startHereReplaces {
-                    view.isHidden = true
-                }
-            } else {
-                for view in startHereReplaces { view.isHidden = false }
-                // R4-UI-09: on Board, Follow-ups is a lane on the board while
-                // four lanes fit, and Projects is the filter row's pop-up. The
-                // List tab keeps both under its table.
-                let board = tasksView == .board && !isProjectDetailFullPage && !failed
-                let laneOnBoard = board && boardFitsFollowUpLane
-                boardView.trailingLaneShown = laneOnBoard
-                // The calendar draws follow-ups on their day and fills the
-                // page, so neither card sits under it.
-                followUpsRow?.isHidden = laneOnBoard || calendarShowing
-                projectsSectionView?.isHidden = board || calendarShowing
-                followUpsJumpWanted = !laneOnBoard && !calendarShowing
-                refreshFilters()
-            }
+            projectsSectionView?.isHidden = board || calendarShowing
+            followUpsJumpWanted = !laneOnBoard && !calendarShowing
+            refreshFilters()
         }
     }
 
@@ -2874,11 +2852,9 @@ final class ShiftController: NSViewController, DaylightDrillActions, HelmSplitPa
         reviewFocusHeadline.textColor = ink
         reviewFocusCaption.textColor = muted
         reviewFocusChart.applyTheme(theme)
-        if drawsSidebarLayout {
-            tasksTable.applyTheme(theme)
-            followUpsTable.applyTheme(theme)
-            reviewCardsRow.applyTheme(theme)
-        }
+        tasksTable.applyTheme(theme)
+        followUpsTable.applyTheme(theme)
+        reviewCardsRow.applyTheme(theme)
     }
 }
 
@@ -3016,16 +2992,13 @@ extension ShiftController: ModuleTabHosting {
 /// line draws nothing here and gives up its slot. The subtitle itself stays
 /// the page's summary (the floating bar and the crew panel read it).
 extension ShiftController: WorkspaceHeaderLineCollapsing {
-    var collapsesEmptyHeaderLine: Bool { drawsSidebarLayout }
-    var drawsSubtitleOnHeaderLine: Bool { !drawsSidebarLayout }
+    var collapsesEmptyHeaderLine: Bool { true }
+    var drawsSubtitleOnHeaderLine: Bool { false }
 }
 
-extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+extension ShiftController: WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         // R5-UX-04: a calendar embedded before this (a Calendar route lands
         // on its tab before the shell adopts the page) hands its Today and
         // periods to the window toolbar now.
@@ -3064,7 +3037,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// Nothing open, nothing completed lately, no follow-up and no project:
     /// a store a captain has never used.
     private var showsStartHere: Bool {
-        drawsSidebarLayout && !store.isInFailedLoadState && store.activeTasks.isEmpty && store.followUps.isEmpty
+        !store.isInFailedLoadState && store.activeTasks.isEmpty && store.followUps.isEmpty
             && store.projects.isEmpty && boardTasks().values.allSatisfy(\.isEmpty)
     }
 
@@ -3083,7 +3056,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     }
 
     /// New task, at the toolbar's far right after Search.
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }
+    var workspacePrimaryAction: NSView? { newTaskButton }
 
     /// T-4's slim band: the day's verdict and figures from the same counting
     /// pass the subtitle and the filter row read, and the Done lane's own
@@ -3095,7 +3068,7 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     }
 
     #if FM_SELFTESTS
-    var debugHeroBand: ShiftTasksHeroBand? { drawsSidebarLayout && !heroBand.isHidden ? heroBand : nil }
+    var debugHeroBand: ShiftTasksHeroBand? { !heroBand.isHidden ? heroBand : nil }
     #endif
 
     /// The band's and the calendar head's filters call back here, so the
@@ -3112,7 +3085,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
     /// when the calendar is embedded, which can be before or after the shell
     /// adopts the page.
     func wireCalendarFilters() {
-        guard drawsSidebarLayout else { return }
         calendar.setHeroFilterHandlers(
             scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) },
             project: { [weak self] view in self?.popUp(self?.projectMenu(), from: view) },
@@ -3137,7 +3109,6 @@ extension ShiftController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidin
 
     /// What the band's figures and pills, and the calendar head's menus, say.
     func refreshFilters() {
-        guard drawsSidebarLayout else { return }
         let project = projectFilter.flatMap { id in store.projects.first { $0.id == id } }
         let projectTitle = project.map { $0.name.isEmpty ? "Untitled project" : $0.name } ?? "All projects"
         heroBand.setFilters(scope: taskScope.rawValue, projectTitle: projectTitle,

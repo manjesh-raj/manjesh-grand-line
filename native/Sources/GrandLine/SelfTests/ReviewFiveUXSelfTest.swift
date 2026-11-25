@@ -124,7 +124,7 @@ enum ReviewFiveUXSelfTest {
                 && WorkspaceModule.tasks.tabs.contains { $0.name == "Calendar" },
               "R5-UX-04: Tasks' Calendar tab is no longer a shortcut to the Calendar", &ok)
         if let shift = source("ShiftController.swift"), let shell = source("MainSplitShellController.swift") {
-            check(shift.contains("tasksView == .calendar && drawsSidebarLayout ? [calendarTodayButton] : []"),
+            check(shift.contains("tasksView == .calendar ? [calendarTodayButton] : []"),
                   "R5-UX-04: the Calendar's toolbar lost Today", &ok)
             check(shell.contains("} else if let calendar = shownCalendar {"),
                   "R5-UX-04: the shell no longer draws the Calendar's own tabs", &ok)
@@ -161,8 +161,11 @@ enum ReviewFiveUXSelfTest {
                           "R5-UX-06: a Personal Console's tab row still holds an operator tool", &ok)
                 }
                 AppSettings.shared.setProfile(.operator)
-                check(console.operatorToolViews.allSatisfy { $0.isDescendant(of: console.view) },
-                      "R5-UX-06: choosing Operator again did not bring the tools back", &ok)
+                // The window toolbar holds the cluster and re-reads
+                // `pageToolViews`; the page's own tab row holds none of it.
+                let back = titles()
+                check(operatorTools.allSatisfy { title in back.contains { $0.hasPrefix(title) } },
+                      "R5-UX-06: choosing Operator again did not bring the tools back (\(back))", &ok)
             }
         }
     }

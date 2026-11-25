@@ -206,8 +206,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     /// mode is one pop-up showing the mode it is in, with the same three
     /// choices (`toolbarModePopUp`).
     var drillHeaderActions: [NSView] {
-        drawsSidebarLayout ? [toolbarModePopUp, todayButton, toolbarMoreMenu.button, newPageButton]
-            : [todayButton, newPageButton]
+        [toolbarModePopUp, todayButton, toolbarMoreMenu.button, newPageButton]
     }
     /// R2-UX-06: Source, Split or Preview, in the sidebar layout's toolbar.
     private lazy var toolbarModePopUp: HelmPopUpButton = {
@@ -234,7 +233,6 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         .init("Delete Page\u{2026}", symbol: "trash",
               isEnabled: { [weak self] in self?.deleteButton.isEnabled ?? false }) { [weak self] in self?.deleteTapped() },
     ], tooltip: "More - find, page details or delete this page")
-    private(set) var drawsSidebarLayout = false
     /// The editor under the page's toolbar row, or - once that row's controls
     /// are the window toolbar's - at the top of the page.
     private var splitUnderToolbar: NSLayoutConstraint!
@@ -385,6 +383,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         reload()
         applyTheme()
         applyMode()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     override func viewWillAppear() {
@@ -661,7 +663,7 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
 
     func applyMode() {
         // The toolbar's pop-up says the mode however it was chosen.
-        if drawsSidebarLayout, let index = ViewMode.allCases.firstIndex(of: mode),
+        if let index = ViewMode.allCases.firstIndex(of: mode),
            toolbarModePopUp.indexOfSelectedItem != index {
             toolbarModePopUp.selectItem(at: index)
         }
@@ -771,13 +773,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
                               + "Everything you write here is a markdown file \(whereItGoes).",
                           // X5: the Welcome page, offered where the captain
                           // is actually looking.
-                          // R2-UX-07: in the sidebar layout New page is the
-                          // toolbar's far-right primary, so the page offers
-                          // its one example, like every module's empty state.
-                          actions: drawsSidebarLayout
-                              ? [("Add a Welcome page", #selector(seedWelcomePageTapped))]
-                              : [("New page", #selector(newPageTapped)),
-                                 ("Add a Welcome page", #selector(seedWelcomePageTapped))])
+                          // R2-UX-07: New page is the toolbar's far-right
+                          // primary, so the page offers its one example, like
+                          // every module's empty state.
+                          actions: [("Add a Welcome page", #selector(seedWelcomePageTapped))])
     }
 
     private func open(pageID: String) {
@@ -1449,18 +1448,15 @@ extension NotebookController: WorkspacePrimaryActionProviding {
 // captain's 1512pt. It stays one of `drillHeaderActions`, which the shell
 // leaves out of the toolbar for it, so the pop-up's state has one owner.
 extension NotebookController: WorkspaceHeaderAccessoryProviding {
-    var workspaceHeaderAccessory: NSView? { drawsSidebarLayout ? toolbarModePopUp : nil }
+    var workspaceHeaderAccessory: NSView? { toolbarModePopUp }
 }
 
 // R2-UX-06: the sidebar layout's Notebook has no page toolbar row. Its
 // controls go up into the window toolbar (`drillHeaderActions`), keeping
 // R2-BUG-07's icon-only actions below `compactToolbarActionsBelow`, and the
 // editor takes the row's height back. The floating bar keeps the row.
-extension NotebookController: SidebarLayoutAdopting {
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+extension NotebookController {
+    func buildSidebarPresentation() {
         toolbarModePopUp.selectItem(at: ViewMode.allCases.firstIndex(of: mode) ?? 0)
         toolbar.isHidden = true
         splitUnderToolbar.isActive = false

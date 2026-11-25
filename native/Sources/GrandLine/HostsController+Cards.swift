@@ -140,7 +140,7 @@ extension HostsController {
     /// first build is the floating bar's - measured, a tour that seeded its
     /// hosts first had no Grouped until a host changed.
     func refreshGroupedChoice() {
-        guard drawsSidebarLayout, let menu = groupPicker.menu else { return }
+        guard let menu = groupPicker.menu else { return }
         if !menu.items.isEmpty, !menu.items.contains(where: { $0.representedObject as? String == Self.groupedChoiceMarker }) {
             addGroupedChoice(to: menu)
         }
@@ -164,7 +164,6 @@ extension HostsController {
     /// Show the grid or the table, per the stored choice. The selection
     /// carries over, because it is one selection.
     func applyConnectionsViewMode() {
-        guard drawsSidebarLayout else { return }
         let list = AppSettings.shared.connectionsShowList
         hostsViewModeControl.select(list ? Self.listModeID : Self.gridModeID)
         hostsGrid.isHidden = list
@@ -175,7 +174,7 @@ extension HostsController {
 
     /// The grid showing on `tab`, or `nil` where the table is.
     func visibleGrid(for tab: HostsTab) -> HelmCardGrid? {
-        guard drawsSidebarLayout, !AppSettings.shared.connectionsShowList else { return nil }
+        guard !AppSettings.shared.connectionsShowList else { return nil }
         switch tab {
         case .hosts: return hostsGrid
         case .keys: return keysGrid
@@ -232,7 +231,6 @@ extension HostsController {
     /// nothing is filtered, then Firstmate, then the hosts - one flat run,
     /// or one section per group when the captain chose Grouped.
     func renderHostsGrid(_ hosts: [Host], query: String) {
-        guard drawsSidebarLayout else { return }
         let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
         let grouped = AppSettings.shared.hostsGrouped
@@ -356,12 +354,8 @@ extension HostsController {
     }
 
     /// H5's pencil, ⌘E and a menu's Edit: the host's form in the side
-    /// panel with the keyboard in it. The floating bar keeps its window.
+    /// panel with the keyboard in it.
     func editHost(_ host: Host) {
-        guard drawsSidebarLayout else {
-            onAddOrEdit?(host)
-            return
-        }
         openHostPanel(forEditing: host)
     }
 }

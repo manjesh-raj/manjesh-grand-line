@@ -189,13 +189,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
 
     // MARK: CR-1 - the Crew band (the sidebar layout's, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`. Never set in the floating bar,
-    /// whose Review page keeps its count line, its boxed figures and its
-    /// failure block exactly as they were.
-    private(set) var drawsSidebarLayout = false
-    /// The band the page opens on in the sidebar layout. Lazy, and only ever
-    /// touched behind `drawsSidebarLayout`, so the floating bar never builds
-    /// one.
+    /// The band the page opens on.
     private lazy var reviewBand = HelmHeroColumn()
     /// The band's four figures, packed at its leading edge.
     private lazy var bandFigures = CrewBand.figureStrip()
@@ -309,6 +303,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             self?.applyTheme()
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -648,7 +646,6 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         failureDetailButton.title = failureDetailShown ? "Hide folder path" : "Show folder path"
         failureDetailButton.symbolName = failureDetailShown ? "chevron.up" : "chevron.down"
         // CR-1: the band's pill says the same, and the band shows the path.
-        guard drawsSidebarLayout else { return }
         bandFolderButton.title = failureDetailButton.title
         renderReviewBand()
     }
@@ -907,12 +904,9 @@ final class ReviewController: NSViewController, DaylightDrillActions {
 // page already rendered - nothing is fetched for it - and only in the sidebar
 // layout: the floating bar's Review page is unchanged.
 
-extension ReviewController: SidebarLayoutAdopting {
+extension ReviewController {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         reviewBand.setArrangement(.band)
         contentStack.insertArrangedSubview(reviewBand, at: 0)
         reviewBand.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
@@ -931,7 +925,6 @@ extension ReviewController: SidebarLayoutAdopting {
     /// path). With nothing open after a clean scan the band is the empty
     /// state too, so the two empty forge cards go, as the board draws it.
     fileprivate func applySidebarVisibility() {
-        guard drawsSidebarLayout else { return }
         headerRow.isHidden = true
         statsRow.isHidden = true
         failureState.isHidden = true
@@ -959,7 +952,6 @@ extension ReviewController: SidebarLayoutAdopting {
     /// Draw the band. Cheap when nothing changed: it is only rebuilt when its
     /// words or its foot do.
     fileprivate func renderReviewBand() {
-        guard drawsSidebarLayout else { return }
         let words = CrewHeroWords.review(reviewReading, time: CrewBand.time)
         let showsPath = words.offersFolderPath && failureDetailShown
         let signature = "\(words)|\(showsPath)"
@@ -975,9 +967,9 @@ extension ReviewController: SidebarLayoutAdopting {
     }
 
     #if FM_SELFTESTS
-    /// The band as drawn, or `nil` with none (the floating bar).
+    /// The band as drawn, or `nil` while it is not on the page.
     var debugReviewBand: HelmHeroColumn? {
-        drawsSidebarLayout && !reviewBand.isHidden && reviewBand.superview != nil ? reviewBand : nil
+        !reviewBand.isHidden && reviewBand.superview != nil ? reviewBand : nil
     }
     var debugBandFigures: HelmKPIStrip { bandFigures }
     var debugBandFolderButton: HelmButton { bandFolderButton }
@@ -991,11 +983,10 @@ extension ReviewController: SidebarLayoutAdopting {
     #endif
 }
 
-/// CR-1: the band says what the grey line under the toolbar said, so in the
-/// sidebar layout Review gives up that line as Needs you, In flight and Tasks
-/// do. The live subtitle is still the page's summary for the crew panel and
-/// the floating bar's drill header.
+/// CR-1: the band says what the grey line under the toolbar said, so Review
+/// gives up that line as Needs you, In flight and Tasks do. The live subtitle
+/// is still the page's summary for the crew panel.
 extension ReviewController: WorkspaceHeaderLineCollapsing {
-    var collapsesEmptyHeaderLine: Bool { drawsSidebarLayout }
-    var drawsSubtitleOnHeaderLine: Bool { !drawsSidebarLayout }
+    var collapsesEmptyHeaderLine: Bool { true }
+    var drawsSubtitleOnHeaderLine: Bool { false }
 }

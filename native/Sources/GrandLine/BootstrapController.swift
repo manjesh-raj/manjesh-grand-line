@@ -415,7 +415,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout's state (stage 7)
 
-    private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var fullSetupCardView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
@@ -448,7 +447,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// instructions, at 1512).
     override func viewDidLayout() {
         super.viewDidLayout()
-        guard drawsSidebarLayout else { return }
         var changed = false
         for views in stepRowViews.values {
             let width = floor(views.bodyStack.bounds.width)
@@ -602,6 +600,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         profileObserver = NotificationCenter.default.addObserver(
             forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
         ) { [weak self] _ in self?.stepsShownDidChange() }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     deinit {
@@ -785,7 +787,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         isRefreshingAll = true
         refreshPill.isHidden = true
         refreshBusyLabel.isHidden = false
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
 
         refreshFromSettings()
         refreshDotfiles { [weak self] in
@@ -795,7 +797,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
                 self.isRefreshingAll = false
                 self.refreshPill.isHidden = false
                 self.refreshBusyLabel.isHidden = true
-                if self.drawsSidebarLayout { self.setupSummary.render() }
+                self.setupSummary.render()
                 // Also re-reads the two live steps and ends in
                 // `refreshStepperVisuals()`, so the step pills, the stepper
                 // dots and the drill header's own line all land on one
@@ -1068,7 +1070,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         syncSetupStepsWithLiveState()
         runFullSetupButton.title = isRunningFullSetup ? "Running\u{2026}" : "Run full setup"
         runFullSetupButton.isEnabled = !isRunningFullSetup
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
         fullSetupSubtitleLabel.stringValue = fullSetupSubtitle
         fullSetupSubtitleLabel.textColor = HelmTheme.mutedInk(theme)
 
@@ -3118,12 +3120,9 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 // Details link rather than gone. Run full setup is the toolbar's primary
 // action; its progress is the header's line while it runs.
 
-extension BootstrapController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+extension BootstrapController: WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
         fullSetupCardView?.isHidden = true
         stack.insertArrangedSubview(setupSummary, at: 0)
@@ -3149,12 +3148,11 @@ extension BootstrapController: SidebarLayoutAdopting, WorkspacePrimaryActionProv
         applyTheme()
     }
 
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? runFullSetupButton : nil }
+    var workspacePrimaryAction: NSView? { runFullSetupButton }
 
     /// Each step's Details link and folded controls, and the current step's
     /// action, from the live state `refreshStepperVisuals` just read.
     fileprivate func refreshSidebarSteps() {
-        guard drawsSidebarLayout else { return }
         for kind in SetupStepKind.allCases {
             guard let views = stepRowViews[kind] else { continue }
             let open = expandedSteps.contains(kind)
@@ -3214,7 +3212,6 @@ extension BootstrapController: SidebarLayoutAdopting, WorkspacePrimaryActionProv
 
 #if FM_SELFTESTS
 extension BootstrapController {
-    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     var debugFullSetupCardShown: Bool { !(fullSetupCardView?.isHidden ?? true) }
     var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugRunFullSetupButton: HelmButton { runFullSetupButton }

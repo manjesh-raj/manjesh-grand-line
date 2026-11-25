@@ -84,11 +84,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private var filterRowView: HelmFilterBar?
     private var inspectorWidthConstraint: NSLayoutConstraint?
 
-    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+    // MARK: The sidebar presentation (`buildSidebarPresentation`, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`: the credentials are a table and
-    /// the inspector is the shell's pane. Never set in the floating bar.
-    private(set) var drawsSidebarLayout = false
     private lazy var credentialTable = HelmDataTable(columns: [
         .init(id: "name", title: "Name", width: 240, minWidth: 200, flexible: true),
         .init(id: "kind", title: "Kind", width: 100, hiddenBelow: 900),
@@ -253,6 +250,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         applyTheme(ThemeManager.shared.theme)
         registerWithAppLockGate()
         render()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     /// The page is three columns: a fixed nav sidebar, the credential list, and
@@ -410,7 +411,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        if drawsSidebarLayout { fitHeroColumnWidth() }
+        fitHeroColumnWidth()
     }
 
     override func viewDidAppear() {
@@ -447,10 +448,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         totpObservation = TOTPTicker.shared.observe { [weak self] in
             guard let self, self.store.isUnlocked else { return }
             self.list.tickTOTP(now: TOTPTicker.shared.now)
-            if self.drawsSidebarLayout {
-                self.tickTableTOTP()
-                self.heroColumn?.setRing(self.heroAutoLockRing())
-            }
+            self.tickTableTOTP()
+            self.heroColumn?.setRing(self.heroAutoLockRing())
         }
     }
 
@@ -470,7 +469,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         if unlocked {
             renderSidebar()
             renderList()
-            if drawsSidebarLayout { renderTable() }
+            renderTable()
             renderInspector()
         } else {
             // Nothing selected survives the gate - the panel holds a decrypted
@@ -498,7 +497,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     private func renderSidebar() {
         sidebar.setCounts(matching: store.credentials.filter { $0.matches(query) })
         sidebar.select(collectionFilter)
-        if drawsSidebarLayout { renderHeroColumn() }
+        renderHeroColumn()
     }
 
     /// Show whatever is selected, or the panel's own empty state.
@@ -1299,7 +1298,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         // (`DestinationMountingSelfTest.everyDestinationForcesItsOwnAppearance`).
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         list.applyTheme(theme)
-        if drawsSidebarLayout { credentialTable.applyTheme(theme) }
+        credentialTable.applyTheme(theme)
         sidebar.applyTheme(theme)
         inspector.applyTheme(theme)
         unlockView.applyTheme(theme)
@@ -1462,12 +1461,10 @@ enum LAContextFactory {
 // is unlocked and a lock still empties it (`clearInspector`). The shell's pane
 // sits under the app's lock overlay with the rest of the window.
 
-extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSource {
+extension CredentialVaultController: WorkspaceInspectorSource {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout, let pane = splitPage?.contentPane, let filterRow = filterRowView else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
+        guard let pane = splitPage?.contentPane, let filterRow = filterRowView else { return }
         // The inspector leaves the page for the shell's pane: its fixed
         // width there is the pane's, and the search row and the table take
         // the page's full width instead.
@@ -1654,7 +1651,7 @@ extension CredentialVaultController: SidebarLayoutAdopting, WorkspaceInspectorSo
     #endif
 
     var inspectorContent: WorkspaceInspectorContent? {
-        guard drawsSidebarLayout, store.isUnlocked, selectedID != nil, let credential = inspector.credential else {
+        guard store.isUnlocked, selectedID != nil, let credential = inspector.credential else {
             return nil
         }
         var content = WorkspaceInspectorContent(title: credential.title, view: inspector)

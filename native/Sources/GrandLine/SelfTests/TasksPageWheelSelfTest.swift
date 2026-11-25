@@ -67,7 +67,6 @@ enum TasksPageWheelSelfTest {
         seedBacklog(store)
         let controller = ShiftController(store: store)
         controller.view.frame = NSRect(x: 0, y: 0, width: 1512, height: 950)
-        controller.adoptSidebarLayout()
 
         var allOK = true
         let checks: [(ShiftController, inout Bool) -> Void] = [

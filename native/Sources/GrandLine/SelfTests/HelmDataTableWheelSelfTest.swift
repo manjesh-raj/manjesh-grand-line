@@ -181,7 +181,6 @@ enum HelmDataTableWheelSelfTest {
         let controller = UpdatesController()
         let root = controller.view
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
-        controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
         guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first,
               let document = page.documentView else {
@@ -201,7 +200,6 @@ enum HelmDataTableWheelSelfTest {
         let controller = GitHubSyncController()
         let root = controller.view
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
-        controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
         guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first else {
             return fail("GitHubSync: no page scroll view", &ok)

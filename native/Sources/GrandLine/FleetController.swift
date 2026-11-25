@@ -189,10 +189,6 @@ final class FleetController: NSViewController {
 
     // MARK: Crew › Needs you (the sidebar layout's, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`: Crew's first tab, Needs you, is
-    /// this page's. Never set in the floating bar, whose Dashboard still
-    /// carries the Needs your call list.
-    private(set) var drawsSidebarLayout = false
     /// Needs you is showing. Not an `OverviewTab`, whose cases are the
     /// floating bar's own two segments.
     private var needsYouShowing = false
@@ -221,9 +217,7 @@ final class FleetController: NSViewController {
 
     // MARK: CR-1 - the Crew band (the sidebar layout's, at the end of this file)
 
-    /// The band every tab this page draws opens on in the sidebar layout.
-    /// Lazy, and only ever touched behind `drawsSidebarLayout`, so the
-    /// floating bar never builds one.
+    /// The band every tab this page draws opens on.
     private lazy var crewBand = HelmHeroColumn()
     /// The band's strip: In flight's six figures, or Needs you's three.
     /// Ready to merge is its one button, into Review.
@@ -521,6 +515,10 @@ final class FleetController: NSViewController {
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             self?.applyTheme()
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -837,16 +835,14 @@ final class FleetController: NSViewController {
             emptyBody = "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
         }
         logReading = CrewHeroWords.LogReading(read)
-        // CR-1, the sidebar layout's band: an empty list under a kind that
-        // could not be read is unknown, not "Nothing here" (GL-14).
-        if drawsSidebarLayout,
-           let unknown = CrewHeroWords.logListUnknown(logReading, kind: logFilterKind, time: CrewBand.time) {
+        // CR-1, the band: an empty list under a kind that could not be read
+        // is unknown, not "Nothing here" (GL-14).
+        if let unknown = CrewHeroWords.logListUnknown(logReading, kind: logFilterKind, time: CrewBand.time) {
             emptyTitle = unknown.title
             emptyBody = unknown.body
         }
         logList.setRows(FleetLogFeed.rows(for: shown), theme: theme,
                         emptyTitle: emptyTitle, emptyBody: emptyBody)
-        guard drawsSidebarLayout else { return }
         // The band is the empty state of a log with nothing in it, and of
         // one that could not be read at all, so the list goes as the board
         // draws it rather than saying the same thing again under it.
@@ -1046,9 +1042,9 @@ final class FleetController: NSViewController {
         if !hasLoadedOnce {
             hasLoadedOnce = true
             loadingContainer.isHidden = true
-            // CR-1: the sidebar layout's band says what these two said.
-            bannerRow.isHidden = drawsSidebarLayout
-            statsRow.isHidden = drawsSidebarLayout
+            // CR-1: the band says what these two said.
+            bannerRow.isHidden = true
+            statsRow.isHidden = true
             inFlightSectionView.isHidden = false
         }
 
@@ -1085,9 +1081,9 @@ final class FleetController: NSViewController {
         // the sidebar layout lists its result.
         let carried = noteNeedsYouRead(snapshot, needs: needs)
         needsYouListedCount = carried.count
-        currentNeedsTasks = drawsSidebarLayout ? carried : needs
+        currentNeedsTasks = carried
         rebuildNeedsRows(currentNeedsTasks)
-        if drawsSidebarLayout { renderNeedsYou(currentNeedsTasks) }
+        renderNeedsYou(currentNeedsTasks)
         rebuildTaskRows(into: inFlightStack, tasks: working, emptyTitle: "All hands idle", emptyBody: "No crew are working right now. Send your first mate a task from the console and this board lights up.")
         inFlightHeader.stringValue = "In flight"
         inFlightCountLabel.stringValue = "\(working.count)"
@@ -1406,10 +1402,10 @@ final class FleetController: NSViewController {
         renderCrewBand()
     }
 
-    /// CR-1: the card is the floating bar's. In the sidebar layout the
-    /// briefing is the band's line and tiles, and the card stays hidden.
+    /// CR-1: the briefing is the band's line and tiles, so the card - the
+    /// floating bar's, until P-03 of the 2026-11-25 review - stays hidden.
     private func setBriefingCardShown(_ shown: Bool) {
-        briefingCard.isHidden = !shown || drawsSidebarLayout
+        briefingCard.isHidden = true
     }
 
     private func hideBriefing() {
@@ -1586,8 +1582,8 @@ final class FleetController: NSViewController {
 // MARK: - Crew's In flight and Log in the sidebar layout
 
 extension FleetController: ModuleTabHosting {
-    /// Needs you is Crew's first tab in the sidebar layout only.
-    var moduleTabNames: [String] { drawsSidebarLayout ? ["Needs you", "In flight", "Log"] : ["In flight", "Log"] }
+    /// Needs you is Crew's first tab.
+    var moduleTabNames: [String] { ["Needs you", "In flight", "Log"] }
 
     var selectedModuleTabName: String {
         if needsYouShowing { return "Needs you" }
@@ -1596,7 +1592,7 @@ extension FleetController: ModuleTabHosting {
 
     func selectModuleTab(named name: String) {
         guard isViewLoaded else { return }
-        if name == "Needs you", drawsSidebarLayout {
+        if name == "Needs you" {
             showNeedsYou()
             return
         }
@@ -1620,12 +1616,9 @@ extension FleetController: ModuleTabHosting {
 // place; the dashboard's banner still counts it. The floating bar keeps the
 // list on its dashboard, unchanged.
 
-extension FleetController: SidebarLayoutAdopting {
+extension FleetController {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         // R2-UX-05: the greeting was a fourth name for this place, under the
         // crumb, the sidebar row and the module header. Its live half is the
         // header's subtitle now (`drillHeaderSubtitle`).
@@ -1677,7 +1670,7 @@ extension FleetController: SidebarLayoutAdopting {
     /// has no such tab, so there this does nothing and the dashboard - where
     /// its list is - stays.
     func revealNeedsYou() {
-        guard isViewLoaded, drawsSidebarLayout else { return }
+        guard isViewLoaded else { return }
         showNeedsYou()
     }
 
@@ -1725,7 +1718,6 @@ extension FleetController: SidebarLayoutAdopting {
     /// these two skeleton rows - never "nothing needs you" for a state it has
     /// not seen, and never after a read that failed.
     fileprivate func renderNeedsYou(_ shown: [FleetTask]) {
-        guard drawsSidebarLayout else { return }
         needsYouSkeleton.isHidden = hasLoadedOnce && needsYouCheckedAt != nil
     }
 
@@ -1757,7 +1749,6 @@ extension FleetController: SidebarLayoutAdopting {
     }()
 
     fileprivate func applyNeedsYouTheme() {
-        guard drawsSidebarLayout else { return }
         needsYouSkeleton.applyTheme(theme)
         needsYouSkeletonRows.applyTheme(theme)
     }
@@ -1803,9 +1794,9 @@ extension FleetController {
         renderCrewBand()
     }
 
-    /// Every tab this page draws opens on the band in the sidebar layout:
-    /// Needs you, In flight and Log.
-    fileprivate var crewBandShows: Bool { drawsSidebarLayout }
+    /// Every tab this page draws opens on the band: Needs you, In flight and
+    /// Log.
+    fileprivate var crewBandShows: Bool { true }
 
     /// Fold one read into In flight's band: the verdict `FleetGreeting` has
     /// always said, and the counts the boxed figures showed.
@@ -1835,7 +1826,6 @@ extension FleetController {
     }
 
     func renderCrewBand() {
-        guard drawsSidebarLayout else { return }
         crewBand.isHidden = !crewBandShows
         guard crewBandShows else { return }
         // Log's feed opens on its first day header, whose row already holds
@@ -2010,14 +2000,13 @@ extension FleetController: DaylightDrillActions {
     /// text on a 1512pt window (`WorkspaceToolbarSelfTest`), and Refresh does
     /// nothing until the pass ends anyway.
     var drillHeaderActions: [NSView] {
-        guard drawsSidebarLayout else { return [] }
         return isLoading ? [stopButton] : [refreshButton]
     }
-    var drillHeaderSubtitle: String? { drawsSidebarLayout ? liveSubtitle : nil }
+    var drillHeaderSubtitle: String? { liveSubtitle }
 }
 
 // R2-UX-04: Ask your crew is the page's verb, the far-right filled button in
 // the sidebar layout.
 extension FleetController: WorkspacePrimaryActionProviding {
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? crewButton : nil }
+    var workspacePrimaryAction: NSView? { crewButton }
 }

@@ -222,7 +222,6 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout's state (stage 7)
 
-    private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var runCardView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
@@ -246,7 +245,6 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     override func viewDidLayout() {
         super.viewDidLayout()
         // Gotcha (22): each row's description wraps at the card's own width.
-        guard drawsSidebarLayout else { return }
         var changed = false
         if let automationGroup {
             let before = automationGroup.rows.map { $0.descriptionLabel?.preferredMaxLayoutWidth ?? 0 }
@@ -317,6 +315,10 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
         applyTheme()
         rebuildStepper()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
 
@@ -359,7 +361,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         settleDeferredThemeRebuild()
         // The Schedules page may have changed a schedule while this one was
         // away; its store's one change hook is that page's.
-        if drawsSidebarLayout { renderAutomationList() }
+        renderAutomationList()
         // A visit shares the last fetch of the clone (R5 energy fix 4).
         if isLoadingDotfiles { refreshDotfiles(forceFetch: false) }
         if isLoadingSoftware { checkAllSoftware() }
@@ -1001,7 +1003,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         guard !isRunning, !isRefreshing else { return }
         isRefreshing = true
         refreshButton.isEnabled = false
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
 
         // Both completions land on main (see each method's own
         // `DispatchQueue.main.async` hop), so this counter needs no lock.
@@ -1011,7 +1013,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             guard remaining == 0, let self else { return }
             self.isRefreshing = false
             self.refreshButton.isEnabled = true
-            if self.drawsSidebarLayout { self.setupSummary.render() }
+            self.setupSummary.render()
             self.reportRefreshOutcome()
         }
         refreshDotfiles(completion: finish)
@@ -1094,7 +1096,7 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
         runButton.title = isRunning ? "Running\u{2026}" : "Run Automation"
         runButton.isEnabled = !isRunning
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
         progressSummaryLabel.stringValue = progressSummary
         progressSummaryLabel.textColor = HelmTheme.mutedInk(theme)
         applyTheme()
@@ -1143,12 +1145,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 // writes, so the two always agree. The pipeline Run Automation sequences
 // stays below, and Run Automation is the toolbar's primary action.
 
-extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+extension AutomationController: WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
         runCardView?.isHidden = true
         automationHost.orientation = .vertical
@@ -1162,11 +1161,10 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         renderAutomationList()
     }
 
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? runButton : nil }
+    var workspacePrimaryAction: NSView? { runButton }
 
     /// The rows, from the live settings and schedules.
     fileprivate func renderAutomationList() {
-        guard drawsSidebarLayout else { return }
         var rows: [SettingsRow] = []
         for schedule in scheduleStore?.schedules ?? [] {
             let toggle = HelmToggle()
@@ -1239,7 +1237,6 @@ extension AutomationController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
 
 #if FM_SELFTESTS
 extension AutomationController {
-    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     var debugRunCardShown: Bool { !(runCardView?.isHidden ?? true) }
     var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugAutomationRows: [SettingsRow] { automationGroup?.rows ?? [] }

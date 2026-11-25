@@ -106,7 +106,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout's state (stage 7)
 
-    private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var reposCardView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
@@ -256,6 +255,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         readingsToken = BackgroundSignalsPoller.shared.observeForkReadings { [weak self] in
             DispatchQueue.main.async { self?.adoptNewerReadings() }
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     /// Take every reading the poller holds that is newer than the row's own.
@@ -457,7 +460,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         guard !isSyncingAll else { return }
         isSyncingAll = true
         syncAllButton.isEnabled = false
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
         let targets = rows.filter { $0.status.showsSyncButton }
         guard !targets.isEmpty else {
             isSyncingAll = false
@@ -537,7 +540,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         refreshPill.isHidden = true
         refreshProgressLabel.isHidden = false
         refreshButton.isEnabled = false
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
 
         let total = rows.count
         refreshProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
@@ -568,8 +571,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// actions visibly distinct.
     private func finishCheckAll() {
         isCheckingAll = false
-        // The sidebar layout's toolbar carries Refresh instead of the pill.
-        refreshPill.isHidden = drawsSidebarLayout
+        // The window toolbar carries Refresh instead of the pill.
+        refreshPill.isHidden = true
         refreshProgressLabel.isHidden = true
         refreshButton.isEnabled = true
         renderForksSubtitle()
@@ -815,7 +818,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// empty) cluster, which made this same call for all four Engineering
     /// setup pages at once before `fm/grandline-separate-setup-destinations`
     /// gave each of them its own destination.
-    var drillHeaderActions: [NSView] { drawsSidebarLayout ? [refreshButton] : [] }
+    var drillHeaderActions: [NSView] { [refreshButton] }
 
     #if FM_SELFTESTS
     /// Set every row's status to `statuses` (by catalog order) and run the
@@ -941,7 +944,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         } else {
             syncAllButton.toolTip = "Nothing is behind upstream right now."
         }
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
     }
 
     private func render(_ row: GitHubSyncRow) {
@@ -1068,12 +1071,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         refreshPill.applyTheme(theme)
         refreshProgressLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rows { applyThemeToRow(row) }
-        if drawsSidebarLayout {
-            forksTable.applyTheme(theme)
-            forksSubtitle.textColor = HelmTheme.mutedInk(theme)
-            applyPausedCard()
-            renderForksTable()
-        }
+        forksTable.applyTheme(theme)
+        forksSubtitle.textColor = HelmTheme.mutedInk(theme)
+        applyPausedCard()
+        renderForksTable()
     }
 
     #if FM_SELFTESTS
@@ -1117,12 +1118,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 // the method the floating bar's own buttons reach; a fork's detail and its
 // last `gh` output are the inspector's.
 
-extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
+extension GitHubSyncController: WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
         reposCardView?.isHidden = true
         refreshPill.isHidden = true
@@ -1145,10 +1143,10 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
         applyTheme()
     }
 
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? syncAllButton : nil }
+    var workspacePrimaryAction: NSView? { syncAllButton }
 
     var inspectorContent: WorkspaceInspectorContent? {
-        guard drawsSidebarLayout, let name = selectedForkName,
+        guard let name = selectedForkName,
               let row = rows.first(where: { $0.repo.fullName == name }) else { return nil }
         forkDetail.show(forkDetail(for: row))
         return WorkspaceInspectorContent(title: row.repo.name, view: forkDetail)
@@ -1161,7 +1159,6 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
     /// Shown only for a confirmed public repo: an unknown answer (no `gh`,
     /// offline) never blocks a push, so it never claims a pause either.
     fileprivate func applyPausedCard() {
-        guard drawsSidebarLayout else { return }
         let paused = configRepo?.visibility == .publicRepo
         pausedCard.isHidden = !paused
         guard paused else { return }
@@ -1198,14 +1195,13 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
     }
 
     fileprivate func renderForksSubtitle() {
-        guard drawsSidebarLayout, !isCheckingAll else { return }
+        guard !isCheckingAll else { return }
         let checked = rows.compactMap(\.checkedAt).max()
         forksSubtitle.stringValue = checked.map { "checked \(Self.relative($0))" } ?? "not checked yet"
         setupSummary.render()
     }
 
     fileprivate func renderForksTable() {
-        guard drawsSidebarLayout else { return }
         forksTable.setRows(rows.map(forkRow))
         renderForksSubtitle()
         onInspectorContentChanged?()
@@ -1372,7 +1368,6 @@ extension GitHubSyncController: SidebarLayoutAdopting, WorkspacePrimaryActionPro
 
 #if FM_SELFTESTS
 extension GitHubSyncController {
-    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     var debugReposCardShown: Bool { !(reposCardView?.isHidden ?? true) }
     var debugIsCheckingAll: Bool { isCheckingAll }
     var debugForksTable: HelmDataTable { forksTable }

@@ -727,7 +727,6 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.shift)
         settle(shell)
         clickTab("Board", shell)
-        check(tasks.drawsSidebarLayout, "Tasks did not adopt its sidebar presentation", &ok)
         check(!tasks.debugSidebarIsVisible, "Tasks still draws its own page column beside the board", &ok)
         // Tf-2: the band is the page's filters.
         guard let band = tasks.debugHeroBand else {
@@ -999,7 +998,7 @@ enum SidebarRedesignsSelfTest {
                     return false
                 }
         }
-        check(updates.debugDrawsSidebarLayout && !updates.debugCategoryCardsShown && !updates.debugStatsStripShown,
+        check(!updates.debugCategoryCardsShown && !updates.debugStatsStripShown,
               "Updates still draws its category cards or its stat strip", &ok)
         check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
         let rows = updates.debugToolsTable.debugRows
@@ -1060,7 +1059,7 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.githubSync)
         settle(shell)
         _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
-        check(github.debugDrawsSidebarLayout && !github.debugReposCardShown, "GitHub sync still draws its Repos card", &ok)
+        check(!github.debugReposCardShown, "GitHub sync still draws its Repos card", &ok)
         // GL-14: a test process refuses `gh`, so every check failed - which
         // the subtitle used to report as "all in sync".
         let subtitle = github.drillHeaderSubtitle ?? ""
@@ -1107,7 +1106,7 @@ enum SidebarRedesignsSelfTest {
         let steps = shell.workspace.bootstrap
         shell.workspace.navigator.show(.bootstrap)
         settle(shell)
-        check(steps.debugDrawsSidebarLayout && !steps.debugFullSetupCardShown, "Setup steps still draws its own run card", &ok)
+        check(!steps.debugFullSetupCardShown, "Setup steps still draws its own run card", &ok)
         check(shell.toolbar.debugPrimaryAction === steps.debugRunFullSetupButton, "Run full setup is not the far-right button", &ok)
         for kind in SetupStepKind.allCases {
             guard let details = steps.debugDetailsButton(kind) else {
@@ -1137,7 +1136,7 @@ enum SidebarRedesignsSelfTest {
         let automation = shell.workspace.automation
         shell.workspace.navigator.show(.automation)
         settle(shell)
-        check(automation.debugDrawsSidebarLayout && !automation.debugRunCardShown, "Automation still draws its run card", &ok)
+        check(!automation.debugRunCardShown, "Automation still draws its run card", &ok)
         check(shell.toolbar.debugPrimaryAction === automation.debugRunButton, "Run Automation is not the far-right button", &ok)
         let rows = automation.debugAutomationRows
         let titles = rows.map(\.titleLabel.stringValue)

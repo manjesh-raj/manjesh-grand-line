@@ -52,9 +52,9 @@ extension ShiftController {
     /// shows, after the board, so a session that never opens it builds no
     /// web view and lays out nothing for it.
     func embedCalendarIfNeeded() {
-        // R5-UX-04: in the sidebar layout the window toolbar is the
-        // Calendar's, with Today and the periods on it.
-        calendar.setPeriodControlsInToolbar(drawsSidebarLayout)
+        // R5-UX-04: the window toolbar is the Calendar's, with Today and
+        // the periods on it.
+        calendar.setPeriodControlsInToolbar(true)
         guard calendarSection.superview == nil else { return }
         _ = view
         calendarSection.translatesAutoresizingMaskIntoConstraints = false
@@ -172,31 +172,18 @@ extension ShiftController {
     }
 
     /// The tie's constant: the clip view's height less what sits above and
-    /// below the section - the content's top inset, the floating bar's tab
-    /// row and its spacing, and the foot. The sidebar layout has no row
-    /// above the calendar since Cf-4: its filters are the month head's menus.
+    /// below the section - the content's top inset and the foot. There is no
+    /// row above the calendar since Cf-4: its filters are the month head's
+    /// menus.
     func applyCalendarHeight() {
         guard let tie = calendarHeightTie else { return }
-        let rowAbove: NSView? = drawsSidebarLayout ? nil : topToolbar
-        let rowHeight = rowAbove.map { $0.isHidden ? 0 : $0.fittingSize.height + contentStack.spacing } ?? 0
-        let reserved = Self.contentTopInset + rowHeight + HelmMetrics.s5
+        let reserved = Self.contentTopInset + HelmMetrics.s5
         if tie.constant != -reserved { tie.constant = -reserved }
     }
 
     /// The content stack's distance from the top of the scroll document:
     /// the page frame's first-content line (S03), where the filter row sits.
     static let contentTopInset: CGFloat = HelmMetrics.pageContentInset
-
-    /// The floating bar's tab row: the sort belongs to the board and the
-    /// list, and Colour by to the calendar. In the sidebar layout the sort is
-    /// the band's menu and Colour by the calendar head's (Tf-2, Cf-4).
-    func applyTabRowAccessories() {
-        guard !drawsSidebarLayout else { return }
-        let dashboard = topLevelView == .dashboard
-        let calendar = tasksView == .calendar
-        sortPopup.isHidden = !dashboard || calendar
-        colourControl.isHidden = !dashboard || !calendar
-    }
 
     #if FM_SELFTESTS
     var debugCalendarSection: NSView { calendarSection }

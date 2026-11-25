@@ -412,12 +412,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var onDrillSubtitleChanged: (() -> Void)?
     var onDrillActionsChanged: (() -> Void)?
 
-    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+    // MARK: The sidebar presentation (`buildSidebarPresentation`, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`: the three lists are tables and a
-    /// selection's details go in the shell's inspector. Never set in the
-    /// floating bar, so that layout's page is exactly what it was.
-    private(set) var drawsSidebarLayout = false
     private(set) lazy var hostsTable = Self.makeHostsTable()
     /// H1: the hosts as cards, the sidebar layout's default view (C4).
     /// `HostsController+Cards.swift` fills it. C-1's roomy card: 98pt tall,
@@ -525,7 +521,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // `DictationController` follows.
         refreshExpansionPanel()
         // The same probe, re-read on every visit, like the stat strip's.
-        if drawsSidebarLayout { refreshKeysTouchID() }
+        refreshKeysTouchID()
     }
 
     override func loadView() {
@@ -722,6 +718,10 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // page is fully built (`ThemeManager.swift`'s checklist item 4, the
         // trap this codebase has now hit four times).
         applyTheme(ThemeManager.shared.theme)
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     /// The content column, for the sidebar layout's re-tie of the tab views.
@@ -748,10 +748,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
                                      trusted: state.trusted,
                                      armed: state.armed,
                                      triggerCount: state.triggerCount)
-        if drawsSidebarLayout {
-            expansionStrip.setState(enabled: state.enabled, trusted: state.trusted,
-                                    armed: state.armed, triggerCount: state.triggerCount)
-        }
+        expansionStrip.setState(enabled: state.enabled, trusted: state.trusted,
+                                armed: state.armed, triggerCount: state.triggerCount)
     }
 
     /// The Workspace card's four numbers, read from the same three stores the
@@ -770,33 +768,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// UI-50: the inspector column shows only when it has something to say.
     /// Without a selection the list takes the page's full width.
     private func updateInspectorVisibility() {
-        // The sidebar layout keeps no right column of its own: details are
-        // the shell's inspector, and the expansion switch is a strip.
-        let show = !drawsSidebarLayout && sideStack.hasContent
-        // Deactivate before activating, so the two are never both live.
-        if show {
-            contentToGutter?.isActive = false
-            contentToInspector?.isActive = true
-        } else {
-            contentToInspector?.isActive = false
-            contentToGutter?.isActive = true
-        }
-        sideStack.isHidden = !show
+        // The page keeps no right column of its own: details are the shell's
+        // inspector, and the expansion switch is a strip. Deactivate before
+        // activating, so the two are never both live.
+        contentToInspector?.isActive = false
+        contentToGutter?.isActive = true
+        sideStack.isHidden = true
     }
 
     /// Fill (or empty) the detail panel from the showing tab's own selection.
     func refreshDetailPanel() {
-        if drawsSidebarLayout {
-            refreshSidebarInspector()
-            return
-        }
-        guard let detail = currentDetail() else {
-            sideStack.detail.clear()
-            updateInspectorVisibility()
-            return
-        }
-        sideStack.detail.show(detail)
-        updateInspectorVisibility()
+        refreshSidebarInspector()
     }
 
     /// The saved key's own label, never a path or key material - the same
@@ -987,12 +969,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // The sidebar layout's add actions are H8's and K2's split buttons.
         // Handing the shell the floating bar's plain button as well would put
         // a second Add Host among the toolbar's page actions.
-        if drawsSidebarLayout { return [workspacePrimaryAction].compactMap { $0 } }
-        switch activeTab {
-        case .hosts: return [addHostButton]
-        case .keys: return [addKeyButton]
-        case .snippets: return [addSnippetButton]
-        }
+        return [workspacePrimaryAction].compactMap { $0 }
     }
 
     /// §6.4's live subtitle - what the showing scope *is*, not how much of it
@@ -1045,19 +1022,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         hostsList.applyTheme(theme)
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
-        if drawsSidebarLayout {
-            hostsTable.applyTheme(theme)
-            keysTable.applyTheme(theme)
-            snippetsTable.applyTheme(theme)
-            expansionStrip.applyTheme(theme)
-            onlineFilter.applyTheme(theme)
-            tagMatchControl.applyTheme(theme)
-            hostsGrid.applyTheme(theme)
-            hostsViewModeControl.applyTheme(theme)
-            keysGrid.applyTheme(theme)
-            keysViewModeControl.applyTheme(theme)
-            keysTouchID.applyTheme(theme)
-        }
+        hostsTable.applyTheme(theme)
+        keysTable.applyTheme(theme)
+        snippetsTable.applyTheme(theme)
+        expansionStrip.applyTheme(theme)
+        onlineFilter.applyTheme(theme)
+        tagMatchControl.applyTheme(theme)
+        hostsGrid.applyTheme(theme)
+        hostsViewModeControl.applyTheme(theme)
+        keysGrid.applyTheme(theme)
+        keysViewModeControl.applyTheme(theme)
+        keysTouchID.applyTheme(theme)
         sideStack.applyTheme(theme)
         workspacePanel.applyTheme(theme)
         quickActionsPanel.applyTheme(theme)
@@ -1116,11 +1091,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         // Only the tag strip collapses when there are no tags - the "Online"
         // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
-        if drawsSidebarLayout {
-            visibleTagChipCount = Int.max
-            refreshTagMatchControl()
-            refitTagChips()
-        }
+        visibleTagChipCount = Int.max
+        refreshTagMatchControl()
+        refitTagChips()
     }
 
     /// One row per distinct group across all hosts, plus "All groups" and -
@@ -1203,7 +1176,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         onlineOnly = on
         onlineChip.state = on ? .on : .off
         onlineChip.tint = on ? .good : nil
-        if drawsSidebarLayout { onlineFilter.select(on ? Self.onlineFilterID : Self.allFilterID) }
+        onlineFilter.select(on ? Self.onlineFilterID : Self.allFilterID)
         applyHostFilter(searchField.stringValue)
     }
 
@@ -1225,7 +1198,6 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// X4's switch shows only while it can change the result.
     private func refreshTagMatchControl() {
-        guard drawsSidebarLayout else { return }
         tagMatchControl.isHidden = selectedTags.count < 2
         refreshTagOverflowChip()
     }
@@ -1293,7 +1265,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Show the chips that fit the strip and put the rest behind "+N".
     /// Runs whenever the strip changes width and whenever the chips change.
     private func refitTagChips() {
-        guard drawsSidebarLayout, !tagsScroll.isHidden else { return }
+        guard !tagsScroll.isHidden else { return }
         let chips = tagsStack.arrangedSubviews
         let widths = chips.map { $0.fittingSize.width }
         let count = Self.settledTagCount(chipWidths: widths, spacing: tagsStack.spacing,
@@ -1311,7 +1283,6 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// "+N", filled while any tag behind it is selected - so a filter the
     /// captain set is never hidden from them.
     private func refreshTagOverflowChip() {
-        guard drawsSidebarLayout else { return }
         let hidden = hiddenTags
         tagOverflowChip.isHidden = hidden.isEmpty || tagsScroll.isHidden
         tagOverflowChip.title = "+\(hidden.count)"
@@ -1395,7 +1366,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         lastHostItems = items
         #endif
         hostsList.setItems(items)
-        if drawsSidebarLayout { renderHostsTable(hosts, query: query) }
+        renderHostsTable(hosts, query: query)
         renderHeroColumn()
         refreshWorkspacePanel()
         refreshDetailPanel()
@@ -1463,15 +1434,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// selection path - what the tour lab's `select` verb drives.
     @discardableResult
     func debugSelectRecord(titled title: String) -> Bool {
-        if drawsSidebarLayout {
-            if let grid = visibleGrid(for: activeTab) { return grid.debugSelect(titled: title) }
-            return table(for: activeTab).debugSelect(titled: title)
-        }
-        switch activeTab {
-        case .hosts: return hostsList.debugSelect(titled: title)
-        case .keys: return keysList.debugSelect(titled: title)
-        case .snippets: return snippetsList.debugSelect(titled: title)
-        }
+        if let grid = visibleGrid(for: activeTab) { return grid.debugSelect(titled: title) }
+        return table(for: activeTab).debugSelect(titled: title)
     }
     var debugHostsTable: HelmDataTable { hostsTable }
     var debugKeysTable: HelmDataTable { keysTable }
@@ -1548,7 +1512,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         keysTitleLabel.stringValue = HostsTab.keys.title
         keysList.setItems(items)
-        if drawsSidebarLayout { renderKeysTable() }
+        renderKeysTable()
         renderHeroColumn()
         refreshWorkspacePanel()
         refreshDetailPanel()
@@ -1567,7 +1531,7 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         }
         snippetsTitleLabel.stringValue = HostsTab.snippets.title
         snippetsList.setItems(items)
-        if drawsSidebarLayout { renderSnippetsTable() }
+        renderSnippetsTable()
         renderHeroColumn()
         refreshWorkspacePanel()
         refreshExpansionPanel()
@@ -1594,13 +1558,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// ⌘N / the card header's "Add Host": add a new host.
     @objc func newHost() {
         select(tab: .hosts)
-        // H10: in the sidebar layout a new host is an empty form in the side
-        // panel; the floating bar keeps its window.
-        if drawsSidebarLayout {
-            openNewHostPanel()
-            return
-        }
-        onAddOrEdit?(nil)
+        // H10: a new host is an empty form in the side panel.
+        openNewHostPanel()
     }
 
     /// The Hosts menu's Quick Connect: focus the quick-connect field.
@@ -1671,7 +1630,6 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     func refreshFindOrConnectButton() {
-        guard drawsSidebarLayout else { return }
         // C-4: while the hero column shows, its Quick connect is where a
         // typed user@host goes; Return in this field still connects.
         findOrConnectButton.isHidden = heroColumnWanted
@@ -1709,47 +1667,14 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
 
     /// The key the Keys tab has selected, if any.
     var selectedSSHKey: SSHKey? {
-        guard drawsSidebarLayout, let key = keysTable.selectedKey, let id = UUID(uuidString: key) else { return nil }
+        guard let key = keysTable.selectedKey, let id = UUID(uuidString: key) else { return nil }
         return keyStore.key(id: id)
     }
 
     func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
         // K7 and K8: in the sidebar layout a key is edited, and a new one
         // made, in the side panel. The floating bar keeps the sheet.
-        if drawsSidebarLayout {
-            if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
-            return
-        }
-        let usedByHostCount = key.map { targetKey in hostStore.hosts.filter { $0.keyID == targetKey.id }.count } ?? 0
-        let editor = KeyEditorController(key: key, usedByHostCount: usedByHostCount)
-        editor.preset = preset
-        #if FM_SELFTESTS
-        lastKeyEditorForTests = editor
-        if Self.suppressesKeyEditorPresentationForTests { return }
-        #endif
-        editor.onSave = { [weak self] newKey, privateKeyData, passphrase in
-            self?.persistNewKey(newKey, privateKeyData: privateKeyData, passphrase: passphrase)
-        }
-        editor.onUpdate = { [weak self] updatedKey, newPassphrase in
-            self?.persistUpdatedKey(updatedKey, newPassphrase: newPassphrase)
-        }
-        // GL-06: the sheet's own Delete button used to call `keyStore.delete`
-        // straight through - unconfirmed, and that call removes the Keychain
-        // private key and passphrase, which exist nowhere else (key material is
-        // deliberately excluded from `.glbackup` exports). It now goes through
-        // the exact same `confirmDeleteKey` the row-level `⋯` menu uses, whose
-        // copy already spells out the Keychain consequence.
-        //
-        // Deferred to the next runloop turn on purpose: the editor dismisses
-        // itself immediately after this closure returns, so running a modal
-        // here would stack an alert on a sheet that is mid-teardown.
-        editor.onDelete = { [weak self] id in
-            DispatchQueue.main.async {
-                guard let self, let key = self.keyStore.key(id: id) else { return }
-                self.confirmDeleteKey(key)
-            }
-        }
-        presentAsSheet(editor)
+        if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
     }
 
     /// Create mode: `SSHKeyStore.addNew` writes the Keychain secrets before
@@ -1980,7 +1905,6 @@ extension HostsController: ModuleTabHosting {
     /// A store changed under one of the three counts; the toolbar re-reads
     /// them. Only the sidebar layout's toolbar draws them.
     fileprivate func moduleTabCountsMayHaveChanged() {
-        guard drawsSidebarLayout else { return }
         onModuleTabChanged?()
     }
 
@@ -2037,12 +1961,9 @@ extension HostsController: ModuleTabHosting {
 // `confirmDeleteHost`, `presentKeyEditor` and the rest - so the two layouts
 // cannot drift apart in what a host, a key or a snippet can do.
 
-extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, WorkspacePrimaryActionProviding {
+extension HostsController: WorkspaceInspectorSource, WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         adoptSidebarFrame()
         adoptSidebarFilterRow()
         rebuildTagChips()
@@ -2196,7 +2117,6 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
 
     /// "All 7" and "Online 5", from the same reading the stat strip used.
     fileprivate func refreshSidebarFilterCounts(all: Int, online: Int) {
-        guard drawsSidebarLayout else { return }
         onlineFilter.setTitle("All\u{2002}\(all)", forID: Self.allFilterID)
         onlineFilter.setTitle("Online\u{2002}\(online)", forID: Self.onlineFilterID)
     }
@@ -2214,7 +2134,6 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     /// The showing tab's add action, at the toolbar's far right: H8's and
     /// K2's split buttons for Hosts and Keys.
     var workspacePrimaryAction: NSView? {
-        guard drawsSidebarLayout else { return nil }
         switch activeTab {
         case .hosts: return addHostSplit
         case .keys: return addKeySplit
@@ -2223,7 +2142,7 @@ extension HostsController: SidebarLayoutAdopting, WorkspaceInspectorSource, Work
     }
 
     var inspectorContent: WorkspaceInspectorContent? {
-        guard drawsSidebarLayout, let inspectorTitle else { return nil }
+        guard let inspectorTitle else { return nil }
         // H6: a saved host, or a new one, is its form in the panel.
         if activeTab == .hosts, let panel = importPanel {
             return WorkspaceInspectorContent(title: inspectorTitle, view: panel.view, fillsPane: true)

@@ -162,9 +162,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout's state (stage 7)
 
-    /// Set once, the first time the sidebar shell shows this page
-    /// (`adoptSidebarLayout`). The floating bar never sets it.
-    private var drawsSidebarLayout = false
     private var pageStack: NSStackView?
     private var statsRowView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
@@ -248,6 +245,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         applyFilter()
         applyTheme()
         renderStats()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -444,7 +445,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         isCheckingAll = true
         setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = false
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
         setToolbarHidden(checkAllProgressBar, false)
         setToolbarHidden(checkAllProgressLabel, false)
 
@@ -467,8 +468,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     private func finishCheckAll() {
         isCheckingAll = false
-        // The sidebar layout's toolbar carries Check for updates instead.
-        setToolbarHidden(checkAllPill, drawsSidebarLayout)
+        // The window toolbar carries Check for updates instead.
+        setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = true
         setToolbarHidden(checkAllProgressBar, true)
         setToolbarHidden(checkAllProgressLabel, true)
@@ -554,7 +555,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         publishToolUpdateSignal()
         // After the publish, so the hero's verdict reads the counts its tiles
         // were just given.
-        if drawsSidebarLayout { setupSummary.render() }
+        setupSummary.render()
         let summary = self.summary
         // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
         // while 13 checks are still running is a confident claim about an
@@ -571,9 +572,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                   : .init(.unread, caption: "Need attention"),
             .init(.value(relativeLastChecked()), caption: "Last checked"),
         ], theme: theme)
-        if drawsSidebarLayout {
-            toolsLastChecked.stringValue = lastCheckedAt == nil ? "not checked yet" : "checked \(relativeLastChecked())"
-        }
+        toolsLastChecked.stringValue = lastCheckedAt == nil ? "not checked yet" : "checked \(relativeLastChecked())"
     }
 
     /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
@@ -681,27 +680,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private func applyFilter() {
         // The sidebar layout filters its one table; the category cards are
         // the floating bar's and stay hidden there.
-        if drawsSidebarLayout {
-            renderToolsTable()
-            return
-        }
-        let q = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        for section in categorySections {
-            var anyVisible = false
-            for row in section.rows {
-                let matchesQuery = q.isEmpty || row.item.name.lowercased().contains(q)
-                let matchesMode = filterMode == .all || row.status.showsUpdateButton
-                let matches = matchesQuery && matchesMode
-                row.rowContainer.isHidden = !matches
-                if matches { anyVisible = true }
-            }
-            section.background.isHidden = !anyVisible
-            for i in section.separators.indices {
-                let rowVisible = !section.rows[i].rowContainer.isHidden
-                let laterVisible = section.rows[(i + 1)...].contains { !$0.rowContainer.isHidden }
-                section.separators[i].isHidden = !(rowVisible && laterVisible)
-            }
-        }
+        renderToolsTable()
     }
 
     // MARK: Card chrome
@@ -1046,11 +1025,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
         summaryStrip.applyTheme(theme)
         for row in rows { applyThemeToRow(row) }
-        if drawsSidebarLayout {
-            toolsTable.applyTheme(theme)
-            toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
-            renderToolsTable()
-        }
+        toolsTable.applyTheme(theme)
+        toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
+        renderToolsTable()
     }
 
     private func applyThemeToRow(_ row: UpdateRow) {
@@ -1197,12 +1174,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 // way. A tool's detail and its last command output - the floating bar's
 // expandable log - are the inspector's.
 
-extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
+extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspectorSource {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
         statsRowView?.isHidden = true
         for card in cards { card.isHidden = true }
@@ -1218,10 +1192,10 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
         applyTheme()
     }
 
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? checkForUpdatesButton : nil }
+    var workspacePrimaryAction: NSView? { checkForUpdatesButton }
 
     var inspectorContent: WorkspaceInspectorContent? {
-        guard drawsSidebarLayout, let id = selectedToolID, let row = rows.first(where: { $0.item.id == id }) else {
+        guard let id = selectedToolID, let row = rows.first(where: { $0.item.id == id }) else {
             return nil
         }
         toolDetail.show(toolDetail(for: row))
@@ -1235,7 +1209,6 @@ extension UpdatesController: SidebarLayoutAdopting, WorkspacePrimaryActionProvid
     /// The tools that pass the filter row, grouped as the floating bar's
     /// cards are.
     fileprivate func renderToolsTable() {
-        guard drawsSidebarLayout else { return }
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         var tableRows: [HelmDataTable.Row] = []
         for category in DependencyCatalog.categoryOrder {
@@ -1409,7 +1382,6 @@ extension DependencyKind {
 
 #if FM_SELFTESTS
 extension UpdatesController {
-    var debugDrawsSidebarLayout: Bool { drawsSidebarLayout }
     /// Whether any of the floating bar's category cards, or its stat strip,
     /// is drawn.
     var debugCategoryCardsShown: Bool { cards.contains { !$0.isHidden } }

@@ -15,9 +15,9 @@ import AppKit
 extension ConsoleController {
 
     /// Rebuild the band's words and chips. Cheap, and a no-op until the page
-    /// shows in the sidebar layout.
+    /// has loaded.
     func refreshSessionBand() {
-        guard isViewLoaded, drawsSidebarLayout else { return }
+        guard isViewLoaded else { return }
         let registry = sessionRouter?.bandSessions
         let chips = registry.map(ConsoleSessionBand.chips(from:)) ?? []
         let content: ConsoleSessionBand.Content

@@ -172,16 +172,9 @@ extension ConsoleController {
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
         }
-        // `setTrailing` also installs the clearance inequality that keeps a
-        // long tab strip truncating rather than running under the actions -
-        // the constraint this method used to activate by hand.
+        // The window toolbar holds the cluster's views (`drillHeaderActions`)
+        // and re-reads `pageToolViews` when the profile changes.
         allPageToolViews = toolViews
-        applyToolbarProfile()
-        // A profile chosen later (the welcome sheet, Settings) reshapes the
-        // cluster too. A selector observer, so a closed host page's console
-        // leaves nothing registered behind it.
-        NotificationCenter.default.addObserver(self, selector: #selector(hiddenModulesDidChange(_:)),
-                                               name: AppSettings.hiddenModulesDidChange, object: nil)
     }
 
     /// R5-UX-06: the investigation tools an SRE reaches for on a host page -
@@ -196,20 +189,6 @@ extension ConsoleController {
     /// tabs - and the investigation tools leave its toolbar, in both layouts.
     /// An Operator, and a Custom set built from one, keeps them.
     static var showsOperatorTools: Bool { AppSettings.shared.effectiveProfile != .personal }
-
-    /// The tab bar's own copy of the cluster (the floating bar's toolbar).
-    /// In the sidebar layout the window toolbar holds the cluster's views,
-    /// and regrouping them here would take them back into the page's row;
-    /// the shell re-reads `pageToolViews` instead.
-    func applyToolbarProfile() {
-        guard !drawsSidebarLayout else { return }
-        tabBar.setTrailing(HelmPageToolbar.group(pageToolViews))
-    }
-
-    @objc private func hiddenModulesDidChange(_ note: Notification) {
-        guard isViewLoaded else { return }
-        applyToolbarProfile()
-    }
 
     func makeIconButton(symbol: String, tooltip: String, action: Selector) -> HelmButton {
         HelmPageToolbar.iconButton(symbol: symbol, tooltip: tooltip, target: self, action: action)
@@ -238,10 +217,9 @@ extension ConsoleController {
     /// chips and "+". With no tab yet - a host page whose session has not
     /// connected - that is nothing, and the row was a 44pt blank band
     /// between the shell's Sessions strip and the terminal card. It collapses
-    /// then, and comes back with the first tab. The floating bar keeps its
-    /// actions in this row, so it is never collapsed there.
+    /// then, and comes back with the first tab.
     func collapseTabBarIfEmpty() {
-        tabBar.setCollapsed(drawsSidebarLayout && tabs.isEmpty)
+        tabBar.setCollapsed(tabs.isEmpty)
     }
 
     // MARK: Compose (`fm/grandline-console-command-composer`)
@@ -497,12 +475,10 @@ extension ConsoleController {
     /// what gives this destination - and every dedicated host page, which the
     /// shell also routes through this controller - a live header line.
     ///
-    /// R2-UX-06 revisits that for the sidebar layout, where the "row above"
-    /// is the window toolbar: its action cluster moves up there whole, so
-    /// the two toolbars no longer stack, and the tab strip stays in the
-    /// page's own row - the tabs are content, not chrome. Nothing is on
-    /// screen twice. The floating bar keeps the cluster in the tab bar.
-    var drillHeaderActions: [NSView] { drawsSidebarLayout ? pageToolViews : [] }
+    /// R2-UX-06: the "row above" is the window toolbar, so the action
+    /// cluster sits there whole and the tab strip stays in the page's own
+    /// row - the tabs are content, not chrome. Nothing is on screen twice.
+    var drillHeaderActions: [NSView] { pageToolViews }
 
     /// §6.4's "`caption()` subtitle with live numbers", from state this page
     /// already has: how many tabs are open and which one is showing. No new
@@ -609,11 +585,8 @@ extension ConsoleController: WorkspaceHeaderLineCollapsing {
     var collapsesEmptyHeaderLine: Bool { true }
 }
 
-extension ConsoleController: SidebarLayoutAdopting {
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+extension ConsoleController {
+    func buildSidebarPresentation() {
         // Con-1: the band takes the strip's place above the tabs. This runs
         // when the shell adopts the page, before a terminal has history.
         sessionBand.isHidden = false

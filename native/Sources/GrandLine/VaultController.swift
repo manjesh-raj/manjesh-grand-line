@@ -163,12 +163,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// unlock rather than raising Automic Vault's approval dialog behind it.
     private(set) var readDeferredByLock = false
 
-    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+    // MARK: The sidebar presentation (`buildSidebarPresentation`, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`: Secrets and Verified Launchers are
-    /// the shared table, under the same card headers. Never set in the
-    /// floating bar.
-    private(set) var drawsSidebarLayout = false
+    // Secrets and Verified Launchers are the shared table, under the same
+    // card headers.
     private lazy var secretsTable = HelmDataTable(columns: [
         .init(id: "secret", title: "Secret", width: 260, minWidth: 180, flexible: true),
         .init(id: "status", title: "Status", width: 140, hiddenBelow: 560),
@@ -272,6 +270,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
             guard !locked, let self, self.readDeferredByLock, !self.view.isHiddenOrHasHiddenAncestor else { return }
             self.startFirstRead()
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
 
@@ -531,10 +533,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
         let notInstalled = installStatus == .notInstalled
         secretsPanel.isHidden = notInstalled
         toolsPanel.isHidden = notInstalled
-        if drawsSidebarLayout {
-            secretsTable.card.isHidden = notInstalled
-            toolsTable.card.isHidden = notInstalled
-        }
+        secretsTable.card.isHidden = notInstalled
+        toolsTable.card.isHidden = notInstalled
 
         // B1: a read that failed says nothing about whether anything needs
         // attention, so the banner stays down rather than claiming all-clear.
@@ -550,11 +550,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         // B1: "?" rather than "0" for a count this page does not have.
         secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
-        rebuildSecretsStack()
 
         toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
-        rebuildToolsStack()
-        if drawsSidebarLayout { renderTables() }
+        renderTables()
 
         applyTheme()
         onDrillSubtitleChanged?()
@@ -905,12 +903,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         secretsPanel.applyTheme(theme)
         toolsPanel.applyTheme(theme)
-        if drawsSidebarLayout {
-            secretsTable.applyTheme(theme)
-            toolsTable.applyTheme(theme)
-            // The amber tone is the theme's own, so the card is re-filled.
-            renderHeroSplit()
-        }
+        secretsTable.applyTheme(theme)
+        toolsTable.applyTheme(theme)
+        // The amber tone is the theme's own, so the card is re-filled.
+        renderHeroSplit()
         recipePanel.applyTheme(theme)
         // Re-derive from the *current* theme, not whatever theme was active
         // when this label's color was last set - see `recipeLabelKind`'s own
@@ -994,7 +990,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
     var debugToolsTable: HelmDataTable { toolsTable }
-    var debugHeroSplit: VaultHeroSplitView? { drawsSidebarLayout ? heroSplit : nil }
+    var debugHeroSplit: VaultHeroSplitView? { heroSplit }
     #endif
 }
 
@@ -1414,12 +1410,9 @@ final class VaultInjectSheetController: NSViewController {
 // Automic Vault value) - and the three states the cards honour stay three:
 // still reading, could not read, and genuinely empty (B1).
 
-extension VaultController: SidebarLayoutAdopting {
+extension VaultController {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         for (panel, table, index) in [(secretsPanel, secretsTable, 1), (toolsPanel, toolsTable, 2)] {
             panel.isHidden = true
             contentStack.removeArrangedSubview(panel)
@@ -1460,7 +1453,6 @@ extension VaultController: SidebarLayoutAdopting {
     /// S-1: the card for the read as it stands. The banner it replaces
     /// stays down in this layout.
     fileprivate func renderHeroSplit() {
-        guard drawsSidebarLayout else { return }
         attentionBanner.isHidden = true
         let words = VaultHeroWords.make(secrets: secrets, tools: tools, hasLoadedOnce: hasLoadedOnce,
                                         notInstalled: installStatus == .notInstalled, refusedHere: readWasRefusedHere)
@@ -1555,5 +1547,5 @@ extension VaultController: SidebarLayoutAdopting {
 // button in the sidebar layout rather than a button in the Secrets card's
 // header. The floating bar keeps it in the card.
 extension VaultController: WorkspacePrimaryActionProviding {
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? addSecretButton : nil }
+    var workspacePrimaryAction: NSView? { addSecretButton }
 }

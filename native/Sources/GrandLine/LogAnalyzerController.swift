@@ -122,32 +122,14 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     // MARK: - Drill header (Daylight §6.4)
 
-    /// Set by `AppShellController` - "re-read my subtitle". The header belongs
+    /// Set by the shell - "re-read my subtitle". The header belongs
     /// to the shell; this page only says when its numbers moved.
     var onDrillSubtitleChanged: (() -> Void)?
 
-    /// §6.4's "`caption()` subtitle with live numbers", counted off the same
-    /// `investigation` the page below renders - so the header and the tabs can
-    /// never disagree about how much evidence is loaded or how many findings
-    /// came back. Honest about the two states before an analysis exists: an
-    /// empty page says what to do, and loaded-but-unanalysed says exactly
-    /// that rather than implying a result.
-    var drillHeaderSubtitle: String? {
-        if drawsSidebarLayout { return sidebarSubtitle }
-        let sources = investigation.evidence.count
-        guard sources > 0 else {
-            return "Paste raw logs or terminal output to get a structured read"
-        }
-        let sourceText = sources == 1 ? "1 source" : "\(sources) sources"
-        guard let analysis = investigation.analysis else {
-            return "\(sourceText) \u{00B7} not analyzed yet"
-        }
-        let lines = analysis.local.lineCount
-        let lineText = lines == 1 ? "1 line" : "\(lines) lines"
-        let findings = analysis.findings.count
-        let findingText = findings == 1 ? "1 finding" : "\(findings) findings"
-        return "\(sourceText) \u{00B7} \(lineText) \u{00B7} \(findingText)"
-    }
+    /// The header line: the sidebar layout's own reading of the analysis
+    /// (`sidebarSubtitle`), counted off the same `investigation` the page
+    /// below renders.
+    var drillHeaderSubtitle: String? { sidebarSubtitle }
 
     /// §6.4's right-aligned cluster: this page's two page-level actions, the
     /// ones that were sharing a row with the deleted hero. Everything else on
@@ -209,8 +191,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout (stage 6)
 
-    /// Set once, by `adoptSidebarLayout()`. Never set in the floating bar.
-    private(set) var drawsSidebarLayout = false
     /// The analysis tab's right-hand column, which the sidebar layout opens
     /// with the summary cards, the patterns and the likely cause.
     private var analysisRightColumn: NSStackView!
@@ -421,6 +401,10 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         }
         applyTheme()
         renderInvestigation()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -1388,8 +1372,8 @@ extension LogAnalyzerController: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard (notification.object as? NSTextView) === inputTextView.textView else { return }
         refreshDetectionStripFromInput()
-        // The sidebar layout's header counts the lines being typed or pasted.
-        if drawsSidebarLayout { onDrillSubtitleChanged?() }
+        // The header counts the lines being typed or pasted.
+        onDrillSubtitleChanged?()
     }
 
     private func refreshDetectionStripFromInput() {
@@ -2230,7 +2214,7 @@ extension LogAnalyzerController {
         renderStorageSelection()
         renderComparePickers()
         renderAINotice()
-        if drawsSidebarLayout { renderSidebarSummary() }
+        renderSidebarSummary()
         applyTheme()
         onDrillSubtitleChanged?()
     }
@@ -2748,10 +2732,8 @@ extension LogAnalyzerController {
         mutedLabels.apply(theme)
 
         for card in cards { card.applyTheme(theme) }
-        if drawsSidebarLayout {
-            patternsTable.applyTheme(theme)
-            metricsStrip.applyTheme(theme)
-        }
+        patternsTable.applyTheme(theme)
+        metricsStrip.applyTheme(theme)
         tabs.applyTheme(theme)
 
         detectionStrip.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
@@ -2998,12 +2980,9 @@ private extension Array {
 // not drawn - the analyzer counts a pattern's occurrences and its first and
 // last timestamp, not a series.
 
-extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+extension LogAnalyzerController: WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
 
         // Analyze leaves the input row for the toolbar.
         inputControls.removeArrangedSubview(analyzeButton)
@@ -3044,7 +3023,7 @@ extension LogAnalyzerController: SidebarLayoutAdopting, WorkspacePrimaryActionPr
         renderInvestigation()
     }
 
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? analyzeButton : nil }
+    var workspacePrimaryAction: NSView? { analyzeButton }
 
     /// "Log Analyzer · 1,284 lines", as the prototype's header reads, with
     /// the state of the analysis after it.

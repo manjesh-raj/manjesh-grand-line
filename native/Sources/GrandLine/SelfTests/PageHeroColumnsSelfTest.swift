@@ -596,7 +596,6 @@ enum PageHeroColumnsSelfTest {
 
         let fleet = FleetController(shiftStore: ShiftStore())
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         // Before the first read: the band says it is reading, with no figures.
         guard let first = fleet.debugCrewBand else {
             fail("CR-1: In flight has no band before its first read", &ok)
@@ -841,7 +840,6 @@ enum PageHeroColumnsSelfTest {
 
         let fleet = FleetController(shiftStore: shift, logStore: log)
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         fleet.selectModuleTab(named: "Log")
         guard let logBand = fleet.debugCrewBand else {
             fail("CR-1: Log opens on no band", &ok)
@@ -1026,7 +1024,6 @@ enum PageHeroColumnsSelfTest {
 
         let review = ReviewController()
         _ = review.view
-        review.adoptSidebarLayout()
         guard let first = review.debugReviewBand else {
             fail("CR-1: Review has no band before its first scan", &ok)
             return
@@ -1236,7 +1233,6 @@ enum PageHeroColumnsSelfTest {
 
         let fleet = FleetController(shiftStore: ShiftStore())
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         fleet.selectModuleTab(named: "Needs you")
         fleet.debugRender(snapshot: snapshot(tasks), mergedPRs: [])
         guard let reply = fleet.debugReplyButton(taskID: "rp-wait") else {

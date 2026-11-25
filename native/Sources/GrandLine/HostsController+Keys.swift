@@ -123,7 +123,6 @@ extension HostsController {
     /// is searched and the hero column is put away, then the keys - the
     /// Hosts grid's Recent and All hosts.
     func renderKeysGrid(_ keys: [SSHKey]) {
-        guard drawsSidebarLayout else { return }
         let searching = !keySearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // While the hero column shows, Recent keys is its job.
         let recent = searching || heroColumnShowing ? [] : Self.recentKeys(keyStore.keys)

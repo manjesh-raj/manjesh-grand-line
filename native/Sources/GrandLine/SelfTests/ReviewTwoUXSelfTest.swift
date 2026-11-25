@@ -724,9 +724,9 @@ enum ReviewTwoUXSelfTest {
         autoreleasepool {
             let hostPage = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
             _ = hostPage.view
-            check(hostPage.tabs.isEmpty && !hostPage.tabBar.isHidden,
-                  "fixture: a host page with no tab, in the floating bar's layout, keeps its tab row (its actions live there)", &ok)
-            hostPage.adoptSidebarLayout()
+            // The fixture's own power: the page really has no tab, while the
+            // Firstmate console above (same class) keeps its row.
+            check(hostPage.tabs.isEmpty, "fixture: the host page already has a tab", &ok)
             hostPage.view.layoutSubtreeIfNeeded()
             check(hostPage.tabBar.isHidden && hostPage.tabBar.frame.height == 0,
                   "R5-UI-02: a host page with no tab still draws a \(hostPage.tabBar.frame.height)pt tab row in the sidebar layout", &ok)

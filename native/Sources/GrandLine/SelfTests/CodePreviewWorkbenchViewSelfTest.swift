@@ -64,7 +64,6 @@ enum CodePreviewWorkbenchViewSelfTest {
         window.contentView = controller.view
         NSApp.setActivationPolicy(.accessory)
         window.orderFront(nil)
-        controller.adoptSidebarLayout()
         window.displayIfNeeded()
 
         guard waitFor(timeout: 30, until: { controller.debugWebView.isReady && !controller.debugTabNames.isEmpty }) else {

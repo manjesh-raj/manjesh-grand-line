@@ -1025,11 +1025,10 @@ final class ShiftFollowUpLaneView: NSView {
     /// (`ShiftBoardColumnView`'s classic style), so the lane takes the same
     /// shape there rather than the sidebar layout's tinted one.
     ///
-    /// S08 of the 2026-11-17 UI/UX proposals: this is a setter both ways now,
-    /// not a one-way adoption. The page's first render runs from `loadView`,
-    /// before the sidebar shell's `adoptSidebarLayout` has said which layout
-    /// it is in, and a one-way adoption made there left the sidebar layout's
-    /// Follow-ups in the classic shape beside three washed lanes for good.
+    /// S08 of the 2026-11-17 UI/UX proposals: this is a setter both ways, not
+    /// a one-way adoption, so a render can never leave Follow-ups in the
+    /// classic shape beside three washed lanes. Since P-03 of the 2026-11-25
+    /// review removed the floating bar, the page always asks for `false`.
     func setClassicStyle(_ classic: Bool) {
         guard classic != usesClassicStyle else { return }
         usesClassicStyle = classic

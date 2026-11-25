@@ -90,8 +90,7 @@ enum SidebarPageFixesSelfTest {
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         clickTab("Hosts", shell)
-        check(hosts.drawsSidebarLayout, "Connections did not adopt its sidebar presentation", &ok)
-
+        
         // The tabs count what each holds, read from the page's own stores -
         // and the Hosts count agrees with the table under it.
         let counts = hosts.moduleTabCounts
@@ -212,7 +211,6 @@ enum SidebarPageFixesSelfTest {
         let logs = shell.workspace.logAnalyzer
         shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
-        check(logs.drawsSidebarLayout, "Logs did not adopt its sidebar presentation", &ok)
         check(shell.toolbar.debugPrimaryAction === logs.debugAnalyzeButton
                 && shell.toolbar.debugItemIdentifiers.last == WorkspaceToolbar.ItemID.primaryAction,
               "Analyze is not the toolbar's far-right action", &ok)
@@ -285,7 +283,7 @@ enum SidebarPageFixesSelfTest {
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         settle(shell)
         let card = health.debugHealthCard
-        check(health.drawsSidebarLayout && card.drawsTable && card.card.isHidden,
+        check(card.drawsTable && card.card.isHidden,
               "Health did not swap its card for the summary and the table", &ok)
         check(shell.toolbar.debugPrimaryAction === card.diagnosticsButton, "Copy diagnostics is not the far-right action", &ok)
         check(shell.toolbar.debugPageActions.contains { $0 === health.debugRefreshButton }, "Refresh is not in the toolbar", &ok)

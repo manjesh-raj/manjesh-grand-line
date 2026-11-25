@@ -366,8 +366,8 @@ enum SidebarRedesignsModelSelfTest {
                        "heroBand.onFollowUps = { [weak self] in self?.followUpsJumpClicked() }",
                        "heroBand.onShowProjectMenu = { [weak self] view in self?.popUp(self?.projectMenu(), from: view) }",
                        "scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) }",
-                       "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
-                       "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
+                       "splitPage?.pageForcesCollapse = true",
+                       "var workspacePrimaryAction: NSView? { newTaskButton }",
                        "boardView.adoptWorkspaceStyle()"] {
             check(shift.contains(needle), "Tasks' sidebar presentation lost `\(needle)`", &ok)
         }
@@ -387,7 +387,7 @@ enum SidebarRedesignsModelSelfTest {
         for (name, text, primary) in [("Updates", updates, "checkForUpdatesButton"), ("GitHub sync", github, "syncAllButton"),
                                       ("Setup steps", bootstrap, "runFullSetupButton"), ("Automation", automation, "runButton")] {
             check(text.contains("insertArrangedSubview(setupSummary, at: 0)"), "\(name) does not open on the Setup hero", &ok)
-            check(text.contains("var workspacePrimaryAction: NSView? { drawsSidebarLayout ? \(primary) : nil }"),
+            check(text.contains("var workspacePrimaryAction: NSView? { \(primary) }"),
                   "\(name)'s primary action is no longer `\(primary)`", &ok)
         }
         check(updates.contains("action: #selector(checkAllTapped)") && updates.contains("title: \"Check for updates\""),

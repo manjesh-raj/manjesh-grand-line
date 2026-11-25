@@ -16,9 +16,8 @@
 //
 // ## Why a separate view, and why only here
 //
-// The floating bar is frozen, so its Code page keeps exactly the page it had;
-// this presentation is built the first time the sidebar shell shows the page
-// (`SidebarLayoutAdopting`) and the page never switches back. The controller
+// The page builds this presentation as part of loading
+// (`buildSidebarPresentation`). The controller
 // keeps every piece of state and every action - which snippet is open, what a
 // run printed, what Run means - and hands this view the existing editor
 // surface, snippet list, tab strip and status bar to place. So the two

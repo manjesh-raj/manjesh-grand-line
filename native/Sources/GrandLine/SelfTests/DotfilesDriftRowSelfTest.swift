@@ -173,7 +173,6 @@ enum DotfilesDriftRowSelfTest {
             let page = controller()
             // The sidebar layout is the one that folds a step behind its
             // Details link; the classic one shows every step's body.
-            page.adoptSidebarLayout()
             let row = page.debugDriftedDotfilesRow(repoPath: "/tmp/dotfiles", state: captainState, autoSyncStatus: .synced)
             guard let button = descendants(of: row).compactMap({ $0 as? HelmButton }).first,
                   let action = button.action, let target = button.target else {

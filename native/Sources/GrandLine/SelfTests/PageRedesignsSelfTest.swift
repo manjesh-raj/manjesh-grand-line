@@ -170,7 +170,6 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.hosts)
         clickTab("Hosts", shell)
         let hosts = shell.workspace.hostsPanel
-        check(hosts.drawsSidebarLayout, "Hosts did not switch to the sidebar layout's presentation", &ok)
         // C4 of the Termius-style plan made the cards the default view; this
         // check is the table's, which is the List side of the same switch.
         // The cards are `ConnectionsCardsSelfTest`'s.
@@ -343,7 +342,6 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.poneglyph)
         settle(shell)
         let page = shell.debugPoneglyph
-        check(page.drawsSidebarLayout, "Poneglyph did not switch to the sidebar layout's presentation", &ok)
         let table = page.debugCredentialTable
         check(onScreen(table.card), "the credential table is not on screen", &ok)
         check(!onScreen(page.debugList.card), "the floating bar's credential list still shows", &ok)
@@ -495,7 +493,6 @@ enum PageRedesignsSelfTest {
         // The visit starts the page's own read, which this process refuses.
         // It has to land before the fixture does, or it lands on top of it.
         check(waitUntil(timeout: 10) { !vault.debugIsReading }, "Automic Vault's own read never finished", &ok)
-        check(vault.drawsSidebarLayout, "Automic Vault did not switch to the sidebar layout's presentation", &ok)
         let secrets = vault.debugSecretsTable
         // S-1: the launchers are the split card's rows; their table is kept
         // current but not drawn.

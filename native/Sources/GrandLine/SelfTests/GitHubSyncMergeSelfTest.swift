@@ -122,7 +122,6 @@ enum GitHubSyncMergeSelfTest {
                 return recorder.mergeResult
             })
         page.view.frame = NSRect(x: 0, y: 0, width: 1100, height: 900)
-        page.adoptSidebarLayout()
         page.view.layoutSubtreeIfNeeded()
         return page
     }
