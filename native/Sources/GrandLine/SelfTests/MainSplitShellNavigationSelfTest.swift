@@ -1368,8 +1368,25 @@ enum MainSplitShellNavigationSelfTest {
         current.dueDate = day(0)
         store.addTask(current)
         settle(shell)
+        // The page was empty until these two tasks, so it was showing its
+        // start-here state with the band hidden (R2-UX-07). The band comes
+        // back on the store's coalesced re-render, one main-queue turn after
+        // `addTask`, and `settle`'s one 50 ms turn did not always cover that
+        // turn on CI's loaded runner. The press then reached no band at all,
+        // through an optional chain that cannot fail, and four checks below
+        // failed instead of this one (PR #633's push). Wait for the band
+        // itself, bounded, and say so by name if it never comes.
+        let bandDeadline = Date().addingTimeInterval(2)
+        while tasks.debugHeroBand == nil, Date() < bandDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        let band = tasks.debugHeroBand
+        check(band != nil,
+              "the band never came back after two tasks were added (start-here showing: "
+                + "\(!tasks.debugStartHereState.isHidden), calendar: \(tasks.isShowingCalendar))", &ok)
         // Tf-2: through the band's own Overdue figure.
-        tasks.debugHeroBand?.debugFigureButtons[2].performPrimaryAction()
+        check(band?.debugFigureButtons[2].performPrimaryAction() == true,
+              "the band's Overdue figure did nothing when pressed", &ok)
         settle(shell)
         check(tasks.taskScope == .overdue, "the Overdue filter did not take on Board", &ok)
         clickTab("Calendar", shell)
