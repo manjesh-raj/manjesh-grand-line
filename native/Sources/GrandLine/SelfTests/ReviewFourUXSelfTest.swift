@@ -230,7 +230,7 @@ enum ReviewFourUXSelfTest {
         check(opened == 2, "R4-UX-05: Return on a Home card did not open it", &ok)
         card.debugKey(0, characters: "a")
         check(opened == 2, "R4-UX-05: another key opened the card", &ok)
-        if let home = source("HomeCanvasController.swift") {
+        if let home = SelfTestSources.homeCanvas(read: source) {
             check(home.contains("card.onOpen = {"), "R4-UX-05: Home's cards no longer open their module", &ok)
         }
     }

@@ -1753,3 +1753,31 @@ The review tried two simpler fixes in the lab: a `collapseBehavior` change did n
   It then waits for the pane motions to land and checks the window width, the open pane, the mounted New Host form and the pane's visible width.
   Before the fix it failed with the window at 1037pt and the pane closed, the lab's measurement.
 - `FM_RUN_MOTION_TABLE_TESTS` asserts the queue's rules headless.
+
+## P-05: Home split by card family (`fm/grandline-process-fixes-p01-p06`)
+
+The 2026-11-25 full review found the four largest files growing against GL-36's own split rule.
+`HomeCanvasController.swift` had reached 5,229 lines (4,381 nine days earlier).
+
+It is now split by card family into `HomeCanvasController+*.swift`, the way `ConsoleController` was:
+
+- `+Briefing`: the briefing hero, the greeting, the daily tip and the Morning briefing card's content.
+- `+Attention`: the Needs Attention card and its rows, and how the arranged cards are measured.
+- `+Customize`: hiding, sizing and colouring a card, the drag-to-size grips, the grid rebuild and each card's style menu.
+- `+Dashboard`: Overview's three-column dashboard and the merge queue's row budget.
+- `+Claude`, `+Fleet`, `+MergeQueue`, `+Health` and `+Hosts`: one card family each.
+- `+ModuleCards`: Tasks, the Straw Hat crew, Console, the Setup sub-pages and every other page's card.
+
+The main file keeps the class, its stored state (an extension cannot hold a stored property), build, data in, render, layout and the self-test surface, at 1,456 lines.
+It is a pure move: a line-multiset comparison of the old file against the new family found no line missing, and the only additions are the headers, the `extension` wrappers and one comment.
+`private` was dropped from the class's members, and `private(set)` from five properties a moved method writes, so the family can reach its own members across files.
+
+Fifteen suites read `HomeCanvasController.swift` as text.
+They now read the whole family through `SelfTestSources.homeCanvas(read:)`, which returns `nil` when any file is missing.
+Several of those guards assert that a phrase is absent, and against one file they would have passed vacuously once the code they guard moved.
+`HelmKitSourceGuardSelfTest`'s token-only list now names every file of the family.
+
+A soft line budget came with it: `Scripts/line_budget.py` names every hand-written Swift file over 3,000 lines, skips a file whose header carries the `GENERATED FILE` marker, and never fails.
+CI runs it in the Python job as `::warning` annotations.
+The other three files the review named (`HelmModuleCard.swift`, `HelmDesignSystem.swift` and `SettingsController.swift`) were left as they are.
+The first two are Helm kit files, so a move would change their digests and need a release for every component in them, and `SettingsController.swift` is not the card-family split the review asked for.

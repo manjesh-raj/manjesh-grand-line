@@ -807,7 +807,7 @@ enum SplitShellModelSelfTest {
     private static func checkTheWiring(_ ok: inout Bool) {
         guard let main = code("main.swift"), let lock = code("LockPresenter.swift"),
               let shell = code("MainSplitShellController.swift"), let settings = code("SettingsController.swift"),
-              let classic = code("AppShellController.swift"), let canvas = code("HomeCanvasController.swift") else {
+              let classic = code("AppShellController.swift"), let canvas = SelfTestSources.homeCanvas(read: code) else {
             fail("could not read the sources this check reads - it would pass vacuously", &ok)
             return
         }
@@ -824,7 +824,7 @@ enum SplitShellModelSelfTest {
                 && personalOnly!.lowerBound < operatorHub!.lowerBound && operatorHub!.lowerBound < personalLayout!.lowerBound
                 && classic.components(separatedBy: "cardLayout =").count == 3,
               "the floating bar hands Home a card layout outside a Personal profile, which would replace its hub", &ok)
-        check(canvas.contains("private var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
+        check(canvas.contains("var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
               "Home's hub no longer keeps its dashboard when no layout is set", &ok)
         // The four pages whose own tabs are a module's tabs.
         for (file, type) in [("ShiftController.swift", "ShiftController"), ("FleetController.swift", "FleetController"),

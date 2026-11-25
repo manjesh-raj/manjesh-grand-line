@@ -1233,8 +1233,7 @@ enum DaylightModuleSelfTest {
             print("  SKIP - app sources are not next to this binary")
             return
         }
-        let url = dir.appendingPathComponent("HomeCanvasController.swift")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        guard let text = SelfTestSources.homeCanvasSource() else {
             fail("could not read HomeCanvasController.swift - has it moved? this check would silently pass", &ok)
             return
         }
@@ -2163,8 +2162,7 @@ enum DaylightModuleSelfTest {
             print("  SKIP - app sources are not next to this binary")
             return
         }
-        let url = dir.appendingPathComponent("HomeCanvasController.swift")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        guard let text = SelfTestSources.homeCanvasSource() else {
             fail("could not read HomeCanvasController.swift - this check would silently pass", &ok)
             return
         }

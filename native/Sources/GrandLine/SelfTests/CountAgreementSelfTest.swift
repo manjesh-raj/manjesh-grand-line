@@ -166,7 +166,7 @@ enum CountAgreementSelfTest {
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                 .joined(separator: "\n")
         }
-        check(code("HomeCanvasController.swift").contains("if let attention = counts.vaultAttention {"),
+        check((SelfTestSources.homeCanvas(read: { code($0) }) ?? "").contains("if let attention = counts.vaultAttention {"),
               "W9: Home's Vault card hides a known attention count behind an unknown secrets count", &ok)
         check(code("HostsController.swift").contains("if hostStore.loadStatus == .clean { counts[\"Hosts\"]"),
               "W12: an unreadable hosts.json reads as 'Hosts 0'", &ok)

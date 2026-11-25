@@ -162,8 +162,7 @@ enum Phase4P3LeftoversSelfTest {
             ("ShiftListViews.swift", "runs once per rendered task row"),
             ("StickyBoardViews.swift", "runs once per rendered note"),
             ("ShiftStore.swift", "runs on every timestamp read and write"),
-            ("HomeCanvasController.swift", "runs on every canvas render"),
-        ] {
+        ] + SelfTestSources.homeCanvasFiles.map { ($0, "runs on every canvas render") } {
             let path = sources.appendingPathComponent(file)
             guard let text = try? String(contentsOf: path, encoding: .utf8) else {
                 check(false, "could not read \(file)")

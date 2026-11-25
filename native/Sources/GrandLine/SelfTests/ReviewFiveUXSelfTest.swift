@@ -224,7 +224,7 @@ enum ReviewFiveUXSelfTest {
         // Both layouts: the floating bar hands a Personal Home its own cards
         // and hidden set (an Operator's hub stays the hand-placed one), and a
         // Home with no Crew never speaks for the fleet.
-        if let floating = source("AppShellController.swift"), let home = source("HomeCanvasController.swift") {
+        if let floating = source("AppShellController.swift"), let home = SelfTestSources.homeCanvas(read: source) {
             check(floating.contains("guard AppSettings.shared.effectiveProfile == .personal else {")
                     && floating.contains("canvas.cardLayout = AppSettings.shared.homeCardLayout"),
                   "R5-UX-07: the floating bar's Home no longer follows a Personal profile", &ok)
@@ -232,7 +232,7 @@ enum ReviewFiveUXSelfTest {
                   "R5-UX-07: a Home without Crew reports on the fleet again", &ok)
         }
         // The card re-renders when the session changes, not on every tick.
-        if let home = source("HomeCanvasController.swift") {
+        if let home = SelfTestSources.homeCanvas(read: source) {
             check(home.contains("guard key != focusCardKey else { return }"),
                   "R5-UX-07: Home re-renders the Focus timer card on every timer tick", &ok)
         }
@@ -377,7 +377,7 @@ enum ReviewFiveUXSelfTest {
         check(item?.keyEquivalent == "/" && item?.keyEquivalentModifierMask == [.command],
               "R5-UX-03: Help has no ⌘/ Shortcuts for This Page", &ok)
         // Home starts the week at a real launch, never in a test process.
-        if let settings = source("AppSettings.swift"), let home = source("HomeCanvasController.swift") {
+        if let settings = source("AppSettings.swift"), let home = SelfTestSources.homeCanvas(read: source) {
             check(settings.contains("if homeTipsFirstShown == nil { homeTipsFirstShown = Date() }")
                     && home.contains("stack.addArrangedSubview(tipRow)"),
                   "R5-UX-03: Home's tip strip or its week is no longer wired", &ok)

@@ -859,3 +859,10 @@ jobs:
 
       - name: Lint
         run: ruff check --config Scripts/ruff.toml Scripts/*.py
+
+      # P-05 of the 2026-11-25 review: a soft line budget. Every hand-written
+      # Swift file over 3,000 lines is a warning annotation on the run, so a
+      # file growing past GL-36's split point is visible on the pull request.
+      # It never fails the job; `Scripts/test_line_budget.py` covers it.
+      - name: Line budget (warns, never fails)
+        run: python3 Scripts/line_budget.py

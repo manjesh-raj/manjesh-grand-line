@@ -781,8 +781,10 @@ enum UIUXProposalsSelfTest {
 
     /// An app source file's text, or "" when the sources are not beside the
     /// binary. Callers that depend on it check `sourcesAvailable` first.
+    /// `HomeCanvasController.swift` reads its whole `+` family (P-05).
     static func source(_ name: String) -> String {
         guard let dir = SelfTestSources.appSourceDirectory() else { return "" }
+        if name == "HomeCanvasController.swift" { return SelfTestSources.homeCanvasSource() ?? "" }
         return (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
     }
 

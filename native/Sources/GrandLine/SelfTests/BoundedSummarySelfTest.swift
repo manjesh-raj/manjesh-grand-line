@@ -83,9 +83,7 @@ enum BoundedSummarySelfTest {
     /// its own height-derived budget and its own footer ("All 22 open").
     private static func checkEveryPeekCardIsBounded(_ ok: inout Bool) {
         print("\n-- P4: every Home peek list is bounded and says so --")
-        guard let root = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: root.appendingPathComponent("HomeCanvasController.swift"), encoding: .utf8)
-        else {
+        guard let text = SelfTestSources.homeCanvasSource() else {
             print("  SKIP could not read HomeCanvasController.swift")
             return
         }

@@ -348,11 +348,12 @@ enum ReviewTwoUXModelSelfTest {
             ("HomeCanvasController.swift", "Generate one from an SRE Lead investigation"),
         ]
         for (file, phrase) in banned {
-            guard let text = source(file) else { fail("\(file) was not found", &ok); continue }
+            let read = file == "HomeCanvasController.swift" ? SelfTestSources.homeCanvas(read: source) : source(file)
+            guard let text = read else { fail("\(file) was not found", &ok); continue }
             let code = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             check(!code.contains { $0.contains(phrase) }, "\(file) still says \"\(phrase)\" to every user", &ok)
         }
-        if let home = source("HomeCanvasController.swift") {
+        if let home = SelfTestSources.homeCanvas(read: source) {
             check(home.contains("crew ? fleetAttentionItem() : nil") && home.contains("setup ? sessionChecksAttentionItem() : nil"),
                   "Home's attention card no longer leaves out the fleet and Setup rows for a profile that hides them", &ok)
         }

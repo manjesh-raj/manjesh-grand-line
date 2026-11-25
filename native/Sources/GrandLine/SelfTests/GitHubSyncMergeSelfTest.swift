@@ -624,7 +624,7 @@ enum GitHubSyncMergeSelfTest {
         // Home's card states the same figure: one definition, asserted as a
         // source guard because Home's card is window-backed.
         if let dir = SelfTestSources.appSourceDirectory(),
-           let home = try? String(contentsOf: dir.appendingPathComponent("HomeCanvasController.swift"), encoding: .utf8) {
+           let home = SelfTestSources.homeCanvas(read: { try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }) {
             check(home.contains("SetupSummary.ForksFigure(BackgroundSignalsPoller.shared.lastCounts)"),
                   "Home's GitHub sync card reads the shared ForksFigure", &ok)
         } else {
