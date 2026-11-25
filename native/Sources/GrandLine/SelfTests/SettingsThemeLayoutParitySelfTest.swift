@@ -434,16 +434,20 @@ enum SettingsThemeLayoutParitySelfTest {
         // card (the switch that turns the history on, off by default).
         // Thirty-five since the Security page gained its Power card (the
         // lid-closed switch). Thirty-six since it gained its Xcode card (the
-        // Metal Toolchain switch).
-        guard daylightFP.cardCount == 36 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 36")
+        // Metal Toolchain switch). Twenty-one since P-03 of the 2026-11-25
+        // review: the page builds its Set-2 split cards at load, and the rows
+        // a split plan takes leave their section cards.
+        guard daylightFP.cardCount == 21 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 21")
             ok = false
             return
         }
         // Vacuity: "both themes produced the same panes" means nothing if
         // the panes were empty. Every category must have mounted at least
         // one card, and the seven must account for all ten.
-        if daylightFP.paneSizes.contains(0) || daylightFP.paneSizes.reduce(0, +) != daylightFP.cardCount {
+        // A page whose split card holds all of its rows has no section card
+        // left, so a zero pane is allowed; the partition still has to add up.
+        if daylightFP.paneSizes.reduce(0, +) != daylightFP.cardCount {
             print("  FAIL the panes do not partition the page's cards: \(daylightFP.paneSizes) over \(daylightFP.cardCount)")
             ok = false
         }
@@ -467,7 +471,7 @@ enum SettingsThemeLayoutParitySelfTest {
 
         // The navigation shape does not change with the window's width
         // either - narrowing the page must not merge or drop a category.
-        if daylightFP.paneSizes != legacyFP.paneSizes || daylightFP.paneSizes.contains(0) {
+        if daylightFP.paneSizes != legacyFP.paneSizes || daylightFP.paneSizes.reduce(0, +) == 0 {
             print("  FAIL the panes differ or are empty at 820pt (Daylight=\(daylightFP.paneSizes), legacy=\(legacyFP.paneSizes))")
             ok = false
         }

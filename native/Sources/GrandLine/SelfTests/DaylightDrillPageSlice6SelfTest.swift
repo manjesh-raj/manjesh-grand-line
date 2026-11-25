@@ -117,7 +117,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// Thirty-five since the Security page gained its Power card (the
     /// lid-closed switch). Thirty-six since it gained its Xcode card (the
     /// Metal Toolchain switch).
-    private static let expectedCardCount = 36
+    /// Twenty-one since P-03 of the 2026-11-25 review: the page builds its
+    /// Set-2 split cards at load, and the rows a split plan takes leave their
+    /// section cards.
+    private static let expectedCardCount = 21
 
 
     static func run() -> Bool {
@@ -293,12 +296,12 @@ enum DaylightDrillPageSlice6SelfTest {
         let settingsWindow = mount(settings)
         defer { _ = settingsWindow }
         // R2-UX-08: the local-storage claim was on this page three times. It
-        // is the column footer's alone now, so the line names the category
-        // and the footer carries the claim - once, not zero times.
-        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.title,
+        // is the column footer's alone now. R2-UX-05: the column names the
+        // category, so the line is its description.
+        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.heroDescription,
               !line.contains("locally"), settings.debugFooterText.hasPrefix("Stored locally") else {
             print("  FAIL Settings' subtitle is \"\(settings.drillHeaderSubtitle ?? "nil")\" and its footer "
-                  + "\"\(settings.debugFooterText)\" - want the category's name, and the local-storage claim in the footer")
+                  + "\"\(settings.debugFooterText)\" - want the category's description, and the local-storage claim in the footer")
             ok = false
             return
         }

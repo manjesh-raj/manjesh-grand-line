@@ -3382,6 +3382,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         debugMountedGroupCards.filter { $0.isDescendant(of: pageContainer) }.count
     }
     var debugMountedCategory: Category? { mountedCategory }
+    /// The page's Set-2 split card, which holds the rows the split plan took
+    /// out of its sections.
+    func debugSplitCard(in category: Category) -> NSView? { pages[category]?.split }
 
     /// The theme grid's cards, in grid order.
     var debugThemeCards: [SettingsThemeCard] { themeCards }
