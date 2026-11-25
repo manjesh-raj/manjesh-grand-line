@@ -1389,15 +1389,30 @@ final class ShiftStore {
         recentActivityEntries(monthsBack: monthsBack, reference: reference)
     }
 
-    private func recentActivityEntries(monthsBack: Int, reference: Date) -> [ShiftActivityEntry] {
+    /// `recentActivity`, and the months whose file is there and could not be
+    /// read (`ShiftYaml.readListChecked`'s `.parseFailed`), for the Crew
+    /// band's Log tab. GL-14: a month that could not be read is unknown, not
+    /// a month in which nothing happened. A missing month file is an empty
+    /// month.
+    func recentActivityChecked(monthsBack: Int = 2,
+                               reference: Date = Date()) -> (entries: [ShiftActivityEntry], unreadableMonths: [String]) {
         let cal = Calendar(identifier: .gregorian)
         var entries: [ShiftActivityEntry] = []
+        var unreadable: [String] = []
         for offset in 0...monthsBack {
             guard let month = cal.date(byAdding: .month, value: -offset, to: reference) else { continue }
-            let path = activityPath(forMonth: ShiftStore.monthKey(for: month))
-            entries.append(contentsOf: ShiftYaml.readList(path: path, key: "activity").compactMap(ShiftYaml.activity(from:)))
+            let key = ShiftStore.monthKey(for: month)
+            switch ShiftYaml.readListChecked(path: activityPath(forMonth: key), key: "activity") {
+            case .ok(let items): entries.append(contentsOf: items.compactMap(ShiftYaml.activity(from:)))
+            case .missing: break
+            case .parseFailed: unreadable.append(key)
+            }
         }
-        return entries
+        return (entries, unreadable)
+    }
+
+    private func recentActivityEntries(monthsBack: Int, reference: Date) -> [ShiftActivityEntry] {
+        recentActivityChecked(monthsBack: monthsBack, reference: reference).entries
     }
 
     /// Computes Weekly Review's three headline numbers, entirely from data

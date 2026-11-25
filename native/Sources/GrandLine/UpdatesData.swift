@@ -220,6 +220,13 @@ struct UpdatesSummary: Equatable {
         if total > 0 && upToDate == total { return "Checked \(total) tools - all up to date" }
         return "Checked \(total) tools: " + parts.joined(separator: ", ")
     }
+
+    /// TO-1: the glyph that toast wears. A sweep that finished with a tool it
+    /// could not check, or an update that failed, is a warning: the sweep ran,
+    /// but not entirely. An update waiting is news, not a problem.
+    var completionKind: Feedback.Kind {
+        couldNotCheck + updatesFailed > 0 ? .warning : .done
+    }
 }
 
 struct CheckOutcome {

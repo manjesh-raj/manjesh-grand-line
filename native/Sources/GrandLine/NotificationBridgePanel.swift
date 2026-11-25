@@ -30,6 +30,19 @@
 // the card's width, the snooze collapses to its glyph when its label would
 // not fit, and the primary is the one control allowed to give up width.
 //
+// **The hero head (N-1, Helm 10.4.0)**, the captain's pick on the
+// notifications hero board (`data/grandline-notifications-hero-design-scout/`).
+// The panel opens on the hero gradient, as the sidebar, Home's hero cards and
+// the Console's Compose, Claude usage and SRE Lead popovers do, through the
+// same `PopoverHeroHeader` with a glass bell tile. Its kicker keeps the old
+// title and the date, the headline is the verdict ("4 things need you"), and
+// the second line says how much is new (`NotificationHeroWords`). A ring of
+// unread items sits in the trailing slot. Inbox, Snoozed and Mark all read
+// are ghost pills on the gradient, so the panel's own controls share one row
+// rather than three. The cards below are unchanged. The head paints the
+// quiet-ink palette, so its 86% second line clears the text floor on every
+// palette. The bell's badge still counts every item waiting, read or not.
+//
 // **Keyboard.** The list's document view is the first responder: ↑ ↓ select a
 // card, → ← expand and collapse, Return runs the selected card's action, S
 // opens its snooze menu, Delete hides an informational card, and ⌘[ ⌘]
@@ -218,6 +231,10 @@ enum NotificationBridgeMetrics {
     static let dotSide: CGFloat = 7
     /// The accent edge on an action-needed card.
     static let edgeWidth: CGFloat = 3
+    /// The hero head's ring of unread items.
+    static let ringSide: CGFloat = 48
+    /// The ring's track: the ink at this alpha, as the Claude usage rings.
+    static let ringTrackAlpha: CGFloat = 0.26
     /// Past this many inbox cards, informational cards drop their detail line
     /// so the list stays scannable rather than becoming a column of cards
     /// three to a screen.
@@ -248,14 +265,19 @@ final class NotificationBridgePanelViewController: NSViewController {
         return max(HelmType.scaled(240), min(Self.maxListHeight, screen.visibleFrame.height - Self.screenReserve))
     }
 
-    private let titleLabel = NSTextField(labelWithString: "Waiting for you")
-    private let dateLabel = NSTextField(labelWithString: "")
-    /// Holds the segment, which is rebuilt when a count changes - the
-    /// component's titles are fixed at construction.
-    private let segmentHost = NSView()
-    private var segmentTabs: HelmSegmentedTabs?
+    /// The hero head's body: the two lists and Mark all read as ghost pills.
+    private let heroBody = NSStackView()
+    private lazy var header = PopoverHeroHeader(
+        symbol: "bell", tileStyle: .glass, tileSide: 32,
+        insets: NSEdgeInsets(top: 14, left: 14, bottom: 12, right: 14),
+        body: heroBody, bodySpacing: 12, titleStyle: .verdict,
+        quietInk: HelmHeroColumn.quietInkAlpha)
+    /// The lists. The chosen one is `heroSelection`, the other a ghost pill.
+    private let inboxPill = HelmButton(title: "Inbox", variant: .secondary, size: .small)
+    private let snoozedPill = HelmButton(title: "Snoozed", variant: .secondary, size: .small)
+    private let ring = HelmRingGauge(side: NotificationBridgeMetrics.ringSide)
     private var segmentTitles: [String] = []
-    private let headerSeparator = NSView()
+    private(set) var heroWords: NotificationHeroWords?
 
     private let scroll = NSScrollView()
     private let listStack = NSStackView()
@@ -305,23 +327,8 @@ final class NotificationBridgePanelViewController: NSViewController {
         root.wantsLayer = true
         view = root
 
-        for label in [titleLabel, dateLabel, footerLabel] {
-            label.translatesAutoresizingMaskIntoConstraints = false
-        }
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        titleLabel.lineBreakMode = .byTruncatingTail
-        dateLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let titleStack = NSStackView(views: [titleLabel, dateLabel])
-        titleStack.orientation = .vertical
-        titleStack.alignment = .leading
-        titleStack.spacing = HelmMetrics.s0
-        titleStack.translatesAutoresizingMaskIntoConstraints = false
-
-        segmentHost.translatesAutoresizingMaskIntoConstraints = false
-
-        headerSeparator.wantsLayer = true
-        headerSeparator.translatesAutoresizingMaskIntoConstraints = false
-        headerSeparator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        footerLabel.translatesAutoresizingMaskIntoConstraints = false
+        buildHeroHead()
 
         listStack.orientation = .vertical
         listStack.alignment = .leading
@@ -353,7 +360,6 @@ final class NotificationBridgePanelViewController: NSViewController {
         footerLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         openHomeButton.symbolTrailing = true
         for (button, action) in [(undoButton, #selector(undoClicked)),
-                                 (markAllReadButton, #selector(markAllReadClicked)),
                                  (openHomeButton, #selector(openHomeClicked))] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.target = self
@@ -365,17 +371,14 @@ final class NotificationBridgePanelViewController: NSViewController {
         undoButton.isHidden = true
         openHomeButton.isHidden = onOpenHome == nil
         openHomeButton.accessibilityLabelOverride = "Open Home"
-        markAllReadButton.accessibilityLabelOverride = "Mark every notification as read"
-        let footerRow = NSStackView(views: [markAllReadButton, footerLabel, undoButton, openHomeButton])
+        let footerRow = NSStackView(views: [footerLabel, undoButton, openHomeButton])
         footerRow.orientation = .horizontal
         footerRow.distribution = .fill
         footerRow.alignment = .centerY
         footerRow.spacing = HelmMetrics.s2
         footerRow.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(titleStack)
-        root.addSubview(segmentHost)
-        root.addSubview(headerSeparator)
+        root.addSubview(header)
         root.addSubview(scroll)
         root.addSubview(footerSeparator)
         root.addSubview(footerRow)
@@ -387,19 +390,11 @@ final class NotificationBridgePanelViewController: NSViewController {
         NSLayoutConstraint.activate([
             root.widthAnchor.constraint(equalToConstant: Self.width),
 
-            titleStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),
-            titleStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
-            titleStack.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -inset),
+            header.topAnchor.constraint(equalTo: root.topAnchor),
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
 
-            segmentHost.topAnchor.constraint(equalTo: titleStack.bottomAnchor, constant: 10),
-            segmentHost.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
-            segmentHost.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -inset),
-
-            headerSeparator.topAnchor.constraint(equalTo: segmentHost.bottomAnchor, constant: 12),
-            headerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            headerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-
-            scroll.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             listHeight,
@@ -409,7 +404,7 @@ final class NotificationBridgePanelViewController: NSViewController {
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
 
             footerRow.topAnchor.constraint(equalTo: footerSeparator.bottomAnchor, constant: 10),
-            footerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset - 6),
+            footerRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: inset),
             footerRow.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -(inset - 6)),
             footerRow.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
 
@@ -427,9 +422,42 @@ final class NotificationBridgePanelViewController: NSViewController {
 
     override func viewDidAppear() {
         super.viewDidAppear()
-        // Tab walks each card's buttons, then the footer, in drawn order.
+        // Tab walks the head's pills, each card's buttons, then the footer,
+        // in drawn order.
         view.window?.autorecalculatesKeyViewLoop = true
         view.window?.makeFirstResponder(listDocument)
+    }
+
+    /// The hero head: the pills row as the header's body, and the ring in its
+    /// trailing slot. Gotcha (10): `.fill`, with only the spacer free to give.
+    private func buildHeroHead() {
+        for pill in [inboxPill, snoozedPill, markAllReadButton] {
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            pill.target = self
+            pill.followsTextScale = true
+            pill.setContentHuggingPriority(.required, for: .horizontal)
+            pill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        inboxPill.action = #selector(segmentPillClicked(_:))
+        snoozedPill.action = #selector(segmentPillClicked(_:))
+        inboxPill.toolTip = "Inbox (\u{2318}[)"
+        snoozedPill.toolTip = "Snoozed (\u{2318}])"
+        markAllReadButton.action = #selector(markAllReadClicked)
+        markAllReadButton.accessibilityLabelOverride = "Mark every notification as read"
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for view in [inboxPill, snoozedPill, spacer, markAllReadButton] { heroBody.addArrangedSubview(view) }
+        heroBody.orientation = .horizontal
+        heroBody.distribution = .fill
+        heroBody.alignment = .centerY
+        heroBody.spacing = HelmMetrics.s1
+        header.trailing.addArrangedSubview(ring)
+    }
+
+    @objc private func segmentPillClicked(_ sender: HelmButton) {
+        switchSegment(to: sender === snoozedPill ? .snoozed : .inbox)
     }
 
     // MARK: Building
@@ -477,7 +505,8 @@ final class NotificationBridgePanelViewController: NSViewController {
     func reload() {
         guard isViewLoaded else { return }
         let center = GrandLineNotificationCenter.shared
-        let inbox = NotificationBridgeSections(center.entries).ordered
+        let sections = NotificationBridgeSections(center.entries)
+        let inbox = sections.ordered
         let snoozed = center.snoozedEntries
         let liveIDs = Set(inbox.map(\.id))
         expandedIDs.formIntersection(liveIDs)
@@ -488,7 +517,17 @@ final class NotificationBridgePanelViewController: NSViewController {
         lastRenderSignature = signature
 
         let now = clock()
-        dateLabel.stringValue = NotificationBridgeTimeText.headerDate(now)
+        let words = NotificationHeroWords.make(
+            segment: segment, needs: (sections.now == nil ? 0 : 1) + sections.upNext.count,
+            informational: sections.later.count, unread: center.unreadCount, snoozed: snoozed.count,
+            dateText: NotificationBridgeTimeText.headerDate(now))
+        heroWords = words
+        header.set(kicker: words.kicker, title: words.title, subtitle: words.subtitle)
+        ring.isHidden = words.ringText == nil
+        if let text = words.ringText {
+            ring.configure(fraction: words.ringFraction, text: text)
+            ring.setSpokenLabel(words.ringSpoken)
+        }
         updateSegment(inbox: inbox.count, snoozed: snoozed.count)
         markAllReadButton.isHidden = segment != .inbox || inbox.isEmpty
         markAllReadButton.isEnabled = center.unreadCount > 0
@@ -504,15 +543,17 @@ final class NotificationBridgePanelViewController: NSViewController {
         switch segment {
         case .inbox:
             if inbox.isEmpty {
-                addEmptyState(title: "You\u{2019}re all caught up", body: "Nothing needs you right now.",
+                // The head already says "All caught up"; the card says what
+                // happens next rather than repeating it.
+                addEmptyState(title: "Nothing waiting", body: "New notifications land here as they arrive.",
                               symbol: "checkmark", tint: .good)
             }
             let compact = inbox.count > NotificationBridgeMetrics.compactThreshold
             for entry in inbox { addCard(entry, compact: compact, center: center, now: now) }
         case .snoozed:
             if snoozed.isEmpty {
-                addEmptyState(title: "Nothing snoozed",
-                              body: "A snoozed notification comes back here on its own.",
+                addEmptyState(title: "No snoozes yet",
+                              body: "Snooze anything in your inbox to put it away until later.",
                               symbol: "moon.zzz", tint: .info)
             }
             for item in snoozed {
@@ -536,28 +577,31 @@ final class NotificationBridgePanelViewController: NSViewController {
     }
 
     private func updateSegment(inbox: Int, snoozed: Int) {
-        let titles = [inbox > 0 ? "Inbox \(inbox)" : "Inbox", snoozed > 0 ? "Snoozed \(snoozed)" : "Snoozed"]
-        guard titles != segmentTitles || segmentTabs == nil else {
-            segmentTabs?.select(segment.rawValue)
-            return
-        }
-        segmentTitles = titles
-        segmentTabs?.removeFromSuperview()
-        let tabs = HelmSegmentedTabs(items: [.init(id: NotificationBridgeSegment.inbox.rawValue, title: titles[0]),
-                                             .init(id: NotificationBridgeSegment.snoozed.rawValue, title: titles[1])],
-                                     selected: segment.rawValue, size: .compact)
-        tabs.onSelect = { [weak self] id in
-            self?.switchSegment(to: NotificationBridgeSegment(rawValue: id) ?? .inbox)
-        }
-        segmentHost.addSubview(tabs)
-        NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: segmentHost.topAnchor),
-            tabs.leadingAnchor.constraint(equalTo: segmentHost.leadingAnchor),
-            tabs.trailingAnchor.constraint(equalTo: segmentHost.trailingAnchor),
-            tabs.bottomAnchor.constraint(equalTo: segmentHost.bottomAnchor),
-        ])
-        tabs.applyTheme(theme)
-        segmentTabs = tabs
+        segmentTitles = [inbox > 0 ? "Inbox \(inbox)" : "Inbox", snoozed > 0 ? "Snoozed \(snoozed)" : "Snoozed"]
+        inboxPill.title = segmentTitles[0]
+        snoozedPill.title = segmentTitles[1]
+        // The pills are buttons, so the chosen one says so in its label.
+        inboxPill.accessibilityLabelOverride = (inbox > 0 ? "Inbox, \(inbox) waiting" : "Inbox, empty")
+            + (segment == .inbox ? ", selected" : "")
+        snoozedPill.accessibilityLabelOverride = (snoozed > 0 ? "Snoozed, \(snoozed)" : "Snoozed, empty")
+            + (segment == .snoozed ? ", selected" : "")
+        paintHeroControls()
+    }
+
+    /// The pills and the ring take the head's ink, read after its theme pass.
+    /// The chosen list is solid ink with the head's deep stop as its words.
+    private func paintHeroControls() {
+        let ink = header.ink
+        let deep = header.deepStop
+        inboxPill.heroInk = ink
+        snoozedPill.heroInk = ink
+        inboxPill.heroSelection = segment == .inbox ? deep : nil
+        snoozedPill.heroSelection = segment == .snoozed ? deep : nil
+        markAllReadButton.heroInk = ink
+        ring.trackColorOverride = ink.withAlphaComponent(NotificationBridgeMetrics.ringTrackAlpha)
+        ring.valueColorOverride = ink
+        ring.labelColorOverride = ink
+        ring.applyTheme(theme, hue: .blue)
     }
 
     private func addEmptyState(title: String, body: String, symbol: String, tint: HelmTint) {
@@ -847,7 +891,7 @@ final class NotificationBridgePanelViewController: NSViewController {
         }
         // The label's width from the buttons beside it, never from its own
         // frame (gotcha (22)).
-        let buttons = [markAllReadButton, undoButton, openHomeButton].filter { !$0.isHidden }
+        let buttons = [undoButton, openHomeButton].filter { !$0.isHidden }
         let taken = buttons.reduce(CGFloat(0)) { $0 + ceil($1.fittingSize.width) + HelmMetrics.s2 }
         footerLabel.preferredMaxLayoutWidth = max(60, Self.width - 2 * NotificationBridgeMetrics.sideInset - taken)
         footerLabel.textColor = toastMessage != nil
@@ -916,18 +960,13 @@ final class NotificationBridgePanelViewController: NSViewController {
         self.theme = theme
         guard isViewLoaded else { return }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let muted = HelmTheme.mutedInk(theme)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         // The cards float on the side-panel step of the ground, which is
         // bisected to clear `sidePanelSeparation` from the card in every
         // palette - the ground itself equals the card in several.
         scroll.backgroundColor = HelmTheme.sidePanelFill(theme)
-        titleLabel.font = .systemFont(ofSize: HelmType.scaled(17), weight: .bold)
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        dateLabel.font = HelmType.caption()
-        dateLabel.textColor = muted
-        segmentTabs?.applyTheme(theme)
-        headerSeparator.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
+        header.applyTheme(theme)
+        paintHeroControls()
         footerSeparator.layer?.backgroundColor = line.withAlphaComponent(0.6).cgColor
         footerLabel.font = HelmType.caption()
         for view in listStack.arrangedSubviews {
@@ -947,12 +986,25 @@ final class NotificationBridgePanelViewController: NSViewController {
     var debugMutedNote: String? {
         listStack.arrangedSubviews.compactMap { $0 as? NotificationMutedNote }.first?.text
     }
-    var debugHeaderTitle: String { titleLabel.stringValue }
+    var debugHeaderTitle: String { header.titleLabel.stringValue }
+    var debugHeaderSubtitle: String { header.subtitleLabel.stringValue }
+    /// The kicker as drawn, in capitals.
+    var debugHeaderKicker: String { header.kickerLabel.stringValue }
+    var debugHeader: PopoverHeroHeader { header }
+    var debugRing: HelmRingGauge { ring }
     var debugSegmentTitles: [String] { segmentTitles }
-    var debugSegmentTabs: HelmSegmentedTabs? { segmentTabs }
+    var debugSegmentPills: [HelmButton] { [inboxPill, snoozedPill] }
+    /// The head's visible controls, in drawn order.
+    var debugHeroButtons: [HelmButton] {
+        [inboxPill, snoozedPill, markAllReadButton].filter { !$0.isHidden }
+    }
+    /// Through the pill's own target/action, the path a real click takes.
+    func debugClickSegmentPill(_ segment: NotificationBridgeSegment) {
+        (segment == .inbox ? inboxPill : snoozedPill).performClick(nil)
+    }
     var debugFooterText: String { footerLabel.stringValue }
     var debugFooterButtons: [HelmButton] {
-        [markAllReadButton, undoButton, openHomeButton].filter { !$0.isHidden }
+        [undoButton, openHomeButton].filter { !$0.isHidden }
     }
     var debugMarkAllReadEnabled: Bool { markAllReadButton.isEnabled }
     var debugEmptyState: NotificationBridgeEmptyView? { emptyState }

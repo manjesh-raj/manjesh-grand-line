@@ -1040,7 +1040,9 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             message = "Re-checked setup - \(satisfied) of \(total) steps satisfied"
         }
         if let container = view.window?.contentView {
-            Toast.show(in: container, message: message)
+            // TO-1: a step that could not be checked is a warning. Steps not
+            // yet satisfied are the page's news, not the re-check failing.
+            Toast.show(in: container, message: message, kind: unknown > 0 ? .warning : .done)
         }
     }
 

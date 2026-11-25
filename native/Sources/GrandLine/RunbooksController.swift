@@ -474,7 +474,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         let title = runbookTitleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = runbookBodyTextView.string
         guard !title.isEmpty else {
-            if let container = view.window?.contentView { Toast.show(in: container, message: "A runbook needs a title") }
+            if let container = view.window?.contentView { Toast.show(in: container, message: "A runbook needs a title", kind: .warning) }
             return
         }
         // Keep the stored markdown's own leading "# Title" in sync with the

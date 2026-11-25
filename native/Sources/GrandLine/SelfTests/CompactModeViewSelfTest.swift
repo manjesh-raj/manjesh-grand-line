@@ -31,6 +31,13 @@
 //     reviewed mockup's four tabs - and a future "simplification" into
 //     lookalike panes would pass every other check in both suites.
 //
+// MB-1's hero head (Helm 10.4.0) adds the `checkTheHead...` cases: the head's
+// words per tab and the Today ring, the tabs in the hero's ink with ← → and
+// their radio roles, the Today pane without its own header (the Tasks item
+// keeps it, `TasksMenuBarSelfTest`), the head's contrast on every palette,
+// the lock state, and no width floor (gotcha (13)). The last check of the
+// run asserts that no window this process opened is on a display.
+//
 // Hermeticity: the suite changes the theme, so it saves and restores
 // `ThemeManager.shared.theme` (AGENTS.md's most-repeated operational lesson,
 // and `Phase3PolishSelfTest.checkSuitesRestoreTheTheme` fails the run without
@@ -141,6 +148,12 @@ enum CompactModeViewSelfTest {
         checkTheLockRefusesThePopover(check)
         checkLockedShowsAnUnlockFormInsteadOfTabs(check)
         checkIconClickedShowsTheLockFormRatherThanRefusing(check)
+        checkTheHeadFollowsTheTab(check)
+        checkTheHeadTabsKeepTheirKeysAndRoles(check)
+        checkTheTodayPaneLeavesItsHeaderToTheHead(check)
+        checkTheHeadClearsTheFloorOnEveryPalette(check)
+        checkTheHeadHoldsNoWidthFloor(check)
+        checkNothingThisSuiteOpenedIsOnADisplay(check)
 
         print(ok ? "CompactModeViewSelfTest: OK" : "CompactModeViewSelfTest: FAILURES")
         return ok
@@ -164,6 +177,7 @@ enum CompactModeViewSelfTest {
             controller.todayProvider = { todayFixture }
             controller.bridgeProvider = { bridgeFixture }
             controller.notesProvider = { notesFixture }
+            controller.noteCountProvider = { notesFixture.count }
             controller.vaultCodesProvider = { [] }
             controller.vaultUnlockedProvider = { false }
             controller.captureFiler = filer
@@ -216,12 +230,20 @@ enum CompactModeViewSelfTest {
             check(abs(controller.view.frame.width - CompactModePopoverController.width) < 0.5,
                   "the popover lays out at the reviewed mockup's 330pt - got "
                       + "\(controller.view.frame.width)")
-            let labels = allSubviews(of: controller.view).compactMap { $0 as? NSTextField }
-                .map { $0.stringValue }
-            check(labels.contains("Grand Line"),
-                  "the header names the app, which in compact mode is all the branding there is")
-            check(labels.contains("compact mode"),
-                  "and says which mode this is - the mockup's own caption")
+            // MB-1: the plain "Grand Line · compact mode" title is the hero
+            // head now, and it leads with the day rather than the app's name.
+            let head = controller.debugHead
+            check(head.titleLabel.stringValue == "2 of 6 done today"
+                      && head.subtitleLabel.stringValue == "4-day streak \u{00B7} 1 overdue",
+                  "the head opens on the day's progress and the streak - got "
+                      + "\(head.titleLabel.stringValue) / \(head.subtitleLabel.stringValue)")
+            check(controller.debugTabs.isDescendant(of: head),
+                  "the tab strip is in the hero head, not under it")
+            let headFrame = head.convert(head.bounds, to: controller.view)
+            check(abs(headFrame.maxY - controller.view.bounds.maxY) < 0.5 && abs(headFrame.minX) < 0.5
+                      && abs(headFrame.width - CompactModePopoverController.width) < 0.5,
+                  "and the head runs edge to edge from the popover's top - got \(headFrame) in "
+                      + "\(controller.view.bounds)")
             check(controller.debugSelectedTab == .today,
                   "Today is the tab the popover opens on")
             let titles = allSubviews(of: controller.debugTabs).compactMap { $0 as? NSTextField }
@@ -256,6 +278,12 @@ enum CompactModeViewSelfTest {
             check(controller.debugOpenWindowButton.title == "Open full window",
                   "the footer's way out of the mode is a real button - got "
                       + "\(controller.debugOpenWindowButton.title)")
+            // The key hint is its keys and its caption, not the row's slack:
+            // without its own hug, "toggle" sat about 70pt from the keys.
+            let hint = controller.debugHotkeyHint
+            check(hint.frame.width > 1 && hint.frame.width <= hint.fittingSize.width + 1,
+                  "the ⌃⌥G hint is as wide as what it says - got \(hint.frame.width) for "
+                      + "\(hint.fittingSize.width)")
         }
     }
 
@@ -327,8 +355,8 @@ enum CompactModeViewSelfTest {
                       + "state - the countdown rings, the copy flash and this copy are that "
                       + "file's, not a reimplementation. Visible labels: \(vaultLabels)")
             check(!vaultLabels.contains("Poneglyph"),
-                  "the embedded vault pane hides its own header - the popover already says "
-                      + "\"Grand Line\", and two titles is the thing merging these was meant to "
+                  "the embedded vault pane hides its own header - the popover's head already says "
+                      + "what the tab is, and two titles is the thing merging these was meant to "
                       + "avoid. Visible labels: \(vaultLabels)")
             check(abs(controller.vaultPane.view.frame.width - CompactModePopoverController.width) < 0.5,
                   "the embedded pane lays out at the popover's width rather than its own 300 - a "
@@ -582,14 +610,13 @@ enum CompactModeViewSelfTest {
                 check(pane.debugChipTexts == ["17:24 focus", "2 follow-ups"],
                       "\(theme.name): both chips render what they were handed - got "
                           + "\(pane.debugChipTexts)")
-                let header = pane.debugBridge.header
-                check(header.debugProgressText == "2/6" && header.debugStreakText == "4",
-                      "\(theme.name): the header shows done today and the streak - got "
-                          + "\(header.debugProgressText ?? "nil") and \(header.debugStreakText ?? "nil")")
-                let chips = pane.debugBridge.debugChips + header.debugChips
-                    + [pane.debugBridge.debugNowCard.debugPill]
-                check(chips.count == 5,
-                      "\(theme.name): two chips under the list, two in the header and the pill - got "
+                // MB-1: done today and the streak are the head's words here,
+                // and the pane's own header (with its two chips) is not drawn.
+                check(!pane.debugBridge.debugShowsHeader,
+                      "\(theme.name): the Today pane draws no header of its own under the hero head")
+                let chips = pane.debugBridge.debugChips + [pane.debugBridge.debugNowCard.debugPill]
+                check(chips.count == 3,
+                      "\(theme.name): two chips under the list and the Now card's pill - got "
                           + "\(chips.count)")
                 for chip in chips {
                     let ratio = HelmContrast.ratio(HelmContrast.components(chip.debugTextColor),
@@ -1133,6 +1160,29 @@ enum CompactModeViewSelfTest {
                   "prepareToShowLocked() must read no data provider at all - a captain's tasks or "
                       + "notes must never be touched before the password check below succeeds, got "
                       + "\(providerCalls) provider calls")
+            // MB-1: the head says it is locked, under a padlock, with no tabs,
+            // no ring and no gear, and closes up under its words.
+            let head = controller.debugHead
+            check(controller.heroWords == .locked && head.debugSymbol == CompactHeroWords.lockedSymbol,
+                  "locked, the head is the lock's words under a padlock - got "
+                      + "\(head.titleLabel.stringValue), \(head.debugSymbol)")
+            check(controller.debugRing.isHidden && controller.debugSettingsButton.isHidden,
+                  "and shows neither the Today ring nor the settings gear")
+            let headHeight = head.frame.height
+            let tabsBottom = controller.debugTabs.frame.height
+            check(tabsBottom > 1 && headHeight < 100,
+                  "and the head closes up under its words rather than keeping the tabs' room - "
+                      + "got a \(headHeight)pt head")
+            let column = controller.debugLockPane.debugColumn
+            let pane = controller.debugLockPane.bounds
+            check(column.frame.width > 1 && column.frame.width <= CompactLockPane.columnWidth + 0.5
+                      && abs(column.frame.midX - pane.midX) < 1,
+                  "and the form is a centred column at most \(CompactLockPane.columnWidth)pt wide - got "
+                      + "\(column.frame) in \(pane)")
+            let paneLabels = allSubviews(of: controller.debugLockPane).compactMap { $0 as? NSTextField }
+                .filter { !$0.isHiddenOrHasHiddenAncestor }.map { $0.stringValue }
+            check(!paneLabels.contains("Grand Line is locked"),
+                  "and the lock pane does not say it a second time - got \(paneLabels)")
 
             var attempts: [String] = []
             var lastCompletion: ((Bool) -> Void)?
@@ -1147,6 +1197,12 @@ enum CompactModeViewSelfTest {
             lastCompletion?(false)
             check(controller.debugLockPane.debugErrorLabelText != nil,
                   "a rejected password must say so, mirroring the real lock screen's own error label")
+            controller.view.layoutSubtreeIfNeeded()
+            let errorFrame = controller.debugLockPane.debugErrorLabel.frame
+            let lockColumn = controller.debugLockPane.debugColumn.bounds
+            check(errorFrame.width > 1 && errorFrame.width <= lockColumn.width + 0.5
+                      && abs(errorFrame.midX - lockColumn.midX) < 1,
+                  "and says it centred inside the lock form - got \(errorFrame) in \(lockColumn)")
             check(controller.debugIsLocked,
                   "a rejected password must not leave the locked content - got debugIsLocked == false")
 
@@ -1163,6 +1219,11 @@ enum CompactModeViewSelfTest {
                   "...with the lock pane itself now hidden")
             check(!controller.debugTodayPane.isHidden,
                   "...showing the tab the popover was already on (Today) - not a second, blank open")
+            check(controller.debugHead.titleLabel.stringValue == "2 of 6 done today"
+                      && controller.debugHead.debugSymbol == CompactHeroWords.appSymbol
+                      && !controller.debugRing.isHidden,
+                  "...with the head back on Today's words, the sailboat and the ring - got "
+                      + "\(controller.debugHead.titleLabel.stringValue)")
         }
     }
 
@@ -1200,7 +1261,281 @@ enum CompactModeViewSelfTest {
         }
     }
 
+    // MARK: MB-1's hero head
+
+    /// Three codes for the Vault head, so "3 codes ready" is drawn over three
+    /// real rows rather than asserted over an empty vault.
+    private static let codesFixture = ["GitHub", "AWS root", "Okta"].map {
+        PoneglyphQuickCode(id: $0, title: $0, account: "captain", totp: VaultTOTP(secret: "JBSWY3DPEHPK3PXP"))
+    }
+
+    /// Lavender and Powder, the two registers the board draws.
+    private static func boardThemes() -> [HelmTheme] {
+        ["lavender", "powder"].compactMap { id in HelmTheme.appThemes.first { $0.id == id } }
+    }
+
+    /// The head's words follow the tab, read from the same values the pane
+    /// under it renders, and the ring is Today's alone.
+    private static func checkTheHeadFollowsTheTab(_ check: (Bool, String) -> Void) {
+        let themes = boardThemes()
+        check(themes.count == 2, "both board themes exist - got \(themes.map { $0.id })")
+        for theme in themes {
+            mounted(theme: theme) { controller, _ in
+                controller.vaultCodesProvider = { codesFixture }
+                controller.vaultUnlockedProvider = { true }
+                let head = controller.debugHead
+                let expected: [CompactModeTab: CompactHeroWords] = [
+                    .today: .today(bridgeFixture, overdue: todayFixture.overdueCount),
+                    .notes: .notes(onBoard: notesFixture.count, shown: notesFixture.count),
+                    .vault: .vault(codes: codesFixture.count, unlocked: true),
+                    .crew: .crew,
+                ]
+                for tab in CompactModeTab.allCases {
+                    controller.debugTabs.debugClickTab(id: tab.rawValue)
+                    controller.view.layoutSubtreeIfNeeded()
+                    guard let want = expected[tab] else { continue }
+                    check(controller.heroWords == want,
+                          "\(theme.id) \(tab.title): the head says \(want.headline) - got "
+                              + "\(controller.heroWords?.headline ?? "nil")")
+                    check(head.titleLabel.stringValue == want.headline
+                              && head.subtitleLabel.stringValue == want.detail
+                              && head.kickerLabel.stringValue == want.kicker.uppercased(),
+                          "\(theme.id) \(tab.title): and paints those words - got "
+                              + "\(head.kickerLabel.stringValue) / \(head.titleLabel.stringValue) / "
+                              + "\(head.subtitleLabel.stringValue)")
+                    check((head.accessibilityLabel() ?? "") == want.spoken,
+                          "\(theme.id) \(tab.title): VoiceOver reads the three lines in their own case - got "
+                              + "\(head.accessibilityLabel() ?? "nil")")
+                    check(controller.debugRing.isHidden == (tab != .today),
+                          "\(theme.id) \(tab.title): the ring shows on Today alone")
+                    check(head.debugSymbol == CompactHeroWords.appSymbol && !controller.debugSettingsButton.isHidden,
+                          "\(theme.id) \(tab.title): the sailboat and the gear stay on every tab")
+                }
+                check(expected[.vault]?.headline == "3 codes ready"
+                          && expected[.notes]?.headline == "2 notes on the board",
+                      "\(theme.id): the fixtures really carry counts, so the words above are not empty states")
+                controller.debugTabs.debugClickTab(id: CompactModeTab.today.rawValue)
+                controller.view.layoutSubtreeIfNeeded()
+                check(controller.debugRing.debugLabel == "2/6",
+                      "\(theme.id): the Today ring's centre is done over total - got \(controller.debugRing.debugLabel)")
+                let ink = head.ink
+                let arc = controller.debugRing.debugArcColor.flatMap { NSColor(cgColor: $0) }
+                let centre = ringLabel(controller.debugRing)?.textColor
+                for (name, color) in [("arc", arc), ("centre", centre)] {
+                    let got = color.map { HelmContrast.components($0) } ?? (0, 0, 0)
+                    check(componentsMatch(got, HelmContrast.components(ink)),
+                          "\(theme.id): the ring's \(name) is painted in the head's ink - got \(got)")
+                }
+                check(controller.debugSettingsButton.heroInk == ink,
+                      "\(theme.id): the gear is a ghost pill in the head's ink")
+                // The vault pane ticks its codes while it has some to show.
+                controller.popoverDidClose()
+            }
+        }
+    }
+
+    /// The tab strip in the head is the same control in the hero's ink: the
+    /// chosen one solid ink, ← → through the pill's own key path move the
+    /// tab and the head's words, and the radio roles and values are as before.
+    private static func checkTheHeadTabsKeepTheirKeysAndRoles(_ check: (Bool, String) -> Void) {
+        let savedOverride = HelmFocusVisibility.overrideForTests
+        defer { HelmFocusVisibility.overrideForTests = savedOverride }
+        for theme in boardThemes() {
+            mounted(theme: theme) { controller, window in
+                let tabs = controller.debugTabs
+                let head = controller.debugHead
+                check(tabs.heroInk == head.ink && tabs.heroSelection == head.deepStop,
+                      "\(theme.id): the strip takes the head's ink and its deep stop for the chosen words")
+                let g = tabs.debugGeometry()
+                if let words = g.activeInk {
+                    let r = HelmContrast.ratio(words, head.ink)
+                    check(r >= HelmContrast.textTarget - 0.01,
+                          "\(theme.id): Today's words clear the floor on the solid ink - got " + String(format: "%.2f", r))
+                }
+                let pills = tabs.debugPillsForAccessibilityTests()
+                check(pills.count == 4 && pills.allSatisfy { $0.accessibilityRole() == .radioButton },
+                      "\(theme.id): four radio buttons, as before")
+                check(pills.map { ($0.accessibilityValue() as? String) ?? "" }
+                          == ["selected", "not selected", "not selected", "not selected"],
+                      "\(theme.id): and Today is the selected one")
+
+                HelmFocusVisibility.overrideForTests = true
+                window.makeFirstResponder(pills[0])
+                func arrow(_ code: UInt16, on pill: HoverHighlightView) {
+                    guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                       timestamp: 0, windowNumber: window.windowNumber,
+                                                       context: nil, characters: "",
+                                                       charactersIgnoringModifiers: "", isARepeat: false,
+                                                       keyCode: code) else { return }
+                    pill.keyDown(with: event)
+                }
+                arrow(124, on: pills[0])
+                controller.view.layoutSubtreeIfNeeded()
+                check(controller.debugSelectedTab == .notes && window.firstResponder === pills[1],
+                      "\(theme.id): → from Today moves the tab and focus to Notes - got \(controller.debugSelectedTab)")
+                check(head.titleLabel.stringValue == "2 notes on the board",
+                      "\(theme.id): and the head follows it - got \(head.titleLabel.stringValue)")
+                let ring = tabs.debugHeroRing
+                check(ring.isShowing && !ring.systemRingIsOn,
+                      "\(theme.id): a keyed focus draws the ink ring, not the accent one")
+                arrow(123, on: pills[1])
+                controller.view.layoutSubtreeIfNeeded()
+                check(controller.debugSelectedTab == .today && window.firstResponder === pills[0],
+                      "\(theme.id): ← goes back to Today - got \(controller.debugSelectedTab)")
+                arrow(123, on: pills[0])
+                check(controller.debugSelectedTab == .today,
+                      "\(theme.id): ← on the first tab stays there, as it always has")
+                check(pills.map { ($0.accessibilityValue() as? String) ?? "" }
+                          == ["selected", "not selected", "not selected", "not selected"],
+                      "\(theme.id): the values follow the selection")
+                check(OffScreenProbe.isInvisible(window),
+                      "\(theme.id): the popover's window is off every display while focus moves in it")
+                window.makeFirstResponder(nil)
+            }
+        }
+    }
+
+    /// The Today pane leaves its header to the head in this host. The Tasks
+    /// item's own pane keeps it (the default), asserted against the real
+    /// `ShiftMenuBarController` in `TasksMenuBarSelfTest`.
+    private static func checkTheTodayPaneLeavesItsHeaderToTheHead(_ check: (Bool, String) -> Void) {
+        mounted { controller, _ in
+            let bridge = controller.debugTodayPane.debugBridge
+            check(!bridge.debugShowsHeader && bridge.header.superview == nil,
+                  "the compact popover's Today pane draws no header of its own")
+            check(bridge.header.debugProgressText == "2/6",
+                  "the header is still configured, so it reads the same wherever it is drawn - got "
+                      + "\(bridge.header.debugProgressText ?? "nil")")
+            let visible = allSubviews(of: controller.debugTodayPane).compactMap { $0 as? NSTextField }
+                .filter { !$0.isHiddenOrHasHiddenAncestor }.map { $0.stringValue }
+            check(!visible.contains("Today") && !visible.contains(bridgeFixture.dateText),
+                  "and nothing in the pane says Today or the date a second time - got \(visible)")
+            let other = TasksBridgePane(showsPin: true)
+            check(other.debugShowsHeader,
+                  "a pane built the way the Tasks menu-bar item builds it keeps its header")
+            let first = controller.debugTodayPane.debugBridge.debugNowCard.convert(
+                controller.debugTodayPane.debugBridge.debugNowCard.bounds, to: controller.view)
+            let headBottom = controller.debugHead.convert(controller.debugHead.bounds, to: controller.view).minY
+            check(headBottom - first.maxY >= 0 && headBottom - first.maxY < 16,
+                  "the Now card starts just under the head, where the header used to sit - got a "
+                      + "\(headBottom - first.maxY)pt gap")
+        }
+    }
+
+    /// Everything the head paints, on every chrome palette: the kicker, the
+    /// headline and the second line on the lighter stop, the ring's centre,
+    /// the chosen tab's words on the ink and the others on their shade.
+    private static func checkTheHeadClearsTheFloorOnEveryPalette(_ check: (Bool, String) -> Void) {
+        let palettes = HelmContrastSelfTest.everyChromePalette
+        var worst = (ratio: Double.greatestFiniteMagnitude, label: "")
+        var failures: [String] = []
+        mounted { controller, _ in
+            let head = controller.debugHead
+            for theme in palettes {
+                controller.applyTheme(theme)
+                guard let palette = head.palette else { failures.append("\(theme.id): no palette"); continue }
+                let ground = palette.lighterStop
+                func score(_ name: String, _ color: NSColor?, over backdrop: (Double, Double, Double)) {
+                    guard let color else { failures.append("\(theme.id) \(name): no colour"); return }
+                    let painted = HelmContrast.mix(HelmContrast.components(color), backdrop, Double(color.alphaComponent))
+                    let r = HelmContrast.ratio(painted, backdrop)
+                    if r < worst.ratio { worst = (r, "\(theme.id) \(name)") }
+                    if r < HelmContrast.textTarget - 0.01 {
+                        failures.append("\(theme.id) \(name) " + String(format: "%.2f", r))
+                    }
+                }
+                let kickerColor = head.kickerLabel.attributedStringValue.length > 0
+                    ? head.kickerLabel.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+                    : nil
+                score("kicker", kickerColor, over: ground)
+                score("headline", head.titleLabel.textColor, over: ground)
+                score("second line", head.subtitleLabel.textColor, over: ground)
+                score("ring", ringLabel(controller.debugRing)?.textColor, over: ground)
+                let tabs = controller.debugTabs
+                let g = tabs.debugGeometry()
+                if let fill = g.activeFill { score("chosen tab", g.activeInk, over: HelmContrast.components(fill)) }
+                let fills = tabs.debugPillFills
+                let words = tabs.debugPillLabelColors
+                for index in 1..<fills.count {
+                    let shade = HelmContrast.mix(HelmContrast.components(fills[index]), ground,
+                                                 Double(fills[index].alphaComponent))
+                    score("tab \(index)", words[index], over: shade)
+                }
+            }
+        }
+        check(failures.isEmpty, "every word on the head clears 4.5:1 on every palette - under it: \(failures)")
+        check(worst.ratio < 100, "the sweep measured something - worst " + String(format: "%.2f", worst.ratio)
+                  + " (\(worst.label)) over \(palettes.count) palettes")
+        print("  MB-1 head contrast over \(palettes.count) palettes: weakest " + String(format: "%.2f", worst.ratio)
+                  + ":1 (\(worst.label))")
+    }
+
+    /// Gotcha (13): nothing in the head holds a width between 500 and
+    /// required, and a headline far wider than the popover truncates inside
+    /// it rather than pushing it out.
+    private static func checkTheHeadHoldsNoWidthFloor(_ check: (Bool, String) -> Void) {
+        let long = TasksBridgeDigest(
+            dateText: "Wednesday the thirtieth of September in a locale that spells every word out",
+            progress: .init(done: 12_345, total: 67_890), streakDays: 1_234, now: nil,
+            nothingDueCaption: TasksBridge.nothingScheduledCaption, upNext: [], backlog: [],
+            focusChip: nil, followUpChip: nil)
+        mounted { controller, window in
+            let before = window.frame.width
+            controller.bridgeProvider = { long }
+            controller.debugRenderPane()
+            controller.view.layoutSubtreeIfNeeded()
+            let head = controller.debugHead
+            check(head.titleLabel.intrinsicContentSize.width + head.kickerLabel.intrinsicContentSize.width
+                      > CompactModePopoverController.width,
+                  "the long fixture really is wider than the popover, or this proves nothing")
+            var offenders: [String] = []
+            func scan(_ view: NSView) {
+                for constraint in view.constraints where constraint.isActive
+                    && constraint.priority.rawValue >= 500 && constraint.priority < .required {
+                    switch constraint.firstAttribute {
+                    case .width, .leading, .trailing, .left, .right, .centerX:
+                        offenders.append("\(type(of: view)) \(constraint.priority.rawValue)")
+                    default: break
+                    }
+                }
+                view.subviews.forEach(scan)
+            }
+            scan(head)
+            check(offenders.isEmpty, "the head holds no width between 500 and required - got \(offenders)")
+            let floor = HelmSplitPage.floorWidth(of: head)
+            print("  MB-1 head floor width \(floor)pt in a \(CompactModePopoverController.width)pt popover")
+            check(floor > 0 && floor <= CompactModePopoverController.width,
+                  "the head's own floor fits the popover - got \(floor)pt")
+            check(abs(head.frame.width - CompactModePopoverController.width) < 0.5
+                      && abs(controller.view.frame.width - CompactModePopoverController.width) < 0.5
+                      && abs(window.frame.width - before) < 0.5,
+                  "and the head, the popover and the window keep their widths - got \(head.frame.width), "
+                      + "\(controller.view.frame.width), \(window.frame.width) (was \(before))")
+        }
+    }
+
+    /// No window this suite opened, the popover's included, is on a display.
+    /// The mounted windows are `OffScreenProbe` windows, and the real
+    /// `NSPopover` is prepared but never shown (`withController`'s cases).
+    ///
+    /// The menu bar's own status-item window is left out: the merged status
+    /// item is real in `withController`'s cases, as it always has been, and it
+    /// lives in the menu bar rather than over the captain's work.
+    private static func checkNothingThisSuiteOpenedIsOnADisplay(_ check: (Bool, String) -> Void) {
+        let shown = NSApplication.shared.windows.filter { window in
+            window.isVisible && !OffScreenProbe.isInvisible(window)
+                && !String(describing: type(of: window)).contains("StatusBar")
+        }
+        let described = shown.map { String(describing: type(of: $0)) + " " + NSStringFromRect($0.frame) }
+        check(shown.isEmpty, "no window of this suite is visible on a display - got \(described)")
+    }
+
     // MARK: Helpers
+
+    /// The ring's centre label as painted: the gauge's own text field.
+    private static func ringLabel(_ ring: HelmRingGauge) -> NSTextField? {
+        allSubviews(of: ring).compactMap { $0 as? NSTextField }.first
+    }
 
     private static func allSubviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap { allSubviews(of: $0) }

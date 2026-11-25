@@ -45,6 +45,10 @@ final class FleetLogStore {
     private let lock = NSLock()
     /// Loaded lazily on first read/append, oldest-first (file order).
     private var cache: [Line]?
+    /// The file is there and its bytes could not be read (no permission,
+    /// not UTF-8), so `cache` holds only what was appended since. Set by the
+    /// one disk read that fills the cache, and kept with it.
+    private var readFailed = false
 
     init(directory: URL) {
         fileURL = directory.appendingPathComponent("events.jsonl")
@@ -76,6 +80,21 @@ final class FleetLogStore {
         lock.lock()
         defer { lock.unlock() }
         return loadedLocked().compactMap { if case .event(let e) = $0 { return e } else { return nil } }.reversed()
+    }
+
+    /// `events()`, and whether the file could be read at all. GL-14: a log
+    /// file that is there and unreadable is not an empty log, so the Crew
+    /// band says it could not read it rather than "Nothing logged yet". A
+    /// missing file is an empty log (nothing has happened yet), and a line
+    /// that will not decode still costs only itself (`parseLines`).
+    func eventsChecked() -> (events: [FleetLogEvent], unreadable: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        let events = loadedLocked().compactMap { line -> FleetLogEvent? in
+            if case .event(let event) = line { return event }
+            return nil
+        }
+        return (events.reversed(), readFailed)
     }
 
     // MARK: Appending
@@ -155,7 +174,13 @@ final class FleetLogStore {
     }
 
     private func readFromDisk() -> [Line] {
-        guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
+        readFailed = false
+        guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            // GL-01: "missing" and "there but unreadable" are different
+            // states. Only the second is a failed read.
+            readFailed = FileManager.default.fileExists(atPath: fileURL.path)
+            return []
+        }
         return Self.parseLines(text)
     }
 

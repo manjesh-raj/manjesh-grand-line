@@ -776,12 +776,12 @@ material does. Such a root is a plain `NSView` with `wantsLayer` and a
 `HelmTheme`-derived `layer.backgroundColor`. Reserve real sidebar material for
 an actual split-view pane.
 
-The one legitimate `.behindWindow` case here is the inverse: `DictationHUD`'s
-borderless pill floating over *other apps*, where the desktop genuinely is what
-is behind it. Two non-obvious requirements there -
-`.followsWindowActiveState` leaves the material permanently inactive on a
-`.nonactivatingPanel` (it never becomes key), and the material needs
-`masksToBounds` or it draws square corners behind a rounded border.
+`DictationHUD`'s pill over *other apps* was the one legitimate `.behindWindow`
+case, and since DH-2 (Helm 10.4.0) it paints its own hero gradient instead, so
+its words no longer depend on what is behind it. If a surface ever needs the
+material again, two requirements are non-obvious: `.followsWindowActiveState`
+leaves it permanently inactive on a `.nonactivatingPanel` (it never becomes
+key), and it needs `masksToBounds` or it draws square corners behind a border.
 
 ### (9) A plain `NSView` document view is not flipped
 

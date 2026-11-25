@@ -663,3 +663,72 @@ The notification panel's own Bridge restyle was built in parallel on a separate 
   Confirmed by injection: an unwired Claim, a pin that does nothing and a locked pane that keeps its data each fail by name.
 
 Not verified: the popovers on a real menu bar, which needs a running app with a real status item. That live half is the captain's own check.
+
+## MB-1 Hero head popover (Helm 10.4.0, PR 631)
+
+The captain's menu-bar popover pick from the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, `hr-small.js`, stage `stage-menubar`).
+The popover used to open on a plain "Grand Line · compact mode" title over its tab strip.
+
+### What shipped
+
+- The head is a `PopoverHeroHeader` in the `.verdict` style on the quiet-ink palette (`HelmHeroColumn.quietInkAlpha`), as the notifications panel's N-1 head is.
+  It runs edge to edge from the popover's top, with a glass sailboat tile and no rule under it.
+- Its words follow the tab, from `CompactHeroWords` (Foundation only, asserted in `FM_RUN_COMPACT_MODE_TESTS`):
+  - Today: "Today · Tue 24 Nov", "2 of 6 done today", and "4-day streak · 1 overdue", with a 44pt ring of done today in the head's ink.
+  - Notes: "12 notes on the board" and "The newest 5 are below", or "Click one to open it on the board" when the board fits.
+  - Vault: "3 codes ready", or "Poneglyph is locked" whatever the vault holds, or "No 2FA codes yet".
+  - Crew: "Ask the crew" and "It knows your tasks, docs and health".
+- Every count comes from what the panes already render: the Today pane's own Bridge digest, the status menu's uncapped overdue count (`CompactTodayDigest.overdueCount`), and the vault pane's codes.
+- Notes needed one new read: the rows stop at five (`CompactModeDigest.maxRows`), so "N notes on the board" comes from `CompactModeDigest.noteCount` through a new `noteCountProvider`, wired in `AppComposition` to the same `StickyBoardStore`.
+- A count the popover was never handed reads as not loaded ("Tasks aren't loaded yet"), never as the empty state (GL-14).
+  An unknown overdue count is left out of the Today line rather than read as "Nothing overdue".
+- The tab strip moved into the head as the same `HelmSegmentedTabs`, now `heroInk` (Helm `HelmSegmentedTabs` 1.3.0): each segment is a shade capsule with an ink hairline, the chosen one solid ink with its words in the head's deep stop, and keyboard focus is an ink ring 3pt outside the pill.
+  ← →, the radio roles and values and the selection behaviour are unchanged.
+- The gear is a `HelmButton.heroInk` ghost pill in the head's trailing slot, beside the ring.
+- The Today pane leaves its own header out in this host only: `TasksBridgePane(showsPin:showsHeader:)`, defaulting to today's header, which the Tasks menu-bar item keeps.
+  The header is left out of the pane's column rather than hidden in it, because its title row is aligned on its first baseline and the column detaches hidden views, which is gotcha (23).
+- Locked, the head says "Grand Line is locked" and "Enter your password to unlock." under a padlock, with no tabs, ring or gear, and closes up under its words (`PopoverHeroHeader.setBodyHidden`).
+  The lock pane keeps the same password check, the field, Unlock and the error line, now as a centred column at most 240pt wide as the board draws it, and no longer repeats the title.
+- The capture line and the password are raised wells (the board's `.rfield`).
+- Found in the renders and fixed: the ⌃⌥G hint had no hug of its own, so the footer's slack landed inside it and its own stack set "toggle" about 70pt from the keys.
+  It now hugs at `HelmDaylightPriority.columnHug`.
+- `PopoverHeroHeader` (not a kit file) gained `titleSize`, `setSymbol(_:)` and `setBodyHidden(_:)`, all off by default, so Compose, Claude usage, SRE Lead and the notifications head draw as before.
+
+### Where the design did not hold as drawn
+
+- The headline is 15pt heavy, the board's size, rather than the `.verdict` style's 21pt.
+  Beside the 44pt ring and the gear the Today words have 168pt, and in the rounded heavy face at 21pt "2 of 6 done today" measures 177pt and "12 of 14 done today" 199pt, so both truncated.
+  At 15pt they measure 130pt and 146pt.
+- The kicker, the second line and the ring's label take the kit's sizes (11pt, 12pt), not the board's 10px and 11.5px.
+- The segments are the kit's compact size (11.5pt, about 24pt tall) where the board draws 12px 600 at 26px.
+- The second line on Today says "overdue" (the status item's own count, by day) where the board says "late".
+  The Now card still says how late in minutes.
+- The Vault line says "Copy one from its row" rather than the board's "Click a code to copy it", because a code is copied by its row's button, not by clicking the row.
+- The gear is the kit's `heroInk` ghost pill (a shade with an ink hairline), as the Claude usage popover's refresh is, where the board draws a bare icon.
+- The Now card keeps its accent wash, where the board's MB-1 draws it on the plain card with a hairline: the card is shared with the Tasks menu-bar item, and the report asks only for the header to go.
+- Unlock keeps the kit's primary button, which on Powder is the gradient rather than the board's pale fill.
+- The board's popover has no app name once the head leads with the day, and neither does this one: "Grand Line" is now only the locked kicker.
+- The board's note says the arrow takes the head's top colour.
+  It does not: `NSPopover` draws its arrow from its own material, as the Compose and Claude usage popovers' arrows are, and painting it means reaching into the popover's private frame view, which no suite here can see because none shows a real popover.
+
+### Verification
+
+- `FM_RUN_COMPACT_MODE_TESTS` (CI's blocking lane) asserts `CompactHeroWords` on every tab and state against the real Bridge digest, that each unknown count reads differently from its empty state and shows no number, and that `noteCount` counts the whole board while the rows stop at five.
+- `FM_RUN_COMPACT_MODE_VIEW_TESTS` (window lane) mounts the real popover in an `OffScreenProbe` window, in Lavender and Powder:
+  - the head's painted words, its VoiceOver label and the ring on Today alone, per tab, through the real pill clicks.
+  - the ring's arc and centre and the gear in the head's ink.
+  - the strip in the head's ink, its chosen words on the ink, ← → through the pill's own `keyDown` moving the tab, focus, the ink ring and the head's words, and the radio roles and values.
+  - the Today pane with no header of its own and nothing saying Today or the date twice, and a pane built as the Tasks item builds it keeping its header.
+  - the locked head (padlock, no tabs, ring or gear, closed up), the centred lock form and no repeated title, and the head back on Today after the unlock.
+  - every word on the head at 4.5:1 or better on all 50 chrome palettes (weakest 4.92:1, the kicker on Tokyo Night Light).
+  - no width held between 500 and required in the head, its floor 265pt in the 330pt popover, and a headline far wider than the popover truncating inside it.
+  - the ⌃⌥G hint as wide as its keys and caption, and the lock form's error line centred in the form.
+  - no window of the suite visible on a display, the menu bar's status-item window aside.
+- `FM_RUN_TASKS_MENU_BAR_TESTS` asserts the Tasks menu-bar item's pane still draws its header.
+- `FM_RUN_CONTRAST_TESTS` asserts `HelmSegmentedTabs.heroInk` on every chrome palette and its focus ring in a real window.
+- Each check was confirmed against an injected regression, thirteen for MB-1 and five for the kit option.
+  An unknown overdue count read as zero, unknown notes read as an empty board, a note count capped like the rows, the Today pane keeping its header, the tabs left off the hero ink, a locked head keeping its tabs, a 750 width floor on the head, the ring's arc off the ink, the Crew head showing another tab's words, the Tasks item losing its header, the key hint without its hug (173pt for 114.5pt of keys and caption), the lock form uncapped (306pt) and the lock form left-aligned each failed by name.
+- Pixel parity against the board in Lavender and Powder (Today, Notes, Vault, Crew, empty, vault locked and app locked): the gradient's start and the body's ground sample to the board's own values (`#3e6196` and `#ffffff` on Lavender, `#4d627b` and `#20233d` on Powder).
+  The renders found the key hint and the full-width lock form, both fixed above.
+
+Not verified: the popover on a real menu bar, which needs a running app with a real status item, a live VoiceOver pass (the head's label and the radio roles are asserted, not spoken), and the full window-backed lane.

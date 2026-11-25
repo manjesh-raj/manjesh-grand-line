@@ -1870,3 +1870,301 @@ The five-screen redesign board (`data/grandline-page-redesign-options/`) offered
 
 `FeelPassSelfTest` asserts the verdict's colours and a hero with and without a greeting, headless. `MainSplitShellNavigationSelfTest` asserts the greeting is the hero's title and is not drawn twice.
 Injecting an always-green verdict fails six of the colour cases.
+
+## The notifications panel's hero head (`fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain asked for the notifications panel in the app's hero style.
+A design scout drew four directions on a Lavish board (`data/grandline-notifications-hero-design-scout/`), one per hero family the app already had, and the captain picked N-1 Hero head.
+
+### What shipped
+
+- **The panel opens on the hero gradient.**
+  The head is a `PopoverHeroHeader` with a glass bell tile, the same view Compose, Claude usage and SRE Lead open on.
+  Its kicker keeps "Waiting for you" and the date, the headline is the verdict ("4 things need you", "1 update for you", "All caught up"), and the second line says how much is unread ("4 unread · 3 when you have a minute").
+  A 48pt `HelmRingGauge` of unread items sits in the trailing slot: its label is the unread count and its arc the unread share of what is waiting.
+- **The panel's own controls share one row.**
+  Inbox and Snoozed are `HelmButton.heroInk` pills, the shown list drawn `heroSelection`, with Mark all read beside them.
+  `HelmSegmentedTabs` left this panel, and Mark all read left the footer, which also eases the footer's crowding at the Larger text size.
+  Open Home stays in the footer.
+- **The words are pure.**
+  `NotificationHeroWords.make` takes the counts the panel already has (`NotificationBridgeSections`, the store's read state, the Snoozed list) and returns the kicker, the verdict, the second line and the ring.
+  `GrandLineNotificationCenterSelfTest` asserts every sentence in CI's blocking lane.
+- **Everything below the head is unchanged.**
+  The triage cards, their order, the snooze menu, Hide, Mute, read state, Undo, the keys and the VoiceOver actions are as they were.
+  The bell's badge still counts every item waiting, read or not (`badgeCount = entries.count`).
+- **The empty cards no longer repeat the head.**
+  With the verdict in the head, the inbox's empty card says "Nothing waiting" and the Snoozed one "No snoozes yet", each with what happens next.
+
+### Where the design did not hold as drawn
+
+- **The plain hero palette fails the head's second line.**
+  `PopoverHeroHeader` painted `HelmHeroSurface.palette(for:)`, and its subtitle is the ink at 86%.
+  Against the lighter stop that measured 3.78:1 on Daylight, 3.91:1 on Dusk, and 4.20:1 and 3.93:1 on Lavender and Powder (the scout's port of the rule).
+  The header gained a `quietInk` option that paints `palette(accent:quietInk:)`, as the hero columns do, and the panel passes `HelmHeroColumn.quietInkAlpha`.
+  Compose, Claude usage and SRE Lead pass nothing and still draw the plain palette, so their subtitles keep the gap. That is a follow-up.
+- **The header had no kicker.**
+  It gained a `.verdict` title style: a kicker over a 21pt rounded heavy headline, with the row top-aligned so the tile and the ring sit level with the kicker.
+- **The board drew Mark all read borderless.**
+  `heroInk` always draws the ghost pill's hairline, and the kit is canonical, so it ships bordered.
+
+### Verification
+
+- `NotificationBridgePanelSelfTest` asserts the head's words, the ring, the pills and their selection, that each pill sits inside the head (at 1.0x and 1.3x), that the headline is never cut at 1.3x, that Mark all read moved to the head with its Undo intact, the Snoozed and empty heads, and that the badge still counts read items.
+  A new sweep reads the painted gradient in every palette and checks it is the quiet-ink palette, with the headline, the 86% line and the chosen pill's words over the floor.
+- Confirmed to fail when injected: the panel on the plain palette (the sweep fails on Daylight, Dusk and every other palette below the floor), a wrong verdict rule (three pure checks), and a 462pt headline in a 256pt column at 1.3x.
+- An off-screen render of the real panel (one item, many, Snoozed and empty, in Lavender and Powder) was compared with the board's N-1. It was a scratch hook, removed before commit.
+
+## The Crew band on Needs you and In flight (CR-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain's Crew pick on the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, stage `stage-crew`): CR-1 Crew band.
+This is its first half: the band itself and the two tabs `FleetController` draws that have one, Needs you and In flight.
+Review and Log are the second half.
+Sidebar layout only: the floating bar's Fleet page builds no band and draws what it drew before.
+
+### What shipped
+
+- **One band per tab.**
+  Needs you and In flight each open on one `HelmHeroColumn` in its `.band` layout, the instance Health and DevOps Hub fall back to, mounted at the top of the page and reconfigured per tab from what the page already read.
+  It replaces the grey header line (`WorkspaceHeaderLineCollapsing`, as Tasks does), the answer banner, the boxed figures, the briefing card, and Needs you's summary line and boxed empty state.
+  The live subtitle is still the page's summary for the crew panel.
+- **In flight.**
+  The `FleetGreeting` verdict is the headline and its meta the second line, word for word, under the kicker "In flight · Tue, 24 Nov".
+  The watcher is a glass status pill at the top right, its dot the watcher's state lifted onto the gradient.
+  The Morning briefing is a line (its generated time and sources, with Regenerate and Dismiss until tomorrow as ghost icons) over Home's Br-3 sentence tiles, built by `HomeBriefingHero.tile`, and each tile still opens its page through this page's own deep links.
+  The six figures are an inline `HelmKPIStrip` in the hero ink under a hairline, and Ready to merge is still the one figure that is a button into Review.
+- **Needs you.**
+  "2 tasks are waiting on you" over "3 open decisions · 1 waiting on a decision · 1 blocked. The crew is holding for you.", with the three counts as figures.
+  The band is the empty state ("Nothing needs you") and the first read ("Reading the crew's state…" over two skeleton rows).
+  A failed read paints the dimmed tone, says "Couldn't read the crew's state at 11:24 AM" with the real time and when it last read, and keeps the carried rows.
+  The rows sit straight under the band without the "Needs your call" heading, and the rows and Reply are unchanged.
+- **The words are pure.**
+  `CrewHeroWords` takes the counts and times the page already holds and returns each tab's band, so `PageHeroColumnsSelfTest` asserts every state in CI's blocking lane.
+  Review and Log can add a function each returning the same `Band`.
+- **Kit.**
+  `HelmHeroColumn` 1.5.0 gives a band a status pill, views across it between the words and the foot (a `HelmHeroTileGrid` among them is painted with the hero card's tile recipe), and a foot rule.
+  `HelmHeroTile` and `HelmHeroTileGrid` 1.1.0 carry the dot's tint and the paint.
+  `HelmKPIStrip` 1.4.0 lets an `.inline` figure be a button.
+
+### Where the design did not hold as drawn
+
+- **In flight over a task list that could not be read.**
+  The board's failed state is a failed PR scan, which dims the band as drawn.
+  It does not model the crew's task list failing to read, and there `FleetGreeting.answer` saw an empty list and the old banner said "Nothing needs you right now".
+  The band says "Couldn't read the crew's state at …" in the dimmed tone instead, with Working as a dash (GL-14).
+  The In flight rows under it still say "All hands idle" over a failed read.
+  That is today's behaviour and is left for a follow-up.
+- **The kit's sizes, not the board's.**
+  The band's headline is the kit's 17pt (the board drew 20pt), the status pill is the hero card's 13pt pill, the briefing line is a `HelmHeroRow` (a title over its time, two lines, where the board drew one 11pt line), the tiles are Home's (200pt minimum, balanced rows, a dot before the label, where the board drew 170pt tiles with a glyph), and the ghost icons are bordered pills.
+- **The figures carry no signal dots.**
+  The board drew a dot beside Done today, the watcher, Need a decision and Blocked.
+  An inline strip on a hero draws every figure in the ink by design (the verdict carries the state), and the watcher's state is on its pill.
+- **The figures are equal columns with hairlines,** the inline strip's own look, packed at the band's leading edge.
+  Packing them showed a defect in every inline strip: a stack keeps its edge insets only at its hugging priority (250), under the strip's equal-column tie (251), so the widest caption gave up its trailing inset and ran into the hairline after it.
+  Each column's trailing inset now holds at the labels' own floor (252).
+- **The kicker's date is localised** ("Tue, 24 Nov" here, the board's "Tue 24 Nov").
+- **Nothing pulses.**
+  The board's working chip has a live dot that stops under Reduce Motion.
+  The native chip never had one, so there is nothing to stop.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless) asserts `CrewHeroWords` for both tabs in every state, the kit options, a real `FleetController` in the sidebar layout through its first read, a good read and a failed one with the rows carried, and the band's painted words, pill, tiles and figures on 50 palettes in both tones (weakest text 5.95:1).
+- `PageRedesignsSelfTest` (window lane) drives both tabs in a real off-screen sidebar shell: the words per state, the dimmed tone with carried rows, Open Setup, the briefing's tiles opening Review and GitHub Sync, Dismiss, Ready to merge opening Review and reading as a button, Reduce Motion, the header line given up on the band's tabs and kept on Log, the floating bar unchanged, and gotcha (13): no width held between 500 and required, and a 1100pt window keeps its width.
+- Confirmed to fail when injected: the failed read on the accent tone, Ready to merge not a button, the header line kept, the floating bar's banner hidden, tiles without actions, the inline inset fix removed, the PR failure on the accent tone, a 750 width floor on the band (the window grew from 1100pt to 1613pt), and the status pill on a white wash (3.85:1 on Daylight).
+- An off-screen render of the real page (both tabs, typical, failed, empty and not set up, in Lavender and Powder) was compared with the board's CR-1.
+  It was a scratch hook, removed before commit.
+- Not verified: the band in the captain's running app, a spoken VoiceOver pass, a live Reduce Motion toggle (the suites pin `HelmMotion.reducedOverrideForTests`), and the full window lane.
+
+## The Crew band on Review (CR-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The second half of CR-1 Crew band, for the Review tab (`ReviewController`).
+Log is still to come, and keeps its header line until it has its own band.
+Sidebar layout only: the floating bar's Review page builds no band and draws what it drew before.
+
+### What shipped
+
+- **The same band.**
+  Review opens on a `HelmHeroColumn` in `.band`, built the way Needs you and In flight build theirs.
+  The AppKit half they share moved out of `FleetController` into `CrewBand` (the figure strip and its leading-edge hug, the figure, pill and ring mapping, the tone, the band's clock), so the three tabs draw their bands one way.
+  It replaces the grey header line (`WorkspaceHeaderLineCollapsing`), the count line and the boxed three-figure strip.
+  The live subtitle is still the page's summary for the crew panel and the floating bar's drill header.
+- **The words.**
+  "2 pull requests are ready to merge" under "Review · 9 open · checked 11:24 AM", over "3 with checks running · 1 failing · across GitHub and Bitbucket."
+  A ring of ready over open sits at the band's top right ("2/9", captioned "ready"), and the figures are Open PRs, Ready to merge, Checks running and Checks failing.
+  Ready to merge is counted by `FleetDataSource.readyToMerge`, the one definition the rows, the bell and Home use.
+  The first scan says "Checking your projects…" over the skeleton, which loses its own loading sentence.
+- **The band is the empty state.**
+  A clean scan with nothing open reads "No open pull requests right now" with a check tile, and the two empty forge cards go, as the board draws it.
+- **A failed scan (GL-14).**
+  A scan that reached nothing paints the dimmed tone and says "Couldn’t read your projects at 11:24 AM" under "Review · last read 11:02 AM".
+  It draws no figure and no ring rather than a zero.
+  Show folder path moves from the failure block onto the band as a ghost pill, and reveals the path as a row on the gradient (a `HelmHeroRow` with a code subtitle, truncated in the middle).
+  A scan that missed some forges is dimmed too, keeps the pull requests it found with their counts and ring, and says they are only part of the picture.
+  The forge cards and their unavailable rows stay under it, as they did.
+- **Unchanged.**
+  The forge cards, their rows, the Review and Merge buttons, the merge gate and confirm, the keys, the VoiceOver roles, and Refresh in the toolbar.
+- **Kit.**
+  `HelmHeroColumn` 1.5.1 puts a band's ring at the band's trailing edge.
+  The words and the ring's caption both hugged at 250 and the engine gave the slack to the caption, so the ring sat right after the words.
+  A band's words now hug at 249 when it has a ring.
+
+### Where the design did not hold as drawn
+
+- **The ring's word is beside it, not inside it.**
+  The board draws "2/9" over "ready" inside the ring.
+  `HelmRingGauge` has one centre label, so "ready" is the ring's caption at its right.
+- **The first fix for the ring's place was the wrong one.**
+  Raising the caption's hug to 251 moved the ring, and grew a 1100pt window to 1463pt on Connections with the inspector open (`PageRedesignsSelfTest`'s inspector check, three cases).
+  A raised hug is a width ceiling, gotcha (13)'s third bullet.
+  Lowering the words' hug to 249 moves the ring and can hold nothing narrower.
+  A stack-level hug of 251 on the ring's row did nothing, because the caption inside it still stretched at 250.
+- **The failure's words carry the time.**
+  The board's failed band says "Couldn't read your projects" under a bare "Review" kicker.
+  The band says when the scan tried, in the headline, and when it last read everything, in the kicker, as Needs you's failed band does.
+- **Today's failure body loses a sentence.**
+  The failure block said "If it has moved, set the firstmate home again in Setup."
+  The band takes the board's two sentences, which fill its two lines, and the path row is one click away.
+- **Not set up is the failed scan.**
+  The board draws the two states alike, and the page cannot tell them apart: with no firstmate home, the projects folder cannot be listed.
+- **The figures carry no signal dots and are equal columns with hairlines**, the inline strip's look, as on Needs you and In flight.
+- **"Keeps what was carried" means what the scan still holds.**
+  Review has never carried an earlier scan's list across a failure.
+  A partial scan keeps what it found and an unreadable projects folder keeps the task-tracked pull requests, both dimmed and counted.
+  A scan that found nothing shows nothing, as today.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless, CI's blocking lane) asserts `CrewHeroWords.review` in every state: the first scan, typical, one ready, none ready, the forge phrases, empty, a scan that reached nothing (with and without an earlier clean read), a partial scan with and without pull requests, and task-tracked pull requests over an unreadable folder.
+  It drives a real `ReviewController` in the sidebar layout through its first scan, a scan, an unreadable folder with Show folder path both ways, a partial scan and an empty one, beside one that never adopted the layout and keeps its line, figures and failure block.
+  Its palette sweep now includes the ring's arc and label and the folder row's words, on 50 palettes in both tones (weakest text 4.50:1, the folder path at the quiet ink, which the palette is deepened to hold at the floor).
+- `PageRedesignsSelfTest` (window lane) opens Review from Crew's toolbar tab in a real off-screen sidebar shell: the band as one group named by its headline, its words and figures, the ring at the band's trailing edge, the header line given up, the count line, boxed figures and failure block gone, Refresh in the toolbar, the forge cards and their rows, the dimmed unreadable folder with no figure and Show folder path putting the path on the band and taking it off, a partial scan keeping its rows, the empty band without forge cards, and gotcha (13) (no width held between 500 and required, a floor under 420pt, and a 1100pt window keeping its width).
+  The floating bar's Review keeps its count line, its three boxed figures, its header line and its empty forge cards.
+- Confirmed to fail when injected: a failed scan on the accent tone (four word checks, two real-page checks, two window checks), the header line kept (the real page and the window), the empty forge cards kept (both), an unreadable folder counting zeros (the words and the window, which printed "0 Open PRs"), the path never reaching the band (both), the floating bar hiding its count line and figures (both), a partial scan hiding its rows (both), the ring's arc at 30% (the sweep, 1.91:1 on Daylight), and the kit without 1.5.1 (the window's ring check, "at x 320.0 of 1199.0").
+- An off-screen render of the real page (first scan, typical, busy, empty, unreadable folder with and without the path, and a partial scan, in Lavender and Powder) was compared with the board's CR-1 Review tab.
+  It was a scratch hook, removed before commit.
+- Not verified: the band in the captain's running app, a spoken VoiceOver pass, a live Reduce Motion toggle (nothing on the band animates, and none was added), and the full window lane.
+
+## The Needs you reply composer (RP-2, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The captain's pick for the reply composer on the hero restyle board (`data/grandline-hero-restyle-designs-scout/`, stage `stage-reply`): RP-2 Question head.
+Sidebar layout only: the floating bar's dashboard still opens `FleetMessageComposer` under the row.
+
+### What shipped
+
+- **The row becomes the card.**
+  Reply on Needs you swaps the decision row for one `FleetReplyCard` in the same place in the list.
+  The old composer showed the question twice, both times clipped: the row's second line truncates at one line, and the "Replying to" address stopped at three.
+- **The head is the question.**
+  It paints `HelmHeroSurface` through `HelmHeroColumn.palette(for:in:)`, the quiet-ink rule, with the capsule glow the board's `.hero.q` draws.
+  A blocked task takes the theme's amber (`HelmTint.warn`), the colour Dictation's amber tone already uses.
+  The kicker is the row's own ("Needs decision · task-142"), beside a glass tile whose outline glyph is the state's hue lifted by `HelmHeroSurface.signalColor`.
+  The headline is the open decision's note in the rounded face, wrapping to every line it needs.
+  The second line names the repo and the decision or decisions the answer is addressed to ("grand-line · 2 open decisions: helm-bump, board-review").
+  The row's Reply/Cancel button rides on the head as a `heroInk` ghost ×, with the same identifier and the same `replyTapped` action.
+- **The body is the shared prompt well.**
+  `HelmPromptWell` with no hint line, then today's caption, then the status, `HelmKeyHint`s for ⌘↩ and Esc, Cancel and Send.
+  The caption and the status wrap: the old composer built both with `labelWithString`, so they never did (gotcha (22)'s constructor trap), and the floating bar's composer still has that.
+- **Keys and outcomes are today's.**
+  ⌘↩ reaches the card through `performKeyEquivalent`, the route `HelmFormSheet`'s confirm takes, and sends only while the card's own text view has focus.
+  ↩ is the text view's new line and Esc reaches `textView(_:doCommandBy:)` as `cancelOperation:`.
+  Delivered closes the card with a toast, sent but unconfirmed clears the text and keeps the amber line, and failed keeps the text with the red line.
+  While a send is out the × and Cancel wait, as the board draws them, and Esc waits with them.
+- **One defect fixed on the way.**
+  A delivered reply closed whichever composer was open when it landed, so a reply the captain had opened on another task in the meantime was thrown away with what was typed in it.
+  It now closes only its own.
+- **The words are pure.**
+  `ReplyHeroWords` holds the head's words and the row's kicker, glyph, second line and the caption, which `FleetController+Reply` used to spell inline, so the row, both composers and the card read one definition.
+
+### Where the design did not hold as drawn
+
+- **Kit looks, not the board's.**
+  The × is the bordered `heroInk` ghost pill (the board drew a borderless glyph), the kicker tile is the band's 20pt tile (the board drew 22pt), and the keys are `HelmKeyHint` caps: ⌘ and ↩ as two caps and Esc as the ⎋ glyph, where the board drew "⌘↩" and "esc".
+- **The blocked glyph is measured on the amber head.**
+  The board lifted both glyphs on the accent palette.
+  The card lifts each on the gradient it actually sits on, so the blocked octagon is a paler red on amber than the board's.
+- **Powder's amber is the app's own** (`HelmTint.warn`), warmer than the board's Catppuccin Mocha yellow, as DH-2 found for the Dictation HUD.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless) asserts `ReplyHeroWords` for one decision, several, a block and a task with none on record, with a 600-character note kept whole.
+  It paints the card's head on 50 palettes in both tones and measures the headline, the 80% kicker and second line, the glyph, the ×, the caption and both status tints (weakest text 4.50:1).
+  A real `FleetController` in the sidebar layout turns the row into the card, keeps what was typed across a refresh that moves the list, closes through the ×, and opens a blocked task on amber, while the floating bar still opens today's composer under its row.
+- `PageRedesignsSelfTest` (window lane) drives the real Needs you tab in Lavender and Powder.
+  It checks the card in its row's place, focus in the well on open and after a refresh that inserts a task above it, the headline measured from its own words against the space it has, its wrap width from the card's own, and the painted gradient at the head's corner.
+  ↩ through the window inserts a new line, ⌘↩ away from the well sends nothing, and ⌘↩ in the well sends through a fake `fm-send.sh` for each outcome.
+  A slow delivery leaves a reply opened after it alone, the blocked head is amber, an unbroken URL wraps at 1100pt with the window kept at 1100pt and the card's floor under 420pt, and Esc through the window cancels.
+- Confirmed to fail when injected: the card under its row, the headline held to two lines, the wrap width from the label's own frame, a 750 width floor (the window grew from 1100pt to 1613pt), no key equivalent, no Esc, no focus on open, a refresh that re-keys the card (focus lost), a blocked task on the accent, the plain palette (80% lines at 3.49:1 on Daylight), the unconfirmed send keeping its text, the delivery closing any open reply, the floating bar opening the card, and the second line without its repo.
+- An off-screen render of the real Needs you tab (typing on a waiting task, a failed send and a fresh open on a blocked one, in Lavender and Powder) was compared with the board's RP-2.
+  It was a scratch hook, removed before commit.
+- Not verified: the card in the captain's running app, a real ⌘↩ through `NSApplication.sendEvent` (the suite enters at the window's `performKeyEquivalent`, which is where AppKit hands a ⌘ chord first), a spoken VoiceOver pass, and the full window lane.
+
+## The Crew band on Log (CR-1, `fm/grandline-notifications-hero-design-scout`, Helm 10.4.0)
+
+The last piece of CR-1 Crew band, for the Log tab (`FleetController`'s second tab).
+Sidebar layout only: the floating bar's Log keeps its filter over the feed, in the theme's recipe and without counts, and draws no band.
+
+### What shipped
+
+- **The same band.**
+  Log opens on the band Needs you and In flight already share, drawn through `CrewBand`, so all four Crew tabs now open on one.
+  It gives up the grey header line as the other tabs did (`WorkspaceHeaderLineCollapsing`), which is now every tab this page draws in the sidebar layout.
+- **The words.**
+  "5 events today" under "Log · Tue, 24 Nov", over what they were: "1 merge · 1 task update · 1 investigation saved · 2 incident updates. Latest at 10:32 AM."
+  A day with nothing yet reads "Quiet so far today" over "The last event was yesterday at 6:18 PM." (or "on Saturday 22 November", the feed's own day header).
+  An empty log reads "Nothing logged yet" with a check tile and the feed's own empty sentence, and the band is the empty state: no filter, and no second empty card under it.
+  The words are `CrewHeroWords.log`, built from the same read the list renders (`FleetLogFeed.read`), so the band counts exactly what the list shows.
+- **The filter is on the band.**
+  The same `HelmSegmentedTabs` moves to the band's foot under a hairline, in the hero ink, with the chosen segment solid ink and the gradient's deep stop for its words.
+  Each segment carries its count ("Merges 3"), with an en space, as Hosts' and DevOps Hub's counted segments do.
+  Its radio roles, its VoiceOver labels and values, ← →, the sliding selection (instant under Reduce Motion) and what it filters are unchanged.
+- **A log that could not be read (GL-14).**
+  The feed has two halves: the log file holds merges, sync fixes, investigations and incidents, and Shift's activity holds the task updates.
+  Neither read could fail before: an unreadable log file and a month of activity that would not parse both read as empty.
+  `FleetLogStore.eventsChecked()` and `ShiftStore.recentActivityChecked()` now say when a file is there and cannot be read, and a missing file is still an empty one (GL-01's two states).
+  The band then paints the dimmed tone, says when it tried ("Couldn’t read the log at 11:24 AM", or "all of the log" when part was read), says what is unknown, and counts only what it read.
+  A segment whose kind could not be read carries its title alone rather than a zero, and an empty list under it says the kind could not be read rather than "Nothing here".
+- **The feed sits closer under the band.**
+  Its first day header's row holds its own space above the day's name, so Log sets no stack spacing after the band, as the board draws the feed 6px under it.
+- **Kit.**
+  `HelmHeroColumn` 1.6.0 hands a `HelmSegmentedTabs` on a column its `heroInk` and its `heroSelection` (the nav rows' selected words) on every theme pass, as it already did for a ghost pill, a field and a figure strip.
+  The page never paints the strip itself, so a theme change cannot leave it on the previous ink.
+
+### Found on the way
+
+- **The feed's last card was cut 13pt short, in both layouts.**
+  `FleetLogListView` sized its table as the rows' heights plus one spacing fewer than the rows, and the table's default style resolves to `.inset`, which pads the rows with 10pt above the first.
+  Measured under the band: six rows laid out 328pt of rows in a 312pt table.
+  The table is now `.plain` (as `HelmDataTable`'s) and as tall as its rows, each row counting its spacing.
+  The floating bar's feed changes with it: its cards now run to the column's edges, level with the filter, and its last card is whole.
+- `ReviewPRListView` sizes its forge tables with the same formula and was not looked at here.
+
+### Where the design did not hold as drawn
+
+- **"Task updates", not the board's "tasks done".**
+  Shift logs every task change into the feed (created, completed, a due date moved), so not every task event is a task done.
+- **The counts are the segment's own words.**
+  The board draws a count smaller and quieter than its title, and `HelmSegmentedTabs` has one label per segment, so "Merges 3" is one string in one colour.
+  VoiceOver still reads the segment's title alone, as `setTitle(_:forID:)` leaves its label, which is how every counted segment in the app reads.
+- **Kit differences kept, as on the other tabs:** the 17pt band headline (board 20), the localised "Tue, 24 Nov", and the compact segments at 11.5pt.
+- **No first-read or not-set-up state of its own.**
+  The log is a local read on the main thread when the tab shows, so the band never waits on it, and it does not read the firstmate home, so Open Setup does not apply.
+  "Reading the log…" exists for a band drawn before the first read and is asserted, but nothing reaches it today.
+- **Nothing is carried across a failed read.**
+  The log is re-read in full each time, so a read that fails shows what it read now rather than an earlier list.
+
+### Verification
+
+- `PageHeroColumnsSelfTest` (headless, CI's blocking lane) asserts `CrewHeroWords.log` in every state: before the first read, typical, one event, two of each kind, quiet since yesterday and since an older day, empty, an unreadable log file alone and over Shift's task updates, an unreadable month of activity, and both.
+  It checks the band's segments are the floating bar's, in its order, and that the list's empty state under an unknown kind says so.
+  It drives a real `FleetController` on scratch stores (a real `ShiftStore` and a real `FleetLogStore`): the floating bar's Log with no band and its filter unchanged, then the sidebar layout's band, its counts, a filter click, a month of activity broken on disk (dimmed, Tasks uncounted, the rows kept) and the same month readable again.
+  Its palette sweep now includes the filter: an unchosen segment's words on its shade over both stops and the chosen segment's words on the solid ink, on 50 palettes in both tones (weakest band text still 4.50:1).
+- `FleetLogSelfTest` (headless) asserts the two new reads: a missing log file and a missing month are empty, a log file that is not UTF-8 and a month that will not parse are reported, the readable half is still read, and Shift's plain activity read is unchanged.
+- `PageRedesignsSelfTest` (window lane) opens Log from Crew's toolbar tab in a real off-screen sidebar shell, pointed at a log the suite wrote (`debugUseLogStore`): the band as one group named by its headline, the words, the header line given up, the filter on the band's foot in the band's ink and chosen words, its counts, six radio buttons with their labels and values unchanged, the feed under the band with its first day right under it and its last card whole, ← and → through the pill's own `keyDown` moving the selection, the focus, the ink ring and the rows, the thumb under the chosen pill at once under Reduce Motion, a click filtering to Incidents, and gotcha (13).
+  The band holds no width between 500 and required outside the strip (the strip's own pill row is the kit's unchanged `.gravityAreas` stack, whose spacing sits at 749.95 to 750 between pills inside a capsule of required edges), its floor is 36pt against a 502.5pt strip, and at 1100pt and at the app's 960pt minimum the window keeps its width with the whole strip inside the band.
+  Then a quiet log, an empty one (no filter and no list), an unreadable one (dimmed, the time, no filter and no list) and one read only in part (uncounted segments, and the list saying the kind could not be read).
+  The floating bar's Log keeps its filter over the feed with no counts and no hero ink, and its header line.
+- Confirmed to fail when injected: Log left out of the band (both suites), the strip not handed the ink (every palette in the sweep, and the window's ink, chosen words and focus ring), the counts left off (both), a failed read on the accent tone (the words and both pages), an unknown count drawn as zero (the words and both pages), the log file never reported unreadable (`FleetLogSelfTest` and the window), a broken month never reported (`FleetLogSelfTest` and the real page), the list kept under an empty band, the old table height and style (the window: "the feed's last row ends at 790.0 in a 774.0pt table"), the default gap under the band, the floating bar giving up its header line, the filter's ink at 45% (the sweep, 2.95:1 on Daylight), and the list's own words over an unknown kind.
+- An off-screen render of the real page (typical, Merges chosen, a keyed focus, busy, quiet, empty, unreadable and partly read, in Lavender and Powder) was compared with the board's CR-1 Log tab.
+  The gradient matched by sampling (Lavender `#3e6197` against the board's `#3f6298`, Powder `#4d627c` against `#4e637d`), and the render is what found the clipped card and the wide gap under the band.
+  It was a scratch hook, removed before commit.
+- Not verified: the band in the captain's running app, a spoken VoiceOver pass, the filter at the Larger text scale at the 960pt minimum (measured at the default scale only), and the full window lane.

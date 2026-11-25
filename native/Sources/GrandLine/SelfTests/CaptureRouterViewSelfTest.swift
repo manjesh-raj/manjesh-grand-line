@@ -2,8 +2,17 @@
 //
 // The window-backed half of universal capture (F2 of full review #3 §8):
 // the real ⌥Space panel, built by the real controller, driven by real
-// ⌘1-⌘5 key equivalents and real tile clicks, and rendered off-screen in
+// ⌘1-⌘6 key equivalents and real tile clicks, and rendered off-screen in
 // both registers.
+//
+// **CP-1, the hero head** (the hero restyle board, the captain's pick) is
+// measured here too, in Lavender and Powder: the head's quiet-ink gradient,
+// the field on the hero's dark shade (its typed words and placeholder against
+// the lighter stop, with the white wash the board rejected shown to fail),
+// the chips on the gradient, the lit tile following Return's default and the
+// crew's pick, the confirmation taking the head (and holding still under
+// Reduce Motion), the hint naming every chord, and the gradient reaching a
+// real bitmap.
 //
 // **Why this is `NEEDS_SESSION` even though it builds no `OffScreenProbe`
 // window.** `ShiftQuickCaptureController` constructs its own `NSPanel` - the
@@ -71,7 +80,14 @@ enum CaptureRouterViewSelfTest {
             checkChipsTrackTheText(check)
             checkTilesAreLegibleInBothRegisters(check)
             checkTheSelectedTileReallyPaints(check)
+            checkCapsLockDoesNotKillTheChords(check)
+            checkTheHeadIsAHero(check)
+            checkTheHeadFollowsTheTheme(check)
+            checkTheLightFollowsTheDefault(check)
+            checkTheConfirmationTakesTheHead(check)
+            checkTheHintNamesEveryChord(check)
         }
+        check(!panelWasShown, "a case put the capture panel on screen")
 
         print(ok ? "CaptureRouterViewSelfTest: OK" : "CaptureRouterViewSelfTest: FAILURES")
         return ok
@@ -87,9 +103,15 @@ enum CaptureRouterViewSelfTest {
             // `init`, but the frame is only real after a layout pass.
             capture.window?.contentView?.layoutSubtreeIfNeeded()
             body(capture, recorder)
+            // The panel is a real `.floating` `NSPanel`; nothing here may
+            // order it in over the captain's own screen.
+            if capture.window?.isVisible == true { panelWasShown = true }
             capture.window?.orderOut(nil)
         }
     }
+
+    /// Set by `withPanel` if any case left the panel visible.
+    private static var panelWasShown = false
 
     // MARK: The tiles
 
@@ -112,7 +134,7 @@ enum CaptureRouterViewSelfTest {
         }
     }
 
-    // MARK: ⌘1-⌘5
+    // MARK: ⌘1-⌘6
 
     /// A real command-modified digit, dispatched through the real root view's
     /// `performKeyEquivalent` - the same path AppKit uses while the field
@@ -148,6 +170,10 @@ enum CaptureRouterViewSelfTest {
             ]
             for (digit, destination) in expected {
                 recorder.filed.removeAll()
+                // Each chord is its own presentation: a filed capture holds
+                // its confirmation and takes no second file until the panel
+                // opens again.
+                capture.debugResetHead()
                 guard let event = commandDigit(digit) else {
                     check(false, "could not synthesise \u{2318}\(digit)")
                     continue
@@ -178,6 +204,7 @@ enum CaptureRouterViewSelfTest {
             capture.debugSetText("kubectl -n raas get pods")
             for tile in capture.debugTiles {
                 recorder.filed.removeAll()
+                capture.debugResetHead()
                 // The tile's own accessibility press - the same action a real
                 // click and a real Space keypress both run (GL-16).
                 _ = tile.accessibilityPerformPress()
@@ -222,6 +249,24 @@ enum CaptureRouterViewSelfTest {
                   "the crew's answer is what gets filed, got \(String(describing: recorder.filed.first?.0))")
             check(capture.debugTiles.first(where: { $0.isDefault })?.destination == .note,
                   "the crew's answer becomes the highlighted tile")
+            check(capture.debugTiles.filter(\.debugIsLit).map(\.destination) == [.note],
+                  "CP-1: the light moved to the crew's pick before it filed, lit \(capture.debugTiles.filter(\.debugIsLit).map(\.destination))")
+            check(capture.debugVerdictText == CaptureDestination.note.confirmation,
+                  "the crew's file is confirmed in the head, got \(String(describing: capture.debugVerdictText))")
+        }
+
+        withPanel { capture, recorder in
+            // The crew's pick is refused: the light goes back to the tile
+            // Return files to, so it never points somewhere Return will not.
+            recorder.outcome = .refused("the vault is locked")
+            capture.classifier = { _, done in done(.credential) }
+            capture.debugSetText("A paragraph of prose worth keeping.")
+            capture.debugAskTheCrew()
+            let lit = capture.debugTiles.filter(\.debugIsLit).map(\.destination)
+            check(recorder.filed.first?.0 == .credential, "the refused crew pick was tried")
+            check(lit == [.task], "a refused crew pick hands the light back to Return's tile, lit \(lit)")
+            check(capture.debugStatusText == "the vault is locked" && capture.debugStatusIsError,
+                  "the refusal is the body's error line, got \(String(describing: capture.debugStatusText))")
         }
 
         withPanel { capture, recorder in
@@ -257,8 +302,8 @@ enum CaptureRouterViewSelfTest {
 
     private static func checkTilesAreLegibleInBothRegisters(_ check: (Bool, String) -> Void) {
         withPanel { capture, _ in
-            for id in ["dusk", "daylight"] {
-                guard let palette = HelmTheme.theme(id: id) else {
+            for id in ["dusk", "daylight", "lavender", "powder"] {
+                guard let palette = HelmTheme.theme(id: id) ?? HelmTheme.appTheme(id: id) else {
                     check(false, "theme \(id) is not a real palette any more - fixture is stale")
                     continue
                 }
@@ -294,7 +339,13 @@ enum CaptureRouterViewSelfTest {
             root.cacheDisplay(in: root.bounds, to: rep)
 
             let tiles = capture.debugTiles
-            guard tiles.count == 5 else { return }
+            // This guard read `== 5` from F2 until CP-1, so once F4 appended
+            // Link the whole render check returned before asserting anything.
+            // It is a failure now, not a silent return.
+            guard tiles.count == CaptureDestination.allCases.count else {
+                check(false, "\(tiles.count) tiles for \(CaptureDestination.allCases.count) destinations")
+                return
+            }
             // The fixture's own discriminating power first: the two tiles have
             // to be somewhere real and distinct, or "their pixels differ" is
             // vacuous.
@@ -314,23 +365,206 @@ enum CaptureRouterViewSelfTest {
             // failed with delta 0.0000 for exactly that reason.
             let scaleX = CGFloat(rep.pixelsWide) / root.bounds.width
             let scaleY = CGFloat(rep.pixelsHigh) / root.bounds.height
-            func pixel(_ rect: NSRect) -> NSColor? {
-                let x = Int(rect.midX * scaleX)
+            // 4pt in from the leading edge, half way down: inside the rounded
+            // surface and clear of the glyph, the name and the keycap.
+            func pixel(_ rect: NSRect) -> (Double, Double, Double)? {
+                let x = Int((rect.minX + 4) * scaleX)
                 // `bitmapImageRepForCachingDisplay` is top-left origin; the
                 // view is not flipped, so the row has to be mirrored.
                 let y = Int((root.bounds.height - rect.midY) * scaleY)
-                guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh else { return nil }
-                return rep.colorAt(x: x, y: y)
+                guard x >= 0, y >= 0, x < rep.pixelsWide, y < rep.pixelsHigh,
+                      let c = rep.colorAt(x: x, y: y) else { return nil }
+                // The raw components are already in the rep's space; only the
+                // expected colour is converted (AGENTS.md's probe rules).
+                return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
             }
-            guard let selectedPixel = pixel(selected), let neighbourPixel = pixel(neighbour) else {
-                check(false, "could not sample both tiles")
+            func inRep(_ color: NSColor) -> (Double, Double, Double) {
+                let c = color.usingColorSpace(rep.colorSpace) ?? color
+                return (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
+            }
+            func distance(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Double {
+                abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2)
+            }
+            let head = capture.debugHeadView.convert(capture.debugHeadView.bounds, to: root)
+            guard let selectedPixel = pixel(selected), let neighbourPixel = pixel(neighbour),
+                  let headPixel = pixel(head) else {
+                check(false, "could not sample both tiles and the head")
                 return
             }
-            let a = HelmContrast.components(selectedPixel)
-            let b = HelmContrast.components(neighbourPixel)
-            let delta = abs(a.0 - b.0) + abs(a.1 - b.1) + abs(a.2 - b.2)
-            check(delta > 0.01,
-                  "the default tile's wash really paints - sampled \(a) against \(b), delta \(String(format: "%.4f", delta))")
+            let card = inRep(HelmTheme.nsColor(dusk.chromeBackgroundHex))
+            let start = inRep(HelmContrast.color(ShiftQuickCaptureController.palette(in: dusk).start))
+            check(distance(neighbourPixel, card) < 0.03,
+                  "an unlit tile is the card, sampled \(neighbourPixel) against \(card)")
+            check(distance(selectedPixel, card) > 0.3 && distance(selectedPixel, start) < 0.25,
+                  "CP-1: the default tile's gradient really paints, sampled \(selectedPixel) against the start stop \(start)")
+            check(distance(headPixel, start) < 0.25,
+                  "CP-1: the head's gradient really paints, sampled \(headPixel) against the start stop \(start)")
+        }
+    }
+
+    // MARK: Gotcha (21)
+
+    /// A command digit with Caps Lock on - and one from the keypad - still
+    /// files. The root view compared `.deviceIndependentFlagsMask` against
+    /// `.command`, which those ambient flags make unequal.
+    private static func checkCapsLockDoesNotKillTheChords(_ check: (Bool, String) -> Void) {
+        withPanel { capture, recorder in
+            guard let root = capture.debugRootView else { return }
+            capture.debugSetText("rotate the RaaS deploy key")
+            for (name, flags) in [("Caps Lock", NSEvent.ModifierFlags([.command, .capsLock])),
+                                  ("the keypad", NSEvent.ModifierFlags([.command, .numericPad]))] {
+                recorder.filed.removeAll()
+                capture.debugResetHead()
+                guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                                   timestamp: 0, windowNumber: 0, context: nil,
+                                                   characters: "2", charactersIgnoringModifiers: "2",
+                                                   isARepeat: false, keyCode: 0) else { continue }
+                check(root.performKeyEquivalent(with: event) && recorder.filed.first?.0 == .sticky,
+                      "\u{2318}2 with \(name) still files to Sticky, got \(String(describing: recorder.filed.first?.0))")
+            }
+            // The discriminating half: ⌘⌥2 is a different chord and must fall through.
+            recorder.filed.removeAll()
+            capture.debugResetHead()
+            if let other = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .option],
+                                            timestamp: 0, windowNumber: 0, context: nil, characters: "2",
+                                            charactersIgnoringModifiers: "2", isARepeat: false, keyCode: 0) {
+                check(!root.performKeyEquivalent(with: other) && recorder.filed.isEmpty,
+                      "\u{2318}\u{2325}2 is not a capture chord")
+            }
+        }
+    }
+
+    // MARK: CP-1 - the hero head
+
+    /// `color` laid over an opaque `backdrop`, as alpha compositing does it.
+    private static func over(_ color: NSColor, _ backdrop: (Double, Double, Double)) -> (Double, Double, Double) {
+        HelmContrast.mix(HelmContrast.components(color), backdrop, Double(color.alphaComponent))
+    }
+
+    private static func same(_ a: NSColor?, _ b: NSColor) -> Bool {
+        guard let a else { return false }
+        let x = HelmContrast.components(a), y = HelmContrast.components(b)
+        return abs(x.0 - y.0) < 0.004 && abs(x.1 - y.1) < 0.004 && abs(x.2 - y.2) < 0.004
+    }
+
+    private static func ratio(_ r: Double) -> String { String(format: "%.2f", r) }
+
+    private static func checkTheHeadIsAHero(_ check: (Bool, String) -> Void) {
+        for id in ["lavender", "powder"] {
+            guard let theme = HelmTheme.appTheme(id: id) else {
+                check(false, "\(id) is not an app theme any more - the fixture is stale")
+                continue
+            }
+            ThemeManager.shared.setTheme(theme)
+            withPanel { capture, _ in
+                let palette = ShiftQuickCaptureController.palette(in: theme)
+                let lighter = palette.lighterStop
+                let ink = HelmContrast.color(palette.ink)
+                check(capture.debugHeadPalette == palette, "\(id): the head is not the quiet-ink hero palette")
+                let stops = capture.debugHeadGradient.compactMap { NSColor(cgColor: $0) }
+                check(stops.count == 2 && same(stops.first, HelmContrast.color(palette.start))
+                        && same(stops.last, HelmContrast.color(palette.end)),
+                      "\(id): the head's gradient layer does not paint the palette's two stops")
+                let title = HelmContrast.ratio(HelmContrast.components(capture.debugTitleColor ?? .clear), lighter)
+                check(title >= HelmContrast.textTarget, "\(id): \"Capture\" is \(ratio(title)):1 on the lighter stop")
+
+                // The field: the hero's ink on its dark shade.
+                let field = capture.debugInputField
+                check(field.heroInk.map { same($0, ink) } == true, "\(id): the field is not in the hero's ink")
+                let well = field.chromeView.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } ?? .clear
+                let wellOnHero = over(well, lighter)
+                let typed = HelmContrast.ratio(HelmContrast.components(field.debugEditor.textColor ?? .clear), wellOnHero)
+                let placeholder = HelmContrast.ratio(
+                    HelmContrast.mix(palette.ink, wellOnHero, Double(HelmSearchField.heroPlaceholderAlpha)), wellOnHero)
+                check(HelmContrast.relativeLuminance(wellOnHero) < HelmContrast.relativeLuminance(lighter),
+                      "\(id): the field's well lifts the gradient instead of shading it")
+                check(typed >= HelmContrast.textTarget, "\(id): typed words are \(ratio(typed)):1 on the field")
+                check(placeholder >= HelmContrast.textTarget,
+                      "\(id): the placeholder is \(ratio(placeholder)):1 on the field")
+                // The fixture's discriminating power: the white wash the board
+                // measured and rejected really does fail here.
+                let wash = HelmContrast.mix((1, 1, 1), lighter, 0.14)
+                check(HelmContrast.ratio(palette.ink, wash) < HelmContrast.textTarget,
+                      "\(id): fixture - a 14% white wash should fail the floor, it measured \(ratio(HelmContrast.ratio(palette.ink, wash))):1")
+
+                // The chips on the gradient.
+                capture.debugSetText("review the deploy notes tomorrow 3pm")
+                for chip in capture.debugChips where !chip.isHidden {
+                    let fill = chip.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } ?? .clear
+                    let r = HelmContrast.ratio(HelmContrast.components(chip.debugTextColor ?? .clear), over(fill, lighter))
+                    check(r >= HelmContrast.textTarget, "\(id): a chip's words are \(ratio(r)):1 on the gradient")
+                }
+                check(capture.debugHotkeyText == AppSettings.shared.quickCaptureShortcut.displayString,
+                      "\(id): the head's chord reads \(capture.debugHotkeyText)")
+                print("  \(id): title \(ratio(title)):1, typed \(ratio(typed)):1, placeholder \(ratio(placeholder)):1")
+            }
+        }
+    }
+
+    /// The panel observes the theme: the head repaints in the new register.
+    private static func checkTheHeadFollowsTheTheme(_ check: (Bool, String) -> Void) {
+        guard let lavender = HelmTheme.appTheme(id: "lavender"),
+              let powder = HelmTheme.appTheme(id: "powder") else { return }
+        ThemeManager.shared.setTheme(lavender)
+        withPanel { capture, _ in
+            ThemeManager.shared.setTheme(powder)
+            let want = ShiftQuickCaptureController.palette(in: powder)
+            check(want != ShiftQuickCaptureController.palette(in: lavender), "fixture: the two registers share a palette")
+            check(capture.debugHeadPalette == want, "a theme change left the head in the old register")
+            check(capture.debugTiles.first(where: \.isDefault).map { $0.debugFillColor(under: powder) }
+                    .map { same($0, HelmContrast.color(want.lighterStop)) } == true,
+                  "a theme change left the lit tile in the old register")
+        }
+    }
+
+    /// One lit tile, and it is the one Return files to.
+    private static func checkTheLightFollowsTheDefault(_ check: (Bool, String) -> Void) {
+        withPanel { capture, _ in
+            func lit() -> [CaptureDestination] { capture.debugTiles.filter(\.debugIsLit).map(\.destination) }
+            capture.debugSetText("")
+            check(lit() == [.task], "an empty capture lights Task, lit \(lit())")
+            capture.debugSetText("https://developer.apple.com/design/")
+            let urlDefault = CaptureRouter.defaultDestination(for: CaptureRouter.draft(from: "https://developer.apple.com/design/"))
+            check(urlDefault == .link, "fixture: a bare URL should default to Link, got \(urlDefault)")
+            check(lit() == [urlDefault], "a URL lights \(urlDefault), lit \(lit())")
+            check(capture.debugTiles.filter { !$0.debugIsLit }.allSatisfy { $0.debugGlassTileHidden },
+                  "an unlit tile still shows the glass tile")
+            capture.debugSetText("review the deploy notes")
+            check(lit() == [.task], "prose lights Task again, lit \(lit())")
+        }
+    }
+
+    /// A filed capture's confirmation takes the head, at once under Reduce
+    /// Motion, and the panel takes no second file while it stands.
+    private static func checkTheConfirmationTakesTheHead(_ check: (Bool, String) -> Void) {
+        HelmMotion.reducedOverrideForTests = true
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        withPanel { capture, recorder in
+            capture.debugSetText("review the deploy notes")
+            let headHeight = capture.debugHeadView.frame.height
+            capture.debugPressReturn()
+            check(recorder.filed.count == 1, "Return filed \(recorder.filed.count) times")
+            check(capture.debugVerdictText == CaptureDestination.task.confirmation,
+                  "the head says \(String(describing: capture.debugVerdictText))")
+            check(capture.debugHeadContentAlpha == 0 && capture.debugVerdictAlpha == 1,
+                  "under Reduce Motion the swap is immediate, head \(capture.debugHeadContentAlpha) verdict \(capture.debugVerdictAlpha)")
+            check(capture.debugStatusText == nil, "a filed capture still shows a status line")
+            capture.window?.contentView?.layoutSubtreeIfNeeded()
+            check(abs(capture.debugHeadView.frame.height - headHeight) < 0.5,
+                  "the confirmation changed the head's height from \(headHeight) to \(capture.debugHeadView.frame.height)")
+            // A second Return inside the confirmation's 0.9s.
+            capture.debugPressReturn()
+            check(recorder.filed.count == 1, "a second Return during the confirmation filed again (\(recorder.filed.count))")
+        }
+    }
+
+    private static func checkTheHintNamesEveryChord(_ check: (Bool, String) -> Void) {
+        withPanel { capture, _ in
+            check(capture.debugHintText == CaptureHeroWords.hint, "the panel shows \(capture.debugHintText)")
+            let last = "\u{2318}\(CaptureDestination.allCases.count)"
+            check(capture.debugHintText.contains(last), "the hint does not reach \(last)")
+            check(capture.debugTiles.last.map { $0.debugChordCap.text == last } == true,
+                  "the last tile's keycap and the hint disagree")
         }
     }
 }

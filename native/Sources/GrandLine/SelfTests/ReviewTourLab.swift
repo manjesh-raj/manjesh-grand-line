@@ -1092,7 +1092,7 @@ enum ReviewTourLab {
             ])
             window.orderFront(nil)
             content.reload()
-            content.debugSegmentTabs?.debugClickTab(id: segment.rawValue)
+            content.debugClickSegmentPill(segment)
             host.layoutSubtreeIfNeeded()
             let url = outputDirectory.appendingPathComponent("\(parts[2]).png")
             let written = writePNG(of: host, to: url)

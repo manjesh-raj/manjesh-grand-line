@@ -135,6 +135,19 @@ enum UnifiedSearchLayoutSelfTest {
               "a grouped list of 2 hosts + 5 actions across 2 sections should be a real height, got \(groupedHeight)pt "
               + "- a collapsed palette scrolls everything but the first row off screen")
 
+        // ...and the results' viewport is as tall as what it holds. The
+        // panel's height is its own arithmetic (header + results + footer),
+        // and a header constant that had gone stale left the scroll view 8pt
+        // short of its content, so the last row sat under the footer. Under
+        // the 420pt cap nothing should need scrolling.
+        palette.debugLayoutNow()
+        let viewport = palette.debugResultsViewportHeight
+        let content = palette.debugResultsContentHeight
+        check(content < 420, "fixture: the grouped list should fit under the 420pt cap, it is \(content)pt")
+        check(abs(viewport - content) < 0.5,
+              "the results' viewport is \(viewport)pt for \(content)pt of rows - the panel's header arithmetic "
+              + "no longer matches its real header, so a row is clipped or a gap opens under the list")
+
         // ...and shrinks again for a narrower result set, so the height is
         // genuinely measured per reload rather than only ever growing.
         palette.debugReload(query: "Prod EKS bastion for the payments platform")
@@ -168,6 +181,24 @@ enum UnifiedSearchLayoutSelfTest {
         check(palette.debugSelectedIndex == 0, "arrow-up past the start must clamp to the first row")
         check(palette.debugRowCount == titles.count,
               "every selectable item must have a rendered row: \(titles.count) items, \(palette.debugRowCount) rows")
+
+        // MARK: H1's height animation skips under Reduce Motion
+
+        // With motion the panel eases to its new height, so its frame lags
+        // the target for a moment. Under Reduce Motion it must already be
+        // there when the reload returns.
+        HelmMotion.reducedOverrideForTests = true
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        palette.debugReload(query: "prod")
+        palette.debugReload(query: "Prod EKS bastion for the payments platform")
+        let target = palette.debugPanelHeight
+        let live = palette.window?.frame.height ?? 0
+        check(abs(live - target) < 0.5,
+              "under Reduce Motion the palette must take its new height at once, it is \(live)pt toward \(target)pt")
+
+        // The panel is a real `.floating` `NSPanel`; nothing here may order
+        // it in over the captain's own screen.
+        check(palette.window?.isVisible == false, "the suite put the palette on screen")
 
         if failures.isEmpty {
             print("UnifiedSearchLayoutSelfTest: OK")

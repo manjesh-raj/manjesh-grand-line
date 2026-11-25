@@ -8,6 +8,14 @@
 // Pure, so `DictationDataSelfTest` asserts every state headless. The page
 // (`DictationController`) owns the controls and only hands these words to the
 // panel.
+//
+// **DH-2, the floating HUD** (the hero restyle board,
+// `data/grandline-hero-restyle-designs-scout/`). The HUD is the same panel in
+// miniature: a constant kicker that says whose pill this is, since it floats
+// over other apps, over the state's own words (`DictationHUDVisualState.text`,
+// unchanged), in this panel's two tones. An earlier draft used this panel's
+// kicker words ("Dictation · Listening" over "Listening…"), and the captain
+// pointed out that it said "Listening" twice.
 
 import Foundation
 
@@ -154,6 +162,22 @@ struct DictationHeroWords: Equatable {
         case .failed:
             return HelmHeroColumn.Ring(fraction: 0, label: "!", caption: "Download failed",
                                        spoken: "Whisper model download failed", state: .warn, isDimmed: true)
+        }
+    }
+
+    // MARK: DH-2 - the floating HUD
+
+    /// The HUD's kicker, the same in every state.
+    static let hudKicker = "Dictation \u{00B7} Grand Line"
+
+    /// The HUD's tone: the accent while dictation is going right, and the
+    /// theme's amber where today's HUD was orange - a paste that only reached
+    /// the clipboard, and the two failures. Each failure's headline is
+    /// complete on its own ("Didn't catch that"), and the amber says it is one.
+    static func hudTone(_ state: DictationHUDVisualState) -> Tone {
+        switch state {
+        case .listening, .transcribing, .cleaningUp, .success: return .accent
+        case .copiedOnly, .failure: return .amber
         }
     }
 }

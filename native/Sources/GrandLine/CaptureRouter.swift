@@ -9,7 +9,7 @@
 // pasteboard pre-filled and an 'ask the crew to file it' option".
 //
 // **This file is the pure-logic half, and it owns no AppKit.** The panel
-// (`ShiftQuickCaptureController`) draws the five tiles and reads the chords;
+// (`ShiftQuickCaptureController`) draws the six tiles and reads the chords;
 // the shell (`AppShellController.fileCapture`) owns the five stores. What
 // lives here is everything in between that is a *decision* rather than a view
 // or a write: which digit means which destination, how one typed line is split
@@ -24,7 +24,7 @@
 
 import Foundation
 
-// MARK: - The five destinations
+// MARK: - The six destinations
 
 /// Where a captured line can be filed.
 ///
@@ -45,7 +45,7 @@ enum CaptureDestination: String, CaseIterable {
     /// already learned.
     case link
 
-    /// `1`...`5`, derived from the case order - see the type's own note.
+    /// `1`...`6`, derived from the case order - see the type's own note.
     var chordDigit: Int {
         (Self.allCases.firstIndex(of: self) ?? 0) + 1
     }
@@ -294,7 +294,7 @@ enum CaptureRouter {
     /// Shaped the way `DictationCleanup.prompt(for:vocabulary:)` is - one
     /// instruction, an explicit output contract, and no room for prose -
     /// because the same thing is true here: the reply is parsed, not read.
-    /// The five destinations are listed with what each one *is* rather than
+    /// The destinations are listed with what each one *is* rather than
     /// only its name, since "note" and "sticky" are not self-explanatory
     /// labels for anyone who has not used this app.
     static func classificationPrompt(for text: String) -> String {

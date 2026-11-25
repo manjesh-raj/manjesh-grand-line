@@ -77,12 +77,12 @@ extension ConsoleController {
     /// what happens on a host without per-command block tracking.
     @objc func analyzeLogsTapped() {
         guard let tab = currentTab else {
-            Toast.show(in: view, message: "No tab to capture from")
+            Toast.show(in: view, message: "No tab to capture from", kind: .warning)
             return
         }
         let capture = buildLogCapture(for: tab)
         guard !capture.isEmpty else {
-            Toast.show(in: view, message: "This tab has no output to analyze yet")
+            Toast.show(in: view, message: "This tab has no output to analyze yet", kind: .warning)
             return
         }
         // F8 (incident mode): the capture's *shape* attaches to an active

@@ -70,7 +70,7 @@
 // programmatic state restore. Pass `animated: false` for those.
 //
 // **The exceptions, and why they are not tokens.** Ambient loops (the
-// skeleton shimmer, the lock screen's scene, the dictation pulse, the crew
+// skeleton shimmer, the lock screen's scene, the Dictation HUD's meter, the crew
 // pulse, the bell's arrival bounce), the lock screen's shake, the theme
 // crossfade (K3's own 200ms, asserted by `ThemeMotionWebIslandsSelfTest`) and
 // a toast's dwell time are each a one-off with its own reason, so each keeps

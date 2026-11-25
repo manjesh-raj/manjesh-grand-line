@@ -257,7 +257,23 @@ enum FleetActions {
     /// `FirstmateHome.root` is a `static let` resolved once, so setting
     /// `FM_HOME` from inside a process is too late to rely on.
     static var stateDirectoryOverrideForTests: URL?
+
+    /// Test seam: the directory `reply` runs `fm-send.sh` in and passes as
+    /// `FM_HOME`. A CI runner has no firstmate home, and `Process` cannot
+    /// launch in a working directory that does not exist, so a suite driving a
+    /// stand-in script failed with "The file firstmate doesn't exist" before the
+    /// script ran (measured on PR 631's first full CI run; reproduced locally
+    /// with `FM_HOME` pointing nowhere).
+    static var homeOverrideForTests: URL?
     #endif
+
+    /// Where `reply` runs: the firstmate home, or a suite's scratch directory.
+    private static var sendHome: URL {
+        #if FM_SELFTESTS
+        if let homeOverrideForTests { return homeOverrideForTests }
+        #endif
+        return FirstmateHome.root
+    }
 
     /// Every still-open decision on `taskID`, read live from its status file.
     static func openDecisions(taskID: String) -> [FleetDecision] {
@@ -327,8 +343,8 @@ enum FleetActions {
         let result = Subprocess.run(
             executable: "/bin/bash",
             arguments: arguments(taskID: taskID, resolveKey: key, text: trimmed),
-            cwd: FirstmateHome.root,
-            extraEnv: ["FM_HOME": FirstmateHome.root.path],
+            cwd: sendHome,
+            extraEnv: ["FM_HOME": sendHome.path],
             timeout: sendTimeout,
             label: "fm-send"
         )

@@ -311,7 +311,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
             renderRecovery()
             onChanged?()
         case .failure(let error):
-            Toast.show(in: view, message: "Could not print a recovery key: \(error.localizedDescription)")
+            Toast.show(in: view, message: "Could not print a recovery key: \(error.localizedDescription)", kind: .failure)
         }
     }
 
@@ -355,7 +355,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
                 try kit.pdfData().write(to: url, options: [.atomic])
                 Toast.show(in: host, message: "Saved - print it and delete the file")
             } catch {
-                Toast.show(in: host, message: "Could not save the PDF: \(error.localizedDescription)")
+                Toast.show(in: host, message: "Could not save the PDF: \(error.localizedDescription)", kind: .failure)
             }
         }
         if let window = view.window {
@@ -439,7 +439,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
         // parse runs on the main thread, and no password manager's export
         // comes near the cap.
         if let refusal = InputSizeLimit.refusal(forFileAt: url, what: url.lastPathComponent) {
-            Toast.show(in: view, message: refusal)
+            Toast.show(in: view, message: refusal, kind: .warning)
             return
         }
         let text: String
@@ -448,7 +448,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
         } else if let latin = try? String(contentsOf: url, encoding: .isoLatin1) {
             text = latin
         } else {
-            Toast.show(in: view, message: "Could not read that file as text")
+            Toast.show(in: view, message: "Could not read that file as text", kind: .failure)
             return
         }
         chosenFileName = url.lastPathComponent
@@ -492,7 +492,7 @@ final class CredentialVaultRecoverySheetController: NSViewController {
                     + "\(count == 1 ? "" : "s") into a vault with no recovery key. Print one now."
             }
         case .failure(let error):
-            Toast.show(in: view, message: "Import failed: \(error.localizedDescription)")
+            Toast.show(in: view, message: "Import failed: \(error.localizedDescription)", kind: .failure)
         }
     }
 

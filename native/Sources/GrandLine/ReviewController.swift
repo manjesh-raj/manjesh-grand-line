@@ -187,6 +187,37 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     private static let failureBody = "Open pull requests are read from the clones in your firstmate home's "
         + "projects folder. If it has moved, set the firstmate home again in \(PlaceName.of(.bootstrap))."
 
+    // MARK: CR-1 - the Crew band (the sidebar layout's, at the end of this file)
+
+    /// Set once, by `adoptSidebarLayout()`. Never set in the floating bar,
+    /// whose Review page keeps its count line, its boxed figures and its
+    /// failure block exactly as they were.
+    private(set) var drawsSidebarLayout = false
+    /// The band the page opens on in the sidebar layout. Lazy, and only ever
+    /// touched behind `drawsSidebarLayout`, so the floating bar never builds
+    /// one.
+    private lazy var reviewBand = HelmHeroColumn()
+    /// The band's four figures, packed at its leading edge.
+    private lazy var bandFigures = CrewBand.figureStrip()
+    /// The failure block's disclosure, on the band's foot as a ghost pill.
+    /// The same action as the block's own button, so the two can never
+    /// disagree about whether the path is showing.
+    private lazy var bandFolderButton = HelmButton(title: "Show folder path", variant: .secondary, size: .small,
+                                                   symbol: "folder")
+    /// The projects path the scan tried, on the band once Show folder path is
+    /// pressed: the one place in this layout the path appears, as it was the
+    /// one place in the failure block.
+    private lazy var bandFolderRow = HelmHeroRow(leading: .symbol("folder"), title: "Projects folder",
+                                                 subtitle: FirstmateHome.projects.path, subtitleIsCode: true,
+                                                 subtitleTruncation: .byTruncatingMiddle)
+    /// When the last scan finished, and the last one that reached every
+    /// forge - the band never says a count without its age.
+    private var lastCheckedAt: Date?
+    private var lastCleanReadAt: Date?
+    /// The band's last configuration, so a render that changes nothing does
+    /// not rebuild it.
+    private var bandSignature = ""
+
     /// Set by `AppShellController`: "my live numbers changed, re-read my
     /// subtitle". See `DaylightDrillActions.drillHeaderSubtitle`.
     var onDrillSubtitleChanged: (() -> Void)?
@@ -515,6 +546,9 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         // the list this page already rendered.
         lastRenderedPRs = prs
         lastFetchFailure = failure
+        // CR-1: the band says when it read, and when it last read everything.
+        lastCheckedAt = Date()
+        if failure == nil { lastCleanReadAt = lastCheckedAt }
         // §6.4: the header's subtitle is live, and the shell owns the header -
         // so the page asks for a re-read rather than writing into it.
         onDrillSubtitleChanged?()
@@ -550,6 +584,11 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             otherCountLabel.stringValue = "\(other.count)"
             applyAccountSubtitle(otherSubtitle, prs: other)
         }
+
+        // CR-1: in the sidebar layout the band says what the count line, the
+        // boxed figures and the failure block said.
+        applySidebarVisibility()
+        renderReviewBand()
 
         applyTheme()
 
@@ -608,6 +647,10 @@ final class ReviewController: NSViewController, DaylightDrillActions {
                              body: failureDetailShown ? Self.failureBody + "\n\n" + path : Self.failureBody)
         failureDetailButton.title = failureDetailShown ? "Hide folder path" : "Show folder path"
         failureDetailButton.symbolName = failureDetailShown ? "chevron.up" : "chevron.down"
+        // CR-1: the band's pill says the same, and the band shows the path.
+        guard drawsSidebarLayout else { return }
+        bandFolderButton.title = failureDetailButton.title
+        renderReviewBand()
     }
 
     /// The prototype's forge-card subtitle (`manjesh-raj` under "GitHub") -
@@ -851,4 +894,108 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     var debugGithubPlaceholderRowHeight: CGFloat { githubList.debugFirstRowHeight }
     #endif
     var debugBitbucketRowCount: Int { bitbucketList.debugRowCount }
+}
+
+// MARK: - CR-1 - the Crew band
+
+// The board's CR-1 for Crew › Review (the hero restyle board, stage
+// `stage-crew`): the page opens on the band Needs you and In flight open on, a
+// `HelmHeroColumn` in `.band` drawn through `CrewBand`. Its headline is how
+// many pull requests are ready to merge, its ring is ready over open, and its
+// figures are the counts the boxed strip showed plus the failing checks. The
+// forge cards stay under it as they were. The band is drawn from what the
+// page already rendered - nothing is fetched for it - and only in the sidebar
+// layout: the floating bar's Review page is unchanged.
+
+extension ReviewController: SidebarLayoutAdopting {
+
+    func adoptSidebarLayout() {
+        guard !drawsSidebarLayout else { return }
+        _ = view
+        drawsSidebarLayout = true
+        reviewBand.setArrangement(.band)
+        contentStack.insertArrangedSubview(reviewBand, at: 0)
+        reviewBand.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        bandFolderButton.target = self
+        bandFolderButton.action = #selector(toggleFailureDetail)
+        // The band says "Checking your projects…", so the skeleton under it
+        // needs no sentence of its own.
+        loadingLabel.isHidden = true
+        applySidebarVisibility()
+        renderReviewBand()
+    }
+
+    /// The views the band replaces stay hidden in the sidebar layout: the
+    /// count line (the band's headline and second line), the boxed figures
+    /// (its strip) and the failure block (its dimmed tone and Show folder
+    /// path). With nothing open after a clean scan the band is the empty
+    /// state too, so the two empty forge cards go, as the board draws it.
+    fileprivate func applySidebarVisibility() {
+        guard drawsSidebarLayout else { return }
+        headerRow.isHidden = true
+        statsRow.isHidden = true
+        failureState.isHidden = true
+        guard hasLoadedOnce else { return }
+        let isTotalFailure = lastFetchFailure?.isTotal == true && lastRenderedPRs.isEmpty
+        let nothingOpen = lastFetchFailure == nil && lastRenderedPRs.isEmpty
+        githubSectionView.isHidden = isTotalFailure || nothingOpen
+        bitbucketSectionView.isHidden = isTotalFailure || nothingOpen
+    }
+
+    /// What the page last rendered, as the band's words read it.
+    fileprivate var reviewReading: CrewHeroWords.ReviewReading {
+        guard hasLoadedOnce else { return .init(hasRead: false) }
+        let prs = lastRenderedPRs
+        return .init(hasRead: true, checkedAt: lastCheckedAt, cleanReadAt: lastCleanReadAt,
+                     github: prs.filter { $0.forge == "github" }.count,
+                     bitbucket: prs.filter { $0.forge == "bitbucket" }.count,
+                     other: prs.filter { $0.forge != "github" && $0.forge != "bitbucket" }.count,
+                     ready: FleetDataSource.readyToMergeCount(prs),
+                     running: prs.filter { $0.checks == "pending" }.count,
+                     failing: prs.filter { $0.checks == "red" }.count,
+                     failure: lastFetchFailure?.headline, failureIsTotal: lastFetchFailure?.isTotal == true)
+    }
+
+    /// Draw the band. Cheap when nothing changed: it is only rebuilt when its
+    /// words or its foot do.
+    fileprivate func renderReviewBand() {
+        guard drawsSidebarLayout else { return }
+        let words = CrewHeroWords.review(reviewReading, time: CrewBand.time)
+        let showsPath = words.offersFolderPath && failureDetailShown
+        let signature = "\(words)|\(showsPath)"
+        guard signature != bandSignature else { return }
+        bandSignature = signature
+        var foot: [NSView] = []
+        if !words.figures.isEmpty {
+            bandFigures.configure(CrewBand.items(words.figures), theme: theme)
+            foot.append(bandFigures)
+        }
+        if words.offersFolderPath { foot.append(bandFolderButton) }
+        CrewBand.configure(reviewBand, words: words, foot: foot, bandViews: showsPath ? [bandFolderRow] : [])
+    }
+
+    #if FM_SELFTESTS
+    /// The band as drawn, or `nil` with none (the floating bar).
+    var debugReviewBand: HelmHeroColumn? {
+        drawsSidebarLayout && !reviewBand.isHidden && reviewBand.superview != nil ? reviewBand : nil
+    }
+    var debugBandFigures: HelmKPIStrip { bandFigures }
+    var debugBandFolderButton: HelmButton { bandFolderButton }
+    var debugBandFolderRow: HelmHeroRow { bandFolderRow }
+    /// The boxed figures and the loading sentence, which the band replaces.
+    var debugIsStatsRowVisible: Bool { !statsRow.isHiddenOrHasHiddenAncestor }
+    var debugIsLoadingLabelVisible: Bool { !loadingLabel.isHiddenOrHasHiddenAncestor }
+    /// A refresh is still reading, so a suite can wait for it before
+    /// rendering a fixture that the refresh would otherwise replace.
+    var debugIsLoading: Bool { isLoading }
+    #endif
+}
+
+/// CR-1: the band says what the grey line under the toolbar said, so in the
+/// sidebar layout Review gives up that line as Needs you, In flight and Tasks
+/// do. The live subtitle is still the page's summary for the crew panel and
+/// the floating bar's drill header.
+extension ReviewController: WorkspaceHeaderLineCollapsing {
+    var collapsesEmptyHeaderLine: Bool { drawsSidebarLayout }
+    var drawsSubtitleOnHeaderLine: Bool { !drawsSidebarLayout }
 }

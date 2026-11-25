@@ -1205,9 +1205,11 @@ final class HelmButton: NSButton {
     /// The one legitimate exception to "a page must not set `attributedTitle`
     /// on a `HelmButton`" (`restyle()` owns that property and overwrites it on
     /// the next theme change, which is why setting it from outside does not
-    /// survive). Exists for §6.14's Daylight toast: an ink capsule is not a
-    /// page surface, so a `.quiet` button's `muted` label - correct everywhere
-    /// else - disappears on it. `nil`, the default, changes nothing anywhere.
+    /// survive). Added for §6.14's Daylight toast, which TO-1 (Helm 10.4.0)
+    /// replaced with a hero capsule and a `heroInk` Undo pill. It stays for any
+    /// ink surface that is not a page, where a `.quiet` button's `muted` label
+    /// - correct everywhere else - disappears. `nil`, the default, changes
+    /// nothing anywhere.
     var labelColorOverride: NSColor? {
         didSet { if labelColorOverride != oldValue { restyle() } }
     }
@@ -4111,8 +4113,57 @@ final class HelmSegmentedTabs: NSView {
 
     private struct Pill {
         let id: String
-        let container: HoverHighlightView
+        let container: PillView
         let label: NSTextField
+    }
+
+    /// One segment. A `HoverHighlightView`, so the radio role, the press and
+    /// Return and Space come from that one component, and it also tells the
+    /// strip when it takes or gives up keyboard focus. A strip on a hero
+    /// (`heroInk`) needs that to draw its own ring: the system ring is the
+    /// accent, and on a gradient of the accent it does not show.
+    private final class PillView: HoverHighlightView {
+        /// `(focused, showsRing)`. `showsRing` is what `HelmFocusVisibility`
+        /// decided for this focus (a key moved it, or Full Keyboard Access
+        /// is on), read before this view clears its own ring.
+        var onFocusChange: ((Bool, Bool) -> Void)?
+        /// While set, the strip draws the ring and the system one is off.
+        var drawsOwnRing = false
+        /// What `HelmFocusVisibility` decided when this pill last took focus.
+        private(set) var wantsRing = false
+
+        override func becomeFirstResponder() -> Bool {
+            guard super.becomeFirstResponder() else { return false }
+            wantsRing = focusRingType != .none
+            if drawsOwnRing {
+                focusRingType = .none
+                noteFocusRingMaskChanged()
+            }
+            onFocusChange?(true, wantsRing)
+            return true
+        }
+
+        override func resignFirstResponder() -> Bool {
+            guard super.resignFirstResponder() else { return false }
+            onFocusChange?(false, false)
+            return true
+        }
+
+        /// Hands the ring back to AppKit when the strip leaves a hero while
+        /// this pill holds focus, so focus never goes unmarked.
+        func restoreSystemRing() {
+            guard wantsRing, focusRingType == .none else { return }
+            focusRingType = .exterior
+            noteFocusRingMaskChanged()
+        }
+    }
+
+    /// The hero strip's focus ring (`heroInk`): an ink outline around the
+    /// focused pill, `HelmFocusRing.inset` outside it, as the board's
+    /// `outline-offset` draws it. Above the pills, so it never answers a
+    /// click meant for the pill under it.
+    private final class HeroRingView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 
     private let capsule = NSView()
@@ -4130,6 +4181,41 @@ final class HelmSegmentedTabs: NSView {
     private let thumb = NSView()
     private var pills: [Pill] = []
     private let size: Size
+    /// The row of pills and the four constraints that inset it in the
+    /// capsule, kept so `heroInk` can widen the inset to hold its ring.
+    private var pillRow: NSStackView?
+    private var pillRowInsets: [NSLayoutConstraint] = []
+    private let heroRing = HeroRingView()
+    /// The pill that holds keyboard focus, and whether that focus wants a
+    /// ring (`PillView.onFocusChange`).
+    private var focusedPillID: String?
+    private var focusShowsRing = false
+
+    /// 1.3.0: the strip on a hero gradient, as the board's `.hsegh` draws it
+    /// (the menu-bar popover's MB-1 head, and the Crew band's Log filter).
+    /// Each segment is its own capsule: the ghost pill `HelmButton.heroInk`
+    /// paints, a shade of the ink's opposite under the ink's words with an
+    /// ink hairline. The chosen one is solid ink, as `HelmButton.heroSelection`
+    /// is, with its words in `heroSelection`. Keyboard focus is a 2pt ring of
+    /// the ink drawn `HelmFocusRing.inset` outside the pill, in place of the
+    /// accent ring, which on a gradient of the accent would not show. The
+    /// ring follows `HelmFocusVisibility` exactly as the system one does.
+    /// The selection, the sliding thumb, ← → and the radio roles are
+    /// unchanged. Pass the hero's ink after its theme pass
+    /// (`tabs.heroInk = header.ink`). `nil`, the default, changes nothing.
+    var heroInk: NSColor? {
+        didSet { if heroInk != oldValue { heroInkChanged() } }
+    }
+
+    /// 1.3.0: the chosen segment's words on the solid ink, the hero's deeper
+    /// stop (`PopoverHeroHeader.deepStop`), which clears the text floor on
+    /// the ink by the hero's own palette rule. Checked here anyway: a colour
+    /// under 4.5:1 on the ink falls back to the shade (`HelmButton.heroShade`),
+    /// which always clears it. `nil` takes the shade. Ignored without
+    /// `heroInk`.
+    var heroSelection: NSColor? {
+        didSet { if heroSelection != oldValue { applyTheme(appliedTheme ?? ThemeManager.shared.theme) } }
+    }
     /// `labelSize` (1.1.0): a fixed point size that does not follow the
     /// chrome text scale, or nil for the size's own scaled one.
     private let fixedLabelSize: CGFloat?
@@ -4181,7 +4267,7 @@ final class HelmSegmentedTabs: NSView {
 
         var pillViews: [NSView] = []
         for item in items {
-            let container = HoverHighlightView()
+            let container = PillView()
             container.cornerRadius = size.pillRadius
             container.translatesAutoresizingMaskIntoConstraints = false
             container.identifier = NSUserInterfaceItemIdentifier(item.id)
@@ -4208,6 +4294,9 @@ final class HelmSegmentedTabs: NSView {
             container.onKeyDown = { [weak self] event in
                 self?.handleArrowKey(event, fromID: item.id) ?? false
             }
+            container.onFocusChange = { [weak self] focused, showsRing in
+                self?.pillFocusChanged(item.id, focused: focused, showsRing: showsRing)
+            }
             pills.append(Pill(id: item.id, container: container, label: label))
             pillViews.append(container)
         }
@@ -4228,13 +4317,20 @@ final class HelmSegmentedTabs: NSView {
         thumb.translatesAutoresizingMaskIntoConstraints = true
         capsule.addSubview(thumb)
         capsule.addSubview(row)
+        // Above the pills, and hidden until a strip on a hero takes focus.
+        heroRing.wantsLayer = true
+        heroRing.translatesAutoresizingMaskIntoConstraints = true
+        heroRing.isHidden = true
+        capsule.addSubview(heroRing)
         addSubview(capsule)
-        NSLayoutConstraint.activate([
+        pillRow = row
+        pillRowInsets = [
             row.leadingAnchor.constraint(equalTo: capsule.leadingAnchor, constant: size.capsuleInset),
             row.trailingAnchor.constraint(equalTo: capsule.trailingAnchor, constant: -size.capsuleInset),
             row.topAnchor.constraint(equalTo: capsule.topAnchor, constant: size.capsuleInset),
             row.bottomAnchor.constraint(equalTo: capsule.bottomAnchor, constant: -size.capsuleInset),
-
+        ]
+        NSLayoutConstraint.activate(pillRowInsets + [
             capsule.leadingAnchor.constraint(equalTo: leadingAnchor),
             capsule.trailingAnchor.constraint(equalTo: trailingAnchor),
             capsule.topAnchor.constraint(equalTo: topAnchor),
@@ -4270,10 +4366,14 @@ final class HelmSegmentedTabs: NSView {
     override func layout() {
         super.layout()
         let theme = appliedTheme ?? ThemeManager.shared.theme
-        if theme.isDaylight {
+        // A strip on a hero is capsules on every theme, as the board draws it.
+        if theme.isDaylight || heroInk != nil {
             for pill in pills {
                 pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
             }
+        }
+        if heroInk != nil, let active = pills.first(where: { $0.id == selectedID }) {
+            thumb.layer?.cornerRadius = size.daylightPillRadius(for: active.container)
         }
         // E3: a layout pass repositions the thumb instantly. Only a genuine
         // selection change slides it - otherwise a window resize would send
@@ -4286,6 +4386,7 @@ final class HelmSegmentedTabs: NSView {
         // else ever re-runs it.
         capsule.layoutSubtreeIfNeeded()
         moveThumb(animated: false)
+        placeHeroRing()
     }
 
     #if FM_SELFTESTS
@@ -4391,6 +4492,7 @@ final class HelmSegmentedTabs: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         appliedTheme = theme
+        if let heroInk { applyHeroInk(heroInk, theme: theme); return }
         if theme.isDaylight { applyDaylightTheme(theme); return }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
@@ -4490,6 +4592,157 @@ final class HelmSegmentedTabs: NSView {
         }
         moveThumb(animated: false)
     }
+
+    // MARK: On a hero (1.3.0)
+
+    /// The shade under an unchosen segment, and the ink of its hairline:
+    /// the values `HelmButton.heroPalette` paints a ghost pill with, so a
+    /// segment and a ghost pill beside it on one hero read as one family.
+    static var heroFillAlpha: CGFloat { HelmButton.heroFillAlpha }
+    static var heroHoverAlpha: CGFloat { HelmButton.heroFillAlpha + 0.06 }
+    static var heroBorderAlpha: CGFloat { HelmButton.heroBorderAlpha }
+    /// The ring's stroke. The board's `outline: 2px`, and the weight
+    /// `HelmSearchField.heroInk` gives its focused well.
+    static let heroRingWidth: CGFloat = 2
+
+    /// The chosen segment's words: `heroSelection` when it clears the text
+    /// floor on the ink, otherwise the shade, which always does (black under
+    /// a light ink, white under a pale hero's dark one).
+    static func heroSelectionInk(_ selection: NSColor?, on ink: NSColor) -> NSColor {
+        if let selection, HelmContrast.ratio(selection, ink) >= HelmContrast.textTarget { return selection }
+        return HelmButton.heroShade(for: ink)
+    }
+
+    /// The strip moved onto or off a hero: the row's inset and spacing make
+    /// room for the ring, and a pill holding focus gets the right ring.
+    private func heroInkChanged() {
+        let onHero = heroInk != nil
+        // `HelmFocusRing.inset` all round, so the ring around an end pill
+        // stays inside this view: the binary is stamped with the macOS 13
+        // SDK, where a view still clips its subviews to its bounds.
+        let inset = onHero ? max(size.capsuleInset, HelmFocusRing.inset) : size.capsuleInset
+        for constraint in pillRowInsets {
+            constraint.constant = constraint.firstAttribute == .leading || constraint.firstAttribute == .top
+                ? inset : -inset
+        }
+        // The board's 4pt gap between capsules. The ring sits 3pt outside
+        // its pill, so a neighbour stays 1pt clear of it.
+        pillRow?.spacing = onHero ? HelmMetrics.s1 : size.spacing
+        for pill in pills {
+            pill.container.drawsOwnRing = onHero
+            if onHero {
+                if pill.id == focusedPillID, pill.container.focusRingType != .none {
+                    pill.container.focusRingType = .none
+                    pill.container.noteFocusRingMaskChanged()
+                }
+            } else {
+                pill.container.layer?.borderWidth = 0
+                if pill.id == focusedPillID { pill.container.restoreSystemRing() }
+            }
+        }
+        if !onHero { heroRing.isHidden = true }
+        applyTheme(appliedTheme ?? ThemeManager.shared.theme)
+        needsLayout = true
+    }
+
+    /// The hero recipe - see `heroInk`.
+    private func applyHeroInk(_ ink: NSColor, theme: HelmTheme) {
+        let shade = HelmButton.heroShade(for: ink)
+        let chosenWords = Self.heroSelectionInk(heroSelection, on: ink)
+        capsule.layer?.backgroundColor = NSColor.clear.cgColor
+        capsule.layer?.borderWidth = 0
+        for pill in pills {
+            let isActive = pill.id == selectedID
+            pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
+            pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+            // The chosen fill is the thumb's, as on every other theme (E3),
+            // so it still slides. The others are ghost capsules.
+            pill.container.normalColor = isActive ? .clear : shade.withAlphaComponent(Self.heroFillAlpha)
+            pill.container.hoverColor = isActive ? .clear : shade.withAlphaComponent(Self.heroHoverAlpha)
+            pill.container.layer?.borderWidth = isActive ? 0 : 1
+            pill.container.layer?.borderColor = ink.withAlphaComponent(Self.heroBorderAlpha).cgColor
+            pill.label.textColor = isActive ? chosenWords : ink
+            pill.label.font = theme.isDaylight
+                ? HelmType.rounded(labelPointSize, isActive ? .semibold : .medium)
+                : .systemFont(ofSize: labelPointSize, weight: isActive ? .semibold : .medium)
+        }
+        thumb.layer?.backgroundColor = ink.cgColor
+        if let active = pills.first(where: { $0.id == selectedID }) {
+            thumb.layer?.cornerRadius = size.daylightPillRadius(for: active.container)
+        }
+        heroRing.layer?.backgroundColor = NSColor.clear.cgColor
+        heroRing.layer?.borderColor = ink.cgColor
+        heroRing.layer?.borderWidth = Self.heroRingWidth
+        moveThumb(animated: false)
+        placeHeroRing()
+    }
+
+    private func pillFocusChanged(_ id: String, focused: Bool, showsRing: Bool) {
+        if focused {
+            focusedPillID = id
+            focusShowsRing = showsRing
+        } else if focusedPillID == id {
+            focusedPillID = nil
+            focusShowsRing = false
+        }
+        placeHeroRing()
+    }
+
+    /// Puts the hero ring around the focused pill, or hides it. Instant, as
+    /// the system ring is: it marks where focus is, it does not travel.
+    private func placeHeroRing() {
+        guard heroInk != nil, focusShowsRing,
+              let pill = pills.first(where: { $0.id == focusedPillID }) else {
+            heroRing.isHidden = true
+            return
+        }
+        let frame = capsule.convert(pill.container.bounds, from: pill.container)
+            .insetBy(dx: -HelmFocusRing.inset, dy: -HelmFocusRing.inset)
+        HelmMotion.withoutActions {
+            heroRing.frame = frame
+            heroRing.layer?.cornerRadius = pill.container.cornerRadius + HelmFocusRing.inset
+        }
+        heroRing.isHidden = false
+    }
+
+    #if FM_SELFTESTS
+    /// The hero ring as drawn, in this control's own coordinates, with the
+    /// focused pill's frame in the same space to measure it against.
+    struct HeroRingDebug {
+        let isShowing: Bool
+        let frame: NSRect
+        let pillFrame: NSRect?
+        let color: NSColor?
+        let width: CGFloat
+        /// Whether AppKit's own ring is still on for the focused pill.
+        let systemRingIsOn: Bool
+    }
+
+    var debugHeroRing: HeroRingDebug {
+        layoutSubtreeIfNeeded()
+        let pill = pills.first { $0.id == focusedPillID }
+        return HeroRingDebug(
+            isShowing: !heroRing.isHidden,
+            frame: convert(heroRing.frame, from: capsule),
+            pillFrame: pill.map { convert($0.container.bounds, from: $0.container) },
+            color: heroRing.layer?.borderColor.flatMap { NSColor(cgColor: $0) },
+            width: heroRing.layer?.borderWidth ?? 0,
+            systemRingIsOn: pill.map { $0.container.focusRingType != .none } ?? false)
+    }
+
+    /// Each pill's resting fill and hairline, in pill order.
+    var debugPillFills: [NSColor] { pills.map { $0.container.normalColor } }
+    var debugPillBorders: [(width: CGFloat, color: NSColor?)] {
+        pills.map { pill in
+            (pill.container.layer?.borderWidth ?? 0,
+             pill.container.layer?.borderColor.flatMap { NSColor(cgColor: $0) })
+        }
+    }
+    var debugPillLabelColors: [NSColor] { pills.map { $0.label.textColor ?? .clear } }
+    /// The row's spacing and its inset in the capsule.
+    var debugRowSpacing: CGFloat { pillRow?.spacing ?? 0 }
+    var debugRowInset: CGFloat { pillRowInsets.first?.constant ?? 0 }
+    #endif
 
     // MARK: Probe / self-test surface
 

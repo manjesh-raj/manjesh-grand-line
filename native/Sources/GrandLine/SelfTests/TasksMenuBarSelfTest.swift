@@ -126,6 +126,10 @@ enum TasksMenuBarSelfTest {
 
     private static func checkItShowsTheStoreInTheBridgeShape(_ pane: TasksBridgePane, seeded: Seeded,
                                                             _ check: (Bool, String) -> Void) {
+        // MB-1 leaves the header out of the compact popover's Today tab only,
+        // where the hero head says the same things. The Tasks item keeps it.
+        check(pane.debugShowsHeader && !pane.header.isHiddenOrHasHiddenAncestor,
+              "the Tasks menu-bar item's pane draws its own header, with the date, done today and the streak")
         let card = pane.debugNowCard
         check(card.debugTitle == seeded.now.title,
               "the Now card is the overdue task from the real store - got \(card.debugTitle)")

@@ -248,6 +248,13 @@ enum CompactModeDigest {
             }
     }
 
+    /// How many notes the Notes tab stands for: every one that is not
+    /// archived, by the same cut `notes(_:)` makes, without its cap. MB-1's
+    /// head says "12 notes on the board" while the pane lists the newest five.
+    static func noteCount(_ notes: [StickyNote]) -> Int {
+        notes.filter { !$0.isArchived }.count
+    }
+
     /// A sticky note's title is optional, so this falls back through the text
     /// before giving up - and gives up *visibly*, per GL-14: "Untitled note"
     /// is a state, not an empty string that renders as a blank row.

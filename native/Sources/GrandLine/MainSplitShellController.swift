@@ -1517,10 +1517,10 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: Chrome verbs
 
-    override func showToast(_ message: String) {
+    override func showToast(_ message: String, kind: Feedback.Kind = .done) {
         // Bottom centre of the content column, not of the whole window - the
         // sidebar is not where a page's confirmation belongs.
-        Toast.show(in: contentPane.view, message: message)
+        Toast.show(in: contentPane.view, message: message, kind: kind)
     }
 
     // MARK: WorkspaceChrome

@@ -462,3 +462,57 @@ Each one is an encrypted transcript of about 200 real copies.
   Opening one across launches needs the real Keychain key, and the task did not touch the captain's Keychain.
 - Not verified on the captain's own machine either: no task process opens or lists their real data folder.
   `native/MANUAL-CHECKS.md` §18a has the two-line check for that.
+
+## CP-1 Hero head capture (the ⌥Space panel, hero restyle board)
+
+The captain picked CP-1 for the capture panel on the hero restyle board (`data/grandline-hero-restyle-designs-scout/`).
+It puts the panel in the same language as ⌘K's lit row, the notifications head and the toasts.
+
+### What shipped
+
+- The panel opens on a hero head: the quiet-ink gradient (`HelmHeroColumn.palette`) with the capsule glow, a glass bolt tile, "Capture" in the rounded face, and the captain's chord as a glass keycap.
+  The chord is now read from `AppSettings.quickCaptureShortcut` on every `present()`, so a recorded chord is the one the head names (it was a literal "⌥Space").
+- The field is a `HelmSearchField` in the hero ink (`heroInk`, which already existed), led by a plus where a search has its magnifying glass.
+  It sits on the hero's dark shade at 16%, never a white wash.
+- The date and clipboard chips are pills on the same shade with a glass hairline, and their row keeps its height with no chips in it, so the head does not jump as a date is typed.
+- The body is the card: the status line, "FILE IT AS", the six tiles and the footer, with no dividers and no accent border.
+- Each tile carries a wash tile of its identity hue and a keycap for its chord.
+  The tile Return files to is lit with the gradient, a glass tile and a glass keycap, so the light shows where Return goes.
+  When the crew answers, the light moves to its pick before it files, and a refused crew pick hands the light back to Return's tile.
+- A refusal or the crew working is a line at the top of the body: the refusal in the theme's critical hue with a warning glyph, the crew working muted beside the kit's inline activity bar.
+  The footer's hint stays in place rather than being swapped out.
+- A filed capture's confirmation takes the head: a glass check and the destination's own words, cross-faded in (`HelmMotion.fade`, so only the swap under Reduce Motion), held for the same 0.9s as before, then the panel fades out as it always has.
+  A hand-off (⌘4) still closes at once.
+- "Suggest where it goes" wears the board's sparkle instead of the crew glyph.
+
+### Defects fixed with it
+
+- **The hint said "⌘1–⌘5 choose" since F4 appended Link as ⌘6** (the board's finding 3).
+  `CaptureHeroWords.chordRange` derives the range from `CaptureDestination.allCases`, the order `chordDigit` comes from.
+- **A second Return inside the 0.9s confirmation filed the same words again.** `file(to:)` now ignores a file while the confirmation stands.
+- **Caps Lock killed every chord** (AGENTS.md gotcha (21)).
+  `CaptureRootView` masked with `.deviceIndependentFlagsMask` and compared `== .command`, so Caps Lock or a keypad digit made ⌘1-⌘6 fall through.
+  It masks with `KeyChord.relevantModifierMask` now.
+- **`CaptureRouterViewSelfTest`'s render check had been vacuous since F4.** It guarded `tiles.count == 5` and returned before asserting anything once there were six.
+  It fails loudly on a count mismatch now, and samples the lit tile and the head against the gradient's start stop.
+- `resizeToFit` used `setContentSize`, which keeps the window's bottom edge, so a status line appearing pushed the head up the screen.
+  It keeps the top edge now, where `present()` places the panel.
+
+### Where the design did not hold as drawn
+
+- The board shrinks the head to the confirmation's single line.
+  The confirmation is laid over the head at the head's own height instead, so the panel does not jump in the moment before it closes.
+- The board's refused state lights Task for a GitHub URL.
+  The panel lights Return's real default, which F4 made Link for a bare URL.
+- The board rings the crew's pick with an accent focus ring as well as the light. The light alone moves.
+- The board's spinner is the kit's inline activity bar, which is what the app uses in place of a spinner everywhere.
+- Kit sizes where they differ: a 40pt field (board 42), the bolt tile on `rChip` (board 7), the verdict's gap on `s3` (board 10), the tile keycaps in `HelmType.chip()`.
+
+### Verified
+
+- `CaptureRouterSelfTest` (headless): the hint reads ⌘1–⌘6 literally, its last chord files somewhere and the next one nowhere.
+- `CaptureRouterViewSelfTest` (window lane), in Lavender and Powder: the head's palette and gradient stops, "Capture" at 6.14:1 / 6.16:1, typed words at 7.83:1 / 7.84:1 and the placeholder at 5.70:1 / 5.73:1 on the field (and a 14% white wash shown to fail), the chips' words on the gradient, the live chord, a live theme change repainting the head and the lit tile, one lit tile following Return's default and the crew's pick, the light handed back after a refused crew pick, the confirmation taking the head at once under Reduce Motion at the head's own height, no second file during it, the hint, Caps Lock and keypad chords, the gradient really reaching a bitmap, and the panel never put on screen.
+- Each new check was confirmed to fail on an injection: the ⌘5 literal, the field on a white wash (4.49:1 / 4.46:1 typed, 3.51:1 / 3.50:1 placeholder, the report's figures), the crew's light removed, the refusal keeping the crew's light, the double-file guard removed, the swap ignoring Reduce Motion, the old modifier mask, the head left unpainted, and the lit tile drawn without its gradient.
+- Off-screen renders of the real panel typing, suggesting, refused and filed were compared with the board's CP-1 in both registers.
+  The first render drew the tile glyphs a size large and the refusal's warning glyph as a pale filled triangle, and both were corrected.
+- Not verified: the panel in the captain's running app, the window's shadow, the global hotkey, and a real VoiceOver pass.

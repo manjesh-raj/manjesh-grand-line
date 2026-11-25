@@ -100,9 +100,12 @@ final class UnifiedSearchController: NSWindowController {
     /// raw-input purge - this was the smallest, most-used surface in the app
     /// still wearing system chrome, audit Tier 3). Arrow/Return/Escape still
     /// arrive here, now through `HelmSearchField.onCommand`.
+    ///
+    /// K-2 (the hero restyle board's "Lit selection") puts it in a raised
+    /// well with an `esc` keycap at its trailing edge, as the board draws it.
     private let searchField = HelmSearchField(
         placeholder: "Search hosts, commands, tasks, runbooks, actions\u{2026}",
-        size: .prominent)
+        size: .prominent, shortcutHint: "esc")
     private let resultsStack = NSStackView()
     private let scroll = NSScrollView()
     private var groups: [UnifiedSearchGroup] = []
@@ -184,6 +187,7 @@ final class UnifiedSearchController: NSWindowController {
         // `ThemeManager`/`HelmTheme` checklist, gotcha #8.
         content.wantsLayer = true
 
+        searchField.wellSurface = .raised
         searchField.onTextChanged = { [weak self] query in self?.reload(query: query) }
         searchField.onCommand = { [weak self] selector in self?.handle(command: selector) ?? false }
 
@@ -202,34 +206,24 @@ final class UnifiedSearchController: NSWindowController {
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        // H1: "glass material behind (within-window blur or 96% surface +
-        // raised shadow - it floats over the app, so material is honest
-        // here)". `.withinWindow`, never `.behindWindow`: gotcha (8) is about
-        // the latter, which composites against the *desktop* and renders the
-        // wrong tint on every theme. This panel floats over the app's own
-        // window, which is exactly what within-window blending is for - the
-        // same reading B1 applied to the floating bar.
-        //
-        // The material is Daylight-family only, and the twelve keep the opaque
-        // fill they have always rendered: their surfaces are already near
-        // black, so translucency buys nothing and costs contrast.
-        let material = NSVisualEffectView()
-        material.material = .menu
-        material.blendingMode = .withinWindow
-        material.state = .active
-        material.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(material)
-        self.materialRef = material
+        // K-2 (the hero restyle board's "Lit selection", the captain's pick)
+        // took H1's `.menu` material away. The palette sits on the card
+        // surface now, opaque, like every other surface in the hero language:
+        // the system material was the one part of it that was neither the
+        // app's nor the theme's, and the selected row is now the one lit
+        // thing on the panel, which a blurred backdrop would compete with.
 
         // H1: "a persistent footer strip with key hints (⏎ to run, ⌘K to
         // close)". `HelmKeyHint` (F2c), so a keycap in the palette and a
-        // keycap in a form footer are the same object.
+        // keycap in a form footer are the same object. K-2's footer leads
+        // with the arrows, as the board draws it.
         let footer = NSView()
         footer.wantsLayer = true
         footer.translatesAutoresizingMaskIntoConstraints = false
+        let moveHint = HelmKeyHint(keys: [Self.upKey, Self.downKey], caption: "to move")
         let runHint = HelmKeyHint(keys: [HelmKeyHint.returnKey], caption: "to run")
         let closeHint = HelmKeyHint(keys: [HelmKeyHint.command, "K"], caption: "to close")
-        let footerRow = NSStackView(views: [runHint, closeHint])
+        let footerRow = NSStackView(views: [moveHint, runHint, closeHint])
         footerRow.orientation = .horizontal
         footerRow.alignment = .centerY
         footerRow.spacing = HelmMetrics.s4
@@ -247,18 +241,13 @@ final class UnifiedSearchController: NSWindowController {
         content.addSubview(scroll)
         content.addSubview(footer)
         NSLayoutConstraint.activate([
-            material.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            material.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            material.topAnchor.constraint(equalTo: content.topAnchor),
-            material.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-
-            searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
-            searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
-            searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
+            searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: Self.fieldGutter),
+            searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -Self.fieldGutter),
+            searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: Self.fieldInset),
 
             divider.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 14),
+            divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: Self.fieldInset),
             divider.heightAnchor.constraint(equalToConstant: 1),
 
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -275,7 +264,7 @@ final class UnifiedSearchController: NSWindowController {
             footerDivider.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
             footerDivider.topAnchor.constraint(equalTo: footer.topAnchor),
             footerDivider.heightAnchor.constraint(equalToConstant: 1),
-            footerRow.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 18),
+            footerRow.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: Self.fieldGutter),
             footerRow.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
         ])
         self.dividerRef = divider
@@ -285,22 +274,26 @@ final class UnifiedSearchController: NSWindowController {
     private var hasSizedOnce = false
     /// The frame the panel is settling toward. See `resizeToFit`.
     private var pendingFrame: NSRect?
-    private var materialRef: NSVisualEffectView?
     private var footerRef: NSView?
     private var footerDividerRef: NSView?
 
-    /// H1's persistent footer strip.
-    static let footerHeight: CGFloat = 30
-
-    /// How opaque the panel's own fill sits over the material (H1).
-    ///
-    /// The same value and the same reasoning as `DaylightBarController`'s: a
-    /// material is only visible through a fill that is not fully opaque, and
-    /// this is the highest alpha at which it still reads. Its contrast cost is
-    /// bounded rather than guessed - the effective surface is somewhere
-    /// between the fill and what it composites against, and the suite asserts
-    /// the panel's ink clears the floor against *both* ends.
-    static let daylightFillAlpha: CGFloat = 0.90
+    /// H1's persistent footer strip, 32pt as K-2 draws it.
+    static let footerHeight: CGFloat = 32
+    /// The field's distance from the panel's top edge and from the divider
+    /// under it, and the head's side gutter (K-2's 14pt by 16pt head).
+    static let fieldInset: CGFloat = 14
+    static let fieldGutter: CGFloat = HelmMetrics.s4
+    /// Everything above the results: the field, its two insets and the
+    /// divider. Derived rather than written out, because a literal here went
+    /// stale once already: it read 61, which is a 32pt field, while the field
+    /// has been `HelmField.prominentHeight` (40) since Phase 0 - so the
+    /// results' scroll view came out 8pt shorter than its own content (366pt
+    /// for 374pt of rows, measured by `UnifiedSearchLayoutSelfTest`), and the
+    /// bottom of the last row needed a scroll to see.
+    static var headerHeight: CGFloat { fieldInset + HelmField.prominentHeight + fieldInset + 1 }
+    /// The footer's arrow keycaps.
+    static let upKey = "\u{2191}"
+    static let downKey = "\u{2193}"
 
     /// Centers the palette near the top of the main window, Spotlight-style,
     /// and focuses the search field so typing works immediately.
@@ -515,7 +508,7 @@ final class UnifiedSearchController: NSWindowController {
         let contentHeight = items.isEmpty ? 46 : max(measured, 46)
         let resultsHeight = min(contentHeight, 420)
         // search field + divider + padding + H1's persistent footer strip
-        let total = 61 + resultsHeight + Self.footerHeight
+        let total = Self.headerHeight + resultsHeight + Self.footerHeight
 
         // **Compute from the pending target, not from the live frame.**
         // `window.animator().setFrame` does not apply immediately, so a second
@@ -582,6 +575,7 @@ final class UnifiedSearchController: NSWindowController {
     }
 
     private func applyTheme(_ theme: HelmTheme) {
+        // K-2: the card surface, opaque, on every palette.
         window?.contentView?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         // §6.11: radius 16 on `card` with a raised shadow. A titled `NSPanel`
         // paints its own square background behind the content view, so the
@@ -605,16 +599,9 @@ final class UnifiedSearchController: NSWindowController {
         dividerRef?.wantsLayer = true
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
         footerDividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
-        footerRef?.layer?.backgroundColor = HelmField.fill(theme).cgColor
-        // H1's material, Daylight-family only. The fill above it drops to
-        // `daylightFillAlpha` so the blur actually reads - an opaque surface
-        // over a material is just an opaque surface. Bounded by
-        // `checkPaletteMaterialCannotBreakContrast`: the effective surface
-        // lands between the two ends, and the ink clears the floor on both.
-        materialRef?.isHidden = !theme.isDaylight
-        window?.contentView?.layer?.backgroundColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.chromeBackgroundHex).withAlphaComponent(Self.daylightFillAlpha).cgColor
-            : HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        // K-2: the footer is the card too, under its hairline, rather than a
+        // strip of the inset well's colour.
+        footerRef?.layer?.backgroundColor = NSColor.clear.cgColor
         for label in groupHeaderLabels { label.textColor = HelmTheme.mutedInk(theme) }
         for row in rowViews { row.applyTheme(theme) }
     }
@@ -652,16 +639,27 @@ final class UnifiedSearchController: NSWindowController {
         guard index >= 0, index < rowViews.count else { return nil }
         return rowViews[index].debugGeometry
     }
-    /// §6.11's Daylight per-row recipe.
-    func debugDaylightRowGeometry(at index: Int) -> UnifiedSearchDaylightRowGeometry? {
-        guard index >= 0, index < rowViews.count else { return nil }
-        let g = rowViews[index].debugDaylightGeometry
-        return UnifiedSearchDaylightRowGeometry(
-            flatTileHidden: g.flatTileHidden, gradientTileHidden: g.gradientTileHidden,
-            gradientTileSide: g.gradientTileSide, selectionEdgeHidden: g.selectionEdgeHidden,
-            selectionEdgeWidth: g.selectionEdgeWidth, selectionEdgeColor: g.selectionEdgeColor,
-            backgroundFill: g.backgroundFill, backgroundRadius: g.backgroundRadius,
-            hintFont: g.hintFont)
+    /// The real row views, in display order - K-2's recipe is read off them.
+    var debugRows: [UnifiedSearchRowView] { rowViews }
+    var debugSearchField: HelmSearchField { searchField }
+    var debugFooterHints: [HelmKeyHint] {
+        footerRef.map { Self.descendants(HelmKeyHint.self, in: $0) } ?? []
+    }
+    /// The results' scroll view and the height of what it holds, for the
+    /// check that the panel's own arithmetic leaves room for every row.
+    var debugResultsViewportHeight: CGFloat { scroll.frame.height }
+    var debugResultsContentHeight: CGFloat {
+        resultsStack.arrangedSubviews.reduce(CGFloat(0)) { $0 + $1.fittingSize.height }
+    }
+    /// Whether anything in the panel is a system material (K-2 took H1's away).
+    var debugHasMaterial: Bool {
+        window?.contentView.map { !Self.descendants(NSVisualEffectView.self, in: $0).isEmpty } ?? false
+    }
+    private static func descendants<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        var found: [T] = []
+        if let hit = view as? T { found.append(hit) }
+        for sub in view.subviews { found += descendants(type, in: sub) }
+        return found
     }
     /// The panel chrome §6.11 specifies - radius/opacity/width, read live.
     var debugPanelChrome: (width: CGFloat, radius: CGFloat, masks: Bool,
@@ -680,21 +678,6 @@ final class UnifiedSearchController: NSWindowController {
     #endif
 }
 
-#if FM_SELFTESTS
-/// §6.11's Daylight row recipe, surfaced out of the private row view so a
-/// suite can name the type.
-struct UnifiedSearchDaylightRowGeometry {
-    let flatTileHidden: Bool
-    let gradientTileHidden: Bool
-    let gradientTileSide: CGFloat
-    let selectionEdgeHidden: Bool
-    let selectionEdgeWidth: CGFloat
-    let selectionEdgeColor: NSColor?
-    let backgroundFill: NSColor?
-    let backgroundRadius: CGFloat
-    let hintFont: NSFont?
-}
-#endif
 
 /// One palette row, matching the mockup's shape: a small tinted icon tile,
 /// the title over a muted meta line, and an optional trailing chip carrying
@@ -702,29 +685,58 @@ struct UnifiedSearchDaylightRowGeometry {
 /// Internal rather than `private` so the §3H suite can build one directly and
 /// read what its icon really resolved to - the same reason
 /// `RecentDestinationsPanelViewController` is internal.
+///
+/// **K-2, the Lit selection** (the hero restyle board, the captain's pick).
+/// A row rests on the card surface with a faint wash tile of its own hue, and
+/// the selected row is the one lit thing on the panel: the hero's quiet-ink
+/// gradient (`HelmHeroColumn.palette`, the toasts' and the notifications
+/// head's), its words in the hero's ink with the meta line at the quiet
+/// alpha, its tile a glass tile, and its hint a shade pill drawn for the
+/// gradient. Only the selected row shows its hint, because only that row is
+/// what Return runs. The hint stays in the row at zero alpha rather than
+/// leaving the stack, so a title truncates at the same point whichever row
+/// is lit, and VoiceOver still reads it.
+///
+/// §6.11's gradient tile on every Daylight row went with it: a column of
+/// full-saturation gradient squares beside one gradient row is a dozen lit
+/// things rather than one. The board draws the faint wash tile instead, which
+/// is `IconTileView`, the tile the twelve pre-Daylight palettes always had.
 final class UnifiedSearchRowView: NSView {
-    private let tile = IconTileView(size: 24, cornerRadius: 6)
-    /// §6.11's 28pt gradient tile. Built for every theme and shown only under
-    /// Daylight, where it takes the flat tinted tile's place - the same
-    /// exactly-one-visible arrangement `HelmAccentRow` and `HelmEmptyState`
-    /// already use, so a theme switch never rebuilds a row.
-    private let gradientTile = HelmGradientTile(size: .palette)
-    /// §6.11's "3px `ink` inset left edge" on the selected row.
-    private let selectionEdge = NSView()
+    /// The board's 26pt tile on an 8pt radius.
+    static let tileSide: CGFloat = 26
+    static let glyphPointSize: CGFloat = 12
+
+    private let tile = IconTileView(size: UnifiedSearchRowView.tileSide, cornerRadius: HelmMetrics.rControl)
+    /// The lit row's tile: a translucent shade of the hero's ink with an ink
+    /// glyph and an ink hairline, the glass tile every hero surface draws
+    /// (`PopoverHeroHeader`'s `.glass`, the toast's and the HUD's circles).
+    private let glassTile = NSView()
+    private let glassGlyph = NSImageView()
+    /// The lit row's gradient, under everything else in `background`.
+    private let hero = HelmHeroSurface()
     private let titleLabel = NSTextField(labelWithString: "")
     private let metaLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
-    private let hintBackground = NSView()
+    private let hintBackground = HintPill()
     private let background = HoverHighlightView()
     var onClick: (() -> Void)?
     private var isSelected = false
+    /// The glyph the row's tile carries, kept so the glass tile can draw the
+    /// same one.
+    private var glyphSymbol = "circle"
     private var theme: HelmTheme = ThemeManager.shared.theme
+
+    /// The lit row's palette: the theme's hero colour through the quiet-ink
+    /// rule, so the 80% meta line clears the text floor too.
+    static func palette(in theme: HelmTheme) -> HelmHeroSurface.Palette {
+        HelmHeroColumn.palette(for: HelmModuleCard.HeroTone(colour: .themeAccent), in: theme)
+    }
 
     init() {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        background.cornerRadius = 6
+        background.cornerRadius = HelmMetrics.dTileSmall
         background.translatesAutoresizingMaskIntoConstraints = false
         addSubview(background)
         NSLayoutConstraint.activate([
@@ -732,6 +744,23 @@ final class UnifiedSearchRowView: NSView {
             background.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             background.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             background.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+
+        // The gradient is the background's first subview, so the row's own
+        // content draws over it, and it takes no clicks
+        // (`HelmHeroSurface.hitTest`), so a click on the lit row still lands
+        // on the background's recognizer. The board's glow is an ellipse
+        // sized from the row itself, which is `.capsule`'s shape: the card's
+        // 220pt circle would cover most of a 44pt row.
+        hero.glowShape = .capsule
+        hero.isHidden = true
+        hero.layer?.cornerRadius = HelmMetrics.dTileSmall
+        background.addSubview(hero)
+        NSLayoutConstraint.activate([
+            hero.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            hero.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            hero.topAnchor.constraint(equalTo: background.topAnchor),
+            hero.bottomAnchor.constraint(equalTo: background.bottomAnchor),
         ])
 
         titleLabel.font = HelmType.rowTitle()
@@ -753,7 +782,7 @@ final class UnifiedSearchRowView: NSView {
         textColumn.setHuggingPriority(.defaultLow, for: .horizontal)
         textColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        hintLabel.font = HelmType.caption()
+        hintLabel.font = HelmType.chip()
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         // AGENTS.md gotcha (12) again, and the reason this chip is sized by a
         // *width constraint* rather than by hugging priority: `hintBackground`
@@ -769,38 +798,40 @@ final class UnifiedSearchRowView: NSView {
         hintLabel.setContentHuggingPriority(.required, for: .horizontal)
         hintLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         hintBackground.wantsLayer = true
-        hintBackground.layer?.cornerRadius = 4
         hintBackground.translatesAutoresizingMaskIntoConstraints = false
         hintBackground.addSubview(hintLabel)
         NSLayoutConstraint.activate([
             hintLabel.centerXAnchor.constraint(equalTo: hintBackground.centerXAnchor),
             hintLabel.centerYAnchor.constraint(equalTo: hintBackground.centerYAnchor),
-            hintBackground.widthAnchor.constraint(equalTo: hintLabel.widthAnchor, constant: 12),
-            hintBackground.heightAnchor.constraint(equalTo: hintLabel.heightAnchor, constant: 4),
+            // The board's pill: 8pt either side, 2pt above and below.
+            hintBackground.widthAnchor.constraint(equalTo: hintLabel.widthAnchor, constant: 2 * HelmMetrics.s2),
+            hintBackground.heightAnchor.constraint(equalTo: hintLabel.heightAnchor, constant: HelmMetrics.s1),
         ])
 
-        selectionEdge.wantsLayer = true
-        selectionEdge.isHidden = true
-        selectionEdge.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(selectionEdge)
-        NSLayoutConstraint.activate([
-            selectionEdge.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            selectionEdge.topAnchor.constraint(equalTo: background.topAnchor),
-            selectionEdge.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-            selectionEdge.widthAnchor.constraint(equalToConstant: Self.selectionEdgeWidth),
-        ])
+        glassTile.wantsLayer = true
+        glassTile.layer?.cornerRadius = HelmMetrics.rControl
+        glassTile.layer?.borderWidth = 1
+        glassTile.isHidden = true
+        glassTile.translatesAutoresizingMaskIntoConstraints = false
+        glassGlyph.translatesAutoresizingMaskIntoConstraints = false
+        glassGlyph.imageScaling = .scaleNone
+        glassTile.addSubview(glassGlyph)
 
         let tileBox = NSView()
         tileBox.translatesAutoresizingMaskIntoConstraints = false
         tileBox.addSubview(tile)
-        tileBox.addSubview(gradientTile)
+        tileBox.addSubview(glassTile)
         NSLayoutConstraint.activate([
             tile.centerXAnchor.constraint(equalTo: tileBox.centerXAnchor),
             tile.centerYAnchor.constraint(equalTo: tileBox.centerYAnchor),
-            gradientTile.centerXAnchor.constraint(equalTo: tileBox.centerXAnchor),
-            gradientTile.centerYAnchor.constraint(equalTo: tileBox.centerYAnchor),
-            tileBox.widthAnchor.constraint(equalToConstant: HelmGradientTile.Size.palette.side),
-            tileBox.heightAnchor.constraint(equalToConstant: HelmGradientTile.Size.palette.side),
+            glassTile.centerXAnchor.constraint(equalTo: tileBox.centerXAnchor),
+            glassTile.centerYAnchor.constraint(equalTo: tileBox.centerYAnchor),
+            glassTile.widthAnchor.constraint(equalToConstant: Self.tileSide),
+            glassTile.heightAnchor.constraint(equalToConstant: Self.tileSide),
+            glassGlyph.centerXAnchor.constraint(equalTo: glassTile.centerXAnchor),
+            glassGlyph.centerYAnchor.constraint(equalTo: glassTile.centerYAnchor),
+            tileBox.widthAnchor.constraint(equalToConstant: Self.tileSide),
+            tileBox.heightAnchor.constraint(equalToConstant: Self.tileSide),
         ])
         tileBox.setContentHuggingPriority(.required, for: .horizontal)
         tileBox.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -830,12 +861,24 @@ final class UnifiedSearchRowView: NSView {
 
     @objc private func clicked() { onClick?() }
 
+    /// The hint's pill. Its radius follows its own height, so it stays a pill
+    /// at any interface text size. Set where the size lands rather than in
+    /// the row's `layout()`, which runs before a view two stacks down has a
+    /// frame: the first render drew the pill with square corners that way.
+    private final class HintPill: NSView {
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            layer?.cornerRadius = newSize.height / 2
+        }
+    }
+
     func configure(item: UnifiedSearchItem, theme: HelmTheme, selected: Bool) {
         self.theme = theme
         // H1: "per-kind icons (destinations use their real artwork/hue,
         // commands use their category tint, hosts their accent)". The row's
         // own identity where it has one, `kind`'s where it does not - which is
         // right for a task or a note, whose identity genuinely *is* its kind.
+        let glyph: String
         switch item.icon {
         case .destination(let destination):
             // **I1 narrows H1 here, and the two findings genuinely
@@ -850,35 +893,82 @@ final class UnifiedSearchRowView: NSView {
             //
             // The *hue* half of H1 survives intact - which is what actually
             // fixed its complaint that every action row wore the same square.
-            let hue = destination.domainHue
-            tile.configure(symbol: destination.symbol, tint: hue.fallbackTint, pointSize: 11)
-            gradientTile.configure(symbol: destination.symbol, hue: hue)
+            glyph = destination.symbol
+            tile.configure(symbol: glyph, tint: destination.domainHue.fallbackTint, pointSize: Self.glyphPointSize)
         case .tinted(let tint, let symbol):
-            let glyph = symbol ?? item.kind.symbol
-            tile.configure(symbol: glyph, tint: tint, pointSize: 11)
-            gradientTile.configure(symbol: glyph, hue: HelmDomainHue(tint: tint))
+            glyph = symbol ?? item.kind.symbol
+            tile.configure(symbol: glyph, tint: tint, pointSize: Self.glyphPointSize)
         case .literal(let hex, let symbol):
             // A hue the captain picked, so it is used literally - the same
             // distinction `HelmAccentRow.Content.tintHex` draws.
-            tile.configure(symbol: symbol, tint: item.kind.tint, pointSize: 11)
+            glyph = symbol
+            tile.configure(symbol: symbol, tint: item.kind.tint, pointSize: Self.glyphPointSize)
             tile.overrideFill(hex: hex)
-            gradientTile.configure(symbol: symbol, literalHex: hex)
         case nil:
-            tile.configure(symbol: item.kind.symbol, tint: item.kind.tint, pointSize: 11)
-            gradientTile.configure(symbol: item.kind.symbol, hue: HelmDomainHue(tint: item.kind.tint))
+            glyph = item.kind.symbol
+            tile.configure(symbol: glyph, tint: item.kind.tint, pointSize: Self.glyphPointSize)
         }
+        glyphSymbol = glyph
         titleLabel.stringValue = item.title
         metaLabel.stringValue = item.meta
         metaLabel.isHidden = item.meta.isEmpty
         hintLabel.stringValue = item.actionHint ?? ""
         hintBackground.isHidden = (item.actionHint ?? "").isEmpty
         setSelected(selected)
-        applyTheme(theme)
     }
 
     func setSelected(_ selected: Bool) {
         isSelected = selected
         applyTheme(theme)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        hintLabel.font = HelmType.chip()
+        tile.applyTheme(theme)
+        background.normalColor = .clear
+        HelmMotion.withoutActions {
+            if isSelected {
+                let palette = Self.palette(in: theme)
+                let ink = HelmContrast.color(palette.ink)
+                hero.apply(palette)
+                hero.isHidden = false
+                // The gradient is the row's surface, so a hover wash under it
+                // would never show and must not be what paints a lit row.
+                background.hoverColor = .clear
+                titleLabel.textColor = ink
+                metaLabel.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
+                tile.isHidden = true
+                glassTile.isHidden = false
+                glassTile.layer?.backgroundColor = ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha).cgColor
+                glassTile.layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
+                glassGlyph.image = HelmSymbol.image(glyphSymbol, pointSize: Self.glyphPointSize,
+                                                    weight: .semibold, hierarchicalColor: ink)
+                // The ghost pill's recipe (`HelmButton.heroPalette`): a shade
+                // of the ink's opposite under the words, which can only add
+                // contrast, and an ink hairline.
+                hintLabel.textColor = ink
+                hintBackground.layer?.backgroundColor = HelmButton.heroShade(for: ink)
+                    .withAlphaComponent(HelmButton.heroFillAlpha).cgColor
+                hintBackground.layer?.borderColor = ink.withAlphaComponent(HelmButton.heroBorderAlpha).cgColor
+                hintBackground.layer?.borderWidth = 1
+                hintBackground.alphaValue = 1
+            } else {
+                hero.isHidden = true
+                background.hoverColor = theme.isDaylight
+                    ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
+                    : line.withAlphaComponent(0.3)
+                titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+                metaLabel.textColor = HelmTheme.mutedInk(theme)
+                tile.isHidden = false
+                glassTile.isHidden = true
+                hintLabel.textColor = HelmTheme.mutedInk(theme)
+                hintBackground.layer?.backgroundColor = line.withAlphaComponent(0.35).cgColor
+                hintBackground.layer?.borderWidth = 0
+                hintBackground.alphaValue = 0
+            }
+        }
     }
 
     #if FM_SELFTESTS
@@ -887,70 +977,24 @@ final class UnifiedSearchRowView: NSView {
     var debugFlatTileFill: NSColor? {
         tile.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
     }
-    var debugTileUsesArtwork: Bool { gradientTile.debugUsesArtwork }
-    #endif
 
-    func applyTheme(_ theme: HelmTheme) {
-        self.theme = theme
-        let muted = HelmTheme.mutedInk(theme)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        titleLabel.textColor = ink
-        metaLabel.textColor = muted
-        // §6.11's "right mono shortcut hint".
-        hintLabel.font = theme.isDaylight ? HelmType.code() : HelmType.caption()
-        hintLabel.textColor = muted
-        hintBackground.layer?.backgroundColor = line.withAlphaComponent(0.35).cgColor
-        tile.isHidden = theme.isDaylight
-        gradientTile.isHidden = !theme.isDaylight
-        tile.applyTheme(theme)
-        gradientTile.applyTheme(theme)
-        if theme.isDaylight {
-            // §6.11: selected row = `inset` fill plus a 3px `ink` inset left
-            // edge. The twelve palettes keep the accent-line wash they have.
-            background.cornerRadius = HelmMetrics.dTileSmall
-            let inset = HelmTheme.nsColor(theme.daylightTokens.inset)
-            background.normalColor = isSelected ? inset : .clear
-            background.hoverColor = HelmTheme.nsColor(theme.daylightTokens.rowHover)
-            selectionEdge.isHidden = !isSelected
-            selectionEdge.layer?.backgroundColor = HelmTheme.nsColor(theme.daylightTokens.ink).cgColor
-        } else {
-            background.cornerRadius = 6
-            background.normalColor = isSelected ? line.withAlphaComponent(0.3) : .clear
-            background.hoverColor = line.withAlphaComponent(0.3)
-            selectionEdge.isHidden = true
-        }
-    }
-
-    /// §6.11's selected-row edge weight.
-    static let selectionEdgeWidth: CGFloat = 3
-
-    #if FM_SELFTESTS
-    /// §6.11's Daylight row recipe, read off the real views.
-    struct DaylightRowGeometry {
-        let flatTileHidden: Bool
-        let gradientTileHidden: Bool
-        let gradientTileSide: CGFloat
-        let selectionEdgeHidden: Bool
-        let selectionEdgeWidth: CGFloat
-        let selectionEdgeColor: NSColor?
-        let backgroundFill: NSColor?
-        let backgroundRadius: CGFloat
-        let hintFont: NSFont?
-    }
-
-    var debugDaylightGeometry: DaylightRowGeometry {
-        DaylightRowGeometry(flatTileHidden: tile.isHidden,
-                            gradientTileHidden: gradientTile.isHidden,
-                            gradientTileSide: HelmGradientTile.Size.palette.side,
-                            selectionEdgeHidden: selectionEdge.isHidden,
-                            selectionEdgeWidth: Self.selectionEdgeWidth,
-                            selectionEdgeColor: selectionEdge.layer?.backgroundColor
-                                .flatMap { NSColor(cgColor: $0) },
-                            backgroundFill: background.normalColor,
-                            backgroundRadius: background.cornerRadius,
-                            hintFont: hintLabel.font)
-    }
+    /// K-2's recipe, read off the real views.
+    var debugIsLit: Bool { !hero.isHidden }
+    var debugHeroPalette: HelmHeroSurface.Palette? { hero.palette }
+    var debugHeroGradient: [CGColor] { hero.debugGradientColors }
+    var debugHeroGlowShape: HelmHeroSurface.GlowShape { hero.glowShape }
+    var debugTitleColor: NSColor? { titleLabel.textColor }
+    var debugMetaColor: NSColor? { metaLabel.textColor }
+    var debugHintColor: NSColor? { hintLabel.textColor }
+    var debugHintAlpha: CGFloat { hintBackground.alphaValue }
+    var debugHintFill: NSColor? { hintBackground.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugHintFont: NSFont? { hintLabel.font }
+    var debugFlatTileHidden: Bool { tile.isHidden }
+    var debugGlassTileHidden: Bool { glassTile.isHidden }
+    var debugGlassFill: NSColor? { glassTile.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugBackgroundFill: NSColor { background.normalColor }
+    /// The row's rounded surface, for a probe that samples what is painted.
+    var debugSurfaceView: NSView { background }
 
     var debugGeometry: (rowWidth: CGFloat, chipWidth: CGFloat, chipHidden: Bool,
                         titleMaxX: CGFloat, chipMinX: CGFloat) {

@@ -443,7 +443,7 @@ final class TaskCalendarController: NSViewController {
     func unschedule(id: String, kind: ShiftCalendarEntry.Kind) {
         guard kind == .task else {
             render()
-            Toast.show(in: view, message: ShiftCalendarReschedule.followUpKeepsItsDate)
+            Toast.show(in: view, message: ShiftCalendarReschedule.followUpKeepsItsDate, kind: .warning)
             return
         }
         guard let task = store.activeTasks.first(where: { $0.id == id }) else {
@@ -455,7 +455,7 @@ final class TaskCalendarController: NSViewController {
             render()
         case .refused(let reason):
             render()
-            Toast.show(in: view, message: reason)
+            Toast.show(in: view, message: reason, kind: .warning)
         case .moved(let cleared):
             let previousDue = task.dueDate
             let previousTime = task.dueTime
@@ -525,7 +525,7 @@ final class TaskCalendarController: NSViewController {
             render()
         case .refused(let reason):
             render()
-            Toast.show(in: view, message: reason)
+            Toast.show(in: view, message: reason, kind: .warning)
         case .moved(let moved):
             let previousDue = task.dueDate
             let previousTime = task.dueTime
@@ -558,7 +558,7 @@ final class TaskCalendarController: NSViewController {
             render()
         case .refused(let reason):
             render()
-            Toast.show(in: view, message: reason)
+            Toast.show(in: view, message: reason, kind: .warning)
         case .moved(let moved):
             let previousDay = item.followUpAt
             let previousTime = item.followUpTime
@@ -595,7 +595,7 @@ final class TaskCalendarController: NSViewController {
                                            adoptsTime: adoptsTime, now: now)
         guard case .write(let change) = preview else {
             render()
-            if case .refused(let reason) = preview { Toast.show(in: view, message: reason) }
+            if case .refused(let reason) = preview { Toast.show(in: view, message: reason, kind: .warning) }
             return
         }
         let movedTo = change.added ?? change.updated
@@ -672,7 +672,7 @@ final class TaskCalendarController: NSViewController {
             render()
         case .refused(let reason):
             render()
-            Toast.show(in: view, message: reason)
+            Toast.show(in: view, message: reason, kind: .warning)
         case .write(let change):
             guard store.applySeriesEdit(change, now: now) else {
                 render()
@@ -697,7 +697,7 @@ final class TaskCalendarController: NSViewController {
                         self.store.deleteTask(id: added.id)
                     } else {
                         Toast.show(in: self.view,
-                                   message: "Put back. The new \u{201C}\(added.title)\u{201D} was edited, so it stays.")
+                                   message: "Put back. The new \u{201C}\(added.title)\u{201D} was edited, so it stays.", kind: .warning)
                     }
                 }
                 self.render()

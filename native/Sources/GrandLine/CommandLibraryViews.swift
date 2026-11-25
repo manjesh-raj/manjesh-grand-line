@@ -1244,7 +1244,7 @@ final class CommandLibraryPageView: NSObject {
         guard let id = selectedCommandID, let command = store.command(id: id) else { return }
         switch MultiHostSend.readiness(for: command, values: paramValues) {
         case .needsParameters(let names):
-            Toast.show(in: view, message: MultiHostSend.unfilledParameterMessage(names))
+            Toast.show(in: view, message: MultiHostSend.unfilledParameterMessage(names), kind: .warning)
         case .ready(let generated):
             // Both the values *and* the text they produced: the executor
             // re-runs the readiness check against the values (a real second

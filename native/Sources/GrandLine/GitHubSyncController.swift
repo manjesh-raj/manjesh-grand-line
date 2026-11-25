@@ -482,7 +482,18 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 if !failed.isEmpty { parts.append("\(failed.count) failed") }
                 setSyncAllSummary(parts.isEmpty ? "Nothing to sync." : parts.joined(separator: ", "))
                 if let container = view.window?.contentView {
-                    Toast.show(in: container, message: "GitHub Sync: \(syncAllSummaryLabel.stringValue)")
+                    // TO-1: a run where nothing failed or diverged is done, one
+                    // where nothing went through is a failure, and anything
+                    // between is a warning.
+                    let kind: Feedback.Kind
+                    if failed.isEmpty && refused.isEmpty {
+                        kind = .done
+                    } else if synced == 0 && alreadyInSync == 0 && refused.isEmpty {
+                        kind = .failure
+                    } else {
+                        kind = .warning
+                    }
+                    Toast.show(in: container, message: "GitHub Sync: \(syncAllSummaryLabel.stringValue)", kind: kind)
                 }
                 return
             }
