@@ -311,3 +311,124 @@ Main went red on three of eight merges for suites each pull request had passed.
 - `run-all-tests.sh --accept-flaky`, passed by CI's windowed job on a push to main only: a suite that failed and then passed on its re-run is a warning annotation and a job summary line, and stays `flaky` in the history.
   A suite that fails twice still fails, and a pull request's run never accepts a flake.
 - `native/CI-FLAKES.md` is the tracked list, with the three fixed here.
+
+## Moved from AGENTS.md: verifying native UI bugs (P-04, 2026-11-25)
+
+P-04 of the 2026-11-25 full review moved the measured examples out of AGENTS.md's "Verifying native UI bugs without a real screenshot" section, which keeps one rule line for each.
+The text below is that section as it stood, unchanged.
+
+
+**`screencapture` does NOT work from an agent shell on this machine.**
+`screencapture -x` fails with "could not create image from display" - measured
+by the 2026-09-25 full-app review and again, independently, by
+`fm/grand-line-review-bugs-b1-b14`. A grant this file recorded after
+`fm/grandline-settings-black-band-real-fix` has since lapsed (a shell that is
+re-signed or relaunched under a different parent loses it), so **check before
+relying on it rather than trusting either state written here**: one
+`screencapture -x /tmp/x.png` says which machine you are on today. Where it
+does work, `screencapture -x -o -l <windowID>` captures one window with alpha
+preserved, and `CGWindowListCopyWindowInfo` names every window, its owner and
+its layer.
+
+Accessibility is *not* granted either, and the failure mode is worse than an
+error: `System Events` answers a window query for another process with `0`
+rather than refusing, so a count of zero is not evidence of no window
+(measured, `fm/grand-line-review-bugs-b1-b14`). A real `performClick` is still
+the substitute for a synthetic click, and `CGWarpMouseCursorPosition` moves the
+pointer without it.
+
+So env-gated instrumentation and off-screen renders are the working tools, not
+the fallback - but **an off-screen render still cannot prove a pixel is or is
+not app-painted**: it has no full-screen Space, no title bar and no menu bar
+window, so it structurally cannot reproduce a defect in that region and a clean
+diff there proves nothing;
+[`24-window-and-layout.md`](docs/history/24-window-and-layout.md) records the
+round that cost.
+
+- **Verifying native UI bugs without a real screenshot.** This machine has a
+  real console session, but the agent's shell process (`claude` under WezTerm)
+  has neither Screen Recording nor Accessibility permission granted, and there
+  is no way to grant either non-interactively (`screencapture`/`osascript
+  "System Events"` both fail, TCC.db is SIP-protected even to root, no
+  passwordless sudo). The effective substitute that actually caught real bugs
+  (fixes4): add temporary, env-var-gated debug code straight into the
+  controller under test - print live `NSView.frame` geometry after a real
+  layout pass, or a `Thread.callStackSymbols` dump inside a suspect delegate
+  callback - `swift build && FM_DEBUG_X=1 .build/debug/GrandLine`, read
+  the printed numbers/stack, then revert the instrumentation before committing.
+  This is real evidence from AppKit's actual layout/event engine, not a
+  screenshot, but it is not guesswork either - say so explicitly in any PR that
+  relies on it instead of claiming a visual check that didn't happen. **One
+  hard-won rule for any probe that pixel-samples a render**
+  (`fm/grandline-design-system-phase2`): compare the sampled pixel against the
+  expected colour **in `rep.colorSpace`**, never via
+  `colorAt(...).usingColorSpace(.sRGB)`. `bitmapImageRepForCachingDisplay`
+  returns a rep in the *display's* profile ("Color LCD" on this machine) when
+  the view is inside a real `NSWindow`, and Generic RGB when it is not - and
+  the sRGB conversion is only correct in the second case. In a window it
+  reported `0.286/0.484/0.575` for a pixel genuinely holding the theme accent's
+  `0.157/0.412/0.514`, which reads exactly like a real colour bug; converting
+  the *expected* colour into `rep.colorSpace` first matched to 0.002. A probe
+  that samples a view rendered standalone (no window) will pass with the sRGB
+  conversion and then mislead the moment someone renders the same view inside a
+  window, so use the rep's own space unconditionally. **The same rule governs a
+  *ratio between two samples*, where the plausible-sounding exemption is
+  wrong** - "both operands take the identical transform, so the ratio is
+  safe" - and `HelmContrast.ratio`'s `NSColor` overload converts to sRGB
+  internally, so taking it is the default rather than a choice. Measured
+  (`fm/grandline-settings-sidebar-differentiation-fix`): against a separation
+  the tokens put at exactly 1.0800 in every palette, that overload reported
+  **1.0597 on Daylight and 1.1305 on Dusk** - the display profile deflating
+  every light palette below the floor and inflating every dark one above it,
+  which reads as a real colour bug in eight themes and as a comfortable margin
+  in seven. Feed the **tuple** overload the rep's raw components instead (the
+  same two then measure 1.0753 and 1.0801), leave ~0.01 for the bitmap's 8-bit
+  quantisation, and assert the true-sRGB floor separately against the *tokens*,
+  where no rep is involved. **And the converse half, which is what makes the
+  rule easy to over-apply: convert the *expected* colour and leave the
+  *sample* alone.** `NSBitmapImageRep.colorAt(x:y:)` hands back the rep's own
+  raw components in an `NSColor` that is *tagged* `Generic RGB` whatever the
+  rep's real space is - "Color LCD" for a view inside a real window - so
+  `sampled.usingColorSpace(rep.colorSpace)` re-interprets numbers that were
+  already right. Measured
+  (`fm/grandline-settings-alignment-regression-fix`): one ground pixel read
+  `(0.055, 0.063, 0.086)` raw and `(0.067, 0.078, 0.110)` converted, against
+  an expected `(0.053, 0.062, 0.088)` - a clean pass turned into a 0.022 miss
+  that reads exactly like the unpainted-layer defect the check existed to
+  catch.
+
+**A second rule for the same call, and it is the one that bites first:
+`bitmapImageRepForCachingDisplay` hands back a rep measured in *pixels*, not
+points.** On a retina machine that is a factor of two, so sampling a view's own
+point coordinates lands in the top-left quadrant of whatever you rendered.
+Measured (`fm/grandline-feature-f2-f3-capture-clipboard`): a check comparing two
+tiles of a 600pt panel failed with `delta 0.0000` - two identical *background*
+pixels - which reads exactly like a real colour bug. Scale by
+`rep.pixelsWide / bounds.width` (and the same for height) before indexing, and
+mirror the row for an unflipped view.
+
+**`ImageRenderer` is the substitute when the thing being drawn is SwiftUI
+rather than an `NSView`**, and it is a real rasterised render rather than a
+preview. `cacheDisplay` has nothing to render for a widget, and the system's
+widget host will not load this app's extension until the Developer ID work
+lands - so `Scripts/render-widget-previews.sh` compiles the extension's real
+view files, renders every state at both widget families' real point sizes, and
+writes PNGs the agent reads back with `Read`. It found a real defect on its
+first run (F23's medium Sticky widget repeating a kicker on all three notes and
+wrapping it). One thing it needs: **`EnvironmentValues.widgetFamily` is
+read-only**, so a view that reads it directly can only ever be drawn by a
+widget host - keep the environment read in the entry view and pass the family
+down as a parameter.
+
+**Two probe rules that cost real time here.**
+
+- `cacheDisplay` / `bitmapImageRepForCachingDisplay` is this repo's screenshot
+  substitute, and it does **not** capture `WKWebView` content, draws an
+  `alphaValue = 0` view *visibly*, and renders a `TerminalView` as blank in a
+  window that was never ordered front. Use `WKWebView.takeSnapshot` for a web
+  island, read the alpha rather than looking for a hidden view, and order the
+  probe window in.
+- A probe that changes the theme must save and restore `fm.themeID`; see the
+  hermeticity note above. A probe that renders to a file should write to the
+  session scratchpad and be read back with `Read`, which is a plain file read
+  rather than a screen capture.
