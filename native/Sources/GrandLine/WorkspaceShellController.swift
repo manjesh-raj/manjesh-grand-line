@@ -1,71 +1,27 @@
 // Grand Line - native macOS app.
 //
-// `WorkspaceShellController` - the window's root content view controller,
-// whichever layout the captain chose.
+// `WorkspaceShellController` - the window's root content view controller.
 //
 // Stage 3 of the modular-shell migration (full review section 5.8, step 3)
-// adds a second shell beside the floating bar, so there are two layouts now:
+// added `MainSplitShellController` beside the floating bar's
+// `AppShellController`. P-03 of the 2026-11-25 full review removed the
+// floating bar, so `MainSplitShellController` - a sidebar, a window toolbar,
+// the content column and an inspector - is the only shell. This base class
+// stays as the seam between the shell's chrome and the `Workspace` it hosts.
 //
-//   - `AppShellController` - the floating bar, the space pills and the drill
-//     header. Still a choice in Settings > Appearance, as the classic layout,
-//     and kept for good beside the sidebar (R5-UX-11).
-//   - `MainSplitShellController` - a sidebar, a window toolbar, the content
-//     column, and an inspector. The default since PR #523.
+// It hosts the `Workspace`: the 29 pages, the `DestinationMounter`, the host
+// pages and the lock. Until R2-ARCH-05 it also carried about a hundred
+// one-line forwards to the workspace's parts, so the app delegate, the menus
+// and the suites could call "the shell"; they now call `workspace.navigator`,
+// `.hosts`, `.lock` and the workspace directly, and the menu targets the
+// navigator for every navigation verb.
 //
-// A change of layout is applied the next time the app opens.
-//
-// Both host the same `Workspace`: the same 29 pages, the same
-// `DestinationMounter`, the same host pages, the same lock. This class is
-// what they share - the workspace itself and the window's ground. Until
-// R2-ARCH-05 it also carried about a hundred one-line forwards to the
-// workspace's parts, so the app delegate, the menus and the suites could
-// call "the shell"; they now call `workspace.navigator`, `.hosts`, `.lock`
-// and the workspace directly, and the menu targets the navigator for every
-// navigation verb.
-//
-// What differs between the two is the chrome, so a shell subclass overrides
-// the `WorkspaceChrome` hooks (what to draw when the workspace navigates) and
-// the handful of chrome verbs below that only a shell can answer: where a
-// toast lands, where the clipboard panel drops from, how the quick-access
-// pins are drawn, and whether ⌘⇧D's map is a panel or the sidebar.
+// The shell overrides the `WorkspaceChrome` hooks (what to draw when the
+// workspace navigates) and the handful of chrome verbs below that only a
+// shell can answer: where a toast lands, where the clipboard panel drops
+// from, and how ⌘⇧D's map is revealed.
 
 import AppKit
-
-/// Which shell the main window hosts. Read once at launch, so a change in
-/// Settings applies the next time the app opens - see
-/// `AppSettings.workspaceLayout`.
-enum WorkspaceLayout: String, CaseIterable {
-    /// The floating bar with its space pills and drill header - the classic
-    /// layout. R5-UX-11: the captain keeps both layouts permanently. The
-    /// sidebar is the default and the floating bar stays a choice in
-    /// Settings, with no freeze and no retirement date, and Settings says so
-    /// in plain words (`choiceNote`).
-    case floatingBar
-    /// The sidebar, window toolbar, content column and inspector - the default.
-    case sidebar
-
-    /// The layout a fresh install gets, and anyone who never chose one. The
-    /// one place the default is spelled: `AppSettings.workspaceLayout` falls
-    /// back to it, and so does the tour lab through that setting, so a
-    /// second literal cannot drift from it. `SplitShellModelSelfTest`'s
-    /// `checkTheDefaultIsTheSidebar` fails if it reverts.
-    static let standard: WorkspaceLayout = .sidebar
-
-    var title: String {
-        switch self {
-        case .floatingBar: return "Floating bar (classic)"
-        case .sidebar: return "Sidebar"
-        }
-    }
-
-    /// What Settings says about the two layouts where the captain chooses
-    /// one. R2-ARCH-01 said the floating bar was maintenance only, and review
-    /// #5 recommended a sunset date. R5-UX-11 is the captain's answer: both
-    /// layouts stay, the sidebar is the default, and nothing is retired.
-    static let choiceNote = "Grand Line keeps both layouts. The sidebar, with a window toolbar and an inspector, "
-        + "is the default. The classic floating bar stays available for as long as you want it. "
-        + "Takes effect the next time Grand Line opens."
-}
 
 class WorkspaceShellController: NSViewController, WorkspaceChrome {
 
@@ -185,7 +141,6 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     func workspaceActionsMayHaveChanged() {}
     func workspaceSessionsDidChange(_ registry: HostSessionRegistry) {}
     func workspaceCrewDidRead() {}
-    func workspaceKeyViewLoopMayHaveChanged() {}
     var workspaceWindow: NSWindow? { view.window }
 
     // MARK: The chrome verbs each shell answers
@@ -207,7 +162,7 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
 
     /// The account menu's Log Out, and the Hosts sidebar's user row: one
     /// confirmation (`HelmConfirm.confirmLogout`), then the app delegate's
-    /// lock. The floating bar routes this through its own avatar panel.
+    /// lock.
     func requestLogout() {
         guard HelmConfirm.confirmLogout() else { return }
         onLogoutRequested?()
@@ -227,36 +182,10 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     /// Both halves live in the shell rather than in either component, which
     /// is what keeps §5.3's rule true from both directions - the chrome does
     /// not know what a canvas is, and the canvas does not know how to
-    /// navigate. The floating bar also lights its pill first.
+    /// navigate.
     func selectSpace(_ space: DaylightSpace) {
         workspace.homeCanvas.select(space: space)
         workspace.navigator.show(.homeCanvas)
-    }
-
-    /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
-    /// spaces (the original Daylight spec)".
-    ///
-    /// This wrapper existed once and was deleted with the View menu
-    /// (`fm/grandline-console-tabs-restore-tabmenu-fix` - see `buildMenu`'s
-    /// own note). It comes back in the same shape it had: the menu carries the
-    /// 1-based `shortcutIndex` in its tag, and `selectSpace(_:)` - which the
-    /// bar's own pills call - does the work, so a menu item and a pill click
-    /// cannot diverge.
-    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
-        guard let space = DaylightSpace.allCases.first(where: { $0.shortcutIndex == sender.tag }) else { return }
-        selectSpace(space)
-    }
-
-    /// The Go menu's per-destination rows - UX3's "a 'Go' menu listing every
-    /// destination".
-    ///
-    /// Keyed off the destination's own raw value in `representedObject`, the
-    /// same shape the bar's quick-access overflow menu uses, so neither has to
-    /// hold a parallel array of tags.
-    @objc func selectDestinationFromMenu(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let destination = RailDestination(rawValue: raw) else { return }
-        workspace.navigator.show(destination)
     }
 
     /// R2-UX-02: the sidebar layout's Go menu rows (`WorkspaceGoMenu`) - a
@@ -308,29 +237,6 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     /// One of a module's tabs. The sidebar layout selects a page's own tab
     /// through the page; a shell with no toolbar tabs shows the tab's page.
     func openModuleTab(_ tab: ModuleTab) { workspace.navigator.show(tab.route) }
-
-    // MARK: The configurable quick-access pins (UX1/UX2)
-
-    /// Pin or unpin `destination`, persist the result, and redraw the pins.
-    ///
-    /// The one write path. `AppSettings.quickAccess` is the store of record and
-    /// a shell holds only a cache of what it drew, so a caller that wrote the
-    /// setting directly would leave the pins stale until the next launch.
-    func toggleQuickAccessPin(_ destination: RailDestination) {
-        let next = AppSettings.shared.quickAccess.toggling(destination)
-        AppSettings.shared.quickAccess = next
-        quickAccessDidChange(next)
-    }
-
-    /// Whether `destination` is currently pinned - what a context menu reads
-    /// to decide between "Pin" and "Unpin".
-    func isQuickAccessPinned(_ destination: RailDestination) -> Bool {
-        AppSettings.shared.quickAccess.contains(destination)
-    }
-
-    /// Redraw the pins from `configuration`. The floating bar redraws its
-    /// shortcut row; the sidebar shell redraws its Pinned section.
-    func quickAccessDidChange(_ configuration: QuickAccessConfiguration) {}
 
     // MARK: Clipboard history (F3)
 
@@ -424,6 +330,12 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
             if !view.isHidden { showing += 1 }
         }
         return (attached, showing, workspace.content.destinationPins.count)
+    }
+
+    /// The showing page's width, so a suite can check a revisited page was
+    /// laid out at the body's width rather than merely re-pinned.
+    var showingDestinationWidthForTests: CGFloat? {
+        workspace.content.visibleDestinationView()?.frame.width
     }
 
     var activeHostIDForTests: UUID? { workspace.navigator.activeHostID }
@@ -524,14 +436,4 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     var debugPoneglyph: CredentialVaultController { workspace.debugPoneglyph }
     var debugPoneglyphStore: CredentialVaultStore { workspace.debugPoneglyphStore }
     #endif
-}
-
-extension WorkspaceLayout {
-    /// The shell this layout builds - what the app delegate calls `init` on.
-    var shellType: WorkspaceShellController.Type {
-        switch self {
-        case .floatingBar: return AppShellController.self
-        case .sidebar: return MainSplitShellController.self
-        }
-    }
 }

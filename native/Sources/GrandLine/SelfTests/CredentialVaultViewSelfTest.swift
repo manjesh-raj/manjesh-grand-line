@@ -1544,7 +1544,7 @@ enum CredentialVaultViewSelfTest {
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,

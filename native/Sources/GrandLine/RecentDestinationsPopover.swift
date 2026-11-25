@@ -1,55 +1,29 @@
 // Grand Line - native macOS app.
 //
-// The bar's "Recents" button + its dropdown panel
-// (`fm/grandline-recents-navigation`). Structurally mirrors
-// `NotificationCenterPopover.swift` - the same "small card off a bar icon"
-// idiom this app already uses more than once, not a new UI pattern.
+// The Recents panel (`fm/grandline-recents-navigation`), opened from the
+// window toolbar's Recents button. Structurally mirrors
+// `NotificationCenterPopover.swift`. The floating bar's own Recents square
+// (`RecentDestinationsButton`) went with that layout in P-03 of the
+// 2026-11-25 review.
 //
-// **B5 (UI modernization audit §3B): the chrome is a `HelmBarPanel` now, not
-// an `NSPopover`.** The content controller below is unchanged - same rows,
-// same empty state, same `onSizeChanged`/`onRequestClose` wiring - and only
-// what draws the box around it moved. See `HelmBarPanel`'s header for why,
-// and for where the lock gate went.
+// **B5 (UI modernization audit §3B): the chrome is a `HelmBarPanel`, not an
+// `NSPopover`.** See `HelmBarPanel`'s header for why, and for where the lock
+// gate went.
 //
-// The one structural difference from the notification popover: that one
-// reads a global singleton (`GrandLineNotificationCenter.shared`, fed by many
-// independent subsystems across the app) directly, with no wiring needed at
-// all. `RecentDestinations` is scoped to exactly one shell controller's own
-// navigation (`AppShellController.show(_:)`/`revealHostConsole`), so it is
-// instance-owned rather than a singleton - matching `HostSessionRegistry`'s
-// own choice for the identical reason ("A second writer would be a second
-// source of truth again"). `configure(registry:onSelect:)` is the one late-
-// binding call `AppShellController` makes, the same "forward, never own"
-// shape `KubeSessionAccess`/`onSelectDestination` already establish - the bar
-// draws the button and hosts the popover, it never learns what a
-// `RecentDestinations` is or what "navigate" means.
+// The notification panel reads a global singleton
+// (`GrandLineNotificationCenter.shared`). `RecentDestinations` is scoped to
+// one shell's navigation, so it is instance-owned rather than a singleton -
+// matching `HostSessionRegistry`'s own choice for the identical reason ("A
+// second writer would be a second source of truth again").
+// `configure(registry:onSelect:)` is the one late-binding call the shell
+// makes; this controller never learns what "navigate" means.
 
 import AppKit
 
-/// The Recents button - a plain bordered icon square, the same visible
-/// chrome every other icon-square control on this bar shares
-/// (`DaylightBarIconButton`).
-final class RecentDestinationsButton: DaylightBarIconButton {
-    init() {
-        // `DaylightBarIconButton.chromeTileHue`: Recents opens a panel, not a
-        // page - a way back to a place rather than a place. Slate is §2.2's
-        // claims-nothing hue, so the tile reads as the app's own control
-        // rather than as a twelfth destination. That property's comment
-        // carries the full reasoning and the measurement behind it.
-        super.init(symbol: "clock.arrow.circlepath",
-                   tooltip: "Recently Visited",
-                   accessibilityLabel: "Recently Visited",
-                   hue: DaylightBarIconButton.chromeTileHue)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-}
-
-/// Owns the button, the popover, and the panel content - the bar's
-/// counterpart to `NotificationCenterController`/`ConsoleComposerController`/
+/// Owns the panel and its content - the toolbar's counterpart to
+/// `NotificationCenterController`/`ConsoleComposerController`/
 /// `QuotaUsageController`.
 final class RecentDestinationsController: NSObject {
-    let button = RecentDestinationsButton()
 
     /// B5: a borderless `HelmBarPanel` rather than a stock `NSPopover` - see
     /// that type's header. The panel owns its own theme, lock registration and
@@ -64,8 +38,6 @@ final class RecentDestinationsController: NSObject {
     override init() {
         panel = HelmBarPanel(content: content)
         super.init()
-        button.target = self
-        button.action = #selector(buttonClicked)
         content.onSizeChanged = { [weak self] size in self?.panel.setContentSize(size) }
         content.onRequestClose = { [weak self] in self?.panel.close() }
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
@@ -73,8 +45,8 @@ final class RecentDestinationsController: NSObject {
         }
     }
 
-    /// Wired once by `AppShellController` - see this file's header for why
-    /// this is dependency injection rather than a global singleton read.
+    /// Wired once by `MainSplitShellController` - see this file's header for
+    /// why this is dependency injection rather than a global singleton read.
     func configure(registry: RecentDestinations, onSelect: @escaping (RecentDestinationKind) -> Void) {
         self.registry = registry
         content.registry = registry
@@ -84,13 +56,8 @@ final class RecentDestinationsController: NSObject {
         }
     }
 
-    @objc private func buttonClicked() {
-        togglePanel(under: button)
-    }
-
-    /// Open or close the panel under `anchor`. The floating bar's Recents
-    /// square passes itself; the sidebar shell's toolbar passes its own
-    /// Recents button, so both shells show the same rows.
+    /// Open or close the panel under `anchor`, the sidebar shell's toolbar
+    /// Recents button.
     func togglePanel(under anchor: NSView) {
         if panel.isShown {
             panel.close()

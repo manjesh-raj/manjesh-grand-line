@@ -62,6 +62,16 @@ if !AppPaths.isScratchRedirected() {
 // existing install it is.
 AppSettings.shared.settleFirstLaunch(isExistingInstall: AppSettings.shared.isExistingInstall())
 
+// P-03 of the 2026-11-25 review: the floating-bar layout is gone, and the
+// sidebar is the only layout. Remove the preferences that belonged to it
+// (`fm.workspaceLayout` and `fm.quickAccess`) once, after the rename
+// migration above has carried any pre-rename copy over. A no-op when neither
+// is stored, which is every fresh install and every launch after the first.
+let retiredLayoutKeys = AppSettings.shared.retireFloatingBarLayout()
+if !retiredLayoutKeys.isEmpty {
+    AppLog.store.notice("Removed the floating-bar layout's preferences: \(retiredLayoutKeys.description, privacy: .public)")
+}
+
 // GL-05: refuse to be a second instance. This sits *after* every
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
 // self-test never contends for the lock and never blocks a real running

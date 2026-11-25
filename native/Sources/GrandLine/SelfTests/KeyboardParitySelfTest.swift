@@ -27,7 +27,7 @@ enum KeyboardParitySelfTest {
         var ok = true
         // Each case keeps its own result, so one failure does not hide the
         // next case's OK line.
-        for each in [checkArrowsMoveThroughAFlatList, checkArrowsMoveThroughHomesRows,
+        for each in [checkArrowsMoveThroughAFlatList, 
                      checkEscapeClosesABarPanel, checkReturnAndEscapeReachASheetsButtons,
                      checkEverySheetHasTheFooterKeys] {
             var caseOK = true
@@ -117,40 +117,6 @@ enum KeyboardParitySelfTest {
     }
 
     // MARK: Home
-
-    private static func checkArrowsMoveThroughHomesRows(_ ok: inout Bool) {
-        print("\n-- P5: Up and Down move through Home's attention and Merge queue rows --")
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        defer { window.orderOut(nil) }
-        window.orderFront(nil)
-        shell.workspace.navigator.show(.homeCanvas)
-        let canvas = shell.debugHomeCanvas
-        // The tour's own realistic Tasks data, which is what fills the
-        // attention list.
-        ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
-        ReviewTourLab.seedDemoHome(canvas)
-        canvas.debugRenderNow()
-        shell.view.layoutSubtreeIfNeeded()
-
-        let attention = canvas.debugAttentionRows.compactMap(HelmListNavigation.focusTarget(in:))
-        check(attention.count >= 2, "Home's attention list has \(attention.count) focusable rows, expected at least 2", &ok)
-        if attention.count >= 2 {
-            check(window.makeFirstResponder(attention[0]), "the first attention row does not take the keyboard", &ok)
-            window.sendEvent(down(window))
-            check(window.firstResponder === attention[1], "Down did not move to the second attention row", &ok)
-            window.sendEvent(up(window))
-            check(window.firstResponder === attention[0], "Up did not move back to the first attention row", &ok)
-        }
-
-        let merge = canvas.moduleCardsForTests.map(\.debugPeekRows).max { $0.count < $1.count } ?? []
-        check(merge.count >= 2, "no module card has two focusable peek rows (found \(merge.count))", &ok)
-        if merge.count >= 2 {
-            check(window.makeFirstResponder(merge[0]), "the first peek row does not take the keyboard", &ok)
-            window.sendEvent(down(window))
-            check(window.firstResponder === merge[1], "Down did not move to the second peek row", &ok)
-        }
-        if ok { print("  OK   \(attention.count) attention rows and \(merge.count) peek rows, both directions") }
-    }
 
     // MARK: HelmBarPanel
 

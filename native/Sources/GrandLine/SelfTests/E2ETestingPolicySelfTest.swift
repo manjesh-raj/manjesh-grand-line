@@ -1029,7 +1029,12 @@ enum E2ETestingPolicySelfTest {
     /// 297.6s against the runner's 300s per-suite bound on CI. No check
     /// joined the lane, and raising that bound was the alternative turned
     /// down.
-    private static let windowBackedSuiteCeiling = 136
+    ///
+    /// 126 after P-03 of the 2026-11-25 review removed the floating-bar
+    /// layout: the suites that only measured it left the lane, and
+    /// `WorkspaceBodySelfTest` joined it with the cases of one of them that
+    /// measure code the sidebar shell still runs.
+    private static let windowBackedSuiteCeiling = 126
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

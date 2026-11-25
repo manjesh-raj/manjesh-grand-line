@@ -64,8 +64,8 @@ final class WelcomeSheetController: NSViewController {
             }
         }
 
-        /// The steps a layout shows, in order. Both layouts ask every one.
-        static func steps(for layout: WorkspaceLayout) -> [Step] { allCases }
+        /// The steps the sheet shows, in order.
+        static var steps: [Step] { allCases }
 
         var blurb: String {
             switch self {
@@ -74,32 +74,19 @@ final class WelcomeSheetController: NSViewController {
                     + "applies as you click, and you can change it any time from \(PlaceName.of(.settings)) "
                     + "\u{203A} Appearance. The terminal's own colours are on the Terminal page."
             case .profile:
-                // What the choice changes differs by layout: the floating
-                // bar has no sidebar, so it is Home and the Console there.
-                let shapes = PlaceName.layout == .sidebar
-                    ? "your sidebar, Home's cards and the Console's toolbar"
-                    : "Home's cards and the Console's toolbar"
+                let shapes = "your sidebar, Home's cards and the Console's toolbar"
                 return "This sets what \(shapes) start with. Change it any time in "
                     + "\(PlaceName.of(.settings)) \u{203A} Appearance, where Custom picks module by module. "
                     + "Nothing you hide is deleted."
             case .tour:
-                // R2-UX-02: the sidebar layout has one map, the sidebar, so
-                // its tour describes that and not the floating bar's spaces.
-                if PlaceName.layout == .sidebar {
-                    return "The sidebar on the left is the whole app: Home, then every module in four groups - "
-                        + "Work, Observe, Workbench and Machine.\n\n"
-                        + "A module with several pages shows them as tabs at the top of the window, "
-                        + "and Back and Forward walk the pages you have opened.\n\n"
-                        + "\u{2318}1 to \u{2318}9 open the first nine items in the sidebar, \u{21E7}\u{2318}[ and \u{21E7}\u{2318}] "
-                        + "move between a module's tabs, and \u{2318}K searches for a page, a note, a task or a command."
-                }
-                return "The app is five spaces, and the bar at the top switches between them.\n\n"
-                    + "Overview is the hub - what needs you right now.\n"
-                    + "Command is the console, your tasks and the merge queue.\n"
-                    + "Operations is hosts, logs, health and schedules.\n"
-                    + "Stores is your shelf: docs, the vault, notes, code and tools.\n"
-                    + "Engineering is setup and this machine's settings.\n\n"
-                    + "Press \u{2318}\u{21E7}D at any time to see every page at once, or \u{2318}K to search."
+                // R2-UX-02: the app has one map, the sidebar, so the tour
+                // describes that.
+                return "The sidebar on the left is the whole app: Home, then every module in four groups - "
+                    + "Work, Observe, Workbench and Machine.\n\n"
+                    + "A module with several pages shows them as tabs at the top of the window, "
+                    + "and Back and Forward walk the pages you have opened.\n\n"
+                    + "\u{2318}1 to \u{2318}9 open the first nine items in the sidebar, \u{21E7}\u{2318}[ and \u{21E7}\u{2318}] "
+                    + "move between a module's tabs, and \u{2318}K searches for a page, a note, a task or a command."
             case .lock:
                 // R2-UX-01: the lock is an opt-in, so this step says how to
                 // turn it on rather than implying it is already waiting.
@@ -111,7 +98,7 @@ final class WelcomeSheetController: NSViewController {
         }
     }
 
-    private let steps = Step.steps(for: PlaceName.layout)
+    private let steps = Step.steps
     private var stepIndex = 0
     private var step: Step { steps[stepIndex] }
 
@@ -408,7 +395,7 @@ final class WelcomeSheetController: NSViewController {
 
     #if FM_SELFTESTS
     var debugStepIndex: Int { stepIndex }
-    static var debugStepCount: Int { Step.steps(for: PlaceName.layout).count }
+    static var debugStepCount: Int { Step.steps.count }
     var debugStepTitle: String { step.title }
     var debugBlurb: String { blurbLabel.stringValue }
     var debugProfileChoiceIsHidden: Bool { profileStack.isHidden }

@@ -69,15 +69,6 @@ enum ReviewTourLab {
     /// run as a suite and fail with `=1` for a filename.
     static let variable = "FM_REVIEW_TOUR"
 
-    /// `sidebar` tours the sidebar shell (`MainSplitShellController`) and
-    /// `floatingBar` the floating bar, the raw values `fm.workspaceLayout`
-    /// stores, and a named one is written to the tour's own defaults domain
-    /// as if the captain had picked it. Any other value, or none, is what a
-    /// first launch gets: that domain starts empty, so it is
-    /// `WorkspaceLayout.standard` (the sidebar). Not `FM_RUN_*`, for the
-    /// reason `variable` gives.
-    static let layoutVariable = "FM_REVIEW_TOUR_LAYOUT"
-
     /// One line of a tour. Parsing is separated from running so the grammar
     /// can be asserted without a window - which is the whole difference
     /// between this and a probe somebody wrote once.
@@ -136,21 +127,6 @@ enum ReviewTourLab {
         /// heads, through their own buttons - the tray head's fold button,
         /// and the month head's arrows.
         case calendarHead(String)
-        /// Put one top-bar square into a state a click or a pointer would:
-        /// `bar hover <target>`, `bar press <target>`, or `bar rest` to put
-        /// every square back. A target is a destination's raw value, or
-        /// `theme`, `overflow` or `recents` for the bar's own controls.
-        ///
-        /// This is the one place the lab reaches past real event dispatch, and
-        /// it says so in the log: hover goes through the button's
-        /// `debugSetHovering`, and press through `highlight(_:)`, which is
-        /// what AppKit's own `performClick` calls. It exists to *render* the
-        /// states side by side, not to prove a real pointer reaches them -
-        /// `BarActiveStateSelfTest` posts real events for that.
-        case barState(BarState, target: String?)
-        /// Render only the floating bar, so a tour can compare one row of
-        /// squares across pages and palettes without the page under it.
-        case renderBar(String)
         /// Render Setup's Drift check card on its own, wherever the page has
         /// scrolled it - it sits below the fold at every window height.
         case renderDrift(String)
@@ -323,10 +299,6 @@ enum ReviewTourLab {
         case comment
     }
 
-    enum BarState: String, Equatable {
-        case hover, press, rest
-    }
-
     enum ParseError: Error, Equatable, CustomStringConvertible {
         case unknownVerb(String)
         case unknownDestination(String)
@@ -338,8 +310,8 @@ enum ReviewTourLab {
         var description: String {
             switch self {
             case .unknownVerb(let v):
-                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderbar, renderdrift, menu, wait, "
-                    + "demo, measure, measurewindow, pagetop, orderfront, probe, tasks, calendar, bar, fleet, inspector, sidebar, "
+                return "unknown verb \"\(v)\" (goto, theme, resize, render, renderdoc, renderdrift, menu, wait, "
+                    + "demo, measure, measurewindow, pagetop, orderfront, probe, tasks, calendar, fleet, inspector, sidebar, "
                     + "tab, customize, select, textscale, settings, grouped, code)"
             case .badArgument(let a): return "bad argument \"\(a)\""
             case .unknownDestination(let d): return "unknown destination \"\(d)\""
@@ -352,8 +324,6 @@ enum ReviewTourLab {
 
     // MARK: Parsing
 
-    /// The bar's own controls a `bar` step can name, beside any destination.
-    static let barTargets: Set<String> = ["theme", "overflow", "recents"]
 
     static func parse(line: String) -> Result<Step, ParseError> {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -460,27 +430,9 @@ enum ReviewTourLab {
                 return .failure(.badArgument(argument))
             }
             return .success(.calendarView(scale))
-        case "bar":
-            let words = argument.split(separator: " ").map(String.init)
-            guard let first = words.first, let state = BarState(rawValue: first) else {
-                return .failure(argument.isEmpty ? .missingArgument("bar") : .badArgument(argument))
-            }
-            if state == .rest {
-                guard words.count == 1 else { return .failure(.badArgument(argument)) }
-                return .success(.barState(.rest, target: nil))
-            }
-            guard words.count == 2 else { return .failure(.missingArgument("bar \(first)")) }
-            let target = words[1]
-            guard barTargets.contains(target) || RailDestination(rawValue: target) != nil else {
-                return .failure(.unknownDestination(target))
-            }
-            return .success(.barState(state, target: target))
         case "renderdrift":
             guard !argument.isEmpty else { return .failure(.missingArgument("renderdrift")) }
             return .success(.renderDrift(argument))
-        case "renderbar":
-            guard !argument.isEmpty else { return .failure(.missingArgument("renderbar")) }
-            return .success(.renderBar(argument))
         case "fleet":
             guard argument == "reply" else {
                 return .failure(argument.isEmpty ? .missingArgument("fleet") : .badArgument(argument))
@@ -742,30 +694,12 @@ enum ReviewTourLab {
                 }
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("calendar \(action)")
-            case .barState(let state, let target):
-                guard let classic = shell as? AppShellController else {
-                    log.append("bar \(state.rawValue) FAILED - there is no floating bar in the sidebar layout")
-                    continue
-                }
-                log.append(applyBarState(state, target: target, bar: classic.bar))
-                shell.view.layoutSubtreeIfNeeded()
             case .renderDrift(let name):
                 let url = outputDirectory.appendingPathComponent("\(name).png")
                 if let card = shell.workspace.bootstrap.debugDriftCard, writePNG(of: card, to: url) {
                     log.append("renderdrift \(url.path)")
                 } else {
                     log.append("renderdrift FAILED \(name) - Setup's drift card is not mounted")
-                }
-            case .renderBar(let name):
-                let url = outputDirectory.appendingPathComponent("\(name).png")
-                guard let classic = shell as? AppShellController else {
-                    log.append("renderbar FAILED \(name) - there is no floating bar in the sidebar layout")
-                    continue
-                }
-                if writePNG(of: classic.bar.view, to: url) {
-                    log.append("renderbar \(url.path)")
-                } else {
-                    log.append("renderbar FAILED \(name) - the bar has no bitmap to cache")
                 }
             case .demoDecision:
                 seedDemoDecision(shell.debugOverview, scratch: outputDirectory)
@@ -1177,8 +1111,7 @@ enum ReviewTourLab {
             guard parts.count == 2 else { return "ux pageshortcuts FAILED - want pageshortcuts <name>" }
             let place = shell.shortcutsPlace
             let sheet = KeyboardShortcutsSheetController(
-                sections: PageShortcuts.sections(module: place.module, route: place.route,
-                                                 layout: PlaceName.layout, settings: .shared),
+                sections: PageShortcuts.sections(module: place.module, route: place.route, settings: .shared),
                 heading: "Shortcuts for \(place.module.title)",
                 subheading: "What works on this page, and anywhere in Grand Line.",
                 actionTitle: "All Shortcuts\u{2026}") {}
@@ -1200,38 +1133,6 @@ enum ReviewTourLab {
         default:
             return "ux \(argument) FAILED - unknown state"
         }
-    }
-
-    /// `bar hover|press|rest` against the live bar. Returns the log line,
-    /// which names a target that drew no square rather than skipping it - a
-    /// render of a state that was never applied would look like a bar with no
-    /// hover state at all.
-    static func applyBarState(_ state: BarState, target: String?, bar: DaylightBarController) -> String {
-        let squares = bar.debugIconSquares()
-        if state == .rest {
-            for square in squares {
-                square.highlight(false)
-                square.debugSetHovering(false)
-            }
-            return "bar rest"
-        }
-        let square: DaylightBarIconButton?
-        switch target {
-        case "theme": square = bar.debugThemeToggleButton()
-        case "overflow": square = bar.debugQuickAccessOverflowButton()
-        case "recents": square = squares.first { $0 is RecentDestinationsButton }
-        default:
-            square = bar.debugDestinationButtons().first { $0.destination.rawValue == target }
-        }
-        guard let square, !square.isHidden else {
-            return "bar \(state.rawValue) FAILED \(target ?? "") - no visible square for it on the bar"
-        }
-        switch state {
-        case .hover: square.debugSetHovering(true)
-        case .press: square.highlight(true)
-        case .rest: break
-        }
-        return "bar \(state.rawValue) \(target ?? "") (debug hook, not a real pointer)"
     }
 
     /// The menu bar's shape as text.
@@ -1804,14 +1705,6 @@ enum ReviewTourLab {
         }
 
         let outputDirectory = tourURL.deletingLastPathComponent()
-        // A named layout is stored as the captain's choice, the way Settings
-        // stores it, so the Window layout row a tour renders agrees with the
-        // shell it mounted. This process's defaults domain is its own scratch
-        // one (`AppDefaults.store`), so nothing reaches the real preference.
-        if let chosen = WorkspaceLayout(rawValue: ProcessInfo.processInfo.environment[layoutVariable] ?? "") {
-            AppSettings.shared.workspaceLayout = chosen
-        }
-        let layout = AppSettings.shared.workspaceLayout
         if steps.contains(.demoBitbucket) {
             NetworkTripwire.install()
             OpenPRsSource.debugSeedBitbucketIdentity((user: "tour-user", token: "tour-token-not-real"))
@@ -1827,8 +1720,8 @@ enum ReviewTourLab {
             tourSteps.removeFirst()
             launchLog.append("textscale \(scale) at launch (launch scale \(ChromeTextScale.shared.launchScale))")
         }
-        let (window, shell) = makeOffScreenShell(layout: layout)
-        var log = ["layout \(layout.rawValue)"] + launchLog
+        let (window, shell) = makeOffScreenShell()
+        var log = ["layout sidebar"] + launchLog
         log += run(steps: tourSteps, shell: shell, window: window, outputDirectory: outputDirectory)
         // R2-SEC-01: what the network gate refused, and anything that got
         // past it (counted only when `demo bitbucket` installed the tripwire).
@@ -1894,37 +1787,18 @@ enum ReviewTourLab {
         followUp("Check the AWS Backup failure notification", due: 0)
     }
 
-    static func makeOffScreenShell() -> (window: NSWindow, shell: AppShellController) {
-        let (window, shell) = makeOffScreenShell(layout: .floatingBar)
-        // `.floatingBar` always builds an `AppShellController`.
-        return (window, shell as! AppShellController)
-    }
-
-    /// The sidebar shell, in the same kind of window `main.swift` gives it: a
-    /// standard titled window with a full-size content view and no chrome
-    /// fusion.
-    static func makeOffScreenSplitShell() -> (window: NSWindow, shell: MainSplitShellController) {
-        let (window, shell) = makeOffScreenShell(layout: .sidebar)
-        return (window, shell as! MainSplitShellController)
-    }
-
-    static func makeOffScreenShell(layout: WorkspaceLayout) -> (window: NSWindow, shell: WorkspaceShellController) {
+    /// The shell, in the same kind of window `AppComposition` gives it: a
+    /// standard titled window with a full-size content view. P-03 of the
+    /// 2026-11-25 review removed the floating bar, so this is the sidebar
+    /// shell, and `FM_REVIEW_TOUR_LAYOUT` went with the choice of layout.
+    static func makeOffScreenShell() -> (window: NSWindow, shell: MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1512, height: 950,
                                            styleMask: [.titled, .resizable, .fullSizeContentView])
-        // The real window's chrome fusion (`main.swift`), so the floating
-        // bar's view is the whole frame and the bar reserves its height
-        // inside it - without it every page measured here is a title bar
-        // shorter than the captain's. The sidebar shell keeps the system
-        // title bar, as `main.swift` does for it.
-        if layout == .floatingBar { WindowChromeFusion.apply(to: window) }
-        PlaceName.layout = layout
-        // The sidebar shell's chrome is the system's - the sidebar material,
-        // the toolbar, the system label colours - so its window has to follow
-        // the theme's light/dark mode the way `main.swift`'s does, or a
-        // Daylight render comes out in the Mac's own appearance. (The floating
-        // bar paints every pixel from the theme itself, and its renders are
-        // kept exactly as they were.)
-        if layout == .sidebar { window.followHelmTheme() }
+        // The shell's chrome is the system's - the sidebar material, the
+        // toolbar, the system label colours - so its window has to follow the
+        // theme's light/dark mode the way the app's does, or a Daylight render
+        // comes out in the Mac's own appearance.
+        window.followHelmTheme()
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -1935,7 +1809,7 @@ enum ReviewTourLab {
         // the app would install, built without installing it.
         let menu = AppDelegate().buildMenu(installing: false)
         settings.shortcutsMainMenu = { menu }
-        let shell = layout.shellType.init(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: settings,
@@ -1948,6 +1822,12 @@ enum ReviewTourLab {
         window.contentViewController = shell
         shell.view.layoutSubtreeIfNeeded()
         return (window, shell)
+    }
+
+    /// Every caller's shell is the sidebar shell now; the name is kept for the
+    /// suites that asked for it by name before the floating bar was removed.
+    static func makeOffScreenSplitShell() -> (window: NSWindow, shell: MainSplitShellController) {
+        makeOffScreenShell()
     }
 
     /// A real rasterised render of `view`, written to `url`.

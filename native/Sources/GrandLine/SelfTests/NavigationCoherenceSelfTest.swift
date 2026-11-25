@@ -41,10 +41,7 @@ import AppKit
 enum NavigationCoherenceSelfTest {
     static func run() -> Bool {
         var ok = true
-        ok = checkEveryDestinationIsOnTheMap() && ok
         ok = checkTheMapIsActuallyReachable() && ok
-        ok = checkQuickAccessCapAndOrder() && ok
-        ok = checkQuickAccessRoundTrips() && ok
         ok = checkClipboardHistoryIsNotAShortcut() && ok
         ok = checkContextualNewRouting() && ok
         ok = checkMenuBarShape() && ok
@@ -74,41 +71,33 @@ enum NavigationCoherenceSelfTest {
     /// in for.
     private static func checkTheMenuTargetsTheNavigator() -> Bool {
         var ok = true
-        let stored = AppDefaults.store.string(forKey: "fm.workspaceLayout")
-        defer {
-            if let stored { AppDefaults.store.set(stored, forKey: "fm.workspaceLayout") } else {
-                AppDefaults.store.removeObject(forKey: "fm.workspaceLayout")
-            }
-        }
-        for layout in WorkspaceLayout.allCases {
-            AppSettings.shared.workspaceLayout = layout
-            let shellMark = NSObject()
-            let navigatorMark = NSObject()
-            let menu = AppDelegate().buildMenu(installing: false,
-                                               targets: MenuTargets(shell: shellMark, navigator: navigatorMark))
-            var toNavigator = 0
-            func walk(_ menu: NSMenu) {
-                for item in menu.items {
-                    if let sub = item.submenu { walk(sub) }
-                    guard let action = item.action else { continue }
-                    let navigatorAnswers = Navigator.instancesRespond(to: action)
-                    let shellAnswers = layout.shellType.instancesRespond(to: action)
-                    if item.target === navigatorMark {
-                        toNavigator += 1
-                        check(navigatorAnswers, "\(layout): \(item.title) targets the navigator, which has no \(action)", &ok)
-                    } else if item.target === shellMark {
-                        check(shellAnswers, "\(layout): \(item.title) targets the shell, which has no \(action) - a dead menu item", &ok)
-                    } else if navigatorAnswers && !shellAnswers {
-                        fail("\(layout): \(item.title) runs the navigator's \(action) but does not target it", &ok)
-                    }
+        let layout = "the sidebar shell"
+        let shellMark = NSObject()
+        let navigatorMark = NSObject()
+        let menu = AppDelegate().buildMenu(installing: false,
+                                           targets: MenuTargets(shell: shellMark, navigator: navigatorMark))
+        var toNavigator = 0
+        func walk(_ menu: NSMenu) {
+            for item in menu.items {
+                if let sub = item.submenu { walk(sub) }
+                guard let action = item.action else { continue }
+                let navigatorAnswers = Navigator.instancesRespond(to: action)
+                let shellAnswers = MainSplitShellController.instancesRespond(to: action)
+                if item.target === navigatorMark {
+                    toNavigator += 1
+                    check(navigatorAnswers, "\(layout): \(item.title) targets the navigator, which has no \(action)", &ok)
+                } else if item.target === shellMark {
+                    check(shellAnswers, "\(layout): \(item.title) targets the shell, which has no \(action) - a dead menu item", &ok)
+                } else if navigatorAnswers && !shellAnswers {
+                    fail("\(layout): \(item.title) runs the navigator's \(action) but does not target it", &ok)
                 }
             }
-            walk(menu)
-            // The fixture's own power: the menu really routes its navigation
-            // verbs to the navigator, so a menu built with no targets at all
-            // cannot pass.
-            check(toNavigator >= 25, "\(layout): only \(toNavigator) menu items target the navigator", &ok)
         }
+        walk(menu)
+        // The fixture's own power: the menu really routes its navigation
+        // verbs to the navigator, so a menu built with no targets at all
+        // cannot pass.
+        check(toNavigator >= 25, "\(layout): only \(toNavigator) menu items target the navigator", &ok)
         if ok { print("  OK   R2-ARCH-05: every menu item targets an object that answers it, the navigator for navigation") }
         return ok
     }
@@ -124,8 +113,7 @@ enum NavigationCoherenceSelfTest {
         var ok = true
         guard let dir = SelfTestSources.appSourceDirectory(),
               let shell = try? String(contentsOf: dir.appendingPathComponent("WorkspaceShellController.swift"), encoding: .utf8),
-              let split = try? String(contentsOf: dir.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8),
-              let classic = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8)
+              let split = try? String(contentsOf: dir.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8)
         else {
             fail("R2-ARCH-05: could not read the shells' sources - this check would silently pass", &ok)
             return ok
@@ -151,8 +139,7 @@ enum NavigationCoherenceSelfTest {
                 line.range(of: #"^(get \{ |set \{ |return )?workspace(\.(navigator|hosts|lock|content))?\.\#(name)\b"#,
                            options: .regularExpression) != nil
             }
-            let overridden = split.contains("override func \(name)") || classic.contains("override func \(name)")
-                || split.contains("override var \(name)") || classic.contains("override var \(name)")
+            let overridden = split.contains("override func \(name)") || split.contains("override var \(name)")
             if forwardsByName && !overridden { forwards.append(name) }
         }
         // The parse's own power: the shell still declares members for it to
@@ -174,20 +161,11 @@ enum NavigationCoherenceSelfTest {
     /// word again.
     private static func checkCopyNamesPlacesThroughPlaceName() -> Bool {
         var ok = true
-        let saved = PlaceName.layout
-        defer { PlaceName.layout = saved }
-        PlaceName.layout = .sidebar
         let sidebar = [PlaceName.of(.bootstrap), PlaceName.short(.bootstrap), PlaceName.of(.hosts),
                        PlaceName.of(.settings), PlaceName.of(.overview)]
         if sidebar != ["Setup \u{203A} Setup steps", "Setup steps", "Connections \u{203A} Hosts", "Settings",
                        "Crew \u{203A} In flight"] {
             fail("R2-BUG-06: the sidebar layout names its places \(sidebar)", &ok)
-        }
-        PlaceName.layout = .floatingBar
-        let floating = [PlaceName.of(.bootstrap), PlaceName.short(.bootstrap), PlaceName.of(.hosts),
-                        PlaceName.of(.overview)]
-        if floating != ["Bootstrap", "Bootstrap", "Hosts", "Fleet"] {
-            fail("R2-BUG-06: the floating bar names its places \(floating)", &ok)
         }
 
         guard let dir = SelfTestSources.appSourceDirectory() else {
@@ -199,9 +177,7 @@ enum NavigationCoherenceSelfTest {
         // Setup › Setup steps, Hosts is Connections › Hosts, Fleet is Crew ›
         // In flight), and the two the review found pointing at the wrong
         // place altogether ("in Settings", "Open Setup").
-        PlaceName.layout = .sidebar
         let moved = RailDestination.allCases.filter { PlaceName.of($0) != $0.title }.map(\.title)
-        PlaceName.layout = saved
         let names = Set(moved + ["Settings", "Setup"])
             .sorted { $0.count > $1.count }
             .map { NSRegularExpression.escapedPattern(for: $0) }
@@ -532,33 +508,6 @@ enum NavigationCoherenceSelfTest {
 
     // MARK: UX1
 
-    /// The map is complete and lists nothing twice.
-    ///
-    /// **Discriminating power first** (AGENTS.md: "a check that cannot fail is
-    /// worse than no check"): the grid is asserted non-trivial - more than one
-    /// group, and more destinations than any single group holds - before the
-    /// completeness claim, so a `groups()` that regressed to returning one
-    /// catch-all bucket fails here rather than passing the count check.
-    private static func checkEveryDestinationIsOnTheMap() -> Bool {
-        var ok = true
-        let groups = AllDestinationsOverlayController.groups()
-        check(groups.count > 1, "UX1: the map collapsed to \(groups.count) group(s) - it is meant to be grouped by space", &ok)
-
-        let listed = groups.flatMap(\.destinations)
-        if let biggest = groups.map(\.destinations.count).max() {
-            check(listed.count > biggest,
-                  "UX1: every destination landed in one group - the grouping is not discriminating", &ok)
-        }
-
-        let all = Set(RailDestination.allCases)
-        let listedSet = Set(listed)
-        let missing = all.subtracting(listedSet).map(\.rawValue).sorted()
-        check(missing.isEmpty, "UX1: the all-destinations map is missing \(missing) - a destination nobody can find", &ok)
-        check(listed.count == listedSet.count,
-              "UX1: the map lists \(listed.count - listedSet.count) destination(s) twice", &ok)
-        return ok
-    }
-
     /// UX1's other half: a complete map nobody can open is still a map nobody
     /// can open.
     ///
@@ -598,103 +547,6 @@ enum NavigationCoherenceSelfTest {
 
     // MARK: UX2
 
-    private static func checkQuickAccessCapAndOrder() -> Bool {
-        var ok = true
-        // This case used to drive the *default* row, because the default was
-        // the seven that shipped and therefore genuinely exceeded the cap.
-        // Review U2 cut the default to four, and the comment that used to sit
-        // here called that exact shot: "if the default ever shrinks to six,
-        // every check below still passes while covering nothing." So the
-        // overflow mechanism is driven from an explicit over-cap row now, and
-        // the default's own size is asserted separately below as U2's claim
-        // rather than as this mechanism's fixture.
-        let shipped = QuickAccessConfiguration(pinned: [
-            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts,
-        ])
-        check(shipped.pinned.count > QuickAccessConfiguration.visibleLimit,
-              "UX2: the fixture row (\(shipped.pinned.count)) no longer exceeds the cap (\(QuickAccessConfiguration.visibleLimit)) - this suite's overflow checks are vacuous", &ok)
-        check(shipped.visible.count == QuickAccessConfiguration.visibleLimit,
-              "UX2: \(shipped.visible.count) icons visible, expected the cap of \(QuickAccessConfiguration.visibleLimit)", &ok)
-        check(shipped.overflow.count == shipped.pinned.count - QuickAccessConfiguration.visibleLimit,
-              "UX2: the overflow tail is \(shipped.overflow.count), expected \(shipped.pinned.count - QuickAccessConfiguration.visibleLimit)", &ok)
-        check(shipped.visible + shipped.overflow == shipped.pinned,
-              "UX2: visible + overflow is not the pinned row - a destination is being dropped rather than overflowed", &ok)
-
-        // Six or fewer: no overflow at all, so the button disappears rather
-        // than opening an empty menu.
-        let small = QuickAccessConfiguration(pinned: [.console, .hosts, .shift])
-        check(small.overflow.isEmpty, "UX2: a three-icon row produced an overflow tail", &ok)
-        check(small.visible.count == 3, "UX2: a three-icon row drew \(small.visible.count) icons", &ok)
-
-        // A fresh install pins the shipped seven, in the shipped order - U2's
-        // brief cut to four (which removed Console, Hosts and Poneglyph) is
-        // reverted, so the fixture above states the real default again
-        // rather than an explicit over-cap row standing in for it.
-        let fresh = QuickAccessConfiguration()
-        check(fresh.pinned.count == 7,
-              "a fresh install pins \(fresh.pinned.count) destinations, expected the shipped 7", &ok)
-        check(fresh.overflow.count == 1,
-              "the default row's overflow tail is \(fresh.overflow.count), expected the one icon past the cap of \(QuickAccessConfiguration.visibleLimit)", &ok)
-        check(Array(QuickAccessConfiguration.defaultPinned)
-              == [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts],
-              "the default row was re-ordered rather than restored "
-              + "(\(QuickAccessConfiguration.defaultPinned.map(\.rawValue)))", &ok)
-        return ok
-    }
-
-    private static func checkQuickAccessRoundTrips() -> Bool {
-        var ok = true
-        let base = QuickAccessConfiguration(pinned: [.console, .hosts, .shift])
-
-        let pinned = base.toggling(.whiteboard)
-        check(pinned.contains(.whiteboard), "UX1: pinning a destination did not add it", &ok)
-        check(pinned.pinned.last == .whiteboard,
-              "UX1: a new pin did not append - it displaced an icon the captain already reads at a fixed position", &ok)
-        check(pinned.pinned.prefix(3) == base.pinned.prefix(3),
-              "UX1: pinning moved the icons that were already there", &ok)
-
-        let unpinned = pinned.toggling(.whiteboard)
-        check(unpinned == base, "UX1: pin-then-unpin did not return the original row", &ok)
-
-        // Unpinning the last one leaves an empty row and does NOT silently
-        // restore the seven defaults - "I want no shortcuts" is a real
-        // preference. The store's fallback-to-default is for an *absent* value.
-        let emptied = QuickAccessConfiguration(pinned: [])
-        check(emptied.pinned.isEmpty, "UX1: an explicitly empty row was refilled with the defaults", &ok)
-
-        // Reorder: move the third icon to the front.
-        let moved = base.moving(from: 2, to: 0)
-        check(moved.pinned == [.shift, .console, .hosts],
-              "UX2: reorder produced \(moved.pinned.map(\.rawValue)), expected shift/console/hosts", &ok)
-        check(base.moving(from: 99, to: 0) == base, "UX2: an out-of-range drag changed the row", &ok)
-        check(base.moving(from: 1, to: 1) == base, "UX2: a no-op drag changed the row", &ok)
-
-        // A duplicate cannot survive construction - two squares for one
-        // destination is a row whose active highlight is undefined.
-        let duped = QuickAccessConfiguration(pinned: [.console, .hosts, .console])
-        check(duped.pinned == [.console, .hosts], "UX2: a duplicate pin survived - got \(duped.pinned.map(\.rawValue))", &ok)
-
-        // The encoding round-trips, which is what makes the choice survive a
-        // relaunch at all.
-        guard let data = try? JSONEncoder().encode(pinned),
-              let decoded = try? JSONDecoder().decode(QuickAccessConfiguration.self, from: data) else {
-            fail("UX1: the pinned row does not round-trip through JSON", &ok)
-            return ok
-        }
-        check(decoded == pinned, "UX1: the decoded row is \(decoded.pinned.map(\.rawValue)), expected \(pinned.pinned.map(\.rawValue))", &ok)
-
-        // GL-01: a file this build cannot fully read decodes to something
-        // usable rather than making the whole value undecodable.
-        let unknown = #"{"pinned":["console","nosuchdestination","hosts"]}"#.data(using: .utf8)!
-        if let salvaged = try? JSONDecoder().decode(QuickAccessConfiguration.self, from: unknown) {
-            check(salvaged.pinned == [.console, .hosts],
-                  "UX1: an unknown destination was not dropped cleanly - got \(salvaged.pinned.map(\.rawValue))", &ok)
-        } else {
-            fail("UX1: a row naming one unknown destination failed to decode at all (GL-01)", &ok)
-        }
-        return ok
-    }
-
     // MARK: UX4
 
     /// The captain asked for Clipboard History off the bar's shortcuts. Its
@@ -718,36 +570,6 @@ enum NavigationCoherenceSelfTest {
     private static func checkClipboardHistoryIsNotAShortcut() -> Bool {
         var ok = true
         func isClipboard(_ raw: String) -> Bool { raw.localizedCaseInsensitiveContains("clipboard") }
-
-        check(!QuickAccessConfiguration.defaultPinned.map(\.rawValue).contains(where: isClipboard),
-              "the default shortcut row pins a clipboard entry: "
-              + "\(QuickAccessConfiguration.defaultPinned.map(\.rawValue))", &ok)
-        check(!RailDestination.allCases.map(\.rawValue).contains(where: isClipboard),
-              "a clipboard destination exists, so Settings could pin it back onto the bar", &ok)
-        check(!QuickAccessConfiguration().pinned.map(\.rawValue).contains(where: isClipboard),
-              "a fresh install's shortcut row carries a clipboard entry", &ok)
-
-        // A saved row with clipboard entries mixed into real shortcuts, in a
-        // non-default order so a fall-back to the defaults cannot pass.
-        let saved = #"{"pinned":["hosts","clipboardHistory","stickyBoard","clipboard","console","shift"]}"#
-        let expected: [RailDestination] = [.hosts, .stickyBoard, .console, .shift]
-        check(expected != Array(QuickAccessConfiguration.defaultPinned.prefix(expected.count)),
-              "the saved-layout fixture matches the default row's prefix - a reset would pass vacuously", &ok)
-        guard let migrated = try? JSONDecoder().decode(QuickAccessConfiguration.self,
-                                                       from: Data(saved.utf8)) else {
-            fail("a saved shortcut row naming Clipboard History failed to decode at all (GL-01) - "
-                 + "the captain's whole layout would reset to the defaults", &ok)
-            return ok
-        }
-        check(migrated.pinned == expected,
-              "a saved row naming Clipboard History loaded as \(migrated.pinned.map(\.rawValue)), "
-              + "expected \(expected.map(\.rawValue)) - the rest of the layout or its order was lost", &ok)
-        if let data = try? JSONEncoder().encode(migrated),
-           let text = String(data: data, encoding: .utf8) {
-            check(!isClipboard(text), "the migrated row re-saves a clipboard entry: \(text)", &ok)
-        } else {
-            fail("the migrated shortcut row does not re-encode", &ok)
-        }
 
         guard let menu = buildRealMenuBar() else {
             fail("could not build the app's menu bar - the Clipboard History reachability check is vacuous", &ok)
@@ -878,15 +700,6 @@ enum NavigationCoherenceSelfTest {
                                ("\u{2325}\u{2318}N", "New Snippet"), ("\u{2325}\u{2318}P", "Manage Snippets")] {
             check(bound.contains(where: { $0.chord == chord }),
                   "UX3: \(chord) (\(label)) was lost when Keys/Snippets folded under Hosts", &ok)
-        }
-
-        // UX4's ⌘1-⌘5, which are the floating bar's spaces. R2-UX-02 took the
-        // spaces out of the sidebar layout's menu; its number chords are the
-        // sidebar's modules (`ReviewTwoUXModelSelfTest`).
-        let floatingBound = allBindings(ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar))
-        for index in 1...5 {
-            check(floatingBound.contains(where: { $0.chord == "\u{2318}\(index)" }),
-                  "UX4: \u{2318}\(index) is not bound - the five spaces were meant to take \u{2318}1-\u{2318}5", &ok)
         }
 
         // The H3 trap, generalised: **no chord may be declared twice**. AppKit
@@ -1064,7 +877,6 @@ enum NavigationCoherenceSelfTest {
         }
         return out
     }
-
 
     /// **Review bug B12**: the App menu read "Quit GrandLine".
     ///

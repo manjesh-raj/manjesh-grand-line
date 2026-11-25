@@ -227,8 +227,8 @@ enum UIUXProposalsSelfTest {
             check(NSImage(systemSymbolName: role.name, accessibilityDescription: nil) != nil,
                   "S12: \(role) resolves to a real symbol (\(role.name))", &ok)
         }
-        check(DaylightThemeToggleButton.lightSymbol == HelmSymbol.Role.themeLight.name
-                && DaylightThemeToggleButton.darkSymbol == HelmSymbol.Role.themeDark.name,
+        check(AppearanceToggle.lightSymbol == HelmSymbol.Role.themeLight.name
+                && AppearanceToggle.darkSymbol == HelmSymbol.Role.themeDark.name,
               "S12: the theme toggle reads its glyphs from the role table", &ok)
         guard sourcesAvailable else { print("  SKIP: S12 source half, no app sources"); return }
         let notebook = source("NotebookController.swift")
@@ -642,7 +642,7 @@ enum UIUXProposalsSelfTest {
         check(items.contains { $0.action == #selector(WorkspaceShellController.selectNextModuleTab(_:)) && $0.keyEquivalent == "}" }
                 && items.contains { $0.action == #selector(WorkspaceShellController.selectPreviousModuleTab(_:)) && $0.keyEquivalent == "{" },
               "S21: Previous and Next Tab are ⌘⇧[ and ⌘⇧]", &ok)
-        let sections = PageShortcuts.sections(module: .tasks, route: .shift, layout: .sidebar, settings: .shared)
+        let sections = PageShortcuts.sections(module: .tasks, route: .shift, settings: .shared)
         let page = sections.first?.entries ?? []
         let names = WorkspaceModule.tasks.tabs.map(\.name)
         check(page.contains { $0.title == "Previous or next tab" }, "S21: ⌘/ on Tasks lists the tab chords", &ok)

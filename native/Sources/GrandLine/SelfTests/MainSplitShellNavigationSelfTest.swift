@@ -53,7 +53,6 @@ enum MainSplitShellNavigationSelfTest {
         MainSplitShellHarness.run("MainSplitShellNavigationSelfTest", [
             checkEveryRouteShowsThroughTheMounter, checkNoPageGrowsTheWindow,
             checkAPageColumnNeverGrowsTheWindow, checkTheSidebarIsTheMap,
-            checkTheSidebarDrawsNoPins, checkTheMapAndTheSidebarToggle, checkModuleTabsArePages,
             checkPageTabsAreDrivenFromTheToolbar, checkTheToolbar, checkConsoleIsAModule,
             checkHomeIsTheCaptainsToArrange, checkHomeRowsFillBesideTheSidebar, checkHomeLeavesAnOffBriefingOff,
             checkHomeFeelPass, checkToolbarTabsSlide, checkDensityReachesTheSidebar,
@@ -419,41 +418,6 @@ enum MainSplitShellNavigationSelfTest {
                   "\(module.title)'s row is \(entries.contains(.module(module)) ? "shown" : "missing") with \(hidden.map(\.rawValue).sorted()) hidden", &ok)
         }
         check(!hidden.isEmpty, "the sidebar check hides nothing, so it cannot see a hidden row drawn", &ok)
-    }
-
-    /// Stage 6, the captain's call: the pins are the floating bar's. With
-    /// pages pinned that a Pinned section used to list (Straw Hat Pirates and
-    /// Hosts, each one of several pages in its module), the sidebar draws no
-    /// such section, no row's menu offers Pin or Unpin, and the saved list is
-    /// left exactly as it was.
-    private static func checkTheSidebarDrawsNoPins(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
-        let pins = QuickAccessConfiguration(pinned: [.console, .strawHat, .hosts, .poneglyph])
-        AppSettings.shared.quickAccess = pins
-        shell.quickAccessDidChange(pins)
-        shell.workspace.hosts.sessions.register(hostID: UUID(), label: "Fixture", accentHex: nil, state: .connected)
-        settle(shell)
-        let entries = shell.sidebar.debugVisibleEntries
-        let groups = Set(WorkspaceGroup.allCases.map(\.title))
-        let sections = entries.compactMap { entry -> String? in
-            if case .section(let title) = entry { return title }
-            return nil
-        }
-        check(Set(sections) == groups && sections.count == groups.count,
-              "with pins set the sidebar draws the sections \(sections), want the four groups only", &ok)
-        check(entries.first == .module(.home), "Home is not the first row under the header", &ok)
-        for module in WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules) {
-            let titles = shell.sidebar.debugContextMenuTitles(for: .module(module))
-            check(!titles.contains { $0.hasPrefix("Pin ") || $0.hasPrefix("Unpin ") },
-                  "\(module.title)'s menu still offers to pin: \(titles)", &ok)
-            check(titles.first == "Open \(module.title)", "\(module.title)'s menu lost Open: \(titles)", &ok)
-        }
-        check(shell.sidebar.debugContextMenuTitles(for: .module(.console)).contains("Connect to a Host\u{2026}"),
-              "Console's menu lost Connect to a Host", &ok)
-        check(shell.sidebar.debugContextMenuTitles(for: .module(.connections)).contains("Connect to a Host\u{2026}"),
-              "Connections' menu, where the sessions now sit, has no Connect to a Host", &ok)
-        check(AppSettings.shared.quickAccess == pins, "the sidebar layout changed the floating bar's pins", &ok)
-        for id in shell.workspace.hosts.sessions.sessions.map(\.hostID) { shell.workspace.hosts.sessions.unregister(hostID: id) }
-        settle(shell)
     }
 
     private static func checkTheMapAndTheSidebarToggle(_ shell: MainSplitShellController, _ window: NSWindow,

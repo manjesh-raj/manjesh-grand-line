@@ -105,11 +105,6 @@ enum SidebarRedesignsSelfTest {
                     allOK = allOK && ok
                 }
             }
-            do {
-                var ok = true
-                checkTheFloatingBarIsUnchanged(&ok)
-                allOK = allOK && ok
-            }
             return allOK
         }
         var storesOK = true
@@ -1398,69 +1393,6 @@ enum SidebarRedesignsSelfTest {
 
     private static func sameColour(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Bool {
         abs(a.0 - b.0) < 0.01 && abs(a.1 - b.1) < 0.01 && abs(a.2 - b.2) < 0.01
-    }
-
-    // MARK: 5 - The floating bar
-
-    private static func checkTheFloatingBarIsUnchanged(_ ok: inout Bool) {
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoTasks(shell.workspace.shiftStore)
-        settle(shell)
-        let tasks = shell.workspace.shift
-        shell.workspace.navigator.show(.shift)
-        settle(shell)
-        check(!tasks.drawsSidebarLayout && tasks.debugSidebarIsVisible && !tasks.debugViewTabs.isHidden
-                && tasks.workspacePrimaryAction == nil,
-              "the floating bar's Tasks lost its column or its view switch", &ok)
-        check(tasks.debugBoardView?.debugColumnViews.allSatisfy { !$0.usesWorkspaceStyle } == true,
-              "the floating bar's board takes the sidebar layout's lanes", &ok)
-        check(tasks.debugPushedBackCount == nil, "the floating bar's review draws the sidebar layout's count", &ok)
-        // R4-UX-09: the floating bar's Board is a board, not a board with
-        // Follow-ups and Projects stacked under it. Follow-ups is a lane in
-        // the classic board's shape, Projects is the column's, and List
-        // keeps both cards under its tasks.
-        let pending = shell.workspace.shiftStore.followUps.filter { $0.status == .pending }.count
-        check(pending > 0, "the demo tasks hold no pending follow-up, so the lane check is vacuous", &ok)
-        tasks.selectModuleTab(named: "Board")
-        settle(shell)
-        check(tasks.debugFollowUpLaneOnBoard && tasks.debugFollowUpsRowHidden && tasks.debugProjectsSectionHidden,
-              "the floating bar's Board stacks cards under the board (lane \(tasks.debugFollowUpLaneOnBoard), "
-              + "Follow-ups card hidden \(tasks.debugFollowUpsRowHidden), Projects hidden \(tasks.debugProjectsSectionHidden))", &ok)
-        check(tasks.followUpLane.debugUsesClassicStyle && tasks.followUpLane.debugCount == "\(pending)",
-              "the floating bar's Follow-ups lane is not the classic lane of \(pending) (\(tasks.followUpLane.debugCount))", &ok)
-        // S08: the classic lane's foot is the quiet text button the classic
-        // status lanes have, with no dashed box.
-        check(!tasks.followUpLane.debugAddRow.outlined && tasks.followUpLane.debugAddRow.inLane,
-              "S08: the floating bar's Follow-ups lane foot is not the classic quiet add", &ok)
-        tasks.selectModuleTab(named: "List")
-        settle(shell)
-        check(!tasks.debugFollowUpLaneOnBoard && !tasks.debugFollowUpsRowHidden && !tasks.debugProjectsSectionHidden,
-              "the floating bar's List lost its Follow-ups or Projects card", &ok)
-        tasks.selectModuleTab(named: "Board")
-        settle(shell)
-        for route in [RailDestination.updates, .bootstrap, .automation, .githubSync] {
-            shell.workspace.navigator.show(route)
-            settle(shell)
-        }
-        let updates = shell.workspace.updates
-        check(!updates.debugDrawsSidebarLayout && updates.debugCategoryCardsShown && updates.workspacePrimaryAction == nil,
-              "the floating bar's Updates changed", &ok)
-        check(!shell.workspace.bootstrap.debugDrawsSidebarLayout && shell.workspace.bootstrap.debugFullSetupCardShown,
-              "the floating bar's Bootstrap changed", &ok)
-        check(!shell.workspace.automation.debugDrawsSidebarLayout && shell.workspace.automation.debugRunCardShown,
-              "the floating bar's Automation changed", &ok)
-        let github = shell.workspace.githubSync
-        _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
-        check(!github.debugDrawsSidebarLayout && github.debugReposCardShown && !github.debugPausedCardIsShown,
-              "the floating bar's GitHub sync changed", &ok)
-        check(!(github.drillHeaderSubtitle ?? "").contains("all in sync"),
-              "the floating bar's GitHub sync still says all in sync over failed checks", &ok)
-        let notebook = shell.workspace.notebook
-        shell.workspace.navigator.show(.notebook)
-        settle(shell)
-        check(notebook.splitPage?.pageForcesCollapse == false, "the floating bar's Notebook lost its page column", &ok)
     }
 
     // MARK: Helpers

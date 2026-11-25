@@ -180,9 +180,6 @@ enum ReviewFourUISelfTest {
 
     /// The copy the review quoted reads each module's name from `ModuleTable`.
     private static func checkModuleNamesInCopy(_ ok: inout Bool) {
-        let saved = PlaceName.layout
-        defer { PlaceName.layout = saved }
-        PlaceName.layout = .sidebar
         // S27 retired the "No details" copy this checked; the crew panel's
         // context line is where the inspector names the place now, and it
         // names the module, never a page.
@@ -211,11 +208,6 @@ enum ReviewFourUISelfTest {
         card.setMode(.create)
         check(!card.debugPrimaryButton.title.contains("Poneglyph"),
               "R4-UI-07: the create button reads \"\(card.debugPrimaryButton.title)\" under the \(secrets) row", &ok)
-        // The floating bar's page is titled Poneglyph, so its card keeps that.
-        PlaceName.layout = .floatingBar
-        card.setMode(.unlock(touchIDAvailable: false))
-        check(card.debugTitle == RailDestination.poneglyph.title,
-              "R4-UI-07: the floating bar's unlock card reads \"\(card.debugTitle)\" on its Poneglyph page", &ok)
     }
 
     // MARK: R4-UI-09 - Snippets

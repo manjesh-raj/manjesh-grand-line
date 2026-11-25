@@ -169,12 +169,11 @@ struct ShortcutRow: Equatable {
 enum ShortcutsTable {
 
     /// R4-UI-07: where the terminal's own shortcuts work, by the sidebar's
-    /// module names (`PlaceName`, which reads `ModuleTable`). In the sidebar
-    /// layout a host's page is one of Console's sessions, so "host pages" named
-    /// a place the sidebar does not have. The floating bar keeps its wording.
+    /// module names (`PlaceName`, which reads `ModuleTable`). A host's page is
+    /// one of Console's sessions, so "host pages" would name a place the
+    /// sidebar does not have.
     static var terminalPlaces: String {
-        PlaceName.layout == .sidebar ? "\(PlaceName.of(.console)) and \(PlaceName.of(.tools))"
-            : "Console, host pages and Tools"
+        "\(PlaceName.of(.console)) and \(PlaceName.of(.tools))"
     }
 
     /// What the page's filter tabs choose between.

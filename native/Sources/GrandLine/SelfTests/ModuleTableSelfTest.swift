@@ -79,13 +79,6 @@ enum ModuleTableSelfTest {
             check(row.homeCards == cards, "\(name): Home cards \(row.homeCards) but DaylightModule.opens gives \(cards)", &ok)
             let newAction = ContextualNewAction.forDestination(route)
             check(row.newAction == newAction, "\(name): ⌘N \(row.newAction) but ContextualNewAction says \(newAction)", &ok)
-            // The Go menu and the ⌘⇧D overlay group a page under its space, or
-            // under "Elsewhere" when it has none. The table's space has to put
-            // it in the same group.
-            let group = AllDestinationsOverlayController.groups().first { $0.destinations.contains(route) }?.title
-            check(group == (row.space?.title ?? "Elsewhere"),
-                  "\(name): the Go menu groups it under \(group ?? "nothing") but its space is "
-                    + (row.space?.title ?? "none"), &ok)
             check(NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil) != nil,
                   "\(name)'s symbol \(row.symbol) does not resolve - an invisible icon", &ok)
         }

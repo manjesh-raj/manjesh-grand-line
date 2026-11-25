@@ -221,13 +221,8 @@ enum ReviewFiveUXSelfTest {
         check(HomeFocusCard.state(session: session, focusedSecondsToday: 0, now: noon) == .paused(task: "Write the report", minutesLeft: 15),
               "R5-UX-07: a paused session does not say what is left", &ok)
 
-        // Both layouts: the floating bar hands a Personal Home its own cards
-        // and hidden set (an Operator's hub stays the hand-placed one), and a
-        // Home with no Crew never speaks for the fleet.
-        if let floating = source("AppShellController.swift"), let home = SelfTestSources.homeCanvas(read: source) {
-            check(floating.contains("guard AppSettings.shared.effectiveProfile == .personal else {")
-                    && floating.contains("canvas.cardLayout = AppSettings.shared.homeCardLayout"),
-                  "R5-UX-07: the floating bar's Home no longer follows a Personal profile", &ok)
+        // A Home with no Crew never speaks for the fleet.
+        if let home = SelfTestSources.homeCanvas(read: source) {
             check(home.contains("let answerIfAny = fleetSpeaks ? overviewAnswer() : nil"),
                   "R5-UX-07: a Home without Crew reports on the fleet again", &ok)
         }
@@ -337,7 +332,7 @@ enum ReviewFiveUXSelfTest {
     private static func checkTheHiddenPowerIsVisible(_ ok: inout Bool) {
         let cal = Calendar.current
         guard let start = cal.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) else { return }
-        let tips = HomeTips.all(settings: AppSettings.shared, layout: .sidebar)
+        let tips = HomeTips.all(settings: AppSettings.shared)
         func day(_ n: Int) -> Date { cal.date(byAdding: .day, value: n, to: start) ?? start }
         // One a day for seven days, each different, then none.
         let week = (0..<HomeTips.days).compactMap { HomeTips.tip(firstShown: start, now: day($0), dismissed: false, tips: tips) }
@@ -354,22 +349,18 @@ enum ReviewFiveUXSelfTest {
                 && titles.contains(AppSettings.shared.dictationShortcut.displayString)
                 && titles.contains("\u{2318}K") && titles.contains(";abbreviation") && titles.contains("\u{2325}\u{2318}I"),
               "R5-UX-03: the tips are \(titles)", &ok)
-        let floating = HomeTips.all(settings: AppSettings.shared, layout: .floatingBar).map(\.title).joined(separator: " | ")
-        check(!floating.contains("sidebar") && !floating.contains("inspector"),
-              "R5-UX-03: the floating bar's tips name the sidebar layout's chrome: \(floating)", &ok)
 
         // ⌘/: the page's chords, then the ones that work everywhere.
-        let tasks = PageShortcuts.sections(module: .tasks, route: .shift, layout: .sidebar, settings: AppSettings.shared)
+        let tasks = PageShortcuts.sections(module: .tasks, route: .shift, settings: AppSettings.shared)
         check(tasks.map(\.title) == ["On Tasks", "Everywhere"]
                 && tasks[0].entries.contains { $0.title == ContextualNewAction.task.menuTitle && $0.chord == "\u{2318}N" }
                 && tasks[0].entries.contains { $0.title == "Previous or next tab" }
                 && tasks[1].entries.contains { $0.chord == "\u{2318}K" }
                 && tasks[1].entries.contains { $0.chord == "\u{2325}\u{2318}I" },
               "R5-UX-03: ⌘/ on Tasks lists \(tasks)", &ok)
-        let console = PageShortcuts.sections(module: .console, route: .console, layout: .floatingBar, settings: AppSettings.shared)
-        check(console[0].entries.count > TerminalShortcutAction.allCases.count - 1
-                && !console[1].entries.contains { $0.chord == "\u{2325}\u{2318}I" },
-              "R5-UX-03: ⌘/ on the floating bar's Console lists \(console)", &ok)
+        let console = PageShortcuts.sections(module: .console, route: .console, settings: AppSettings.shared)
+        check(console[0].entries.count > TerminalShortcutAction.allCases.count - 1,
+              "R5-UX-03: ⌘/ on Console lists \(console)", &ok)
         // The chord is real, in the Help menu, once.
         let menu = AppDelegate().buildMenu(installing: false)
         let help = menu.items.compactMap(\.submenu).first { $0.title == "Help" }
@@ -387,26 +378,15 @@ enum ReviewFiveUXSelfTest {
     // MARK: R5-UX-09 - keyboard and accessibility
 
     private static func checkTheKeyboardReachesEveryPage(_ ok: inout Bool) {
-        // The floating bar steps through Knowledge's and Setup's pages, which
-        // it draws as separate pages.
-        check(AppShellController.steppablePages(from: .docs) == [.notebook, .docs, .readingList]
-                && AppShellController.steppablePages(from: .bootstrap) == [.updates, .bootstrap, .automation, .githubSync]
-                && AppShellController.steppablePages(from: .postmortems) == [.runbooks, .postmortems],
-              "R5-UX-09: the floating bar steps through \(AppShellController.steppablePages(from: .docs)) and \(AppShellController.steppablePages(from: .bootstrap))", &ok)
-        check(AppShellController.steppablePages(from: .calendar).count == 1,
-              "R5-UX-09: the floating bar's Tasks steps to another page", &ok)
-
         // ⌥⌘I, the platform's inspector chord, in the layout that has one.
-        let sidebarMenu = ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar)
-        let floatingMenu = ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar)
+        let sidebarMenu = ReviewTwoUXModelSelfTest.mainMenu()
         func inspectorItem(_ menu: NSMenu) -> NSMenuItem? {
             menu.items.compactMap(\.submenu).flatMap(\.items)
                 .first { $0.action == #selector(WorkspaceShellController.toggleInspectorFromMenu) }
         }
         let inspector = inspectorItem(sidebarMenu)
-        check(inspector?.keyEquivalent == "i" && inspector?.keyEquivalentModifierMask == [.command, .option]
-                && inspectorItem(floatingMenu) == nil,
-              "R5-UX-09: Go › Toggle Inspector is not ⌥⌘I in the sidebar layout alone", &ok)
+        check(inspector?.keyEquivalent == "i" && inspector?.keyEquivalentModifierMask == [.command, .option],
+              "R5-UX-09: Go › Toggle Inspector is not ⌥⌘I", &ok)
 
         // The dictation key asks for Accessibility once, at the first press
         // without it, naming the key that was pressed.
@@ -498,8 +478,6 @@ enum ReviewFiveUXSelfTest {
                 && WorkspaceModule.knowledge.primaryRoute == .docs,
               "R5-UX-05: the rows open \(WorkspaceModule.notebook.primaryRoute), \(WorkspaceModule.readingList.primaryRoute) and \(WorkspaceModule.knowledge.primaryRoute)", &ok)
         // Copy names a listed door row as the sidebar does.
-        let savedLayout = PlaceName.layout
-        PlaceName.layout = .sidebar
         withProfile(.personal) {
             check(PlaceName.of(.notebook) == "Notebook" && PlaceName.of(.calendar) == "Calendar",
                   "R5-UX-05: a Personal Notebook is called \(PlaceName.of(.notebook))", &ok)
@@ -508,7 +486,6 @@ enum ReviewFiveUXSelfTest {
             check(PlaceName.of(.notebook) == "Knowledge \u{203A} Notebook" && PlaceName.of(.runbooks) == "Runbooks",
                   "R5-UX-05: an Operator's Notebook is called \(PlaceName.of(.notebook))", &ok)
         }
-        PlaceName.layout = savedLayout
         // Every profile still matches the set it writes.
         for profile in WorkspaceProfile.allCases {
             check(WorkspaceProfile.matching(profile.hiddenModules) == profile,

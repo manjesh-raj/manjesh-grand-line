@@ -39,19 +39,23 @@ enum SettingsSplitCardWordsSelfTest {
 
     private static func checkAppearance(_ ok: inout Bool) {
         let words = SettingsHeroWords.appearance(
-            themeName: "Graphite Dark", isDark: true, followsSystem: false, layout: .sidebar,
-            layoutTakesEffectLater: false, density: .comfortable, profile: .operator,
+            themeName: "Graphite Dark", isDark: true, followsSystem: false,
+            density: .comfortable, profile: .operator,
             terminal: "matches the app (One Dark)")
         check(words.headline == "Graphite Dark is showing.", "Appearance: headline \"\(words.headline)\"", &ok)
-        check(words.body == "Dark appearance, the sidebar layout, comfortable rows and the Operator profile. "
+        check(words.body == "Dark appearance, comfortable rows and the Operator profile. "
                 + "Terminal: matches the app (One Dark).", "Appearance: body \"\(words.body ?? "")\"", &ok)
         check(words.tone == .accent, "Appearance: the panel is not the accent", &ok)
         let following = SettingsHeroWords.appearance(
-            themeName: "Daylight", isDark: false, followsSystem: true, layout: .floatingBar,
-            layoutTakesEffectLater: true, density: .compact, profile: nil, terminal: "Nord, chosen on the Terminal page")
-        check(following.body == "Following macOS, light right now, the floating bar layout from the next launch, "
+            themeName: "Daylight", isDark: false, followsSystem: true,
+            density: .compact, profile: nil, terminal: "Nord, chosen on the Terminal page")
+        check(following.body == "Following macOS, light right now, "
                 + "compact rows and a custom sidebar. Terminal: Nord, chosen on the Terminal page.",
               "Appearance: following macOS reads \"\(following.body ?? "")\"", &ok)
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the panel no longer names one.
+        check(!(words.body ?? "").contains("layout") && !(following.body ?? "").contains("layout"),
+              "Appearance: the panel still names a window layout", &ok)
     }
 
     private static func checkTerminal(_ ok: inout Bool) {

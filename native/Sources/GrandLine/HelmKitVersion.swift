@@ -108,8 +108,6 @@ enum HelmKit {
         Component("HelmType", "1.2.0", file: "HelmDesignSystem.swift"),
         // HelmDensity.swift
         Component("HelmDensity", "1.0.0", file: "HelmDensity.swift"),
-        // HelmDrillHeader.swift
-        Component("HelmDrillHeader", "1.0.0", file: "HelmDrillHeader.swift"),
         // HelmFocusVisibility.swift
         Component("HelmFocusVisibility", "1.0.0", file: "HelmFocusVisibility.swift"),
         // HelmForm.swift

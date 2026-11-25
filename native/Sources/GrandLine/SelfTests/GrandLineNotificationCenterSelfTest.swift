@@ -485,14 +485,11 @@ enum GrandLineNotificationCenterSelfTest {
 
         // MARK: a fallback label names the page, not its path (F9)
 
-        let savedLayout = PlaceName.layout
-        PlaceName.layout = .sidebar
         NotificationSources.setGitHubSync(count: 3, navigate: {})
         let forkLabel = center.entries.first { $0.id == NotificationSources.githubSyncID }?.primaryAction?.label
         check("the fork row's fallback says \(forkLabel ?? "nothing"), not a breadcrumb",
               forkLabel == "Open \(PlaceName.short(.githubSync))" && forkLabel?.contains("\u{203A}") == false)
         NotificationSources.setGitHubSync(count: 0, navigate: {})
-        PlaceName.layout = savedLayout
 
         // MARK: the hero head's words (N-1, `NotificationHeroWords`)
 

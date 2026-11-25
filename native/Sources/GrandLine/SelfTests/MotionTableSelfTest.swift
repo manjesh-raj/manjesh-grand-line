@@ -161,8 +161,6 @@ enum MotionTableSelfTest {
                   reason: "the HUD's sweep while transcribing, an ambient loop at the board's period (DH-2)"),
         Exception(file: "StrawHatCrewViews.swift", snippet: "pulse.duration",
                   reason: "the crew's working pulse, an ambient loop"),
-        Exception(file: "NotificationCenterPopover.swift", snippet: "bounce.duration",
-                  reason: "the bell's arrival bounce, a keyframe gesture"),
         Exception(file: "ConsoleComposerPopover.swift", snippet: "copiedDuration",
                   reason: "how long Copy says Copied, not how it moves - a hold, like a toast's"),
     ]

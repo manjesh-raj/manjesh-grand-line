@@ -31,19 +31,13 @@ enum HomeTips {
 
     /// The week's tips, one a day, in the order they show. A tip names a key
     /// only through the setting or table that owns it.
-    static func all(settings: AppSettings = .shared, layout: WorkspaceLayout = PlaceName.layout) -> [Tip] {
+    static func all(settings: AppSettings = .shared) -> [Tip] {
         let capture = settings.quickCaptureShortcut.displayString
         let dictation = settings.dictationShortcut.displayString
-        let navigation: Tip = layout == .sidebar
-            ? Tip(symbol: "sidebar.left", title: "\u{2318}1 to \u{2318}9 open the sidebar\u{2019}s modules",
-                  body: "\u{2318}0 opens the Calendar, and \u{21E7}\u{2318}[ and \u{21E7}\u{2318}] move between a module\u{2019}s tabs.")
-            : Tip(symbol: "square.grid.2x2", title: "\u{21E7}\u{2318}D shows every page at once",
-                  body: "\u{2318}1 to \u{2318}6 switch between the spaces on the bar.")
-        let inspector: Tip = layout == .sidebar
-            ? Tip(symbol: "sidebar.right", title: "\u{2325}\u{2318}I opens the inspector",
-                  body: "The details of whatever is selected - a host, a credential, a tool - beside the page.")
-            : Tip(symbol: "keyboard", title: "\u{2318}/ lists the shortcuts for this page",
-                  body: "Help \u{203A} Keyboard Shortcuts\u{2026} has every one the app knows.")
+        let navigation = Tip(symbol: "sidebar.left", title: "\u{2318}1 to \u{2318}9 open the sidebar\u{2019}s modules",
+                             body: "\u{2318}0 opens the Calendar, and \u{21E7}\u{2318}[ and \u{21E7}\u{2318}] move between a module\u{2019}s tabs.")
+        let inspector = Tip(symbol: "sidebar.right", title: "\u{2325}\u{2318}I opens the inspector",
+                            body: "The details of whatever is selected - a host, a credential, a tool - beside the page.")
         return [
             Tip(symbol: "magnifyingglass", title: "\u{2318}K finds anything",
                 body: "A page, a task, a note, a saved link or a command, from wherever you are."),
@@ -80,22 +74,20 @@ enum HomeTips {
 /// work everywhere.
 enum PageShortcuts {
 
-    static func sections(module: WorkspaceModule, route: RailDestination?, layout: WorkspaceLayout,
+    static func sections(module: WorkspaceModule, route: RailDestination?,
                          settings: AppSettings) -> [KeyboardShortcutSection] {
         var page: [KeyboardShortcutEntry] = []
         if let route, let new = ModuleTable.descriptor(for: route)?.newAction {
             page.append(.init(title: new.menuTitle, keys: ["\u{2318}", "N"]))
         }
-        if layout == .sidebar {
-            if module == .calendar {
-                page.append(.init(title: "Previous or next period", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
-            } else if module.tabs.count > 1 {
-                page.append(.init(title: "Previous or next tab", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
-                // S21: the tabs by number, named in order.
-                let tabs = module.tabs.prefix(9)
-                page.append(.init(title: tabs.map(\.name).joined(separator: " \u{00B7} "),
-                                  keys: ["\u{2303}", "1\u{2013}\(tabs.count)"]))
-            }
+        if module == .calendar {
+            page.append(.init(title: "Previous or next period", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
+        } else if module.tabs.count > 1 {
+            page.append(.init(title: "Previous or next tab", keys: ["\u{21E7}", "\u{2318}", "[", "]"]))
+            // S21: the tabs by number, named in order.
+            let tabs = module.tabs.prefix(9)
+            page.append(.init(title: tabs.map(\.name).joined(separator: " \u{00B7} "),
+                              keys: ["\u{2303}", "1\u{2013}\(tabs.count)"]))
         }
         if module == .console {
             let terminal = settings.terminalShortcuts
@@ -108,18 +100,11 @@ enum PageShortcuts {
             .init(title: "Dictate", keys: [settings.dictationShortcut.displayString]),
             .init(title: "Clipboard history", keys: ["\u{21E7}", "\u{2318}", "V"]),
         ]
-        if layout == .sidebar {
-            everywhere += [
-                .init(title: "Open a module", keys: ["\u{2318}", "1\u{2013}9"]),
-                .init(title: "Open \(PlaceName.of(.calendar))", keys: ["\u{2318}", "0"]),
-                .init(title: "Show or hide the inspector", keys: ["\u{2325}", "\u{2318}", "I"]),
-            ]
-        } else {
-            everywhere += [
-                .init(title: "Switch space", keys: ["\u{2318}", "1\u{2013}6"]),
-                .init(title: "Every page at once", keys: ["\u{21E7}", "\u{2318}", "D"]),
-            ]
-        }
+        everywhere += [
+            .init(title: "Open a module", keys: ["\u{2318}", "1\u{2013}9"]),
+            .init(title: "Open \(PlaceName.of(.calendar))", keys: ["\u{2318}", "0"]),
+            .init(title: "Show or hide the inspector", keys: ["\u{2325}", "\u{2318}", "I"]),
+        ]
         everywhere.append(.init(title: "Every shortcut", keys: ["\u{21E7}", "\u{2318}", "/"]))
         return [
             KeyboardShortcutSection(title: "On \(module.title)", entries: page),

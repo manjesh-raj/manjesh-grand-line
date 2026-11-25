@@ -12,17 +12,14 @@
 //      A destination added without a module, or a tab with no real view
 //      behind it, fails here by name.
 //   2. **Back and Forward walk what was shown.** `NavigationHistory`.
-//   3. **The layout setting.** The sidebar is the default - for a fresh
-//      store, and as the answer to any value this build does not know - while
-//      a stored choice of either layout is kept, so a captain who picked the
-//      floating bar still gets it. Each layout builds its own shell, and the
-//      default is spelled once (`WorkspaceLayout.standard`), with no second
-//      literal in the app or the tour lab.
+//   3. **The layout setting** was here until P-03 of the 2026-11-25 review
+//      removed the floating bar. `SettingsLayoutChoiceSelfTest` guards that
+//      the choice is gone and that a stored floating-bar value is retired.
 //   4. **The wiring a behaviour check cannot see.** The app delegate builds
-//      the shell the setting names and skips the floating bar's chrome fusion
-//      for the sidebar; ⌘⇧D asks the shell first; the lock overlay tells the
-//      shell when it shows; the toolbar's trailing cluster keeps the
-//      captain's light/dark toggle and notifications button.
+//      the sidebar shell with no chrome fusion on the main window; ⌘⇧D
+//      reveals the sidebar; the lock overlay tells the shell when it shows;
+//      the toolbar's trailing cluster keeps the captain's light/dark toggle
+//      and notifications button.
 //   5. **No status strip, anywhere.** The captain had the layout's status
 //      strip removed from every module, so no source draws one, the content
 //      pane runs its body to its foot, and the focus timer's chip - the one
@@ -47,8 +44,8 @@ enum SplitShellModelSelfTest {
         for check in [checkEveryModuleIsListedOnce, checkEveryRouteLandsOnAModuleAndATab, checkGroupsFollowTheModuleTable,
                       checkTheTabsAreTheRealViews, checkTheCalendarRow, checkSavedSidebarsGetTheCalendar,
                       checkTheSidebarDrawsNoPins, checkSessionsAreConnectionsChildren,
-                      checkHistoryWalksBackAndForward, checkHistoryEdges, checkTheLayoutSetting,
-                      checkTheDefaultIsTheSidebar, checkTheDefaultIsSpelledOnce, checkHomeCardLayout,
+                      checkHistoryWalksBackAndForward, checkHistoryEdges, 
+                      checkHomeCardLayout,
                       checkHomeCardFreeSizes, checkHomeCardSizeMigration, checkHomeCardGrid,
                       checkTheWiring, checkTheLayoutDrawsNoStatusStrip] {
             var ok = true
@@ -350,9 +347,10 @@ enum SplitShellModelSelfTest {
         for token in ["toggleQuickAccessPin", "isQuickAccessPinned", "quickAccessDidChange"] {
             check(!shell.contains(token), "the sidebar shell edits or follows the quick-access pins again (`\(token)`)", &ok)
         }
-        // The pins are still the floating bar's to edit.
-        check(base.contains("func toggleQuickAccessPin(") && code("main.swift")?.contains("appShell.toggleQuickAccessPin(") == true,
-              "the floating bar's ⌘⇧D map can no longer pin a page - the pins were the floating bar's to keep", &ok)
+        // P-03 of the 2026-11-25 review removed the floating bar, and with it
+        // the pins and the ⌘⇧D map that edited them.
+        check(!base.contains("func toggleQuickAccessPin(") && code("main.swift")?.contains("toggleQuickAccessPin(") == false,
+              "the floating bar's quick-access pins are back in the shell", &ok)
     }
 
     /// A launched host's session is listed under Connections, where the host
@@ -448,83 +446,6 @@ enum SplitShellModelSelfTest {
     }
 
     // MARK: 3 - the layout setting
-
-    private static func checkTheLayoutSetting(_ ok: inout Bool) {
-        let suite = "split-shell-model-\(UUID().uuidString)"
-        guard let defaults = UserDefaults(suiteName: suite) else {
-            fail("could not open a scratch defaults domain", &ok)
-            return
-        }
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let settings = AppSettings(defaults: defaults)
-        settings.workspaceLayout = .floatingBar
-        check(settings.workspaceLayout == .floatingBar, "the floating bar layout did not persist", &ok)
-        settings.workspaceLayout = .sidebar
-        check(settings.workspaceLayout == .sidebar, "the sidebar layout did not persist", &ok)
-        defaults.set("a-layout-from-the-future", forKey: "fm.workspaceLayout")
-        check(settings.workspaceLayout == .sidebar, "an unknown layout did not fall back to the sidebar", &ok)
-        check(WorkspaceLayout.floatingBar.shellType == AppShellController.self
-                && WorkspaceLayout.sidebar.shellType == MainSplitShellController.self,
-              "a layout builds the wrong shell", &ok)
-        check(WorkspaceLayout.allCases == [.floatingBar, .sidebar],
-              "Settings no longer offers both layouts: \(WorkspaceLayout.allCases.map(\.rawValue))", &ok)
-    }
-
-    /// The captain's call: the sidebar is the default, and the floating bar
-    /// stays a real choice. Three stores, each its own scratch domain, so a
-    /// case cannot see what the one before it wrote: one that never chose,
-    /// one that chose the sidebar, and one that chose the floating bar - the
-    /// last is the captain who must not be moved by this change.
-    private static func checkTheDefaultIsTheSidebar(_ ok: inout Bool) {
-        check(WorkspaceLayout.standard == .sidebar, "the default layout is \(WorkspaceLayout.standard.rawValue), not the sidebar", &ok)
-        check(WorkspaceLayout.standard.shellType == MainSplitShellController.self,
-              "a first launch would not build the sidebar shell", &ok)
-        for (stored, want) in [(nil, WorkspaceLayout.sidebar), ("sidebar", .sidebar), ("floatingBar", .floatingBar)] {
-            let suite = "split-shell-default-\(UUID().uuidString)"
-            guard let defaults = UserDefaults(suiteName: suite) else {
-                fail("could not open a scratch defaults domain", &ok)
-                return
-            }
-            defer { defaults.removePersistentDomain(forName: suite) }
-            if let stored { defaults.set(stored, forKey: "fm.workspaceLayout") }
-            // The domain really holds what the case says it does, so a fresh
-            // case cannot pass on a value something else left behind.
-            check(defaults.string(forKey: "fm.workspaceLayout") == stored,
-                  "the scratch store for \(stored ?? "a fresh store") holds \(defaults.string(forKey: "fm.workspaceLayout") ?? "nothing")", &ok)
-            let read = AppSettings(defaults: defaults).workspaceLayout
-            check(read == want, "\(stored.map { "a stored \($0) choice" } ?? "a fresh store") opens \(read.rawValue), want \(want.rawValue)", &ok)
-            // Reading never writes, so a captain who never chose keeps
-            // following the default rather than being pinned to today's.
-            check(defaults.string(forKey: "fm.workspaceLayout") == stored,
-                  "reading the layout wrote \(defaults.string(forKey: "fm.workspaceLayout") ?? "nothing") into \(stored ?? "a fresh store")", &ok)
-        }
-    }
-
-    /// The default has one spelling. `AppSettings` falls back to
-    /// `WorkspaceLayout.standard`, the tour lab falls back to the setting,
-    /// and nothing else in the app names a fallback layout of its own - a
-    /// second literal is how a launch, a tour and Settings would disagree
-    /// about what a first launch looks like.
-    private static func checkTheDefaultIsSpelledOnce(_ ok: inout Bool) {
-        guard let settings = code("AppSettings.swift"), let dir = SelfTestSources.appSourceDirectory(),
-              let tourText = try? String(contentsOf: dir.appendingPathComponent("SelfTests/ReviewTourLab.swift"), encoding: .utf8) else {
-            fail("could not read the sources this check reads - it would pass vacuously", &ok)
-            return
-        }
-        let tour = FeatureInventorySelfTest.stripComments(tourText)
-        check(settings.contains("flatMap(WorkspaceLayout.init(rawValue:)) ?? .standard"),
-              "AppSettings.workspaceLayout no longer falls back to WorkspaceLayout.standard", &ok)
-        check(tour.contains("let layout = AppSettings.shared.workspaceLayout"),
-              "the tour lab no longer mounts the layout setting, so a tour's first launch can differ from the app's", &ok)
-        let sources = FeatureInventorySelfTest.appSources() + [("ReviewTourLab", tour)]
-        check(sources.count > 100, "only \(sources.count) sources were read - the scan would pass vacuously", &ok)
-        for (file, text) in sources {
-            for literal in ["?? .floatingBar", "?? .sidebar", "?? WorkspaceLayout.floatingBar", "?? WorkspaceLayout.sidebar"]
-            where text.contains(literal) {
-                fail("\(file).swift falls back to a layout of its own (`\(literal)`) rather than WorkspaceLayout.standard", &ok)
-            }
-        }
-    }
 
     // MARK: 3b - Home's arranged cards
 
@@ -807,23 +728,13 @@ enum SplitShellModelSelfTest {
     private static func checkTheWiring(_ ok: inout Bool) {
         guard let main = code("main.swift"), let lock = code("LockPresenter.swift"),
               let shell = code("MainSplitShellController.swift"), let settings = code("SettingsController.swift"),
-              let classic = code("AppShellController.swift"), let canvas = SelfTestSources.homeCanvas(read: code) else {
+              let canvas = SelfTestSources.homeCanvas(read: code) else {
             fail("could not read the sources this check reads - it would pass vacuously", &ok)
             return
         }
-        // Home's arranged cards are the sidebar layout's: it hands the canvas
-        // the captain's layout. R5-UX-07: the floating bar hands one only to a
-        // Personal profile, and an Operator's floating Home keeps the
-        // hand-placed hub - it is handed `nil`.
+        // Home's arranged cards: the shell hands the canvas the captain's layout.
         check(shell.contains("workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout"),
               "the sidebar layout no longer gives Home the captain's arranged cards", &ok)
-        let personalOnly = classic.range(of: "guard AppSettings.shared.effectiveProfile == .personal else {")
-        let operatorHub = classic.range(of: "canvas.cardLayout = nil")
-        let personalLayout = classic.range(of: "canvas.cardLayout = AppSettings.shared.homeCardLayout")
-        check(personalOnly != nil && operatorHub != nil && personalLayout != nil
-                && personalOnly!.lowerBound < operatorHub!.lowerBound && operatorHub!.lowerBound < personalLayout!.lowerBound
-                && classic.components(separatedBy: "cardLayout =").count == 3,
-              "the floating bar hands Home a card layout outside a Personal profile, which would replace its hub", &ok)
         check(canvas.contains("var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
               "Home's hub no longer keeps its dashboard when no layout is set", &ok)
         // The four pages whose own tabs are a module's tabs.
@@ -833,20 +744,16 @@ enum SplitShellModelSelfTest {
             check(code(file)?.contains("extension \(type): ModuleTabHosting") == true,
                   "\(type) no longer lets the toolbar draw its tabs", &ok)
         }
-        check(main.contains("workspaceLayout.shellType.init("),
-              "main.swift no longer builds the shell the layout setting names", &ok)
-        if let fusion = main.range(of: "WindowChromeFusion.apply(to: window)"),
-           let gate = main.range(of: "if workspaceLayout == .floatingBar {") {
-            check(gate.lowerBound < fusion.lowerBound
-                    && main[gate.upperBound..<fusion.lowerBound].count < 40,
-                  "the floating bar's chrome fusion is no longer applied only to the floating-bar layout", &ok)
-        } else {
-            fail("main.swift's window no longer gates its chrome fusion on the layout", &ok)
-        }
+        // P-03 of the 2026-11-25 review: one shell, and no chrome fusion on
+        // the main window, which was the floating bar's.
+        check(main.contains("return MainSplitShellController("),
+              "the app delegate no longer builds the sidebar shell", &ok)
+        check(!main.contains("WindowChromeFusion.apply(to: window)"),
+              "the main window is fused again, which only the floating bar wanted", &ok)
         if let map = main.range(of: "@objc func showAllDestinations() {") {
             let body = main[map.upperBound...].prefix(400)
             check(body.contains("appShell.revealDestinationMap()"),
-                  "⌘⇧D no longer asks the shell first, so the sidebar shell would open the floating map", &ok)
+                  "⌘⇧D no longer reveals the sidebar", &ok)
         }
         for (method, value) in [("func showLock(reason:", "true"), ("func hideLock()", "false")] {
             guard let start = lock.range(of: method) else {
@@ -859,8 +766,8 @@ enum SplitShellModelSelfTest {
         }
         check(shell.contains("workspace.lock.onOverlayVisibilityChanged ="),
               "the sidebar shell no longer listens for the lock overlay", &ok)
-        check(settings.contains("title: \"Window layout\"") && settings.contains("AppSettings.shared.workspaceLayout = layout"),
-              "Settings > Appearance no longer offers the window layout", &ok)
+        check(!settings.contains("title: \"Window layout\"") && !settings.contains("workspaceLayout"),
+              "Settings > Appearance offers a window layout again, and the sidebar is the only one", &ok)
 
         // The captain's call, kept: both stay in the toolbar's trailing
         // cluster, after the middle and before Search.

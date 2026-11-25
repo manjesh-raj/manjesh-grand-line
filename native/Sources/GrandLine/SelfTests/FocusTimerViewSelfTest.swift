@@ -38,7 +38,6 @@ enum FocusTimerViewSelfTest {
         defer { ThemeManager.shared.setTheme(themeBefore) }
 
         withScratchStore { store in
-            checkBarChip(store: store, check: check)
             checkPopoverPanel(store: store, check: check)
             checkWeeklyReviewTile(store: store, check: check)
             checkThePanelReleasesItsThemeObserver(store: store, check: check)
@@ -46,126 +45,6 @@ enum FocusTimerViewSelfTest {
 
         return report(failures)
     }
-
-    // MARK: The bar chip
-
-    private static func checkBarChip(store: ShiftStore, check: (Bool, String) -> Void) {
-        autoreleasepool {
-            let timer = FocusTimerController(store: store)
-            var clock = Date(timeIntervalSince1970: 1_750_000_000)
-            timer.clock = { clock }
-
-            let bar = DaylightBarController()
-            let window = OffScreenProbe.window(width: 1500, height: 120,
-                                               styleMask: [.titled, .resizable])
-            window.contentView = bar.view
-            window.orderFront(nil)
-            defer { window.orderOut(nil) }
-            bar.attachFocusTimer(timer)
-            bar.view.layoutSubtreeIfNeeded()
-
-            // MARK: The bar with no session is the bar that existed before F7
-
-            check(!bar.debugFocusChipIsVisible,
-                  "the chip must not be on the bar before anything is running")
-            let idleChipWidth = bar.debugFocusChipHostWidth
-            // The whole point of hiding an *arranged* subview: a hidden
-            // ordinary `NSView` would keep its width on the bar forever.
-            check(idleChipWidth < 1,
-                  "a hidden chip must take no width on the bar, got \(idleChipWidth)")
-
-            // MARK: Starting a session puts it there
-
-            var task = ShiftTask.fresh()
-            task.title = "Rotate the prod bastion SSH keys"
-            store.addTask(task)
-            timer.start(task: task, minutes: 25)
-            bar.view.layoutSubtreeIfNeeded()
-
-            check(bar.debugFocusChipIsVisible, "the chip should appear when a session starts")
-            let runningWidth = bar.debugFocusChipHostWidth
-            check(runningWidth > 80,
-                  "the chip should have a real laid-out width, got \(runningWidth)")
-            check(bar.debugFocusChip.debugCountdownText == "25:00",
-                  "the chip starts at the full 25:00, got \(bar.debugFocusChip.debugCountdownText)")
-            check(bar.debugFocusChip.debugTitleText == task.title,
-                  "the chip names the task, got \(bar.debugFocusChip.debugTitleText)")
-            check(bar.debugFocusChip.debugRingFraction < 0.01,
-                  "the ring starts empty, got \(bar.debugFocusChip.debugRingFraction)")
-
-            // MARK: It counts down
-            //
-            // Driven through the controller's own tick rather than by
-            // waiting on the wall clock - the numbers are all derived from
-            // the injected `Date`, so this is the same code path a real
-            // second takes.
-
-            clock = clock.addingTimeInterval(456)
-            timer.debugTick()
-            bar.view.layoutSubtreeIfNeeded()
-            check(bar.debugFocusChip.debugCountdownText == "17:24",
-                  "7:36 in the chip should read 17:24, got \(bar.debugFocusChip.debugCountdownText)")
-            check(abs(bar.debugFocusChip.debugRingFraction - 456.0 / 1500.0) < 0.01,
-                  "the ring tracks the session, got \(bar.debugFocusChip.debugRingFraction)")
-
-            // MARK: The chip re-themes
-            //
-            // Both directions of the Daylight split `FocusTint` makes, since
-            // the two branches resolve different hues entirely.
-
-            let daylight = HelmTheme.allThemes.first(where: { $0.isDaylight })
-                ?? ThemeManager.shared.theme
-            let legacy = HelmTheme.allThemes.first(where: { !$0.isDaylight })
-                ?? ThemeManager.shared.theme
-            ThemeManager.shared.setTheme(daylight)
-            bar.view.layoutSubtreeIfNeeded()
-            let daylightFill = bar.debugFocusChip.layer?.backgroundColor
-            ThemeManager.shared.setTheme(legacy)
-            bar.view.layoutSubtreeIfNeeded()
-            let legacyFill = bar.debugFocusChip.layer?.backgroundColor
-            check(daylightFill != nil && legacyFill != nil,
-                  "the chip should paint a real fill in both registers")
-            check(daylightFill != legacyFill,
-                  "the chip's fill should differ between a Daylight and a legacy palette")
-
-            // MARK: The chip cannot cap the window
-            //
-            // `DaylightModuleSelfTest.checkBarDoesNotCapWindow` skips this
-            // chip's subtree, on the same "a content-sized cluster yields
-            // before the window does" ground the bell and the drill header
-            // are skipped on. A source skip and a behavioural check catch
-            // different things (AGENTS.md), so this is the behavioural half:
-            // a real window, really shrunk, with the chip really on the bar.
-            //
-            // 700 is the bar's own stated comfortable floor
-            // (`DaylightBarController.comfortableWidth`), so a bar that
-            // cannot reach it is capping the window in the way gotcha (13)
-            // describes.
-            let wide = window.frame
-            window.setFrame(NSRect(x: wide.minX, y: wide.minY, width: 700, height: wide.height),
-                            display: true)
-            bar.view.layoutSubtreeIfNeeded()
-            check(abs(window.frame.width - 700) < 1,
-                  "the window should hold 700pt with the chip on the bar, got \(window.frame.width)")
-            check(bar.debugFocusChipHostWidth <= 700,
-                  "and the chip should have yielded rather than overflowed, got "
-                  + "\(bar.debugFocusChipHostWidth)")
-            window.setFrame(wide, display: true)
-            bar.view.layoutSubtreeIfNeeded()
-
-            // MARK: Finishing takes it off the bar again
-
-            clock = clock.addingTimeInterval(200)
-            _ = timer.stop()
-            bar.view.layoutSubtreeIfNeeded()
-            check(!bar.debugFocusChipIsVisible,
-                  "the chip should leave the bar when the session ends")
-            check(bar.debugFocusChipHostWidth < 1,
-                  "and give its width back, got \(bar.debugFocusChipHostWidth)")
-        }
-    }
-
-    // MARK: REL-26 - one panel per chip click must not leave observers behind
 
     /// The focus chip builds a new `FocusTimerPanelController` on every click,
     /// and its theme observer outlived it - one more closure called on every

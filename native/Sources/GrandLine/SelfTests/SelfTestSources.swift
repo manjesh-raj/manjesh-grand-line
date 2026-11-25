@@ -63,7 +63,7 @@ enum SelfTestSources {
     /// than "does this one file" - reads all of them, and a later move between
     /// them cannot make it pass vacuously.
     static let shellLayerFiles = [
-        "WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
+        "WorkspaceShellController.swift", "MainSplitShellController.swift",
         "WorkspaceSidebar.swift", "WorkspaceToolbar.swift", "WorkspaceInspector.swift",
         "NavigationHistory.swift",
         "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",

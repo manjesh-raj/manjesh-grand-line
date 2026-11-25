@@ -25,8 +25,6 @@ enum MainSplitShellHarness {
     static func run(_ suite: String, _ checks: [Check]) -> Bool {
         HelmMotion.reducedOverrideForTests = true
         defer { HelmMotion.reducedOverrideForTests = nil }
-        let savedPins = AppSettings.shared.quickAccess
-        defer { AppSettings.shared.quickAccess = savedPins }
         let savedHome = AppSettings.shared.homeCardLayout
         defer { AppSettings.shared.homeCardLayout = savedHome }
         AppSettings.shared.homeCardLayout = .standard

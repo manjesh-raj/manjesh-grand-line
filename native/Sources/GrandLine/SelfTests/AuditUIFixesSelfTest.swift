@@ -31,8 +31,6 @@ enum AuditUIFixesSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
-            ("B4_narrowWindowTruncatesEveryPillFairly", test_b4),
-            ("B5_selectedSpaceFollowsEveryNavigation", test_b5),
             ("B6_lockRibbonIsPaintedOnFirstLayout", test_b6),
             ("B7_schedulesRowUsesTheAppsOwnToggle", test_b7),
             ("B8_runHistorySheetRecoloursOnThemeChange", test_b8),
@@ -77,58 +75,7 @@ enum AuditUIFixesSelfTest {
 
     // MARK: B4
 
-    private static func test_b4() -> String? {
-        let bar = DaylightBarController()
-        // 900pt is the width the audit measured `engineering`'s label at 4.0pt
-        // while its neighbours kept 60-70pt; 1100 is where the captain would
-        // actually meet it (this app's own default launch frame used to be
-        // 1220).
-        for width in [900.0, 1100.0, 1200.0] as [CGFloat] {
-            let window = mount(bar.view, width: width, height: 90)
-            defer { window.contentView = nil }
-            bar.view.layoutSubtreeIfNeeded()
-            let widths = bar.debugPillLabelWidths()
-            guard !widths.isEmpty else { return "the bar reported no pills" }
-            for (space, w) in widths where w < DaylightBarController.pillLabelMinWidth - 0.5 {
-                let all = widths.map { "\($0.space.rawValue)=\(Int($0.width))" }.joined(separator: " ")
-                return "at \(Int(width))pt, \(space.rawValue)'s label is \(Int(w))pt - below the \(Int(DaylightBarController.pillLabelMinWidth))pt floor (\(all))"
-            }
-        }
-        return nil
-    }
-
     // MARK: B5
-
-    private static func test_b5() -> String? {
-        // Pure mapping, deliberately: `AppShellController.show(_:)` mounts
-        // every destination, and what this finding is about is the *table*
-        // being consulted at all. The wiring itself is a one-line source
-        // guard below.
-        let expected: [(RailDestination, DaylightSpace?)] = [
-            (.schedules, .operations),
-            (.health, .operations),
-            (.shift, .command),
-            (.review, .command),
-            (.vault, .stores),
-            (.updates, .engineering),
-            (.overview, nil),
-            (.homeCanvas, nil),
-        ]
-        for (dest, want) in expected {
-            let got = DaylightModule.space(forDestination: dest)
-            guard got == want else {
-                return "\(dest) maps to \(got.map { $0.rawValue } ?? "nil"), expected \(want.map { $0.rawValue } ?? "nil")"
-            }
-        }
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
-            return nil
-        }
-        guard shell.contains("DaylightModule.space(forDestination: dest)") else {
-            return "AppShellController.show(_:) no longer syncs the selected space - the pill goes stale on every ⌘K / deep-link / module-card navigation again"
-        }
-        return nil
-    }
 
     // MARK: B6
 

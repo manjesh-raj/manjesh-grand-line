@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // The app's composition (R2-ARCH-02, review #1's T-16 `AppComposition`): the
-// `AppDelegate` - the stores it builds, the shell the window layout names,
+// `AppDelegate` - the stores it builds, the window's shell,
 // the wiring between them, and the launch (`applicationDidFinishLaunching`),
 // the lifecycle and the quit-time flushes. Moved verbatim out of `main.swift`,
 // which keeps only the entry point that runs before this class exists.
@@ -100,20 +100,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // their own independent copies of one underlying check (see AGENTS.md).
     let docsRunbookStore = LaunchSignposts.measure("DocsRunbookStore.init") { DocsRunbookStore() }
     lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
-
-    /// UX1's all-destinations map. Lazy, like the search palette beside it -
-    /// a captain who never presses ⌘⇧D never builds twenty-six tiles.
-    lazy var allDestinations: AllDestinationsOverlayController = {
-        let overlay = AllDestinationsOverlayController()
-        overlay.onSelect = { [weak self] destination in self?.appShell.workspace.navigator.show(destination) }
-        overlay.onTogglePin = { [weak self] destination in
-            self?.appShell.toggleQuickAccessPin(destination)
-        }
-        overlay.isPinned = { [weak self] destination in
-            self?.appShell.isQuickAccessPinned(destination) ?? false
-        }
-        return overlay
-    }()
 
     /// The File menu's one item, held so `menuNeedsUpdate` can re-title it -
     /// UX4. See its construction in `buildMenu` for why the title is part of
@@ -272,11 +258,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // `dictationHUD` is: it has to work when the app was launched *by* the tap,
     // before any window exists. See NotificationActions.swift's header.
     let notificationRouter = NotificationActionRouter()
-    /// Which shell the main window hosts, read once for the process - see
-    /// `AppSettings.workspaceLayout` for why a change waits for the next
-    /// launch. Both shells host the same `Workspace`; only their chrome
-    /// differs (`WorkspaceShellController`'s header).
-    let workspaceLayout = AppSettings.shared.workspaceLayout
     // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (its own
     // ssh tab(s) only, no Firstmate host's own Shell tab) for
     // `AppShellController.connectHost` - captured as
@@ -285,9 +266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     lazy var appShell: WorkspaceShellController = {
         let keyStore = self.keyStore
         let snippetStore = self.snippetStore
-        // R2-BUG-06: copy names places in the layout this window runs.
-        PlaceName.layout = workspaceLayout
-        return workspaceLayout.shellType.init(
+        // P-03 of the 2026-11-25 review: the sidebar shell is the only one.
+        return MainSplitShellController(
             // PERF-01: both are autoclosures - evaluated on each page's first
             // use, not here.
             hostsPanel: self.hostsPanel, console: console, settings: self.settingsController,
@@ -905,12 +885,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // for the same reason; the main window never did because until
         // compact mode shipped it could not outlive its own close.
         window.isReleasedWhenClosed = false
-        // The floating bar becomes the window's top edge; the sidebar shell
-        // keeps the system title bar and installs its own toolbar once its
-        // view is in this window (`MainSplitShellController.attach(to:)`).
-        if workspaceLayout == .floatingBar {
-            WindowChromeFusion.apply(to: window)
-        }
+        // The shell keeps the system title bar and installs its own toolbar
+        // once its view is in this window (`MainSplitShellController.attach(to:)`).
         fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
@@ -1572,15 +1548,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The Go menu's "All Destinations…" (⌘⇧D) and ⌘K's verb of the same
     /// name - UX1.
     ///
-    /// The bar's quick-access overflow menu used to carry a third row into
-    /// here. It is gone: it was wired to a closure nothing ever assigned, so
-    /// it did nothing at all, and the captain asked for it removed rather than
-    /// repaired - see `docs/history/03-navigation-and-chrome.md`.
+    /// The sidebar is the whole map, so this reveals and focuses it. The
+    /// floating bar's all-destinations panel went with that layout (P-03 of
+    /// the 2026-11-25 review).
     @objc func showAllDestinations() {
-        // The sidebar shell's sidebar is the whole map, so it reveals and
-        // focuses that instead; the floating bar opens the panel.
-        if appShell.revealDestinationMap() { return }
-        allDestinations.toggle()
+        _ = appShell.revealDestinationMap()
     }
 
     /// Help → "Keyboard Shortcuts…" (⌘⇧/) - UX3.
@@ -1609,8 +1581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// full list above.
     @objc func showPageShortcuts() {
         let place = appShell.shortcutsPlace
-        let sections = PageShortcuts.sections(module: place.module, route: place.route,
-                                              layout: PlaceName.layout, settings: .shared)
+        let sections = PageShortcuts.sections(module: place.module, route: place.route, settings: .shared)
         appShell.presentAsSheet(KeyboardShortcutsSheetController(
             sections: sections, heading: "Shortcuts for \(place.module.title)",
             subheading: "What works on this page, and anywhere in Grand Line.",

@@ -3,7 +3,7 @@
 // R2-PERF-01: the launch path's signposts, read in process.
 //
 // `LaunchSignposts.swift` puts an interval on every store the app delegate
-// builds, on `WorkspaceShellController.init` and on each layout's `loadView`.
+// builds, on `WorkspaceShellController.init` and on the shell's `loadView`.
 // The review's measurement is the captain's: Instruments' App Launch template
 // against real data. This repository cannot launch the app to take it (the
 // app shares one bundle identity with the captain's running copy, AGENTS.md),
@@ -11,7 +11,7 @@
 //
 //   - the real `AppDelegate`, built as `main.swift` builds it, so every store
 //     its properties initialise runs through its own interval.
-//   - its real `appShell`, for each window layout in turn.
+//   - its real `appShell`.
 //   - an `OffScreenProbe` window given that shell, the default frame and one
 //     display pass - the first frame, as far as a process with no composited
 //     window can see one.
@@ -26,8 +26,7 @@
 // shares it with the first one's shell, observers and caches, and measured
 // slower each round (431, then 466 ms), which is not what a warm launch is.
 // A warm launch is a new process with the disk cache warm, so the suite
-// launches once, in the layout `FM_LAUNCH_TIMING_LAYOUT` names (`sidebar`,
-// the default, or `floatingBar`), and a warm figure is a second run of it.
+// launches once, and a warm figure is a second run of it.
 //
 // It asserts no time, because a CI runner is not this Mac. It asserts that
 // every launch interval was recorded each time, so a store that loses its
@@ -47,9 +46,6 @@ import AppKit
 
 enum LaunchTimingSelfTest {
 
-    /// Which layout to launch: `sidebar` (the default) or `floatingBar`.
-    static let layoutVariable = "FM_LAUNCH_TIMING_LAYOUT"
-
     /// The review's pass criteria (MANUAL-CHECKS.md section 19).
     static let firstFrameTarget: Double = 400
     static let storeInitTarget: Double = 10
@@ -62,7 +58,6 @@ enum LaunchTimingSelfTest {
                                  "ReadingListStore.init", "StickyBoardStore.init", "LogAnalyzerStore.init"]
 
     struct Launch {
-        let layout: WorkspaceLayout
         let firstFrame: Double
         let intervals: [(name: String, milliseconds: Double)]
         /// The launch's own steps, in order, and what each cost - what the
@@ -73,13 +68,13 @@ enum LaunchTimingSelfTest {
     static func run() -> Bool {
         HelmMotion.reducedOverrideForTests = true
         defer { HelmMotion.reducedOverrideForTests = nil }
-        let savedLayout = AppSettings.shared.workspaceLayout
-        defer { AppSettings.shared.workspaceLayout = savedLayout }
         defer { LaunchSignposts.debugRecording = nil }
 
         var ok = true
-        let layout = WorkspaceLayout(rawValue: ProcessInfo.processInfo.environment[layoutVariable] ?? "") ?? .sidebar
-        let launch = launch(layout)
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // `FM_LAUNCH_TIMING_LAYOUT` went with the choice.
+        let layout = "sidebar"
+        let launch = launch()
 
         let stores = launch.intervals.filter { $0.name.hasSuffix(".init") && $0.name != "WorkspaceShellController.init" }
         let slowest = stores.max { $0.milliseconds < $1.milliseconds }
@@ -89,7 +84,7 @@ enum LaunchTimingSelfTest {
                      machine(), ProcessInfo.processInfo.operatingSystemVersionString))
         print(String(format: "  %@: first frame %.1f ms (%@ 400), WorkspaceShellController.init %.1f ms, loadView %.1f ms, "
                      + "slowest store %@ %.2f ms (%@ 10)",
-                     layout.rawValue, launch.firstFrame, launch.firstFrame < firstFrameTarget ? "under" : "OVER",
+                     layout, launch.firstFrame, launch.firstFrame < firstFrameTarget ? "under" : "OVER",
                      shellInit, loadView, slowest?.name ?? "-", slowest?.milliseconds ?? 0,
                      (slowest?.milliseconds ?? 0) < storeInitTarget ? "under" : "OVER"))
         print("    phases: " + launch.phases.map { String(format: "%@ %.1f ms", $0.name, $0.milliseconds) }
@@ -101,20 +96,19 @@ enum LaunchTimingSelfTest {
 
         let names = Set(launch.intervals.map(\.name))
         for store in storeIntervals where !names.contains(store) {
-            fail("\(layout.rawValue): \(store) recorded no interval", &ok)
+            fail("\(layout): \(store) recorded no interval", &ok)
         }
-        let loadViewName = layout == .sidebar ? "MainSplitShellController.loadView" : "AppShellController.loadView"
+        let loadViewName = "MainSplitShellController.loadView"
         check(names.contains("WorkspaceShellController.init") && names.contains(loadViewName),
-              "\(layout.rawValue): the shell's intervals were not recorded (\(names.sorted()))", &ok)
+              "\(layout): the shell's intervals were not recorded (\(names.sorted()))", &ok)
         check(launch.firstFrame > 0 && launch.firstFrame >= shellInit + loadView,
-              "\(layout.rawValue): a first frame of \(launch.firstFrame) ms is shorter than the intervals inside it", &ok)
+              "\(layout): a first frame of \(launch.firstFrame) ms is shorter than the intervals inside it", &ok)
         print(ok ? "LaunchTimingSelfTest: all checks passed" : "LaunchTimingSelfTest: FAILED")
         return ok
     }
 
     /// One launch: the delegate, its shell and the first display, timed.
-    private static func launch(_ layout: WorkspaceLayout) -> Launch {
-        AppSettings.shared.workspaceLayout = layout
+    private static func launch() -> Launch {
         LaunchSignposts.debugRecording = []
         let start = DispatchTime.now().uptimeNanoseconds
         var phases: [(name: String, milliseconds: Double)] = []
@@ -131,7 +125,6 @@ enum LaunchTimingSelfTest {
         let window = OffScreenProbe.window(width: 1220, height: 720,
                                            styleMask: [.titled, .closable, .miniaturizable, .resizable,
                                                        .fullSizeContentView])
-        if layout == .floatingBar { WindowChromeFusion.apply(to: window) }
         phase("window")
         window.contentViewController = shell
         phase("contentViewController")
@@ -149,7 +142,7 @@ enum LaunchTimingSelfTest {
         LaunchSignposts.debugRecording = nil
         window.orderOut(nil)
         window.contentViewController = nil
-        return Launch(layout: layout, firstFrame: firstFrame, intervals: intervals, phases: phases)
+        return Launch(firstFrame: firstFrame, intervals: intervals, phases: phases)
     }
 
     private static func machine() -> String {

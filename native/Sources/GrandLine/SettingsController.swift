@@ -491,9 +491,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// Light and Dark pick the family's register; Match macOS is
     /// `AppSettings.followSystemAppearance`.
     private var appearanceModeTabs: HelmSegmentedTabs!
-    /// Stage 3 of the modular-shell migration: which shell the window opens
-    /// with (`AppSettings.workspaceLayout`).
-    private var windowLayoutTabs: HelmSegmentedTabs!
     /// The feel pass's Comfortable / Compact switch.
     private(set) var densityTabs: HelmSegmentedTabs!
     private let appearanceContainer = LayoutReportingStack()
@@ -527,7 +524,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private let lockSessionPopUp = HelmPopUpButton()
     /// R2-UX-08: one "Relaunch Grand Line" beside each row that waits for the
     /// next launch, shown while that row has a change still waiting.
-    private lazy var layoutRelaunchButton = makeRelaunchButton()
     private lazy var textSizeRelaunchButton = makeRelaunchButton()
     private let notifySwitch = HelmToggle()
 
@@ -1484,24 +1480,9 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         scaleRow.orientation = .horizontal
         scaleRow.spacing = HelmMetrics.s1 + 2
 
-        // The modular-shell migration's two window layouts: the sidebar (the
-        // default) and the floating bar, which stays selectable. Read once at
-        // launch (`AppSettings.workspaceLayout`), so the row says when it
-        // takes effect rather than appearing to do nothing.
-        windowLayoutTabs = HelmSegmentedTabs(
-            items: WorkspaceLayout.allCases.map { .init(id: $0.rawValue, title: $0.title) },
-            selected: AppSettings.shared.workspaceLayout.rawValue, size: .compact)
-        windowLayoutTabs.setAccessibilityLabel("Window layout")
-        windowLayoutTabs.onSelect = { [weak self] id in
-            guard let layout = WorkspaceLayout(rawValue: id) else { return }
-            AppSettings.shared.workspaceLayout = layout
-            self?.refreshRelaunchButtons()
-            self?.refreshSplitCard(.appearance)
-        }
-        let layoutRow = SettingsRow(
-            title: "Window layout",
-            description: WorkspaceLayout.choiceNote,
-            control: Self.controlWithRelaunch(windowLayoutTabs, layoutRelaunchButton))
+        // P-03 of the 2026-11-25 review removed the floating bar, so the
+        // sidebar is the only window layout and this card has no layout row.
+        // `SettingsLayoutChoiceSelfTest` guards that it stays gone.
 
         // The feel pass's density. It applies at once: the setter re-fires
         // the theme, and every list re-reads its row height there.
@@ -1523,12 +1504,12 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         familyAside.font = HelmType.caption()
         let sidebarSection = buildSidebarModulesSection()
         // Set-2: the four most-changed choices are the split card's.
-        splitPlans[.appearance] = SplitPlan(rows: [modeRow, layoutRow, densityRow] + [profileRow].compactMap { $0 })
+        splitPlans[.appearance] = SplitPlan(rows: [modeRow, densityRow] + [profileRow].compactMap { $0 })
         return [
             SettingsSection(group: SettingsGroup(rows: [modeRow])),
             SettingsSection(heading: "App theme", aside: familyAside,
                             group: SettingsGroup(custom: appearanceContainer)),
-            SettingsSection(heading: "Window", group: SettingsGroup(rows: [layoutRow, densityRow])),
+            SettingsSection(heading: "Window", group: SettingsGroup(rows: [densityRow])),
             sidebarSection,
             SettingsSection(heading: "Text", group: SettingsGroup(rows: [
                 SettingsRow(title: "Interface text size",
@@ -2887,7 +2868,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
             let current = ThemeManager.shared.theme
             let words = SettingsHeroWords.appearance(
                 themeName: current.name, isDark: current.mode == .dark, followsSystem: settings.followSystemAppearance,
-                layout: settings.workspaceLayout, layoutTakesEffectLater: settings.workspaceLayout != PlaceName.layout,
                 density: settings.density, profile: WorkspaceProfile.matching(settings.hiddenModules),
                 terminal: terminalPaintNote)
             split.configure(words, pills: settings.followSystemAppearance ? [] : [matchMacOSPill],
@@ -3055,9 +3035,8 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
     /// Show each relaunch button while its row has a change waiting.
     private func refreshRelaunchButtons() {
-        layoutRelaunchButton.isHidden = AppSettings.shared.workspaceLayout == PlaceName.layout
         textSizeRelaunchButton.isHidden = abs(ChromeTextScale.shared.scale - ChromeTextScale.shared.launchScale) < 0.001
-        for button in [layoutRelaunchButton, textSizeRelaunchButton] {
+        for button in [textSizeRelaunchButton] {
             button.isEnabled = AppRelaunch.canRelaunch
             button.toolTip = AppRelaunch.canRelaunch ? "Quit and open Grand Line again"
                 : "This copy is not an app bundle, so it cannot reopen itself. Quit and start it again."
@@ -3286,7 +3265,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
         profileTabs?.applyTheme(theme)
         appearanceModeTabs?.applyTheme(theme)
-        windowLayoutTabs?.applyTheme(theme)
         keywordHighlighting.applyTheme(theme)
         // The two popups are not in that loop: `HelmPopUpButton` observes the
         // theme itself, so a second push from here would be a duplicate.
@@ -3350,7 +3328,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// pane's name is not one of them.
     var debugToolbarTexts: [String] { toolbar.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue } }
     var debugFooterText: String { sidebarFooter.stringValue }
-    var debugLayoutRelaunchButton: HelmButton { layoutRelaunchButton }
     var debugTextSizeRelaunchButton: HelmButton { textSizeRelaunchButton }
     var debugUIScaleButtons: [Int: HelmButton] { uiScaleButtons }
     var debugLockIdlePopUp: HelmPopUpButton { lockIdlePopUp }
@@ -3422,7 +3399,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var debugAppearanceModeTabs: HelmSegmentedTabs { appearanceModeTabs }
     var debugAppearanceNote: NSTextField { appearanceNote }
     var debugTerminalColors: TerminalColorsSettingsSections { terminalColors }
-    var debugWindowLayoutTabs: HelmSegmentedTabs { windowLayoutTabs }
     /// One entry per grid row, giving the column count `.fillEqually`
     /// actually divided that row into - so a suite can assert the grid's
     /// density is a pure function of layout width and never of which theme
@@ -3437,6 +3413,21 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     /// The rows that follow a given switch, so a suite can assert the
     /// reference's `data-dep` dimming against the real registry rather than
     /// re-deriving which rows ought to be in it.
+    /// Every row title on `category`'s page, its split card included, read
+    /// off the real views - what a captain could find on that page.
+    func debugRowTitles(in category: Category) -> [String] {
+        _ = view
+        guard let page = pages[category] else { return [] }
+        var titles: [String] = []
+        func walk(_ v: NSView) {
+            if let row = v as? SettingsRow { titles.append(row.titleLabel.stringValue) }
+            for sub in v.subviews { walk(sub) }
+        }
+        walk(page.container)
+        if let split = page.split { walk(split) }
+        return titles
+    }
+
     func debugDependentRows(of key: String) -> [SettingsRow] {
         guard let dependency = Dependency(rawValue: key) else { return [] }
         return dependentRows[dependency] ?? []

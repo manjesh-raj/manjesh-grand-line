@@ -898,16 +898,6 @@ enum SelfTestDispatch {
             exit(VaultRecipeGitSelfTest.run() ? 0 : 1)
         }
 
-        // `fm/grandline-live-gap-rootcause-scout`: real-view-hierarchy regression
-        // coverage for the captain-reported black/blank right-side window gap -
-        // asserts `AppShellController.bodyContainer`'s width tracks the window's
-        // real, current content width across a series of resizes, and self-heals
-        // if that tie is ever silently broken - see AppShellBodyWidthSelfTest.swift's
-        // header.
-        if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
-            exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
-        }
-
         // Bootstrap's own single-line, data-derived labels (a firstmate home path, a
         // dotfiles repo path, a git remote URL) sat at `NSTextField`'s default 750
         // horizontal compression resistance - above `NSLayoutPriorityWindowSizeStayPut`
@@ -915,28 +905,6 @@ enum SelfTestDispatch {
         // width. See BootstrapWindowShrinkSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"] == "1" {
             exit(BootstrapWindowShrinkSelfTest.run() ? 0 : 1)
-        }
-
-        // A drill page header's title can render truncated to a few characters
-        // after switching away from a destination whose action cluster (or a narrow
-        // window) genuinely squeezed the row at some earlier point in the session -
-        // see AppShellDrillHeaderTitleSelfTest.swift's header for the root cause
-        // (an NSStackView's cross-axis width getting permanently stuck once squeezed).
-        if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1" {
-            exit(AppShellDrillHeaderTitleSelfTest.run() ? 0 : 1)
-        }
-
-        // Daylight Phase 2: the shell that replaced the icon rail and the top bar -
-        // module anatomy, span-2 grid math, the locked space table, the canvas's
-        // no-store rule, and the bar's window-safety. See
-        // DaylightModuleSelfTest.swift's header.
-        // The UI modernization audit's A1/A2/A3: the window's titlebar fused into
-        // the floating bar, the drill header merged into that bar's leading area,
-        // and the shared scroll-edge treatment. Window-backed - every case is a
-        // question about a real window's chrome, a real laid-out bar or a real
-        // scroll offset. See WindowChromeFusionSelfTest.swift's header.
-        if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "1" {
-            exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
         }
 
         // The other half of that fusion, which A1 deferred to AppKit and AppKit does
@@ -949,29 +917,18 @@ enum SelfTestDispatch {
             exit(FullScreenMenuBarFillSelfTest.run() ? 0 : 1)
         }
 
-        // The UI modernization audit's B1-B5: the bar's material, its icon row, the
-        // launch-time focus ring, the navigation transition, and the three bar
-        // dropdowns becoming borderless panels. Window-backed - the focus ring, the
-        // panel anchoring and the transition are all questions about a real window.
-        // See BarNavigationModernizationSelfTest.swift's header.
-        if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == "1" {
-            exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
+        // P-03 of the 2026-11-25 review: the shell's body in a real window -
+        // a hidden page leaves the constraint graph (gotcha (15)), a revisited
+        // one comes back, and two leak checks. See WorkspaceBodySelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_WORKSPACE_BODY_TESTS"] == "1" {
+            exit(WorkspaceBodySelfTest.run() ? 0 : 1)
         }
 
-        // `fm/grandline-bar-active-state`: every bar square lit while its page is
-        // open, by every route, and a real press drawing the pressed tile.
-        // Window-backed - it presses the squares of a mounted shell.
-        if ProcessInfo.processInfo.environment["FM_RUN_BAR_ACTIVE_STATE_TESTS"] == "1" {
-            exit(BarActiveStateSelfTest.run() ? 0 : 1)
-        }
-
-        // `fm/grandline-topbar-icon-tiles`: the same row's shortcuts as coloured
-        // tiles - the per-destination hue, its legibility in all 26 palettes, the
-        // three states, the controls deliberately left plain, and the guard that the
-        // row's footprint did not move. Pure logic: layer colours and frames off a
-        // hand-laid-out bar, no window.
-        if ProcessInfo.processInfo.environment["FM_RUN_BAR_ICON_TILE_TESTS"] == "1" {
-            exit(DaylightBarIconTileSelfTest.run() ? 0 : 1)
+        // P-03 of the 2026-11-25 review: Settings offers no window layout,
+        // and a stored floating-bar choice is retired safely at launch. Pure
+        // logic. See SettingsLayoutChoiceSelfTest.swift.
+        if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_LAYOUT_CHOICE_TESTS"] == "1" {
+            exit(SettingsLayoutChoiceSelfTest.run() ? 0 : 1)
         }
 
         // The same audit's C, D and E - the canvas and its cards, row/list density,
@@ -1009,12 +966,6 @@ enum SelfTestDispatch {
         // BoundedSummarySelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_BOUNDED_SUMMARY_TESTS"] == "1" {
             exit(BoundedSummarySelfTest.run() ? 0 : 1)
-        }
-
-        // P9 of the same report: seven pages' columns as real split-view sidebars.
-        // Window-backed. See SplitSidebarSelfTest.swift's header.
-        if ProcessInfo.processInfo.environment["FM_RUN_SPLIT_SIDEBAR_TESTS"] == "1" {
-            exit(SplitSidebarSelfTest.run() ? 0 : 1)
         }
 
         // P6 of the same report: the compact-mode status item's right-click menu.
@@ -1187,14 +1138,6 @@ enum SelfTestDispatch {
         }
         if ProcessInfo.processInfo.environment["FM_RUN_SIDEBAR_REDESIGNS_TESTS"] == "1" {
             exit(SidebarRedesignsSelfTest.run() ? 0 : 1)
-        }
-
-        // `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
-        // reflect a change the captain made through its own detail page. Window-backed
-        // (it mounts a real shell and drives the real pages), so it sits in
-        // `run-all-tests.sh`'s NEEDS_SESSION list.
-        if ProcessInfo.processInfo.environment["FM_RUN_SUMMARY_FRESHNESS_TESTS"] == "1" {
-            exit(SummaryFreshnessSelfTest.run() ? 0 : 1)
         }
 
         // The lock screen's Daylight Harbour restyle - the last pre-Daylight surface
@@ -1432,12 +1375,6 @@ enum SelfTestDispatch {
         // of readers (`StoreObservableSelfTest`, pure logic).
         if ProcessInfo.processInfo.environment["FM_RUN_STORE_OBSERVABLE_TESTS"] == "1" {
             exit(StoreObservableSelfTest.run() ? 0 : 1)
-        }
-
-        // R2-ARCH-04: the floating bar's presentation of each page sits in a
-        // `+Classic.swift` file of its own (`ClassicPresentationSelfTest`, pure logic).
-        if ProcessInfo.processInfo.environment["FM_RUN_CLASSIC_PRESENTATION_TESTS"] == "1" {
-            exit(ClassicPresentationSelfTest.run() ? 0 : 1)
         }
 
         // The second full review's UX findings and the captain's three UI items: the
@@ -2064,23 +2001,6 @@ enum SelfTestDispatch {
             exit(GrandLineNotificationCenterSelfTest.run() ? 0 : 1)
         }
 
-        // `fm/grandline-notification-center-redesign`: window-backed - it mounts the
-        // real "Waiting for you" panel in a real `OffScreenProbe` window and reads
-        // back rendered geometry, real hover state and a real rasterised pixel.
-        // Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
-        // `fm/grandline-notification-rows-not-interactive`: window-backed, and it has
-        // to be - it dispatches real `NSEvent`s through the real `HelmBarPanel` window
-        // the bell opens, which is the only place gesture arbitration between the
-        // row's recognizer and its nested buttons is observable. Listed in
-        // `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
-        if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS"] == "1" {
-            exit(NotificationRowInteractionSelfTest.run() ? 0 : 1)
-        }
-
-        if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"] == "1" {
-            exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
-        }
-
         // `fm/grandline-notification-bridge`: window-backed - the Bridge panel the
         // sidebar layout's bell opens, mounted in a real `OffScreenProbe` window,
         // because wrapping, buttons at rest and per-theme paint are rendered facts.
@@ -2239,13 +2159,6 @@ enum SelfTestDispatch {
 
         if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
             exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
-        }
-        // `fm/grandline-home-fit-implement`: the hub fits the window at the three
-        // measured sizes and the attention list scrolls inside its own card.
-        // Window-backed - it mounts the real shell to read the bar-reduced viewport -
-        // so it is listed in `run-all-tests.sh`'s NEEDS_SESSION.
-        if ProcessInfo.processInfo.environment["FM_RUN_HOME_FIT_TESTS"] == "1" {
-            exit(HomeFitSelfTest.run() ? 0 : 1)
         }
         // `fm/grandline-layout-breaks-refresh-reply`: the Fleet reply composer never
         // widens the window, a widened window does not outlive its page, and Home
@@ -2407,16 +2320,6 @@ enum SelfTestDispatch {
         // alone - see StatusPillThemeSelfTest.swift's header for the root cause.
         if ProcessInfo.processInfo.environment["FM_RUN_STATUS_PILL_THEME_TESTS"] == "1" {
             exit(StatusPillThemeSelfTest.run() ? 0 : 1)
-        }
-
-        // A real, captain-reported bug on the top nav's space pills
-        // (`DaylightBarController`): clicking a pill and leaving the cursor in
-        // place left its label blended into a stale, pre-click background, in both
-        // light and dark mode - see TopNavPillPressedStateSelfTest.swift's header
-        // for the root cause (a missing `HoverHighlightView.hoverColor` repaint
-        // while already hovering).
-        if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"] == "1" {
-            exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
         }
 
         // `fm/grandline-session-switcher`: the persistent live-session strip, the

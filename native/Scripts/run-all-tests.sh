@@ -178,20 +178,14 @@ SUITE_TIMEOUT="${FM_SUITE_TIMEOUT:-300}"
 # band that opened up. Fixing the arithmetic without this table would start
 # killing a suite that has been passing.
 #
-# `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS` mounts a real `AppShellController` in a
-# real window and drives 21 cases through full resize sequences. Measured: 67s
-# on the captain's machine, and **333s and 371s on two green CI runs** - a
-# GitHub macOS runner is roughly five times slower at window-server work than
-# this laptop, which is a property of the runner and not of the suite. 900
-# leaves real headroom over 371 while still being a bound: a genuine hang in
-# it is caught in fifteen minutes instead of by GitHub's six-hour job cap,
-# which is the incident this whole mechanism exists for.
-#
-# Raising the global default instead would have bought that one suite its
-# headroom by taking the backstop away from the other 215.
+# There is none today. The one there was, `FM_RUN_APP_SHELL_BODY_WIDTH_TESTS`
+# (900s, for a suite that took 333s and 371s on two green CI runs), went with
+# the floating-bar layout it tested in P-03 of the 2026-11-25 review. A new
+# exception goes here as a case arm, with the measurement that earned it.
+# Raising the global default instead would take the backstop away from every
+# other suite.
 suite_timeout_for() {
   case "$1" in
-    FM_RUN_APP_SHELL_BODY_WIDTH_TESTS) echo 900 ;;
     *) echo "$SUITE_TIMEOUT" ;;
   esac
 }
@@ -214,7 +208,6 @@ suite_timeout_for() {
 # whole selection. A suite missing from here, or a number that has drifted,
 # costs balance and nothing else. Refresh from a CI run's "slowest:" tail.
 SHARD_WEIGHTS="
-FM_RUN_APP_SHELL_BODY_WIDTH_TESTS 337
 FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS 207
 FM_RUN_PAGE_LOAD_OFF_MAIN_TESTS 147
 FM_RUN_MAIN_SPLIT_SHELL_NAVIGATION_TESTS 132
@@ -228,23 +221,19 @@ FM_RUN_PAGE_POLISH_UXP_TESTS 42
 FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 42
 FM_RUN_SETTINGS_SIDEBAR_TESTS 42
 FM_RUN_SIDEBAR_REDESIGNS_TESTS 40
-FM_RUN_SPLIT_SIDEBAR_TESTS 36
 FM_RUN_SHIFT_TASKS_PAGE_TESTS 34
 FM_RUN_STRAW_HAT_HANDOFF_TESTS 33
 FM_RUN_WORKSPACE_TOOLBAR_TESTS 32
 FM_RUN_CONNECTIONS_CARDS_TESTS 28
 FM_RUN_CODE_PREVIEW_SIDEBAR_VIEW_TESTS 26
 FM_RUN_PAGE_REDESIGNS_TESTS 24
-FM_RUN_WINDOW_CHROME_FUSION_TESTS 23
 FM_RUN_CODE_PREVIEW_VIEW_TESTS 22
-FM_RUN_BAR_ACTIVE_STATE_TESTS 20
 FM_RUN_DAYLIGHT_MODULE_TESTS 19
 FM_RUN_CODE_PREVIEW_WORKBENCH_VIEW_TESTS 19
 FM_RUN_NOTIFICATION_BRIDGE_TESTS 19
 FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS 16
 FM_RUN_PAGE_HERO_COLUMNS_VIEW_TESTS 16
 FM_RUN_TASKS_SECRETS_HERO_VIEW_TESTS 16
-FM_RUN_DRILL_HEADER_TITLE_TESTS 15
 FM_RUN_CONTRAST_TESTS 14
 FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS 14
 FM_RUN_RECENT_DESTINATIONS_TESTS 14
@@ -253,7 +242,6 @@ FM_RUN_REVIEW2_A11Y_PERF_TESTS 13
 FM_RUN_CODE_RUNNER_VIEW_TESTS 13
 FM_RUN_STRAW_HAT_VIEW_TESTS 12
 FM_RUN_SIDEBAR_POLISH_TESTS 12
-FM_RUN_HOME_FIT_TESTS 12
 FM_RUN_SESSION_RESTORE_TESTS 12
 FM_RUN_SETTINGS_REDESIGN_TESTS 11
 FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS 11
@@ -353,13 +341,6 @@ NEEDS_SESSION=(
   # the defect is a circular `preferredMaxLayoutWidth` derivation, which only
   # exists once Auto Layout has actually resolved something.
   "FM_RUN_DICTATION_STATUS_CARD_LAYOUT_TESTS"
-  # The redesigned "Waiting for you" popover: the real panel mounted in a real
-  # key window, because a `HoverHighlightView`'s tracking area is
-  # `.activeInKeyWindow` and the hover-reveals-the-action swap is the whole
-  # point. Its pure half (the store's read/snooze/mute contract) is
-  # deliberately NOT here - that is FM_RUN_NOTIFICATION_CENTER_TESTS.
-  "FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"
-  "FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS"
   # The sidebar layout's Bridge notification panel: wrapped titles, buttons
   # visible at rest and painted colours in every theme are frames and layers in
   # a real window. Its pure half (`NotificationBridgeSections`) is in
@@ -394,7 +375,6 @@ NEEDS_SESSION=(
   # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
   "FM_RUN_KEYED_LISTS_VIEW_TESTS"
-  "FM_RUN_HOME_FIT_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   "FM_RUN_LAYOUT_STABILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # Stage 3 of the modular-shell migration: the sidebar shell in a real
   # window - its toolbar, its split panes and their widths. Two halves of
@@ -440,21 +420,16 @@ NEEDS_SESSION=(
   # a real layout pass. There is no pure half of this - the whole defect was a
   # constraint tie that only a laid-out frame can see.
   "FM_RUN_MODULE_CARD_HEADER_TESTS"
-  "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # Mounts the real shell in a real window and sweeps its width, to prove
   # Bootstrap's own labels can no longer dictate it.
   "FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"
-  # The UI modernization audit's A1/A2/A3: a real window's own titlebar
-  # chrome, a real laid-out bar, and a real scroll offset. None of the three
-  # is answerable without a window.
-  "FM_RUN_WINDOW_CHROME_FUSION_TESTS"
   # The fill for the menu-bar strip macOS reserves above a full-screen window:
   # it mounts a real window and orders the real panel it builds.
   "FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"
-  # The same audit's B1-B5: a real window's initial first responder, a real
-  # panel anchored under a real control, and a real navigation transition.
-  "FM_RUN_BAR_NAV_MODERNIZATION_TESTS"
-  "FM_RUN_BAR_ACTIVE_STATE_TESTS"
+  # The shell's body in a real window: a hidden page's pins to the body are
+  # inactive and a revisited page's are back, which only a laid-out window
+  # can show.
+  "FM_RUN_WORKSPACE_BODY_TESTS"
   # The same audit's C/D/E: hover, press, focus-within and a real scroll
   # offset are each a question about a real window.
   "FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"
@@ -471,7 +446,6 @@ NEEDS_SESSION=(
   # a real window.
   "FM_RUN_KEYED_REFRESH_TESTS"
   # P9: seven pages in a real shell.
-  "FM_RUN_SPLIT_SIDEBAR_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()
   # P5: real key events through real windows; Home via the tour lab shell.
   "FM_RUN_KEYBOARD_PARITY_TESTS"
   # P7: the bar is checked inside a real shell.
@@ -501,10 +475,8 @@ NEEDS_SESSION=(
   # Audit §6.2: mounts a real host-page `ConsoleController` and drives its
   # real `viewDidAppear`.
   "FM_RUN_INCIDENT_RESUME_TESTS"
-  "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   # `fm/grandline-engineering-cards-stale-counts`: mounts a real shell, drives
   # the real Updates/GitHub Sync pages and reads the real hub cards.
-  "FM_RUN_SUMMARY_FRESHNESS_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
   # `fm/grandline-claude-status-card-implement`: builds a real
   # `HelmModuleCard` in a real window, runs a real layout pass and reads a
@@ -737,7 +709,6 @@ NEEDS_SESSION=(
   # workflow's own comment for the blocking/non-blocking reasoning.
   "FM_RUN_LOCK_SCREEN_TESTS"
   "FM_RUN_RECENT_DESTINATIONS_TESTS"
-  "FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"
   "FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"
   # `fm/grandline-settings-page-sidebar-redesign`: mounts a real Settings page
   # in a real window and drives its sidebar, reading rendered geometry and

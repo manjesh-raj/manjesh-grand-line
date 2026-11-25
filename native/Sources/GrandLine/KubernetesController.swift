@@ -85,12 +85,11 @@ struct KubeSessionAccess {
 
 final class KubernetesController: NSViewController, DaylightDrillActions {
 
-    /// R4-UI-07: a host's own page is one of Console's sessions in the
-    /// sidebar layout, so the button names the module the sidebar shows it
-    /// under (`PlaceName`, which reads `ModuleTable`). The floating bar, frozen
-    /// as it is, keeps its host pages and its wording.
+    /// R4-UI-07: a host's own page is one of Console's sessions, so the
+    /// button names the module the sidebar shows it under (`PlaceName`, which
+    /// reads `ModuleTable`).
     static var openHostTitle: String {
-        PlaceName.layout == .sidebar ? "Open in \(PlaceName.of(.console))" : "Open host page"
+        "Open in \(PlaceName.of(.console))"
     }
 
     // MARK: Injected

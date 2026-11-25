@@ -70,7 +70,7 @@ enum ReviewFourUXSelfTest {
                 && WorkspaceGoMenu.chord(for: .crew, hidden: op) == 3 && WorkspaceGoMenu.chord(for: .logs, hidden: op) == 9,
               "R4-UX-01: an existing digit moved", &ok)
 
-        let menu = ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar)
+        let menu = ReviewTwoUXModelSelfTest.mainMenu()
         func items(_ menu: NSMenu) -> [NSMenuItem] {
             menu.items.flatMap { [$0] + ($0.submenu.map(items) ?? []) }
         }
@@ -188,19 +188,9 @@ enum ReviewFourUXSelfTest {
     }
 
     private static func checkKeyFallbackNotice(_ ok: inout Bool) {
-        let registry = HostSessionRegistry()
-        let id = UUID()
-        registry.register(hostID: id, label: "edge", accentHex: nil, state: .connected)
-        let strip = SessionStripView()
-        strip.render(registry)
-        check(strip.debugNoticeText == nil, "R4-UX-04: the strip shows a notice nobody set", &ok)
-        registry.setNotice(hostID: id, ConsoleController.savedKeyFallbackNotice)
-        strip.render(registry)
-        check(strip.debugNoticeText == "edge: Key refused, asking for a password",
-              "R4-UX-04: the strip's key-fallback line reads \(strip.debugNoticeText ?? "nothing")", &ok)
-        registry.setNotice(hostID: id, nil)
-        strip.render(registry)
-        check(strip.debugNoticeText == nil, "R4-UX-04: a cleared notice stayed on the strip", &ok)
+        // The floating bar's session strip drew this notice, and went with
+        // that layout in P-03 of the 2026-11-25 review. The sidebar layout
+        // never drew it (a follow-up), so what is left is the wiring.
 
         // The wiring a behavioural check cannot reach without a failing
         // Keychain read: the fallback branch reports, the success branch

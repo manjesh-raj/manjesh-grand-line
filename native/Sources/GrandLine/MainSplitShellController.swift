@@ -3,8 +3,8 @@
 // `MainSplitShellController` - the sidebar layout (stages 3 and 4 of the
 // modular-shell migration, full review section 5.8 steps 3 and 4).
 //
-// The window root the captain gets with Settings > Appearance > Window layout
-// set to Sidebar:
+// The window root - the only layout since P-03 of the 2026-11-25 review
+// removed the floating bar:
 //
 //   root                                  (the window's content view)
 //   ├── NSSplitViewController.view
@@ -163,7 +163,7 @@ final class MainSplitShellController: WorkspaceShellController {
     /// same rows - opened from a toolbar button instead of a bar square.
     /// The sidebar layout's bell opens the Bridge panel; the floating bar keeps
     /// the classic one (R2-ARCH-01).
-    let notificationCenter = NotificationCenterController(style: .bridge)
+    let notificationCenter = NotificationCenterController()
     let recents = RecentDestinationsController()
     private let clipboardHistory = ClipboardHistoryController()
 

@@ -1,8 +1,9 @@
 // Grand Line - native macOS app.
 //
-// The sidebar layout's notification panel - what its bell opens. The floating
-// bar is frozen (R2-ARCH-01), so it keeps `NotificationPanelViewController`
-// exactly as it was, and the two panels read the one store.
+// The notification panel - what the toolbar's bell opens. Until P-03 of the
+// 2026-11-25 review the floating bar kept its own classic panel
+// (`NotificationPanelViewController`) beside this one; that layout and its
+// panel are gone, so this is the only one.
 //
 // **The shape: triage cards** (`fm/grandline-notification-ui-designs-scout-
 // 1793150000`, option D on the captain's redesign board). It replaced the
@@ -55,15 +56,6 @@
 // without tabbing through the card (F8). Every button names its subject.
 
 import AppKit
-
-/// Which of the two panels a `NotificationCenterController` shows.
-enum NotificationPanelStyle {
-    /// The floating bar's panel, frozen with the floating bar (R2-ARCH-01).
-    case classic
-    /// The sidebar layout's triage-card panel. The case keeps the name the
-    /// shell and the suites already use for it.
-    case bridge
-}
 
 /// The three sections, from the store's own kinds. Pure, so the ordering rule
 /// is asserted in CI's blocking lane rather than only through a window.

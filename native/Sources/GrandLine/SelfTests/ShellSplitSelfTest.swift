@@ -78,8 +78,6 @@ enum ShellSplitSelfTest {
     /// check that the file read really is that shell, so one emptied or
     /// renamed does not pass for the right reason.
     private static let shellFiles: [(file: String, chrome: [String])] = [
-        ("AppShellController.swift", ["let bar = DaylightBarController()", "func reassertBodyContainerWidthTie(",
-                                      "func applyDrillHeader(", "func updateKeyViewLoop()"]),
         ("MainSplitShellController.swift", ["sidebarItem = NSSplitViewItem(viewController: sidebar)", "func fitPanesToWindow()",
                                             "override func workspaceDidShow("]),
         ("WorkspaceShellController.swift", ["self.workspace = Workspace(", "func paintGroundAndFollowTextScale()"]),
@@ -101,7 +99,7 @@ enum ShellSplitSelfTest {
         }
         // Exactly one shell builds the workspace, and it is the base class:
         // a subclass building a second one would be a second set of pages.
-        for file in ["AppShellController.swift", "MainSplitShellController.swift"] {
+        for file in ["MainSplitShellController.swift"] {
             guard let shell = code(file) else { continue }
             check(!shell.contains("Workspace("), "\(file) builds a Workspace of its own", &ok)
         }

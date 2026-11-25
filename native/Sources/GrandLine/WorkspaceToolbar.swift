@@ -657,7 +657,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             quickConnectHostsItem = item
             return item
         case ItemID.theme:
-            let item = imageItem(identifier, symbol: DaylightThemeToggleButton.lightSymbol, label: "Appearance",
+            let item = imageItem(identifier, symbol: AppearanceToggle.lightSymbol, label: "Appearance",
                                  help: "", action: #selector(themeClicked))
             themeItem = item
             applyThemeSymbol(ThemeManager.shared.theme)
@@ -708,7 +708,7 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
             ItemID.navigation: ("chevron.left.chevron.right", "Back/Forward"),
             ItemID.recents: ("clock.arrow.circlepath", "Recents"),
             ItemID.crumb: ("signpost.right", "Location"),
-            ItemID.theme: (DaylightThemeToggleButton.lightSymbol, "Appearance"),
+            ItemID.theme: (AppearanceToggle.lightSymbol, "Appearance"),
             ItemID.notifications: ("bell", "Notifications"),
             ItemID.calendar: (Self.calendarSymbol, "Calendar"),
             ItemID.inspector: (Self.inspectorOnSymbol, "Inspector"),
@@ -1174,8 +1174,8 @@ final class WorkspaceToolbar: NSObject, NSToolbarDelegate {
         setSearchHint(theme)
         applyCrumb(theme)
         let isDark = theme.mode == .dark
-        themeItem?.image = symbol(isDark ? DaylightThemeToggleButton.darkSymbol : DaylightThemeToggleButton.lightSymbol)
-        themeItem?.toolTip = DaylightThemeToggleButton.tooltip(isDark: isDark)
+        themeItem?.image = symbol(isDark ? AppearanceToggle.darkSymbol : AppearanceToggle.lightSymbol)
+        themeItem?.toolTip = AppearanceToggle.tooltip(isDark: isDark)
         if wantsFocusChip { focusChip.applyTheme(theme) }
     }
 

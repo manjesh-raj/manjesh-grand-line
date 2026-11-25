@@ -888,12 +888,12 @@ enum SessionRestoreSelfTest {
     }
 
     /// Mirrors `DestinationMountingSelfTest.makeMountedShell`.
-    private static func makeShell() -> (window: NSWindow, shell: AppShellController) {
+    private static func makeShell() -> (window: NSWindow, shell: MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             // Production's own value (audit 2 §4.1) - see `makeConsole`'s note.
             // `test_consoleTabsSurviveTheAutoOpenedShell` drives the real
