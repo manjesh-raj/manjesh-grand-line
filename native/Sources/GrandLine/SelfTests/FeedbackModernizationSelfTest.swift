@@ -51,10 +51,7 @@ enum FeedbackModernizationSelfTest {
             clearProbeSignals()
         }
         var allOK = true
-        for check in [checkPanelGroupsByKind,
-                      checkPanelRowIsCompactAndStillNavigates,
-                      checkBellBouncesOnArrivalOnly,
-                      checkNoStockProgressIndicatorsRemain,
+        for check in [checkNoStockProgressIndicatorsRemain,
                       checkIndeterminateBarSlides] {
             var ok = true
             check(&ok)
@@ -85,148 +82,9 @@ enum FeedbackModernizationSelfTest {
 
     // MARK: 1. G2 - grouped by kind
 
-    private static func checkPanelGroupsByKind(_ ok: inout Bool) {
-        print("\n-- G2: rows grouped by kind --")
-        clearProbeSignals()
-
-        // One kind only.
-        //
-        // **G2 asked for no header here, and the captain's redesign reverses
-        // that deliberately** (`fm/grandline-notification-center-redesign`).
-        // G2's reasoning was that a lone header "would just restate the panel's
-        // title" - true while the headers were "Needs you" / "Updates", which
-        // is roughly what "Waiting for you" already says. The reference renames
-        // them "Needs action" / "Available", and those are a claim about *this*
-        // tier rather than about the panel: a list showing only "Available"
-        // says nothing is waiting on you, which is the single most useful thing
-        // a glance can learn and is invisible if the header is suppressed.
-        // The rest of G2 - grouping by kind at all, action-needed first -
-        // stands unchanged and is what the two-group case below still asserts.
-        NotificationSources.setToolUpdates(count: 2, navigate: {})
-        let single = NotificationCenterController()
-        _ = single.debugPanelController.view
-        single.debugPanelContent.reload()
-        if single.debugPanelContent.debugGroupHeaders == ["Available"] {
-            print("  OK   one kind: the tier is still named")
-        } else {
-            print("  FAIL one kind rendered \(single.debugPanelContent.debugGroupHeaders), want [Available]")
-            ok = false
-        }
-
-        // Both kinds: two headers, and every row sits under the right one.
-        NotificationSources.setPRReady(count: 1, navigate: {})
-        let both = NotificationCenterController()
-        _ = both.debugPanelController.view
-        both.debugPanelContent.reload()
-        let headers = both.debugPanelContent.debugGroupHeaders
-        if headers.count == 2 {
-            print("  OK   two kinds: \(headers.joined(separator: " / "))")
-        } else {
-            print("  FAIL two kinds rendered \(headers.count) header(s): \(headers)")
-            ok = false
-        }
-        if both.debugPanelContent.debugRows.count != 2 {
-            print("  FAIL \(both.debugPanelContent.debugRows.count) rows, want 2")
-            ok = false
-        }
-        clearProbeSignals()
-    }
-
     // MARK: 2. G2 - the compact row, still wired
 
-    private static func checkPanelRowIsCompactAndStillNavigates(_ ok: inout Bool) {
-        print("\n-- G2: compact row (hue dot + symbol), still navigates --")
-        clearProbeSignals()
-        var navigated = 0
-        NotificationSources.setToolUpdates(count: 4, navigate: { navigated += 1 })
-        let controller = NotificationCenterController()
-        let panel = controller.debugPanelController
-        _ = panel.view
-        controller.debugPanelContent.reload()
-        _ = makeWindow(panel.view)
-
-        guard let row = controller.debugPanelContent.debugRows.first else {
-            print("  FAIL no row in the panel")
-            ok = false
-            return
-        }
-        var problems: [String] = []
-        // The row is the compact one, not the accent card it replaced. If the
-        // old type came back, `debugRows` would be empty - so the guard above
-        // is half of this assertion; the dot and symbol are the other half.
-        // `fm/grandline-notification-center-redesign` moved these two apart:
-        // the dot now means *unread* only, and the source's hue moved onto a
-        // real icon tile beside it. G2's finding is unchanged - a row is a row,
-        // not the 76pt accent card it replaced - so the density assertion
-        // below still stands and these two now name the redesigned elements.
-        if !row.debugUnreadDotVisible { problems.append("no unread dot on a freshly-published entry") }
-        if row.debugTileImage == nil { problems.append("no source icon tile") }
-        if row.debugTitle.isEmpty { problems.append("no title") }
-        // G2's own reason for the change: five stacked elements in a 360pt
-        // column. The accent card was ~76pt; a two-line row is well under it.
-        let height = row.fittingSize.height
-        if height > 64 {
-            problems.append("row is \(fmt(height))pt tall - no denser than the card it replaced")
-        }
-        if problems.isEmpty {
-            print("  OK   dot + symbol + title, \(fmt(height))pt tall")
-        } else {
-            for p in problems { print("  FAIL \(p)") }
-            ok = false
-        }
-
-        // Swapping the row type is exactly the change that drops a handler.
-        // The redesign put navigation behind the row's own action button (the
-        // one revealed where the timestamp sits), so that is what this drives.
-        row.debugClickAction()
-        if navigated == 1 {
-            print("  OK   clicking a row still navigates (fired once)")
-        } else {
-            print("  FAIL navigate fired \(navigated) times, want 1")
-            ok = false
-        }
-        clearProbeSignals()
-    }
-
     // MARK: 3. G2 - the bell bounces on arrival only
-
-    private static func checkBellBouncesOnArrivalOnly(_ ok: inout Bool) {
-        print("\n-- G2: the bell bounces on arrival, not on resolution --")
-        clearProbeSignals()
-        HelmMotion.reducedOverrideForTests = false
-        defer { HelmMotion.reducedOverrideForTests = nil }
-
-        let controller = NotificationCenterController()
-        _ = makeWindow(controller.bell)
-        // A rise.
-        NotificationSources.setToolUpdates(count: 2, navigate: {})
-        let bouncedOnArrival = controller.debugBell.debugIsBouncing
-        controller.debugBell.layer?.removeAllAnimations()
-        controller.debugBell.subviews.forEach { $0.layer?.removeAllAnimations() }
-        // A fall - the same publish path, the opposite direction.
-        NotificationSources.setToolUpdates(count: 0, navigate: {})
-        let bouncedOnFall = controller.debugBell.debugIsBouncing
-
-        if bouncedOnArrival && !bouncedOnFall {
-            print("  OK   bounced on a rising count, not on a falling one")
-        } else {
-            print("  FAIL arrival=\(bouncedOnArrival) resolution=\(bouncedOnFall)")
-            ok = false
-        }
-
-        // Reduce Motion gets nothing - the badge already carries the message.
-        HelmMotion.reducedOverrideForTests = true
-        let quiet = NotificationCenterController()
-        _ = makeWindow(quiet.bell)
-        NotificationSources.setToolUpdates(count: 3, navigate: {})
-        if quiet.debugBell.debugIsBouncing {
-            print("  FAIL it bounced with Reduce Motion on")
-            ok = false
-        } else {
-            print("  OK   Reduce Motion gets no bounce at all")
-        }
-        clearProbeSignals()
-    }
 
     // MARK: 4. G4 - the stock control is genuinely gone
 

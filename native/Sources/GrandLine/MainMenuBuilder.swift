@@ -6,7 +6,7 @@
 // of the app delegate, into an extension of `AppDelegate` of its own.
 //
 // It stays an extension rather than becoming a new type on purpose: the
-// builder reads the delegate's own state (`appShell`, `workspaceLayout`, the
+// builder reads the delegate's own state (`appShell`, the
 // File menu items it keeps for retitling, the Go menu's observer) and targets
 // the delegate's own verbs, so a separate type would rewrite every one of
 // those references - a rewrite, not the move this split was meant to be.
@@ -474,51 +474,15 @@ extension AppDelegate {
         for item in logAnalyzerMenu.items { item.target = navigatorTarget }
 
         // Go menu - UX3's "a 'Go' menu listing every destination with its
-        // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
-        // Daylight spec)". Six of them since
-        // `fm/grandline-overview-page-daily-review` added a sixth pill, so
-        // the range is ⌘1-⌘6 and Home sits at ⌘2.
-        //
-        // **UX issue X3 removed Home's separate ⌘0 row.** The menu used to
-        // open with "Home ⌘0" and then list "Home ⌘2" three rows later -
-        // one destination, two rows, the same word twice, which is half of
-        // what the review read off this menu. One of the two chords had to
-        // go, and ⌘0 is the one that does not fit a model: ⌘1-⌘6 mirrors
-        // the bar's pills left to right and is what `DaylightSpace
-        // .shortcutIndex` already means, while ⌘0 was a leftover from
-        // before the pills were numbered at all. ⌘2 reaches the same page
-        // (`selectSpace` on the Home space shows the canvas), so nothing is
-        // unreachable - only the second spelling of it is gone.
-        //
-        // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
-        // the Hosts menu's own session-switcher comment, which records that
-        // and why the session switcher stayed on ⌘⌃1-9 regardless). The
-        // spaces take ⌘1 upward in declaration order, which is what
-        // `DaylightSpace.shortcutIndex` reports - the loop below reads it
-        // rather than a hand-written list, so a sixth pill needed no edit
-        // here.
-        //
-        // The destination list below is generated from
-        // `AllDestinationsOverlayController.groups()` - the same grouping the
-        // ⌘⇧D map draws - rather than a hand-written second list, so a new
-        // `RailDestination` appears in both surfaces with no edit here.
+        // shortcut". The destinations are the sidebar's own map, at the end of
+        // this menu (`WorkspaceGoMenu`), so ⌘1-⌘9 open the sidebar's first
+        // nine items. P-03 of the 2026-11-25 review removed the floating bar,
+        // and with it the space rows (⌘1-⌘6) and the list generated from its
+        // all-destinations map.
         let goMenuItem = NSMenuItem()
         mainMenu.addItem(goMenuItem)
         let goMenu = NSMenu(title: "Go")
         goMenuItem.submenu = goMenu
-        // R2-UX-02: the spaces are the floating bar's map, so only it lists
-        // them. The sidebar layout's Go menu is the sidebar's own map, at
-        // the end of this menu (`WorkspaceGoMenu`).
-        for space in DaylightSpace.allCases where workspaceLayout == .floatingBar {
-            let item = NSMenuItem(title: space.title,
-                                  action: #selector(WorkspaceShellController.selectSpaceByShortcut(_:)),
-                                  keyEquivalent: "\(space.shortcutIndex)")
-            item.withSymbol(space.heroSymbol)
-            item.tag = space.shortcutIndex
-            item.target = menuTarget
-            goMenu.addItem(item)
-        }
-        if workspaceLayout == .floatingBar { goMenu.addItem(NSMenuItem.separator()) }
         // P9: the standard sidebar command for the seven pages whose column is
         // a real split-view sidebar. Not the system's ⌃⌘S, which this app
         // already gives to Show Hosts; ⌥⌘S was checked free against this
@@ -529,26 +493,23 @@ extension AppDelegate {
         toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
         toggleSidebarItem.target = menuTarget
         goMenu.addItem(toggleSidebarItem)
-        // R2-UX-09: in the sidebar layout ⌥⌘S is always the app's sidebar,
-        // so a page's own column (Notebook, Settings, Schedules) has its own
-        // item, a Shift away.
-        if workspaceLayout == .sidebar {
-            let pageColumnItem = NSMenuItem(title: "Toggle Page Column",
-                                            action: #selector(WorkspaceShellController.togglePageColumnFromMenu),
-                                            keyEquivalent: "s").withSymbol("sidebar.squares.left")
-            pageColumnItem.keyEquivalentModifierMask = [.command, .option, .shift]
-            pageColumnItem.target = menuTarget
-            goMenu.addItem(pageColumnItem)
-            // R5-UX-09: ⌥⌘I, the platform's own inspector chord, for what
-            // was a toolbar button only. Checked free: ⇧⌘I is Log Analyzer's
-            // Investigate Further, a different mask.
-            let inspectorItem = NSMenuItem(title: "Toggle Inspector",
-                                           action: #selector(WorkspaceShellController.toggleInspectorFromMenu),
-                                           keyEquivalent: "i").withSymbol("sidebar.right")
-            inspectorItem.keyEquivalentModifierMask = [.command, .option]
-            inspectorItem.target = menuTarget
-            goMenu.addItem(inspectorItem)
-        }
+        // R2-UX-09: ⌥⌘S is always the app's sidebar, so a page's own column
+        // (Notebook, Settings, Schedules) has its own item, a Shift away.
+        let pageColumnItem = NSMenuItem(title: "Toggle Page Column",
+                                        action: #selector(WorkspaceShellController.togglePageColumnFromMenu),
+                                        keyEquivalent: "s").withSymbol("sidebar.squares.left")
+        pageColumnItem.keyEquivalentModifierMask = [.command, .option, .shift]
+        pageColumnItem.target = menuTarget
+        goMenu.addItem(pageColumnItem)
+        // R5-UX-09: ⌥⌘I, the platform's own inspector chord, for what
+        // was a toolbar button only. Checked free: ⇧⌘I is Log Analyzer's
+        // Investigate Further, a different mask.
+        let inspectorItem = NSMenuItem(title: "Toggle Inspector",
+                                       action: #selector(WorkspaceShellController.toggleInspectorFromMenu),
+                                       keyEquivalent: "i").withSymbol("sidebar.right")
+        inspectorItem.keyEquivalentModifierMask = [.command, .option]
+        inspectorItem.target = menuTarget
+        goMenu.addItem(inspectorItem)
         goMenu.addItem(NSMenuItem.separator())
         let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
                                              action: #selector(AppDelegate.showAllDestinations),
@@ -561,23 +522,10 @@ extension AppDelegate {
         allDestinationsItem.keyEquivalentModifierMask = [.command, .shift]
         allDestinationsItem.target = self
         goMenu.addItem(allDestinationsItem)
-        // **UX issue X3.** Everything above this point already has its own
-        // item: Home at Cmd-0, and every space pill at Cmd-1..Cmd-5. The
-        // groups below are the complete destination map (the same one the
-        // All Destinations overlay draws, where completeness is the whole
-        // point), so without this Home appeared a second time, under
-        // "Elsewhere".
-        //
-        // Filtered here rather than in `groups()` because the overlay is a
-        // map and must stay complete; a menu that already listed something
-        // ten rows up must not list it again.
-        let alreadyListed: Set<RailDestination> = [.homeCanvas]
         // R2-UX-03: a module's tabs, before and after the one showing - the
         // system's own "show previous/next tab" chords. On Console, a host
         // page and Tools `TabKeyboardShortcuts` sees ⌘⇧[ / ⌘⇧] first and
-        // moves between that page's own tabs, as it always has. R5-UX-09:
-        // the floating bar has them too, stepping through a module's pages
-        // (Knowledge's and Setup's were reachable by no chord there).
+        // moves between that page's own tabs, as it always has.
         goMenu.addItem(NSMenuItem.separator())
         let previousTab = NSMenuItem(title: "Previous Tab",
                                      action: #selector(WorkspaceShellController.selectPreviousModuleTab(_:)),
@@ -602,43 +550,18 @@ extension AppDelegate {
             item.target = menuTarget
             goMenu.addItem(item)
         }
-        if workspaceLayout == .sidebar {
-            WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
-            // R2-UX-01 (b): a module shown or hidden in Settings comes and
-            // goes here too, as it does in the sidebar.
-            if installing {
-                if let goMenuObserver { NotificationCenter.default.removeObserver(goMenuObserver) }
-                goMenuObserver = NotificationCenter.default.addObserver(
-                    forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
-                ) { [weak goMenu, weak menuTarget] _ in
-                    guard let goMenu else { return }
-                    WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
-                }
+        WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
+        // R2-UX-01 (b): a module shown or hidden in Settings comes and
+        // goes here too, as it does in the sidebar.
+        if installing {
+            if let goMenuObserver { NotificationCenter.default.removeObserver(goMenuObserver) }
+            goMenuObserver = NotificationCenter.default.addObserver(
+                forName: AppSettings.hiddenModulesDidChange, object: nil, queue: .main
+            ) { [weak goMenu, weak menuTarget] _ in
+                guard let goMenu else { return }
+                WorkspaceGoMenu.populate(goMenu, target: menuTarget, hidden: AppSettings.shared.hiddenModules)
             }
         }
-        for group in AllDestinationsOverlayController.groups() where workspaceLayout == .floatingBar {
-            let remaining = group.destinations.filter { !alreadyListed.contains($0) }
-            guard !remaining.isEmpty else { continue }
-            goMenu.addItem(NSMenuItem.separator())
-            // A disabled header row, the standard Mac way to caption a run of
-            // items inside one menu - the alternative (a submenu per space)
-            // would put every destination two levels deep, which is the
-            // opposite of what a "show me everything" menu is for.
-            let header = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            goMenu.addItem(header)
-            for destination in remaining {
-                let item = NSMenuItem(title: destination.title,
-                                      action: #selector(WorkspaceShellController.selectDestinationFromMenu(_:)),
-                                      keyEquivalent: "")
-                item.withSymbol(destination.symbol)
-                item.representedObject = destination.rawValue
-                item.target = menuTarget
-                item.indentationLevel = 1
-                goMenu.addItem(item)
-            }
-        }
-
         // Window menu - UX3's "⌘M minimise is dead, no Zoom/Bring All to
         // Front".
         //
@@ -654,15 +577,12 @@ extension AppDelegate {
         windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(NSMenuItem.separator())
         windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        // R2-ARCH-06: the sidebar layout's toolbar is customisable. The
-        // system's own sheet, through the window's own action - a right
-        // click on the toolbar offers the same item. The floating bar has no
-        // window toolbar to customise.
-        if workspaceLayout == .sidebar {
-            windowMenu.addItem(NSMenuItem.separator())
-            windowMenu.addItem(withTitle: "Customize Toolbar\u{2026}", symbol: "slider.horizontal.3",
-                               action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
-        }
+        // R2-ARCH-06: the window toolbar is customisable. The system's own
+        // sheet, through the window's own action - a right click on the
+        // toolbar offers the same item.
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(withTitle: "Customize Toolbar\u{2026}", symbol: "slider.horizontal.3",
+                           action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
         if installing { NSApp.windowsMenu = windowMenu }
 
         // Help menu - UX3's "add Help -> 'Keyboard Shortcuts…' (generated from

@@ -59,10 +59,6 @@ enum DaylightHardeningSelfTest {
         [
             ("canvas modules are accessible buttons that actually press", test_moduleIsAButton),
             ("a module with no open action is not announced at all", test_decorativeModuleIsSilent),
-            ("space pills are a radio group with a live selected value", test_spacePillsAreARadioGroup),
-            ("space pills move with the arrow keys", test_spacePillArrowKeys),
-            ("key loop runs bar -> canvas -> content", test_keyLoopOrder),
-            ("key loop re-derives its hand-off per destination", test_keyLoopFollowsDestination),
             ("reduce motion removes the hover translate, keeps the shadow", test_reduceMotionHoverTranslate),
             ("reduce motion suppresses implicit gradient animation", test_reduceMotionGradientTransaction),
             ("every gradient layer write is wrapped", test_gradientWritesAreWrapped),
@@ -133,84 +129,14 @@ enum DaylightHardeningSelfTest {
 
     // MARK: Accessibility - space pills
 
-    private static func test_spacePillsAreARadioGroup() -> String? {
-        let bar = DaylightBarController()
-        bar.loadView()
-        bar.view.layoutSubtreeIfNeeded()
-
-        let pills = bar.keyViewChain.prefix(DaylightSpace.allCases.count)
-        guard pills.count == DaylightSpace.allCases.count else {
-            return "expected \(DaylightSpace.allCases.count) pills at the head of the key chain, got \(pills.count)"
-        }
-        guard let row = pills.first?.superview as? NSStackView else {
-            return "the pills' container is not the stack view that should carry the group role"
-        }
-        guard row.accessibilityRole() == .radioGroup else {
-            return "the pill row's role is \(row.accessibilityRole()?.rawValue ?? "nil"), want .radioGroup"
-        }
-        guard row.accessibilityLabel() == "Spaces" else {
-            return "the pill row's label is \(row.accessibilityLabel() ?? "nil"), want \"Spaces\""
-        }
-
-        for (pill, space) in zip(pills, DaylightSpace.allCases) {
-            guard let hover = pill as? HoverHighlightView else {
-                return "\(space.title)'s pill is not a HoverHighlightView"
-            }
-            guard hover.accessibilityRole() == .radioButton else {
-                return "\(space.title) announces \(hover.accessibilityRole()?.rawValue ?? "nil"), want .radioButton"
-            }
-            guard hover.accessibilityLabel() == space.title else {
-                return "\(space.title) announces the label \(hover.accessibilityLabel() ?? "nil")"
-            }
-        }
-
-        // The value has to *move*, or the group announces the wrong state.
-        func value(_ index: Int) -> String {
-            ((pills[pills.startIndex + index] as? HoverHighlightView)?.accessibilityValue() as? String) ?? ""
-        }
-        bar.setSelectedSpace(DaylightSpace.allCases[0])
-        guard value(0) == "selected", value(1) == "not selected" else {
-            return "with the first space selected the values read \(value(0))/\(value(1))"
-        }
-        bar.setSelectedSpace(DaylightSpace.allCases[1])
-        guard value(0) == "not selected", value(1) == "selected" else {
-            return "the selected value did not move with the selection"
-        }
-        return nil
-    }
-
-    private static func test_spacePillArrowKeys() -> String? {
-        let bar = DaylightBarController()
-        bar.loadView()
-        bar.view.layoutSubtreeIfNeeded()
-        bar.setSelectedSpace(DaylightSpace.allCases[0])
-
-        guard let first = bar.keyViewChain.first as? HoverHighlightView,
-              let handler = first.onKeyDown else {
-            return "the first pill has no key handler, so arrow keys do nothing"
-        }
-        // 124 = right arrow, the keycode `handleArrowKey` reads.
-        guard let right = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-                                           timestamp: 0, windowNumber: 0, context: nil,
-                                           characters: "", charactersIgnoringModifiers: "",
-                                           isARepeat: false, keyCode: 124) else {
-            return "could not synthesise a right-arrow event"
-        }
-        guard handler(right) else { return "the right arrow was not handled" }
-        guard bar.selectedSpaceForTests == DaylightSpace.allCases[1] else {
-            return "the right arrow left the selection on \(bar.selectedSpaceForTests.title)"
-        }
-        return nil
-    }
-
     // MARK: Accessibility - the key view loop
 
-    private static func makeShell() -> (NSWindow, AppShellController) {
+    private static func makeShell() -> (NSWindow, MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1300, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
@@ -223,90 +149,6 @@ enum DaylightHardeningSelfTest {
         )
         window.contentViewController = shell
         return (window, shell)
-    }
-
-    private static func test_keyLoopOrder() -> String? {
-        withScratchEnv {
-            let (window, shell) = makeShell()
-            shell.workspace.navigator.show(.homeCanvas)
-            window.contentView?.layoutSubtreeIfNeeded()
-            shell.updateKeyViewLoop()
-
-            let chain = shell.barKeyViewChainForTests
-            let loop = shell.keyViewLoopOrderForTests()
-            guard loop.count > chain.count else {
-                return "the loop stops inside the bar (\(loop.count) views for a \(chain.count)-view bar) - nothing below it is reachable by Tab"
-            }
-            for (i, expected) in chain.enumerated() where loop[i] !== expected {
-                return "loop position \(i) is not the bar control the reading order asks for"
-            }
-            // The hand-off has to land inside the canvas, not in some other
-            // mounted-but-hidden destination.
-            let handoff = loop[chain.count]
-            let canvasView = shell.homeCanvasForTests.view
-            var ancestor: NSView? = handoff
-            while let current = ancestor, current !== canvasView { ancestor = current.superview }
-            guard ancestor === canvasView else {
-                return "Tab leaves the bar into a view outside the canvas"
-            }
-            // ...and specifically onto a module, which is the canvas's own
-            // content rather than its chrome.
-            let cards = shell.homeCanvasForTests.moduleCardsForTests
-            guard !cards.isEmpty else { return "the canvas rendered no modules to reach" }
-            return nil
-        }
-    }
-
-    private static func test_keyLoopFollowsDestination() -> String? {
-        withScratchEnv {
-            let (window, shell) = makeShell()
-            // A drill page: the audit's A2 moved the back button *into* the
-            // bar, so it is the head of the bar's own chain rather than the
-            // first thing below it - which is the same reading order it
-            // always had, one row up.
-            shell.workspace.navigator.show(.review)
-            window.contentView?.layoutSubtreeIfNeeded()
-            shell.updateKeyViewLoop()
-            let header = shell.drillHeaderForTests
-            guard let barHead = shell.barKeyViewChainForTests.first else {
-                return "the bar offers nothing for Tab to reach on a drill page"
-            }
-            var ancestor: NSView? = barHead
-            while let current = ancestor, current !== header { ancestor = current.superview }
-            guard ancestor === header else {
-                return "on a drill page the bar's chain does not start at the back button"
-            }
-            // A page whose own content is all static (Review before its
-            // fetch lands is cards and labels) legitimately offers nothing
-            // below the bar - that used to be masked, because the hand-off
-            // was the drill header's back button and the header was below
-            // the bar. What must still hold is that anything it *does* offer
-            // is real and visible.
-            if let handoff = shell.firstBodyKeyViewForTests, handoff.isHiddenOrHasHiddenAncestor {
-                return "the drill page's hand-off points at a hidden view"
-            }
-
-            // Back on the canvas the cluster is hidden, so the bar's chain
-            // must drop it rather than handing focus to an invisible control.
-            shell.workspace.navigator.show(.homeCanvas)
-            window.contentView?.layoutSubtreeIfNeeded()
-            shell.updateKeyViewLoop()
-            for view in shell.barKeyViewChainForTests where view.isHiddenOrHasHiddenAncestor {
-                return "the canvas's bar chain includes a hidden control"
-            }
-            var inHeader: NSView? = shell.barKeyViewChainForTests.first
-            while let current = inHeader, current !== header { inHeader = current.superview }
-            if inHeader === header {
-                return "the canvas's bar chain still starts at the hidden drill cluster"
-            }
-            guard let canvasHandoff = shell.firstBodyKeyViewForTests else {
-                return "the canvas offers nothing below the bar for Tab to reach"
-            }
-            if canvasHandoff.isHiddenOrHasHiddenAncestor {
-                return "the hand-off points at a hidden view"
-            }
-            return nil
-        }
     }
 
     // MARK: Reduce Motion

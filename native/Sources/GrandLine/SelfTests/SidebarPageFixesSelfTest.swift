@@ -70,7 +70,6 @@ enum SidebarPageFixesSelfTest {
             }
             do {
                 var ok = true
-                checkTheFloatingBarIsUnchanged(&ok)
                 checkTheWiring(&ok)
                 allOK = allOK && ok
             }
@@ -321,42 +320,7 @@ enum SidebarPageFixesSelfTest {
               "a healthy service still offers Retry", &ok)
     }
 
-    // MARK: 4 - the floating bar
-
-    private static func checkTheFloatingBarIsUnchanged(_ ok: inout Bool) {
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoHosts(shell.workspace)
-        settle(shell)
-        let hosts = shell.workspace.hostsPanel
-        shell.workspace.navigator.show(.hosts)
-        settle(shell)
-        check(!hosts.drawsSidebarLayout && hosts.workspacePrimaryAction == nil, "the floating bar's Hosts has a toolbar primary action", &ok)
-        check(!hosts.debugWorkspacePanel.isHidden && !hosts.debugQuickActions.isHidden && !hosts.debugOnlineChip.isHidden,
-              "the floating bar's Hosts lost its stat strip, its shortcut line or its Online toggle", &ok)
-        check(hosts.drillHeaderActions.count == 1, "the floating bar's Hosts header actions changed", &ok)
-
-        let logs = shell.workspace.logAnalyzer
-        shell.workspace.navigator.show(.logAnalyzer)
-        settle(shell)
-        check(!logs.drawsSidebarLayout && logs.workspacePrimaryAction == nil
-                && logs.debugInputControls.contains { $0 === logs.debugAnalyzeButton } && logs.debugHintIsShown,
-              "the floating bar's Log Analyzer moved Analyze or lost its shortcut line", &ok)
-        check(logs.drillHeaderSubtitle?.hasPrefix("Paste raw logs") == true,
-              "the floating bar's Log Analyzer header changed: \(logs.drillHeaderSubtitle ?? "nil")", &ok)
-        logs.debugRender(ReviewTourLab.demoLogInvestigation())
-        settle(shell)
-        check(logs.debugTabIsShown("analysis"), "the floating bar's finished analysis shows an empty Analysis tab", &ok)
-        logs.newInvestigation()
-
-        let health = shell.workspace.health
-        shell.workspace.navigator.show(.health)
-        settle(shell)
-        check(!health.drawsSidebarLayout && !health.debugHealthCard.drawsTable && health.workspacePrimaryAction == nil
-                && health.drillHeaderActions.count == 1,
-              "the floating bar's Health page changed", &ok)
-    }
+    // MARK: 4 - the wiring
 
     /// Source guards for wiring a behaviour check cannot see: Retry's real
     /// actions are the services' own entry points.

@@ -433,13 +433,12 @@ enum LaunchPathSelfTest {
     /// `OSSignposter` interval has no observable effect inside a process.
     private static func test_theLaunchPathCarriesItsSignposts() -> String? {
         // Stage 3 of the modular-shell migration: the shell's `init` is the
-        // base class's, and each window layout has a `loadView` of its own.
+        // base class's, and the sidebar shell has a `loadView` of its own.
         guard let shell = source("WorkspaceShellController.swift"), let main = SelfTestSources.appDelegateSource(),
-              let classic = source("AppShellController.swift"), let split = source("MainSplitShellController.swift") else {
+              let split = source("MainSplitShellController.swift") else {
             return "could not read the app's sources - the guard would silently pass"
         }
         for (name, file, text) in [("WorkspaceShellController.init", "WorkspaceShellController.swift", shell),
-                                   ("AppShellController.loadView", "AppShellController.swift", classic),
                                    ("MainSplitShellController.loadView", "MainSplitShellController.swift", split)] {
             guard text.contains("LaunchSignposts.begin(\"\(name)\")"),
                   text.contains("LaunchSignposts.end(\"\(name)\"") else {

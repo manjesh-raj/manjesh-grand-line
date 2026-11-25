@@ -97,7 +97,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     /// at, so it is told what a postmortem is and offered the example, and
     /// the button to a module it does not have goes.
     private func refreshEmptyCopy() {
-        let logsShown = PlaceName.layout != .sidebar || !AppSettings.shared.hiddenModules.contains(.logs)
+        let logsShown = !AppSettings.shared.hiddenModules.contains(.logs)
         postmortemEmptyState.setText(
             title: "No postmortems yet",
             body: logsShown

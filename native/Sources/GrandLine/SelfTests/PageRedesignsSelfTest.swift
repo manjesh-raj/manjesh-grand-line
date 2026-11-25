@@ -89,7 +89,6 @@ enum PageRedesignsSelfTest {
             }
             do {
                 var ok = true
-                checkTheFloatingBarIsUnchanged(&ok)
                 checkTheHostsFooterStaysDown(scratch, &ok)
                 allOK = allOK && ok
             }
@@ -1897,83 +1896,7 @@ enum PageRedesignsSelfTest {
         }
     }
 
-    // MARK: 5 - the floating bar
-
-    private static func checkTheFloatingBarIsUnchanged(_ ok: inout Bool) {
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoHosts(shell.workspace)
-        settle(shell)
-        for route in [RailDestination.hosts, .poneglyph, .vault, .notebook, .overview, .runbooks] {
-            shell.workspace.navigator.show(route)
-            settle(shell)
-        }
-        let hosts = shell.workspace.hostsPanel
-        shell.workspace.navigator.show(.hosts)
-        settle(shell)
-        check(!hosts.drawsSidebarLayout && onScreen(hosts.debugHostsList.card) && !onScreen(hosts.debugHostsTable.card),
-              "the floating bar's Hosts page is not its list", &ok)
-        check(!shell.debugPoneglyph.drawsSidebarLayout && !shell.debugPoneglyph.debugInspector.isHostedInWorkspaceInspector,
-              "the floating bar's Poneglyph moved its inspector out of the page", &ok)
-        check(!shell.workspace.vault.drawsSidebarLayout, "the floating bar's Automic Vault switched to tables", &ok)
-        check(shell.workspace.notebook.splitPage?.pageForcesCollapse != true,
-              "the floating bar's Notebook put its page column away", &ok)
-        let fleet = shell.workspace.overview
-        check(!fleet.drawsSidebarLayout && fleet.moduleTabNames == ["In flight", "Log"] && !fleet.debugNeedsSectionIsOnNeedsYou,
-              "the floating bar's Fleet page grew a Needs you", &ok)
-        fleet.revealNeedsYou()
-        check(!fleet.debugNeedsYouShowing, "revealNeedsYou switched the floating bar's Fleet page", &ok)
-        // CR-1 is the sidebar layout's: the floating bar's dashboard keeps its
-        // answer banner and boxed figures, and draws no band.
-        shell.workspace.navigator.show(.overview)
-        settle(shell)
-        let quiet = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [], queuedCount: 1, doneCount: 2,
-                                  projectsCount: 3, watcher: WatcherHealth(status: "healthy"))
-        fleet.debugRender(snapshot: quiet, mergedPRs: [])
-        settle(shell)
-        check(fleet.debugCrewBand == nil && fleet.debugDashboardChromeShown.banner && fleet.debugDashboardChromeShown.stats,
-              "CR-1: the floating bar's Fleet page drew the band or lost its banner and figures", &ok)
-        check(fleet.debugStatTiles.map(\.caption) == ["Working", "Ready to merge", "Queued", "Done today", "Projects",
-                                                      "Watcher healthy"],
-              "CR-1: the floating bar's figures moved: \(fleet.debugStatTiles.map(\.caption))", &ok)
-        check(!(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine
-                && (fleet as WorkspaceHeaderLineCollapsing).drawsSubtitleOnHeaderLine,
-              "CR-1: the floating bar's Fleet page gives up a header line", &ok)
-        // Its Log keeps the filter over the feed, in the theme's own recipe
-        // and with no counts, and draws no band.
-        fleet.debugSwitchTab("log")
-        settle(shell)
-        let logTabs = fleet.debugLogFilters
-        check(fleet.debugCrewBand == nil && logTabs.heroInk == nil && logTabs.superview != nil && onScreen(logTabs)
-                && pillTitles(logTabs) == ["All", "Merges", "Tasks", "Sync", "Investigations", "Incidents"]
-                && fleet.debugLogListShowing
-                && !(fleet as WorkspaceHeaderLineCollapsing).collapsesEmptyHeaderLine,
-              "CR-1: the floating bar's Log drew the band or changed its filter: \(pillTitles(logTabs))", &ok)
-        fleet.debugSwitchTab("overview")
-        settle(shell)
-        // Review's band is the sidebar layout's too: the floating bar's Review
-        // keeps its count line, its boxed figures and its two forge cards.
-        OpenPRsSource.debugFetcher = { OpenPRsSource.FetchResult() }
-        defer { OpenPRsSource.debugFetcher = nil }
-        let review = shell.workspace.review
-        shell.workspace.navigator.show(.review)
-        settle(shell)
-        settleReview(review)
-        review.debugRender(reviewFixture())
-        settle(shell)
-        check(!review.drawsSidebarLayout && review.debugReviewBand == nil && review.debugIsStatsRowVisible
-                && review.debugIsBodySubtitleVisible
-                && review.debugStatTiles.map(\.caption) == ["Open PRs", "Ready to merge", "Checks running"],
-              "CR-1: the floating bar's Review drew the band or lost its line and figures: "
-                + "\(review.debugStatTiles.map(\.caption))", &ok)
-        check(!review.collapsesEmptyHeaderLine && review.drawsSubtitleOnHeaderLine,
-              "CR-1: the floating bar's Review gives up a header line", &ok)
-        review.debugRender([])
-        settle(shell)
-        check(review.debugAreForgeSectionsVisible && review.debugReviewBand == nil,
-              "CR-1: the floating bar's empty Review lost its forge cards", &ok)
-    }
+    // MARK: 5 - the Hosts column
 
     /// Found on the way, on the floating bar's Hosts page: after a tab round
     /// trip the column's footer stack took the column's spare height, so its

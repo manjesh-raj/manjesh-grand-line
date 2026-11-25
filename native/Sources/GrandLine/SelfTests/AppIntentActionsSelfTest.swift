@@ -796,14 +796,13 @@ enum AppIntentActionsSelfTest {
         guard let sources = SelfTestSources.appSourceDirectory(),
               let text = try? String(contentsOf: sources.appendingPathComponent("Workspace.swift"), encoding: .utf8),
               let base = try? String(contentsOf: sources.appendingPathComponent("WorkspaceShellController.swift"), encoding: .utf8),
-              let classic = try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8),
               let split = try? String(contentsOf: sources.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8) else {
-            check(false, "SKIPPED: could not read Workspace.swift and the three shell files")
+            check(false, "SKIPPED: could not read Workspace.swift and the two shell files")
             return
         }
         let calls = text.components(separatedBy: "GrandLineServices.shared.register(").count - 1
         check(calls == 1, "the workspace registers its stores with GrandLineServices exactly once (found \(calls))")
-        for (name, shell) in [("WorkspaceShellController", base), ("AppShellController", classic), ("MainSplitShellController", split)] {
+        for (name, shell) in [("WorkspaceShellController", base), ("MainSplitShellController", split)] {
             check(!shell.contains("GrandLineServices.shared.register("),
                   "and \(name) does not register a second time")
         }
@@ -825,7 +824,7 @@ enum AppIntentActionsSelfTest {
               "the shells' shared init builds the workspace, before super.init")
         // A layout's `loadView` - which compact mode may never run at all -
         // can only come after an initialiser it does not override.
-        for (name, shell) in [("AppShellController", classic), ("MainSplitShellController", split)] {
+        for (name, shell) in [("MainSplitShellController", split)] {
             check(!shell.contains("init(hostsPanel:") && shell.contains("override func loadView()"),
                   "\(name) inherits the shared init and builds its chrome in loadView")
         }

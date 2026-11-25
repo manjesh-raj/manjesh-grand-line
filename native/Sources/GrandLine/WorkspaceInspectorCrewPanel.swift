@@ -209,7 +209,7 @@ final class WorkspaceInspectorCrewPanel: NSViewController {
             view.removeFromSuperview()
         }
         let sections = PageShortcuts.sections(module: context.module, route: context.module.primaryRoute,
-                                              layout: PlaceName.layout, settings: .shared)
+                                              settings: .shared)
         for entry in (sections.first?.entries ?? []) + (sections.dropFirst().first?.entries.prefix(3) ?? []) {
             let title = NSTextField(labelWithString: entry.title)
             title.font = HelmType.body()

@@ -1,30 +1,49 @@
 # Helm kit versions
 
 The Helm kit is every `Helm*.swift` file in `native/Sources/GrandLine/`.
-`native/Sources/GrandLine/HelmKitVersion.swift` holds its version table: `HelmKit.version` for the kit as a whole and one semantic version per component.
-This file is the release notes for that table, newest release first.
-`FM_RUN_HELM_KIT_VERSION_TESTS` reads it, so its shape is part of the contract.
+`native/Sources/GrandLine/HelmKitVersion.swift` holds its version table: one semantic version per component, and the app-level surfaces the proposals also version.
+This file is the rules for that table and the frozen history of the kit's first eight days.
+`FM_RUN_HELM_KIT_VERSION_TESTS` reads it and every file in [`helm-kit-releases/`](helm-kit-releases/), so their shape is part of the contract.
+
+## What changed on 2026-11-25
+
+Until 10.4.0 the kit carried one kit-wide semantic version, a committed table of SHA-256 digests (one per kit file) and one release-notes file with the newest release on top.
+Every pull request that touched a `Helm*.swift` file had to edit all three, so two UI branches open at once always conflicted in the same three places.
+The kit-wide number also stopped meaning anything: it went from 1.0.0 to 10.4.0 in eight days.
+
+P-01 of the 2026-11-25 full review replaced that:
+
+- There is no kit-wide version constant.
+  The kit's number is the date of its newest release file, for example `Helm 2026-11-26`.
+- No digest is committed.
+  The suite hashes every kit file at the branch's base revision and in the working tree, and fails when a file's code changed and none of its components' versions moved.
+  CI sets the base (`FM_HELM_KIT_BASE`) to the pull request's base commit, or to the previous `main` on a push.
+  A local run compares with the merge base of `HEAD` and `origin/main`.
+- Release notes are one file per release in [`helm-kit-releases/`](helm-kit-releases/), so two branches add two files instead of editing one.
+- The sections below the line are the history up to 10.4.0, kept as they were written.
+  Nothing is added to them.
 
 ## How to release
 
 1. Change the component.
 2. Bump that component's version in `HelmKit.components` (or `HelmKit.surfaces` for an app-level view).
-3. Add a section at the top of this file for the new kit version, with one bullet per component that moved.
-4. Move `HelmKit.version` by the largest bump in the section.
-5. Run `FM_RUN_HELM_KIT_VERSION_TESTS=1 .build/debug/GrandLine` and paste the digest it prints into `HelmKit.sourceDigests`.
+3. Add `docs/design-system/helm-kit-releases/YYYY-MM-DD-<slug>.md`.
+   It opens with `# YYYY-MM-DD - <title>` (the same date as the file name) and has one bullet per component that moved.
+4. Run `FM_RUN_HELM_KIT_VERSION_TESTS=1 .build/debug/GrandLine`.
 
-The suite prints a new digest only once one of the file's versions has moved.
-A changed kit file with no bump fails the run.
+A changed kit file with no bump fails the run, and so does a bump with no change.
+A comment-only change is not a release.
 
 ## The bump rule
 
-- **patch**: a visual tweak that changes no call site.
+- **patch**: a visual tweak or a fix that changes no call site.
 - **minor**: a new or extended component, option or token.
-- **major**: a breaking replacement, or a removal.
-- **new**: a component that did not exist. It enters at 1.0.0 and moves the kit by a minor.
+- **major**: a removed or renamed API.
+  This is the only change a caller has to act on, so it is the only one that earns a major.
+  Its bullet has to say which API was removed or renamed, and the suite checks for the word.
+- **new**: a component that did not exist. It enters at 1.0.0.
 
-The kit version moves by the largest bump in its release.
-A removal is written `` `Name` 1.2.0 → removed (removed) `` and moves the kit by a major.
+A removed component is written `` `Name` 1.2.0 → removed (removed) ``.
 
 ## Bullet format
 
@@ -34,7 +53,14 @@ Each bullet starts with the component name in backticks, the two versions and th
 - `HelmPageSidebar` 1.0.0 → 1.1.0 (minor): what changed, and the proposal or PR.
 ```
 
-A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose under the section, without the backticked shape.
+A change that is not a kit component (a private list retired inside a page, for example) is written as plain prose, without the backticked shape.
+
+Two releases on the same day are fine.
+The suite follows each component's chain of bullets from version to version, so it does not depend on the order the files sort in.
+
+---
+
+# History: 1.0.0 to 10.4.0
 
 ## 10.4.0 - The notifications panel's hero head (N-1)
 

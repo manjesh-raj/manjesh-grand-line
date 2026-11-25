@@ -18,9 +18,9 @@ enum ReviewTwoUXModelSelfTest {
     static func run() -> Bool {
         var ok = true
         checkTheGoMenuIsTheSidebarsMap(&ok)
-        checkTheGoMenuPerLayout(&ok)
+        checkTheGoMenuListsTheModules(&ok)
         checkHomeDrawsNoSpaces(&ok)
-        checkTheFloatingBarIsKeptAndHomeHasNoSpaces(&ok)
+        checkHomeHasNoSpaces(&ok)
         checkTheProfiles(&ok)
         checkTheFirstLaunchProfile(&ok)
         checkTheHiddenModulesReachEveryReader(&ok)
@@ -43,21 +43,13 @@ enum ReviewTwoUXModelSelfTest {
         return try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
     }
 
-    /// The main menu `AppDelegate` builds for `layout`, in this process's own
-    /// defaults domain, with the stored layout put back after.
-    static func mainMenu(for layout: WorkspaceLayout) -> NSMenu {
-        let stored = AppDefaults.store.string(forKey: "fm.workspaceLayout")
-        defer {
-            if let stored { AppDefaults.store.set(stored, forKey: "fm.workspaceLayout") } else {
-                AppDefaults.store.removeObject(forKey: "fm.workspaceLayout")
-            }
-        }
-        AppSettings.shared.workspaceLayout = layout
-        return AppDelegate().buildMenu(installing: false)
+    /// The main menu `AppDelegate` builds, without installing it.
+    static func mainMenu() -> NSMenu {
+        AppDelegate().buildMenu(installing: false)
     }
 
-    static func goMenu(for layout: WorkspaceLayout) -> NSMenu? {
-        mainMenu(for: layout).items.compactMap(\.submenu).first { $0.title == "Go" }
+    static func goMenu() -> NSMenu? {
+        mainMenu().items.compactMap(\.submenu).first { $0.title == "Go" }
     }
 
     // MARK: R2-UX-02 - one taxonomy
@@ -108,11 +100,11 @@ enum ReviewTwoUXModelSelfTest {
         }
     }
 
-    /// The real menu: the sidebar layout's has the module rows and no
-    /// spaces, and the floating bar's keeps its spaces.
-    private static func checkTheGoMenuPerLayout(_ ok: inout Bool) {
+    /// The real menu has the sidebar's module rows and none of the floating
+    /// bar's spaces, which P-03 of the 2026-11-25 review removed.
+    private static func checkTheGoMenuListsTheModules(_ ok: inout Bool) {
         let spaces = Set(DaylightSpace.allCases.filter { $0 != .overview }.map(\.title))
-        guard let sidebar = goMenu(for: .sidebar), let floating = goMenu(for: .floatingBar) else {
+        guard let sidebar = goMenu() else {
             fail("there is no Go menu, so the taxonomy check measures nothing", &ok)
             return
         }
@@ -120,35 +112,15 @@ enum ReviewTwoUXModelSelfTest {
         let moduleRows = sidebarRows.filter { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) }
         check(moduleRows.map(\.title) == WorkspaceSidebarModel.listedModules(hidden: AppSettings.shared.hiddenModules).map(\.title),
               "the sidebar layout's Go menu module rows are \(moduleRows.map(\.title))", &ok)
-        let leftovers = sidebarRows.filter { spaces.contains($0.title) || $0.action == #selector(WorkspaceShellController.selectSpaceByShortcut(_:)) }
-        check(leftovers.isEmpty, "the sidebar layout's Go menu still lists the spaces: \(leftovers.map(\.title))", &ok)
-        let floatingSpaces = floating.items.filter { $0.action == #selector(WorkspaceShellController.selectSpaceByShortcut(_:)) }
-        check(floatingSpaces.count == DaylightSpace.allCases.count,
-              "the floating bar's Go menu lost its spaces (\(floatingSpaces.count) rows)", &ok)
-        check(!floating.items.contains { $0.action == #selector(WorkspaceShellController.selectModuleFromMenu(_:)) },
-              "the floating bar's Go menu lists the sidebar's modules", &ok)
+        let leftovers = sidebarRows.filter { spaces.contains($0.title) }
+        check(leftovers.isEmpty, "the Go menu lists the floating bar's spaces again: \(leftovers.map(\.title))", &ok)
     }
 
-    /// R2-ARCH-01, option (a): the floating bar is the classic layout, and
-    /// R5-UX-11 keeps it beside the sidebar for good. Settings says so where the layout is chosen, and the sidebar
-    /// layout's Home no longer reads the floating bar's spaces - its
+    /// R2-ARCH-01: Home does not read the floating bar's spaces - its
     /// Customize menu files each card under the sidebar group of the module
-    /// it opens. The floating bar itself is not touched: its own Go menu and
-    /// spaces are `checkTheGoMenuPerLayout`'s, and stay.
-    private static func checkTheFloatingBarIsKeptAndHomeHasNoSpaces(_ ok: inout Bool) {
-        check(WorkspaceLayout.floatingBar.title.localizedCaseInsensitiveContains("classic"),
-              "R2-ARCH-01: Settings does not label the floating bar as the classic layout (\(WorkspaceLayout.floatingBar.title))", &ok)
-        // R5-UX-11: the captain keeps both layouts, so the note says that
-        // and no longer calls the floating bar maintenance only.
-        check(WorkspaceLayout.choiceNote.contains("keeps both layouts")
-                && WorkspaceLayout.choiceNote.contains("default")
-                && !WorkspaceLayout.choiceNote.contains("maintenance only"),
-              "R5-UX-11: the layout note no longer says both layouts are kept (\(WorkspaceLayout.choiceNote))", &ok)
-        check(source("SettingsController.swift")?.contains("description: WorkspaceLayout.choiceNote") == true,
-              "R5-UX-11: Settings' Window layout row does not show the layout note", &ok)
-        check(WorkspaceLayout.allCases.contains(.floatingBar) && WorkspaceLayout.floatingBar.shellType == AppShellController.self,
-              "R2-ARCH-01: the floating bar is no longer a layout the captain can choose", &ok)
-
+    /// it opens. P-03 of the 2026-11-25 review removed the floating bar
+    /// itself; `SettingsLayoutChoiceSelfTest` guards that the choice is gone.
+    private static func checkHomeHasNoSpaces(_ ok: inout Bool) {
         // Home's Customize menu, with every card hidden so every card is offered.
         let tray = HomeCustomizeTray()
         tray.hiddenCards = DaylightModule.allCases
@@ -170,7 +142,7 @@ enum ReviewTwoUXModelSelfTest {
         }
         check(source("HomeCardLayout.swift").map { !$0.contains("DaylightSpace") } == true,
               "R2-ARCH-01: the sidebar layout's Home card set reads the floating bar's spaces again", &ok)
-        if ok { print("  OK   R2-ARCH-01: the floating bar is labelled classic, and Home's Customize uses the sidebar's groups") }
+        if ok { print("  OK   R2-ARCH-01: Home's Customize uses the sidebar's groups") }
     }
 
     /// Source guard: the sidebar shell hands Home no tabs.
@@ -303,9 +275,6 @@ enum ReviewTwoUXModelSelfTest {
     }
 
     private static func checkTheWelcomeOffersTheProfiles(_ ok: inout Bool) {
-        let saved = PlaceName.layout
-        defer { PlaceName.layout = saved }
-        PlaceName.layout = .sidebar
         let savedHidden = AppSettings.shared.hiddenModules
         defer { AppSettings.shared.hiddenModules = savedHidden }
         let sheet = WelcomeSheetController()
@@ -320,15 +289,6 @@ enum ReviewTwoUXModelSelfTest {
         sheet.debugPickProfile(.operator)
         check(AppSettings.shared.hiddenModules == WorkspaceProfile.operator.hiddenModules,
               "picking Operator on the welcome sheet hid \(AppSettings.shared.hiddenModules.map(\.rawValue))", &ok)
-        // R5-UX-01: the floating bar asks too - the profile decides Home's
-        // cards and the Console's toolbar there - and says so without
-        // promising a sidebar it does not have.
-        PlaceName.layout = .floatingBar
-        check(WelcomeSheetController.debugStepCount == 4, "the floating bar's welcome sheet no longer asks for a profile", &ok)
-        let floating = WelcomeSheetController()
-        floating.loadView()
-        check(floating.debugStepTitle == "How will you use Grand Line?" && !floating.debugBlurb.contains("sidebar"),
-              "the floating bar's profile step reads \(floating.debugBlurb)", &ok)
     }
 
     // MARK: R2-UX-01 (c) - plain language outside the operator modules
@@ -348,11 +308,12 @@ enum ReviewTwoUXModelSelfTest {
             ("HomeCanvasController.swift", "Generate one from an SRE Lead investigation"),
         ]
         for (file, phrase) in banned {
-            guard let text = source(file) else { fail("\(file) was not found", &ok); continue }
+            let read = file == "HomeCanvasController.swift" ? SelfTestSources.homeCanvas(read: source) : source(file)
+            guard let text = read else { fail("\(file) was not found", &ok); continue }
             let code = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             check(!code.contains { $0.contains(phrase) }, "\(file) still says \"\(phrase)\" to every user", &ok)
         }
-        if let home = source("HomeCanvasController.swift") {
+        if let home = SelfTestSources.homeCanvas(read: source) {
             check(home.contains("crew ? fleetAttentionItem() : nil") && home.contains("setup ? sessionChecksAttentionItem() : nil"),
                   "Home's attention card no longer leaves out the fleet and Setup rows for a profile that hides them", &ok)
         }
@@ -392,10 +353,9 @@ enum ReviewTwoUXModelSelfTest {
                 && WorkspaceGoMenu.chord(for: .calendar, hidden: hidden) == 0
                 && WorkspaceGoMenu.chord(for: .settings, hidden: hidden) == nil && WorkspaceGoMenu.chord(for: .crew, hidden: hidden) == nil,
               "a hidden module does not hand its number to the next one down", &ok)
-        // The real menus: every module row in the first nine carries its
-        // chord, Previous and Next Tab are the sidebar layout's, and the
-        // floating bar keeps ⌘1-⌘6 for its spaces.
-        guard let sidebar = goMenu(for: .sidebar), let floating = goMenu(for: .floatingBar) else {
+        // The real menu: every module row in the first nine carries its
+        // chord, and Previous and Next Tab are there.
+        guard let sidebar = goMenu() else {
             fail("there is no Go menu to read the chords from", &ok)
             return
         }
@@ -420,11 +380,6 @@ enum ReviewTwoUXModelSelfTest {
         check(previous?.keyEquivalent == "{" && next?.keyEquivalent == "}"
                 && previous?.keyEquivalentModifierMask == [.command] && next?.keyEquivalentModifierMask == [.command],
               "the sidebar layout's Go menu has no \u{2318}\u{21E7}[ / \u{2318}\u{21E7}] tab items", &ok)
-        // R5-UX-09: the floating bar steps through a module's pages with
-        // the same two chords (`AppShellController.stepModuleTab`).
-        let floatingNext = item(floating, #selector(WorkspaceShellController.selectNextModuleTab(_:)))
-        check(floatingNext?.keyEquivalent == "}" && floatingNext?.keyEquivalentModifierMask == [.command],
-              "the floating bar's Go menu has no \u{2318}\u{21E7}] to step through a module's pages", &ok)
         // The palette's module rows say their chords.
         var provider = UnifiedSearchActionProvider(actions: [])
         provider.moduleActions = {
@@ -451,15 +406,13 @@ enum ReviewTwoUXModelSelfTest {
     // MARK: R2-UX-09 - ⌥⌘S is the sidebar everywhere
 
     private static func checkTheSidebarChordIsOneThing(_ ok: inout Bool) {
-        guard let sidebar = goMenu(for: .sidebar), let floating = goMenu(for: .floatingBar) else {
+        guard let sidebar = goMenu() else {
             fail("there is no Go menu to read ⌥⌘S from", &ok)
             return
         }
         let column = sidebar.items.first { $0.action == #selector(WorkspaceShellController.togglePageColumnFromMenu) }
         check(column?.keyEquivalent == "s" && column?.keyEquivalentModifierMask == [.command, .option, .shift],
               "the sidebar layout's page columns have no \u{2325}\u{21E7}\u{2318}S item", &ok)
-        check(!floating.items.contains { $0.action == #selector(WorkspaceShellController.togglePageColumnFromMenu) },
-              "the floating bar grew a second page-column chord", &ok)
         if let shell = source("MainSplitShellController.swift"),
            let start = shell.range(of: "override func toggleSidebarFromMenu() {"),
            let end = shell.range(of: "}", range: start.upperBound..<shell.endIndex) {
@@ -475,8 +428,8 @@ enum ReviewTwoUXModelSelfTest {
 
     private static func checkTheToolbarEnforcesOneFilledButton(_ ok: inout Bool) {
         let toolbar = WorkspaceToolbar(splitView: NSSplitView())
-        let action = HelmButton(title: "Filled in the floating bar", variant: .primary)
-        let primary = HelmButton(title: "Outlined in the floating bar", variant: .secondary)
+        let action = HelmButton(title: "Filled page action", variant: .primary)
+        let primary = HelmButton(title: "Outlined primary", variant: .secondary)
         toolbar.setPageActions([action])
         toolbar.setPrimaryAction(primary)
         check(action.variant == .secondary, "a page action stays filled in the toolbar", &ok)

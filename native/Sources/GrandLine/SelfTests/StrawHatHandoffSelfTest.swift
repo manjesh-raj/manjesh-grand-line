@@ -119,12 +119,12 @@ enum StrawHatHandoffSelfTest {
     /// window - `AppShellBodyWidthSelfTest.makeMountedShell`'s own copy, so
     /// every shell-mounting suite drives the same real object graph.
     private static func makeMountedShell()
-        -> (window: NSWindow, shell: AppShellController, keys: SSHKeyStore, snippets: SnippetStore) {
+        -> (window: NSWindow, shell: MainSplitShellController, keys: SSHKeyStore, snippets: SnippetStore) {
         let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
@@ -146,7 +146,7 @@ enum StrawHatHandoffSelfTest {
     /// This suite's honest limit, stated the way that one states its own: it
     /// proves the resolution reacts correctly to a registered session, and
     /// deliberately does not prove `connectHost` registers one.
-    private static func register(_ shell: AppShellController, label: String,
+    private static func register(_ shell: MainSplitShellController, label: String,
                                  keyStore: SSHKeyStore, snippetStore: SnippetStore,
                                  withTab: Bool = true) -> UUID {
         let id = UUID()
@@ -177,7 +177,7 @@ enum StrawHatHandoffSelfTest {
     /// process (nothing runs until a question is asked). Tearing it down
     /// stops the bridge's own poll timer rather than leaving one running for
     /// the rest of the suite.
-    private static func settleAndTearDownSRELead(_ shell: AppShellController, hostID: UUID) {
+    private static func settleAndTearDownSRELead(_ shell: MainSplitShellController, hostID: UUID) {
         guard let console = shell.debugHostConsole(id: hostID),
               let tabID = console.debugAllTabIDs().first else { return }
         let deadline = Date().addingTimeInterval(10)

@@ -47,8 +47,6 @@ protocol WorkspaceChrome: AnyObject {
     /// The Fleet page finished a read of the crew (`FleetController`'s
     /// `needsYouReading` has the result).
     func workspaceCrewDidRead()
-    /// Which page is showing decides where the keyboard loop hands off.
-    func workspaceKeyViewLoopMayHaveChanged()
     /// The window the workspace is showing in.
     var workspaceWindow: NSWindow? { get }
 }

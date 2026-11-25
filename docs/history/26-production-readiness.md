@@ -675,6 +675,37 @@ The largest files are `DaylightModuleSelfTest.swift` (33), `Workspace.swift` (26
 3. The `targeted` gate then checks that area's annotations on every build.
 4. When the count reaches zero, change the flag to `complete`, and later move the package to Swift 6 language mode.
 
+### The first slice: Home (P-02 of the 2026-11-25 review)
+
+The 2026-11-25 review counted 6 `@MainActor`, 233 `DispatchQueue.main.async`, 53 `NSLock()` and 395 `try?` in production sources, and recommended marking view controllers and `Helm*` views `@MainActor` one directory at a time to remove main-queue hops.
+Three things measured on Swift 6.4 changed that plan:
+
+- Every `NSView`, `NSViewController` and `NSWindow` subclass is already main-actor isolated.
+  `NSResponder` is `NS_SWIFT_UI_ACTOR` in the macOS SDK, so writing `@MainActor` on a view or a controller changes nothing and removes no hop.
+  The sources are also one directory, so "one UI directory" has no meaning here.
+- The hops that are left are real.
+  A search for a `main.async` directly after a callback that is already delivered on main (`Subprocess.runAsync`, `ClaudeOneShot`) found none.
+  The rest return from a background queue, or defer to the next main-queue turn on purpose, and replacing either with a `Task` changes when the code runs.
+- `DependencyCheckCache`, `FleetTaskCache` and the git-sync queue are not clean actor conversions.
+  The first two are synchronous, blocking reads that coalesce concurrent callers with a `DispatchGroup`, so an actor makes every caller `await` and rewrites their dispatch.
+  The git-sync queue is a serial `DispatchQueue` that seven stores share, and its terminate-time flush is a bounded synchronous dispatch (AGENTS.md's stores rules), which an actor cannot do.
+
+A full `-strict-concurrency=complete` debug build no longer completes on Swift 6.4: the self-test suites' calls into main-actor AppKit code are errors there, not warnings.
+A release build (no suites) with `-Xswiftc -strict-concurrency=complete -Xswiftc -Onone` does, and reported 4,911 unique diagnostics in `Sources/GrandLine`.
+
+The slice taken is the `HomeCanvasController` family, which P-05 had just split: 20 `complete` warnings, all in the main file, to 0.
+
+- `minModuleWidth` and `gridSpacing` are `nonisolated static let`, because a nonisolated default value reads them.
+- The eight properties `deinit` reads are `nonisolated(unsafe)`.
+  `isolated deinit` is not available at the macOS 13 deployment target, and `MainActor.assumeIsolated` in a `deinit` would trap if the last reference ever dropped off main.
+- The three window-notification observers are registered with `queue: .main`, and say so with `MainActor.assumeIsolated`.
+  They compare the sender by `ObjectIdentifier` rather than capturing the non-`Sendable` `Notification`, which is the same identity check `===` made.
+  Breaking that comparison fails `FM_RUN_HOME_DASHBOARD_VIEW_TESTS`'s live-resize checks by name.
+- The clip view's `DispatchQueue.main.async` stays, because deferring to the next main-queue turn is what it is for.
+
+The counts did not move: 6 `@MainActor`, 233 `DispatchQueue.main.async`, 55 `NSLock()` and 395 `try?`.
+Left for later slices: the suites (so a `complete` debug build compiles at all), then one feature at a time by the warning counts above, and the three actors once their callers can `await`.
+
 ## The idle footprint pass (R5-PERF-03, review #5)
 
 Review #5 measured 281 MB resident at idle, with `MALLOC_SMALL` at 167 MB and 82 MB of it dirty.

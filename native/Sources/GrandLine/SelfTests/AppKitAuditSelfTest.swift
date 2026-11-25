@@ -30,14 +30,12 @@ enum AppKitAuditSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("H3_noTwoMenuItemsShareAShortcut", test_h3),
-            ("M1_backToCanvasSyncsTheSpacePill", test_m1),
             ("M5_runHistoryFooterPinsCloseToTheTrailingEdge", test_m5),
             ("M6_runHistorySheetDismissesOnEscape", test_m6),
             ("S1_S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s1_s2),
             ("S3_multiLineAiCommandsAreRefused", test_s3),
             ("Pr1_scheduleStoresRedirectToScratchInASelfTestProcess", test_pr1),
             ("T5_audioTapReadsSnapshotsNotSharedMutableState", test_t5),
-            ("A1_notificationBellSpeaksItsBadgeCount", test_a1),
             ("A2_dictationHUDAnnouncesEveryStateChange", test_a2),
             ("Hover_hoverNeverActivatesAControl", test_hoverNeverActivatesAControl),
         ]
@@ -170,35 +168,6 @@ enum AppKitAuditSelfTest {
             return "found only \(checked) NSControl hover override(s) - expected at least 3, so this scan has drifted"
         }
         return problems.isEmpty ? nil : problems.sorted().joined(separator: "; ")
-    }
-
-    private static func test_a1() -> String? {
-        let bell = NotificationBellButton()
-        var seen: [String] = []
-        for count in [0, 1, 5, 250] {
-            bell.setBadgeCount(count)
-            guard let label = bell.accessibilityLabel() else {
-                return "the bell has no accessibility label at count \(count)"
-            }
-            seen.append(label)
-            if count > 0, !label.contains("\(count)") {
-                return "the bell says \(label.debugDescription) at count \(count) - the count is invisible to VoiceOver"
-            }
-            if count > 0, bell.accessibilityValue() as? Int != count {
-                return "the bell's accessibility value does not carry the count at \(count)"
-            }
-        }
-        if Set(seen).count != seen.count {
-            return "the bell says the same thing at different counts: \(seen)"
-        }
-        // The badge label must not surface as its own stray element.
-        bell.setBadgeCount(5)
-        for sub in bell.subviews where sub.isAccessibilityElement() {
-            if (sub.accessibilityValue() as? String) == "5" {
-                return "the badge label surfaces as its own \"5, text\" element beside the button"
-            }
-        }
-        return nil
     }
 
     /// A2: `DictationHUD` had zero accessibility API usage, so a VoiceOver user
@@ -497,34 +466,6 @@ enum AppKitAuditSelfTest {
     }
 
     // MARK: M1 - the space pill on the way back to the canvas
-
-    /// M1: `DaylightModule.space(forDestination:)` returns nil for the canvas
-    /// itself, and both the drill-header back button and `show(.homeCanvas)`
-    /// route through `show(_:)` rather than `selectSpace` - so B5's fix left
-    /// the pill asserting the drill page's space while the canvas rendered the
-    /// space the captain last chose.
-    ///
-    /// A source guard for the same reason B5's own case is one: exercising it
-    /// for real needs a mounted `AppShellController`, which constructs every
-    /// store in the app. What can go wrong here is the branch being dropped,
-    /// and that is exactly what this reads.
-    private static func test_m1() -> String? {
-        guard let dir = SelfTestSources.appSourceDirectory(),
-              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
-            return nil
-        }
-        // Since stage 2 of the modular-shell migration the canvas is reached
-        // through the workspace, and this branch is `show(_:)`'s chrome half
-        // (`workspaceDidShow`).
-        guard shell.contains("bar.setSelectedSpace(workspace.homeCanvas.selectedSpace)") else {
-            return "show(_:) no longer syncs the pill for .homeCanvas - the back button leaves the previous drill page's space lit"
-        }
-        // And the canvas has to be the one that owns the space, not a second copy.
-        guard DaylightModule.space(forDestination: .homeCanvas) == nil else {
-            return "space(forDestination:) now answers for .homeCanvas, so this branch is dead code - re-check which one wins"
-        }
-        return nil
-    }
 
     // MARK: H3 - shortcut collisions in the main menu
 

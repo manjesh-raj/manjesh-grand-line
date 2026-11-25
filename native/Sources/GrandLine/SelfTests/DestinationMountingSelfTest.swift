@@ -91,7 +91,6 @@ enum DestinationMountingSelfTest {
         let cases: [(String, () -> String?)] = [
             ("everyRailDestinationResolvesToARegisteredSlot", test_everyDestinationHasASlot),
             ("setupGroupHasFourSeparateSlotsAndFourTitles", test_setupGroupHasFourSeparateSlots),
-            ("setupDestinationsShowTheirOwnDrillHeader", test_setupDestinationsShowTheirOwnDrillHeader),
             ("onlyEagerSlotsAreMountedAtLaunch", test_onlyEagerSlotsMountedAtLaunch),
             ("firstVisitMountsExactlyOneSlot", test_firstVisitMountsOneSlot),
             ("revisitReusesTheSameView", test_revisitReusesSameView),
@@ -104,7 +103,6 @@ enum DestinationMountingSelfTest {
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
-            ("windowTitleFollowsTheShowingDestination", test_windowTitleFollowsTheShowingDestination),
             ("theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore", test_theShellBuildsOneRunbookStoreAndOneLogAnalyzerStore),
             ("theLaunchConstructsNoLazyPage", test_theLaunchConstructsNoLazyPage),
             ("aFirstVisitConstructsExactlyThePageAskedFor", test_aFirstVisitConstructsExactlyThePageAskedFor),
@@ -127,63 +125,7 @@ enum DestinationMountingSelfTest {
         return failures == 0
     }
 
-
     // MARK: Review #3 §7 - the window title follows navigation
-
-    /// Every navigation renames the window.
-    ///
-    /// The title used to be `CFBundleDisplayName` and nothing else, so Mission
-    /// Control, the Window menu and the proxy menu named the app rather than
-    /// the page - for twenty-seven destinations plus a page per saved host.
-    /// `AppShellController.onCurrentDestinationChanged` fires from
-    /// `updateRecentDestinations`, the one funnel every navigation path passes
-    /// through, and `main.swift` composes the real title from it.
-    ///
-    /// This is the live half. `NavigationCoherenceSelfTest
-    /// .checkWindowTitleComposition` asserts the composition itself, which
-    /// needs no window at all.
-    ///
-    /// **Confirmed to catch a regression, not merely to pass**: removing the
-    /// `onCurrentDestinationChanged?(kind.title)` line from
-    /// `updateRecentDestinations` leaves `seen` empty and fails the first
-    /// check below by name.
-    private static func test_windowTitleFollowsTheShowingDestination() -> String? {
-        withScratchEnv {
-            let (window, shell) = makeMountedShell()
-            // Wired exactly as `main.swift` does it.
-            var seen: [String] = []
-            shell.workspace.navigator.onCurrentDestinationChanged = { context in
-                window.title = AppDelegate.windowTitle(context: context)
-                seen.append(window.title)
-            }
-            shell.view.layoutSubtreeIfNeeded()
-
-            // Three real navigations, chosen so no two share a title.
-            let visited: [RailDestination] = [.hosts, .console, .settings]
-            for dest in visited {
-                shell.workspace.navigator.show(dest)
-                shell.view.layoutSubtreeIfNeeded()
-            }
-
-            guard seen.count >= visited.count else {
-                return "expected a title per navigation, got \(seen)"
-            }
-            let bare = AppDelegate.windowTitle()
-            for dest in visited where !seen.contains("\(bare) - \(dest.title)") {
-                return "no title named \(dest.title) - got \(seen)"
-            }
-            // The window really is left holding the last one, not just told.
-            guard window.title == "\(bare) - \(RailDestination.settings.title)" else {
-                return "the window should still be titled for the page it is showing, got \(window.title)"
-            }
-            // And `currentContextTitle` is the same answer, since the two must
-            // not be able to disagree.
-            guard shell.workspace.navigator.currentContextTitle == RailDestination.settings.title else {
-                return "currentContextTitle disagrees with the title bar: \(shell.workspace.navigator.currentContextTitle ?? "nil")"
-            }
-            return nil
-        }
-    }
 
     // MARK: Table (pure logic, no view hierarchy)
 
@@ -887,97 +829,6 @@ enum DestinationMountingSelfTest {
         }
     }
 
-    /// `fm/grandline-separate-setup-destinations`, end to end: opening any one
-    /// of the four Engineering setup destinations lands on a page titled for
-    /// *that* page, carrying *that* page's own live line.
-    ///
-    /// **This is the case the captain's own report maps onto.** Four
-    /// distinct cards on the Engineering canvas funnelled into one body view
-    /// whose drill header always said "Setup", with a segmented tab strip
-    /// naming the sub-page underneath: "we have 4 cards, however when we go
-    /// inside it says setup and everything is lumped up." Three independent
-    /// things had to hold for that to stop, and each fails differently:
-    ///
-    ///   - a slot of its own (a shared one cannot show four titles),
-    ///   - the title being the destination's own (the old `bodyTitle`
-    ///     hardcoded "Setup" for all four, which looked like a design choice),
-    ///   - and the subtitle being the page's own live line rather than
-    ///     `drillSubtitle`'s static per-area fallback, which is what a lost
-    ///     `DaylightDrillActions` conformance or a lost
-    ///     `onDrillSubtitleChanged` wiring silently degrades to.
-    ///
-    /// `DaylightModuleSelfTest` sweeps the title half across every
-    /// destination; this is the local, three-part check for the four that were
-    /// merged.
-    private static func test_setupDestinationsShowTheirOwnDrillHeader() -> String? {
-        withScratchEnv {
-            let (_, shell) = makeMountedShell()
-            let group: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
-            var subtitles: [String] = []
-
-            for dest in group {
-                shell.workspace.navigator.show(dest)
-
-                let title = shell.drillHeaderForTests.titleForTests
-                guard title == dest.title else {
-                    return "opening \(dest) shows a page titled \"\(title)\", expected \"\(dest.title)\""
-                }
-                guard title != "Setup" else {
-                    return "\(dest) still lands on a page titled \"Setup\""
-                }
-
-                let subtitle = shell.drillHeaderForTests.subtitleForTests
-                guard !subtitle.isEmpty else { return "\(dest)'s drill header has no subtitle" }
-                guard subtitle != dest.drillSubtitle else {
-                    return "\(dest)'s header shows the static per-area fallback (\"\(subtitle)\") rather than "
-                        + "the page's own live line - its DaylightDrillActions conformance or its "
-                        + "onDrillSubtitleChanged wiring is missing"
-                }
-                subtitles.append(subtitle)
-
-                // Opening the *first* of the four must not build the other
-                // three as a side effect - which is exactly what happened
-                // while they shared a container, since it parented all four
-                // up front regardless of which tab was active. Checked on the
-                // first pass only: by the second, the earlier page is
-                // legitimately mounted and retained.
-                if dest == group[0] {
-                    for other in group.dropFirst() {
-                        guard shell.destinationViewIfMountedForTests(other.slot) == nil else {
-                            return "show(\(dest)) unexpectedly mounted \(other) too"
-                        }
-                    }
-                }
-            }
-
-            // **Bootstrap and Automation are now deliberately identical**, and
-            // the captain decided it: the 2026-09-27 review's U7/X4 is that
-            // they used to disagree out loud about one setup checklist ("3 of
-            // 4 steps done" against "0 of 5 steps ready" on the same
-            // machine). They read one `SetupPipelineProgress` now, so the
-            // property worth pinning for that pair is agreement, and it is
-            // asserted rather than merely tolerated.
-            let sharedChecklist: Set<RailDestination> = [.bootstrap, .automation]
-            var independent: [String] = []
-            var checklist: Set<String> = []
-            for (dest, subtitle) in zip(group, subtitles) {
-                if sharedChecklist.contains(dest) { checklist.insert(subtitle) }
-                else { independent.append(subtitle) }
-            }
-            guard Set(independent).count == independent.count else {
-                return "two setup pages that describe different things render the identical header "
-                    + "line: \(independent)"
-            }
-            guard checklist.count == 1 else {
-                return "Bootstrap and Automation describe one setup checklist differently: \(checklist)"
-            }
-            guard let shared = checklist.first, !independent.contains(shared) else {
-                return "a page outside the setup checklist renders its line: \(checklist)"
-            }
-            return nil
-        }
-    }
-
     private static func test_poneglyphIsSeparateFromSetup() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
@@ -1128,7 +979,7 @@ enum DestinationMountingSelfTest {
             /// Visits every destination and checks the one thing this case is
             /// about. `label` names which sweep found a failure, since the
             /// mount-time and theme-change paths are different bugs.
-            func sweep(_ shell: AppShellController, theme: HelmTheme, label: String) {
+            func sweep(_ shell: MainSplitShellController, theme: HelmTheme, label: String) {
                 let expected: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
                 var reported: Set<DestinationSlotID> = []
                 for dest in RailDestination.allCases {
@@ -1231,14 +1082,14 @@ enum DestinationMountingSelfTest {
         return body()
     }
 
-    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
+    private static func makeMountedShell() -> (window: NSWindow, shell: MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
         let dictationStore = DictationStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),

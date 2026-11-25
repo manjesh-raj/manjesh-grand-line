@@ -56,8 +56,7 @@ enum NotificationBridgePanelSelfTest {
                       checkSnoozeMenuAndTheSnoozedList,
                       checkEmptyStates,
                       checkManyItems,
-                      checkEveryThemeDrawsACard,
-                      checkOnlyTheSidebarShowsBridge] {
+                      checkEveryThemeDrawsACard] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -166,7 +165,7 @@ enum NotificationBridgePanelSelfTest {
 
     private static func mount(scale: CGFloat = 1.0) -> (NotificationBridgePanelViewController, OffScreenProbeWindow) {
         ChromeTextScale.shared.setScale(scale)
-        let controller = NotificationCenterController(style: .bridge)
+        let controller = NotificationCenterController()
         controller.onOpenHome = { performed.append("home") }
         let content = controller.debugBridgeContent
         content.clock = { now }
@@ -746,23 +745,6 @@ enum NotificationBridgePanelSelfTest {
 
     // MARK: 14. Sidebar only
 
-    private static func checkOnlyTheSidebarShowsBridge(_ ok: inout Bool) {
-        print("\n-- the sidebar layout's bell opens the triage cards; the floating bar keeps the classic panel --")
-        check(NotificationCenterController(style: .bridge).debugPanelController is NotificationBridgePanelViewController,
-              "a .bridge controller does not show the triage-card panel", &ok)
-        check(NotificationCenterController().debugPanelController is NotificationPanelViewController,
-              "the default controller is no longer the classic panel the floating bar is frozen on", &ok)
-        guard let dir = SelfTestSources.appSourceDirectory() else {
-            print("  SKIP: app sources not found - the two source guards below did not run")
-            return
-        }
-        let shell = (try? String(contentsOf: dir.appendingPathComponent("MainSplitShellController.swift"), encoding: .utf8)) ?? ""
-        let bar = (try? String(contentsOf: dir.appendingPathComponent("DaylightBarController.swift"), encoding: .utf8)) ?? ""
-        check(shell.contains("NotificationCenterController(style: .bridge)"),
-              "the sidebar shell no longer builds the triage-card panel", &ok)
-        check(bar.contains("NotificationCenterController()") && !bar.contains("style: .bridge"),
-              "the floating bar must keep the classic panel (R2-ARCH-01)", &ok)
-    }
 }
 
 #endif

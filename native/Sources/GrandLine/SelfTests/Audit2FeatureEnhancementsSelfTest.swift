@@ -351,12 +351,12 @@ enum Audit2FeatureEnhancementsSelfTest {
     // MARK: Helpers
 
     /// Mirrors `SessionSwitcherSelfTest.makeMountedShell`.
-    private static func makeShell() -> (window: NSWindow, shell: AppShellController) {
+    private static func makeShell() -> (window: NSWindow, shell: MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,

@@ -408,11 +408,9 @@ enum FeatureInventorySelfTest {
         }
     }
 
-    /// Both layouts' menus. Since R2-UX-02 their Go menus differ - the
-    /// floating bar lists its spaces and destinations, the sidebar layout its
-    /// modules and their tabs - so an item either one has is a feature.
-    private static let cachedMenus: [NSMenu] = [ReviewTwoUXModelSelfTest.mainMenu(for: .sidebar),
-                                                 ReviewTwoUXModelSelfTest.mainMenu(for: .floatingBar)]
+    /// The app's menu. P-03 of the 2026-11-25 review removed the floating
+    /// bar, whose Go menu listed its spaces and destinations, so there is one.
+    private static let cachedMenus: [NSMenu] = [ReviewTwoUXModelSelfTest.mainMenu()]
 
     /// The Help menu's shortcut sheet, which is the app's own catalog: every
     /// menu chord, keyed by the chord, plus the configurable terminal and
@@ -492,7 +490,7 @@ enum FeatureInventorySelfTest {
         // its own. Since R2-ARCH-05 the shell forwards nothing, so the routes
         // are read where they live - the navigator, the host sessions and
         // the lock.
-        for file in ["WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
+        for file in ["WorkspaceShellController.swift", "MainSplitShellController.swift",
                      "Navigator.swift", "HostSessionCoordinator.swift", "LockPresenter.swift"] {
             guard let text = source(file) else { continue }
             let pattern = #"(?m)^\s*(?:@objc\s+)?func\s+((?:open|show|select|switchTo|reveal|new)[A-Za-z]*)\("#

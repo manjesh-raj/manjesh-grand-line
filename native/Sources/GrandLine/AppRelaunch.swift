@@ -2,9 +2,10 @@
 //
 // R2-UX-08 of the second full review: "Relaunch Grand Line".
 //
-// Two Settings rows (Window layout, Interface text size) take full effect
-// only on the next launch, and said so with nothing to press. This is the
-// button's mechanism.
+// A Settings row (Interface text size) takes full effect only on the next
+// launch, and said so with nothing to press. This is the button's mechanism.
+// The Window layout row used it too, until P-03 of the 2026-11-25 review
+// removed the floating bar and with it the choice of layout.
 //
 // A new copy cannot simply be opened next to this one: `SingleInstanceGuard`
 // (GL-05) would see this process still running and hand the new copy's

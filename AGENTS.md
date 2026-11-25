@@ -419,120 +419,51 @@ is scoped by blast radius, and CI's run is not.
 
 ### Verifying native UI bugs without a real screenshot
 
-**`screencapture` does NOT work from an agent shell on this machine.**
-`screencapture -x` fails with "could not create image from display" - measured
-by the 2026-09-25 full-app review and again, independently, by
-`fm/grand-line-review-bugs-b1-b14`. A grant this file recorded after
-`fm/grandline-settings-black-band-real-fix` has since lapsed (a shell that is
-re-signed or relaunched under a different parent loses it), so **check before
-relying on it rather than trusting either state written here**: one
-`screencapture -x /tmp/x.png` says which machine you are on today. Where it
-does work, `screencapture -x -o -l <windowID>` captures one window with alpha
-preserved, and `CGWindowListCopyWindowInfo` names every window, its owner and
-its layer.
+**`screencapture` and Accessibility usually do not work from an agent shell
+here, and a grant recorded once has lapsed before.** Check rather than trust
+either state: one `screencapture -x /tmp/x.png` says which machine you are on
+today. `System Events` answers a window query for another process with `0`
+rather than refusing, so a count of zero is not evidence of no window. A real
+`performClick` substitutes for a synthetic click, and
+`CGWarpMouseCursorPosition` moves the pointer without a grant.
 
-Accessibility is *not* granted either, and the failure mode is worse than an
-error: `System Events` answers a window query for another process with `0`
-rather than refusing, so a count of zero is not evidence of no window
-(measured, `fm/grand-line-review-bugs-b1-b14`). A real `performClick` is still
-the substitute for a synthetic click, and `CGWarpMouseCursorPosition` moves the
-pointer without it.
+**Env-gated instrumentation and off-screen renders are the working tools.** Add
+temporary env-gated debug code to the controller under test (live
+`NSView.frame` geometry after a real layout pass, or a
+`Thread.callStackSymbols` dump in a suspect callback), run
+`swift build && FM_DEBUG_X=1 .build/debug/GrandLine`, read the output, and
+revert it before committing. Say so in the PR rather than claiming a visual
+check. An off-screen render has no full-screen Space, title bar or menu bar
+window, so it cannot prove anything about a defect in that region.
 
-So env-gated instrumentation and off-screen renders are the working tools, not
-the fallback - but **an off-screen render still cannot prove a pixel is or is
-not app-painted**: it has no full-screen Space, no title bar and no menu bar
-window, so it structurally cannot reproduce a defect in that region and a clean
-diff there proves nothing;
-[`24-window-and-layout.md`](docs/history/24-window-and-layout.md) records the
-round that cost.
+**Rules for a probe that pixel-samples a render:**
 
-- **Verifying native UI bugs without a real screenshot.** This machine has a
-  real console session, but the agent's shell process (`claude` under WezTerm)
-  has neither Screen Recording nor Accessibility permission granted, and there
-  is no way to grant either non-interactively (`screencapture`/`osascript
-  "System Events"` both fail, TCC.db is SIP-protected even to root, no
-  passwordless sudo). The effective substitute that actually caught real bugs
-  (fixes4): add temporary, env-var-gated debug code straight into the
-  controller under test - print live `NSView.frame` geometry after a real
-  layout pass, or a `Thread.callStackSymbols` dump inside a suspect delegate
-  callback - `swift build && FM_DEBUG_X=1 .build/debug/GrandLine`, read
-  the printed numbers/stack, then revert the instrumentation before committing.
-  This is real evidence from AppKit's actual layout/event engine, not a
-  screenshot, but it is not guesswork either - say so explicitly in any PR that
-  relies on it instead of claiming a visual check that didn't happen. **One
-  hard-won rule for any probe that pixel-samples a render**
-  (`fm/grandline-design-system-phase2`): compare the sampled pixel against the
-  expected colour **in `rep.colorSpace`**, never via
-  `colorAt(...).usingColorSpace(.sRGB)`. `bitmapImageRepForCachingDisplay`
-  returns a rep in the *display's* profile ("Color LCD" on this machine) when
-  the view is inside a real `NSWindow`, and Generic RGB when it is not - and
-  the sRGB conversion is only correct in the second case. In a window it
-  reported `0.286/0.484/0.575` for a pixel genuinely holding the theme accent's
-  `0.157/0.412/0.514`, which reads exactly like a real colour bug; converting
-  the *expected* colour into `rep.colorSpace` first matched to 0.002. A probe
-  that samples a view rendered standalone (no window) will pass with the sRGB
-  conversion and then mislead the moment someone renders the same view inside a
-  window, so use the rep's own space unconditionally. **The same rule governs a
-  *ratio between two samples*, where the plausible-sounding exemption is
-  wrong** - "both operands take the identical transform, so the ratio is
-  safe" - and `HelmContrast.ratio`'s `NSColor` overload converts to sRGB
-  internally, so taking it is the default rather than a choice. Measured
-  (`fm/grandline-settings-sidebar-differentiation-fix`): against a separation
-  the tokens put at exactly 1.0800 in every palette, that overload reported
-  **1.0597 on Daylight and 1.1305 on Dusk** - the display profile deflating
-  every light palette below the floor and inflating every dark one above it,
-  which reads as a real colour bug in eight themes and as a comfortable margin
-  in seven. Feed the **tuple** overload the rep's raw components instead (the
-  same two then measure 1.0753 and 1.0801), leave ~0.01 for the bitmap's 8-bit
-  quantisation, and assert the true-sRGB floor separately against the *tokens*,
-  where no rep is involved. **And the converse half, which is what makes the
-  rule easy to over-apply: convert the *expected* colour and leave the
-  *sample* alone.** `NSBitmapImageRep.colorAt(x:y:)` hands back the rep's own
-  raw components in an `NSColor` that is *tagged* `Generic RGB` whatever the
-  rep's real space is - "Color LCD" for a view inside a real window - so
-  `sampled.usingColorSpace(rep.colorSpace)` re-interprets numbers that were
-  already right. Measured
-  (`fm/grandline-settings-alignment-regression-fix`): one ground pixel read
-  `(0.055, 0.063, 0.086)` raw and `(0.067, 0.078, 0.110)` converted, against
-  an expected `(0.053, 0.062, 0.088)` - a clean pass turned into a 0.022 miss
-  that reads exactly like the unpainted-layer defect the check existed to
-  catch.
+- **Compare in `rep.colorSpace`.** Convert the *expected* colour into the
+  rep's space and leave the sample alone: `colorAt(x:y:)` returns the rep's
+  raw components tagged `Generic RGB` whatever its real space is. Never
+  `usingColorSpace(.sRGB)` on a sample.
+- **A ratio between two samples follows the same rule.** Feed
+  `HelmContrast.ratio`'s tuple overload the rep's raw components, never its
+  `NSColor` overload (which converts to sRGB), leave ~0.01 for 8-bit
+  quantisation, and assert the true-sRGB floor separately against the tokens.
+- **`bitmapImageRepForCachingDisplay` is measured in pixels, not points.**
+  Scale by `rep.pixelsWide / bounds.width` (and the same for height) before
+  indexing, and mirror the row for an unflipped view.
+- **`cacheDisplay` does not capture `WKWebView` content**, draws an
+  `alphaValue = 0` view visibly, and renders a `TerminalView` blank in a
+  window never ordered front. Use `WKWebView.takeSnapshot` for a web island,
+  read the alpha, and order the probe window in.
+- A probe that changes the theme saves and restores `fm.themeID`, and a probe
+  that renders to a file writes to the session scratchpad and is read back
+  with `Read`.
 
-**A second rule for the same call, and it is the one that bites first:
-`bitmapImageRepForCachingDisplay` hands back a rep measured in *pixels*, not
-points.** On a retina machine that is a factor of two, so sampling a view's own
-point coordinates lands in the top-left quadrant of whatever you rendered.
-Measured (`fm/grandline-feature-f2-f3-capture-clipboard`): a check comparing two
-tiles of a 600pt panel failed with `delta 0.0000` - two identical *background*
-pixels - which reads exactly like a real colour bug. Scale by
-`rep.pixelsWide / bounds.width` (and the same for height) before indexing, and
-mirror the row for an unflipped view.
+**`ImageRenderer` is the substitute for SwiftUI** (the widget extension):
+`Scripts/render-widget-previews.sh` renders every widget state to PNGs.
+`EnvironmentValues.widgetFamily` is read-only, so read it in the entry view
+and pass the family down as a parameter.
 
-**`ImageRenderer` is the substitute when the thing being drawn is SwiftUI
-rather than an `NSView`**, and it is a real rasterised render rather than a
-preview. `cacheDisplay` has nothing to render for a widget, and the system's
-widget host will not load this app's extension until the Developer ID work
-lands - so `Scripts/render-widget-previews.sh` compiles the extension's real
-view files, renders every state at both widget families' real point sizes, and
-writes PNGs the agent reads back with `Read`. It found a real defect on its
-first run (F23's medium Sticky widget repeating a kicker on all three notes and
-wrapping it). One thing it needs: **`EnvironmentValues.widgetFamily` is
-read-only**, so a view that reads it directly can only ever be drawn by a
-widget host - keep the environment read in the entry view and pass the family
-down as a parameter.
-
-**Two probe rules that cost real time here.**
-
-- `cacheDisplay` / `bitmapImageRepForCachingDisplay` is this repo's screenshot
-  substitute, and it does **not** capture `WKWebView` content, draws an
-  `alphaValue = 0` view *visibly*, and renders a `TerminalView` as blank in a
-  window that was never ordered front. Use `WKWebView.takeSnapshot` for a web
-  island, read the alpha rather than looking for a hidden view, and order the
-  probe window in.
-- A probe that changes the theme must save and restore `fm.themeID`; see the
-  hermeticity note above. A probe that renders to a file should write to the
-  session scratchpad and be read back with `Read`, which is a plain file read
-  rather than a screen capture.
+The measurements behind each of these rules are in
+[`31-testing-policy.md`](docs/history/31-testing-policy.md).
 
 ---
 
@@ -873,9 +804,9 @@ captain's own instance - `bodyContainer` frozen 395pt wider than the window.
 Name such a constraint as a stored property and re-assert it: reactivate it if
 AppKit left it inactive and force a layout pass, once after activation and again
 on every `NSWindow.didResizeNotification`.
-`AppShellController.reassertBodyContainerWidthTie()` is the worked example, and
-`ToolsController`'s grid and `SettingsController`'s theme grid learned the same
-lesson independently. See also
+`ToolsController`'s grid and `SettingsController`'s theme grid are the worked
+examples (the floating bar's `AppShellController.reassertBodyContainerWidthTie()`
+was the first, and went with that layout). See also
 [`24-window-and-layout.md`](docs/history/24-window-and-layout.md), which corrects
 this entry's original claim that `contentView` is always in sync with the window.
 
@@ -890,7 +821,7 @@ explicit `contentMinSize` does not short-circuit it.
 
 The fix is to deactivate a hidden page's pins to its container, so its subtree
 has no required path to the window, and reactivate them before unhiding
-(`AppShellController.setDestinationVisible`). Nothing is torn down, so GL-37 is
+(`WorkspaceContent.setDestinationVisible`). Nothing is torn down, so GL-37 is
 untouched. Any container keeping many pages mounted needs the same, and any
 "idle CPU" investigation should `sample` for CoreAutoLayout before suspecting a
 timer.
@@ -1134,7 +1065,7 @@ noted.
 | `TOTPTicker.shared.now` | a `Date()` of your own in anything that renders a 2FA code or its countdown. One clock, or two surfaces disagree about the same code |
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
-| `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
+| `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `Workspace` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
 | `SettingsRow` / `SettingsGroup` / `SettingsSection` / `SettingsHero` (`SettingsForm.swift`) | a hand-rolled Settings row, group card or page header. The Settings page is ~60 rows across eight pages, and the separator inset, the `.sub` indent, the dimmed-**and-inert** dependent state and the description re-wrap are exactly what drifts when each call site spells them out. A group is a real `HelmCard` with no header, so there is still one card surface |
 | `HelmGestureArbitration.shouldRecognize(_:with:)` (and `HoverHighlightView`, which applies it for you) | a hand-rolled `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` walk. Two copies of it existed and the third row that needed one shipped dead - gotcha (20) |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
@@ -1142,16 +1073,18 @@ noted.
 
 ### Colour and theming rules
 
+The measured cases behind these rules are in
+[`04-design-system.md`](docs/history/04-design-system.md), under "Moved from
+AGENTS.md".
+
 - **A `HelmTint` hue is safe as a fill or a bar, and is NOT automatically safe
   as text.** Route any tinted label through `HelmContrast.tintedSurface` /
   `legibleTintedText` / `legibleOn`. `FM_RUN_CONTRAST_TESTS` sweeps every theme
   x every tint and fails the build below the floor.
 - **Every theme-aware view follows `ThemeManager.swift`'s own checklist**, and
   its item 2 is the one most often missed: force `view.appearance` to the
-  theme's light/dark mode. Without it the layer-backed fills track the theme
-  while everything resolving a *system semantic* colour - scroller chrome, the
-  shared field editor, an `NSMenu`, a focus ring - follows the OS instead. That
-  is the "half-themed" defect, and it shipped four separate times.
+  theme's light/dark mode, or everything resolving a *system semantic* colour
+  (scroller chrome, the field editor, an `NSMenu`, a focus ring) follows the OS.
 - **`ThemeManager.observe`'s closure fires synchronously at registration**, so
   it runs before the rest of `loadView` has built anything. A repaint function
   with an early-return cache guard must not consume that cache on the premature
@@ -1159,290 +1092,135 @@ noted.
 - **A theme observer repaints; it never fetches** (GL-24), and it must not
   rebuild a page that is not on screen.
 - **`HelmTint.neutral` is page ink, and washing it as a *tinted surface*
-  produces a near-black chip.** `HelmContrast.tintedSurface` is correct for
-  every real hue and wrong for this one, because `.neutral` resolves to
-  `chromeInkHex` - so the wash lands a few percent off full ink rather than a
-  few percent off the surface. It matters because `.neutral` is what
-  `ShiftProjectPalette` gives a record with **no** project, which is most of
-  them: the commonest chip on a surface is then also its heaviest. A no-identity
-  chip wants `HelmField.fill` plus ink text, the same treatment the Kanban's
-  cards already use. Caught in a real off-screen render
-  ([`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md)),
-  not from the code.
-- `HelmDomainHue.identityHex` is for identity (it resolves to `.neutral` off the
-  Daylight family); `fallbackTint` resolves a *semantic* slot and will paint an
-  alert bar on a benign row. **The one sanctioned use of `fallbackTint` is a
-  destination's own colour *tile***, where `identityHex` alone would wash page
-  ink into a near-black chip on 24 of the 26 palettes - `UnifiedSearch`'s
-  palette row and `DaylightBarIconButton.tileHex(for:in:)` are the two, and
-  they resolve identically. It is safe there and not on a bar because every
-  member of those sets carries a tile, so no one hue is the coloured thing
-  among neutral siblings.
+  produces a near-black chip.** A no-identity chip wants `HelmField.fill` plus
+  ink text, the same treatment the Kanban's cards use.
+- `HelmDomainHue.identityHex` is for identity; `fallbackTint` resolves a
+  *semantic* slot and will paint an alert bar on a benign row. **The one
+  sanctioned use of `fallbackTint` is a destination's own colour *tile***,
+  where every member of the set carries a tile (`UnifiedSearch`'s palette row).
 - **A surface drawing *all seven* `HelmDomainHue`s at once must resolve them
-  through `categoricalHex`, not `fallbackTint`.** The seven-hue to seven-
-  `HelmTint` map is 1:1, but a *palette* is free to spend one colour on two
-  slots - Ayu publishes one amber and uses it as both `accent` and its ANSI
-  yellow, Tokyo Night's `accent` **is** its ANSI blue. Swept as a washed tile
-  over all 26 palettes, the closest pair of domain hues measured **0.0000** on
-  eight of them and under a 0.035 separation floor on fourteen; against the
-  raw §2.2 values the worst pair is 0.0568. That shipped as the top bar's
-  three-tan icon row (`docs/history/03-navigation-and-chrome.md`). The
-  per-palette resolutions stay right for a surface drawing **one** hue among
-  neutral siblings, which is why `UnifiedSearch`'s result tile still splits -
-  `HelmDomainHue.identityHex`'s comment is the dividing line. And measure such
-  a collision as a weighted-RGB **distance**, never `HelmContrast.ratio`:
-  that helper compares relative luminance, so two different hues of equal
-  brightness score identical - exactly the defect being looked for.
+  through `categoricalHex`, not `fallbackTint`**, because a palette may spend
+  one colour on two slots. Measure such a collision as a weighted-RGB
+  **distance**, never `HelmContrast.ratio`, which compares luminance only.
 - **An identity colour derived from text must not come from
-  `String.hashValue`.** Swift seeds it per *process*, so the same host, tag or
-  project gets a different colour on every launch - and the defect is invisible
-  within a single session, which is where it would be looked for. Use an
-  explicit stable hash over the UTF-8 bytes; `ReadingListHostHue.hue(for:)` and
-  `ReadingListTags.stableIndex(of:)` are the worked examples, and both are
-  asserted for stability rather than only for range.
+  `String.hashValue`**, which Swift seeds per process. Use an explicit stable
+  hash over the UTF-8 bytes (`ReadingListHostHue.hue(for:)`,
+  `ReadingListTags.stableIndex(of:)`).
 - **A page-scoped nav column takes `HelmTheme.sidePanelFill` / `sidePanelEdge`,
-  never a blend of the card into the page ground.** `chromeBackgroundHex ==
-  backgroundHex` in several palettes, so that blend *is* the ground in those
-  and the column renders invisible - which is exactly the defect those two
-  exist to fix. The fill steps the ground toward the register's own endpoint,
-  bisected to the smallest step clearing `sidePanelSeparation` (1.08:1, which
-  is Daylight's own card-over-paper). `SettingsController`'s band is the worked
-  example, and note it is the *page's* view: `HelmPageSidebar.Surface.panel`
-  paints the nav list as a card, which is a smaller region than the column.
-- **A hero's base colour is `theme.heroAccentHex`, never `accentHex`.** The six
-  palettes (`AppThemeFamily.Group.palette`) may pin a dark register's heroes
-  to the colour the palette is named for, and a hero read from the accent
-  paints that register's grey-steel derived hero beside a pinned sidebar.
-  Anything that paints a fixed Daylight blue for the classic families gates a
-  palette's own colour on `theme.isPaletteTheme`, so the seven classic
-  families stay pixel-identical. `ThemePalettesSelfTest` guards both
-  ([`44-new-theme-families.md`](docs/history/44-new-theme-families.md)).
+  never a blend of the card into the page ground**, which is the ground itself
+  in several palettes.
+- **A hero's base colour is `theme.heroAccentHex`, never `accentHex`.** Anything
+  that paints a fixed Daylight blue for the classic families gates a palette's
+  own colour on `theme.isPaletteTheme`. `ThemePalettesSelfTest` guards both.
 - **A new terminal scheme is one surface step, and the step is the family's
-  own canonical editor background.** In a scheme `backgroundHex` is the
-  terminal background, so a scheme whose card differs from its page reopens
-  the seam `fm/grand-line-legacy-terminal-canvas-chrome-match` closed - unless
-  it carries a real `terminalCard`, which only the Daylight family does. The
-  app's own themes are a separate catalogue (`HelmTheme.appThemes`,
-  `AppTheme.swift`): there `backgroundHex` is only the page ground, and the
-  terminal paints in `ThemeManager.terminalScheme`.
-  `ThemeFamilySelfTest.checkPaletteShape` fails the run on one that does not,
-  and also on a `pairId` that is one-way (`ThemeManager.toggle()` *silently*
-  falls back to the plain Helm swap, so a broken pair drops the captain out of
-  their family on a keystroke and nothing else notices).
-  [`44-new-theme-families.md`](docs/history/44-new-theme-families.md).
+  own canonical editor background**, unless it carries a real `terminalCard`.
+  Its `pairId` must be two-way. `ThemeFamilySelfTest.checkPaletteShape` fails
+  the run on either.
 - A Daylight-family restyle branches on `theme.isDaylight` (true for every app
-  theme) and leaves the 24 other terminal schemes byte-identical. Branch **colour and geometry recipes** that
-  way - never *structure*: a page whose column count depends on the theme is a
-  bug, and shipped as one.
+  theme) and leaves the other terminal schemes byte-identical. Branch **colour
+  and geometry recipes** that way - never *structure*: a page whose column
+  count depends on the theme is a bug, and shipped as one.
 
 ---
 
 ## Stores, subprocesses and secrets
 
+The incidents and measurements behind these rules are in
+[`46-review-bugs-b1-b14.md`](docs/history/46-review-bugs-b1-b14.md), under
+"Moved from AGENTS.md".
+
 - **The app has exactly one name, one identifier prefix and one data folder,
   and all three have a single definition.** The display name is **"Grand
-  Line"** (never "Manjesh Grand Line", never "Firstmate Cockpit"), the Swift
-  module and the shipped executable are `GrandLine`, every identifier this app
-  owns is `com.manjesh.grandline…`, and every file-backed store nests under
-  `AppPaths.applicationSupportFolderName`. A hand-written copy of any of those
-  is how half a rename gets left behind - `LegacyRenameMigrationSelfTest`
-  fails the run on a source that spells a pre-rename name, and on a fourth
-  Keychain service that does not join `LegacyNameMigration.keychainServices`.
-  **Changing the bundle identifier again is not a find-and-replace**: it
-  orphans the captain's Keychain items, their Application Support folder, their
-  whole preference domain and every macOS privacy grant they have given the
-  app. The first three can be migrated and `LegacyNameMigration` is the worked
-  example; the fourth cannot be, ever, because granting it is a user consent
-  action - say so in the PR rather than leaving the captain to find out.
-  [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) is
-  what a future one has to read first.
-- **A store's default path comes through `AppPaths.dataRoot()`, which is the
-  one place `FM_SCRATCH_ROOT` is honoured.** That single variable moves every
-  file-backed store at once, and it exists because the alternative - a list -
-  drifted: `build-probe-app.sh` promised its `ENV_ARGS` were "every FM_*
-  location override, in one place", and by the 2026-09-25 review seven stores
-  had been added that it did not redirect, so a probe launch wrote the
-  captain's real clipboard history, session-restore file, scratchpad and widget
-  snapshot. A store that resolves `.applicationSupportDirectory` for itself is
-  a store no probe and no suite can move; `FM_RUN_PROBE_SCRATCH_ROOT_TESTS`
-  fails the run on one. A default that is **not** under Application Support
-  (`~/.dotfiles`, a shared App Group container) cannot nest under the root and
-  must ask `AppPaths.isScratchRedirected()` instead. **That alone covers the
-  probe and nothing else**, because a suite or a tour does not set
-  `FM_SCRATCH_ROOT`: such a store also needs its own narrow override, set in
-  the redirect block in `SelfTests/SelfTestDispatch.swift`. `DotfilesSource.dotfilesLocation` is the
-  worked example, and missing it ran a real `git fetch` of the captain's
-  dotfiles clone from every tour.
+  Line"**, the module and executable are `GrandLine`, every identifier is
+  `com.manjesh.grandline…`, and every file-backed store nests under
+  `AppPaths.applicationSupportFolderName`. `LegacyRenameMigrationSelfTest`
+  fails the run on a pre-rename name. **Changing the bundle identifier again
+  is not a find-and-replace**: it orphans Keychain items, the Application
+  Support folder, the preference domain and every macOS privacy grant, and the
+  last cannot be migrated. Read
+  [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md)
+  first.
+- **A store's default path comes through `AppPaths.dataRoot()`, the one place
+  `FM_SCRATCH_ROOT` is honoured.** A store that resolves
+  `.applicationSupportDirectory` for itself cannot be moved by a probe or a
+  suite, and `FM_RUN_PROBE_SCRATCH_ROOT_TESTS` fails the run on one. A default
+  outside Application Support asks `AppPaths.isScratchRedirected()` **and**
+  needs its own narrow override in the redirect block in
+  `SelfTests/SelfTestDispatch.swift` (`DotfilesSource.dotfilesLocation` is the
+  worked example).
 - **Every store also honours its own narrow `FM_*` override**, which wins over
-  the root; the repo-root README has the complete index. A store nested under
-  Shift's data root must honour `FM_SHIFT_DIR` as a fallback, not only its own
-  narrow variable - and it needs an entry in the redirect block in
-  `SelfTests/SelfTestDispatch.swift`, which is the backstop for a store reachable from a bare
-  constructor.
+  the root; the repo-root README has the index. A store under Shift's data root
+  honours `FM_SHIFT_DIR` as a fallback, and a store reachable from a bare
+  constructor needs a redirect-block entry before its first suite.
 - **A Keychain service name comes through `KeychainService.resolve`**, which
-  applies `FM_KEYCHAIN_SERVICE_PREFIX` in a debug build and is the identity in
-  a release one. The same rule as the paths above, for the state that outlives
-  the run: before it existed, `BackupSelfTest` had written **91 real items**
-  under the production `com.manjesh.grandline.sshkey` service on the captain's
-  login Keychain, each holding a literal test passphrase, and nothing removed
-  them. `KeychainServiceSweep` deletes this process's items at exit and
-  anything an interrupted earlier run left. Two traps it encodes:
-  **`SecItemDelete` removes one matching item per call** on the file-based
-  login keychain (a single call leaked a second seeded account 33 times), and
-  a suite that drives a key store's `load(create:)` far enough to *mint* will
-  delete and replace the captain's real key - install the store's write seam.
+  applies `FM_KEYCHAIN_SERVICE_PREFIX` in a debug build, and
+  `KeychainServiceSweep` deletes this process's items at exit.
+  **`SecItemDelete` removes one matching item per call** on the login
+  keychain, so loop it. A suite that drives a key store far enough to *mint*
+  must install the store's write seam.
 - **A new field on a `Codable` store type needs a hand-written
   `init(from:)` with `decodeIfPresent` and a default** (GL-01). A Swift-side
-  default does *not* make a declared key optional to the synthesised decoder,
-  and getting this wrong made every existing `hosts.json` undecodable once.
+  default does *not* make a declared key optional to the synthesised decoder.
 - **A store that re-serialises from a decoded struct silently drops any key
-  it does not know, and that is a GL-01 failure with no symptom.** GL-01's
-  usual shape is a *read* that fails; this is a read that succeeds and a
-  *write* that loses something. A whole-file rewrite built from decoded
-  values can only write the fields this build has, so a record carrying one
-  extra key from a newer build loses it on the very next edit - across a git
-  sync whose entire purpose is two machines on two builds, with nothing
-  failing and nothing to notice. Preserving a record that will not decode at
-  all (`StickyBoardStore.unreadableRecords`) is a *different* mechanism and
-  does not cover this. `StickyBoardStore`'s `knownKeys` + `passthrough` pair
-  is the worked example: capture the unrecognised pairs per record on read,
-  append them on write, and list every key this build writes in one place so
-  a new field that is forgotten there fails a test rather than duplicating
-  itself. Any hand-written whole-file serialiser wants the same shape.
+  it does not know**, which across a git sync between two builds loses data
+  with no symptom. `StickyBoardStore`'s `knownKeys` + `passthrough` pair is
+  the shape for any hand-written whole-file serialiser.
 - **Git-backed stores share one working tree and one serial queue**
   (`ShiftGitSync.sharedQueue`). Two queues against one tree race on
   `.git/index.lock`. A terminate-time flush dispatches **onto** that queue with
   a short bound and cancels the pending debounce inside the queue block.
-- **Secrets never reach disk or argv.** Private key material and vault
-  passphrases live in the Keychain (`ThisDeviceOnly`, never iCloud-synced);
-  credential material on a pasteboard goes through
-  `CredentialVaultClipboard.writeConcealed`; files that carry connection or
-  credential material are written through `AtomicWrite(... sensitive:)`.
-- **One screen-capture path: `ScreenRegionCapture`, and it is `screencapture -i`
-  rather than ScreenCaptureKit.** SCK has no region-drag input and needs a
-  standing Screen Recording grant; the interactive tool needs neither, because
-  the system's own agent does the capture on the captain's drag. An app carrying
-  a credential vault should not acquire a "read every pixel" capability it can
-  avoid, so a second capture path is a security decision and not a convenience -
-  reach for this one. The capture goes to the **pasteboard** (`-c`), never a
-  file, and is read back through `ShiftImageAttachmentWell.image(fromPasteboard:)`,
-  which is this app's one "get an image off a pasteboard" function. Both halves
-  consult `AppLockGate`: the system crosshair draws *over* this app's lock
-  overlay.
-- **`av list` is the one Automic Vault read that can raise an approval prompt,
-  and nothing unattended may call it.** A timer, a retry loop or any other
-  unattended caller takes `VaultSource.loadToolStatus()` (`av doctor --json`,
-  which never prompts); `VaultSource.loadSnapshot()` is reached only from
-  something the captain just did. It is not an `AppActivityState` question: the
-  prompt appears while the app is frontmost too. `BackgroundSignalsSelfTest`
-  source-guards the poller, and the one sanctioned exception
-  (`ScheduleRunner.vaultRecipeExport`) is documented at its call site. The
-  authorization-log measurements are in
-  [`14-poneglyph-and-vault.md`](docs/history/14-poneglyph-and-vault.md).
-
+- **Secrets never reach disk or argv.** Key material and vault passphrases
+  live in the Keychain (`ThisDeviceOnly`), credential material on a pasteboard
+  goes through `CredentialVaultClipboard.writeConcealed`, and files carrying
+  connection or credential material go through `AtomicWrite(... sensitive:)`.
+- **One screen-capture path: `ScreenRegionCapture` (`screencapture -i` to the
+  pasteboard)**, not ScreenCaptureKit, so the app never holds a standing
+  Screen Recording grant. Read back through
+  `ShiftImageAttachmentWell.image(fromPasteboard:)`, and both halves consult
+  `AppLockGate`.
+- **`av list` is the one Automic Vault read that can raise an approval
+  prompt, and nothing unattended may call it.** Unattended callers take
+  `VaultSource.loadToolStatus()`; `VaultSource.loadSnapshot()` is reached only
+  from something the captain just did. `BackgroundSignalsSelfTest`
+  source-guards the poller.
 - **`SubprocessResult.stdout` is trimmed, so never parse a fixed-column tool
-  output by offset.** The first line of a `git status --short` whose field is
-  ` M` loses its leading space, so a `dropFirst(3)` eats the first character of
-  the path. Split on the field separator instead;
-  `BootstrapController.statusLinePath` is the copy to reach for. The measured
-  case is in
-  [`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md).
+  output by offset.** Split on the field separator
+  (`BootstrapController.statusLinePath`).
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
-  `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
-  PTY work is the terminal's, not theirs.
+  `ClaudeOneShot` (GL-26). Do not add a third invocation shape.
 - **Arbitrary *captain-authored* code runs in exactly one place: `CodeRunner`,
-  under `sandbox-exec`.** Code Preview's Run is the only surface in this app
-  that executes a snippet, and it is confined (network denied, writes denied
-  outside a fresh temp directory, the home directory unreadable, a fixed
-  five-variable environment, a wall clock, a cancel handle) with the profile
-  asserted as text by `FM_RUN_CODE_RUNNER_TESTS`. Two rules follow. A missing
-  `sandbox-exec` **refuses** the run rather than downgrading it to an
-  unconfined one; and nothing else in this app gains an "execute this text"
-  path - a second one would be a second, unreviewed sandbox. What the sandbox
-  does **not** do is in `docs/history/22-code-preview.md`, written out rather
-  than implied, and any change to the profile belongs there too.
+  under `sandbox-exec`.** A missing `sandbox-exec` refuses the run, and nothing
+  else gains an "execute this text" path.
+  [`22-code-preview.md`](docs/history/22-code-preview.md) says what the sandbox
+  does not do, and a profile change belongs there too.
 - **`resolvingSymlinksInPath` does not resolve a `/var/folders` temporary
-  path**, and anything that matches paths by prefix has to care. `NSString`'s
-  resolver is documented to *strip* a leading `/private`, so a temp directory
-  comes back as `/var/folders/…` while the child process's real cwd is
-  `/private/var/folders/…`. A `sandbox-exec` profile naming the first form
-  matches nothing, and the symptom is a denial inside the one directory that
-  was supposed to be writable - which reads as a broken sandbox rather than a
-  broken path. `CodeSandbox.realPath` is `realpath(3)` and is the copy to
-  reach for.
+  path.** Anything that matches paths by prefix uses `CodeSandbox.realPath`
+  (`realpath(3)`).
 - **Every `claude -p` run is fail-closed on the built-in tool set.**
-  `--allowedTools` is *additive to* `~/.claude/settings.json`'s
-  `permissions.allow`, and `--strict-mcp-config` scopes only MCP servers - so
-  without `--tools`, the captain's ambient allow rules (which have included
-  `Bash(python3 -)`) reach every persona, including the read-only crew, through
-  ordinary store text a runbook or task title carries. `ClaudeOneShot` emits
-  `--tools` on every run from a parameter defaulting to **none**; a caller that
-  needs a built-in names it. Measured: `--tools` gates below permission
-  checking and holds even under `--permission-mode bypassPermissions`, which is
-  why no runner passes that flag any more.
+  `ClaudeOneShot` emits `--tools` on every run, defaulting to none, because
+  `--allowedTools` is additive to the captain's own allow rules.
   `ClaudeOneShotToolPolicySelfTest` guards the argv and the call sites.
 - **`CredentialVaultClipboard.isConcealed(_:)` is the app's one definition of
-  "a secret is on the pasteboard", and anything that reads `NSPasteboard`
-  content must ask it.** The markers (`org.nspasteboard.ConcealedType`,
-  `...TransientType`, `com.apple.is-sensitive`) are written by
-  `writeConcealed`; **any one of them alone is enough to refuse**, because the
-  nspasteboard.org convention exists to be honoured for other apps' writes too
-  and those carry one marker rather than this app's three. The readers
-  today are the clipboard history's capture loop, ⌥Space's pasteboard chip
-  and its insert, the Reading List's paste/drop route
-  (`ReadingListController.pasteTapped`, `ReadingListDropRootView.acceptableURL`),
-  F12's `{{clipboard}}` placeholder (`SnippetExpander.clipboardText`), the
-  vault editor's 2FA paste and the Log Analyzer's two clipboard actions
-  (`LogAnalyzerController.clipboardTextForEvidence`) - and a second hard-coded copy of
-  the marker strings is the one way this rule
-  could silently stop matching, with no test failing. Check it **before**
-  reading the string, so "a vault secret never reaches this store" is a
-  property of the control flow rather than of a filter somebody could reorder.
-
+  "a secret is on the pasteboard"**, and anything that reads `NSPasteboard`
+  content asks it **before** reading the string. Any one marker alone is
+  enough to refuse, and a second hard-coded copy of the marker strings is the
+  way this rule silently stops matching.
 - **Anything that reaches the vault from outside the vault page goes through
   the vault's own unlock, and returns a confirmation rather than the secret.**
-  F21's Copy Credential App Intent is the worked example and the reason this is
-  a rule: an entry point that handed a credential back as a value - a shortcut
-  variable, a tool result, an automation's output - turns one Touch ID prompt
-  into permanent access to the whole vault for anything that can invoke it. The
-  secret goes on the pasteboard through `CredentialVaultClipboard` (concealed,
-  auto-clearing) and the caller is told *which* credential was copied, never
-  what it is. Three gates in order, none substituting for another: `AppLockGate`,
-  the vault's own lock (`unlockWithTouchID`, and a refusal - never a prompt of
-  your own - when the captain has turned it off), then the credential's own
-  `requiresTouchIDToReveal`. **Look the credential up only after the vault is
-  unlocked**, or the difference between "not found" and "vault locked" makes a
-  locked vault an oracle for which titles exist.
+  Three gates in order: `AppLockGate`, the vault's lock, then the credential's
+  `requiresTouchIDToReveal`. Look the credential up only after the vault is
+  unlocked, so a locked vault is not an oracle for which titles exist.
 - **A `.glbackup` section for a file-backed store carries the files, not the
-  decoded models.** Re-serialising a directory store through its models is the
-  symptomless GL-01 failure this file already describes, one restore later: a
-  whole-file rewrite can only write the fields this build knows. `BackupStores.swift`
-  carries bytes, which also round-trips attachments, passthrough keys and order
-  files without knowing they exist. Validate the relative path on **both** sides
-  (`BackupArchivePath`) - a bundle is a file from another machine, so GL-08's
-  lesson applies to its paths. The vault travels **sealed** (the already-encrypted
-  file, copied - never decrypted, never re-wrapped), a restore **merges and
-  never deletes**, and replacing an existing vault needs its own
-  `DestructiveConfirm` separate from the import confirm.
-- **A store whose file is git-synced must reconcile before it writes.** A pull
-  can change the file underneath an in-memory copy, and a whole-file rewrite
-  from that copy silently discards whatever arrived. `CredentialVaultStore`
-  keeps a decrypted `baseline` - what it believes is also on disk - and
-  three-way merges against it in `persist()`, refusing outright when the file
-  was re-keyed elsewhere. Audit-only events (a reveal, a copy, a lock) are
-  batched and never `markDirty()`: publishing them produces a commit log of
-  when each secret was looked at.
-- **The vault's recovery key is a second wrap of the same key, and three of
-  its properties are load-bearing.** `CredentialVaultRecovery.swift`'s header
-  is the authority; read it before touching that path. The short version: the
-  password path is unchanged by enrolment, the recovery *code* is 160 random
-  bits (which is the whole reason the second door is no easier than the first
-  - shortening it turns this into a backdoor), and a master-password change
-  **drops** the wrap because it holds the old key's bytes and the code was
-  shown once and stored nowhere. A session opened by recovery may re-key
-  without the old password; that is gated on `unlockedViaRecoveryKey` and
-  nothing else, because without the gate every ordinary unlocked session
-  could be taken over.
+  decoded models** (`BackupStores.swift`). Validate relative paths on both
+  sides (`BackupArchivePath`). The vault travels sealed, a restore merges and
+  never deletes, and replacing a vault needs its own `DestructiveConfirm`.
+- **A store whose file is git-synced must reconcile before it writes.**
+  `CredentialVaultStore` three-way merges against its decrypted `baseline` in
+  `persist()`, and audit-only events are never `markDirty()`.
+- **The vault's recovery key is a second wrap of the same key.**
+  `CredentialVaultRecovery.swift`'s header is the authority: the recovery code
+  is 160 random bits, a master-password change drops the wrap, and only a
+  session opened by recovery may re-key without the old password.
 - **An AI-authored command is never executed on its stored risk level.**
   `CommandRiskConfirmation.confirmAIAuthored` is unconditional, and a model
   rewriting a template re-derives the level through `heuristicRisk` with

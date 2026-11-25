@@ -268,14 +268,14 @@ enum BootstrapWindowShrinkSelfTest {
     /// that ordering is what makes AppKit re-derive the window's frame from
     /// the content's fitting size in the first place. Parked far off screen so
     /// it can never disturb anything on a shared machine.
-    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
+    private static func makeMountedShell() -> (window: NSWindow, shell: MainSplitShellController) {
         let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
         let dictationStore = DictationStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),

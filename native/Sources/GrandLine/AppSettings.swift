@@ -46,7 +46,6 @@ final class AppSettings {
         static let terminalScrollbackRows = "fm.terminal.scrollbackRows"
         static let terminalTrimsBackgroundScrollback = "fm.terminal.trimBackgroundScrollback"
         static let terminalHighlighting = "fm.terminalHighlighting"
-        static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
         static let clipboardHistoryEnabled = "fm.clipboardHistoryEnabled"
@@ -63,7 +62,6 @@ final class AppSettings {
         static let followSystemAppearance = "fm.followSystemAppearance"
         static let systemLightThemeID = "fm.systemLightThemeID"
         static let systemDarkThemeID = "fm.systemDarkThemeID"
-        static let workspaceLayout = "fm.workspaceLayout"
         static let homeCardLayout = "fm.homeCardLayout"
         static let homeCardColors = "fm.homeCardColors"
         static let appLockEnabled = "fm.appLockEnabled"
@@ -713,45 +711,29 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: Keys.hasSeenWelcome) }
     }
 
-    /// Review #3's UX1/UX2: which destinations the floating bar's shortcut row
-    /// carries, and in what order - see `QuickAccessConfiguration`.
+    /// P-03 of the 2026-11-25 full review removed the floating-bar layout,
+    /// so the sidebar is the only window layout. Two preferences belonged to
+    /// that layout alone: the layout choice itself (`fm.workspaceLayout`,
+    /// whose raw values were `floatingBar` and `sidebar`) and the floating
+    /// bar's quick-access shortcut row (`fm.quickAccess`).
     ///
-    /// JSON-encoded, on the same "one cohesive value, always read and written
-    /// as a unit" reasoning as `dictationShortcut`/`morningBriefingRecord`
-    /// above. An absent or undecodable value resolves to the seven shortcuts
-    /// the bar shipped with, so a captain who never touches this - and a
-    /// captain whose stored value this build cannot read - sees the bar they
-    /// already had rather than an empty one.
-    var quickAccess: QuickAccessConfiguration {
-        get {
-            guard let data = defaults.data(forKey: Keys.quickAccess),
-                  let decoded = try? JSONDecoder().decode(QuickAccessConfiguration.self, from: data) else {
-                return QuickAccessConfiguration()
-            }
-            return decoded
-        }
-        set {
-            guard let data = try? JSONEncoder().encode(newValue) else { return }
-            defaults.set(data, forKey: Keys.quickAccess)
-        }
-    }
+    /// Nothing reads either key any more, so a stored `floatingBar` already
+    /// opens on the sidebar. This removes both keys once, so no stale value
+    /// stays in the preference domain and nothing can read it back later. It
+    /// is idempotent: on a fresh install, and on every launch after the first,
+    /// neither key is there and it does nothing. Returns what it removed, for
+    /// the log and the suite.
+    static let retiredLayoutKeys = ["fm.workspaceLayout", "fm.quickAccess"]
 
-    /// Which shell the main window hosts - the floating bar or the sidebar
-    /// (stage 3 of the modular-shell migration). Settings > Appearance writes
-    /// it, and the app delegate reads it **once**, when it builds the window,
-    /// so a change applies the next time the app opens: the two shells draw
-    /// different window chrome (a hidden title bar against a system toolbar),
-    /// and swapping that under a running window is not something either
-    /// shell is built to survive.
-    ///
-    /// `WorkspaceLayout.standard` (the sidebar) until the captain picks
-    /// otherwise, and for any value this build does not recognise - an
-    /// unknown layout must never leave the app without a shell. A stored
-    /// choice is kept as it is, so a captain who picked the floating bar
-    /// still gets it.
-    var workspaceLayout: WorkspaceLayout {
-        get { defaults.string(forKey: Keys.workspaceLayout).flatMap(WorkspaceLayout.init(rawValue:)) ?? .standard }
-        set { defaults.set(newValue.rawValue, forKey: Keys.workspaceLayout) }
+    @discardableResult
+    func retireFloatingBarLayout() -> [String: String] {
+        var removed: [String: String] = [:]
+        for key in Self.retiredLayoutKeys {
+            guard let value = defaults.object(forKey: key) else { continue }
+            removed[key] = (value as? String) ?? "\(type(of: value))"
+            defaults.removeObject(forKey: key)
+        }
+        return removed
     }
 
     /// Home's cards as the captain arranged them in the sidebar layout (stage

@@ -63,7 +63,7 @@ enum SelfTestSources {
     /// than "does this one file" - reads all of them, and a later move between
     /// them cannot make it pass vacuously.
     static let shellLayerFiles = [
-        "WorkspaceShellController.swift", "AppShellController.swift", "MainSplitShellController.swift",
+        "WorkspaceShellController.swift", "MainSplitShellController.swift",
         "WorkspaceSidebar.swift", "WorkspaceToolbar.swift", "WorkspaceInspector.swift",
         "NavigationHistory.swift",
         "Workspace.swift", "WorkspaceContent.swift", "Navigator.swift",
@@ -115,6 +115,36 @@ enum SelfTestSources {
             try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8)
         }
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
+    /// P-05 of the 2026-11-25 review split `HomeCanvasController.swift` by
+    /// card family into `HomeCanvasController+*.swift`. A guard asking "does
+    /// Home do X" reads the whole family, so a later move between the files
+    /// cannot make it pass vacuously.
+    static let homeCanvasFiles = [
+        "HomeCanvasController.swift", "HomeCanvasController+Briefing.swift",
+        "HomeCanvasController+Attention.swift", "HomeCanvasController+Customize.swift",
+        "HomeCanvasController+Dashboard.swift", "HomeCanvasController+Claude.swift",
+        "HomeCanvasController+Fleet.swift", "HomeCanvasController+MergeQueue.swift",
+        "HomeCanvasController+Health.swift", "HomeCanvasController+Hosts.swift",
+        "HomeCanvasController+ModuleCards.swift",
+    ]
+
+    /// The Home family's text through a suite's own reader, or `nil` when any
+    /// file of it cannot be read (a partial family would pass for the wrong
+    /// reason).
+    static func homeCanvas(read: (String) -> String?) -> String? {
+        var parts: [String] = []
+        for name in homeCanvasFiles {
+            guard let text = read(name), !text.isEmpty else { return nil }
+            parts.append(text)
+        }
+        return parts.joined(separator: "\n")
+    }
+
+    static func homeCanvasSource() -> String? {
+        guard let dir = appSourceDirectory() else { return nil }
+        return homeCanvas { try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }
     }
 
     static func appSourceFiles() -> [URL]? {

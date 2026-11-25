@@ -44,18 +44,12 @@ enum SessionSwitcherSelfTest {
             ("registryOrderAndDuration", test_registryOrderAndDuration),
             ("registryStepAndShortcutIndex", test_registryStepAndShortcutIndex),
             ("registryActiveNeverClaimsADeadHost", test_registryActiveNeverClaimsADeadHost),
-            ("stripAppearsAndReservesRealHeight", test_stripAppearsAndReservesRealHeight),
-            ("stripPillsCarryHostColourOrderAndShortcuts", test_stripPillsCarryHostColourOrderAndShortcuts),
-            ("activePillHasNoCloseButton", test_activePillHasNoCloseButton),
-            ("stripPillsAreAccessibleRadioButtons", test_stripPillsAreAccessibleRadioButtons),
             ("hostRowReadsAsConnectedAndResumes", test_hostRowReadsAsConnectedAndResumes),
             ("hostRowWithNoSessionIsUnchanged", test_hostRowWithNoSessionIsUnchanged),
             ("paletteAddsPinnedLiveGroupAndDoesNotDuplicate", test_paletteAddsPinnedLiveGroupAndDoesNotDuplicate),
             ("switchToUnknownSessionIsSafe", test_switchToUnknownSessionIsSafe),
             ("connectHostIsTheOnlyRegistrar", test_connectHostIsTheOnlyRegistrar),
             ("sessionShortcutsDoNotCollide", test_sessionShortcutsDoNotCollide),
-            ("closeButtonIsARealButtonAndNotANestedRecognizer", test_closeButtonIsARealButtonAndNotANestedRecognizer),
-            ("realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt", test_realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt),
         ]
         for (name, check) in cases {
             if let failure = check() { failures.append("\(name): \(failure)") }
@@ -106,12 +100,12 @@ enum SessionSwitcherSelfTest {
     /// real (never ordered-front) window - copied from
     /// `AppShellBodyWidthSelfTest.makeMountedShell` so both suites drive the
     /// same real object graph.
-    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController, hosts: HostStore) {
+    private static func makeMountedShell() -> (window: NSWindow, shell: MainSplitShellController, hosts: HostStore) {
         let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
@@ -134,182 +128,6 @@ enum SessionSwitcherSelfTest {
     private static func prodHost() -> Host {
         Host(label: "Prod Bastion", address: "ec2-3-208-58-234.compute-1.amazonaws.com",
              username: "ec2-user", accentHex: "#22b3a6", tags: ["PROD"])
-    }
-
-    // MARK: Finding 4.7 - the ✕ inside a recognizer-bearing pill
-
-    /// Builds a real strip, off the shell, with one active and one inactive
-    /// session - so the inactive pill has a ✕.
-    private static func makeStrip() -> (window: NSWindow, strip: SessionStripView,
-                                        active: UUID, inactive: UUID) {
-        // Built off-screen by `OffScreenProbe.window(...)` and ordered front,
-        // never made key: real
-        // mouse-event routing needs a real `windowNumber` (a window that was
-        // never ordered in has none, and `NSEvent.mouseEvent` then routes
-        // nowhere), while activating the app would steal focus from the
-        // captain's own running instance on a shared machine. `orderFront` on
-        // an `.accessory` process does neither.
-        let window = OffScreenProbe.window(width: 900, height: 200)
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
-        let strip = SessionStripView()
-        strip.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(strip)
-        NSLayoutConstraint.activate([
-            strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            strip.topAnchor.constraint(equalTo: root.topAnchor),
-            strip.heightAnchor.constraint(equalToConstant: SessionStripView.height),
-        ])
-        window.contentView = root
-        NSApp.setActivationPolicy(.accessory)
-        window.orderFront(nil)
-
-        let registry = HostSessionRegistry()
-        let active = UUID(), inactive = UUID()
-        registry.register(hostID: active, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-        registry.register(hostID: inactive, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
-        registry.setActive(active)
-        strip.render(registry)
-        root.layoutSubtreeIfNeeded()
-        return (window, strip, active, inactive)
-    }
-
-    /// **The structural half of finding 4.7.** The ✕ shipped as a
-    /// `HoverHighlightView` carrying its own `NSClickGestureRecognizer`,
-    /// *nested inside* the pill container that carries `pillClicked`'s -
-    /// and AppKit defines no automatic ancestor/descendant exclusivity, so
-    /// nothing decided which of the two a ✕ click belonged to.
-    ///
-    /// Asserted structurally as well as behaviourally because the shape is
-    /// what makes the behaviour unpredictable: a nested recognizer added back
-    /// for some other control would reintroduce the ambiguity even if a click
-    /// on the ✕ still happened to land correctly.
-    private static func test_closeButtonIsARealButtonAndNotANestedRecognizer() -> String? {
-        let (_, strip, active, inactive) = makeStrip()
-
-        guard let close = strip.debugCloseView(inactive) else {
-            return "the inactive pill has no ✕"
-        }
-        guard close.target != nil, close.action != nil else {
-            return "the ✕ is an NSButton with no target/action - it would do nothing at all"
-        }
-        guard strip.debugCloseView(active) == nil else {
-            return "the active pill must not carry a ✕ (mockup callout c)"
-        }
-
-        // No click recognizer anywhere inside a pill: the pill's own is the
-        // only one on that subtree.
-        func nestedClickRecognizers(_ view: NSView) -> [String] {
-            var out: [String] = []
-            for sub in view.subviews {
-                let count = sub.gestureRecognizers.filter { $0 is NSClickGestureRecognizer }.count
-                if count > 0 { out.append("\(type(of: sub)) x\(count)") }
-                out += nestedClickRecognizers(sub)
-            }
-            return out
-        }
-        for hostID in [active, inactive] {
-            guard let pill = strip.debugPillView(hostID) else { return "no pill for \(hostID)" }
-            let own = pill.gestureRecognizers.filter { $0 is NSClickGestureRecognizer }
-            guard own.count == 1 else {
-                return "a pill should carry exactly one click recognizer, has \(own.count)"
-            }
-            guard own[0].delegate != nil else {
-                return "the pill's recognizer has no delegate - nothing declines a click that "
-                    + "landed on a real control inside it"
-            }
-            let nested = nestedClickRecognizers(pill)
-            guard nested.isEmpty else {
-                return "a click recognizer is nested inside a pill (\(nested)) - that is the "
-                    + "ambiguity finding 4.7 is about"
-            }
-        }
-        return nil
-    }
-
-    /// **The behavioural half.** A real `NSEvent` at the ✕'s own centre,
-    /// dispatched through the real `NSWindow.sendEvent`, must end that session
-    /// and must not switch to it.
-    ///
-    /// Measured across the three states while fixing this, which is why both
-    /// halves of the fix are load-bearing and both are asserted here:
-    ///   - as shipped (two competing recognizers, no exclusion): **neither**
-    ///     handler fired - the ✕ was simply dead;
-    ///   - with the `NSButton` swap alone: `onSelect` fired and `onClose` did
-    ///     not - a ✕ click *switched to* the session it was meant to end;
-    ///   - with the swap plus the recognizer delegate: `onClose` only.
-    ///
-    /// Honest limitation: this process is `.accessory` and never becomes
-    /// active (activating it would steal focus from the captain's own running
-    /// instance on a shared machine), so this is not a byte-perfect
-    /// reproduction of a real click in a key window. What it does prove is
-    /// that the routing reaches exactly one handler, and which one.
-    private static func test_realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt() -> String? {
-        let (window, strip, active, inactive) = makeStrip()
-        var selected: [UUID] = []
-        var closed: [UUID] = []
-        strip.onSelect = { selected.append($0) }
-        strip.onClose = { closed.append($0) }
-
-        guard let close = strip.debugCloseView(inactive) else { return "no ✕ on the inactive pill" }
-
-        func click(at view: NSView) {
-            let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                guard let event = NSEvent.mouseEvent(
-                    with: type, location: point, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime,
-                    windowNumber: window.windowNumber, context: nil,
-                    eventNumber: 0, clickCount: 1,
-                    pressure: type == .leftMouseDown ? 1 : 0) else { continue }
-                window.sendEvent(event)
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        }
-
-        click(at: close)
-        guard closed == [inactive] else {
-            return "a click on ✕ should end exactly that session - onClose got \(closed)"
-        }
-        guard selected.isEmpty else {
-            return "a click on ✕ also switched to the session it was ending - onSelect got \(selected)"
-        }
-
-        // The rest of the pill still switches, so the exclusion is scoped to
-        // the ✕ rather than disabling the row. A pill's own label is an
-        // `NSTextField` - i.e. an `NSControl` - so a delegate written as "any
-        // NSControl declines" would silently kill most of the pill's clickable
-        // surface; that is why the rule is *actionable* control, and why this
-        // half is asserted rather than assumed.
-        //
-        // A fresh strip, so the ✕ click above cannot interact with this one
-        // through AppKit's own click bookkeeping.
-        let (window2, strip2, _, inactive2) = makeStrip()
-        var selected2: [UUID] = []
-        var closed2: [UUID] = []
-        strip2.onSelect = { selected2.append($0) }
-        strip2.onClose = { closed2.append($0) }
-        guard let pill = strip2.debugPillView(inactive2),
-              let label = strip2.debugPillLabelView(inactive2) else { return "no pill/label" }
-
-        let bodyPoint = label.convert(NSPoint(x: label.bounds.midX, y: label.bounds.midY), to: nil)
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            guard let event = NSEvent.mouseEvent(
-                with: type, location: bodyPoint, modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window2.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1,
-                pressure: type == .leftMouseDown ? 1 : 0) else { continue }
-            window2.sendEvent(event)
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        guard selected2 == [inactive2] else {
-            return "clicking the pill's own label should still switch to that session - got \(selected2)"
-        }
-        guard closed2.isEmpty else { return "clicking the pill body ended a session - got \(closed2)" }
-        _ = active
-        _ = pill
-        return nil
     }
 
     // MARK: Registry
@@ -388,134 +206,6 @@ enum SessionSwitcherSelfTest {
     }
 
     // MARK: Strip
-
-    private static func test_stripAppearsAndReservesRealHeight() -> String? {
-        withScratchEnv {
-            let (_, shell, _) = makeMountedShell()
-            let collapsedInset = shell.bodyTopInsetForTests
-            guard shell.sessionStripIsHiddenForTests, shell.sessionStripHeightForTests == 0 else {
-                return "strip is showing with no live sessions"
-            }
-            guard abs(collapsedInset - DaylightBarController.reservedTopHeight) < 0.5 else {
-                return "collapsed body inset \(collapsedInset), expected \(DaylightBarController.reservedTopHeight)"
-            }
-            shell.workspace.hosts.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-            shell.view.layoutSubtreeIfNeeded()
-            guard !shell.sessionStripIsHiddenForTests else { return "strip stayed hidden with a live session" }
-            // The height half matters as much as `isHidden`: an ordinary
-            // hidden `NSView` still constrains layout (gotcha (11)), so a
-            // strip that only toggled visibility would leave a permanent gap.
-            guard shell.sessionStripHeightForTests == SessionStripView.height else {
-                return "strip height \(shell.sessionStripHeightForTests), expected \(SessionStripView.height)"
-            }
-            let grown = shell.bodyTopInsetForTests
-            guard abs(grown - (collapsedInset + SessionStripView.gapBelowBar + SessionStripView.height)) < 0.5 else {
-                return "body inset \(grown) did not grow by the strip's own height (was \(collapsedInset))"
-            }
-            guard shell.sessionStripForTests.frame.height > 1 else {
-                return "strip resolved a zero-height frame while visible"
-            }
-            return nil
-        }
-    }
-
-    private static func test_stripPillsCarryHostColourOrderAndShortcuts() -> String? {
-        withScratchEnv {
-            let (_, shell, _) = makeMountedShell()
-            let dev = UUID(), prod = UUID()
-            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
-            shell.workspace.hosts.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
-            shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard strip.debugPillHostIDs() == [dev, prod] else {
-                return "pill order does not match the registry's own order"
-            }
-            guard strip.debugPillShortcutText(dev) == "\u{2318}\u{2303}1",
-                  strip.debugPillShortcutText(prod) == "\u{2318}\u{2303}2" else {
-                return "shortcut hints wrong: \(strip.debugPillShortcutText(dev) ?? "nil") / \(strip.debugPillShortcutText(prod) ?? "nil")"
-            }
-            // A pill's dot is the captain's own per-host colour - the same
-            // literal hue the Hosts row's accent bar carries, which is what
-            // makes recognition instant (mockup callout b). Compared
-            // component-wise: `HelmContrast.ratio(a, b) < 1.01` is a
-            // *luminance* comparison and two different hues of similar
-            // brightness pass it (a trap two other suites in this repo have
-            // already walked into).
-            for (id, hex) in [(dev, "#e8a23d"), (prod, "#22b3a6")] {
-                guard let pill = strip.debugPillView(id),
-                      let dot = pill.subviews.first?.subviews.first(where: { $0.layer?.cornerRadius == 3.5 }),
-                      let painted = dot.layer?.backgroundColor.map({ NSColor(cgColor: $0) }) ?? nil else {
-                    return "could not find the accent dot for \(hex)"
-                }
-                let expected = HelmContrast.components(HelmTheme.nsColor(hex))
-                let actual = HelmContrast.components(painted)
-                guard abs(expected.0 - actual.0) < 0.02, abs(expected.1 - actual.1) < 0.02,
-                      abs(expected.2 - actual.2) < 0.02 else {
-                    return "pill dot for \(hex) painted \(actual), expected \(expected)"
-                }
-            }
-            return nil
-        }
-    }
-
-    private static func test_activePillHasNoCloseButton() -> String? {
-        withScratchEnv {
-            let (_, shell, _) = makeMountedShell()
-            let dev = UUID(), prod = UUID()
-            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.workspace.hosts.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil, state: .connected)
-            shell.workspace.hosts.sessions.setActive(dev)
-            shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard strip.debugActiveHostID() == dev else { return "the active pill is not the active session" }
-            // Mockup callout c: no ✕ on the active pill, so a mis-click cannot
-            // close the session currently being read.
-            guard strip.debugPillHasCloseButton(dev) == false else {
-                return "the active pill offers a close button"
-            }
-            guard strip.debugPillHasCloseButton(prod) == true else {
-                return "an inactive pill has no close button"
-            }
-            return nil
-        }
-    }
-
-    private static func test_stripPillsAreAccessibleRadioButtons() -> String? {
-        withScratchEnv {
-            let (_, shell, _) = makeMountedShell()
-            let dev = UUID()
-            shell.workspace.hosts.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
-            shell.workspace.hosts.sessions.setActive(dev)
-            shell.view.layoutSubtreeIfNeeded()
-            let strip = shell.sessionStripForTests
-            guard let pill = strip.debugPillView(dev) else { return "no pill built" }
-            guard pill.isActivatable else { return "pill is invisible to VoiceOver and the key loop" }
-            guard pill.accessibilityRoleOverride == .radioButton else {
-                return "pill role is \(String(describing: pill.accessibilityRoleOverride)), expected radioButton"
-            }
-            guard pill.accessibilityValueOverride == "selected" else {
-                return "active pill does not announce itself as selected"
-            }
-            // Case-insensitive on the state word: audit 2 §4.6 moved this
-            // label onto `HostSession.stateText`, which renders "Connected ·
-            // 14m" / "Restored · not connected" - a sentence fragment for
-            // VoiceOver rather than a lowercase fixed word. What this case is
-            // about is that the label names the host *and* its state, which
-            // casing has nothing to do with.
-            guard let label = strip.debugPillAccessibilityLabel(dev),
-                  label.contains("DEV Bastion"),
-                  label.lowercased().contains("connected") else {
-                return "pill label does not name the host and its state: \(strip.debugPillAccessibilityLabel(dev) ?? "nil")"
-            }
-            guard strip.debugAddButton().isActivatable,
-                  strip.debugAddButton().accessibilityLabelOverride == "New session" else {
-                return "the + affordance is not an accessible button"
-            }
-            // The strip sits between the bar and the body in the key loop.
-            guard strip.keyViewChain.count >= 2 else { return "strip contributes nothing to the key view loop" }
-            return nil
-        }
-    }
 
     // MARK: Hosts rows
 

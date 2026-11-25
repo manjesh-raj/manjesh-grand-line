@@ -129,22 +129,16 @@ outside its reach, and so is a real keystroke from a real keyboard layout.
 
 ## 7. Window chrome
 
-The traffic lights are repositioned *outside* their own superview and reached
-by hit-test forwarding. A suite can hand the content view a synthetic point;
-it cannot click a real one, drag a real window, or enter real full screen.
+The window keeps the system title bar and installs its own toolbar
+(`MainSplitShellController.attach(to:)`). Until P-03 of the 2026-11-25 review
+removed the floating bar, the traffic lights were repositioned onto the bar
+and reached by hit-test forwarding; that is gone. A suite cannot click a real
+traffic light, drag a real window, or enter real full screen.
 
-- [ ] Click **close**, **minimise** and **zoom**. All three work. (They were
-      unreachable for three releases while every geometry test passed.)
-- [ ] Drag the window by the floating bar's empty area. It moves.
-- [ ] Enter and leave full screen. The lights hand off to macOS's own overlay
-      and come back correctly, and the bar keeps its leading inset.
-- [ ] Let a Console tab report shell titles for a minute (a few `cd`s). The
-      lights must not drift - a bare `title` change resets them.
-- [ ] Switch theme with a page scrolled away from its top. The chrome
-      crossfades, the scroll-edge treatment stays, and nothing snaps.
-- [ ] Sweep the cursor across the whole bar without clicking. **Nothing may
-      activate** - no theme flip, no navigation. A bare hover once fired the
-      theme toggle.
+- [ ] Click **close**, **minimise** and **zoom**. All three work.
+- [ ] Drag the window by the toolbar's empty area. It moves.
+- [ ] Enter and leave full screen. The toolbar and the sidebar come back
+      correctly, with no black band above the window (`FullScreenMenuBarFill`).
 
 ## 8. Session restore across a relaunch
 
@@ -506,9 +500,9 @@ so that measurement is one table rather than a call tree.
       Filter the os_signpost track to subsystem `com.manjesh.grandline.native`,
       category `launch`.
 - [ ] Record, per run: process start to the window becoming key, and the
-      duration of `AppShellController.init`, `AppShellController.loadView`,
+      duration of `WorkspaceShellController.init`, `MainSplitShellController.loadView`,
       every `*.init` store interval, and `restoreSessionIfNeeded`.
-- [ ] Pass: `AppShellController.init` under 50 ms, no store `init` over 10 ms,
+- [ ] Pass: `WorkspaceShellController.init` under 50 ms, no store `init` over 10 ms,
       first frame under 400 ms, and the main thread free within 100 ms of the
       first frame with five restored host pages.
 - [ ] Record the numbers in

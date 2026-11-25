@@ -641,8 +641,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
                 self.noteInteraction()
                 self.render()
                 // R4-UI-07: named as the create button named it.
-                Toast.show(in: self.view, message: PlaceName.layout == .floatingBar
-                    ? "\(CredentialVaultUnlockView.pageName) created" : "Vault created")
+                Toast.show(in: self.view, message: "Vault created")
                 // R4-UX-02: the recovery step the creation copy promises.
                 // The vault was created unlocked, so this is the same sheet
                 // and the same gate as the toolbar's button.

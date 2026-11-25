@@ -303,3 +303,218 @@ quit" and had no caller at all.
   a process that demonstrably had one. Do not read that as evidence.
 - Every fix in this branch was confirmed by reverting it and watching a named
   case fail, then restoring it. The commit messages carry the failure text.
+
+## Moved from AGENTS.md: stores, subprocesses and secrets (P-04, 2026-11-25)
+
+P-04 of the 2026-11-25 full review moved the incidents and measurements out of AGENTS.md's "Stores, subprocesses and secrets" section, which keeps one rule for each.
+The text below is that section as it stood, unchanged.
+
+
+- **The app has exactly one name, one identifier prefix and one data folder,
+  and all three have a single definition.** The display name is **"Grand
+  Line"** (never "Manjesh Grand Line", never "Firstmate Cockpit"), the Swift
+  module and the shipped executable are `GrandLine`, every identifier this app
+  owns is `com.manjesh.grandline…`, and every file-backed store nests under
+  `AppPaths.applicationSupportFolderName`. A hand-written copy of any of those
+  is how half a rename gets left behind - `LegacyRenameMigrationSelfTest`
+  fails the run on a source that spells a pre-rename name, and on a fourth
+  Keychain service that does not join `LegacyNameMigration.keychainServices`.
+  **Changing the bundle identifier again is not a find-and-replace**: it
+  orphans the captain's Keychain items, their Application Support folder, their
+  whole preference domain and every macOS privacy grant they have given the
+  app. The first three can be migrated and `LegacyNameMigration` is the worked
+  example; the fourth cannot be, ever, because granting it is a user consent
+  action - say so in the PR rather than leaving the captain to find out.
+  [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) is
+  what a future one has to read first.
+- **A store's default path comes through `AppPaths.dataRoot()`, which is the
+  one place `FM_SCRATCH_ROOT` is honoured.** That single variable moves every
+  file-backed store at once, and it exists because the alternative - a list -
+  drifted: `build-probe-app.sh` promised its `ENV_ARGS` were "every FM_*
+  location override, in one place", and by the 2026-09-25 review seven stores
+  had been added that it did not redirect, so a probe launch wrote the
+  captain's real clipboard history, session-restore file, scratchpad and widget
+  snapshot. A store that resolves `.applicationSupportDirectory` for itself is
+  a store no probe and no suite can move; `FM_RUN_PROBE_SCRATCH_ROOT_TESTS`
+  fails the run on one. A default that is **not** under Application Support
+  (`~/.dotfiles`, a shared App Group container) cannot nest under the root and
+  must ask `AppPaths.isScratchRedirected()` instead. **That alone covers the
+  probe and nothing else**, because a suite or a tour does not set
+  `FM_SCRATCH_ROOT`: such a store also needs its own narrow override, set in
+  the redirect block in `SelfTests/SelfTestDispatch.swift`. `DotfilesSource.dotfilesLocation` is the
+  worked example, and missing it ran a real `git fetch` of the captain's
+  dotfiles clone from every tour.
+- **Every store also honours its own narrow `FM_*` override**, which wins over
+  the root; the repo-root README has the complete index. A store nested under
+  Shift's data root must honour `FM_SHIFT_DIR` as a fallback, not only its own
+  narrow variable - and it needs an entry in the redirect block in
+  `SelfTests/SelfTestDispatch.swift`, which is the backstop for a store reachable from a bare
+  constructor.
+- **A Keychain service name comes through `KeychainService.resolve`**, which
+  applies `FM_KEYCHAIN_SERVICE_PREFIX` in a debug build and is the identity in
+  a release one. The same rule as the paths above, for the state that outlives
+  the run: before it existed, `BackupSelfTest` had written **91 real items**
+  under the production `com.manjesh.grandline.sshkey` service on the captain's
+  login Keychain, each holding a literal test passphrase, and nothing removed
+  them. `KeychainServiceSweep` deletes this process's items at exit and
+  anything an interrupted earlier run left. Two traps it encodes:
+  **`SecItemDelete` removes one matching item per call** on the file-based
+  login keychain (a single call leaked a second seeded account 33 times), and
+  a suite that drives a key store's `load(create:)` far enough to *mint* will
+  delete and replace the captain's real key - install the store's write seam.
+- **A new field on a `Codable` store type needs a hand-written
+  `init(from:)` with `decodeIfPresent` and a default** (GL-01). A Swift-side
+  default does *not* make a declared key optional to the synthesised decoder,
+  and getting this wrong made every existing `hosts.json` undecodable once.
+- **A store that re-serialises from a decoded struct silently drops any key
+  it does not know, and that is a GL-01 failure with no symptom.** GL-01's
+  usual shape is a *read* that fails; this is a read that succeeds and a
+  *write* that loses something. A whole-file rewrite built from decoded
+  values can only write the fields this build has, so a record carrying one
+  extra key from a newer build loses it on the very next edit - across a git
+  sync whose entire purpose is two machines on two builds, with nothing
+  failing and nothing to notice. Preserving a record that will not decode at
+  all (`StickyBoardStore.unreadableRecords`) is a *different* mechanism and
+  does not cover this. `StickyBoardStore`'s `knownKeys` + `passthrough` pair
+  is the worked example: capture the unrecognised pairs per record on read,
+  append them on write, and list every key this build writes in one place so
+  a new field that is forgotten there fails a test rather than duplicating
+  itself. Any hand-written whole-file serialiser wants the same shape.
+- **Git-backed stores share one working tree and one serial queue**
+  (`ShiftGitSync.sharedQueue`). Two queues against one tree race on
+  `.git/index.lock`. A terminate-time flush dispatches **onto** that queue with
+  a short bound and cancels the pending debounce inside the queue block.
+- **Secrets never reach disk or argv.** Private key material and vault
+  passphrases live in the Keychain (`ThisDeviceOnly`, never iCloud-synced);
+  credential material on a pasteboard goes through
+  `CredentialVaultClipboard.writeConcealed`; files that carry connection or
+  credential material are written through `AtomicWrite(... sensitive:)`.
+- **One screen-capture path: `ScreenRegionCapture`, and it is `screencapture -i`
+  rather than ScreenCaptureKit.** SCK has no region-drag input and needs a
+  standing Screen Recording grant; the interactive tool needs neither, because
+  the system's own agent does the capture on the captain's drag. An app carrying
+  a credential vault should not acquire a "read every pixel" capability it can
+  avoid, so a second capture path is a security decision and not a convenience -
+  reach for this one. The capture goes to the **pasteboard** (`-c`), never a
+  file, and is read back through `ShiftImageAttachmentWell.image(fromPasteboard:)`,
+  which is this app's one "get an image off a pasteboard" function. Both halves
+  consult `AppLockGate`: the system crosshair draws *over* this app's lock
+  overlay.
+- **`av list` is the one Automic Vault read that can raise an approval prompt,
+  and nothing unattended may call it.** A timer, a retry loop or any other
+  unattended caller takes `VaultSource.loadToolStatus()` (`av doctor --json`,
+  which never prompts); `VaultSource.loadSnapshot()` is reached only from
+  something the captain just did. It is not an `AppActivityState` question: the
+  prompt appears while the app is frontmost too. `BackgroundSignalsSelfTest`
+  source-guards the poller, and the one sanctioned exception
+  (`ScheduleRunner.vaultRecipeExport`) is documented at its call site. The
+  authorization-log measurements are in
+  [`14-poneglyph-and-vault.md`](docs/history/14-poneglyph-and-vault.md).
+
+- **`SubprocessResult.stdout` is trimmed, so never parse a fixed-column tool
+  output by offset.** The first line of a `git status --short` whose field is
+  ` M` loses its leading space, so a `dropFirst(3)` eats the first character of
+  the path. Split on the field separator instead;
+  `BootstrapController.statusLinePath` is the copy to reach for. The measured
+  case is in
+  [`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md).
+- **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
+  `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
+  PTY work is the terminal's, not theirs.
+- **Arbitrary *captain-authored* code runs in exactly one place: `CodeRunner`,
+  under `sandbox-exec`.** Code Preview's Run is the only surface in this app
+  that executes a snippet, and it is confined (network denied, writes denied
+  outside a fresh temp directory, the home directory unreadable, a fixed
+  five-variable environment, a wall clock, a cancel handle) with the profile
+  asserted as text by `FM_RUN_CODE_RUNNER_TESTS`. Two rules follow. A missing
+  `sandbox-exec` **refuses** the run rather than downgrading it to an
+  unconfined one; and nothing else in this app gains an "execute this text"
+  path - a second one would be a second, unreviewed sandbox. What the sandbox
+  does **not** do is in `docs/history/22-code-preview.md`, written out rather
+  than implied, and any change to the profile belongs there too.
+- **`resolvingSymlinksInPath` does not resolve a `/var/folders` temporary
+  path**, and anything that matches paths by prefix has to care. `NSString`'s
+  resolver is documented to *strip* a leading `/private`, so a temp directory
+  comes back as `/var/folders/…` while the child process's real cwd is
+  `/private/var/folders/…`. A `sandbox-exec` profile naming the first form
+  matches nothing, and the symptom is a denial inside the one directory that
+  was supposed to be writable - which reads as a broken sandbox rather than a
+  broken path. `CodeSandbox.realPath` is `realpath(3)` and is the copy to
+  reach for.
+- **Every `claude -p` run is fail-closed on the built-in tool set.**
+  `--allowedTools` is *additive to* `~/.claude/settings.json`'s
+  `permissions.allow`, and `--strict-mcp-config` scopes only MCP servers - so
+  without `--tools`, the captain's ambient allow rules (which have included
+  `Bash(python3 -)`) reach every persona, including the read-only crew, through
+  ordinary store text a runbook or task title carries. `ClaudeOneShot` emits
+  `--tools` on every run from a parameter defaulting to **none**; a caller that
+  needs a built-in names it. Measured: `--tools` gates below permission
+  checking and holds even under `--permission-mode bypassPermissions`, which is
+  why no runner passes that flag any more.
+  `ClaudeOneShotToolPolicySelfTest` guards the argv and the call sites.
+- **`CredentialVaultClipboard.isConcealed(_:)` is the app's one definition of
+  "a secret is on the pasteboard", and anything that reads `NSPasteboard`
+  content must ask it.** The markers (`org.nspasteboard.ConcealedType`,
+  `...TransientType`, `com.apple.is-sensitive`) are written by
+  `writeConcealed`; **any one of them alone is enough to refuse**, because the
+  nspasteboard.org convention exists to be honoured for other apps' writes too
+  and those carry one marker rather than this app's three. The readers
+  today are the clipboard history's capture loop, ⌥Space's pasteboard chip
+  and its insert, the Reading List's paste/drop route
+  (`ReadingListController.pasteTapped`, `ReadingListDropRootView.acceptableURL`),
+  F12's `{{clipboard}}` placeholder (`SnippetExpander.clipboardText`), the
+  vault editor's 2FA paste and the Log Analyzer's two clipboard actions
+  (`LogAnalyzerController.clipboardTextForEvidence`) - and a second hard-coded copy of
+  the marker strings is the one way this rule
+  could silently stop matching, with no test failing. Check it **before**
+  reading the string, so "a vault secret never reaches this store" is a
+  property of the control flow rather than of a filter somebody could reorder.
+
+- **Anything that reaches the vault from outside the vault page goes through
+  the vault's own unlock, and returns a confirmation rather than the secret.**
+  F21's Copy Credential App Intent is the worked example and the reason this is
+  a rule: an entry point that handed a credential back as a value - a shortcut
+  variable, a tool result, an automation's output - turns one Touch ID prompt
+  into permanent access to the whole vault for anything that can invoke it. The
+  secret goes on the pasteboard through `CredentialVaultClipboard` (concealed,
+  auto-clearing) and the caller is told *which* credential was copied, never
+  what it is. Three gates in order, none substituting for another: `AppLockGate`,
+  the vault's own lock (`unlockWithTouchID`, and a refusal - never a prompt of
+  your own - when the captain has turned it off), then the credential's own
+  `requiresTouchIDToReveal`. **Look the credential up only after the vault is
+  unlocked**, or the difference between "not found" and "vault locked" makes a
+  locked vault an oracle for which titles exist.
+- **A `.glbackup` section for a file-backed store carries the files, not the
+  decoded models.** Re-serialising a directory store through its models is the
+  symptomless GL-01 failure this file already describes, one restore later: a
+  whole-file rewrite can only write the fields this build knows. `BackupStores.swift`
+  carries bytes, which also round-trips attachments, passthrough keys and order
+  files without knowing they exist. Validate the relative path on **both** sides
+  (`BackupArchivePath`) - a bundle is a file from another machine, so GL-08's
+  lesson applies to its paths. The vault travels **sealed** (the already-encrypted
+  file, copied - never decrypted, never re-wrapped), a restore **merges and
+  never deletes**, and replacing an existing vault needs its own
+  `DestructiveConfirm` separate from the import confirm.
+- **A store whose file is git-synced must reconcile before it writes.** A pull
+  can change the file underneath an in-memory copy, and a whole-file rewrite
+  from that copy silently discards whatever arrived. `CredentialVaultStore`
+  keeps a decrypted `baseline` - what it believes is also on disk - and
+  three-way merges against it in `persist()`, refusing outright when the file
+  was re-keyed elsewhere. Audit-only events (a reveal, a copy, a lock) are
+  batched and never `markDirty()`: publishing them produces a commit log of
+  when each secret was looked at.
+- **The vault's recovery key is a second wrap of the same key, and three of
+  its properties are load-bearing.** `CredentialVaultRecovery.swift`'s header
+  is the authority; read it before touching that path. The short version: the
+  password path is unchanged by enrolment, the recovery *code* is 160 random
+  bits (which is the whole reason the second door is no easier than the first
+  - shortening it turns this into a backdoor), and a master-password change
+  **drops** the wrap because it holds the old key's bytes and the code was
+  shown once and stored nowhere. A session opened by recovery may re-key
+  without the old password; that is gated on `unlockedViaRecoveryKey` and
+  nothing else, because without the gate every ordinary unlocked session
+  could be taken over.
+- **An AI-authored command is never executed on its stored risk level.**
+  `CommandRiskConfirmation.confirmAIAuthored` is unconditional, and a model
+  rewriting a template re-derives the level through `heuristicRisk` with
+  `raised(to:)`.

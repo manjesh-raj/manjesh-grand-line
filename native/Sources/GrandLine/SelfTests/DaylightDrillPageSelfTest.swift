@@ -57,7 +57,7 @@ enum DaylightDrillPageSelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkDrillHeaderActions, checkHeroTitlesAreGone,
+        for check in [checkHeroTitlesAreGone,
                       checkDaylightCardRecipe, checkDaylightButtonRecipe,
                       checkDaylightChipAndWell, checkGaugesAreShared,
                       checkTasksBoardLayout, checkChipInputInteractions,
@@ -113,69 +113,6 @@ enum DaylightDrillPageSelfTest {
     }
 
     // MARK: 1. The drill header's action cluster (§6.4)
-
-    private static func checkDrillHeaderActions(_ ok: inout Bool) {
-        print("\n-- drill header actions (§6.4) --")
-        let review = ReviewController()
-        let window = mount(review)
-        defer { _ = window }
-
-        // UI modernization audit A2: the action cluster is the *bar's* now,
-        // not the drill header's - so this drives the surface that actually
-        // renders it. The contract it is asserting is unchanged.
-        let bar = DaylightBarController()
-        _ = bar.view
-        bar.setDrillContext(DaylightBarController.DrillContext(
-            title: "Review", subtitle: "", symbol: RailDestination.review.symbol,
-            hue: RailDestination.review.domainHue, artwork: nil))
-        bar.setDrillActions(review.drillHeaderActions)
-
-        guard !review.drillHeaderActions.isEmpty else {
-            print("  FAIL Review offers no drill-header actions - its Refresh never moved")
-            ok = false
-            return
-        }
-        // Identity, not just count: a copy would render but never disable
-        // itself while a fetch is in flight.
-        guard bar.drillActionsForTests.count == review.drillHeaderActions.count,
-              zip(bar.drillActionsForTests, review.drillHeaderActions).allSatisfy({ $0 === $1 }) else {
-            print("  FAIL the bar is not showing Review's own action views")
-            ok = false
-            return
-        }
-        // Clearing has to actually clear - otherwise navigating from a
-        // migrated page to an unmigrated one leaves the previous page's
-        // buttons in the bar.
-        bar.setDrillActions([])
-        guard bar.drillActionsForTests.isEmpty else {
-            print("  FAIL setDrillActions([]) left \(bar.drillActionsForTests.count) view(s) behind")
-            ok = false
-            return
-        }
-
-        // The live subtitle: a page that has not fetched yet must not claim a
-        // confident zero (GL-14's rule).
-        guard let subtitle = review.drillHeaderSubtitle, !subtitle.isEmpty else {
-            print("  FAIL Review has no live drill subtitle")
-            ok = false
-            return
-        }
-        guard !subtitle.contains("0 open") else {
-            print("  FAIL pre-fetch subtitle reports a confident zero: \(subtitle)")
-            ok = false
-            return
-        }
-
-        let shift = ShiftController(store: scratchShiftStore())
-        let shiftWindow = mount(shift)
-        defer { _ = shiftWindow }
-        guard let shiftSubtitle = shift.drillHeaderSubtitle, shiftSubtitle.contains("open") else {
-            print("  FAIL Tasks has no live drill subtitle (\(shift.drillHeaderSubtitle ?? "nil"))")
-            ok = false
-            return
-        }
-        print("  OK - Review: \"\(subtitle)\" + \(review.drillHeaderActions.count) action(s); Tasks: \"\(shiftSubtitle)\"")
-    }
 
     // MARK: 2. The in-page heroes are gone (§6.4)
 

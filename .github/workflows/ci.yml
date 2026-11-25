@@ -358,6 +358,15 @@ jobs:
       - name: Run the headless-safe suites
         # `--rerun-failed` names a suite that failed and then passed; the run
         # still fails (R2-PROC-06). `--history` is described above.
+        #
+        # P-01 of the 2026-11-25 review: `FM_RUN_HELM_KIT_VERSION_TESTS`
+        # hashes every Helm kit file at this base and in the checkout, instead
+        # of comparing with a committed digest table. The base is the pull
+        # request's base commit, or the previous `main` on a push. Empty on a
+        # manual run, where the suite falls back to the merge base with
+        # `origin/main`.
+        env:
+          FM_HELM_KIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./Scripts/run-all-tests.sh --ci --no-build --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
 
       - name: Keep the suite history for the next run
@@ -850,3 +859,10 @@ jobs:
 
       - name: Lint
         run: ruff check --config Scripts/ruff.toml Scripts/*.py
+
+      # P-05 of the 2026-11-25 review: a soft line budget. Every hand-written
+      # Swift file over 3,000 lines is a warning annotation on the run, so a
+      # file growing past GL-36's split point is visible on the pull request.
+      # It never fails the job; `Scripts/test_line_budget.py` covers it.
+      - name: Line budget (warns, never fails)
+        run: python3 Scripts/line_budget.py

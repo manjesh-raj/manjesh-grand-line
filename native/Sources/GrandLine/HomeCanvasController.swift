@@ -59,6 +59,15 @@
 //     is still built and still heads the four other spaces as the plain row
 //     it always was there; `hubHeader` is where Overview's two header
 //     strings come from now.
+//
+// **P-05 of the 2026-11-25 full review split this file by card family**
+// (GL-36), the way `ConsoleController` was split. It had reached 5,229 lines.
+// This file keeps the class, its stored state, build, data in, render,
+// layout and the self-test surface. The rest is in `HomeCanvasController+*.swift`:
+// `+Briefing`, `+Attention`, `+Customize`, `+Dashboard`, `+Claude`, `+Fleet`,
+// `+MergeQueue`, `+Health`, `+Hosts` and `+ModuleCards`. The move changed no
+// statement. `private` was dropped from the class's members so the family can
+// reach them across files, so treat the whole family as private to itself.
 
 import AppKit
 
@@ -101,8 +110,8 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
-    static let minModuleWidth: CGFloat = 255
-    static let gridSpacing: CGFloat = 16
+    nonisolated static let minModuleWidth: CGFloat = 255
+    nonisolated static let gridSpacing: CGFloat = 16
 
     /// Which grid a card was placed by, and how much of it the card owns.
     ///
@@ -218,7 +227,7 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: State pushed in from elsewhere
 
-    private var fleetSnapshot: FleetSnapshot?
+    var fleetSnapshot: FleetSnapshot?
     /// The Claude quota reading behind the `.claudeStatus` card.
     ///
     /// Pushed in, never fetched (rule 1 in this file's header):
@@ -231,13 +240,13 @@ final class HomeCanvasController: NSViewController {
     /// `nil` means no reading has arrived yet; `quotaFailure` non-nil means
     /// one was attempted and could not be taken. GL-14: those are different
     /// states and the card says so differently - neither is drawn as a zero.
-    private var quotaSnapshot: QuotaSnapshot?
-    private var quotaFailure: String?
+    var quotaSnapshot: QuotaSnapshot?
+    var quotaFailure: String?
     /// When `quotaSnapshot` arrived - see `applyQuota`. `nil` until the first
     /// successful reading, which is exactly when the card has no freshness to
     /// state and so shows no caption at all rather than "Updated just now"
     /// about nothing.
-    private var quotaFetchedAt: Date?
+    var quotaFetchedAt: Date?
     /// `true` between the card's Refresh being pressed and the reading (or
     /// the stated reason there is none) coming back. Drives the header
     /// button's disabled in-flight state, and stops a second press stacking
@@ -246,17 +255,17 @@ final class HomeCanvasController: NSViewController {
     /// Cleared in `applyQuota`, which `FleetController.refreshQuota` publishes
     /// on failure as well as on success - so this cannot wedge on a
     /// `quota-axi` that is offline or unauthenticated.
-    private var isRefreshingQuota = false
+    var isRefreshingQuota = false
     /// When `applyFleet` last delivered a reading - UX5's hero detail line.
     /// `nil` until the first one lands, which is the "reading now" state.
-    private var fleetReadAt: Date?
-    private var mergedPRs: [MergedPR]?
-    private var prFetchFailure: String?
+    var fleetReadAt: Date?
+    var mergedPRs: [MergedPR]?
+    var prFetchFailure: String?
     /// UI-12's error state for the merge queue: the last list that was read,
     /// and when. A failed scan keeps showing it and says how old it is,
     /// rather than blanking a card that was right a minute ago.
-    private var lastGoodPRs: [MergedPR]?
-    private var lastGoodPRsAt: Date?
+    var lastGoodPRs: [MergedPR]?
+    var lastGoodPRsAt: Date?
     /// `nil` until the engine has pushed one. The Dictation module then falls
     /// back to `DictationPermissions.currentStatus()` rather than assuming
     /// `.ready`: the engine only pushes on a *change*, so a hub rendered at
@@ -265,22 +274,24 @@ final class HomeCanvasController: NSViewController {
     /// dictate. That read is three synchronous authorization-status calls -
     /// no subprocess, no network - and is what `DictationController` seeds
     /// its own state from.
-    private var pushedDictationStatus: DictationStatus?
+    var pushedDictationStatus: DictationStatus?
     /// `nil` until the crew page has pushed one - i.e. until a conversation
     /// has actually moved. The card then reads as "no conversation yet",
     /// which is the honest state at launch rather than a fabricated summary.
-    private var strawHatState: StrawHatCanvasState?
+    var strawHatState: StrawHatCanvasState?
 
-    private let sources: Sources
-    private var space: DaylightSpace = .overview
+    // P-02: `nonisolated(unsafe)` because `deinit` reads `focusTimer` from it.
+    // Assigned once in `init` and never written again.
+    nonisolated(unsafe) let sources: Sources
+    var space: DaylightSpace = .overview
 
     // MARK: Views
 
-    private let scroll = NSScrollView()
-    private let document = FlippedView()
-    private let stack = NSStackView()
-    private let greetingLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
+    let scroll = NSScrollView()
+    let document = FlippedView()
+    let stack = NSStackView()
+    let greetingLabel = NSTextField(labelWithString: "")
+    let subtitleLabel = NSTextField(labelWithString: "")
     /// C1's hero: the state badge and its uppercase kicker.
     ///
     /// The audit's fix for "one top-left row and then 80% empty paper" is to
@@ -293,13 +304,13 @@ final class HomeCanvasController: NSViewController {
     /// It renders `FleetGreeting.Answer`, which Overview's own banner already
     /// computes - the same three-state decision and the same copy, not a
     /// second one - so the hero and the page it links to can never disagree.
-    private let heroBadge = IconTileView(size: 40, cornerRadius: 12)
-    private let kickerLabel = NSTextField(labelWithString: "")
-    private var heroTint: HelmTint = .accent
+    let heroBadge = IconTileView(size: 40, cornerRadius: 12)
+    let kickerLabel = NSTextField(labelWithString: "")
+    var heroTint: HelmTint = .accent
     /// The app's one Refresh (`HelmButton.refresh`, UXP-08): a labelled
     /// secondary button, because Refresh re-reads and is never what a page
     /// is for.
-    private let refreshButton = HelmButton.refresh()
+    let refreshButton = HelmButton.refresh()
     /// Plan B's hero *band*: the surface the greeting row sits on.
     ///
     /// The captain reviewed C1's shipped vertical centring live and rejected
@@ -312,8 +323,8 @@ final class HomeCanvasController: NSViewController {
     /// name themselves and nothing more, so there the band is transparent
     /// with no insets and the header renders as the plain row it already was
     /// - the change there is purely that it now sits at the top of the page.
-    private let heroCard = NSView()
-    private var heroCardInsets: [NSLayoutConstraint] = []
+    let heroCard = NSView()
+    var heroCardInsets: [NSLayoutConstraint] = []
     /// The captain's "Needs Attention" card - what is due today and which
     /// follow-ups are waiting, merged into one flat list.
     ///
@@ -329,8 +340,8 @@ final class HomeCanvasController: NSViewController {
     /// already-loaded in-memory lists, which is the same read `fillTasks`
     /// makes two screens down. No store is constructed and nothing is
     /// fetched.
-    private let attentionCard = NeedsAttentionCard()
-    private let gridStack = NSStackView()
+    let attentionCard = NeedsAttentionCard()
+    let gridStack = NSStackView()
 
     // MARK: The feel pass (the sidebar layout's Home)
     //
@@ -354,14 +365,14 @@ final class HomeCanvasController: NSViewController {
     // registry's summary). There are no sparklines: nothing records a series
     // of any of these figures, and a trend line needs one.
 
-    private let greetingTitle = NSTextField(labelWithString: "")
-    private let greetingSummary = NSTextField(labelWithString: "")
-    private let greetingHeader = NSStackView()
-    private let briefingHero = HelmHeroCard()
+    let greetingTitle = NSTextField(labelWithString: "")
+    let greetingSummary = NSTextField(labelWithString: "")
+    let greetingHeader = NSStackView()
+    let briefingHero = HelmHeroCard()
     /// The content's top edge: S03's first-content line, lifted by the
     /// greeting's own ink inset while the greeting is the first thing drawn
     /// (`greetingInkInset`).
-    private var stackTop: NSLayoutConstraint?
+    var stackTop: NSLayoutConstraint?
 
     /// How far a display title's capitals sit below its frame's top: the
     /// font's ascender less its cap height. S03 puts every page's first ink
@@ -372,16 +383,16 @@ final class HomeCanvasController: NSViewController {
         return max(0, floor(font.ascender - font.capHeight))
     }
 
-    private var cards: [HelmModuleCard] = []
+    var cards: [HelmModuleCard] = []
     /// P2: the page's cards by module, the placement each was built for, and
     /// the layout they were built into - so a render that changes only data
     /// reconfigures these cards in place instead of rebuilding the grid.
-    private var cardsByModule: [DaylightModule: HelmModuleCard] = [:]
-    private var cardPlacements: [DaylightModule: CardPlacement] = [:]
-    private var gridLayoutKey: GridLayoutKey?
+    var cardsByModule: [DaylightModule: HelmModuleCard] = [:]
+    var cardPlacements: [DaylightModule: CardPlacement] = [:]
+    var gridLayoutKey: GridLayoutKey?
     /// The hub's own-height preferences (`dashboardColumn`), by module, so
     /// an in-place refresh can move them with the content.
-    private var dashboardOwnHeights: [DaylightModule: NSLayoutConstraint] = [:]
+    var dashboardOwnHeights: [DaylightModule: NSLayoutConstraint] = [:]
 
     // MARK: Home's arranged cards (the sidebar layout, modular-shell stage 4)
 
@@ -419,8 +430,8 @@ final class HomeCanvasController: NSViewController {
         }
     }
     /// Customize: the tray above the grid and the controls on every card.
-    private(set) var isCustomizing = false
-    private lazy var customizeTray: HomeCustomizeTray = {
+    var isCustomizing = false
+    lazy var customizeTray: HomeCustomizeTray = {
         let tray = HomeCustomizeTray()
         tray.translatesAutoresizingMaskIntoConstraints = false
         tray.onAdd = { [weak self] module in self?.arrange { $0.show(module) } }
@@ -434,15 +445,17 @@ final class HomeCanvasController: NSViewController {
     }()
     /// Set by the shell, which owns Customize's toolbar button.
     var onCustomizingChanged: ((Bool) -> Void)?
-    private var cardStrips: [DaylightModule: HomeCardCustomizeStrip] = [:]
+    var cardStrips: [DaylightModule: HomeCardCustomizeStrip] = [:]
     /// The grips on every card while Customize is on.
-    private var resizeHandles: [DaylightModule: [HomeCardResizeHandle]] = [:]
+    var resizeHandles: [DaylightModule: [HomeCardResizeHandle]] = [:]
     /// The size a card is being dragged to, on that card.
-    private let sizeBadge = HomeCardSizeBadge()
-    private var themeToken: ThemeObservation?
-    private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
-    private var windowResizeObserver: NSObjectProtocol?
-    private var clipResizeObserver: NSObjectProtocol?
+    let sizeBadge = HomeCardSizeBadge()
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var themeToken: ThemeObservation?
+    nonisolated(unsafe) var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
+    nonisolated(unsafe) var windowResizeObserver: NSObjectProtocol?
+    nonisolated(unsafe) var clipResizeObserver: NSObjectProtocol?
 
     // MARK: Live resize (PERF-03)
     //
@@ -465,41 +478,43 @@ final class HomeCanvasController: NSViewController {
     //     that changes the shelf's column count, or crosses the hub's
     //     fall-back width, still rebuilds, because that is a different grid.
 
-    private var liveResizeObservers: [NSObjectProtocol] = []
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var liveResizeObservers: [NSObjectProtocol] = []
     private(set) var isInLiveResize = false
 
     /// Each width pin the current grid was built with, and the span it
     /// covers, so a live resize can move them without rebuilding. On the hub
     /// these are the three columns' pins; on a shelf, every card's and
     /// spacer's.
-    private var gridWidthPins: [(constraint: NSLayoutConstraint, span: Int)] = []
+    var gridWidthPins: [(constraint: NSLayoutConstraint, span: Int)] = []
     /// The shelf's column count at build time - the live-resize path's test
     /// for "same grid, new width".
-    private var builtShelfColumns = 0
+    var builtShelfColumns = 0
 
-    private struct ProbeKey: Hashable {
+    struct ProbeKey: Hashable {
         let signature: String
         let width: CGFloat
     }
     /// See `probeHeight(_:width:)`.
-    private var probeHeights: [ProbeKey: CGFloat] = [:]
+    var probeHeights: [ProbeKey: CGFloat] = [:]
     /// The keys the plan being computed has read, so the memo can drop
     /// everything else once it is done - what keeps it "cleared when the
     /// content changes" without a per-module bookkeeping of its own.
-    private var probeKeysInUse: Set<ProbeKey>?
+    var probeKeysInUse: Set<ProbeKey>?
 
     #if FM_SELFTESTS
     /// PERF-03's counters: real probe layouts, memo hits, and full grid
     /// rebuilds (the teardown path).
-    private(set) var debugProbeMeasurements = 0
-    private(set) var debugProbeMemoHits = 0
-    private(set) var debugGridRebuilds = 0
+    var debugProbeMeasurements = 0
+    var debugProbeMemoHits = 0
+    var debugGridRebuilds = 0
     private(set) var debugApplyThemeCount = 0
     #endif
-    private var lastGridWidth: CGFloat = 0
+    var lastGridWidth: CGFloat = 0
     /// The height the hub's columns were last budgeted for - see
     /// `containerWidthMayHaveChanged`.
-    private var lastGridHeight: CGFloat = 0
+    var lastGridHeight: CGFloat = 0
     /// `fm/grandline-home-fit-implement`: on the hub the document is held as
     /// tall as the viewport, at 499 - so the page fits the window and its
     /// columns' lists absorb the room, while content that genuinely cannot
@@ -509,28 +524,28 @@ final class HomeCanvasController: NSViewController {
     /// trailing below. Under `NSLayoutPriorityWindowSizeStayPut`, and inside
     /// a scroll view, so it can never become a floor on the window (gotchas
     /// (13) and (15)).
-    private var documentFillsViewport: NSLayoutConstraint?
+    var documentFillsViewport: NSLayoutConstraint?
     /// The attention card's full-width tie while it sits above the grid
     /// (every space but the hub's three-column page, where it is column 1).
-    private var attentionWidthTie: NSLayoutConstraint?
+    var attentionWidthTie: NSLayoutConstraint?
     /// The Merge queue's peek rows on the hub's page, chosen from the height
     /// its column has left (`dashboardRowViews`). The shelf keeps
     /// `maxPeekRows`.
-    private var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
+    var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
     /// The background services as this render sees them - see
     /// `ServiceHealthSummary`. Taken once at the top of `render()`, which the
     /// registry's observer schedules on every report, and read by the
     /// attention card's closing note and the Health card alike: R5-BUG-02's
     /// footer said "7/7 services healthy" beside a card reading "7/8" because
     /// each asked the registry for itself.
-    private var healthSummary = ServiceHealthSummary()
+    var healthSummary = ServiceHealthSummary()
     /// Whether the hub's Health card lists its services under the ring -
     /// set by `dashboardRowViews` when its column has the room, never on the
     /// shelf.
-    private var healthListsServices = false
+    var healthListsServices = false
     /// C1: the content column's preferred width, retuned on every grid
     /// rebuild from the column count the grid actually used.
-    private var contentWidthConstraint: NSLayoutConstraint?
+    var contentWidthConstraint: NSLayoutConstraint?
     /// Coalesces the render requests that arrive in bursts.
     ///
     /// Three of this page's inputs fire several times in quick succession by
@@ -541,7 +556,7 @@ final class HomeCanvasController: NSViewController {
     /// changed), so answering every one of those individually would be real,
     /// visible work for a page whose content only changes once. One flag plus
     /// a main-queue hop collapses a burst into a single render.
-    private var renderPending = false
+    var renderPending = false
 
     init(sources: Sources) {
         self.sources = sources
@@ -560,18 +575,20 @@ final class HomeCanvasController: NSViewController {
 
     /// What the Focus timer card last said about the session, so a tick
     /// that changes nothing it shows asks for no render.
-    private var focusCardKey: String?
-    private var focusTimerToken: UUID?
-    private var dayRolloverToken: NSObjectProtocol?
+    var focusCardKey: String?
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var focusTimerToken: UUID?
+    nonisolated(unsafe) var dayRolloverToken: NSObjectProtocol?
 
     /// B-01: one render while Home can be seen; a hidden Home renders when
     /// it is shown again.
-    private func dayDidChange() {
+    func dayDidChange() {
         guard isViewLoaded, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
         setNeedsRender()
     }
 
-    private func focusTimerDidChange() {
+    func focusTimerDidChange() {
         let session = sources.focusTimer?.session
         let key = session.map { "\($0.taskID)|\($0.isPaused)|\($0.plannedSeconds)" }
         guard key != focusCardKey else { return }
@@ -777,8 +794,14 @@ final class HomeCanvasController: NSViewController {
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] note in
-            guard let self, (note.object as? NSWindow) === self.view.window else { return }
-            self.containerWidthMayHaveChanged()
+            // P-02: `queue: .main` delivers on main; this says so to the compiler.
+            // `Notification` is not `Sendable`, so the closure carries the
+            // sender's identity, which `===` compared before.
+            let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated {
+                guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                self.containerWidthMayHaveChanged()
+            }
         }
         // The clip view can narrow without the window resizing: a legacy
         // scroller appears when the content first overflows on a Mac set to
@@ -796,21 +819,33 @@ final class HomeCanvasController: NSViewController {
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willStartLiveResizeNotification, object: nil, queue: .main
             ) { [weak self] note in
-                guard let self, (note.object as? NSWindow) === self.view.window else { return }
-                self.isInLiveResize = true
+                // `Notification` is not `Sendable`, so the closure carries the
+                // sender's identity, which `===` compared before.
+                let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated {
+                    guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                    self.isInLiveResize = true
+                }
             },
             NotificationCenter.default.addObserver(
                 forName: NSWindow.didEndLiveResizeNotification, object: nil, queue: .main
             ) { [weak self] note in
-                guard let self, (note.object as? NSWindow) === self.view.window else { return }
-                self.liveResizeDidEnd()
+                // `Notification` is not `Sendable`, so the closure carries the
+                // sender's identity, which `===` compared before.
+                let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated {
+                    guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                    self.liveResizeDidEnd()
+                }
             },
         ]
         scroll.contentView.postsFrameChangedNotifications = true
         clipResizeObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main
         ) { [weak self] _ in
-            DispatchQueue.main.async { self?.containerWidthMayHaveChanged() }
+            // The hop is the point here (the next main-queue turn, not inside
+            // the layout pass that moved the clip), so it stays.
+            DispatchQueue.main.async { [weak self] in self?.containerWidthMayHaveChanged() }
         }
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
@@ -854,7 +889,7 @@ final class HomeCanvasController: NSViewController {
         applyTheme(ThemeManager.shared.theme)
     }
 
-    private let scrollMemory = HelmScrollMemory()
+    let scrollMemory = HelmScrollMemory()
 
     override func viewWillDisappear() {
         super.viewWillDisappear()
@@ -988,169 +1023,14 @@ final class HomeCanvasController: NSViewController {
         setNeedsRender()
     }
 
-    // MARK: Render
+    // MARK: State the split files keep here
 
-    /// Ask for one render on the next main-queue turn, however many callers
-    /// ask before it runs. See `renderPending`.
-    private func setNeedsRender() {
-        guard !renderPending else { return }
-        renderPending = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.renderPending = false
-            guard self.isViewLoaded else { return }
-            self.render()
-        }
-    }
-
-    private func render() {
-        healthSummary = ServiceHealthRegistry.shared.summary()
-        renderGreeting()
-        renderFeelPass()
-        renderAttention()
-        renderTip()
-        rebuildGrid()
-        applyTheme(ThemeManager.shared.theme)
-    }
-
-    // MARK: The feel pass
-
-    /// The summary line's size: the prototype's 14 under a 30pt title.
-    static let greetingSummarySize: CGFloat = 14
-
-    private func buildFeelPass() {
-        greetingTitle.lineBreakMode = .byTruncatingTail
-        greetingSummary.lineBreakMode = .byTruncatingTail
-        for label in [greetingTitle, greetingSummary] {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            // Gotcha (13): the largest type on the page is never a width floor.
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        }
-        greetingTitle.setAccessibilityRole(.staticText)
-        greetingHeader.setViews([greetingTitle, greetingSummary], in: .top)
-        greetingHeader.orientation = .vertical
-        greetingHeader.alignment = .leading
-        greetingHeader.spacing = HelmMetrics.s1 + 2
-        greetingHeader.translatesAutoresizingMaskIntoConstraints = false
-        greetingHeader.setHuggingPriority(.defaultLow, for: .horizontal)
-        greetingHeader.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        greetingHeader.isHidden = true
-        briefingHero.isHidden = true
-    }
-
-    /// The greeting and the hero, on Home's arranged space only.
-    ///
-    /// Hg-2 (the five-screen redesign board): while the briefing is drawn as
-    /// the hero, the greeting is the hero's own title and the day's verdict
-    /// its pill, so the page-ground header is not drawn. Without the hero -
-    /// the briefing hidden by the captain's layout, or nothing to say, or
-    /// Customize drawing it as a card - the greeting keeps its own row.
-    private func renderFeelPass(now: Date = DayRollover.now()) {
-        let on = showsArrangedCards
-        let greetingOnGround = on && !briefingIsHero
-        greetingHeader.isHidden = !greetingOnGround
-        briefingHero.isHidden = !briefingIsHero
-        stackTop?.constant = Self.contentTopMargin - (greetingOnGround ? Self.greetingInkInset : 0)
-        guard on else { return }
-
-        let counts = HomeTaskCounts(store: sources.shiftStore, now: now)
-        var prsReady: Int?
-        if case let .value(count) = prReading { prsReady = count }
-        let crewShown = !hiddenModules.contains(.crew)
-        let healthShown = !hiddenModules.contains(.health)
-        let fleetAnswer = crewShown ? overviewAnswer() : nil
-        let fleetTint = fleetAnswer.flatMap { $0.tint == .good ? nil : $0.tint }
-        let fleetNeedsCaptain = HomeBriefingHero.offersNeedsYou(crewShown: crewShown,
-                                                                tasks: fleetSnapshot?.tasks ?? [])
-        let facts = HomeGreeting.Facts(
-            dueToday: hiddenModules.contains(.tasks) ? nil : counts?.due,
-            overdue: counts?.overdue,
-            fleetNeedsYou: fleetAnswer.flatMap { $0.tint == .good ? nil : $0.title },
-            prsReady: crewShown ? prsReady : nil,
-            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil)
-        greetingTitle.stringValue = HomeGreeting.title(
-            captain: HomeGreeting.captainName(fleetCaptain: fleetSnapshot?.captain), now: now)
-        greetingSummary.stringValue = HomeGreeting.summary(facts, now: now)
-        greetingHeader.setAccessibilityElement(true)
-        greetingHeader.setAccessibilityRole(.group)
-        greetingHeader.setAccessibilityLabel("\(greetingTitle.stringValue). \(greetingSummary.stringValue)")
-
-        if briefingIsHero {
-            let verdict = HomeGreeting.verdict(facts, fleetTint: fleetTint)
-            renderBriefingHero(fleetNeedsYou: fleetNeedsCaptain, healthShown: healthShown,
-                               greeting: greetingTitle.stringValue,
-                               status: .init(text: verdict.text, tint: verdict.tint), now: now)
-        }
-    }
-
-    private func renderBriefingHero(fleetNeedsYou: Bool, healthShown: Bool, greeting: String,
-                                    status: HelmHeroCard.Content.Status, now: Date) {
-        let record = AppSettings.shared.morningBriefingRecord
-        let words = HomeBriefingHero.words(record: record, enabled: AppSettings.shared.morningBriefingEnabled,
-                                           settingsName: PlaceName.of(.settings))
-        // Hg-2: the date the page-ground summary used to open with leads the
-        // kicker, since the greeting it sat under is this card's title now.
-        var kicker = "\(HomeGreeting.date(now)) \u{00B7} Morning briefing"
-        if let record, !record.clauses.isEmpty {
-            kicker += " \u{00B7} generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
-            kicker += " \u{00B7} \(record.sources.count) source\(record.sources.count == 1 ? "" : "s")"
-            if record.isDegraded { kicker += " \u{00B7} offline" }
-        }
-        // The feasibility audit's ring: the services figure Home's Health
-        // card already draws, as the last tile. None when the profile hides
-        // Health, and none before anything has reported - an empty ring
-        // would read as zero healthy (GL-14).
-        var ring: HelmHeroCard.Content.Ring?
-        if healthShown, healthSummary.total > 0 {
-            ring = .init(value: healthSummary.healthy, total: healthSummary.total,
-                         label: PlaceName.short(.health), caption: "services healthy", isLink: true)
-        }
-        var tiles = words.facts.map { HomeBriefingHero.tile($0, pageName: PlaceName.short) }
-        if let note = words.note { tiles.append(.init(label: nil, text: note, tint: nil, isLink: false)) }
-        briefingHero.configure(.init(kicker: kicker, title: words.title, tiles: tiles, ring: ring,
-                                     greeting: greeting, status: status))
-        let facts = words.facts
-        briefingHero.onActivateTile = { [weak self] index in
-            guard let self, !self.isCustomizing, facts.indices.contains(index) else { return }
-            self.follow(facts[index].target)
-        }
-        briefingHero.onActivateRing = { [weak self] in
-            guard let self, !self.isCustomizing else { return }
-            self.heroOpenHealth()
-        }
-
-        // The prototype's two actions, each only when it has somewhere real
-        // to go: the crew's decisions when one is waiting, Health when a
-        // service is failing.
-        var actions: [(String, Selector)] = []
-        if fleetNeedsYou { actions.append(("Open Needs you", #selector(heroOpenDecisions))) }
-        if healthShown, healthSummary.failing > 0 { actions.append(("See Health", #selector(heroOpenHealth))) }
-        if heroActionTitles != actions.map(\.0) {
-            heroActionTitles = actions.map(\.0)
-            briefingHero.setActions(actions.map { HelmButton(title: $0.0, variant: .secondary, target: self, action: $0.1) })
-        }
-    }
+    // Stored properties of the + files (GL-36): an extension cannot
+    // hold one, so they stay with the class.
 
     /// The titles the hero's buttons were last built with, so a render that
     /// changes nothing keeps the buttons it has (and their hover state).
-    private var heroActionTitles: [String] = []
-
-    @objc private func heroOpenDecisions() {
-        if let onOpenCrewDecisions { onOpenCrewDecisions() } else { onOpenDestination?(.overview) }
-    }
-    @objc private func heroOpenHealth() { onOpenDestination?(.health) }
-
-    #if FM_SELFTESTS
-    var debugGreetingTitle: String { greetingHeader.isHidden ? "" : greetingTitle.stringValue }
-    var debugGreetingSummary: String { greetingHeader.isHidden ? "" : greetingSummary.stringValue }
-    /// Hg-2: whether the greeting is drawn on the page ground rather than as
-    /// the briefing hero's title.
-    var debugGreetingOnGround: Bool { !greetingHeader.isHidden }
-    var debugBriefingHero: HelmHeroCard? { briefingHero.isHidden ? nil : briefingHero }
-    #endif
-
-    // MARK: R5-UX-03 - Things you can do
+    var heroActionTitles: [String] = []
 
     /// Home's "Things you can do" strip: one tip a day for the first week,
     /// under the attention card, until the captain hides it.
@@ -1158,302 +1038,18 @@ final class HomeCanvasController: NSViewController {
     /// tile and no edge, which keeps UI-4's rule that only the attention card
     /// carries one on Home. "Hide tips" is its dismiss, remembered in
     /// `AppSettings.homeTipsDismissed`.
-    private lazy var tipRow: HelmNotice = {
+    lazy var tipRow: HelmNotice = {
         let notice = HelmNotice(dismissTitle: "Hide tips")
         notice.onDismiss = { [weak self] in self?.dismissTips() }
         return notice
     }()
-    private var shownTip: HomeTips.Tip?
-    private var shownTipDay = 0
-
-    private func renderTip(now: Date = Date()) {
-        let settings = AppSettings.shared
-        guard space == .overview, let first = settings.homeTipsFirstShown,
-              let tip = HomeTips.tip(firstShown: first, now: now, dismissed: settings.homeTipsDismissed,
-                                     tips: HomeTips.all()) else {
-            shownTip = nil
-            tipRow.isHidden = true
-            return
-        }
-        shownTip = tip
-        shownTipDay = (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: first),
-                                                       to: Calendar.current.startOfDay(for: now)).day ?? 0) + 1
-        tipRow.isHidden = false
-        paintTip(ThemeManager.shared.theme)
-    }
-
-    private func paintTip(_ theme: HelmTheme) {
-        guard let tip = shownTip else { return }
-        tipRow.configure(HelmNotice.Content(
-            tint: .info,
-            symbol: tip.symbol,
-            kicker: "Things you can do \u{00B7} day \(shownTipDay) of \(HomeTips.days)",
-            title: tip.title,
-            body: tip.body), theme: theme)
-    }
-
-    #if FM_SELFTESTS
-    var debugTipTitle: String? { tipRow.isHidden ? nil : shownTip?.title }
-    func debugDismissTips() { tipRow.debugDismiss() }
-    var debugTipNotice: HelmNotice { tipRow }
-    #endif
-
-    private func dismissTips() {
-        AppSettings.shared.homeTipsDismissed = true
-        renderTip()
-        Toast.show(in: view, message: "Tips hidden. \u{2318}/ lists the shortcuts for any page.")
-    }
-
-    /// §5.4's copy. Overview reuses `FleetGreeting`'s time-of-day logic and
-    /// the answer-banner summary Overview itself renders - the same two
-    /// functions, not a second implementation - and every other space shows
-    /// its own fixed pair.
-    private func renderGreeting() {
-        // C1: on every space the hero is badge + kicker + headline + detail.
-        // Off Overview there is no fleet answer to report, so the space names
-        // itself and the badge carries that space's own identity hue - never
-        // a semantic tint, which would be claiming a state this page has not
-        // measured.
-        guard space == .overview else {
-            heroCard.isHidden = false
-            setHero(tint: nil,
-                    symbol: space.heroSymbol,
-                    kicker: "",
-                    title: space.title,
-                    detail: space.subtitle)
-            return
-        }
-        // **The hub has no hero band any more.**
-        //
-        // `fm/grandline-home-page-visual-overhaul`: the captain's reference
-        // draws one card at the top of Home - tile, eyebrow, headline,
-        // freshness subline, Refresh - and the app drew two, a hero band
-        // saying "Nothing needs you right now / Fleet read just now" over a
-        // Needs Attention card saying "All clear / Nothing is due". Two cards
-        // one above the other, each reporting a different half of the same
-        // question, is exactly the duplication review #3's UX5 objected to on
-        // this very page, and the reference resolves it by merging them.
-        //
-        // So on Overview the band is hidden - which for an *arranged* subview
-        // really does take it out of the layout (gotcha (15)'s one such case)
-        // - and `renderAttention` below builds the whole header from the same
-        // `FleetGreeting.Answer` this function used to. Nothing was deleted:
-        // every branch that used to `setHero` here now decides a field of
-        // that card instead, and the four other spaces are untouched.
-        heroCard.isHidden = true
-    }
-
-    /// The four header fields the merged attention card takes over from the
-    /// hero band, for **Overview only**.
-    ///
-    /// Every branch below was a `setHero` call in `renderGreeting` before the
-    /// merge, in the same order and with the same copy. What changed is only
-    /// where the strings land: `title` becomes the card's all-clear headline
-    /// (used when the list is empty, which is exactly when the old hero's
-    /// title was the only thing on screen) and `detail` becomes its subline.
-    ///
-    /// A card with rows writes its own headline from those rows, so `title`
-    /// is deliberately *not* forced on it - the reference's card says "Two
-    /// things are late." over its list rather than repeating a fleet
-    /// all-clear above rows that contradict it. The one verdict that must not
-    /// be lost that way is a fleet that needs the captain, and that is not
-    /// dropped either: it becomes a row of its own (see `fleetAttentionItem`),
-    /// so it is counted, named in the headline and given a button.
-    private func hubHeader(hasItems: Bool) -> (title: String, detail: String) {
-        // Review #3's UX13: "a guided 'your first host / your first task'
-        // empty state on the canvas" for a genuinely first-run state.
-        //
-        // **It must never hide a verdict that needs the captain**, which is
-        // why this is not simply "no local data -> show the invitation". The
-        // three stores it counts are *local* - saved hosts, tasks, sticky
-        // notes - and none of them is what `FleetGreeting` reports on: a
-        // crewmate can be parked on a decision while this machine has nothing
-        // saved on it at all (a new Mac, a second user, a fresh clone), and a
-        // cheerful "Welcome aboard" over a task that is blocked waiting for an
-        // answer would be strictly worse than the all-clear this finding
-        // already objects to.
-        //
-        // So a needs-you answer wins, and the invitation is shown only where
-        // the header would otherwise be reporting nothing worth reading:
-        // before the first fetch lands, or over a genuine all-clear. Caught
-        // by `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly
-        // that combination - a parked fleet task over empty local stores.
-        //
-        // It is additionally safe under the merge for a second reason worth
-        // stating: this title is only ever *shown* when the list is empty, so
-        // an invitation cannot appear over rows that need doing even if the
-        // guard above were ever weakened.
-        // R5-UX-01 / R5-UX-07: a profile that hides Crew has no fleet to hear
-        // from, so the header never reports on one - not "Fleet read just
-        // now", and not "No firstmate home was found" to someone who needs
-        // none.
-        let fleetSpeaks = !hiddenModules.contains(.crew)
-        let answerIfAny = fleetSpeaks ? overviewAnswer() : nil
-        let nothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
-        // `hasItems` is the other half of the guard, and it is the one the
-        // merge added. The invitation replaces **both** header strings, so
-        // showing it over a list would put "Nothing is saved here yet" under
-        // a headline counting rows - measured in an off-screen render, where
-        // it read as two cards' worth of copy disagreeing with each other.
-        // PERF-01: an unloaded sticky board is not an empty one, so the
-        // first-run invitation waits for the store rather than reading the
-        // file before the first frame (or claiming "nothing is saved").
-        if !hasItems, nothingUrgent, sources.stickyBoardStore.isLoaded,
-           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
-                                                tasks: sources.shiftStore.activeTasks.count,
-                                                notes: sources.stickyBoardStore.activeNotes.count) {
-            return (firstRun.title, firstRun.detail)
-        }
-        guard fleetSpeaks else {
-            return (FleetGreeting.timeOfDay(), "What is due today, from your tasks and follow-ups.")
-        }
-        guard let answer = answerIfAny else {
-            // GL-14: nothing has been measured yet, so the header says so
-            // rather than rendering an all-clear it cannot stand behind -
-            // and the subline states the gap rather than claiming a
-            // freshness for a reading that has not happened.
-            return (FleetGreeting.timeOfDay(), "The fleet hasn\u{2019}t been read yet.")
-        }
-        return (answer.title, heroDetail(for: answer))
-    }
-
-    /// `FleetGreeting`'s verdict over the snapshot this page was handed, or
-    /// `nil` before the first one arrives.
-    ///
-    /// One definition, called by both `hubHeader` and `fleetAttentionItem` -
-    /// the headline and the row that backs it must be derived from the same
-    /// answer or the card can count a verdict it is not showing.
-    private func overviewAnswer() -> FleetGreeting.Answer? {
-        fleetSnapshot.map {
-            FleetGreeting.answer(tasks: $0.tasks, prs: prReading, homeOk: $0.homeOk)
-        }
-    }
-
-    /// REL-04: the PR half of the verdict, read the way `fillMergeQueue`
-    /// already reads it. Every Fleet refresh pushes its fast snapshot with no
-    /// PR list and no failure, and this used to turn that into "0 PRs ready
-    /// to merge" in the good tint for the length of every scan - while the
-    /// Merge queue card directly below kept the last good list. A scan in
-    /// flight now keeps the last good count, and with none yet it says it
-    /// is still checking. A failed scan still says so rather than quoting
-    /// the old count as current.
-    private var prReading: FleetDataSource.PRReadyReading {
-        if let prFetchFailure { return .failed(prFetchFailure) }
-        if let prs = mergedPRs ?? lastGoodPRs { return .value(FleetDataSource.readyToMergeCount(prs)) }
-        return .scanning
-    }
-
-    // MARK: Needs Attention (the captain's move of Today's Due Today)
-
-    /// Build the card's rows from `DailyReviewComposer`'s digest.
-    ///
-    /// The composer is the one definition of "due", "overdue", the ordering
-    /// and the caps - which is the whole point of routing this through a
-    /// digest instead of filtering `activeTasks` here.
-    private func renderAttention() {
-        // Only the hub itself. The other spaces are filters over the module
-        // grid and have no day of their own to report on. Home's arranged
-        // cards (the sidebar layout) do not draw it either: the captain
-        // removed the band between the briefing hero and the cards.
-        guard space == .overview, !showsArrangedCards else {
-            attentionCard.isHidden = true
-            return
-        }
-        attentionCard.isHidden = false
-        #if FM_SELFTESTS
-        // The tour lab's and the fit suite's fabricated rows - see
-        // `debugAttentionOverride`.
-        if let override = debugAttentionOverride {
-            // What the card shows is no longer what was last composed.
-            lastAttention = nil
-            attentionCard.sublineProvider = nil
-            attentionCard.render(override, subline: debugAttentionSubline, theme: ThemeManager.shared.theme)
-            return
-        }
-        #endif
-
-        var inputs = DailyReviewInputs()
-        inputs.now = Date()
-        if sources.shiftStore.isInFailedLoadState {
-            // GL-14/GL-01: "the store failed to parse" is not "nothing is
-            // due", and the card renders it as a stated gap rather than as an
-            // all-clear.
-            let reason = "your tasks could not be read - a file in the Tasks store failed to parse"
-            inputs.tasks = .unavailable(reason)
-            inputs.followUps = .unavailable(reason)
-        } else {
-            inputs.tasks = .available(sources.shiftStore.activeTasks)
-            inputs.followUps = .available(sources.shiftStore.followUps)
-            var names: [String: String] = [:]
-            for project in sources.shiftStore.projects { names[project.id] = project.name }
-            inputs.projectNames = names
-        }
-
-        // R2-PERF-06: a service-health tick (every 30 and 60 seconds, from
-        // two pollers) re-rendered this card, re-running the composer over
-        // every active task and follow-up. When nothing it reads has moved
-        // and the clock has not reached the digest's next change, the card
-        // only takes its freshness line - GL-20's cheap check before the
-        // expensive half.
-        let extra = signalAttentionItems()
-        let clear = clearNotes()
-        var unclocked = inputs
-        unclocked.now = .distantPast
-        if let last = lastAttention, last.inputs == unclocked, last.extra == extra, last.clear == clear,
-           inputs.now < last.validUntil {
-            let header = hubHeader(hasItems: last.hasItems)
-            if header.title == last.headerTitle {
-                attentionCard.setSubline(header.detail)
-                return
-            }
-        }
-
-        #if FM_SELFTESTS
-        debugDigestCount += 1
-        #endif
-        let digest = DailyReviewComposer.digest(from: inputs)
-        // Whether the card will draw a list, which is what decides both of
-        // the header's strings - see `hubHeader`. Derived from the digest
-        // rather than from the built summary so the header can be handed to
-        // the composer in the same call that builds it.
-        let hasItems = !digest.dueTasks.isEmpty || !digest.followUps.isEmpty || !extra.isEmpty
-        let header = hubHeader(hasItems: hasItems)
-        lastAttention = AttentionComposed(inputs: unclocked, extra: extra, clear: clear, hasItems: hasItems,
-                                          headerTitle: header.title,
-                                          validUntil: DailyReviewComposer.nextChange(for: inputs))
-        // UI-13: the card re-reads the freshness phrase once a minute while it
-        // is on screen, so "Fleet read 4 min ago" stays true. The card owns
-        // that tick; this controller keeps its no-timer refresh model.
-        attentionCard.sublineProvider = { [weak self] in
-            self?.hubHeader(hasItems: hasItems).detail ?? ""
-        }
-        attentionCard.render(NeedsAttentionComposer.summary(from: digest,
-                                                            extra: extra,
-                                                            clear: clear,
-                                                            allClearHeadline: header.title),
-                             // The **fleet freshness** line now, not the
-                             // digest's own "as of".
-                             //
-                             // Before the merge this card sat under a hero
-                             // band that carried the freshness line, and its
-                             // own subline said when the digest was composed
-                             // - a defensible answer for a card about tasks,
-                             // and a useless one for a card that is now the
-                             // page's whole verdict: the digest is re-derived
-                             // on every render, so that line could only ever
-                             // say "a moment ago". The fleet is the one
-                             // source here whose age the captain cannot
-                             // otherwise tell, which is the same argument
-                             // review #3's UX5 made for putting it in the
-                             // hero in the first place.
-                             subline: header.detail,
-                             theme: ThemeManager.shared.theme)
-    }
+    var shownTip: HomeTips.Tip?
+    var shownTipDay = 0
 
     /// What the attention card was last composed from, and until when that
     /// composition holds (R2-PERF-06). The inputs carry no clock: the clock
     /// is `validUntil`.
-    private struct AttentionComposed {
+    struct AttentionComposed {
         let inputs: DailyReviewInputs
         let extra: [NeedsAttentionItem]
         let clear: [String]
@@ -1461,506 +1057,10 @@ final class HomeCanvasController: NSViewController {
         let headerTitle: String
         let validUntil: Date
     }
-    private var lastAttention: AttentionComposed?
-
-    // MARK: The three non-to-do attention rows
-
-    /// The reference's other attention sources, in its own order.
-    ///
-    /// **Rule 1 of this file holds.** Not one of these reads a store, starts
-    /// a poll or shells out: the fleet snapshot, the quota reading and
-    /// `BackgroundSignalsPoller.lastCounts` are all state that was pushed
-    /// into this page for cards it already draws. What is new is that the
-    /// card at the top of the page now says so in words as well.
-    private func signalAttentionItems() -> [NeedsAttentionItem] {
-        // R2-UX-01 (c): the fleet and Claude's usage are the crew's, and the
-        // session checks are Setup's.
-        let crew = !hiddenModules.contains(.crew)
-        let setup = !hiddenModules.contains(.setup)
-        return [crew ? fleetAttentionItem() : nil, crew ? claudeAttentionItem() : nil,
-                setup ? sessionChecksAttentionItem() : nil]
-            .compactMap { $0 }
-    }
-
-    /// The fleet, when it needs the captain.
-    ///
-    /// This is the row that keeps the hero band's strongest verdict alive
-    /// through the merge.
-    ///
-    /// **The test is the answer's own tint, and `metaRestatesCards` is the
-    /// wrong one.** That flag means "this answer's `meta` repeats the cards
-    /// below it", which is a statement about the *detail line* and not about
-    /// whether anything is wrong - and it is `true` on the partly-unknown
-    /// branch, where the PR scan failed. Using it dropped that branch's row
-    /// entirely, so a hub that could not reach the forge fell back to
-    /// "All clear" over a reading it had not taken. That is GL-14's exact
-    /// rule, and `DaylightModuleSelfTest` caught it.
-    ///
-    /// `tint == .good` is the one branch `FleetGreeting` paints green, and
-    /// it is the only one that is genuinely an all-clear. The other three -
-    /// crew parked on a decision, a PR scan that failed, a firstmate home
-    /// that could not be found - are each a thing the captain should see.
-    private func fleetAttentionItem() -> NeedsAttentionItem? {
-        guard let answer = overviewAnswer(), answer.tint != .good else { return nil }
-        return NeedsAttentionItem(
-            id: "signal.fleet",
-            kind: .signal(.fleet),
-            source: answer.isSetupPrompt ? "Setup" : "Fleet",
-            text: answer.title,
-            meta: answer.meta,
-            chipText: answer.kicker,
-            // `.warn` rather than `.critical`: the crew is *holding*, which
-            // is a state that wants the captain today and is not the same as
-            // a task that is already five days late. The reference reserves
-            // its red for what is genuinely overdue.
-            tone: .risk,
-            actionTitle: "Open",
-            headlineClause: answer.title.prefix(1).lowercased() + answer.title.dropFirst())
-    }
-
-    /// Claude's extra usage, when it is at or near the spend cap.
-    ///
-    /// The threshold is `claudeSpendStatus`', not a second one: the card
-    /// below already decides what "near cap" means, and a top-of-page row
-    /// that disagreed with the card it points at would be worse than no row.
-    private func claudeAttentionItem() -> NeedsAttentionItem? {
-        guard let snapshot = quotaSnapshot,
-              let status = Self.claudeSpendStatus(for: snapshot),
-              status.state != .ok else { return nil }
-        let fraction = Self.claudeSpendFraction(for: snapshot)
-        let atCap = (fraction ?? 0) >= 1
-        return NeedsAttentionItem(
-            id: "signal.claude",
-            kind: .signal(.claudeUsage),
-            source: "Claude usage",
-            text: atCap ? "Extra usage hit the spend cap" : "Extra usage is near the spend cap",
-            meta: Self.claudeSubtitle(for: snapshot),
-            // `claudeSpendFraction` is 0...1 and `percentText` takes a
-            // *percentage*, which is the one unit mismatch on this path -
-            // measured in an off-screen render, where a 94% cap reported
-            // "1%" on the row beside a card correctly reading "94%".
-            chipText: fraction.map { Self.percentText($0 * 100) } ?? status.text,
-            tone: .risk,
-            actionTitle: "View usage",
-            headlineClause: atCap ? "Claude has hit its spend cap" : "Claude is near its spend cap")
-    }
-
-    /// The background checks that have not run yet this session.
-    ///
-    /// The three counts named are the three the Setup cards render, and the
-    /// sentence is built from whichever of them is still `nil` rather than
-    /// from a fixed list - so a pass that produced two of three says two,
-    /// which is the honest reading and the one GL-14 asks for.
-    private func sessionChecksAttentionItem() -> NeedsAttentionItem? {
-        // **Not while the poller is warming up.** Its first pass lands about
-        // ten seconds after launch, and this page is the launch landing - so
-        // without this guard the hub would open on "Needs attention \u{00B7} 1: one
-        // check is waiting" every single time, for ten seconds, about
-        // nothing. That is a false alarm on the one card whose whole job is
-        // to be believed.
-        //
-        // It is the same distinction `applyPendingSetupSignal` already draws
-        // for the four Setup cards, which render a skeleton while a pass is
-        // in flight and say so in words only once one has finished and
-        // produced nothing: ordinary startup is not a fault, and a pass that
-        // completed without a number is.
-        guard !Self.pollerIsStillWarmingUp else { return nil }
-        let counts = BackgroundSignalsPoller.shared.lastCounts
-        var pending: [String] = []
-        if counts.forkDrift == nil { pending.append("forks behind upstream") }
-        if counts.toolUpdates == nil { pending.append("tool updates") }
-        if counts.setupDrift == nil { pending.append("setup drift") }
-        guard !pending.isEmpty else { return nil }
-        return NeedsAttentionItem(
-            id: "signal.checks",
-            kind: .signal(.sessionChecks),
-            source: "Session checks",
-            text: Self.sentenceList(pending).prefix(1).uppercased()
-                + Self.sentenceList(pending).dropFirst()
-                + " haven\u{2019}t been checked yet this session",
-            chipText: "\(pending.count) \(pending.count == 1 ? "check" : "checks") not run",
-            tone: .info,
-            actionTitle: "Open \(PlaceName.of(.bootstrap))")
-    }
-
-    /// "a", "a and b", "a, b, and c" - the reference's own joining.
-    ///
-    /// `static` and pure so the three-clause case can be asserted without a
-    /// poller: it is the only one with a serial comma, and the only one a
-    /// hand-rolled `joined(separator:)` gets wrong.
-    static func sentenceList(_ parts: [String]) -> String {
-        switch parts.count {
-        case 0: return ""
-        case 1: return parts[0]
-        case 2: return "\(parts[0]) and \(parts[1])"
-        default: return parts.dropLast().joined(separator: ", ") + ", and " + (parts.last ?? "")
-        }
-    }
-
-    /// The reference's closing strip: one phrase per source that was read and
-    /// is fine.
-    ///
-    /// **A source that has not reported contributes nothing**, which is the
-    /// whole discipline of this list: "Fleet idle" over a fleet that has
-    /// never been read is a cheerful lie of exactly the kind GL-14 forbids,
-    /// so every entry below is behind a `guard let` on the reading itself
-    /// rather than behind a count being zero.
-    private func clearNotes() -> [String] {
-        var notes: [String] = []
-        // R2-UX-01 (c): a note speaks for a module in the sidebar only.
-        let crew = !hiddenModules.contains(.crew)
-        if crew, let snapshot = fleetSnapshot,
-           snapshot.tasks.allSatisfy({ $0.status != "working" }),
-           snapshot.tasks.allSatisfy({ $0.status != "needs_decision" && $0.status != "blocked" }) {
-            notes.append("Fleet idle")
-        }
-        if !hiddenModules.contains(.health), let health = healthSummary.allHealthyNote {
-            notes.append(health)
-        }
-        if crew, let snapshot = quotaSnapshot,
-           let plan = Self.claudePlanLimitsStatus(for: snapshot), plan.state == .ok {
-            notes.append("Claude plan limits comfortable")
-        }
-        return notes
-    }
-
-    /// The row checkbox. Writes through the **shared** store this page was
-    /// given (GL-23) - a second `ShiftStore` would diverge from the Tasks
-    /// page's within the session and race its writes.
-    private func markAttentionItemDone(_ item: NeedsAttentionItem) {
-        switch item.kind {
-        case .task: sources.shiftStore.setTaskCompleted(id: item.id, completed: true)
-        case .followUp: sources.shiftStore.setFollowUpStatus(id: item.id, done: true)
-        // A signal row draws no checkbox at all (see `NeedsAttentionItem.
-        // Kind.signal`), so nothing can reach this - and it is deliberately
-        // a no-op rather than a `fatalError`: the honest behaviour for
-        // "complete something that is not a to-do" is to do nothing, not to
-        // crash the hub.
-        case .signal: return
-        }
-        // The row has just left the list, so the card has to be re-derived
-        // rather than left showing what it was handed.
-        render()
-    }
-
-    /// The row's trailing "Start" / "Open". A task opens itself; a follow-up
-    /// has no deep link of its own, so it opens the page that owns it; a
-    /// signal opens the page that owns the thing it is reporting.
-    private func openAttentionItem(_ item: NeedsAttentionItem) {
-        switch item.kind {
-        case .task: onOpenShiftTask?(item.id)
-        case .followUp: onOpenDestination?(.shift)
-        case .signal(let signal):
-            switch signal {
-            case .fleet:
-                if let open = onOpenCrewDecisions { open() } else { onOpenDestination?(.overview) }
-            // The same destination `follow(.quota)` already resolves to, and
-            // the same one `DaylightModule.claudeStatus.opens` names: the
-            // Claude-usage control lives on Console. Two callers, one answer.
-            case .claudeUsage: onOpenDestination?(.console)
-            case .sessionChecks: onOpenDestination?(.bootstrap)
-            }
-        }
-    }
-
-    /// The hero's detail line on **the hub**, which is the one surface that
-    /// draws cards under it - review #3's UX5.
-    ///
-    /// The all-clear `meta` enumerates exactly the two cards immediately
-    /// below the hero ("N crew working" is the Fleet card's subtitle, the PR
-    /// clause is the Merge queue card, "nobody is parked" is the absence of
-    /// the Fleet card's warn chip), so on this page it is the third statement
-    /// of one fact. It is replaced with the one thing none of those cards can
-    /// say: **how fresh the all-clear is**. "Nothing needs you" read four
-    /// seconds ago and "nothing needs you" read forty minutes ago are
-    /// genuinely different claims, and until now the hub gave a captain no way
-    /// to tell them apart - the same shape of gap GL-14 is about.
-    ///
-    /// Every other branch keeps `meta` verbatim, and `FleetController`'s own
-    /// banner is untouched - see `Answer.metaRestatesCards`.
-    private func heroDetail(for answer: FleetGreeting.Answer) -> String {
-        guard answer.metaRestatesCards else { return answer.meta }
-        return "Fleet read \(Self.freshnessPhrase(since: fleetReadAt))."
-    }
-
-    /// "just now" / "4 minutes ago" / "at 09:14" - deliberately coarse.
-    ///
-    /// A ticking seconds counter on a hub a captain leaves open all day would
-    /// be motion for its own sake (and `HelmMotion`'s whole point is that this
-    /// app does not do that); this line is re-derived when the fleet is read
-    /// and when the canvas re-renders, which is exactly when the answer
-    /// changes in a way worth reading.
-    /// UI-13: the one relative-time phrase, so the attention card's "Fleet
-    /// read 4 min ago" and the Claude card's "updated 4 min ago" agree.
-    static func freshnessPhrase(since date: Date?, now: Date = Date()) -> String {
-        guard let date else { return "just now" }
-        return HelmRelativeTime.phrase(since: date, now: now)
-    }
-
-    /// What the hub says to a captain who has not put anything in yet -
-    /// review #3's UX13. `nil` once they have, which is the overwhelmingly
-    /// common case and the reason this is a guard rather than a mode.
-    ///
-    /// **Three stores, all empty**, deliberately - not one. A captain with
-    /// tasks but no hosts is not new, they just do not use hosts; showing
-    /// them "add your first host" would be the app misreading its own user.
-    /// The condition is "this app has never been used", and the honest test
-    /// for that is that nothing at all has been put into it.
-    ///
-    /// Pure and `static` so `DaylightModuleSelfTest` can assert both
-    /// directions without a canvas - and the second direction is the one that
-    /// matters, since a first-run banner that outstayed its welcome would be
-    /// a permanent fixture on a working captain's hub.
-    ///
-    /// A `nil` tint at the call site is load-bearing: this is an invitation,
-    /// not a verdict, and `setHero` drops the surface and the kicker for a
-    /// `nil` tint precisely so a hero that has measured nothing cannot look
-    /// like one reporting good news.
-    static func firstRunHeroCopy(hosts: Int, tasks: Int, notes: Int) -> (title: String, detail: String)? {
-        guard hosts == 0, tasks == 0, notes == 0 else { return nil }
-        return (title: "Welcome aboard",
-                detail: "Nothing is saved here yet. Add your first host (\u{2318}\u{2303}N) to keep a "
-                    + "connection, or your first task (\u{2318}N) to keep a to-do. "
-                    + "\u{2318}\u{21E7}D shows every page this app has.")
-    }
-
-    /// The hero's four strings and its badge, from one place.
-    ///
-    /// A `nil` tint means "this is an identity, not a verdict": the badge
-    /// takes the space's own domain hue and the kicker is dropped, so a space
-    /// that has measured nothing cannot look like it is reporting good news.
-    private func setHero(tint: HelmTint?,
-                         symbol: String,
-                         kicker: String,
-                         title: String,
-                         detail: String) {
-        // `.neutral` is the one slot that claims nothing - deliberately not
-        // a domain hue's `fallbackTint`, which resolves rose to `.critical`
-        // and would paint an alert bar on a space that has reported nothing.
-        heroTint = tint ?? .neutral
-        heroBadge.configure(symbol: symbol, tint: heroTint, pointSize: 17)
-        kickerLabel.stringValue = kicker.uppercased()
-        kickerLabel.isHidden = kicker.isEmpty
-        greetingLabel.stringValue = title
-        subtitleLabel.stringValue = detail
-        heroBadge.applyTheme(ThemeManager.shared.theme)
-    }
-
-    private func visibleModules() -> [DaylightModule] {
-        if showsArrangedCards, let shownLayout { return shownLayout.shown }
-        return DaylightModule.canvasOrder.filter {
-            $0.isVisible(in: space) && ($0 != .briefing || Self.briefingHasSomethingToSay)
-        }
-    }
-
-    /// R5-UI-08 (full review #5): whether the Morning briefing card has
-    /// anything of its own to show. Off, with no briefing on record, it took
-    /// the largest slot on Home in both layouts to say "Turn on Morning
-    /// briefing in Settings". It is left off Home until the briefing is on
-    /// (Settings > General, which is also where that card pointed), and it
-    /// is still in Customize, so the captain can place it.
-    static var briefingHasSomethingToSay: Bool {
-        AppSettings.shared.morningBriefingEnabled
-            || !(AppSettings.shared.morningBriefingRecord?.clauses.isEmpty ?? true)
-    }
-
-    /// The arranged cards as drawn: the captain's layout, less a briefing
-    /// card with nothing to say (R5-UI-08) - except while customizing, where
-    /// every card the captain placed is drawn so it can be moved, sized or
-    /// hidden, and where the drag and resize maths index `cardLayout` itself.
-    private var shownLayout: HomeCardLayout? {
-        guard var layout = cardLayout else { return nil }
-        // Out of the grid either way outside Customize: with nothing to say
-        // (R5-UI-08), or because the feel pass draws it as the hero above
-        // the grid (`briefingIsHero`). Customize keeps it a card, so it can
-        // still be moved, sized or hidden like every other one.
-        if !isCustomizing, layout.shown.contains(.briefing) {
-            layout.hide(.briefing)
-        }
-        return layout
-    }
-
-    /// Whether the briefing is drawn as the feel pass's hero: Home's
-    /// arranged cards include it, it has something to say, and Customize is
-    /// not drawing it as a card.
-    private var briefingIsHero: Bool {
-        showsArrangedCards && !isCustomizing && Self.briefingHasSomethingToSay
-            && (cardLayout?.shown.contains(.briefing) ?? false)
-    }
-
-    /// Whether Home's own space is showing the captain's arranged cards.
-    private var showsArrangedCards: Bool { space == .overview && cardLayout != nil }
-
-    /// A card's grid span: its own, or - on Home's arranged cards, which
-    /// are laid out in `HomeCardGrid.columns` - the width the captain gave
-    /// it, as its row draws it at this width (`HomeCardGrid.rows`).
-    private func cardSpan(_ module: DaylightModule) -> Int {
-        guard showsArrangedCards, let shownLayout else { return module.gridSpan }
-        return arrangedSpans(of: shownLayout, available: gridContainerWidth())[module]
-            ?? shownLayout.size(of: module).columns
-    }
-
-    /// Home's arranged cards in rows at this width, each placement's `index`
-    /// into `layout.shown` - the captain's rows, with room made in a row for
-    /// a card the window has made too narrow to read.
-    ///
-    /// R5-UI-08: when `shownLayout` has left the briefing off, its slot is
-    /// not left as a hole. If the captain's whole arrangement filled every
-    /// row, the rows without it fill the width too; an arrangement that
-    /// already had a short row keeps its shape.
-    private func arrangedRows(of layout: HomeCardLayout, available: CGFloat) -> [[HelmResponsiveGrid.SpanPlacement]] {
-        let minimum = arrangedMinimumColumns(available: available)
-        func spans(_ layout: HomeCardLayout) -> [Int] { layout.shown.map { layout.size(of: $0).columns } }
-        var filling = false
-        if let full = cardLayout, full.shown.count > layout.shown.count {
-            filling = !HomeCardGrid.rows(spans: spans(full), minimum: minimum).contains { row in
-                row.reduce(0) { $0 + $1.span } < HomeCardGrid.columns
-            }
-        }
-        return HomeCardGrid.rows(spans: spans(layout), minimum: minimum, fillingShortRows: filling)
-    }
-
-    /// Each arranged card's columns at this width, as its row draws it.
-    private func arrangedSpans(of layout: HomeCardLayout, available: CGFloat) -> [DaylightModule: Int] {
-        let shown = layout.shown
-        var spans: [DaylightModule: Int] = [:]
-        for placement in arrangedRows(of: layout, available: available).joined() where shown.indices.contains(placement.index) {
-            spans[shown[placement.index]] = placement.span
-        }
-        return spans
-    }
-
-    /// How many cards each row of Home's arranged grid holds at this width -
-    /// nothing off Home's arranged cards, whose rows only the spans decide.
-    private func arrangedRowLengths(available: CGFloat) -> [Int] {
-        guard showsArrangedCards, let shownLayout else { return [] }
-        return arrangedRows(of: shownLayout, available: available).map(\.count)
-    }
-
-    /// `module`'s row stored at the widths it is drawn at
-    /// (`HomeCardGrid.drawnSpans`) - what sizing that card starts from, so
-    /// the captain sizes what they see.
-    private func keepDrawnRow(of module: DaylightModule, in layout: inout HomeCardLayout, available: CGFloat) {
-        let shown = layout.shown
-        guard let index = shown.firstIndex(of: module) else { return }
-        let spans = shown.map { layout.size(of: $0).columns }
-        let kept = HomeCardGrid.drawnSpans(spans, minimum: arrangedMinimumColumns(available: available), rowOf: index)
-        for (index, other) in shown.enumerated() where kept[index] != spans[index] {
-            var size = layout.size(of: other)
-            size.columns = kept[index]
-            layout.setSize(size, for: other)
-        }
-    }
-
-    /// The fewest of `HomeCardGrid.columns` a card may take at this width:
-    /// the canvas's own minimum card width (§6.1's 255).
-    private func arrangedMinimumColumns(available: CGFloat) -> Int {
-        HomeCardGrid.minimumColumns(containerWidth: available, minWidth: Self.minModuleWidth, spacing: Self.gridSpacing)
-    }
-
-    /// The height a card on Home's arranged grid is drawn at, `width` wide:
-    /// the captain's, but never less than its content needs - or nil for a
-    /// card that takes its row's height. Measured the way the shelf measures
-    /// an exempt card's floor, after a real layout pass (gotcha (22)).
-    private func arrangedHeight(of module: DaylightModule, width: CGFloat) -> CGFloat? {
-        guard showsArrangedCards, let height = cardLayout?.size(of: module).height else { return nil }
-        return max(min(height, HomeCardGrid.maximumHeight), naturalHeight(of: module, width: width))
-    }
-
-    /// How tall a card's content needs it to be at `width`.
-    private func naturalHeight(of module: DaylightModule, width: CGFloat) -> CGFloat {
-        let probe = Self.probeCard(content(for: module, placement: .shelf(width: width)))
-        return max(Self.fittingHeight(of: probe, width: width), HelmModuleCard.minimumHeight)
-    }
-
-    // MARK: Customize
-
-    /// Enter or leave Customize. Only Home's own space, and only with a
-    /// layout to arrange - the floating bar has none.
-    func setCustomizing(_ customizing: Bool) {
-        let customizing = customizing && cardLayout != nil
-        guard customizing != isCustomizing else { return }
-        if customizing, space != .overview { space = .overview }
-        // A drag still in progress ends with Customize. Left running, the
-        // rebuild below keeps its card, strip and grips included, and that
-        // card shows Customize's controls in place of its own until Home is
-        // rebuilt again with no drag on.
-        if !customizing { endCardResize() }
-        isCustomizing = customizing
-        guard isViewLoaded else { return }
-        render()
-        view.layoutSubtreeIfNeeded()
-        if customizing { scrollToTop() }
-    }
-
-    private func endCustomizing() {
-        setCustomizing(false)
-        onCustomizingChanged?(false)
-    }
-
-    /// The captain changed the arrangement: keep it, tell the shell, redraw.
-    private func arrange(_ change: (inout HomeCardLayout) -> Void) {
-        guard var layout = cardLayout else { return }
-        change(&layout)
-        guard layout != cardLayout else { return }
-        cardLayout = layout
-        onCardLayoutChanged?(layout)
-    }
-
-    /// The tray sits above the attention card while Customize is on.
-    private func placeCustomizeTray() {
-        let wanted = isCustomizing && showsArrangedCards
-        if wanted, customizeTray.superview !== stack {
-            stack.insertArrangedSubview(customizeTray, at: stack.arrangedSubviews.firstIndex(of: heroCard) ?? 1)
-            customizeTray.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        } else if !wanted, customizeTray.superview === stack {
-            stack.removeArrangedSubview(customizeTray)
-            customizeTray.removeFromSuperview()
-        }
-        customizeTray.hiddenCards = cardLayout?.hidden ?? []
-    }
-
-    /// A card's controls while Customize is on: reset its size, earlier,
-    /// later and hide, over the card's own header actions - and the grips on
-    /// its edges that size it.
-    private func attachCustomizeStrip(to card: HelmModuleCard, module: DaylightModule) {
-        guard isCustomizing, showsArrangedCards, let layout = cardLayout else { return }
-        let strip = HomeCardCustomizeStrip(cardTitle: module.title, hasCustomSize: layout.hasCustomSize(module),
-                                           canMoveEarlier: layout.canMove(module, by: -1),
-                                           canMoveLater: layout.canMove(module, by: 1))
-        strip.onResetSize = { [weak self] in self?.arrange { $0.resetSize(of: module) } }
-        strip.onMove = { [weak self] offset in self?.arrange { $0.move(module, by: offset) } }
-        strip.onHide = { [weak self] in self?.arrange { $0.hide(module) } }
-        card.setHeaderAccessory(strip)
-        cardStrips[module] = strip
-        attachResizeHandles(to: card, module: module)
-    }
-
-    /// The trailing, bottom and corner grips. A card kept through a rebuild
-    /// mid-drag already has its own, and keeps them - they are the views the
-    /// drag's events are going to.
-    private func attachResizeHandles(to card: HelmModuleCard, module: DaylightModule) {
-        let existing = card.subviews.compactMap { $0 as? HomeCardResizeHandle }
-        let handles = existing.isEmpty
-            ? HomeCardResizeHandle.Edge.allCases.map { edge -> HomeCardResizeHandle in
-                let handle = HomeCardResizeHandle(edge: edge, cardTitle: module.title)
-                handle.install(in: card)
-                handle.onBegin = { [weak self] edge, point in self?.beginCardResize(module, edge: edge, at: point) }
-                handle.onDrag = { [weak self] _, point in self?.dragCardResize(to: point) }
-                handle.onEnd = { [weak self] _ in self?.endCardResize() }
-                handle.onReset = { [weak self] edge in self?.resetCardSize(module, edge: edge) }
-                handle.onStep = { [weak self] edge, step in self?.stepCardSize(module, edge: edge, by: step) }
-                return handle
-            }
-            : existing
-        for handle in handles { handle.isActive = cardResize?.module == module }
-        resizeHandles[module] = handles
-    }
-
-    // MARK: Sizing a card by dragging it
+    var lastAttention: AttentionComposed?
 
     /// A drag in progress: which card and grip, and where it started.
-    private struct CardResize {
+    struct CardResize {
         let module: DaylightModule
         let edge: HomeCardResizeHandle.Edge
         /// The pointer, in the document's (flipped) coordinates, so a scroll
@@ -1975,821 +1075,31 @@ final class HomeCanvasController: NSViewController {
         let base: HomeCardLayout
     }
 
-    private var cardResize: CardResize?
+    var cardResize: CardResize?
 
-    private func beginCardResize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, at windowPoint: NSPoint) {
-        guard isCustomizing, showsArrangedCards, let layout = cardLayout, let card = cardsByModule[module] else { return }
-        var base = layout
-        if edge.resizesWidth { keepDrawnRow(of: module, in: &base, available: gridContainerWidth()) }
-        cardResize = CardResize(module: module, edge: edge, start: document.convert(windowPoint, from: nil),
-                                startWidth: card.frame.width, startHeight: card.frame.height, startLayout: layout,
-                                base: base)
-        for handle in resizeHandles[module] ?? [] { handle.isActive = true }
-        sizeBadge.removeFromSuperview()
-        card.addSubview(sizeBadge, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            sizeBadge.trailingAnchor.constraint(equalTo: card.trailingAnchor,
-                                                constant: -(HomeCardResizeHandle.cornerSize + HelmMetrics.s1)),
-            sizeBadge.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -HelmMetrics.s2),
-        ])
-        updateSizeBadge()
-    }
+    // MARK: Render
 
-    /// The pointer moved: the size it now asks for, on the grid. The card is
-    /// the preview - Home is laid out again at that size, so its neighbours
-    /// reflow under the pointer - and nothing is kept until the drag ends.
-    private func dragCardResize(to windowPoint: NSPoint) {
-        guard let resize = cardResize, cardLayout != nil else { return }
-        if let event = NSApp?.currentEvent, event.type == .leftMouseDragged { document.autoscroll(with: event) }
-        let point = document.convert(windowPoint, from: nil)
-        let available = gridContainerWidth()
-        var layout = resize.base
-        var size = layout.size(of: resize.module)
-        if resize.edge.resizesWidth {
-            let wanted = HomeCardGrid.columns(nearestWidth: resize.startWidth + point.x - resize.start.x,
-                                              containerWidth: available, spacing: Self.gridSpacing)
-            size.columns = max(wanted, arrangedMinimumColumns(available: available))
-        }
-        if resize.edge.resizesHeight {
-            let span = arrangedSpans(of: layout, available: available)[resize.module] ?? size.columns
-            let width = HomeCardGrid.width(columns: span, containerWidth: available, spacing: Self.gridSpacing)
-            // Never below what the content needs: dragging past it would
-            // store a height the card cannot be drawn at.
-            size.height = max(HomeCardGrid.storedHeight(resize.startHeight + point.y - resize.start.y),
-                              naturalHeight(of: resize.module, width: width))
-        }
-        layout.setSize(size, for: resize.module)
-        guard layout != cardLayout else { return }
-        cardLayout = layout
-    }
-
-    /// The drag ended: keep the size it settled on.
-    private func endCardResize() {
-        guard let resize = cardResize else { return }
-        cardResize = nil
-        sizeBadge.removeFromSuperview()
-        for handle in resizeHandles[resize.module] ?? [] { handle.isActive = false }
-        guard let layout = cardLayout, layout != resize.startLayout else { return }
-        cardStrips[resize.module]?.setHasCustomSize(layout.hasCustomSize(resize.module))
-        onCardLayoutChanged?(layout)
-    }
-
-    /// A double-click on a grip: the width back to the card's own, the
-    /// height back to its content's, or both from the corner.
-    private func resetCardSize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge) {
-        arrange { layout in
-            var size = layout.size(of: module)
-            let own = HomeCardLayout.ownSize(of: module)
-            if edge.resizesWidth { size.columns = own.columns }
-            if edge.resizesHeight { size.height = nil }
-            if size == own { layout.resetSize(of: module) } else { layout.setSize(size, for: module) }
+    /// Ask for one render on the next main-queue turn, however many callers
+    /// ask before it runs. See `renderPending`.
+    func setNeedsRender() {
+        guard !renderPending else { return }
+        renderPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.renderPending = false
+            guard self.isViewLoaded else { return }
+            self.render()
         }
     }
 
-    /// VoiceOver's increment and decrement on a grip: a column wider or
-    /// narrower, or four height steps taller or shorter.
-    private func stepCardSize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, by step: Int) {
-        guard let card = cardsByModule[module] else { return }
-        let available = gridContainerWidth()
-        arrange { layout in
-            var size = layout.size(of: module)
-            if edge.resizesWidth {
-                // From the width it is drawn at, as a drag is.
-                keepDrawnRow(of: module, in: &layout, available: available)
-                size = layout.size(of: module)
-                size.columns = min(max(size.columns + step, arrangedMinimumColumns(available: available)),
-                                   HomeCardGrid.columns)
-            }
-            if edge.resizesHeight {
-                let height = (size.height ?? card.frame.height) + CGFloat(step) * HomeCardGrid.heightStep * 4
-                size.height = max(HomeCardGrid.storedHeight(height), naturalHeight(of: module, width: card.frame.width))
-            }
-            layout.setSize(size, for: module)
-        }
-    }
-
-    /// The badge on the card being dragged: the size it is drawn at.
-    private func updateSizeBadge() {
-        guard let resize = cardResize, let card = cardsByModule[resize.module] else { return }
-        sizeBadge.show(width: card.frame.width, height: card.frame.height)
-    }
-
-    /// What a built grid depends on besides its cards' data. Two renders with
-    /// the same key lay out identically, so the second can reuse the first's
-    /// cards (P2).
-    private struct GridLayoutKey: Equatable {
-        var space: DaylightSpace
-        var modules: [DaylightModule]
-        /// Each card's span, which the captain can change on Home.
-        var spans: [Int]
-        /// Each card's own height on Home, -1 for one that takes its row's.
-        var heights: [CGFloat] = []
-        /// How many cards each of Home's arranged rows holds: the same spans
-        /// can break into rows differently once the window makes room in one.
-        var rowLengths: [Int] = []
-        /// Customize puts controls on every card, so toggling it rebuilds.
-        var customizing: Bool
-        var dashboard: Bool
-        var width: CGFloat
-        /// The hub's columns are budgeted from the height; the shelf's are not.
-        var height: CGFloat
-    }
-
-    private func rebuildGrid() {
-        let available = gridContainerWidth()
-        lastGridWidth = available
-        lastGridHeight = gridContainerHeight()
-        let modules = visibleModules()
-
-        // Overview is hand-placed - see `dashboardRowViews` for why, and for
-        // the two conditions under which it declines and this falls through
-        // to the wrapping grid below.
-        let dashboard = usesDashboardLayout && dashboardRowViewsWouldApply(available: available, modules: modules)
-
-        // P2: a render that changed only data keeps the grid and its cards.
-        // Rebuilding them is what made Home flash on every fleet refresh and
-        // dropped a card's hover; it also re-registered every card's theme
-        // observer and re-solved the whole grid.
-        if refreshGridInPlace(available: available, modules: modules, dashboard: dashboard) { return }
-
-        #if FM_SELFTESTS
-        debugGridRebuilds += 1
-        #endif
-        // A card being dragged to a new size survives the rebuild its drag
-        // causes: its grips are the views the drag's events are going to.
-        // Only while Customize is on: outside it nothing would take the
-        // kept card's strip and grips off again.
-        let kept = isCustomizing
-            ? cardResize.flatMap { resize in cardsByModule[resize.module].map { (resize.module, $0) } }
-            : nil
-        for row in gridStack.arrangedSubviews {
-            gridStack.removeArrangedSubview(row)
-            row.removeFromSuperview()
-        }
-        gridWidthPins.removeAll()
-        builtShelfColumns = 0
-        cards.removeAll()
-        cardsByModule.removeAll()
-        cardPlacements.removeAll()
-        dashboardOwnHeights.removeAll()
-        cardStrips.removeAll()
-        resizeHandles.removeAll()
-        gridLayoutKey = nil
-
-        placeCustomizeTray()
-        placeAttentionCard(inDashboard: dashboard)
-        documentFillsViewport?.isActive = dashboard
-        if dashboard,
-           let rows = dashboardRowViews(available: available, modules: modules) {
-            // The dashboard uses the full width by construction: its spans
-            // sum to the whole track grid, so there is no leftover column to
-            // turn into margin the way `composedContentWidth` does for a
-            // space with fewer cards than columns.
-            contentWidthConstraint?.constant = available
-            for row in rows {
-                gridStack.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-                gridWidthPins += row.arrangedSubviews.enumerated().compactMap { index, column in
-                    Self.widthPin(of: column).map { ($0, Self.dashboardSpans[min(index, Self.dashboardSpans.count - 1)]) }
-                }
-            }
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: [], customizing: false, dashboard: true,
-                                          width: available, height: lastGridHeight)
-            return
-        }
-
-        if showsArrangedCards {
-            buildArrangedGrid(available: available, modules: modules, keeping: kept)
-            return
-        }
-
-        // C1: use only as many columns as this space has cards to fill, and
-        // let the column that is left over become margin on both sides
-        // instead of a one-sided void on the right.
-        //
-        // The card *size* is unchanged - `unit` is still derived from the
-        // full available width and the full column count, which is what the
-        // captain's uniform-height decision (and the uniform-width rule that
-        // came with it) rests on. Only how many of those columns the content
-        // occupies changes.
-        let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
-        contentWidthConstraint?.constant = width
-        // R2-A11Y-05: the full-width card is told its width as a column is,
-        // so its headline wraps to two lines and its single lines truncate.
-        // Told nothing, a long verdict stayed on one line and ran past the
-        // card and out of the window - measured in the tour lab at 1100 and
-        // 1512, and at the Larger text scale it hid Refresh as well.
-        attentionCard.setLayoutWidth(width)
-
-        // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
-        // columns and every other module spans one (`DaylightModule.gridSpan`).
-        // Uniform *width* still comes from the layout rather than from
-        // anything a card asks for - a span-1 card is exactly one column in
-        // every row - and this path carries the same partial-row padding that
-        // stops a lone leftover card stretching, expressed in columns rather
-        // than cells. Uniform *height* is per row (`equalHeights` below):
-        // full review #3's PF2 turned `HelmModuleCard`'s fixed height into a
-        // floor, so a row of one-line cards is now as short as its content.
-        let rows = HelmResponsiveGrid.spanningRows(
-            modules,
-            spans: cardSpan,
-            containerWidth: width,
-            minItemWidth: Self.minModuleWidth,
-            spacing: Self.gridSpacing,
-            // PF2: a card is content-sized now, so uniformity is per row.
-            // Every card joins its row's tie, the Claude card included
-            // (`fm/grandline-widget-polish`): the captain wants it as tall as
-            // Fleet and Hosts beside it.
-            equalHeights: true
-        ) { [weak self] module, cardWidth in
-            guard let self else { return NSView() }
-            let card = self.makeCard(for: module, placement: .shelf(width: cardWidth))
-            self.attachCustomizeStrip(to: card, module: module)
-            return card
-        }
-
-        let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
-                                                 spacing: Self.gridSpacing)
-        let unit = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: Self.gridSpacing)
-        builtShelfColumns = columns
-        for row in rows {
-            gridStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-            // Each cell's span, read back off the width it was built at - the
-            // inverse of `spanningRows`' own `unit * span + spacing * (span - 1)`.
-            gridWidthPins += row.arrangedSubviews.compactMap { cell in
-                Self.widthPin(of: cell).map {
-                    ($0, max(1, Int((($0.constant + Self.gridSpacing) / (unit + Self.gridSpacing)).rounded())))
-                }
-            }
-        }
-        if Set(cardsByModule.keys) == Set(modules) {
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map(cardSpan),
-                                          customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0)
-        }
-    }
-
-    /// Home's arranged cards: the captain's widths, in `HomeCardGrid.columns`
-    /// across the whole width, and their heights. The same row builder as
-    /// the shelf below, at a fixed column count, so a card left at its own
-    /// size draws exactly as it did when sizes were fixed.
-    ///
-    /// The content is not composed into fewer columns (C1): the captain sized
-    /// these cards against the full width, and a row they left short is
-    /// theirs to leave.
-    private func buildArrangedGrid(available: CGFloat, modules: [DaylightModule],
-                                   keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
-        contentWidthConstraint?.constant = available
-        attentionCard.setLayoutWidth(available)
-        let placed = shownLayout.map { arrangedRows(of: $0, available: available) } ?? []
-        var spans: [DaylightModule: Int] = [:]
-        for placement in placed.joined() where modules.indices.contains(placement.index) {
-            spans[modules[placement.index]] = placement.span
-        }
-        let widths = spans.mapValues { HomeCardGrid.width(columns: $0, containerWidth: available, spacing: Self.gridSpacing) }
-        let heights = Dictionary(modules.map { ($0, arrangedHeight(of: $0, width: widths[$0] ?? 0)) },
-                                 uniquingKeysWith: { first, _ in first })
-        let rows = HelmResponsiveGrid.spanningRows(
-            modules,
-            spans: { spans[$0] ?? 1 },
-            containerWidth: available,
-            minItemWidth: Self.minModuleWidth,
-            columnCount: HomeCardGrid.columns,
-            spacing: Self.gridSpacing,
-            equalHeights: true,
-            fixedHeight: { heights[$0] ?? nil },
-            packedRows: placed
-        ) { [weak self] module, cardWidth in
-            guard let self else { return NSView() }
-            let placement = CardPlacement.shelf(width: cardWidth)
-            let card: HelmModuleCard
-            if let kept, kept.module == module {
-                // Off its old row, and without the width and height that row
-                // gave it; the new row gives it its own.
-                let own = kept.card.constraints.filter {
-                    $0.identifier == HelmResponsiveGrid.cellConstraintIdentifier
-                        || $0.identifier == HelmResponsiveGrid.fixedHeightIdentifier
-                }
-                NSLayoutConstraint.deactivate(own)
-                kept.card.removeFromSuperview()
-                kept.card.configureIfChanged(self.content(for: module, placement: placement))
-                card = kept.card
-                self.cards.append(card)
-                self.cardsByModule[module] = card
-                self.cardPlacements[module] = placement
-            } else {
-                card = self.makeCard(for: module, placement: placement)
-            }
-            self.attachCustomizeStrip(to: card, module: module)
-            return card
-        }
-        let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
-        builtShelfColumns = HomeCardGrid.columns
-        for row in rows {
-            gridStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-            gridWidthPins += row.arrangedSubviews.compactMap { cell in
-                Self.widthPin(of: cell).map {
-                    ($0, max(1, Int((($0.constant + Self.gridSpacing) / (unit + Self.gridSpacing)).rounded())))
-                }
-            }
-        }
-        if Set(cardsByModule.keys) == Set(modules) {
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map { spans[$0] ?? 1 },
-                                          heights: modules.map { heights[$0].flatMap { $0 } ?? -1 },
-                                          rowLengths: placed.map(\.count),
-                                          customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0)
-        }
-        view.layoutSubtreeIfNeeded()
-        updateSizeBadge()
-    }
-
-    /// The arrangement changed mid-drag. A height on a card that already has
-    /// one moves in place; anything that can change which row a card is on
-    /// lays the grid out again, keeping the dragged card.
-    private func resizeArrangedGrid() {
-        guard let resize = cardResize, let built = gridLayoutKey, built.space == space, !built.dashboard,
-              let card = cardsByModule[resize.module] else {
-            rebuildGrid()
-            return
-        }
-        let modules = visibleModules()
-        let available = gridContainerWidth()
-        let spans = modules.map(cardSpan)
-        if built.modules == modules, built.spans == spans, built.rowLengths == arrangedRowLengths(available: available),
-           abs(built.width - available) <= 0.5,
-           let index = modules.firstIndex(of: resize.module), built.heights.indices.contains(index),
-           built.heights[index] >= 0,
-           let height = arrangedHeight(of: resize.module, width: card.frame.width),
-           let pin = card.constraints.first(where: { $0.identifier == HelmResponsiveGrid.fixedHeightIdentifier }) {
-            pin.constant = height
-            gridLayoutKey?.heights[index] = height
-            view.layoutSubtreeIfNeeded()
-            updateSizeBadge()
-            return
-        }
+    func render() {
+        healthSummary = ServiceHealthRegistry.shared.summary()
+        renderGreeting()
+        renderFeelPass()
+        renderAttention()
+        renderTip()
         rebuildGrid()
-    }
-
-    /// P2: reconfigure the grid's existing cards when nothing about the
-    /// layout changed. `false` when the grid has to be rebuilt instead.
-    ///
-    /// Every card is configured from scratch from fresh content, exactly as
-    /// a new card would be, so "refreshed in place" and "built fresh" render
-    /// the same; only the card objects - their chrome, hover state and theme
-    /// observers - and the rows holding them survive.
-    private func refreshGridInPlace(available: CGFloat, modules: [DaylightModule], dashboard: Bool) -> Bool {
-        guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
-              previous.spans == (dashboard ? [] : modules.map(cardSpan)),
-              previous.heights == (dashboard ? [] : arrangedHeightKey(modules)),
-              previous.rowLengths == (dashboard ? [] : arrangedRowLengths(available: available)),
-              previous.customizing == (dashboard ? false : isCustomizing),
-              previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
-              Set(cardsByModule.keys) == Set(modules) else { return false }
-        if dashboard {
-            guard abs(previous.height - lastGridHeight) <= 0.5 else { return false }
-            let plan = dashboardPlan(available: available)
-            for module in modules {
-                guard let content = plan.contents[module] else { return false }
-                cardsByModule[module]?.configure(content)
-            }
-            // The column's own-height preferences follow the content, which
-            // is everything a rebuild would have re-measured.
-            for (module, height) in plan.ownHeights {
-                dashboardOwnHeights[module]?.constant = height
-            }
-            return true
-        }
-        var contents: [DaylightModule: HelmModuleCard.Content] = [:]
-        for module in modules {
-            guard let placement = cardPlacements[module] else { return false }
-            contents[module] = content(for: module, placement: placement)
-        }
-        for module in modules {
-            if let content = contents[module] { cardsByModule[module]?.configure(content) }
-        }
-        return true
-    }
-
-    /// The heights a built arranged grid is keyed on: -1 for a card that
-    /// takes its row's height, and nothing at all off Home's arranged cards.
-    private func arrangedHeightKey(_ modules: [DaylightModule]) -> [CGFloat] {
-        guard showsArrangedCards, let shownLayout else { return [] }
-        let available = gridContainerWidth()
-        return modules.map { module in
-            guard shownLayout.size(of: module).height != nil else { return -1 }
-            let width = HomeCardGrid.width(columns: cardSpan(module), containerWidth: available, spacing: Self.gridSpacing)
-            return arrangedHeight(of: module, width: width) ?? -1
-        }
-    }
-
-    /// The attention card is column 1 of the hub's three-column page, and a
-    /// full-width card above the grid everywhere else (where it is hidden
-    /// off the hub, and where the hub falls back to the wrapping grid).
-    /// Moved rather than rebuilt, so its rows, its scroll position and its
-    /// minute tick survive a rebuild.
-    private func placeAttentionCard(inDashboard: Bool) {
-        // `proportionalRow` pins a column's width with a constant on the view
-        // itself, which outlives the row it was made for - so the last
-        // rebuild's pin is dropped before this one adds its own.
-        attentionCard.removeConstraints(attentionCard.constraints.filter {
-            $0.firstItem === attentionCard && $0.secondItem == nil && $0.firstAttribute == .width
-        })
-        if inDashboard {
-            if attentionCard.superview === stack {
-                stack.removeArrangedSubview(attentionCard)
-                attentionCard.removeFromSuperview()
-                attentionWidthTie = nil
-            }
-            return
-        }
-        attentionCard.setLayoutWidth(0)
-        guard attentionCard.superview !== stack else { return }
-        attentionCard.removeFromSuperview()
-        stack.insertArrangedSubview(attentionCard, at: 1)
-        let tie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        tie.isActive = true
-        attentionWidthTie = tie
-    }
-
-    // MARK: Overview's dashboard layout
-
-    /// The hub's page: the attention card and the five widgets, in three
-    /// equal columns (`fm/grandline-home-fit-implement`, layout A).
-    ///
-    /// **Why Overview has a hand-placed layout and the other four spaces do
-    /// not.** The wrapping grid is right for a shelf of interchangeable
-    /// navigation cards, which is what Command, Operations, Stores and
-    /// Engineering are: a card there is one of N equivalent doors, and the
-    /// window's width should decide how many fit on a line. Overview is not
-    /// that. It is a handful of specific readouts whose placement is the
-    /// design, and letting the window decide is what produced the ragged
-    /// masonry the captain rejected.
-    ///
-    /// **Why three columns rather than the 7:5 rows it replaced.** The
-    /// captain asked for Home to fit the window without scrolling. Stacking
-    /// the attention card above two rows of widgets added their heights
-    /// together, and every attention row pushed the widgets further down:
-    /// measured at the captain's 1512x945 window, the page was 29pt over the
-    /// fold with three rows and 468pt over with ten, and 384pt over at the
-    /// 960x620 minimum. Columns share the height instead of adding it.
-    ///
-    ///   - Column 1 is Needs Attention at its rows' height, capped at the
-    ///     column's, its list scrolling inside it past that.
-    ///   - Column 2 is Claude (the dense usage form), Fleet and Health.
-    ///   - Column 3 is the Morning briefing and the Merge queue.
-    ///
-    /// The columns still end on one line, but a card is never stretched past
-    /// what it holds (UXP-04): every column ends in a spacer that takes the
-    /// leftover height, and every card sits at its own height
-    /// (`dashboardKeepsOwnHeight`). Column 3 used to fill by the Merge
-    /// queue's *row count* with the briefing absorbing the remainder; since
-    /// the queue is capped at `maxPeekRows` (R5-UI-03) that remainder is most
-    /// of the column, and an absorbing briefing rendered as a 600pt card
-    /// holding one sentence.
-    private static let dashboardColumns: [[DaylightModule]] = [
-        [.claudeStatus, .fleet, .health],
-        [.briefing, .mergeQueue],
-    ]
-    /// Track spans out of `HelmResponsiveGrid.dashboardColumns`: equal thirds.
-    private static let dashboardSpans = [4, 4, 4]
-    /// A non-absorbing card's preference for its own height. Under the 499
-    /// the row ties each column with, so a column's absorber takes the slack
-    /// rather than a card being stretched, and above nothing else.
-    static let dashboardKeepsOwnHeight = NSLayoutConstraint.Priority(490)
-    /// The fewest Merge queue rows the page shows before it would rather
-    /// scroll.
-    static let mergeQueueMinimumRows = 2
-
-    /// Is this space laid out by hand? Only the hub.
-    private var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }
-
-    /// Whether the hub's own layout applies.
-    ///
-    /// Split out so the layout and anything asking "is the dashboard on"
-    /// cannot answer differently - a `usesDashboard` flag set beside the
-    /// build is exactly the shape that drifts.
-    ///
-    /// `nil` from `dashboardRowViews` - the caller falls back to the
-    /// wrapping grid - when the modules on screen are not the five this
-    /// layout was written for. That is not a defensive flourish:
-    /// `DaylightModule.appearsOnOverview` is a captain-editable list, and a
-    /// sixth card added there must render *somewhere* rather than silently
-    /// vanish.
-    func dashboardRowViewsWouldApply(available: CGFloat, modules: [DaylightModule]) -> Bool {
-        let expected = Set(Self.dashboardColumns.flatMap { $0 })
-        // R5-UI-08: the briefing may be left off, and its column is then the
-        // Merge queue alone.
-        guard Set(modules) == expected || Set(modules) == expected.subtracting([.briefing]) else { return false }
-        // Under this width a 4-track column is narrower than one wrapping
-        // column, so hand back to the wrapping grid, which stacks every
-        // widget full width. The app's 960pt minimum window keeps it on.
-        return HelmResponsiveGrid.fitsProportionally(containerWidth: available,
-                                                     spans: Self.dashboardSpans,
-                                                     minItemWidth: Self.minModuleWidth,
-                                                     spacing: Self.gridSpacing)
-    }
-
-    /// Everything the hub's layout decides from the data: each card's
-    /// content (Fleet's note trimmed or not, Health listing its services or
-    /// not, how many Merge queue rows fit) and the own height of each card
-    /// that does not absorb its column's slack. Measured from probe cards, so
-    /// a build and an in-place refresh (P2) agree on every number.
-    private struct DashboardPlan {
-        var width: CGFloat
-        var contents: [DaylightModule: HelmModuleCard.Content]
-        var ownHeights: [DaylightModule: CGFloat]
-    }
-
-    private func dashboardPlan(available: CGFloat) -> DashboardPlan {
-        // PERF-03: whatever this plan does not read is stale - a module's
-        // content moved on, or the width did - so it leaves the memo.
-        probeKeysInUse = []
-        defer {
-            if let used = probeKeysInUse { probeHeights = probeHeights.filter { used.contains($0.key) } }
-            probeKeysInUse = nil
-        }
-        let span = Self.dashboardSpans[0]
-        let width = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
-                                                         spacing: Self.gridSpacing)
-        let placement = CardPlacement.dashboard(span: span, width: width)
-        let height = gridContainerHeight()
-
-        // Column 2: Claude, Fleet and Health at their own heights, a spacer
-        // under them taking what is left.
-        // Fleet's sentence is the first thing to go when the column is
-        // short - its chip already says whether anyone needs the captain.
-        let claudeContent = content(for: .claudeStatus, placement: placement)
-        var fleetContent = content(for: .fleet, placement: placement)
-        var healthContent = content(for: .health, placement: placement)
-        let claudeHeight = probeHeight(claudeContent, width: width)
-        let healthHeight = probeHeight(healthContent, width: width)
-        var fleetHeight = probeHeight(fleetContent, width: width)
-        if claudeHeight + fleetHeight + healthHeight + Self.gridSpacing * 2 > height,
-           case let .kpis(_, items) = fleetContent.body {
-            fleetContent.body = .kpis(note: nil, items: items)
-            fleetHeight = probeHeight(fleetContent, width: width)
-        }
-        // Health lists its services under the ring when the column holds
-        // them; otherwise it stays the ring and its sentence.
-        healthListsServices = true
-        let listed = content(for: .health, placement: placement)
-        healthListsServices = false
-        if case .ringWithLines = listed.body,
-           claudeHeight + fleetHeight + probeHeight(listed, width: width)
-            + Self.gridSpacing * 2 <= height {
-            healthContent = listed
-        }
-
-        // Column 3: as many Merge queue rows as the column holds under the
-        // briefing, up to the card's own `maxPeekRows`; the briefing takes
-        // what is left, below its paragraph.
-        //
-        // R5-UI-03 (R4-UI-10): uncapped, this listed 20 of 22 pull requests
-        // in an 850pt card, where the sidebar layout's same card shows three
-        // and a "Showing 3 of 22" footer. The cap is the sidebar's.
-        let showsBriefing = Self.briefingHasSomethingToSay
-        let briefingContent = content(for: .briefing, placement: placement)
-        let briefingHeight = showsBriefing ? probeHeight(briefingContent, width: width) : 0
-        mergeQueueRowLimit = min(HelmModuleCard.maxPeekRows,
-                                 mergeQueueRows(budget: height - (showsBriefing ? briefingHeight + Self.gridSpacing : 0),
-                                                placement: placement, width: width))
-        let mergeContent = content(for: .mergeQueue, placement: placement)
-        mergeQueueRowLimit = HelmModuleCard.maxPeekRows
-        let mergeHeight = probeHeight(mergeContent, width: width)
-
-        return DashboardPlan(
-            width: width,
-            contents: [.claudeStatus: claudeContent, .fleet: fleetContent, .health: healthContent,
-                       .briefing: briefingContent, .mergeQueue: mergeContent],
-            // UXP-04: Health keeps its own height too. It used to absorb its
-            // column's slack, so at a narrow width - where it drops its
-            // service rows - it kept the height it had with seven of them.
-            ownHeights: [.claudeStatus: claudeHeight, .fleet: fleetHeight,
-                         .health: probeHeight(healthContent, width: width),
-                         .briefing: briefingHeight, .mergeQueue: mergeHeight])
-    }
-
-    private func dashboardRowViews(available: CGFloat, modules: [DaylightModule]) -> [NSStackView]? {
-        guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return nil }
-        let plan = dashboardPlan(available: available)
-        let placement = CardPlacement.dashboard(span: Self.dashboardSpans[0], width: plan.width)
-        func card(_ module: DaylightModule) -> HelmModuleCard {
-            makeCard(for: module, content: plan.contents[module] ?? content(for: module, placement: placement),
-                     placement: placement)
-        }
-        let claude = card(.claudeStatus)
-        let fleet = card(.fleet)
-        let health = card(.health)
-        let merge = card(.mergeQueue)
-        let thirdColumn: [(DaylightModule, HelmModuleCard)] = modules.contains(.briefing)
-            ? [(.briefing, card(.briefing)), (.mergeQueue, merge)]
-            : [(.mergeQueue, merge)]
-
-        attentionCard.setLayoutWidth(plan.width)
-        let row = HelmResponsiveGrid.proportionalRow(
-            views: [dashboardAttentionColumn(),
-                    dashboardColumn([(.claudeStatus, claude), (.fleet, fleet), (.health, health)],
-                                    absorbing: nil, ownHeights: plan.ownHeights, width: plan.width),
-                    dashboardColumn(thirdColumn,
-                                    absorbing: nil, ownHeights: plan.ownHeights, width: plan.width)],
-            spans: Self.dashboardSpans,
-            containerWidth: available,
-            spacing: Self.gridSpacing)
-        return [row]
-    }
-
-    /// UXP-04: what takes a column's leftover height when no card should -
-    /// page ground below the column's last card, rather than a card drawn
-    /// taller than what it holds.
-    private static func columnSpacer() -> NSView {
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .vertical)
-        spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 0).isActive = true
-        return spacer
-    }
-
-    /// Column 1: the attention card at its rows' height, then the page.
-    ///
-    /// UXP-04: the card used to *be* the column, so the row's height tie
-    /// stretched it to the full page - three rows over a mostly empty card.
-    private func dashboardAttentionColumn() -> NSStackView {
-        attentionCard.removeFromSuperview()
-        let column = NSStackView(views: [attentionCard, Self.columnSpacer()])
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.distribution = .fill
-        column.spacing = 0
-        column.translatesAutoresizingMaskIntoConstraints = false
-        column.setHuggingPriority(.defaultLow, for: .horizontal)
-        column.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        let tie = attentionCard.widthAnchor.constraint(equalTo: column.widthAnchor)
-        tie.priority = HelmDaylightPriority.contentTie
-        tie.isActive = true
-        return column
-    }
-
-    /// One page column: a vertical stack whose members fill its width, and
-    /// whose every member but `absorbing` prefers its own height. With no
-    /// absorber every card keeps its own height and a spacer below takes the
-    /// rest (UXP-04).
-    private func dashboardColumn(_ members: [(DaylightModule, HelmModuleCard)], absorbing: DaylightModule?,
-                                 ownHeights: [DaylightModule: CGFloat], width: CGFloat) -> NSStackView {
-        let column = NSStackView(views: members.map(\.1))
-        if absorbing == nil, let last = members.last?.1 {
-            column.addArrangedSubview(Self.columnSpacer())
-            // The spacer is page, not a card: no gap in front of it, or the
-            // column is a spacing taller than its cards and a tight window
-            // scrolls by exactly that.
-            column.setCustomSpacing(0, after: last)
-        }
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.distribution = .fill
-        column.spacing = Self.gridSpacing
-        column.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (12)+(13): the stack-level APIs, both yielding, or this
-        // column is a window-width floor.
-        column.setHuggingPriority(.defaultLow, for: .horizontal)
-        column.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        for (module, card) in members {
-            let tie = card.widthAnchor.constraint(equalTo: column.widthAnchor)
-            tie.priority = HelmDaylightPriority.contentTie
-            tie.isActive = true
-            guard module != absorbing, let ownHeight = ownHeights[module] else { continue }
-            let own = card.heightAnchor.constraint(equalToConstant: ownHeight)
-            own.priority = Self.dashboardKeepsOwnHeight
-            own.isActive = true
-            dashboardOwnHeights[module] = own
-        }
-        return column
-    }
-
-    /// How many Merge queue rows fit `budget` points: every one that does,
-    /// and never fewer than `mergeQueueMinimumRows`. Measured from two real
-    /// cards rather than from a row height written down here, so a change to
-    /// the peek row or the footer moves it with them.
-    private func mergeQueueRows(budget: CGFloat, placement: CardPlacement, width: CGFloat) -> Int {
-        let minimum = Self.mergeQueueMinimumRows
-        mergeQueueRowLimit = minimum
-        let first = probeHeight(content(for: .mergeQueue, placement: placement), width: width)
-        mergeQueueRowLimit = minimum + 1
-        let second = probeHeight(content(for: .mergeQueue, placement: placement), width: width)
-        let perRow = second - first
-        guard perRow > 0.5 else { return minimum }
-        let extra = Int(((budget - first) / perRow).rounded(.down))
-        return max(minimum, minimum + extra)
-    }
-
-    /// A probe card's height, from the memo when the same content was
-    /// measured at the same width (PERF-03).
-    ///
-    /// The key is the content's `layoutSignature` - every field that can move
-    /// a card's height, so a changed reading is a new key rather than a stale
-    /// hit - and the width. During a live resize the width is bucketed to
-    /// `liveResizeProbeBucket`, so the frames of a drag share measurements;
-    /// otherwise it is the exact width, so a settled page is budgeted from
-    /// exactly the width it is shown at. Either way the probe is measured at
-    /// the real width the first time its key is seen.
-    private func probeHeight(_ content: HelmModuleCard.Content, width: CGFloat) -> CGFloat {
-        let widthKey = isInLiveResize
-            ? (width / Self.liveResizeProbeBucket).rounded(.down) * Self.liveResizeProbeBucket
-            : (width * 2).rounded() / 2
-        let key = ProbeKey(signature: content.layoutSignature, width: widthKey)
-        probeKeysInUse?.insert(key)
-        if let height = probeHeights[key] {
-            #if FM_SELFTESTS
-            debugProbeMemoHits += 1
-            #endif
-            return height
-        }
-        #if FM_SELFTESTS
-        debugProbeMeasurements += 1
-        #endif
-        let height = Self.fittingHeight(of: Self.probeCard(content), width: width)
-        probeHeights[key] = height
-        return height
-    }
-
-    /// The review's "width rounded to 8 pt": how far apart two live-resize
-    /// frames may be and still share a probe measurement.
-    static let liveResizeProbeBucket: CGFloat = 8
-
-    /// The width pin `proportionalRow`/`spanningRows` put on a cell: a
-    /// constant width at `contentTie`, on the view itself.
-    private static func widthPin(of view: NSView) -> NSLayoutConstraint? {
-        view.constraints.last {
-            $0.firstItem === view && $0.secondItem == nil && $0.firstAttribute == .width
-                && $0.priority == HelmDaylightPriority.contentTie
-        }
-    }
-
-    /// A card built only to be measured - not added to `cards`, so it is
-    /// never themed, mounted or handed to a test as one of the page's own.
-    private static func probeCard(_ content: HelmModuleCard.Content) -> HelmModuleCard {
-        let card = HelmModuleCard()
-        card.configure(content)
-        return card
-    }
-
-    /// `view`'s height at `width`, after a real layout pass in a scratch
-    /// host. The pass matters: a wrapping label sets its wrap width in
-    /// `layout()` (gotcha (22)), so a bare `fittingSize` measures Fleet's
-    /// two-line sentence as one line - measured, 6pt over at 960x620.
-    /// `view` must not be in a hierarchy yet; it leaves the host on return.
-    private static func fittingHeight(of view: NSView, width: CGFloat) -> CGFloat {
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 2000))
-        view.translatesAutoresizingMaskIntoConstraints = false
-        host.addSubview(view)
-        NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            view.topAnchor.constraint(equalTo: host.topAnchor),
-            view.widthAnchor.constraint(equalToConstant: width),
-        ])
-        host.layoutSubtreeIfNeeded()
-        let height = view.fittingSize.height
-        view.removeFromSuperview()
-        return height
-    }
-
-    private func makeCard(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard {
-        makeCard(for: module, content: content(for: module, placement: placement), placement: placement)
-    }
-
-    private func makeCard(for module: DaylightModule, content: HelmModuleCard.Content,
-                          placement: CardPlacement) -> HelmModuleCard {
-        let card = HelmModuleCard()
-        card.configure(content)
-        // While the captain arranges Home a click on a card must not take
-        // them off it.
-        card.onOpen = { [weak self] in
-            guard let self, !self.isCustomizing else { return }
-            self.onOpenDestination?(module.opens)
-        }
-        card.onFollowLink = { [weak self] target in
-            guard let self, !self.isCustomizing else { return }
-            self.follow(target)
-        }
-        cards.append(card)
-        cardsByModule[module] = card
-        cardPlacements[module] = placement
-        return card
-    }
-
-    /// The briefing's clause links, from the briefing card and from the
-    /// hero's tiles. `HomeBriefingHero.page(of:)` is where each target goes
-    /// (and why two of them differ from Overview's own briefing card).
-    private func follow(_ target: BriefingTarget) {
-        // The one Shift task a `.tasks` clause is about, when the app itself
-        // resolved there is exactly one; otherwise the clause's page.
-        if target == .tasks, let id = AppSettings.shared.morningBriefingRecord?.shiftTaskID {
-            onOpenShiftTask?(id)
-            return
-        }
-        if let page = HomeBriefingHero.page(of: target) { onOpenDestination?(page) }
+        applyTheme(ThemeManager.shared.theme)
     }
 
     // MARK: Layout
@@ -2817,7 +1127,7 @@ final class HomeCanvasController: NSViewController {
         return unit * CGFloat(used) + gridSpacing * CGFloat(used - 1)
     }
 
-    private func gridContainerWidth() -> CGFloat {
+    func gridContainerWidth() -> CGFloat {
         let clip = scroll.contentView.bounds.width
         let usable = clip - Self.gutter * 2
         return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
@@ -2825,7 +1135,7 @@ final class HomeCanvasController: NSViewController {
 
     /// The height the hub's columns share: the viewport less the page's own
     /// top and bottom margins.
-    private func gridContainerHeight() -> CGFloat {
+    func gridContainerHeight() -> CGFloat {
         let usable = scroll.contentView.bounds.height - Self.contentTopMargin - Self.contentBottomMargin
         return usable > 0 ? usable : 600
     }
@@ -2834,7 +1144,7 @@ final class HomeCanvasController: NSViewController {
     /// only when the width (or, on the hub, the height) genuinely changed. A resize fires many times per
     /// drag; rebuilding fifteen cards on every frame of one is the exact
     /// regression `ToolsController` measured (~3.6ms -> ~20ms per frame).
-    private func containerWidthMayHaveChanged() {
+    func containerWidthMayHaveChanged() {
         guard isViewLoaded, !view.isHidden else { return }
         let width = gridContainerWidth()
         // The hub's row counts come from its height as well, so there a
@@ -2850,7 +1160,7 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// The end of a drag: the one rebuild the frames inside it deferred.
-    private func liveResizeDidEnd() {
+    func liveResizeDidEnd() {
         guard isInLiveResize else { return }
         isInLiveResize = false
         guard isViewLoaded, !view.isHidden else { return }
@@ -2861,7 +1171,7 @@ final class HomeCanvasController: NSViewController {
     /// needs a different grid - the shelf's column count changed, or the hub
     /// crossed the width it falls back to the shelf at - and the caller
     /// rebuilds instead.
-    private func resizeGridInPlace(available: CGFloat) -> Bool {
+    func resizeGridInPlace(available: CGFloat) -> Bool {
         guard let built = gridLayoutKey, built.space == space, !gridWidthPins.isEmpty else { return false }
         let modules = visibleModules()
         guard built.modules == modules else { return false }
@@ -2910,13 +1220,13 @@ final class HomeCanvasController: NSViewController {
         return true
     }
 
-    private func scrollToTop() {
+    func scrollToTop() {
         guard let clip = scroll.contentView as NSClipView? else { return }
         clip.scroll(to: NSPoint(x: 0, y: 0))
         scroll.reflectScrolledClipView(clip)
     }
 
-    @objc private func refreshTapped() {
+    @objc func refreshTapped() {
         onRefresh?()
         render()
     }
@@ -2924,7 +1234,7 @@ final class HomeCanvasController: NSViewController {
     /// The Claude card's Refresh. The subprocess itself runs on
     /// `FleetController`'s own quota queue (GL-04/GL-12) - nothing here
     /// blocks, and this page still starts no work it owns.
-    private func refreshQuotaTapped() {
+    func refreshQuotaTapped() {
         guard !isRefreshingQuota else { return }
         isRefreshingQuota = true
         // `setNeedsRender`, not `render()`: a render can rebuild every card
@@ -2939,7 +1249,7 @@ final class HomeCanvasController: NSViewController {
         onRefreshQuota?()
     }
 
-    private func applyTheme(_ theme: HelmTheme) {
+    func applyTheme(_ theme: HelmTheme) {
         #if FM_SELFTESTS
         debugApplyThemeCount += 1
         #endif
@@ -3013,2059 +1323,11 @@ final class HomeCanvasController: NSViewController {
     /// always false.
     ///
     /// What is left is what the other four spaces always rendered.
-    private func paintHeroBand(_ theme: HelmTheme) {
+    func paintHeroBand(_ theme: HelmTheme) {
         for constraint in heroCardInsets { constraint.constant = 0 }
         heroCard.layer?.backgroundColor = NSColor.clear.cgColor
         heroCard.layer?.borderWidth = 0
         heroCard.layer?.cornerRadius = 0
-    }
-
-    // MARK: Module content (§6.1's table)
-
-    /// `placement` is where the grid put this card. Only the briefing and the
-    /// Claude report read it, to pick their narrow forms - see
-    /// `CardPlacement`.
-    private func content(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard.Content {
-        var content = HelmModuleCard.Content(
-            title: module.title,
-            subtitle: "",
-            symbol: module.symbol,
-            hue: module.hue,
-            chip: nil,
-            body: .note(""))
-
-        switch module {
-        case .briefing: fillBriefing(&content, placement: placement)
-        case .claudeStatus: fillClaudeStatus(&content, placement: placement)
-        case .fleet: fillFleet(&content, placement: placement)
-        case .strawHat: fillStrawHat(&content)
-        case .tasks: fillTasks(&content)
-        case .mergeQueue: fillMergeQueue(&content)
-        case .console: fillConsole(&content)
-        case .health: fillHealth(&content)
-        case .hosts: fillHosts(&content, placement: placement)
-        case .updates: fillUpdates(&content)
-        case .bootstrap: fillBootstrap(&content)
-        case .automation: fillAutomation(&content)
-        case .githubSync: fillGitHubSync(&content)
-        case .schedules: fillSchedules(&content)
-        case .logAnalyzer: fillLogAnalyzer(&content)
-        case .kubernetes: fillKubernetes(&content)
-        case .vault: fillVault(&content)
-        case .poneglyph: fillPoneglyph(&content)
-        case .docs: fillDocs(&content)
-        case .notebook: fillNotebook(&content)
-        case .readingList: fillReadingList(&content)
-        case .runbooks: fillRunbooks(&content)
-        case .postmortems: fillPostmortems(&content)
-        case .dictation: fillDictation(&content)
-        case .tools: fillTools(&content)
-        case .whiteboard: fillWhiteboard(&content)
-        case .stickyBoard: fillStickyBoard(&content)
-        case .codePreview: fillCodePreview(&content)
-        case .commandLibrary: fillCommandLibrary(&content)
-        case .calendar: fillCalendar(&content)
-        case .focusTimer: fillFocusCard(&content)
-        case .settings: fillSettings(&content)
-        }
-        return content
-    }
-
-    /// F12's record, read straight out of `AppSettings` - already generated,
-    /// never regenerated here. A canvas that could trigger a `claude -p` call
-    /// would be a new cost on every visit.
-    // GL-P3: built once. `DateFormatter` construction is measurably
-    // expensive and this carries no per-call state - the same treatment
-    // `FleetLogFeed`/`HealthCardView` already give theirs.
-    private static let briefingTimeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .none
-        return f
-    }()
-    private func fillBriefing(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
-            content.subtitle = AppSettings.shared.morningBriefingEnabled
-                ? "not generated yet today"
-                : "off in \(PlaceName.of(.settings))"
-            content.body = .note(AppSettings.shared.morningBriefingEnabled
-                ? "Your first briefing of the day appears here."
-                : "Turn on Morning briefing in \(PlaceName.of(.settings)) to get one short summary each morning.")
-            return
-        }
-        // UI-8's rule on this card: the source count is a fact about the
-        // reading, so it joins the subtitle; the header keeps a pill only for
-        // the state that is not the default (an offline briefing).
-        content.subtitle = "generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
-            + " \u{00B7} \(record.sources.count) source\(record.sources.count == 1 ? "" : "s")"
-        content.chip = record.isDegraded ? .warn("offline") : nil
-
-        // Two columns wide again, and still bounded - see
-        // `HelmModuleCard.maxBriefingClauses` for why the cap survives the
-        // extra width (the card's height is fixed now) and why the number went
-        // from three to five. An overflow is stated rather than dropped in
-        // silence - a card that quietly showed five of eight clauses would
-        // read as "that is the whole briefing", which is exactly the "no
-        // silent caps" failure. The trailing line is a plain `.none`-target
-        // clause, so it renders as text inside the same paragraph and needs no
-        // new mechanism.
-        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(for: placement)))
-        let hidden = record.clauses.count - clauses.count
-        if hidden > 0 {
-            clauses.append(BriefingClause(text: "+\(hidden) more in \(PlaceName.of(.overview)).", target: .none))
-        }
-        content.body = .paragraph(clauses)
-    }
-
-    /// How many clauses the briefing's paragraph may carry on a card of this
-    /// width.
-    ///
-    /// A span-2 card is at least two minimum columns plus the gap between
-    /// them, so anything narrower than that is a briefing `packRows` degraded
-    /// to one column in a single-column grid - and its paragraph has to shrink
-    /// with it or it overflows the fixed card height and is clipped.
-    static func briefingClauseCap(forCardWidth width: CGFloat) -> Int {
-        briefingClauseCap(for: .shelf(width: width))
-    }
-
-    /// The same decision from the card's placement - see `CardPlacement` for
-    /// why the dashboard cannot use the shelf's width arithmetic.
-    static func briefingClauseCap(for placement: CardPlacement) -> Int {
-        placement.isNarrowerThanTwoColumns
-            ? HelmModuleCard.maxNarrowBriefingClauses
-            : HelmModuleCard.maxBriefingClauses
-    }
-
-    // MARK: The Claude usage report
-
-    /// The captain's picked usage report: a header carrying the plan, one
-    /// overall verdict and the reading's age, then a "Plan limits" section
-    /// with one full-width bar per window, then an "Extra usage" section
-    /// showing the spend against its cap.
-    ///
-    /// It replaced a five-column "Status strip"
-    /// (`docs/history/07-fleet-and-notifications.md` has that shape's own
-    /// history). The card is taller than the strip was, deliberately and on
-    /// the captain's own instruction - `HelmModuleCard.minimumHeight` is a
-    /// floor rather than a fixed height, so it simply grows.
-    ///
-    /// **The two labelling decisions this card is built on**, both carried
-    /// forward from the design exploration the captain picked a mockup from
-    /// (`docs/history/07-fleet-and-notifications.md` records the reasoning):
-    ///
-    ///  - The five-hour window is **"Session (5h)"**, never "Daily". Claude's
-    ///    quota has no daily window and `quota-axi` reports none - the window
-    ///    is `five_hour`, which the tool itself labels `session`. Naming it
-    ///    "Daily" would be a claim about a reset cadence that does not exist.
-    ///  - The credit pool is **"Extra usage"** against a **"Spend cap"**,
-    ///    never "MTD spend". Its window id is `extra_usage` and its kind is
-    ///    `credits`; `quota-axi` returns `pace: {status: "unknown", reason:
-    ///    "missing_cycle"}` for it, so it does not know the billing cycle's
-    ///    boundaries and nothing derived from it may honestly say "month to
-    ///    date". True organisation month-to-date spend would need Anthropic's
-    ///    Admin/Usage API and an Admin key, which this app does not have.
-    ///
-    /// GL-14 runs through the whole card: every window is independently
-    /// optional, and one this account's response does not carry renders
-    /// "Not reported" in the muted face with no bar at all - never a `0%` or
-    /// a `$0`, which on a quota readout are real and alarming values rather
-    /// than synonyms for "unknown".
-    private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        // On every state, including the two below: the one moment a captain
-        // most wants to re-take a reading is when the card is stating a gap.
-        content.headerAction = HelmModuleCard.HeaderAction(
-            symbol: "arrow.clockwise",
-            tooltip: isRefreshingQuota
-                ? "Reading the Claude quota\u{2026}"
-                : "Refresh the Claude quota",
-            isBusy: isRefreshingQuota,
-            handler: { [weak self] in self?.refreshQuotaTapped() })
-
-        // The captain's split hero, wherever the card is a shelf card. The
-        // floating bar's hub keeps its dense card below: that dashboard is
-        // fitted to its window, and a hero's panel is not in its budget.
-        if case let .shelf(width) = placement {
-            fillClaudeHero(&content, width: width)
-            return
-        }
-
-        guard let snapshot = quotaSnapshot else {
-            // Two genuinely different states, and they read differently.
-            if let failure = quotaFailure {
-                content.subtitle = "no reading"
-                content.chip = .warn("unavailable")
-                content.body = .note(failure)
-            } else {
-                content.subtitle = "reading"
-                content.body = .skeleton(rows: 2)
-            }
-            return
-        }
-
-        // `fm/grandline-home-fit-implement`: on the hub the report is the
-        // dense one-grid form, so the page fits its window - never the
-        // stacked reflow, which is the shelf's answer to a degraded card and
-        // costs the most height of the three. The dense form draws no section
-        // verdicts, so the header chip carries the card's one verdict always.
-        if case .dashboard = placement {
-            fillClaudeDense(&content, snapshot: snapshot, width: placement.width)
-            return
-        }
-        let compact = Self.claudeUsageIsCompact(for: placement)
-        content.subtitle = Self.claudeSubtitle(for: snapshot)
-        // UI-12's error state: a refresh that failed keeps the last reading,
-        // says how old it is and why, rather than presenting it as current.
-        if let failure = quotaFailure {
-            if let fetchedAt = quotaFetchedAt {
-                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
-            }
-            content.chip = .warn("Can't reach")
-            content.toolTip = "The last refresh failed: \(failure)"
-            content.body = .usageReport(Self.claudeUsageSections(for: snapshot), compact: compact)
-            return
-        }
-        // **A compact card's header is identity and Refresh, nothing else**,
-        // and that is a design call rather than a shrug at a layout problem.
-        // Measured at a one-column card's 255pt: the tile, a "Near spend
-        // cap" pill, the freshness caption and the Refresh leave the
-        // identity column about 60pt, which renders the plan as "Team p...".
-        // Two things have to go, and these are the two that are said twice:
-        // both section verdicts ("Comfortable", "Near cap") are painted in
-        // full a few points below the pill, and the freshness moves to the
-        // card's own hover text, which AppKit also serves to VoiceOver as
-        // the card's accessibility help (GL-16). The plan name is said
-        // nowhere else at all, which is why it is what survives.
-        let updated = quotaFetchedAt.map { Self.claudeUpdatedText(fetchedAt: $0) }
-        content.chip = compact ? nil : Self.claudeChip(for: snapshot)
-        // UI-8: one status word in the header, and the reading's age in the
-        // subtitle beside the plan ("Team plan · updated 3h ago") rather than
-        // as a second caption under the word.
-        if let fetchedAt = quotaFetchedAt, !compact {
-            content.subtitle = "\(Self.claudeSubtitle(for: snapshot)) \u{00B7} updated "
-                + HelmRelativeTime.phrase(since: fetchedAt)
-        }
-        if compact { content.toolTip = updated }
-        content.body = .usageReport(Self.claudeUsageSections(for: snapshot,
-                                                             headerCarriesVerdict: content.chip != nil),
-                                    compact: compact)
-    }
-
-    /// The hub's Claude card: `.usageReportDense`, with the verdict in the
-    /// header chip and the reading's age beside the plan. The UI-12 error
-    /// state is the same as the shelf's: the last reading stays, the chip
-    /// says it could not be refreshed, and the reason is on hover.
-    private func fillClaudeDense(_ content: inout HelmModuleCard.Content, snapshot: QuotaSnapshot, width: CGFloat) {
-        content.subtitle = Self.claudeSubtitle(for: snapshot)
-        if let failure = quotaFailure {
-            if let fetchedAt = quotaFetchedAt {
-                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
-            }
-            content.chip = .warn("Can't reach")
-            content.toolTip = "The last refresh failed: \(failure)"
-        } else {
-            content.chip = Self.claudeChip(for: snapshot)
-            if let fetchedAt = quotaFetchedAt {
-                // In a narrow column the age moves to the card's hover text
-                // (and so to its VoiceOver help), the shelf's compact rule:
-                // beside the chip and Refresh it truncated to "just...".
-                if Self.claudeUsesShortLabels(forCardWidth: width) {
-                    content.toolTip = Self.claudeUpdatedText(fetchedAt: fetchedAt)
-                } else {
-                    content.subtitle += " \u{00B7} updated " + HelmRelativeTime.phrase(since: fetchedAt)
-                }
-            }
-        }
-        content.body = .usageReportDense(Self.claudeUsageSections(
-            for: snapshot, headerCarriesVerdict: true,
-            shortLabels: Self.claudeUsesShortLabels(forCardWidth: width)))
-    }
-
-    /// Below this card width the dense grid's four columns do not fit the
-    /// long names and the "Resets" word: "Session (5h)", a figure, a 40pt bar
-    /// and "Resets Mon 12:32 PM" need about 280pt of a 293pt column's 261pt
-    /// of content. Measured with the tour lab's `probe` verb.
-    static let claudeShortLabelWidth: CGFloat = 400
-
-    static func claudeUsesShortLabels(forCardWidth width: CGFloat) -> Bool {
-        width < claudeShortLabelWidth
-    }
-
-    /// Whether this card is narrow enough to need the report's stacked
-    /// reflow rather than its aligned four-column grid.
-    ///
-    /// The same threshold `claudeStripColumnsPerRow` used, and for the same
-    /// reason: `HelmResponsiveGrid.packRows` degrades a span-2 card to one
-    /// column in a single-column grid, and at that width the grid's three
-    /// content columns leave the bar a stub. This is the direct analogue of
-    /// the mockup's own `@media (max-width: 560px)` rule, which reflows the
-    /// same four fields the same way - title and figure on one line, the bar
-    /// full width beneath, the reset caption under that.
-    ///
-    /// The card pays height, never a reading. Nothing is dropped in either
-    /// layout, which is the property the strip already had when it wrapped.
-    static func claudeUsageIsCompact(forCardWidth width: CGFloat) -> Bool {
-        claudeUsageIsCompact(for: .shelf(width: width))
-    }
-
-    /// The same decision from the card's placement. On the dashboard a
-    /// 7-of-12-track card is never the degraded one-column card this reflow
-    /// exists for, even where it resolves a fraction of a point under the
-    /// shelf's 526pt (M3) - see `CardPlacement`.
-    static func claudeUsageIsCompact(for placement: CardPlacement) -> Bool {
-        placement.isNarrowerThanTwoColumns
-    }
-
-    /// The report's two sections, in the mockup's order. `static` so a suite
-    /// can assert the mapping from a fabricated snapshot without mounting a
-    /// canvas.
-    ///
-    /// GL-14 runs through the whole function exactly as it ran through
-    /// `claudeStripColumns` before it: every window is independently
-    /// optional, and one this account's response does not carry renders
-    /// "Not reported" in the muted caption face with no bar at all - never a
-    /// `0%` or a `$0`, which on a quota readout are real and alarming values
-    /// rather than synonyms for "unknown".
-    /// - Parameter headerCarriesVerdict: UI-8 - when the card's header already
-    ///   says the plan's verdict ("Comfortable"), the Plan limits section
-    ///   keeps only its title rather than saying it a second time. A compact
-    ///   card drops the header word (see `fillClaudeStatus`), so there the
-    ///   section keeps it.
-    /// - Parameter shortLabels: the dense form at a narrow column's width -
-    ///   "Session" / "Week" / "Fable" and the reset time without its
-    ///   "Resets" word. The long reset sentence stays on each row's hover
-    ///   text and VoiceOver help, so nothing is lost but the painted word.
-    static func claudeUsageSections(for snapshot: QuotaSnapshot,
-                                    now: Date = Date(),
-                                    headerCarriesVerdict: Bool = false,
-                                    shortLabels: Bool = false) -> [HelmModuleUsageSection] {
-        func row(_ title: String, _ window: QuotaWindow?) -> HelmModuleUsageRow {
-            guard let window else {
-                return HelmModuleUsageRow(title: title, value: "Not reported",
-                                          fill: nil, state: .idle, isGap: true)
-            }
-            return HelmModuleUsageRow(
-                title: title,
-                value: percentText(window.percentUsed),
-                fill: max(0, min(1, window.percentUsed / 100)),
-                state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState,
-                // Both forms, deliberately: the short one is painted beside
-                // the bar and the long one stays on the hover and the
-                // accessibility label, so the full date is still one hover
-                // away. Both are `nil` for a window carrying no reset
-                // instant, which passes through as no caption and no
-                // affordance rather than a fabricated one.
-                //
-                // **The `Resets` prefix is the redesign's own addition**, and
-                // it is the mockup's wording. In the strip the compact time
-                // sat directly under a column headed SESSION (5H), which
-                // said what it was; here it sits at the card's right edge
-                // with a bar between it and its row's title, and a bare
-                // "10:30 PM" out there could be anything. The mockup also
-                // carries a live countdown ("in 2h 14m") which this card
-                // deliberately does not: a counting figure needs one
-                // injectable clock on a controller that ticks it (AGENTS.md),
-                // and nothing on this canvas ticks - a countdown rendered
-                // once at build time and then left to go stale would be
-                // worse than the instant it replaced.
-                caption: window.resetsCompact(now: now).map { shortLabels ? $0 : "Resets \($0)" },
-                detail: window.resetsSentence)
-        }
-
-        let rows = [
-            row(shortLabels ? "Session" : "Session (5h)", snapshot.session),
-            row("Week", snapshot.weekly),
-            row(shortLabels ? "Fable" : "Fable week", snapshot.fable),
-        ]
-
-        var sections: [HelmModuleUsageSection] = [
-            HelmModuleUsageSection(title: "Plan limits",
-                                   status: headerCarriesVerdict ? nil : claudePlanLimitsStatus(for: snapshot),
-                                   content: .limits(rows)),
-        ]
-        sections.append(HelmModuleUsageSection(title: "Extra usage",
-                                               status: claudeSpendStatus(for: snapshot),
-                                               content: claudeSpendContent(for: snapshot,
-                                                                           shortLabels: shortLabels)))
-        // U4: one alarm colour per card. The thresholds above are untouched -
-        // this only stops a card spending two hues on one situation. See
-        // `keepingOnlyTheWorstAlarm`.
-        return sections.keepingOnlyTheWorstAlarm()
-    }
-
-    /// The extra-usage section's body. Three genuinely different states, and
-    /// they read differently (GL-14): no window at all, a window carrying
-    /// dollars but no cap, and the full reading.
-    /// `shortLabels` drops the word "cap" from "of $140 cap" for the dense
-    /// form's narrow column, where the worst-case "$137.62 of $140 cap" was
-    /// measured painting truncated at 293pt. The row's hover text still
-    /// carries the footnote, which says "before the cap" in full.
-    static func claudeSpendContent(for snapshot: QuotaSnapshot,
-                                   shortLabels: Bool = false) -> HelmModuleUsageSection.Content {
-        guard let credits = snapshot.extraUsage, let spent = credits.spentUsd else {
-            return .note("Not reported.")
-        }
-        guard let limit = credits.limitUsd, limit > 0 else {
-            // No ceiling, so no bar and no percentage: a track drawn against
-            // a cap nobody sent would be a picture of a number that does not
-            // exist.
-            return .spend(HelmModuleUsageSpend(
-                amount: dollarText(spent), against: "spent, no cap set",
-                value: nil, fill: nil, state: .idle, footnote: nil))
-        }
-        let fraction = max(0, min(1, spent / limit))
-        // The percentage the *card* states is derived from the two dollar
-        // figures it is already showing, rather than from `percentUsed` -
-        // which is independently optional on this window and, when both are
-        // present, is the same quantity. A figure the captain can check
-        // against the two numbers beside it is worth more than one they
-        // cannot.
-        let state = QuotaSeverity(percentUsed: fraction * 100).moduleRowState
-        let remaining = max(0, limit - spent)
-        return .spend(HelmModuleUsageSpend(
-            amount: dollarText(spent),
-            against: shortLabels ? "of \(dollarText(limit))" : "of \(dollarText(limit)) cap",
-            value: percentText(fraction * 100),
-            fill: fraction,
-            state: state,
-            footnote: remaining > 0
-                ? "\(dollarText(remaining)) left before the cap"
-                : "Cap reached, extra usage is paused"))
-    }
-
-    /// The Plan limits section's verdict - the binding window, named.
-    static func claudePlanLimitsStatus(for snapshot: QuotaSnapshot) -> HelmModuleUsageStatus? {
-        guard let worst = claudeWorstWindow(for: snapshot) else {
-            return HelmModuleUsageStatus(text: "No limits reported", state: .idle)
-        }
-        if worst.window.percentUsed >= 100 {
-            return HelmModuleUsageStatus(text: "\(worst.name) limit reached", state: .bad)
-        }
-        switch QuotaSeverity(percentUsed: worst.window.percentUsed) {
-        case .critical: return HelmModuleUsageStatus(text: "\(worst.name) nearly used", state: .bad)
-        case .warning: return HelmModuleUsageStatus(text: "\(worst.name) getting close", state: .warn)
-        case .comfortable: return HelmModuleUsageStatus(text: "Comfortable", state: .ok)
-        }
-    }
-
-    /// The Extra usage section's verdict.
-    static func claudeSpendStatus(for snapshot: QuotaSnapshot) -> HelmModuleUsageStatus? {
-        guard let fraction = claudeSpendFraction(for: snapshot) else {
-            return HelmModuleUsageStatus(text: "No cap", state: .idle)
-        }
-        if fraction >= 1 { return HelmModuleUsageStatus(text: "Cap reached", state: .bad) }
-        switch QuotaSeverity(percentUsed: fraction * 100) {
-        case .critical: return HelmModuleUsageStatus(text: "Near cap", state: .bad)
-        case .warning: return HelmModuleUsageStatus(text: "Approaching cap", state: .warn)
-        case .comfortable: return HelmModuleUsageStatus(text: "Within cap", state: .ok)
-        }
-    }
-
-    /// `spent / limit`, or `nil` when the response did not carry both - the
-    /// one place the card decides whether it has a spend reading at all.
-    static func claudeSpendFraction(for snapshot: QuotaSnapshot) -> Double? {
-        guard let credits = snapshot.extraUsage,
-              let spent = credits.spentUsd,
-              let limit = credits.limitUsd, limit > 0 else { return nil }
-        return max(0, spent / limit)
-    }
-
-    /// The window that runs out first, with the name the header pill uses
-    /// for it. `nil` when the response carried no resetting window at all.
-    static func claudeWorstWindow(for snapshot: QuotaSnapshot) -> (name: String, window: QuotaWindow)? {
-        let windows: [(String, QuotaWindow)] = [
-            ("Session", snapshot.session), ("Week", snapshot.weekly), ("Fable", snapshot.fable),
-        ].compactMap { name, window in window.map { (name, $0) } }
-        return windows.max(by: { $0.1.percentUsed < $1.1.percentUsed }).map { ($0.0, $0.1) }
-    }
-
-    /// `Updated 2 min ago`. Relative, not absolute, because the question the
-    /// caption answers is "are these figures worth acting on" rather than
-    /// "what time was it" - and a wall-clock stamp makes the captain do the
-    /// subtraction themselves.
-    ///
-    /// `now` is injectable for the same reason every other date helper here
-    /// is: a suite that drove a fabricated instant and then measured the real
-    /// elapsed time would be testing two clocks rather than the feature
-    /// (AGENTS.md's one-injectable-clock rule).
-    static func claudeUpdatedText(fetchedAt: Date, now: Date = Date()) -> String {
-        "Updated " + HelmRelativeTime.phrase(since: fetchedAt, now: now)
-    }
-
-    /// `96%`. No decimal: `quota-axi` reports whole `percentRemaining`
-    /// integers, so a `.1f` here would invent precision the source does not
-    /// have.
-    static func percentText(_ percentUsed: Double) -> String {
-        "\(Int(percentUsed.rounded()))%"
-    }
-
-    /// `$140` for a whole number of dollars, `$137.62` otherwise - the cap is
-    /// always round and the spend rarely is, and `$140.00` beside `$137.62`
-    /// reads as false precision on a card this dense.
-    static func dollarText(_ amount: Double) -> String {
-        amount == amount.rounded()
-            ? String(format: "$%.0f", amount)
-            : String(format: "$%.2f", amount)
-    }
-
-    /// The plan, named as a plan - the mockup's `Team plan` rather than the
-    /// bare `Team` the strip carried.
-    ///
-    /// The extra word is worth its width: "Team" beside a gauge tile reads as
-    /// a label for something on the card, where "Team plan" is unambiguously
-    /// the account's own tier, which is what the header is for. Falls back to
-    /// naming the *source* when the response carried no plan at all, which is
-    /// a stated gap rather than a guess (GL-14).
-    static func claudeSubtitle(for snapshot: QuotaSnapshot) -> String {
-        guard let plan = snapshot.plan, !plan.isEmpty else { return "quota-axi" }
-        return "\(plan.capitalized) plan"
-    }
-
-    /// The header pill: **one** verdict for the whole card.
-    ///
-    /// It has to weigh two independent things now, which is what the
-    /// redesign changed. The strip's chip only ever looked at the three
-    /// resetting windows, so a card whose spend was a dollar off its cap
-    /// could read "Comfortable" - the captain's own mockup names that case
-    /// ("Near spend cap") and shows it winning over three comfortable
-    /// windows, which is the right call: the windows refill on a clock and
-    /// the cap does not.
-    ///
-    /// The tie-break is the mockup's: spend wins when it is at least as
-    /// alarming as the worst window. Below the warning threshold on both,
-    /// the card says so in one word rather than restating a row.
-    static func claudeChip(for snapshot: QuotaSnapshot) -> HelmModuleChip? {
-        let worst = claudeWorstWindow(for: snapshot)
-        let windowSeverity = worst.map { QuotaSeverity(percentUsed: $0.window.percentUsed) }
-        let spendFraction = claudeSpendFraction(for: snapshot)
-        let spendSeverity = spendFraction.map { QuotaSeverity(percentUsed: $0 * 100) }
-
-        if let spendSeverity, spendSeverity != .comfortable,
-           claudeSeverityRank(spendSeverity) >= claudeSeverityRank(windowSeverity ?? .comfortable) {
-            if (spendFraction ?? 0) >= 1 { return .bad("Spend cap reached") }
-            return spendSeverity == .critical
-                ? .bad("Near spend cap")
-                : .warn("Extra usage climbing")
-        }
-
-        guard let worst, let windowSeverity else { return nil }
-        switch windowSeverity {
-        case .critical, .warning:
-            let text = worst.window.percentUsed >= 100
-                ? "\(worst.name) limit reached"
-                : "\(worst.name) limit close"
-            return windowSeverity == .critical ? .bad(text) : .warn(text)
-        case .comfortable:
-            return .ok("Comfortable")
-        }
-    }
-
-    /// How alarming one severity is against another. `QuotaSeverity` is
-    /// deliberately not `Comparable` - it is a verdict, not a scale, and the
-    /// only place this app needs to order two of them is the pill above.
-    private static func claudeSeverityRank(_ severity: QuotaSeverity) -> Int {
-        switch severity {
-        case .comfortable: return 0
-        case .warning: return 1
-        case .critical: return 2
-        }
-    }
-
-    private func fillFleet(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        // The captain's full hero, wherever the card is a shelf card - the
-        // same split as the Claude card's.
-        if case let .shelf(width) = placement {
-            fillFleetHero(&content, width: width)
-            return
-        }
-        guard let snapshot = fleetSnapshot else {
-            // UI-12: the one loading idiom, the skeleton every card uses.
-            content.subtitle = "reading"
-            content.toolTip = "Reading the fleet's state\u{2026}"
-            content.body = .skeleton(rows: 2)
-            return
-        }
-        // UI-9 / GL-14: a snapshot from a missing firstmate home is not a
-        // fleet of zeroes. `homeOk` false means nothing was read, so the
-        // counts are dashes under a "Not read" pill - never 0/0/0 under
-        // "All clear", which is what this card used to draw.
-        guard snapshot.homeOk else {
-            content.subtitle = "not read"
-            content.chip = .warn(HelmReading<String>.unknownCaption)
-            content.body = .kpis(note: "Point Grand Line at your firstmate home in \(PlaceName.of(.bootstrap)).",
-                                 items: ["Working", "Done today", "Queued"].map {
-                                     HelmKPIStrip.Item(.unread, caption: $0)
-                                 })
-            return
-        }
-        let working = snapshot.tasks.filter { $0.status == "working" }
-        let needs = snapshot.tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
-        content.subtitle = "\(working.count) crew working"
-        content.chip = needs.isEmpty ? .ok("All clear") : .warn("\(needs.count) need you")
-
-        // The reference's Fleet widget: one sentence, then the three numbers
-        // under it as tiles.
-        //
-        // **The three counts are the snapshot's own**, not a second
-        // definition: `working` is the same predicate this card's subtitle is
-        // already built from, and `doneCount`/`queuedCount` are the very
-        // fields Overview's own stat row reads (`FleetController`'s
-        // `statsRow`). A second arithmetic for the same three numbers on the
-        // hub is exactly what the component index exists to stop - and the
-        // tile they are drawn in is that row's `HelmStatTile` too.
-        // UI-9: a KPI strip, not three boxed tiles. A fine zero is muted, so
-        // the numbers that mean something carry the weight.
-        let items: [HelmKPIStrip.Item] = [
-            .count(working.count, caption: "Working"),
-            .count(snapshot.doneCount, caption: "Done today"),
-            .count(snapshot.queuedCount, caption: "Queued"),
-        ]
-
-        if working.isEmpty && needs.isEmpty {
-            content.body = .kpis(note: "All hands idle. Nothing is running and nothing is waiting on you.",
-                                 items: items)
-            return
-        }
-        // With something actually in flight the sentence names it, because a
-        // parked crewmate's id is the one thing the three counts cannot say.
-        let lead = needs.isEmpty
-            ? "\(working.count) crew working."
-            : "\(needs.count) waiting on you: \(needs.prefix(2).map(\.id).joined(separator: ", "))."
-        content.body = .kpis(note: lead, items: items)
-    }
-
-    // MARK: The hero cards (the widget-style board's picks)
-    //
-    // The captain picked the split hero for the Claude card and the full hero
-    // for Fleet, each with a colour they choose (`HomeCardStyle`). The readings
-    // and their thresholds are the cards' own - `claudeUsageSections`,
-    // `claudeChip` and `QuotaSeverity` for Claude, the snapshot's counts for
-    // Fleet - so the hero changes how a card looks and never what it says.
-
-    /// The colour the captain chose for `module`, dimmed for a stale reading.
-    private func heroTone(for module: DaylightModule, dimmed: Bool) -> HelmModuleCard.HeroTone {
-        HelmModuleCard.HeroTone(colour: HomeCardStyle.color(for: module).heroColour, isDimmed: dimmed)
-    }
-
-    /// The palette button on a hero card's header.
-    private func styleMenu(for module: DaylightModule) -> HelmModuleCard.HeaderMenu {
-        HelmModuleCard.HeaderMenu(symbol: HomeCardStyleMenu.symbol, tooltip: HomeCardStyleMenu.tooltip) { [weak self] in
-            self?.makeStyleMenu(for: module).makeMenu() ?? NSMenu()
-        }
-    }
-
-    /// The style menu for `module` as it stands now. Size and Hide are
-    /// offered only on Home's own arranged cards, which are the only cards
-    /// with a width and a place the captain owns.
-    func makeStyleMenu(for module: DaylightModule) -> HomeCardStyleMenu {
-        var sizing: HomeCardStyleMenu.Sizing?
-        var hide: (() -> Void)?
-        if showsArrangedCards, let layout = cardLayout, layout.shown.contains(module) {
-            sizing = HomeCardStyleMenu.Sizing(
-                current: HomeCardSizeMode(columns: layout.size(of: module).columns),
-                choose: { [weak self] mode in self?.setCardSize(mode, for: module) })
-            hide = { [weak self] in self?.hideCard(module) }
-        }
-        return HomeCardStyleMenu(
-            cardTitle: module.title, sizing: sizing, color: HomeCardStyle.color(for: module),
-            chooseColor: { [weak self] color in self?.setCardColor(color, for: module) },
-            chooseCustomColor: { [weak self] in self?.chooseCustomCardColor(for: module) },
-            hide: hide)
-    }
-
-    /// The same edit Customize's hide button makes. Customize's Add a Card
-    /// brings the card back, and the toast says so, with an Undo that puts
-    /// back the arrangement as it was (GL-33).
-    private func hideCard(_ module: DaylightModule) {
-        guard let before = cardLayout else { return }
-        arrange { $0.hide(module) }
-        guard isViewLoaded, cardLayout != before else { return }
-        Toast.showUndo(in: view, message: "\(module.title) hidden. Add it back from Customize.") { [weak self] in
-            guard let self else { return }
-            self.cardLayout = before
-            self.onCardLayoutChanged?(before)
-        }
-    }
-
-    /// The same edit a resize drag makes, so it is kept with the rest of
-    /// Home's arrangement. The captain's height, if any, stays.
-    private func setCardSize(_ mode: HomeCardSizeMode, for module: DaylightModule) {
-        arrange { layout in
-            var size = layout.size(of: module)
-            size.columns = mode.columns
-            layout.setSize(size, for: module)
-        }
-    }
-
-    private func setCardColor(_ color: HomeCardColor, for module: DaylightModule) {
-        HomeCardStyle.setColor(color, for: module)
-        guard isViewLoaded else { return }
-        render()
-    }
-
-    private func chooseCustomCardColor(for module: DaylightModule) {
-        let current = HomeCardStyle.color(for: module).rgb(in: ThemeManager.shared.theme)
-        HomeCardColorPanel.shared.open(current: current) { [weak self] color in
-            self?.setCardColor(color, for: module)
-        }
-    }
-
-    /// The split hero's panel for one reading: what the gradient says.
-    struct ClaudeHeroPanel: Equatable {
-        let headline: String
-        let body: String?
-        let ring: HelmModuleCard.HeroRing?
-        /// The header's status. `nil` while the headline is the verdict;
-        /// only a refresh that failed adds one.
-        let chip: HelmModuleChip?
-        /// GL-14: there is no reading to show, so the colour dims. A failed
-        /// refresh over a real reading keeps the colour - its pill and
-        /// headline say the figures may be behind.
-        let isStale: Bool
-    }
-
-    /// The panel for a reading, a failure, or neither yet. `static` so a suite
-    /// can assert every state from a fabricated snapshot.
-    ///
-    /// The headline is the card's one verdict - `claudeChip`'s, worded as a
-    /// sentence - and the ring shows the reading that verdict is about: the
-    /// spend against its cap when the spend is what is alarming, otherwise
-    /// the window that runs out first.
-    static func claudeHeroPanel(snapshot: QuotaSnapshot?, failure: String?, fetchedAt: Date?,
-                                now: Date = Date()) -> ClaudeHeroPanel {
-        guard let snapshot else {
-            if failure != nil {
-                return ClaudeHeroPanel(headline: "No reading yet",
-                                       body: "The Claude quota could not be read. Refresh to try again.",
-                                       ring: nil, chip: .warn("unavailable"), isStale: true)
-            }
-            return ClaudeHeroPanel(headline: "Reading the quota\u{2026}", body: nil, ring: nil, chip: nil,
-                                   isStale: false)
-        }
-
-        let verdict = claudeChip(for: snapshot)
-        let spendFraction = claudeSpendFraction(for: snapshot)
-        let worst = claudeWorstWindow(for: snapshot)
-        // The spend is the subject when it is the verdict: `claudeChip` lets
-        // it win only when it is at least as alarming as the worst window.
-        let spendIsTheSubject = spendFraction != nil
-            && QuotaSeverity(percentUsed: (spendFraction ?? 0) * 100) != .comfortable
-            && claudeSpendWinsVerdict(snapshot)
-
-        var ring: HelmModuleCard.HeroRing?
-        if spendIsTheSubject, let fraction = spendFraction, let limit = snapshot.extraUsage?.limitUsd {
-            let percent = percentText(fraction * 100)
-            ring = HelmModuleCard.HeroRing(
-                fraction: min(1, fraction), label: percent, caption: "of the \(dollarText(limit)) cap",
-                spoken: "Extra usage, \(percent) of the \(dollarText(limit)) cap",
-                state: QuotaSeverity(percentUsed: fraction * 100).moduleRowState)
-        } else if let worst {
-            let percent = percentText(worst.window.percentUsed)
-            let noun = claudeWindowNoun(worst.name)
-            ring = HelmModuleCard.HeroRing(
-                fraction: max(0, min(1, worst.window.percentUsed / 100)), label: percent,
-                caption: "of \(noun) used", spoken: "\(percent) of \(noun) used",
-                state: QuotaSeverity(percentUsed: worst.window.percentUsed).moduleRowState)
-        }
-
-        let headline: String
-        switch verdict?.kind {
-        case nil: headline = "No limits reported"
-        case .ok?: headline = worst?.name == "Session" ? "Plenty of room this session" : "Plenty of room this week"
-        default: headline = verdict?.text ?? "Plenty of room"
-        }
-
-        var sentences: [String] = []
-        if let worst {
-            let noun = claudeWindowNoun(worst.name)
-            // `String(...)` on both halves: a `Substring` in a concatenation
-            // is what CI's compiler rejected once (AGENTS.md's toolchain note).
-            var sentence = String(noun.prefix(1)).uppercased() + String(noun.dropFirst())
-                + " is at \(percentText(worst.window.percentUsed))"
-            if let resets = worst.window.resetsCompact(now: now) { sentence += " and resets \(resets)" }
-            sentences.append(sentence + ".")
-        }
-        if let spend = claudeSpendSentence(for: snapshot) {
-            if spendIsTheSubject { sentences.insert(spend, at: 0) } else { sentences.append(spend) }
-        }
-
-        if failure != nil {
-            let time = fetchedAt.map { briefingTimeFormatter.string(from: $0) }
-            return ClaudeHeroPanel(headline: time.map { "Showing the \($0) reading" } ?? "Showing the last reading",
-                                   body: "The last refresh failed, so these figures may be behind.",
-                                   ring: ring, chip: .warn("Can't reach"), isStale: false)
-        }
-        return ClaudeHeroPanel(headline: headline, body: sentences.isEmpty ? nil : sentences.joined(separator: " "),
-                               ring: ring, chip: nil, isStale: false)
-    }
-
-    /// Whether the spend, rather than a window, carries `claudeChip`'s verdict.
-    private static func claudeSpendWinsVerdict(_ snapshot: QuotaSnapshot) -> Bool {
-        guard let spend = claudeSpendFraction(for: snapshot) else { return false }
-        let spendSeverity = QuotaSeverity(percentUsed: spend * 100)
-        let windowSeverity = claudeWorstWindow(for: snapshot).map { QuotaSeverity(percentUsed: $0.window.percentUsed) }
-        return claudeSeverityRank(spendSeverity) >= claudeSeverityRank(windowSeverity ?? .comfortable)
-    }
-
-    /// "the week", "the session", "the Fable week" - `claudeWorstWindow`'s
-    /// names in a sentence.
-    private static func claudeWindowNoun(_ name: String) -> String {
-        switch name {
-        case "Session": return "the session"
-        case "Fable": return "the Fable week"
-        default: return "the week"
-        }
-    }
-
-    /// The extra-usage pool in one sentence, or `nil` when it was not reported.
-    private static func claudeSpendSentence(for snapshot: QuotaSnapshot) -> String? {
-        guard let credits = snapshot.extraUsage, let spent = credits.spentUsd else { return nil }
-        guard let limit = credits.limitUsd, limit > 0 else {
-            return spent > 0 ? "\(dollarText(spent)) of extra usage spent, with no cap set." : "No extra usage spent."
-        }
-        if spent >= limit { return "Extra usage hit the \(dollarText(limit)) cap and is paused." }
-        if spent <= 0 { return "No extra usage spent." }
-        return "\(dollarText(spent)) of the \(dollarText(limit)) extra-usage cap is spent."
-    }
-
-    /// The Claude card as the split hero: the verdict and its ring on the
-    /// panel, every reading and reset time on the card beside it - the dense
-    /// report's own rows, so no figure, threshold or short-label rule moves.
-    private func fillClaudeHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
-        let layout = HelmModuleCard.HeroLayout(cardWidth: width)
-        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
-        let panel = Self.claudeHeroPanel(snapshot: quotaSnapshot, failure: quotaFailure, fetchedAt: quotaFetchedAt)
-
-        if let snapshot = quotaSnapshot {
-            content.subtitle = Self.claudeSubtitle(for: snapshot)
-        } else {
-            content.subtitle = quotaFailure == nil ? "reading" : "no reading"
-        }
-        content.chip = panel.chip
-        if let failure = quotaFailure {
-            content.toolTip = "The last refresh failed: \(failure)"
-        } else if quotaSnapshot != nil, let fetchedAt = quotaFetchedAt {
-            // The narrow band has no room beside Refresh and the palette, so
-            // the age moves to the card's hover text there (the compact rule).
-            let updated = Self.claudeUpdatedText(fetchedAt: fetchedAt)
-            if layout == .narrow { content.toolTip = updated } else { content.headerCaption = updated }
-        }
-
-        let detail: HelmModuleCard.HeroSplit.Detail
-        if let snapshot = quotaSnapshot {
-            detail = .report(Self.claudeUsageSections(
-                for: snapshot, headerCarriesVerdict: true,
-                shortLabels: Self.claudeUsesShortLabels(forCardWidth: detailWidth)))
-        } else if let failure = quotaFailure {
-            detail = .note(failure)
-        } else {
-            detail = .loading
-        }
-        content.body = .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
-                                                           ring: panel.ring, detail: detail, layout: layout))
-        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
-        content.headerMenu = styleMenu(for: .claudeStatus)
-    }
-
-    /// The full hero's words for a fleet reading. `static` for the suite.
-    struct FleetHero: Equatable {
-        let subtitle: String
-        let chip: HelmModuleChip?
-        let headline: String
-        let body: String
-        let ring: HelmModuleCard.HeroRing?
-        let items: [HelmKPIStrip.Item]
-        /// GL-14: the card has no real fleet to show, so its colour dims.
-        /// Only a fleet that was never read sets it - a stale watcher's
-        /// counts are real and stay in the captain's colour.
-        let isStale: Bool
-    }
-
-    /// Five states, worst first: a crewmate blocked (red), one waiting on a
-    /// decision (amber), a watcher that has stopped reporting (amber pill),
-    /// crew working, and all clear. Two of them are new on this card: today
-    /// `blocked` and `needs_decision` both read amber, and the watcher's
-    /// health was not read at all.
-    ///
-    /// The ring is the day's progress: what is done today out of everything
-    /// the snapshot knows about (done, working and queued), so the arc fills
-    /// as the queue drains. The centre is the done count.
-    static func fleetHero(snapshot: FleetSnapshot?) -> FleetHero {
-        let captions = ["Working", "Done today", "Queued"]
-        let unread = captions.map { HelmKPIStrip.Item(.unread, caption: $0) }
-        guard let snapshot else {
-            return FleetHero(subtitle: "reading", chip: nil, headline: "Reading the fleet\u{2026}",
-                             body: "Counting the crew's lanes.", ring: nil, items: unread, isStale: false)
-        }
-        // GL-14, as the plain card already had it: no firstmate home is not
-        // a fleet of zeroes.
-        guard snapshot.homeOk else {
-            return FleetHero(subtitle: "not read", chip: .warn(HelmReading<String>.unknownCaption),
-                             headline: "Fleet not read",
-                             body: "Point Grand Line at your firstmate home in \(PlaceName.of(.bootstrap)).",
-                             ring: nil, items: unread, isStale: true)
-        }
-
-        let working = snapshot.tasks.filter { $0.status == "working" }
-        let blocked = snapshot.tasks.filter { $0.status == "blocked" }
-        let deciding = snapshot.tasks.filter { $0.status == "needs_decision" }
-        let items: [HelmKPIStrip.Item] = [
-            .count(working.count, caption: "Working"),
-            .count(snapshot.doneCount, caption: "Done today"),
-            .count(snapshot.queuedCount, caption: "Queued"),
-        ]
-        let open = working.count + snapshot.queuedCount
-        let total = snapshot.doneCount + open
-        let state: HelmModuleRowState = !blocked.isEmpty ? .bad : (!deciding.isEmpty ? .warn : .ok)
-        let ring = HelmModuleCard.HeroRing(
-            fraction: total > 0 ? Double(snapshot.doneCount) / Double(total) : 0,
-            label: "\(snapshot.doneCount)", caption: "done today \u{00B7} \(open) open",
-            spoken: "\(snapshot.doneCount) done today, \(open) still open", state: state)
-        let watcher: String
-        switch snapshot.watcher.status {
-        case "healthy": watcher = "watcher ok"
-        case "stale": watcher = "watcher stale"
-        default: watcher = "watcher off"
-        }
-        func names(_ tasks: [FleetTask]) -> String { tasks.prefix(2).map(\.id).joined(separator: ", ") }
-        func crew(_ count: Int) -> String { count == 1 ? "crewmate" : "crewmates" }
-
-        if !blocked.isEmpty {
-            var body = "\(names(blocked)) \(blocked.count == 1 ? "is" : "are") blocked and \(blocked.count == 1 ? "needs" : "need") help."
-            if !deciding.isEmpty { body += " \(deciding.count) more \(deciding.count == 1 ? "is" : "are") waiting on you." }
-            return FleetHero(subtitle: watcher, chip: .bad("\(blocked.count) blocked"),
-                             headline: "\(blocked.count) \(crew(blocked.count)) blocked", body: body,
-                             ring: ring, items: items, isStale: false)
-        }
-        if !deciding.isEmpty {
-            var body = "\(names(deciding)) \(deciding.count == 1 ? "wants" : "want") a decision."
-            if !working.isEmpty { body += " \(working.count) other crew \(working.count == 1 ? "is" : "are") working." }
-            return FleetHero(subtitle: watcher, chip: .warn("\(deciding.count) need\(deciding.count == 1 ? "s" : "") you"),
-                             headline: "\(deciding.count) waiting on you", body: body,
-                             ring: ring, items: items, isStale: false)
-        }
-        // A stale watcher keeps the card's colour (`fm/grandline-widget-polish`).
-        // The counts are the snapshot's own, not unknowns, and the pill, the
-        // headline and the body already say they may be behind. Dimmed, the
-        // card turned grey for as long as the watcher stayed stopped, which
-        // read as Fleet ignoring the theme beside Claude and Hosts.
-        if snapshot.watcher.status == "stale" {
-            return FleetHero(subtitle: watcher, chip: .warn("Watcher stale"), headline: "Counts may be behind",
-                             body: "The watcher has stopped reporting, so these numbers may be out of date.",
-                             ring: ring, items: items, isStale: false)
-        }
-        if !working.isEmpty {
-            return FleetHero(subtitle: watcher, chip: .ok("All clear"),
-                             headline: "\(working.count) crew working",
-                             body: "\(working.count == 1 ? "One lane is" : "\(working.count) lanes are") running. Nothing is waiting on you.",
-                             ring: ring, items: items, isStale: false)
-        }
-        return FleetHero(subtitle: watcher, chip: .ok("All clear"), headline: "All clear",
-                         body: "All hands idle. Nothing is running and nothing is waiting on you.",
-                         ring: ring, items: items, isStale: false)
-    }
-
-    /// The Fleet card as the full hero.
-    private func fillFleetHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
-        let hero = Self.fleetHero(snapshot: fleetSnapshot)
-        content.subtitle = hero.subtitle
-        content.chip = hero.chip
-        if fleetSnapshot == nil { content.toolTip = "Reading the fleet's state\u{2026}" }
-        content.body = .heroSummary(HelmModuleCard.HeroSummary(
-            headline: hero.headline, body: hero.body, ring: hero.ring, items: hero.items,
-            layout: HelmModuleCard.HeroLayout(cardWidth: width)))
-        content.hero = heroTone(for: .fleet, dimmed: hero.isStale)
-        content.headerMenu = styleMenu(for: .fleet)
-    }
-
-    private func fillTasks(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-card-shortcut-icons`: the captain's own checklist
-        // artwork, replacing the plain `checkmark.circle` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.shift` case, so the card
-        // and the floating-bar shortcut/drill header agree.
-        content.artwork = TasksIcon.image
-        // Exactly the two predicates the Tasks page's own stat tiles use.
-        let tasks = sources.shiftStore.activeTasks
-        let calendar = Calendar.current
-        let today = Date()
-        let due = tasks.filter { task in
-            guard let date = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return calendar.isDate(date, inSameDayAs: today)
-        }
-        let overdue = tasks.filter { task in
-            guard let date = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
-            return date < calendar.startOfDay(for: today)
-        }
-        content.subtitle = "today"
-        content.chip = overdue.isEmpty
-            ? .mute("\(due.count) due")
-            : .bad("\(overdue.count) overdue")
-        // S06 of the 2026-11-17 UI/UX proposals: the urgent tasks as rows -
-        // overdue first, then due today - the shape the Calendar and Notebook
-        // cards beside it already use, where a lone "1 task" numeral left
-        // most of a row-height card empty. The chip keeps the count.
-        let urgent = overdue + due
-        guard !urgent.isEmpty else {
-            content.body = .note(tasks.isEmpty ? "No active tasks." : "\(tasks.count) active, none due today.",
-                                 maxLines: 2)
-            return
-        }
-        let rows = urgent.prefix(HelmModuleCard.maxPeekRows).map { task in
-            let late = overdue.contains { $0.id == task.id }
-            return HelmModulePeekRow(state: late ? .bad : .warn, text: task.title,
-                                     value: late ? StateWord.overdue.label : StateWord.dueToday.label)
-        }
-        content.setBoundedPeekRows(Array(rows), total: urgent.count)
-    }
-
-    private func fillMergeQueue(_ content: inout HelmModuleCard.Content) {
-        var stale: Date?
-        let prs: [MergedPR]
-        if let current = mergedPRs {
-            prs = current
-        } else if let failure = prFetchFailure, let last = lastGoodPRs {
-            // UI-12's error state: keep the last reading and say how old it
-            // is, with the reason on hover - stale-but-real beats a blank.
-            prs = last
-            stale = lastGoodPRsAt
-            content.toolTip = "GitHub did not answer: \(failure)"
-        } else if let last = lastGoodPRs {
-            // A refresh in flight. Every Fleet refresh pushes its fast
-            // snapshot with `mergedPRs: nil` and the slow PR scan seconds
-            // later, so falling through to the skeleton here put the hub
-            // back into its loading layout on every Refresh and every Fleet
-            // visit: the Merge queue dropped to three skeleton rows and the
-            // Morning briefing above it stretched to absorb the column
-            // (`fm/grandline-layout-breaks-refresh-reply`, 139pt to 600pt at
-            // 1512x945). The last list stays until the new one lands.
-            prs = last
-        } else if let failure = prFetchFailure {
-            content.subtitle = "not read"
-            content.chip = .warn("Can't reach")
-            // GL-14: a failed scan must never render as a confident zero.
-            content.body = .note("PR status unavailable - \(failure)")
-            return
-        } else {
-            content.subtitle = "reading"
-            content.toolTip = "Reading open pull requests\u{2026}"
-            // As many placeholder rows as the loaded list would get: on the
-            // hub `mergeQueueRows` measures this very card to fill its
-            // column, so a first launch's skeleton holds the column at the
-            // loaded height instead of handing it to the briefing. On the
-            // shelf the limit is `maxPeekRows`, the three it always was.
-            content.body = .skeleton(rows: mergeQueueRowLimit)
-            return
-        }
-        let ready = FleetDataSource.readyToMerge(prs)
-        content.subtitle = "\(prs.count) open"
-        content.chip = ready.isEmpty ? .mute("none ready") : .ok("\(ready.count) ready")
-        if let stale {
-            content.subtitle = "\(prs.count) open \u{00B7} as of \(Self.briefingTimeFormatter.string(from: stale))"
-            content.chip = .warn("Can't reach")
-        }
-        if prs.isEmpty {
-            content.body = .note("Nothing open. The queue is clear.")
-            return
-        }
-        content.peekRowLimit = mergeQueueRowLimit
-        let rows = prs.prefix(mergeQueueRowLimit).map { pr -> HelmModulePeekRow in
-            let state: HelmModuleRowState
-            switch pr.checks {
-            case "green": state = .ok
-            case "red": state = .bad
-            case "pending": state = .warn
-            default: state = .idle
-            }
-            // UI-10: a row is a link to its pull request rather than inert
-            // text; the card itself still opens the whole queue.
-            let url = URL(string: pr.url)
-            return HelmModulePeekRow(state: state, text: pr.displayTitle,
-                                     value: pr.checks == "none" ? "No checks" : "Checks \(pr.checks)",
-                                     onOpen: url.map { url in { WebNavigationPolicy.openExternally(url, from: "Home's merge queue") } },
-                                     openHelp: pr.number.map { "Open pull request #\($0)" } ?? "Open the pull request")
-        }
-        content.body = .peekRows(Array(rows))
-        // The reference's footer, and the reason it is worth having: this
-        // card shows at most `maxPeekRows` of however many are open, and
-        // until now it said so nowhere. "Showing 3 of 33" is the difference
-        // between a queue with three PRs in it and a queue whose first three
-        // are on screen, which a captain glancing at the hub cannot
-        // otherwise tell.
-        //
-        // Only when there is genuinely more than the card is showing - a
-        // footer reading "Showing 2 of 2" is furniture.
-        if prs.count > rows.count {
-            content.footer = HelmModuleCard.Footer(
-                caption: "Showing \(rows.count) of \(prs.count)",
-                actionTitle: "All \(prs.count) open",
-                handler: { [weak self] in self?.onOpenDestination?(.review) })
-        }
-    }
-
-    /// The Straw Hat Pirates card.
-    ///
-    /// The crew's own Jolly Roger rather than an SF Symbol, which is the
-    /// captain's own ask: this card's job is to be recognisable as *the crew*
-    /// among a grid of otherwise-uniform hue tiles. `module.symbol` stays the
-    /// fallback if the payload ever stops decoding - see
-    /// `HelmGradientTile.configure(artwork:symbol:hue:)`.
-    ///
-    /// The subtitle is a fixed line, not a status readout - the captain's own
-    /// call (`fm/straw-hat-menubar-quick-chat-popover`), replacing the
-    /// earlier "Nami \u{00B7} 3 exchanges" derived-from-state text. Luffy's
-    /// signature line ("I'm gonna be King of the Pirates!"), always, in
-    /// every state - not a rotating pool, and not swapped out while a turn
-    /// is in flight either. It reads as the crew's own voice on their own
-    /// card rather than as a summary of the conversation.
-    ///
-    /// The body is still the real activity line: a preview of what was last
-    /// said, with no "unread" concept (the captain is the only other
-    /// participant, and a reply they have not read is one they asked for
-    /// seconds ago). Nothing is invented - with no conversation yet it says
-    /// so and names what the crew can be asked for; while thinking, it says
-    /// that instead of a stale preview from the previous reply (the one
-    /// piece of the removed "thinking\u{2026}" subtitle worth keeping - see
-    /// below).
-    private func fillStrawHat(_ content: inout HelmModuleCard.Content) {
-        content.artwork = StrawHatFlag.image
-        content.subtitle = "I'm gonna be King of the Pirates!"
-
-        guard let state = strawHatState, state.exchanges > 0 || state.isThinking else {
-            // Short on purpose: a module note is one or two lines at a card's
-            // real width, so the invitation is the half that has to survive -
-            // "every write is yours to confirm" is already on this page's own
-            // drill subtitle and on the chat's empty state.
-            content.body = .note("Ask for a task, runbook or command.")
-            return
-        }
-
-        if state.isThinking {
-            // The "thinking" signal used to live in the subtitle
-            // ("thinking\u{2026}"); with the subtitle now fixed, the body
-            // carries it instead - still real, current activity, which is
-            // exactly what this line is for.
-            content.body = .note("The crew is thinking\u{2026}")
-        } else {
-            content.body = .note(state.lastLine ?? "The crew is on it.")
-        }
-    }
-
-    private func fillConsole(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own console
-        // artwork, replacing the plain `terminal` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.console` case.
-        content.artwork = ConsoleIcon.image
-        let rows = consoleTabsProvider?() ?? []
-        content.subtitle = rows.isEmpty ? "no tabs open" : "\(rows.count) tab\(rows.count == 1 ? "" : "s") open"
-        let connected = connectedHostIDs?() ?? []
-        if !connected.isEmpty { content.chip = .mute("\(connected.count) host live") }
-        if rows.isEmpty {
-            content.body = .note("Open a shell, or connect a saved host.")
-        } else {
-            content.setBoundedPeekRows(rows, total: rows.count)
-        }
-    }
-
-    /// What the Health card's ring and its sentence both say.
-    struct HealthRingSummary: Equatable {
-        let value: Int
-        let total: Int
-        let title: String
-        let note: String
-        /// S11: the headline's colour, which the arc and the title both take.
-        /// `nil` while the headline is healthy or not a verdict yet, so the
-        /// ring keeps the card's own hue and the title stays in ink.
-        var tint: HelmTint? = nil
-    }
-
-    /// **Review defect U5**, then R5-BUG-02, then S11. U5: the ring counted
-    /// one set and its sentence another ("2/6" beside "All reporting
-    /// services healthy"). Its fix counted *reporting* services over total
-    /// while any had not reported ("Reporting 7 of 8"), which is a third
-    /// number for the same registry. So the ring is healthy over total,
-    /// always, from the same `ServiceHealthSummary` the Health page and the
-    /// footer read.
-    ///
-    /// S11 of the 2026-11-17 UI/UX proposals: the card still said three
-    /// things about one fact - a red "1 failing" pill, a green ring and the
-    /// title "Healthy". The title is now the summary's headline (its worst
-    /// verdict, `ServiceHealthSummary.headline`), in that state's colour, and
-    /// the ring takes the same tint. The pill is gone: the title carries the
-    /// state, once. GL-14 still holds: a service that has never finished a
-    /// pass is "not run yet", never healthy.
-    static func healthRingSummary(_ summary: ServiceHealthSummary) -> HealthRingSummary {
-        guard summary.total > 0, let headline = summary.headline else {
-            // B9: shorter copy as well as a third line - the note column
-            // beside a 66pt gauge is genuinely narrow, and a summary that
-            // needs three lines to say "fine" is not a summary.
-            // UI-11 / GL-14: nothing reported is not healthy. The ring draws
-            // its grey track and a dash, and the title says what is true.
-            return HealthRingSummary(value: 0, total: 0, title: HelmReading<String>.unknownCaption,
-                                     note: "Nothing has reported yet.")
-        }
-        let total = summary.total
-        let names = { (bucket: ServiceHealthSummary.Bucket) in
-            summary.services(in: bucket).map(\.title).joined(separator: ", ")
-        }
-        // The figures the headline does not already say, for a sentence that
-        // follows a named failure: "6 of 8 healthy, 1 not run yet".
-        let rest = { (lead: ServiceHealthSummary.Bucket) -> String in
-            var parts = ["\(summary.healthy) of \(total) \(ServiceHealthSummary.Bucket.healthy.phrase)"]
-            for bucket in [ServiceHealthSummary.Bucket.failing, .degraded, .notRun] where bucket != lead {
-                let n = summary.count(bucket)
-                if n > 0 { parts.append(bucket.word.counted(n)) }
-            }
-            return parts.joined(separator: ", ")
-        }
-        let title: String
-        let note: String
-        switch headline {
-        case .failing:
-            title = ServiceHealthSummary.Bucket.failing.word.counted(summary.failing)
-            note = "\(names(.failing)) needs a look. \(rest(.failing))."
-        case .degraded:
-            title = ServiceHealthSummary.Bucket.degraded.word.counted(summary.degraded)
-            note = "\(names(.degraded)) had a recent failure. \(rest(.degraded))."
-        case .healthy:
-            title = ServiceHealthSummary.Bucket.healthy.label
-            if summary.notRun > 0 {
-                note = "\(summary.notRun) of \(total) \(ServiceHealthSummary.Bucket.notRun.phrase)."
-            } else {
-                // "All 1 services healthy." is what a bare count reads as on
-                // a machine where only one service has registered - measured
-                // in the probe.
-                note = total == 1 ? "The only service is healthy." : "All \(total) services healthy."
-            }
-        case .notRun:
-            title = ServiceHealthSummary.Bucket.notRun.label
-            note = "\(summary.notRun) of \(total) \(ServiceHealthSummary.Bucket.notRun.phrase)."
-        }
-        // Healthy keeps the card's own green hue rather than the good tint,
-        // so an all-clear card looks exactly as it did.
-        let tint = headline == .healthy ? nil : headline.word.tint
-        return HealthRingSummary(value: summary.healthy, total: total, title: title, note: note, tint: tint)
-    }
-
-    private func fillHealth(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own health
-        // artwork, replacing the plain `waveform.path.ecg` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.health` case.
-        content.artwork = HealthIcon.image
-        let health = healthSummary
-        content.subtitle = "background services"
-        // S11: no "1 failing" pill. The ring's title says it, once.
-        let summary = Self.healthRingSummary(health)
-        let lines = Self.healthServiceLines(health)
-        let spoken = health.spoken
-        content.body = healthListsServices && !lines.isEmpty
-            ? .ringWithLines(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note, lines: lines, spoken: spoken,
-                             tint: summary.tint)
-            : .ring(value: summary.value, total: summary.total,
-                    title: summary.title, note: summary.note, spoken: spoken, tint: summary.tint)
-    }
-
-    /// One line per service for the hub's Health list, in the registry's
-    /// order, each in the Health page's own word for its state (R5-UI-04).
-    /// GL-14 holds per line: a service that has never reported says "Not run
-    /// yet" and one mid-pass says "Checking…" - neither is "Healthy", and
-    /// neither takes a state colour it has not earned.
-    ///
-    /// R2-A11Y-04's spoken ring is `ServiceHealthSummary.spoken`.
-    static func healthServiceLines(_ summary: ServiceHealthSummary) -> [HelmModulePeekRow] {
-        summary.entries.map { entry in
-            let verdict = entry.state.verdict
-            let state: HelmModuleRowState
-            switch verdict {
-            case .healthy: state = .ok
-            case .degraded: state = .warn
-            case .failing: state = .bad
-            case .running, .unknown: state = .idle
-            }
-            return HelmModulePeekRow(state: state, text: entry.service.title, value: verdict.label)
-        }
-    }
-
-    private func fillHosts(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own hosts
-        // artwork, replacing the plain `server.rack` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.hosts` case.
-        content.artwork = HostsIcon.image
-        // The captain's hero, wherever the card is a shelf card - the Claude
-        // and Fleet cards' rule. The floating bar's fitted hub keeps its rows.
-        if case let .shelf(width) = placement {
-            fillHostsHero(&content, width: width)
-            return
-        }
-        let hosts = sources.hostStore.hosts
-        let connected = connectedHostIDs?() ?? []
-        content.subtitle = "\(hosts.count) saved"
-        if !connected.isEmpty { content.chip = .ok("\(connected.count) live") }
-        guard !hosts.isEmpty else {
-            content.body = .note("No saved hosts yet. Add one to connect in a click.")
-            return
-        }
-        let rows = hosts.prefix(HelmModuleCard.maxPeekRows).map { host in
-            HelmModulePeekRow(state: connected.contains(host.id) ? .ok : .idle,
-                              text: host.label,
-                              value: connected.contains(host.id) ? "live" : "idle")
-        }
-        content.setBoundedPeekRows(Array(rows), total: hosts.count)
-    }
-
-    // MARK: The Hosts hero card
-
-    /// What the Hosts hero says. `static` and pure, so a suite can assert
-    /// every state from fabricated hosts.
-    struct HostsHero: Equatable {
-        let headline: String
-        let body: String
-        let ring: HelmModuleCard.HeroRing?
-        /// "Recent", or "Saved hosts" before anything has been connected to.
-        let sectionTitle: String
-        /// The rows' hosts, in order.
-        let hostIDs: [UUID]
-        /// GL-14: the hosts file could not be read, so the colour dims.
-        let isStale: Bool
-    }
-
-    /// How many hosts the card lists.
-    static let hostsHeroRowLimit = 3
-
-    static func hostsHero(hosts: [Host], readable: Bool, live: [UUID: Date],
-                          now: Date = Date()) -> HostsHero {
-        guard readable else {
-            return HostsHero(headline: "Saved hosts could not be read.",
-                             body: "Your hosts file is still on disk. Open \(PlaceName.of(.hosts)) to see why.",
-                             ring: nil, sectionTitle: "Recent", hostIDs: [], isStale: true)
-        }
-        let liveHosts = hosts.filter { live[$0.id] != nil }
-            .sorted { (live[$0.id] ?? now) < (live[$1.id] ?? now) }
-        let recent = HostsController.recentHosts(hosts, limit: hostsHeroRowLimit)
-        let headline: String
-        let body: String
-        if liveHosts.count == 1, let host = liveHosts.first {
-            headline = "1 live session, on \(host.label)."
-            body = "Open for \(ConnectionsHeroWords.duration(since: live[host.id] ?? now, now: now))."
-        } else if liveHosts.count > 1 {
-            headline = "\(liveHosts.count) live sessions."
-            let names = liveHosts.prefix(2).map(\.label)
-            body = liveHosts.count > 2
-                ? "\(names.joined(separator: ", ")) and \(liveHosts.count - 2) more."
-                : "\(names.joined(separator: " and "))."
-        } else if hosts.isEmpty {
-            headline = "No saved hosts yet."
-            body = "Add a host in \(PlaceName.of(.hosts)) and it connects from here in a click."
-        } else if let last = recent.first, let at = last.lastConnectedAt {
-            headline = "No live session."
-            body = "Last connected to \(last.label) \(HostsController.relativeText(at, now: now))."
-        } else {
-            headline = "No live session."
-            body = "Pick a host to connect."
-        }
-        // Recent first; before anything has been connected to, the saved
-        // hosts in their own order, so the card is never a list of nothing.
-        let shown = recent.isEmpty ? Array(hosts.prefix(hostsHeroRowLimit)) : recent
-        let ring = hosts.isEmpty ? nil : HelmModuleCard.HeroRing(
-            fraction: Double(liveHosts.count) / Double(hosts.count), label: "\(liveHosts.count)/\(hosts.count)",
-            caption: "hosts online", spoken: "\(liveHosts.count) of \(hosts.count) saved hosts online", state: .ok)
-        return HostsHero(headline: headline, body: body, ring: ring,
-                         sectionTitle: recent.isEmpty ? "Saved hosts" : "Recent",
-                         hostIDs: shown.map(\.id), isStale: false)
-    }
-
-    /// The Hosts card as the full hero with its rows: the session verdict,
-    /// the ring of hosts online, and the three hosts connected last, each
-    /// with Switch (a live session) or Connect.
-    private func fillHostsHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
-        let hosts = sources.hostStore.hosts
-        let connected = connectedHostIDs?() ?? []
-        var live: [UUID: Date] = [:]
-        for id in connected { live[id] = hostSession?(id)?.startedAt ?? Date() }
-        let hero = Self.hostsHero(hosts: hosts, readable: sources.hostStore.loadStatus == .clean, live: live)
-        content.subtitle = "\(hosts.count) saved"
-        if !connected.isEmpty { content.chip = .ok("\(connected.count) live") }
-        let byID = Dictionary(hosts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let rows: [HelmModuleCard.HeroListRow] = hero.hostIDs.compactMap { id in
-            guard let host = byID[id] else { return nil }
-            if connected.contains(id) {
-                return HelmModuleCard.HeroListRow(
-                    symbol: host.iconSymbol, title: host.label, subtitle: host.subtitle, subtitleIsCode: true,
-                    actionTitle: "Switch", actionTooltip: "Switch to \(host.label)'s session",
-                    handler: { [weak self] in self?.onSwitchToHostSession?(id) })
-            }
-            return HelmModuleCard.HeroListRow(
-                symbol: host.iconSymbol, title: host.label, subtitle: host.subtitle, subtitleIsCode: true,
-                actionTitle: nil, actionSymbol: "bolt.fill", actionTooltip: "Connect to \(host.label)",
-                handler: { [weak self] in self?.onConnectHost?(id) })
-        }
-        content.body = .heroList(HelmModuleCard.HeroList(
-            headline: hero.headline, body: hero.body, ring: hero.ring, sectionTitle: hero.sectionTitle,
-            rows: rows, emptyText: hosts.isEmpty ? "Nothing saved yet" : "Nothing connected yet",
-            layout: HelmModuleCard.HeroLayout(cardWidth: width)))
-        content.hero = heroTone(for: .hosts, dimmed: hero.isStale)
-        content.headerMenu = styleMenu(for: .hosts)
-    }
-
-    // MARK: The four Setup sub-pages
-    //
-    // Each of these reads the one number its own page owns out of
-    // `BackgroundSignalsPoller.lastCounts` - already computed for the
-    // Notification Center, and §6.1 is explicit that the canvas takes the last
-    // published value and "never a fresh check". Splitting the old aggregate
-    // Setup card into four was the captain's call after seeing the hub live.
-    //
-    // Every one of them shares the same two-state "no number yet" handling
-    // (`fillPendingSetupSignal`): the poller's first pass is genuinely in
-    // flight, or a pass completed without producing a count, which is a real
-    // fault rather than ordinary startup. Neither ever renders a confident
-    // zero or an "all current" verdict - GL-14's rule.
-
-    /// The honest loading state shared by all four Setup modules and Vault.
-    private func fillPendingSetupSignal(_ content: inout HelmModuleCard.Content,
-                                        checking: String,
-                                        stale: String) {
-        Self.applyPendingSetupSignal(&content,
-                                     warmingUp: Self.pollerIsStillWarmingUp,
-                                     checking: checking,
-                                     stale: stale)
-    }
-
-    /// The two honest "no number yet" states, as a pure function of which one
-    /// it is.
-    ///
-    /// **Review #3's UI10.** The warming half used to be a
-    /// `Checking\u{2026}` chip over a sentence, on all five cards at once -
-    /// see `HelmModuleCard.Body`'s `.skeleton` case for why that read as a
-    /// wall rather than as five loading cards. The chip and the sentence are
-    /// both gone from the body; the sentence survives as the card's tooltip,
-    /// so the detail is still a hover away.
-    ///
-    /// A static taking `warmingUp` rather than reading the poller, so the two
-    /// states can be asserted without waiting fifteen minutes for a real pass
-    /// (`Audit3UIFixesSelfTest`).
-    static func applyPendingSetupSignal(_ content: inout HelmModuleCard.Content,
-                                        warmingUp: Bool,
-                                        checking: String,
-                                        stale: String) {
-        guard warmingUp else {
-            // A pass finished and produced nothing. That is a real fault, not
-            // ordinary startup, and it says so in words - a skeleton here
-            // would promise an answer that is not coming.
-            content.chip = nil
-            content.body = .note(stale)
-            return
-        }
-        content.chip = nil
-        content.body = .skeleton()
-        content.toolTip = checking
-    }
-
-    /// Updates: how many catalog tools need an action - a newer version, a
-    /// missing install or a failed check - the count the sidebar's Setup
-    /// badge and the bell state. Worded as "updates" only when every one of
-    /// them really is an update (`fm/grandline-github-sync-counts`): this
-    /// said "13 updates - Ready to install" over thirteen failed checks while
-    /// Setup's own Updates card beside it said 0.
-    private func fillUpdates(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own updates
-        // artwork, replacing the plain `steeringwheel` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.updates` case.
-        content.artwork = UpdatesIcon.image
-        content.subtitle = "tools & packages"
-        guard let updates = BackgroundSignalsPoller.shared.lastCounts.toolUpdates else {
-            fillPendingSetupSignal(&content,
-                                   checking: "Checking every tool for a newer version\u{2026}",
-                                   stale: "Tool versions haven't been checked yet this session.")
-            return
-        }
-        guard updates > 0 else {
-            content.chip = .ok("Current")
-            content.body = .note("Every tool in the catalog is on its latest version.")
-            return
-        }
-        let available = BackgroundSignalsPoller.shared.lastCounts.toolsWithUpdate
-        guard let available, available != updates else {
-            content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
-            content.body = .metric(value: "\(updates)",
-                                   unit: updates == 1 ? "update" : "updates",
-                                   note: "Ready to install from \(PlaceName.of(.updates)).")
-            return
-        }
-        content.chip = .warn("\(updates) need\(updates == 1 ? "s" : "") attention")
-        content.body = .metric(value: "\(updates)",
-                               unit: updates == 1 ? "tool" : "tools",
-                               note: available == 0
-                                   ? "Missing, or could not be checked. See \(PlaceName.of(.updates))."
-                                   : "\(available) with an update, the rest missing or not checked.")
-    }
-
-    /// Bootstrap: how many of the five setup steps have drifted. This is the
-    /// progress body the aggregate Setup card used to carry, and it belongs
-    /// here because `SetupStepKind` *is* Bootstrap's own stepper.
-    private func fillBootstrap(_ content: inout HelmModuleCard.Content) {
-        content.subtitle = "machine setup"
-        guard let drift = BackgroundSignalsPoller.shared.lastCounts.setupDrift else {
-            fillPendingSetupSignal(&content,
-                                   checking: "Checking the setup steps\u{2026} this card fills itself in when the first pass lands.",
-                                   stale: "Setup status hasn't been checked yet this session.")
-            return
-        }
-        let total = SetupStepKind.shown.count
-        let done = max(0, total - drift)
-        content.chip = drift == 0 ? .ok("Current") : .warn("\(drift) drifted")
-        content.body = .progress(value: done, total: total,
-                                 note: drift == 0
-                                    ? "Every setup step matches."
-                                    : "\(drift) step\(drift == 1 ? "" : "s") drifted.")
-    }
-
-    /// Automation: what a one-click "Run Automation" would actually do.
-    ///
-    /// Deliberately the same published `setupDrift` Bootstrap reads - that page
-    /// is the sequencer over the very same `SetupStepChecks` predicates, so a
-    /// second number would be a second opinion about one fact. What differs is
-    /// the question each card answers: Bootstrap's is "does my machine match?",
-    /// this one's is "is there anything for a run to do?".
-    private func fillAutomation(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own automation
-        // artwork, replacing the plain `bolt.fill` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.automation` case.
-        content.artwork = AutomationIcon.image
-        content.subtitle = "one-click setup"
-        guard let drift = BackgroundSignalsPoller.shared.lastCounts.setupDrift else {
-            fillPendingSetupSignal(&content,
-                                   checking: "Checking what a full run would need to do\u{2026}",
-                                   stale: "Setup status hasn't been checked yet this session.")
-            return
-        }
-        let total = SetupStepKind.shown.count
-        guard drift > 0 else {
-            content.chip = .ok("Nothing to run")
-            content.body = .note("All \(total) steps are already satisfied - a full run would skip every one.")
-            return
-        }
-        content.chip = .warn("\(drift) to run")
-        content.body = .note("A full run would work through \(drift) drifted step\(drift == 1 ? "" : "s") in order, stopping at the first failure.")
-    }
-
-    /// GitHub Sync: how many of the captain's forks upstream is ahead of -
-    /// `SetupSummary.ForksFigure`, the same figure and words Setup's own
-    /// GitHub sync card states, so the two cannot disagree.
-    ///
-    /// `fm/grandline-github-sync-counts`: this used to say "In sync - All 8
-    /// forks match their upstream" both for a diverged fork and for a sweep
-    /// where every check failed.
-    private func fillGitHubSync(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own GitHub Sync
-        // artwork, replacing the plain `arrow.2.squarepath` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.githubSync` case.
-        content.artwork = GithubSyncIcon.image
-        content.subtitle = "forks"
-        let figure = SetupSummary.ForksFigure(BackgroundSignalsPoller.shared.lastCounts)
-        let label = figure.label ?? ""
-        switch figure {
-        case .unread:
-            fillPendingSetupSignal(&content,
-                                   checking: "Checking each fork against its upstream\u{2026}",
-                                   stale: "Fork drift hasn't been checked yet this session.")
-        case .toSync(let n, let diverged):
-            content.chip = diverged > 0 ? .bad(label) : .warn(label)
-            let total = GitHubSyncCatalog.repos.count
-            let note: String
-            if diverged == 0 {
-                note = "Behind upstream, of \(total) tracked."
-            } else if diverged == n {
-                note = "Diverged from upstream, of \(total) tracked."
-            } else {
-                note = "Behind upstream, \(diverged) diverged, of \(total) tracked."
-            }
-            content.body = .metric(value: "\(n)", unit: n == 1 ? "fork" : "forks", note: note)
-        case .couldNotCheck:
-            content.chip = .bad(label)
-            content.body = .note("None of the forks could be checked against upstream.")
-        case .partlyRead(let checked, let total):
-            content.chip = .warn(label)
-            content.body = .note("\(total - checked) of \(total) forks could not be checked.")
-        case .inSync(let total):
-            content.chip = .ok(label)
-            content.body = .note("All \(total) forks match their upstream.")
-        }
-    }
-
-    private func fillSchedules(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own schedules
-        // artwork, replacing the plain `calendar` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.schedules` case.
-        content.artwork = SchedulesIcon.image
-        let schedules = sources.scheduleStore.schedules
-        content.subtitle = "unattended"
-        guard !schedules.isEmpty else {
-            // L3: the old copy ("Nothing scheduled. Add one to have it run on
-            // its own.") ran past the two-line note cap at a narrow column and
-            // truncated mid-word - the same class as B9's Health note. Short
-            // enough to fit, and the card's title already says what "one" is.
-            content.body = .note("Nothing scheduled yet. Add one here.")
-            return
-        }
-        let failed = schedules.filter { $0.lastRun?.verdict == .failed }
-        content.chip = failed.isEmpty ? .ok("Clean") : .warn("\(failed.count) failed")
-        let rows = schedules.prefix(HelmModuleCard.maxPeekRows).map { schedule -> HelmModulePeekRow in
-            let state: HelmModuleRowState
-            switch schedule.lastRun?.verdict {
-            case .some(.failed): state = .bad
-            case .some: state = .ok
-            case .none: state = .idle
-            }
-            return HelmModulePeekRow(state: schedule.isEnabled ? state : .idle,
-                                     text: schedule.action.title,
-                                     value: schedule.isEnabled ? schedule.cadence.displayString : "paused")
-        }
-        content.setBoundedPeekRows(Array(rows), total: schedules.count)
-    }
-
-    private func fillLogAnalyzer(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own log-analyzer
-        // artwork, replacing the plain `text.magnifyingglass` glyph -
-        // matches `RailDestination.drillHeaderArtwork`'s `.logAnalyzer` case.
-        content.artwork = LogAnalyzerIcon.image
-        // Memoised inside the store (GL-35) - this is not a fresh disk walk
-        // on every canvas render.
-        let history = sources.logAnalyzerStore.history()
-        content.subtitle = history.first.map { "last: \($0.sourceKind.displayName)" } ?? "nothing saved"
-        guard let latest = history.first else {
-            content.body = .note("Paste output or capture a terminal block to start an investigation.")
-            return
-        }
-        content.body = .metric(value: "\(history.count)",
-                               unit: history.count == 1 ? "saved" : "saved",
-                               note: "Latest: \(latest.title)")
-    }
-
-    /// `fm/grandline-k8s-cluster-tail`. Reads the same `connectedHostIDs`
-    /// closure the Hosts module already uses - `HostSessionRegistry`'s own
-    /// live set, in memory, one hop away - and nothing else. The canvas constructs no store and fires no fetch
-    /// (`DaylightModuleSelfTest.checkCanvasConstructsNoStores` is a source
-    /// guard on exactly that), and this page's own data needs a feed tab the
-    /// canvas has no business creating.
-    private func fillKubernetes(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own kubernetes
-        // artwork, replacing the plain `cube.transparent` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.kubernetes` case.
-        content.artwork = KubernetesIcon.image
-        let live = connectedHostIDs?().count ?? 0
-        content.subtitle = live == 0 ? "no live session" : (live == 1 ? "1 live session" : "\(live) live sessions")
-        guard live > 0 else {
-            content.body = .note("Cluster browsing and log tailing run inside a bastion session you're already logged into. Connect a host first.")
-            return
-        }
-        content.body = .note("Browse pods, deployments and events read-only, or tail several pods at once - through a session you've already authenticated.")
-    }
-
-    /// Automic Vault's hardening panel, back at this app's `.vault`
-    /// destination by the captain's own later correction
-    /// (`fm/swap-vault-poneglyph-naming-in-grand-lin-1f` - see
-    /// `VaultController.swift`'s header for the full history). The number is
-    /// unchanged either way - the last snapshot `BackgroundSignalsPoller`
-    /// took, never a fresh `av` shell-out (§6.1) - because what it counts did
-    /// not change, only where the page lives and what it is called.
-    private func fillVault(_ content: inout HelmModuleCard.Content) {
-        let counts = BackgroundSignalsPoller.shared.lastCounts
-        content.subtitle = "names only"
-        guard let secrets = counts.vaultSecrets else {
-            // `fm/grandline-github-sync-counts`: the attention count comes
-            // from the poller's `av doctor` read, which never needs the
-            // secrets count (`av list`, the Vault page's alone). It used to be
-            // hidden behind this branch, so the card said "hasn't been
-            // checked" while the bell said "2 security tools need attention".
-            if let attention = counts.vaultAttention {
-                if attention > 0 { content.chip = .warn("\(attention) need\(attention == 1 ? "s" : "") a look") }
-                content.body = .note("Open \(PlaceName.of(.vault)) to count the hardened secrets.")
-                return
-            }
-            // The same two honest loading states as the four Setup modules, for
-            // the same reason.
-            fillPendingSetupSignal(&content,
-                                   checking: "Checking Automic Vault\u{2026} this card fills itself in when the first pass lands.",
-                                   stale: "Automic Vault hasn't been checked yet this session.")
-            return
-        }
-        if let attention = counts.vaultAttention, attention > 0 {
-            content.chip = .warn("\(attention) need\(attention == 1 ? "s" : "") a look")
-        }
-        content.body = .metric(value: "\(secrets)",
-                               unit: secrets == 1 ? "secret" : "secrets",
-                               note: "Hardened in Automic Vault's Keychain. Values never leave it.")
-    }
-
-    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: the captain's own
-    /// credential vault, named Poneglyph (`fm/swap-vault-poneglyph-naming-in-
-    /// grand-lin-1f` gave `.vault`/Stores back to Automic Vault's hardening
-    /// panel above). It is its own standalone destination now rather than a
-    /// Setup tab (`fm/poneglyph-own-destination-and-strawhat-toolbar-
-    /// shortcut`) - this card still just opens `RailDestination.poneglyph`,
-    /// unaffected by which slot that destination shows.
-    ///
-    /// It reads injected state and shells out to nothing - §6.1's rule, and
-    /// here it is also a security property: a canvas card must not decrypt
-    /// anything, and while the vault is locked there is genuinely nothing to
-    /// count.
-    private func fillPoneglyph(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-card-shortcut-icons`: the captain's own poneglyph
-        // tablet artwork, replacing the plain `doc.text.image` glyph -
-        // matches `RailDestination.drillHeaderArtwork`'s `.poneglyph` case.
-        content.artwork = PoneglyphIcon.image
-        guard let vault = credentialVaultState?() else {
-            content.subtitle = "encrypted credentials"
-            content.body = .note("Open \(PlaceName.of(.poneglyph)) to unlock it.")
-            return
-        }
-        switch vault.state {
-        case .absent:
-            content.subtitle = "not set up yet"
-            content.chip = .warn("Set up")
-            content.body = .note("Store your tokens and passwords here, encrypted, and get them back on any machine.")
-        case .unreadable:
-            content.subtitle = "unavailable"
-            content.chip = .bad("Unreadable")
-            content.body = .note("The vault file could not be read. Nothing has been overwritten - open \(PlaceName.of(.poneglyph)) for details.")
-        case .present:
-            content.subtitle = "encrypted credentials"
-            guard vault.isUnlocked, let count = vault.count else {
-                content.chip = .mute("Locked")
-                content.body = .note("Unlock with your master password to reach your credentials.")
-                return
-            }
-            content.chip = .ok("Unlocked")
-            content.body = .metric(value: "\(count)",
-                                   unit: count == 1 ? "credential" : "credentials",
-                                   note: "Reveal or copy any of them in one click.")
-        }
-    }
-
-    /// `fm/grandline-docs-split-runbooks-postmortems` narrowed this card to
-    /// the Playbook alone - Runbooks and Postmortems are `fillRunbooks`/
-    /// `fillPostmortems` below now, each with its own module card. `DocsStore`
-    /// is a plain static enum (no store to inject), so this reads exactly
-    /// what `DocsController.drillHeaderSubtitle`'s own Playbook branch reads -
-    /// the real sync state, never a fabricated "offline copy" claim.
-    private func fillDocs(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own docs
-        // artwork, replacing the plain `book.closed` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.docs` case.
-        content.artwork = DocsAppIcon.image
-        content.subtitle = "DevOps Playbook"
-        if DocsStore.isSynced {
-            content.chip = .ok("Synced")
-            content.body = .note("Browsable offline - the captain's playbook, kept locally.")
-        } else {
-            content.chip = .warn("Not synced")
-            content.body = .note("Sync it once from \(PlaceName.of(.docs)) to browse it here, fully offline afterward.")
-        }
-    }
-
-    /// F1's notebook card: the two most recently touched pages, and how many
-    /// there are.
-    ///
-    /// GL-14: an empty notebook says so in its own words rather than showing
-    /// "0 pages", and the card never claims a sync state it has not read.
-    private func fillNotebook(_ content: inout HelmModuleCard.Content) {
-        let pages = sources.notebookStore.listPages()
-        content.subtitle = "linked markdown pages"
-        guard !pages.isEmpty else {
-            content.body = .note("No pages yet. Start with today's note - everything you write "
-                                 + "lands in your own config repo as markdown.")
-            return
-        }
-        content.chip = .ok(pages.count == 1 ? "1 page" : "\(pages.count) pages")
-        let rows = pages
-            .sorted { $0.modifiedAt > $1.modifiedAt }
-            .prefix(2)
-            .map { page in
-                HelmModulePeekRow(state: .idle,
-                                  text: page.title,
-                                  value: page.isDailyNote ? "daily note" : page.folder)
-            }
-        content.setBoundedPeekRows(Array(rows), total: pages.count, limit: 2)
-    }
-
-    /// F4's reading list card: what is still waiting, and the two most
-    /// recently saved.
-    ///
-    /// GL-14 twice over: an empty list says so in its own words rather than
-    /// showing "0 unread", and a link whose title has not been fetched yet
-    /// shows its host rather than a blank row pretending to be a headline.
-    private func fillReadingList(_ content: inout HelmModuleCard.Content) {
-        content.subtitle = "links saved to read"
-        // PERF-01: the store reads its file off the main thread at launch.
-        // Until that lands this card states the gap (GL-14) rather than
-        // either reading the file here, before the first frame, or calling
-        // an unread list empty. `storeDidLoad()` re-renders it.
-        guard sources.readingListStore.isLoaded else {
-            content.body = .note("Reading your saved links\u{2026}")
-            return
-        }
-        let links = sources.readingListStore.links
-        guard !links.isEmpty else {
-            content.body = .note("Nothing saved yet. Paste a URL here, or press \u{2318}6 in the "
-                                 + "\u{2325}Space capture panel, and it lands here as a card.")
-            return
-        }
-        let unread = links.filter { !$0.isRead }
-        content.chip = unread.isEmpty
-            ? .ok("all read")
-            : .warn(unread.count == 1 ? "1 unread" : "\(unread.count) unread")
-        // Unread first, newest first - the grid's own order, so the card and
-        // the page agree about what is at the top of the pile.
-        let rows = links
-            .sorted(by: ReadingListQuery.order)
-            .prefix(2)
-            .map { link in
-                HelmModulePeekRow(state: link.isRead ? .idle : .warn,
-                                  text: link.displayTitle,
-                                  value: link.host)
-            }
-        content.setBoundedPeekRows(Array(rows), total: links.count, limit: 2)
-    }
-
-    /// The runbook peek rows this card used to show under `.docs` before the
-    /// split above - moved verbatim, since Runbooks is now its own module
-    /// with its own destination.
-    private func fillRunbooks(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own runbooks
-        // artwork, replacing the plain `list.bullet.rectangle` glyph -
-        // matches `RailDestination.drillHeaderArtwork`'s `.runbooks` case.
-        content.artwork = RunbooksIcon.image
-        let runbooks = sources.docsRunbookStore.listRunbooks()
-        content.subtitle = "step-by-step procedures"
-        guard !runbooks.isEmpty else {
-            // R2-UX-01 (c): what a runbook is, before who can write one.
-            content.body = .note("No runbooks yet. A runbook is a checklist of steps you can follow again - write one, or start from an example.")
-            return
-        }
-        let rows = runbooks.prefix(2).map { runbook in
-            HelmModulePeekRow(state: .idle,
-                              text: runbook.title,
-                              value: DocsRunbookMetadata.runbookSubtitle(runbook) ?? "")
-        }
-        content.setBoundedPeekRows(Array(rows), total: runbooks.count, limit: 2)
-    }
-
-    /// The Postmortems sibling of `fillRunbooks` above - same shape, reading
-    /// `listPostmortems()` instead.
-    private func fillPostmortems(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own postmortems
-        // artwork, replacing the plain `doc.text.magnifyingglass` glyph -
-        // matches `RailDestination.drillHeaderArtwork`'s `.postmortems` case.
-        content.artwork = PostmortemsIcon.image
-        let postmortems = sources.docsRunbookStore.listPostmortems()
-        content.subtitle = "incident write-ups"
-        guard !postmortems.isEmpty else {
-            content.body = .note("No postmortems yet. A postmortem writes down what went wrong, why, and what changes next time.")
-            return
-        }
-        let rows = postmortems.prefix(2).map { postmortem in
-            HelmModulePeekRow(state: .idle,
-                              text: postmortem.title,
-                              value: DocsRunbookMetadata.postmortemSubtitle(postmortem) ?? "")
-        }
-        content.setBoundedPeekRows(Array(rows), total: postmortems.count, limit: 2)
-    }
-
-    private func fillDictation(_ content: inout HelmModuleCard.Content) {
-        content.subtitle = "hold Right \u{2325}"
-        let dictationStatus = pushedDictationStatus ?? DictationPermissions.currentStatus()
-        switch dictationStatus {
-        case .ready: content.chip = .ok("Ready")
-        case .recording, .transcribing, .cleaningUp: content.chip = .mute(dictationStatus.title)
-        case .didNotCatchThat: content.chip = .warn(dictationStatus.title)
-        default: content.chip = .warn("Needs access")
-        }
-        content.body = .note(dictationStatus.detail(shortcutDisplay: AppSettings.shared.dictationShortcut.displayString))
-    }
-
-    private func fillTools(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own tools
-        // artwork, replacing the plain `wrench.and.screwdriver` glyph -
-        // matches `RailDestination.drillHeaderArtwork`'s `.tools` case.
-        content.artwork = ToolsAppIcon.image
-        content.subtitle = "\(ToolKind.allCases.count) utilities"
-        content.body = .note(ToolKind.allCases.prefix(5).map { $0.shortName }.joined(separator: " \u{00B7} ") + " and more")
-    }
-
-    /// Static, like Tools' and Settings' cards (§6.1's table says "static" for
-    /// both, and this is the same kind of card): a whiteboard has no count the
-    /// canvas could read without reaching into a live web view, and this card
-    /// must never do that - the whole point of the destination being lazy is
-    /// that the canvas can be on screen with no canvas process running.
-    private func fillWhiteboard(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own whiteboard
-        // artwork, replacing the plain `scribble.variable` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.whiteboard` case.
-        content.artwork = WhiteboardAppIcon.image
-        content.subtitle = "Excalidraw, offline"
-        content.body = .note("Sketch by hand, or describe a diagram and have Claude draw it.")
-    }
-
-    /// Static, like Whiteboard's card right above and for the exact same
-    /// reason: a live note count would mean constructing a `StickyBoardStore`
-    /// from the canvas, which `checkCanvasConstructsNoStores` exists to
-    /// forbid - the canvas never fires a fetch, and a store construction here
-    /// is one, not just a read.
-    /// R5-UX-07: what the calendar has next - the open tasks and follow-ups
-    /// dated from now to two weeks out, from the entries the calendar itself
-    /// draws (`HomeNextUpCard`). Overdue work is the Tasks card's.
-    private func fillCalendar(_ content: inout HelmModuleCard.Content) {
-        content.subtitle = "next up"
-        // GL-14: a task list that would not read is not an empty calendar.
-        guard !sources.shiftStore.isInFailedLoadState else {
-            content.chip = .warn("Can't read")
-            content.body = .note("The task list could not be read, so nothing upcoming can be shown.")
-            return
-        }
-        let rows = HomeNextUpCard.rows(tasks: sources.shiftStore.activeTasks, followUps: sources.shiftStore.followUps)
-        guard !rows.isEmpty else {
-            content.chip = .mute("clear")
-            content.body = .note("Nothing dated in the next two weeks. Give a task a due date, or "
-                                 + "double-click a day on \(PlaceName.of(.calendar)) to add one.")
-            return
-        }
-        content.chip = .mute(rows.count == 1 ? "1 coming up" : "\(rows.count) coming up")
-        content.setBoundedPeekRows(rows.prefix(HelmModuleCard.maxPeekRows).map { row in
-            HelmModulePeekRow(state: .idle, text: row.isFollowUp ? "Follow up: \(row.title)" : row.title,
-                              value: row.when)
-        }, total: rows.count)
-    }
-
-    /// R5-UX-07: the focus timer - the session running now, or today's
-    /// focused minutes (`HomeFocusCard`).
-    private func fillFocusCard(_ content: inout HelmModuleCard.Content) {
-        content.subtitle = "deep work"
-        let state = HomeFocusCard.state(session: sources.focusTimer?.session,
-                                        focusedSecondsToday: sources.shiftStore.focusSecondsToday())
-        switch state {
-        case .running:
-            content.chip = .ok("Focusing")
-            content.body = .note(HomeFocusCard.note(for: state))
-        case .paused:
-            content.chip = .warn("Paused")
-            content.body = .note(HomeFocusCard.note(for: state))
-        case .idle(let minutes):
-            content.chip = .mute(minutes == 0 ? "not started" : "today")
-            content.body = .metric(value: "\(minutes)", unit: "min", note: HomeFocusCard.note(for: state))
-        }
-    }
-
-    private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-card-shortcut-icons`: the captain's own sticky-note
-        // artwork, replacing the plain `note.text` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.stickyBoard` case.
-        content.artwork = StickyNotesIcon.image
-        content.subtitle = "quick notes"
-        // UX5: "give each module card a genuinely useful peek (Tasks: due
-        // today; Console: last command; Sticky: newest note) rather than a
-        // static summary." Tasks and Console already had theirs; this card was
-        // one of the static ones the finding is about - the same sentence on
-        // every visit whether the board held nothing or forty notes.
-        //
-        // Newest first, which is the opposite of the store's own order
-        // (`notes` is sorted oldest-first, because that is the board's
-        // stacking order) - a peek of three answers "what was I just
-        // thinking", not "what did I think first".
-        // `activeNotes`, not every note: UX10 gave the board an archive, and a
-        // hub peek that counted archived notes would report a board fuller
-        // than the one the captain sees.
-        // PERF-01: the same gap the reading list card states, for the same
-        // reason - see `fillReadingList`.
-        guard sources.stickyBoardStore.isLoaded else {
-            content.body = .note("Reading your notes\u{2026}")
-            return
-        }
-        let newest = sources.stickyBoardStore.activeNotes.sorted { $0.createdAt > $1.createdAt }
-        guard !newest.isEmpty else {
-            content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
-            return
-        }
-        content.chip = .mute(newest.count == 1 ? "1 note" : "\(newest.count) notes")
-        content.setBoundedPeekRows(newest.prefix(HelmModuleCard.maxPeekRows).map { note in
-            HelmModulePeekRow(state: .idle,
-                              // The same title-or-first-line fallback ⌘K's own
-                              // sticky rows use, so one note reads the same way
-                              // wherever it is listed.
-                              text: UnifiedSearchStickyNoteProvider.displayTitle(for: note),
-                              // The colour is the one thing a captain
-                              // actually sorts these by on the board itself.
-                              value: note.color.rawValue.capitalized)
-        }, total: newest.count)
-    }
-
-    /// `names()` rather than `list()`: this needs "how many, and what are they
-    /// called", and a snippet's content can be large - reading every one of
-    /// them on every return to the hub would be a real cost for a subtitle.
-    private func fillCodePreview(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-card-shortcut-icons`: the captain's own code-preview
-        // artwork, replacing the plain `chevron.left.forwardslash.chevron.right`
-        // glyph - matches `RailDestination.drillHeaderArtwork`'s
-        // `.codePreview` case.
-        content.artwork = CodePreviewIcon.image
-        let names = sources.codePreviewStore.names()
-        content.subtitle = "Monaco, offline"
-        guard !names.isEmpty else {
-            content.body = .note("Paste code here to read it with real syntax highlighting.")
-            return
-        }
-        content.chip = .mute(names.count == 1 ? "1 snippet" : "\(names.count) snippets")
-        content.setBoundedPeekRows(names.prefix(HelmModuleCard.maxPeekRows).map {
-            HelmModulePeekRow(state: .idle,
-                              text: $0,
-                              value: CodePreviewLanguage.forFilename($0).displayName)
-        }, total: names.count)
-    }
-
-    /// Reads the store's already-loaded `commands` array and its favourites -
-    /// both in-memory field reads on a store the shell already owns, so this
-    /// costs nothing per canvas render. The peek rows are the captain's own
-    /// recently-used commands, which is the one thing about this library that
-    /// changes between visits.
-    private func fillCommandLibrary(_ content: inout HelmModuleCard.Content) {
-        let total = commandLibrarySources.commands.count
-        content.subtitle = "saved commands"
-        guard total > 0 else {
-            content.body = .note("Your DevOps command library - searchable, parameterised, one click from a terminal.")
-            return
-        }
-        content.chip = .mute("\(total)")
-        let recent = commandLibrarySources.recentlyUsedCommands(limit: HelmModuleCard.maxPeekRows)
-        guard !recent.isEmpty else {
-            content.body = .metric(value: "\(total)",
-                                   unit: total == 1 ? "command" : "commands",
-                                   note: "Nothing run yet - open the library to find one.")
-            return
-        }
-        content.setBoundedPeekRows(recent.map {
-            HelmModulePeekRow(state: .idle, text: $0.name, value: $0.category)
-        }, total: total)
-    }
-
-    /// Spelled out rather than reaching through `sources` inline, purely so
-    /// the store's role in this one card is obvious at its use site.
-    private var commandLibrarySources: CommandLibraryStore { sources.commandLibraryStore }
-
-    private func fillSettings(_ content: inout HelmModuleCard.Content) {
-        // `fm/grandline-rail-icons-batch2`: the captain's own settings
-        // artwork, replacing the plain `gearshape` glyph - matches
-        // `RailDestination.drillHeaderArtwork`'s `.settings` case.
-        content.artwork = SettingsAppIcon.image
-        content.subtitle = "this machine"
-        content.body = .note("Connection \u{00B7} Appearance \u{00B7} Terminal \u{00B7} Security \u{00B7} Backup")
-    }
-
-    /// Whether the background-signals poller has yet completed a pass.
-    ///
-    /// Read from the poller rather than tracked here: `lastCompletedPassAt` is
-    /// its own already-published state, so this cannot drift out of step with
-    /// it and adds nothing new to observe.
-    private static var pollerIsStillWarmingUp: Bool {
-        BackgroundSignalsPoller.shared.lastCompletedPassAt == nil
     }
 
     // MARK: Probe / self-test surface
@@ -5190,7 +1452,7 @@ final class HomeCanvasController: NSViewController {
     /// P5: the attention card's rows, as its list holds them.
     var debugAttentionRows: [NSView] { attentionCard.debugRows }
     /// How many times the attention card's digest has been composed.
-    private(set) var debugDigestCount = 0
+    var debugDigestCount = 0
     var debugAttentionCard: NeedsAttentionCard { attentionCard }
     /// R2-UX-01 (c): the attention card's signal rows and closing notes, as
     /// this page composes them now.

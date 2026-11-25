@@ -1271,3 +1271,127 @@ Toasts also posted no VoiceOver announcement.
 `DaylightChromeSelfTest`'s toast case now measures the hero capsule in Lavender and Powder: the gradient against the kit's quiet-ink rule, the capsule glow, the words, the three glyphs and their colours, the ghost Undo and its draining ring, and no ring under Reduce Motion.
 `UpdatesFailureSelfTest` asserts `completionKind`.
 An off-screen render of four held toasts was compared with the board in both themes, and the colours at the left, middle and right of each pill match the board's within a few steps.
+
+## P-01: the kit stops being a merge point (`fm/grandline-process-fixes-p01-p06`)
+
+The 2026-11-25 full review found that the kit's numbers no longer carried meaning, and that one file made every UI branch conflict.
+The kit went from 1.0.0 to 10.4.0 in eight days, so a major bump said nothing about risk.
+Every pull request that touched a `Helm*.swift` file edited `HelmKit.version`, re-recorded a digest in `HelmKit.sourceDigests` and added a section at the top of `helm-kit-versions.md`.
+The last eight commits to `HelmKitVersion.swift` were eight consecutive UI pull requests, #623 to #631.
+
+What changed:
+
+- `HelmKit.version` is gone.
+  The kit's number is the date of its newest release file.
+- `HelmKit.sourceDigests` is gone.
+  `HelmKitVersionSelfTest` now hashes each kit file at a base revision and in the working tree, and applies the same two rules the committed table did: a changed file must move a version, and a version may only move with a change.
+  CI passes the base as `FM_HELM_KIT_BASE` (the pull request's base commit, or `github.event.before` on a push to `main`).
+  A base that does not resolve fails the suite, so CI cannot skip the check by accident.
+  A local run with no base and no `origin/main` skips that one check and says so.
+  The base revision's table is read as text with a regex over its `Component(...)` lines, so the comparison needs no second build.
+- Release notes are one file per release in `docs/design-system/helm-kit-releases/`.
+  `helm-kit-versions.md` keeps the rules and the history up to 10.4.0, unchanged below its new top section.
+- A major bump is reserved for a removed or renamed API, and its bullet has to say which one.
+- The release-notes check no longer depends on file order.
+  It follows each component's chain of bullets and takes the version no other bullet moves past, so two releases dated the same day agree in either order.
+
+Each new rule runs against a fixture it must fail first: a change with no bump, a bump with no change, a major that names no removal, a heading dated off its file name, a misnamed release file, and a version the notes never reach.
+
+## Moved from AGENTS.md: the colour and theming rules (P-04, 2026-11-25)
+
+P-04 of the 2026-11-25 full review moved the measured examples out of AGENTS.md's "Colour and theming rules", which keeps one rule for each.
+The text below is that list as it stood, unchanged.
+
+
+- **A `HelmTint` hue is safe as a fill or a bar, and is NOT automatically safe
+  as text.** Route any tinted label through `HelmContrast.tintedSurface` /
+  `legibleTintedText` / `legibleOn`. `FM_RUN_CONTRAST_TESTS` sweeps every theme
+  x every tint and fails the build below the floor.
+- **Every theme-aware view follows `ThemeManager.swift`'s own checklist**, and
+  its item 2 is the one most often missed: force `view.appearance` to the
+  theme's light/dark mode. Without it the layer-backed fills track the theme
+  while everything resolving a *system semantic* colour - scroller chrome, the
+  shared field editor, an `NSMenu`, a focus ring - follows the OS instead. That
+  is the "half-themed" defect, and it shipped four separate times.
+- **`ThemeManager.observe`'s closure fires synchronously at registration**, so
+  it runs before the rest of `loadView` has built anything. A repaint function
+  with an early-return cache guard must not consume that cache on the premature
+  call; a component that themes itself must do so *after* it builds its chrome.
+- **A theme observer repaints; it never fetches** (GL-24), and it must not
+  rebuild a page that is not on screen.
+- **`HelmTint.neutral` is page ink, and washing it as a *tinted surface*
+  produces a near-black chip.** `HelmContrast.tintedSurface` is correct for
+  every real hue and wrong for this one, because `.neutral` resolves to
+  `chromeInkHex` - so the wash lands a few percent off full ink rather than a
+  few percent off the surface. It matters because `.neutral` is what
+  `ShiftProjectPalette` gives a record with **no** project, which is most of
+  them: the commonest chip on a surface is then also its heaviest. A no-identity
+  chip wants `HelmField.fill` plus ink text, the same treatment the Kanban's
+  cards already use. Caught in a real off-screen render
+  ([`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md)),
+  not from the code.
+- `HelmDomainHue.identityHex` is for identity (it resolves to `.neutral` off the
+  Daylight family); `fallbackTint` resolves a *semantic* slot and will paint an
+  alert bar on a benign row. **The one sanctioned use of `fallbackTint` is a
+  destination's own colour *tile***, where `identityHex` alone would wash page
+  ink into a near-black chip on 24 of the 26 palettes - `UnifiedSearch`'s
+  palette row and `DaylightBarIconButton.tileHex(for:in:)` are the two, and
+  they resolve identically. It is safe there and not on a bar because every
+  member of those sets carries a tile, so no one hue is the coloured thing
+  among neutral siblings.
+- **A surface drawing *all seven* `HelmDomainHue`s at once must resolve them
+  through `categoricalHex`, not `fallbackTint`.** The seven-hue to seven-
+  `HelmTint` map is 1:1, but a *palette* is free to spend one colour on two
+  slots - Ayu publishes one amber and uses it as both `accent` and its ANSI
+  yellow, Tokyo Night's `accent` **is** its ANSI blue. Swept as a washed tile
+  over all 26 palettes, the closest pair of domain hues measured **0.0000** on
+  eight of them and under a 0.035 separation floor on fourteen; against the
+  raw §2.2 values the worst pair is 0.0568. That shipped as the top bar's
+  three-tan icon row (`docs/history/03-navigation-and-chrome.md`). The
+  per-palette resolutions stay right for a surface drawing **one** hue among
+  neutral siblings, which is why `UnifiedSearch`'s result tile still splits -
+  `HelmDomainHue.identityHex`'s comment is the dividing line. And measure such
+  a collision as a weighted-RGB **distance**, never `HelmContrast.ratio`:
+  that helper compares relative luminance, so two different hues of equal
+  brightness score identical - exactly the defect being looked for.
+- **An identity colour derived from text must not come from
+  `String.hashValue`.** Swift seeds it per *process*, so the same host, tag or
+  project gets a different colour on every launch - and the defect is invisible
+  within a single session, which is where it would be looked for. Use an
+  explicit stable hash over the UTF-8 bytes; `ReadingListHostHue.hue(for:)` and
+  `ReadingListTags.stableIndex(of:)` are the worked examples, and both are
+  asserted for stability rather than only for range.
+- **A page-scoped nav column takes `HelmTheme.sidePanelFill` / `sidePanelEdge`,
+  never a blend of the card into the page ground.** `chromeBackgroundHex ==
+  backgroundHex` in several palettes, so that blend *is* the ground in those
+  and the column renders invisible - which is exactly the defect those two
+  exist to fix. The fill steps the ground toward the register's own endpoint,
+  bisected to the smallest step clearing `sidePanelSeparation` (1.08:1, which
+  is Daylight's own card-over-paper). `SettingsController`'s band is the worked
+  example, and note it is the *page's* view: `HelmPageSidebar.Surface.panel`
+  paints the nav list as a card, which is a smaller region than the column.
+- **A hero's base colour is `theme.heroAccentHex`, never `accentHex`.** The six
+  palettes (`AppThemeFamily.Group.palette`) may pin a dark register's heroes
+  to the colour the palette is named for, and a hero read from the accent
+  paints that register's grey-steel derived hero beside a pinned sidebar.
+  Anything that paints a fixed Daylight blue for the classic families gates a
+  palette's own colour on `theme.isPaletteTheme`, so the seven classic
+  families stay pixel-identical. `ThemePalettesSelfTest` guards both
+  ([`44-new-theme-families.md`](docs/history/44-new-theme-families.md)).
+- **A new terminal scheme is one surface step, and the step is the family's
+  own canonical editor background.** In a scheme `backgroundHex` is the
+  terminal background, so a scheme whose card differs from its page reopens
+  the seam `fm/grand-line-legacy-terminal-canvas-chrome-match` closed - unless
+  it carries a real `terminalCard`, which only the Daylight family does. The
+  app's own themes are a separate catalogue (`HelmTheme.appThemes`,
+  `AppTheme.swift`): there `backgroundHex` is only the page ground, and the
+  terminal paints in `ThemeManager.terminalScheme`.
+  `ThemeFamilySelfTest.checkPaletteShape` fails the run on one that does not,
+  and also on a `pairId` that is one-way (`ThemeManager.toggle()` *silently*
+  falls back to the plain Helm swap, so a broken pair drops the captain out of
+  their family on a keystroke and nothing else notices).
+  [`44-new-theme-families.md`](docs/history/44-new-theme-families.md).
+- A Daylight-family restyle branches on `theme.isDaylight` (true for every app
+  theme) and leaves the 24 other terminal schemes byte-identical. Branch **colour and geometry recipes** that
+  way - never *structure*: a page whose column count depends on the theme is a
+  bug, and shipped as one.

@@ -54,18 +54,14 @@ struct SettingsHeroWords: Equatable {
 
     /// The page's own "Graphite Dark is showing." line, then the other three
     /// choices on the card and what the terminal paints in.
-    static func appearance(themeName: String, isDark: Bool, followsSystem: Bool, layout: WorkspaceLayout,
-                           layoutTakesEffectLater: Bool, density: HelmDensity, profile: WorkspaceProfile?,
+    static func appearance(themeName: String, isDark: Bool, followsSystem: Bool,
+                           density: HelmDensity, profile: WorkspaceProfile?,
                            terminal: String) -> SettingsHeroWords {
         let mode = followsSystem
             ? "Following macOS, \(isDark ? "dark" : "light") right now"
             : "\(isDark ? "Dark" : "Light") appearance"
-        let layoutName = layout == .sidebar ? "sidebar" : "floating bar"
-        let layoutPart = layoutTakesEffectLater
-            ? "the \(layoutName) layout from the next launch"
-            : "the \(layoutName) layout"
         let profilePart = profile.map { "the \($0.title) profile" } ?? "a custom sidebar"
-        let body = "\(mode), \(layoutPart), \(density.title.lowercased()) rows and \(profilePart). "
+        let body = "\(mode), \(density.title.lowercased()) rows and \(profilePart). "
             + "Terminal: \(terminal)."
         return SettingsHeroWords(headline: "\(themeName) is showing.", body: body, tone: .accent)
     }

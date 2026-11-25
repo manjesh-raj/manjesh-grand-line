@@ -496,17 +496,14 @@ final class CredentialVaultUnlockView: NSView {
         updateStrength()
     }
 
-    /// R4-UI-07: the vault as the running layout names it - "Secrets" beside
-    /// the sidebar's Secrets row and tab, "Poneglyph" in the floating bar,
-    /// whose page is titled that. The card used to say "Poneglyph" under a
+    /// R4-UI-07: the vault as the sidebar names it - "Secrets" beside the
+    /// sidebar's Secrets row and tab. The card used to say "Poneglyph" under a
     /// "Work › Secrets" crumb.
     static var pageName: String { PlaceName.short(.poneglyph) }
 
     /// The create button. "Create Secrets" would read as making a secret, so
-    /// the sidebar layout's says what the card's title already calls it.
-    static var createTitle: String {
-        PlaceName.layout == .floatingBar ? "Create \(pageName)" : "Create vault"
-    }
+    /// it says what the card's title already calls it.
+    static var createTitle: String { "Create vault" }
 
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }

@@ -946,32 +946,19 @@ enum ReviewTwoUXSelfTest {
         // button reaches the relaunch path. The path itself is a recorder.
         settings.debugSidebar.debugClickRow(id: SettingsController.Category.appearance.rawValue)
         settle(shell)
-        let savedLayout = AppSettings.shared.workspaceLayout
         let savedPerform = AppRelaunch.perform
         var relaunches = 0
         AppRelaunch.perform = { relaunches += 1 }
         // This binary has no bundle, so the real button is disabled here -
         // asserted, then overridden so the click path can be measured.
-        check(!AppRelaunch.canRelaunch && !settings.debugLayoutRelaunchButton.isEnabled,
+        check(!AppRelaunch.canRelaunch && !settings.debugTextSizeRelaunchButton.isEnabled,
               "an unbundled binary offers an enabled Relaunch Grand Line it cannot carry out", &ok)
         AppRelaunch.canRelaunchOverrideForTests = true
         defer {
-            AppSettings.shared.workspaceLayout = savedLayout
             AppRelaunch.perform = savedPerform
             AppRelaunch.canRelaunchOverrideForTests = nil
         }
-        check(settings.debugLayoutRelaunchButton.isHidden, "Relaunch is offered beside Window layout with nothing to apply", &ok)
         check(settings.debugTextSizeRelaunchButton.isHidden, "Relaunch is offered beside text size with nothing to apply", &ok)
-        let other = WorkspaceLayout.allCases.first { $0 != PlaceName.layout } ?? .floatingBar
-        settings.debugWindowLayoutTabs.debugClickTab(id: other.rawValue)
-        settle(shell)
-        check(!settings.debugLayoutRelaunchButton.isHidden,
-              "choosing the other window layout does not offer Relaunch Grand Line", &ok)
-        settings.debugLayoutRelaunchButton.performClick(nil)
-        check(relaunches == 1, "Relaunch Grand Line beside Window layout did not reach the relaunch path", &ok)
-        settings.debugWindowLayoutTabs.debugClickTab(id: PlaceName.layout.rawValue)
-        settle(shell)
-        check(settings.debugLayoutRelaunchButton.isHidden, "Relaunch stays offered after the layout went back", &ok)
 
         let savedScale = ChromeTextScale.shared.scale
         defer { ChromeTextScale.shared.setScale(savedScale) }
@@ -982,7 +969,7 @@ enum ReviewTwoUXSelfTest {
             check(!settings.debugTextSizeRelaunchButton.isHidden,
                   "a new text size does not offer Relaunch Grand Line beside it", &ok)
             settings.debugTextSizeRelaunchButton.performClick(nil)
-            check(relaunches == 2, "Relaunch Grand Line beside text size did not reach the relaunch path", &ok)
+            check(relaunches == 1, "Relaunch Grand Line beside text size did not reach the relaunch path", &ok)
         } else {
             fail("no text size differs from the launch one, so the text-size relaunch measures nothing", &ok)
         }

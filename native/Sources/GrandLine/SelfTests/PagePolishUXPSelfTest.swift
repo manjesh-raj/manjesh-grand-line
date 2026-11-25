@@ -24,7 +24,6 @@ enum PagePolishUXPSelfTest {
         let cases: [(String, () -> Bool)] = [
             ("uxp01ReviewDrawsDashesNotZerosAfterATotalFailure", uxp01ReviewDrawsDashesNotZeros),
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
-            ("uxp01SearchPillKeepsItsPlaceholderBesideALongSubtitle", uxp01SearchPillKeepsItsPlaceholder),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
             ("uxp03WeeklyReviewKeepsThePageMargin", uxp03WeeklyReviewKeepsThePageMargin),
             ("uxp18BoardLaneShowsACountAndNoSliver", uxp18BoardLaneShowsACountAndNoSliver),
@@ -34,7 +33,6 @@ enum PagePolishUXPSelfTest {
             ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
             ("uxp13PageEmptyStatesSitInTheMiddleOfTheContentArea", uxp13PageEmptyStatesSitInTheMiddle),
             ("uxp06TheFirstmateHomePathAppearsOnce", uxp06TheFirstmateHomePathAppearsOnce),
-            ("uxp04HomeCardsAreSizedToTheirContent", uxp04HomeCardsAreSizedToTheirContent),
             ("uxp10HostsNamesItselfOnceAndKeepsItsEmptyStateNearItsAction", uxp10HostsEmptyStateAndName),
             ("uxp11AnEmptyNotebookShowsOneEmptyState", uxp11AnEmptyNotebookShowsOneEmptyState),
             ("uxp14DevOpsCommandsOpensOnACommand", uxp14DevOpsCommandsOpensOnACommand),
@@ -135,32 +133,6 @@ enum PagePolishUXPSelfTest {
               "UXP-01: a partial failure's tiles should say what their counts cover", &ok)
         check(review.drillHeaderSubtitle == "Couldn't reach the forge for 2 repositories.",
               "UXP-01: unexpected partial-failure subtitle \(review.drillHeaderSubtitle ?? "nil")", &ok)
-        return ok
-    }
-
-    /// The search pill holds its whole placeholder beside the longest drill
-    /// subtitle a page can produce. It used to collapse to "Se…".
-    private static func uxp01SearchPillKeepsItsPlaceholder() -> Bool {
-        var ok = true
-        ThemeManager.shared.setTheme(HelmTheme.theme(id: "dusk") ?? ThemeManager.shared.theme)
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        defer { _ = window }
-        shell.workspace.navigator.show(.review)
-        let bar = shell.barForTests
-        bar.setDrillContext(.init(title: "Review", subtitle: String(repeating: "Couldn't read a path ", count: 10),
-                                  symbol: "arrow.triangle.branch", hue: .green, artwork: nil))
-        shell.view.layoutSubtreeIfNeeded()
-        guard let pill = bar.debugSearchPill() as? DaylightSearchPill else {
-            fail("UXP-01: the bar's search pill is not a DaylightSearchPill", &ok)
-            return ok
-        }
-        let readable = pill.debugReadableWidth
-        check(readable > 120, "UXP-01: the pill's readable width should be a real placeholder width, got \(readable)", &ok)
-        check(pill.debugFloorWidth >= readable - 0.5,
-              "UXP-01: the pill's floor is \(pill.debugFloorWidth), below its readable width \(readable)", &ok)
-        check(pill.frame.width >= readable - 0.5,
-              "UXP-01: the pill collapsed to \(pill.frame.width)pt beside a long subtitle (needs \(readable))", &ok)
-        check(!pill.debugPlaceholderIsTruncated, "UXP-01: the search placeholder is truncated", &ok)
         return ok
     }
 
@@ -483,46 +455,6 @@ enum PagePolishUXPSelfTest {
     }
 
     // MARK: UXP-04
-
-    /// Home's attention card and Health stand at their own content's height,
-    /// at the captain's width and at a narrow one, while the three columns
-    /// still end on one line. The attention card used to be stretched to the
-    /// full column (three rows, 60% empty), and Health kept its seven-row
-    /// height after dropping its rows at 1100.
-    private static func uxp04HomeCardsAreSizedToTheirContent() -> Bool {
-        var ok = true
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        defer { _ = window }
-        shell.workspace.navigator.show(.homeCanvas)
-        let canvas = shell.debugHomeCanvas
-        ReviewTourLab.seedDemoHome(canvas)
-        for size in [NSSize(width: 1512, height: 945), NSSize(width: 1100, height: 720)] {
-            HomeFitSelfTest.show(rows: 3, at: size, shell: shell, window: window)
-            let label = "\(Int(size.width))x\(Int(size.height))"
-            guard canvas.usesDashboardLayoutForTests else {
-                fail("UXP-04: \(label) Home is not on its three-column page", &ok)
-                continue
-            }
-            let attention = canvas.attentionCardForTests
-            let attentionFit = attention.fittingSize.height
-            check(attention.frame.height <= attentionFit + 1,
-                  "UXP-04: \(label) the attention card is \(attention.frame.height)pt around "
-                  + "\(attentionFit)pt of rows", &ok)
-            if let health = canvas.moduleCardsForTests.first(where: { $0.anatomyForTests.title == "Health" }) {
-                check(health.frame.height <= health.fittingSize.height + 1,
-                      "UXP-04: \(label) Health is \(health.frame.height)pt around "
-                      + "\(health.fittingSize.height)pt of content", &ok)
-            } else {
-                fail("UXP-04: \(label) Home has no Health card", &ok)
-            }
-            if let row = canvas.gridRowsForTests.first {
-                let heights = row.arrangedSubviews.map(\.frame.height)
-                check((heights.max() ?? 0) - (heights.min() ?? 0) <= 1,
-                      "UXP-04: \(label) the three columns should still end on one line, got \(heights)", &ok)
-            }
-        }
-        return ok
-    }
 
     // MARK: UXP-10
 

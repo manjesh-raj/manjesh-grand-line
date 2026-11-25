@@ -369,7 +369,7 @@ enum ThemeMotionWebIslandsSelfTest {
         // split the shell, so a move between its files cannot hide one.
         if let shell = SelfTestSources.shellLayerSource(),
            shell.contains("transitionCoordinator =") {
-            print("  FAIL AppShellController installs the coordinator: every window-backed suite that mounts a shell and re-themes it would then measure through a snapshot overlay")
+            print("  FAIL MainSplitShellController installs the coordinator: every window-backed suite that mounts a shell and re-themes it would then measure through a snapshot overlay")
             ok = false
         }
     }

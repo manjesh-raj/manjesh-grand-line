@@ -133,17 +133,15 @@ enum HelmKitSourceGuardSelfTest {
 
     /// The files the revamp rebuilt. They spell no spacing or radius as a
     /// number at all, on the scale or off it - only tokens (and zero).
-    static let tokenOnlyFiles: Set<String> = [
-        "DaylightBarController.swift",
+    static let tokenOnlyFiles: Set<String> = Set(SelfTestSources.homeCanvasFiles).union([
         "HelmKit.swift",
         "HelmModuleCard.swift",
         "HelmPlateCard.swift",
-        "HomeCanvasController.swift",
         "NeedsAttentionCard.swift",
         "ShiftBoardViews.swift",
         "ShiftController.swift",
         "ShiftListViews.swift",
-    ]
+    ])
 
     /// Off-scale literals per file when the guard landed. A file may go
     /// down, never up, and a file not listed here must have none.
@@ -194,7 +192,6 @@ enum HelmKitSourceGuardSelfTest {
         "SchedulesCardView.swift": 1,
         "SchedulesController.swift": 1,
         "SchedulesInsights.swift": 1,
-        "SessionStripView.swift": 1,
         "SettingsController.swift": 4,
         "SettingsForm.swift": 1,
         "SettingsThemeCard.swift": 2,

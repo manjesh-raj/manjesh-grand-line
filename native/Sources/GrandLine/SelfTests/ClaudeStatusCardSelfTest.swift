@@ -1373,7 +1373,7 @@ enum ClaudeStatusCardSelfTest {
         }
         // `Workspace` wires the canvas since stage 2 of the modular-shell
         // migration moved the pages' wiring out of the shell.
-        guard let canvas = read("HomeCanvasController.swift"),
+        guard let canvas = SelfTestSources.homeCanvas(read: read),
               let shell = read("Workspace.swift"),
               let fleet = read("FleetController.swift") else {
             fail("could not read the three files this guard is written against", &ok)
@@ -1381,7 +1381,7 @@ enum ClaudeStatusCardSelfTest {
         }
 
         // Anchors first.
-        guard canvas.contains("private func fillClaudeStatus"),
+        guard canvas.contains("func fillClaudeStatus("),
               canvas.contains("var onRefreshQuota"),
               fleet.contains("func refreshQuotaNow()") else {
             fail("`fillClaudeStatus`, `onRefreshQuota` or `refreshQuotaNow` no longer exists - "
@@ -1392,7 +1392,7 @@ enum ClaudeStatusCardSelfTest {
         // 1. The card offers the action, and offers it *before* the
         //    no-snapshot early return - the loading and failure states are
         //    exactly when a captain reaches for Refresh.
-        guard let fill = canvas.range(of: "private func fillClaudeStatus"),
+        guard let fill = canvas.range(of: "func fillClaudeStatus("),
               let earlyReturn = canvas.range(of: "guard let snapshot = quotaSnapshot else {",
                                              range: fill.upperBound..<canvas.endIndex) else {
             fail("`fillClaudeStatus` no longer has its no-snapshot guard - anchor drift", &ok)

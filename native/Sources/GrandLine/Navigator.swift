@@ -186,10 +186,6 @@ final class Navigator: NSObject {
         content.animateDestinationEntrance(slot.controller.view,
                                            direction: page == .homeCanvas ? .back : .drillIn,
                                            skip: wasAlreadyShowing)
-
-        // §8 Phase 6: which destination is showing decides where the bar's
-        // chain hands off, so the loop is re-derived on every navigation.
-        workspace.chrome?.workspaceKeyViewLoopMayHaveChanged()
     }
 
     // MARK: Contextual ⌘N (UX4)
@@ -412,7 +408,6 @@ final class Navigator: NSObject {
         hosts.sessions.setActive(hostID)
         controller.focusCurrentTab()
         controller.markCurrentTabAsRead()
-        workspace.chrome?.workspaceKeyViewLoopMayHaveChanged()
     }
 
     // MARK: F2 - session restoration

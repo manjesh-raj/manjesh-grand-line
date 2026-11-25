@@ -59,8 +59,6 @@ enum RecentDestinationsSelfTest {
             ("hostPageNavigationIsTracked", test_hostPageNavigationIsTracked),
             ("panelRendersRowsAndClickNavigates", test_panelRendersRowsAndClickNavigates),
             ("panelShowsEmptyStateWithNothingRecorded", test_panelShowsEmptyStateWithNothingRecorded),
-            ("barButtonSitsBeforeStickyBoardAfterSearch", test_barButtonSitsBeforeStickyBoardAfterSearch),
-            ("barButtonThemesAcrossLightAndDark", test_barButtonThemesAcrossLightAndDark),
             ("recordNavigationIsTheOnlyWriter", test_recordNavigationIsTheOnlyWriter),
             ("endedSessionRowReconnectsInsteadOfDoingNothing", test_endedSessionRowReconnectsInsteadOfDoingNothing),
             ("deletedHostRowIsDroppedRatherThanLeftDead", test_deletedHostRowIsDroppedRatherThanLeftDead),
@@ -115,12 +113,12 @@ enum RecentDestinationsSelfTest {
     /// a real (never ordered-front) window - copied from
     /// `SessionSwitcherSelfTest.makeMountedShell` so both suites drive the
     /// same real object graph.
-    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController, keyStore: SSHKeyStore, snippetStore: SnippetStore) {
+    private static func makeMountedShell() -> (window: NSWindow, shell: MainSplitShellController, keyStore: SSHKeyStore, snippetStore: SnippetStore) {
         let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
-        let shell = AppShellController(
+        let shell = MainSplitShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
@@ -621,83 +619,6 @@ enum RecentDestinationsSelfTest {
     }
 
     // MARK: Bar placement + theming
-
-    private static func test_barButtonSitsBeforeStickyBoardAfterSearch() -> String? {
-        let bar = DaylightBarController()
-        let window = OffScreenProbe.window(width: 1400, height: 80)
-        window.contentViewController = bar
-        bar.view.layoutSubtreeIfNeeded()
-
-        let pills = bar.debugPills()
-        guard !pills.isEmpty else { return "no pills built" }
-        let lastPillMaxX = pills.map { $0.frame.maxX }.max() ?? 0
-        let button = bar.recentDestinations.button
-        let search = bar.debugSearchPill()
-        guard let stickyBoard = bar.debugDestinationButtons().first else {
-            return "no destination quick-access buttons built"
-        }
-
-        guard button.frame.width > 1, button.frame.height > 1 else {
-            return "the Recents button resolved a zero-size frame"
-        }
-        // The second captain correction (`fm/grandline-recents-position-and-
-        // codepreview-theme`): the Recents button now sits after the search
-        // pill, not right after the space pills - it must clear the pills by
-        // more than a token gap, i.e. genuinely be on the far side of the
-        // search field.
-        guard search.frame.minX >= lastPillMaxX - 0.5 else {
-            return "the search pill (minX=\(search.frame.minX)) starts before the space pills end (maxX=\(lastPillMaxX))"
-        }
-        guard button.frame.minX >= search.frame.maxX - 0.5 else {
-            return "the Recents button (minX=\(button.frame.minX)) starts before the search pill ends (maxX=\(search.frame.maxX))"
-        }
-        // **Converted into the bar's own coordinate space.** Review #3's UX2
-        // moved the quick-access buttons inside an `NSStackView`, so a
-        // button's own `frame` is in that row's space and its `minX` is 0 for
-        // the leading one - comparing it against the Recents button's
-        // bar-space frame would fail for a reason that is not the one this
-        // check names (it did, on the first full run after UX2 landed).
-        let stickyBoardInBar = stickyBoard.convert(stickyBoard.bounds, to: bar.view)
-        guard stickyBoardInBar.width > 1 else {
-            return "the Sticky Board icon resolved a zero-size frame - this check would be vacuous"
-        }
-        guard button.frame.maxX <= stickyBoardInBar.minX + 0.5 else {
-            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the Sticky Board icon (minX=\(stickyBoardInBar.minX))"
-        }
-        // The explicit first captain correction still holds: not next to the
-        // logo, i.e. not at the bar's own leading inset.
-        guard button.frame.minX > 40 else {
-            return "the Recents button sits right at the bar's leading edge, next to the logo"
-        }
-        // AGENTS.md gotcha (13)/DaylightModuleSelfTest.checkBarDoesNotCapWindow
-        // already owns the "no bar width constraint can cap the window"
-        // guarantee - checked there straight off `loadView()`, before any real
-        // layout pass has run, which is what keeps it from also tripping on
-        // `NSTextField`'s own lazily-materialised intrinsic-size constraints
-        // (a pre-existing, unrelated artifact this test's own real layout
-        // pass would otherwise surface as a false positive). Not re-checked
-        // here to avoid exactly that.
-        return nil
-    }
-
-    private static func test_barButtonThemesAcrossLightAndDark() -> String? {
-        let themes = [
-            HelmTheme.allThemes.first { $0.mode == .light },
-            HelmTheme.allThemes.first { $0.mode == .dark },
-        ].compactMap { $0 }
-        guard themes.count == 2 else { return "could not find one light and one dark real HelmTheme" }
-        for theme in themes {
-            ThemeManager.shared.setTheme(theme)
-            let bar = DaylightBarController()
-            bar.loadView()
-            let button = bar.recentDestinations.button
-            guard button.debugHasIcon else { return "\(theme.id): the Recents button's icon did not resolve" }
-            guard button.debugIconBackground.layer?.backgroundColor != nil else {
-                return "\(theme.id): the Recents button's icon square was never painted"
-            }
-        }
-        return nil
-    }
 
     // MARK: Source guard
 

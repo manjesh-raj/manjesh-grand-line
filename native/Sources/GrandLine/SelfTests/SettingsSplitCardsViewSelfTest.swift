@@ -96,7 +96,7 @@ enum SettingsSplitCardsViewSelfTest {
 
     /// The rows each page's card is planned to hold, by title.
     static let expectedCardRows: [SettingsController.Category: [String]] = [
-        .appearance: ["Appearance", "Window layout", "Density", "Profile"],
+        .appearance: ["Appearance", "Density", "Profile"],
         .terminal: ["Working directory", "Reconnect automatically", "Default font size",
                     "Notify when the crew needs you"],
         .shortcuts: ["Find a shortcut", "Show"],

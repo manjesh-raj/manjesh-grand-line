@@ -16,9 +16,10 @@ section that genuinely does not apply rather than leaving it empty.
 ## Design system
 
 <!--
-S01 of the 2026-11-17 UI/UX proposals: the Helm kit is versioned in
-`native/Sources/GrandLine/HelmKitVersion.swift`, with release notes in
-`docs/design-system/helm-kit-versions.md`. One line per component that moved,
+S01 of the 2026-11-17 UI/UX proposals: each Helm kit component is versioned
+in `native/Sources/GrandLine/HelmKitVersion.swift`, with one release file per
+change in `docs/design-system/helm-kit-releases/` (rules in
+`docs/design-system/helm-kit-versions.md`). One line per component that moved,
 or "No design-system change".
 
 Design system: component · before → after · bump

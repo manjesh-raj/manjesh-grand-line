@@ -34,7 +34,6 @@ enum DisplayAccessibilitySelfTest {
             ThemeManager.shared.setTheme(captainTheme)
         }
         checkIncreaseContrastStrengthensEveryEdge(&ok)
-        checkReduceTransparencyDropsTheBarMaterial(&ok)
         checkAChangeReachesMountedViews(&ok)
         checkNothingObservesTheDefaultCenter(&ok)
         print(ok ? "DisplayAccessibilitySelfTest: all checks passed" : "DisplayAccessibilitySelfTest: FAILED")
@@ -88,30 +87,6 @@ enum DisplayAccessibilitySelfTest {
     }
 
     // MARK: Reduce Transparency
-
-    private static func checkReduceTransparencyDropsTheBarMaterial(_ ok: inout Bool) {
-        print("\n-- P7: Reduce Transparency drops the bar's material --")
-        guard let daylight = HelmTheme.theme(id: "daylight") else { return fail("no `daylight` theme", &ok) }
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        defer { window.orderOut(nil) }
-        window.orderFront(nil)
-        ThemeManager.shared.setTheme(daylight)
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = false
-        ThemeManager.shared.reapplyCurrentTheme()
-        let bar = shell.bar
-        // Discriminating power: on Daylight the material is normally there.
-        check(bar.debugMaterialIsShown, "the Daylight bar shows no material with Reduce Transparency off", &ok)
-        let translucentAlpha = bar.debugBarFill?.alpha ?? 1
-        check(translucentAlpha < 0.999, "the Daylight bar's fill is already opaque (\(translucentAlpha))", &ok)
-
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = true
-        ThemeManager.shared.reapplyCurrentTheme()
-        check(!bar.debugMaterialIsShown, "the bar still shows its material under Reduce Transparency", &ok)
-        check((bar.debugBarFill?.alpha ?? 0) > 0.999, "the bar's fill is not opaque under Reduce Transparency", &ok)
-        HelmDisplayAccessibility.reduceTransparencyOverrideForTests = nil
-        ThemeManager.shared.reapplyCurrentTheme()
-        if ok { print("  OK   material shown and fill \(String(format: "%.2f", translucentAlpha)) normally; hidden and opaque when reduced") }
-    }
 
     // MARK: The live path
 
