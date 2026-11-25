@@ -1271,3 +1271,28 @@ Toasts also posted no VoiceOver announcement.
 `DaylightChromeSelfTest`'s toast case now measures the hero capsule in Lavender and Powder: the gradient against the kit's quiet-ink rule, the capsule glow, the words, the three glyphs and their colours, the ghost Undo and its draining ring, and no ring under Reduce Motion.
 `UpdatesFailureSelfTest` asserts `completionKind`.
 An off-screen render of four held toasts was compared with the board in both themes, and the colours at the left, middle and right of each pill match the board's within a few steps.
+
+## P-01: the kit stops being a merge point (`fm/grandline-process-fixes-p01-p06`)
+
+The 2026-11-25 full review found that the kit's numbers no longer carried meaning, and that one file made every UI branch conflict.
+The kit went from 1.0.0 to 10.4.0 in eight days, so a major bump said nothing about risk.
+Every pull request that touched a `Helm*.swift` file edited `HelmKit.version`, re-recorded a digest in `HelmKit.sourceDigests` and added a section at the top of `helm-kit-versions.md`.
+The last eight commits to `HelmKitVersion.swift` were eight consecutive UI pull requests, #623 to #631.
+
+What changed:
+
+- `HelmKit.version` is gone.
+  The kit's number is the date of its newest release file.
+- `HelmKit.sourceDigests` is gone.
+  `HelmKitVersionSelfTest` now hashes each kit file at a base revision and in the working tree, and applies the same two rules the committed table did: a changed file must move a version, and a version may only move with a change.
+  CI passes the base as `FM_HELM_KIT_BASE` (the pull request's base commit, or `github.event.before` on a push to `main`).
+  A base that does not resolve fails the suite, so CI cannot skip the check by accident.
+  A local run with no base and no `origin/main` skips that one check and says so.
+  The base revision's table is read as text with a regex over its `Component(...)` lines, so the comparison needs no second build.
+- Release notes are one file per release in `docs/design-system/helm-kit-releases/`.
+  `helm-kit-versions.md` keeps the rules and the history up to 10.4.0, unchanged below its new top section.
+- A major bump is reserved for a removed or renamed API, and its bullet has to say which one.
+- The release-notes check no longer depends on file order.
+  It follows each component's chain of bullets and takes the version no other bullet moves past, so two releases dated the same day agree in either order.
+
+Each new rule runs against a fixture it must fail first: a change with no bump, a bump with no change, a major that names no removal, a heading dated off its file name, a misnamed release file, and a version the notes never reach.
