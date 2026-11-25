@@ -1781,3 +1781,33 @@ A soft line budget came with it: `Scripts/line_budget.py` names every hand-writt
 CI runs it in the Python job as `::warning` annotations.
 The other three files the review named (`HelmModuleCard.swift`, `HelmDesignSystem.swift` and `SettingsController.swift`) were left as they are.
 The first two are Helm kit files, so a move would change their digests and need a release for every component in them, and `SettingsController.swift` is not the card-family split the review asked for.
+
+## P-03, part 1: the floating-bar layout is removed (`fm/grandline-process-fixes-p01-p06`)
+
+R5-UX-11 of review #5 kept both window layouts permanently.
+The 2026-11-25 full review counted 200 `drawsSidebarLayout` references and found every page carrying a branch for each layout, and the captain decided to remove the floating bar.
+This is the first of two pull requests.
+
+What this one removed:
+
+- The classic shell, `AppShellController`, and everything only it drew: `DaylightBarController` (the bar, its search pill, icon squares and avatar panel), `AllDestinationsOverlay` (the ⌘⇧D map), `SessionStripView`, `HelmDrillHeader` and `QuickAccessConfiguration`.
+- The classic notifications panel and the bar's bell. The Bridge panel is the only one.
+- `WorkspaceLayout`, `PlaceName.layout` and every sentence that varied by layout.
+- The Go menu's space rows and the list it generated from the old map.
+- The Window layout row in Settings › Appearance, its Relaunch button, and the layout clause in the Appearance panel's words.
+- `FM_REVIEW_TOUR_LAYOUT`, `FM_LAUNCH_TIMING_LAYOUT` and the tour lab's `bar` and `renderbar` verbs.
+
+A stored `fm.workspaceLayout` and the bar's `fm.quickAccess` are removed once at launch by `AppSettings.retireFloatingBarLayout`, after the rename migration.
+Nothing reads either key, so an install that had chosen the floating bar already opens on the sidebar; the retirement only keeps the stale values from lingering.
+It does nothing on a fresh install and on every launch after the first.
+
+Fifteen suites that only measured the floating bar were deleted, and the classic cases of the shared suites removed.
+Suites that used the classic shell as a harness run on the sidebar shell.
+`WorkspaceBodySelfTest` keeps the cases of the old body-width suite that measure code the sidebar still runs (gotcha (15)'s hidden pages), and `SettingsLayoutChoiceSelfTest` guards that Settings offers no layout and that the retirement removes exactly the two keys.
+
+Two findings on the way:
+
+- The "key refused, asking for a password" session notice was only ever drawn by the floating bar's session strip. The sidebar never showed it, before or after this change.
+- `FM_RUN_TERMINAL_SELECTION_RENDER_TESTS` fails on this machine on an unchanged `main` too, so it is not this change.
+
+Part 2 follows in its own pull request: each page builds its sidebar presentation at load, so the `drawsSidebarLayout` branches, the seven `+Classic` files and Home's dashboard and spaces can go.

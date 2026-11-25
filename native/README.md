@@ -268,32 +268,26 @@ System Settings keeps showing Grand Line switched on in that state, and switchin
 
 ## What the app is, structurally
 
-One window. `AppShellController` is its root: a floating `DaylightBarController`
-across the top (the wordmark or the current page's drill header, the space
-pills, search, quick-access icons, theme, notifications, avatar) over a body
-that holds every destination.
+One window. `MainSplitShellController` is its root: a sidebar (Home, then the
+modules in four groups, with the live sessions under Console), a window
+toolbar (Back and Forward, the module's tabs, the page's actions, the
+light/dark toggle, notifications and search), the content column and an
+inspector. It is the only layout: P-03 of the 2026-11-25 review removed the
+floating bar.
 
 Destinations are **lazily mounted and then only ever hidden** (GL-37), from one
 table in `DestinationRegistry.swift`. Adding one is a `RailDestination` case plus
 one `register(...)` line - not six edits in lockstep, which is what it used to
 be.
 
-There is no left sidebar and no rail: both were deleted in the Daylight
-migration. A page-scoped nav column (`HelmPageSidebar`) is a different thing and
-several destinations have one.
+A page-scoped nav column (`HelmPageSidebar`) is a different thing from the
+app's sidebar, and several destinations have one.
 
 ### The destination map
 
-Reached from the Home canvas's cards, the ⌘K palette, a quick-access icon on the
-bar, or a Recents entry.
-
-| Space | Destinations |
-|---|---|
-| Overview (no space of their own) | **Fleet**, **Straw Hat Pirates**, the morning briefing, the merge queue |
-| Command | **Console**, **Tasks**, **DevOps Commands**, the merge queue card |
-| Operations | **Hosts**, **Log Analyzer**, **Kubernetes**, **Health**, **Schedules** |
-| Stores | **Vault**, **Poneglyph**, **Docs**, **Notebook**, **Runbooks**, **Postmortems**, **Tools**, **Dictation**, **Whiteboard**, **Sticky Board**, **Code Preview** |
-| Engineering | **Updates**, **Bootstrap**, **Automation**, **GitHub Sync**, **Settings** |
+Reached from the sidebar, the ⌘K palette, Home's cards, or a Recents entry.
+The map is `ModuleTable.swift`: every `RailDestination` lands on one module
+and, where the module has several pages, one of its tabs.
 
 `Vault` is Automic Vault's hardening panel; **`Poneglyph`** is this app's own
 encrypted credential store. They swapped names once - see

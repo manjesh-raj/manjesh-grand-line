@@ -804,9 +804,9 @@ captain's own instance - `bodyContainer` frozen 395pt wider than the window.
 Name such a constraint as a stored property and re-assert it: reactivate it if
 AppKit left it inactive and force a layout pass, once after activation and again
 on every `NSWindow.didResizeNotification`.
-`AppShellController.reassertBodyContainerWidthTie()` is the worked example, and
-`ToolsController`'s grid and `SettingsController`'s theme grid learned the same
-lesson independently. See also
+`ToolsController`'s grid and `SettingsController`'s theme grid are the worked
+examples (the floating bar's `AppShellController.reassertBodyContainerWidthTie()`
+was the first, and went with that layout). See also
 [`24-window-and-layout.md`](docs/history/24-window-and-layout.md), which corrects
 this entry's original claim that `contentView` is always in sync with the window.
 
@@ -821,7 +821,7 @@ explicit `contentMinSize` does not short-circuit it.
 
 The fix is to deactivate a hidden page's pins to its container, so its subtree
 has no required path to the window, and reactivate them before unhiding
-(`AppShellController.setDestinationVisible`). Nothing is torn down, so GL-37 is
+(`WorkspaceContent.setDestinationVisible`). Nothing is torn down, so GL-37 is
 untouched. Any container keeping many pages mounted needs the same, and any
 "idle CPU" investigation should `sample` for CoreAutoLayout before suspecting a
 timer.
@@ -1065,7 +1065,7 @@ noted.
 | `TOTPTicker.shared.now` | a `Date()` of your own in anything that renders a 2FA code or its countdown. One clock, or two surfaces disagree about the same code |
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
-| `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
+| `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `Workspace` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
 | `SettingsRow` / `SettingsGroup` / `SettingsSection` / `SettingsHero` (`SettingsForm.swift`) | a hand-rolled Settings row, group card or page header. The Settings page is ~60 rows across eight pages, and the separator inset, the `.sub` indent, the dimmed-**and-inert** dependent state and the description re-wrap are exactly what drifts when each call site spells them out. A group is a real `HelmCard` with no header, so there is still one card surface |
 | `HelmGestureArbitration.shouldRecognize(_:with:)` (and `HoverHighlightView`, which applies it for you) | a hand-rolled `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` walk. Two copies of it existed and the third row that needed one shipped dead - gotcha (20) |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
