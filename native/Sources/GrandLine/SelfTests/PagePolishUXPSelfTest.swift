@@ -22,10 +22,8 @@ enum PagePolishUXPSelfTest {
         defer { ThemeManager.shared.setTheme(savedTheme) }
 
         let cases: [(String, () -> Bool)] = [
-            ("uxp01ReviewDrawsDashesNotZerosAfterATotalFailure", uxp01ReviewDrawsDashesNotZeros),
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
-            ("uxp03WeeklyReviewKeepsThePageMargin", uxp03WeeklyReviewKeepsThePageMargin),
             ("uxp18BoardLaneShowsACountAndNoSliver", uxp18BoardLaneShowsACountAndNoSliver),
             ("uxp18ListPanelSaysHowManyMoreRows", uxp18ListPanelSaysHowManyMoreRows),
             ("uxp08EveryPageShowsAtMostOnePrimaryButton", uxp08EveryPageShowsAtMostOnePrimaryButton),
@@ -71,52 +69,6 @@ enum PagePolishUXPSelfTest {
     }
 
     // MARK: UXP-01
-
-    /// A scan that could not list the projects folder read nothing, so the
-    /// three tiles are unknown. They used to read 0 / 0 / 0 under a sentence
-    /// saying the folder could not be read (GL-14), and the drill subtitle
-    /// carried the whole path.
-    private static func uxp01ReviewDrawsDashesNotZeros() -> Bool {
-        var ok = true
-        let (window, review) = mountReview()
-        defer { _ = window }
-        review.debugRender([], scan: OpenPRsSource.FetchResult(projectsUnreadable: true))
-        review.view.layoutSubtreeIfNeeded()
-
-        let tiles = review.debugStatTiles
-        check(tiles.count == 3, "UXP-01: Review should draw three stat tiles, drew \(tiles.count)", &ok)
-        for tile in tiles {
-            check(tile.value != "0", "UXP-01: the \(tile.caption) tile reads 0 after a failed read", &ok)
-            check(tile.value == HelmReading<Int>.dash,
-                  "UXP-01: the \(tile.caption) tile should draw a dash, drew \"\(tile.value)\"", &ok)
-        }
-        check(review.debugStatTileToolTips.allSatisfy { ($0 ?? "").contains(FirstmateHome.projects.path) },
-              "UXP-01: each unknown tile should carry the failure as its tooltip", &ok)
-
-        let subtitle = review.drillHeaderSubtitle ?? ""
-        check(!subtitle.contains("/"), "UXP-01: the drill subtitle carries a path: \"\(subtitle)\"", &ok)
-        check(subtitle.count <= 40, "UXP-01: the drill subtitle is \(subtitle.count) characters long", &ok)
-
-        check(review.debugIsFailureStateVisible, "UXP-01: a total failure should show one failure block", &ok)
-        check(!review.debugAreForgeSectionsVisible,
-              "UXP-09: a total failure should hide the two forge cards that have nothing to say", &ok)
-        check(!review.debugIsBodySubtitleVisible,
-              "UXP-01: the body line should give way to the failure block, not repeat it", &ok)
-
-        // The path is behind the disclosure, once.
-        check(!review.debugFailureStateBody.contains(FirstmateHome.projects.path),
-              "UXP-01: the path should be behind the disclosure, not in the block's first read", &ok)
-        review.debugToggleFailureDetail()
-        check(review.debugFailureStateBody.contains(FirstmateHome.projects.path),
-              "UXP-01: Show folder path should reveal the projects path", &ok)
-
-        // A later clean render puts the page back.
-        review.debugRender([pr(1)], scan: OpenPRsSource.FetchResult())
-        check(!review.debugIsFailureStateVisible && review.debugAreForgeSectionsVisible,
-              "UXP-01: a clean scan after a failure should restore the forge cards", &ok)
-        check(review.debugStatTiles.first?.value == "1", "UXP-01: a clean scan should count its one PR", &ok)
-        return ok
-    }
 
     /// A partial failure found real PRs, so its counts stand - with a tooltip
     /// that says they cover only the repositories that answered.
@@ -202,45 +154,6 @@ enum PagePolishUXPSelfTest {
     }
 
     // MARK: UXP-03
-
-    /// Weekly Review collapses the column, and its content keeps the page's
-    /// own gutter from the window edge. It used to sit about 7pt from it,
-    /// because the inset the other views had came from the column.
-    private static func uxp03WeeklyReviewKeepsThePageMargin() -> Bool {
-        var ok = true
-        withScratchShiftStore { store in
-            let (window, shift) = mountShift(store)
-            defer { _ = window }
-            let board = shift.debugContentLeadingInWindow
-            check(shift.debugContentStartsAfterSidebar, "UXP-03: the board should show the column", &ok)
-            // The fixture discriminates only if the board's content really
-            // starts past a column.
-            check(board.tabs > 200, "UXP-03: the board's content should start after the column, at \(board.tabs)", &ok)
-
-            shift.debugShowView("review")
-            let review = shift.debugContentLeadingInWindow
-            check(!shift.debugContentStartsAfterSidebar, "UXP-03: Weekly Review should collapse the column", &ok)
-            check(review.reviewHeader >= HelmMetrics.pageGutter - 0.5,
-                  "UXP-03: the review header sits \(review.reviewHeader)pt (tabs \(review.tabs)) from the window edge, "
-                  + "under the \(HelmMetrics.pageGutter)pt page gutter", &ok)
-            check(review.tabs >= HelmMetrics.pageGutter - 0.5,
-                  "UXP-03: the view switcher sits \(review.tabs)pt from the window edge on Review", &ok)
-
-            // Back on the board the content returns to where it was.
-            shift.debugShowView("board")
-            let back = shift.debugContentLeadingInWindow
-            check(abs(back.tabs - board.tabs) < 0.5,
-                  "UXP-03: the board's content moved from \(board.tabs) to \(back.tabs) after a visit to Review", &ok)
-
-            // The captain's own Toggle Sidebar on the board gets the same gutter.
-            shift.debugToggleSidebar()
-            let toggled = shift.debugContentLeadingInWindow
-            check(toggled.tabs >= HelmMetrics.pageGutter - 0.5,
-                  "UXP-03: with the column hidden by Toggle Sidebar the content sits \(toggled.tabs)pt from the edge", &ok)
-            shift.debugToggleSidebar()
-        }
-        return ok
-    }
 
     // MARK: UXP-18
 

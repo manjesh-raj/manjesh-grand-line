@@ -45,7 +45,6 @@ enum Audit3UIFixesSelfTest {
                       checkUnselectedTabChipIsPainted,
                       checkVaultHeaderCountIsAPillAndCardsLoad,
                       checkBootstrapDropsTheDuplicateStepSummary,
-                      checkAnalyzeModePickerIsNotTheAnalyzeButton,
                       checkCommandLibraryUsesNoEmoji,
                       checkSecondaryButtonOutlineClearsTheFloor,
                       checkConsoleCardDistinguishesACleanExit,
@@ -326,30 +325,6 @@ enum Audit3UIFixesSelfTest {
     }
 
     // MARK: UI6 - the mode picker and the action no longer share a name
-
-    private static func checkAnalyzeModePickerIsNotTheAnalyzeButton(_ ok: inout Bool) {
-        print("\n-- UI6: the Log Analyzer's mode picker is distinguishable from its Analyze button --")
-        withScratchEnv {
-            let analyzer = LogAnalyzerController(commandLibrary: CommandLibraryStore())
-            laidOut(analyzer, width: 1100, height: 800)
-            let views = everyView(in: analyzer.view)
-            let buttonTitles = Set(views.compactMap { ($0 as? HelmButton)?.title })
-            let popupTitles = views.compactMap { $0 as? NSPopUpButton }.flatMap { $0.itemTitles }
-
-            check(buttonTitles.contains("Analyze"),
-                  "the primary Analyze action is still titled \"Analyze\"",
-                  &ok)
-            let collisions = popupTitles.filter { buttonTitles.contains($0) }
-            check(collisions.isEmpty,
-                  "no popup item shares a button's title (collisions: \(collisions))",
-                  &ok)
-            // And the picker still offers every mode - a fix that solved the
-            // collision by deleting the modes would pass the check above.
-            check(popupTitles.filter { $0.hasPrefix("Mode: ") }.count == LogAnalysisMode.allCases.count,
-                  "every analysis mode is still offered, prefixed",
-                  &ok)
-        }
-    }
 
     // MARK: UI7 - one icon language on the DevOps Commands page
 

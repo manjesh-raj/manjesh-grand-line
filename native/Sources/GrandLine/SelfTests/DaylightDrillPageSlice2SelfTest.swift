@@ -199,8 +199,9 @@ enum DaylightDrillPageSlice2SelfTest {
         let health = HealthController()
         let healthWindow = mount(health)
         defer { _ = healthWindow }
-        guard health.drillHeaderActions.count == 1,
-              let copyButton = health.drillHeaderActions.first as? NSButton,
+        // The toolbar carries Refresh and Copy diagnostics.
+        guard health.drillHeaderActions.count == 2,
+              let copyButton = health.drillHeaderActions.last as? NSButton,
               copyButton.title.lowercased().contains("diagnostics") else {
             print("  FAIL Health does not hoist its Copy diagnostics button")
             ok = false
@@ -214,7 +215,7 @@ enum DaylightDrillPageSlice2SelfTest {
         }
         // The button is caller-owned: reading twice must hand back the same
         // instance, or the page's own enabled/target state would be lost.
-        if health.drillHeaderActions.first !== copyButton {
+        if health.drillHeaderActions.last !== copyButton {
             print("  FAIL Health rebuilds its Copy diagnostics button on every read")
             ok = false
         }

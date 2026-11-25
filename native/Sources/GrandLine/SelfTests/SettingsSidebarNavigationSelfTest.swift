@@ -264,7 +264,9 @@ enum SettingsSidebarNavigationSelfTest {
         var seen: [ObjectIdentifier: [String]] = [:]
         for category in SettingsController.Category.allCases {
             let cards = settings.debugGroupCards(in: category)
-            if cards.isEmpty {
+            // A page whose split card took every row has no section card
+            // left; the split card is its card then.
+            if cards.isEmpty && settings.debugSplitCard(in: category) == nil {
                 print("  FAIL category \(category.rawValue) shows no cards at all")
                 ok = false
             }

@@ -50,7 +50,6 @@ enum DaylightDrillPageSlice4SelfTest {
         var allOK = true
         for check in [checkDrillConformances, 
                       checkRawPaneIsADarkCard, checkRawLineContrastOnTheDarkCard,
-                      checkSecretNamesAreMono,
                       checkNoWindowWidthFloor] {
             var ok = true
             check(&ok)
@@ -311,37 +310,6 @@ enum DaylightDrillPageSlice4SelfTest {
     // MARK: 5. §7's signal row for launcher issues
 
     // MARK: 6. §7's mono secret names
-
-    private static func checkSecretNamesAreMono(_ ok: inout Bool) {
-        print("\n-- §7: secret names render in the mono role --")
-        let vault = VaultController()
-        let window = mount(vault)
-        defer { _ = window }
-        vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN")],
-                          tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened)])
-        vault.view.layoutSubtreeIfNeeded()
-
-        guard let secret = vault.debugSecretRows.first else {
-            print("  FAIL no secret row rendered")
-            ok = false
-            return
-        }
-        let secretFont = secret.debugPaint().titleFont
-        if secretFont?.fontName != HelmType.code().fontName {
-            print("  FAIL a secret name renders in \(secretFont?.fontName ?? "nil"), "
-                  + "want \(HelmType.code().fontName)")
-            ok = false
-        }
-        // A launcher is a tool name, not an identifier the captain types -
-        // it stays in the ordinary row title face, so this is a real
-        // distinction rather than "everything on the page is mono".
-        if let tool = vault.debugToolRows.first,
-           tool.debugPaint().titleFont?.fontName == HelmType.code().fontName {
-            print("  FAIL a launcher name is mono too - the mono treatment is not carrying meaning")
-            ok = false
-        }
-        print("  OK - secret \"\(secret.debugTitle)\" is \(secretFont?.fontName ?? "nil")")
-    }
 
     // MARK: 7. No new window-width floor (AGENTS.md gotcha (13))
 

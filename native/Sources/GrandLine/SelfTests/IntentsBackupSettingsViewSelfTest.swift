@@ -133,11 +133,16 @@ enum IntentsBackupSettingsViewSelfTest {
     /// section is a *heading beside* one header-less group card - so there is
     /// no titled card to find any more. The claims below are unchanged; only
     /// the way the card is reached is.
+    /// The section's card, or the page's split card when the split plan took
+    /// the section's rows (Intents) or its detail (Backup's inventory).
     private static func groupCard(_ controller: SettingsController,
                                   on category: SettingsController.Category,
-                                  headed heading: String) -> HelmCard? {
-        controller.debugSections(in: category)
-            .first { $0.headingLabel?.stringValue == heading }?.group.card
+                                  headed heading: String) -> NSView? {
+        if let section = controller.debugSections(in: category).first(where: { $0.headingLabel?.stringValue == heading }),
+           !section.group.rows.isEmpty || category == .backup {
+            return section.group.card
+        }
+        return controller.debugSplitCard(in: category)
     }
 
     /// The `SettingsRow`s of that same section, for a case that measures rows
@@ -145,8 +150,9 @@ enum IntentsBackupSettingsViewSelfTest {
     private static func rows(_ controller: SettingsController,
                              on category: SettingsController.Category,
                              headed heading: String) -> [SettingsRow] {
-        controller.debugSections(in: category)
+        let rows = controller.debugSections(in: category)
             .first { $0.headingLabel?.stringValue == heading }?.group.rows ?? []
+        return rows.isEmpty ? controller.debugSplitRows(in: category) : rows
     }
 
     // MARK: F21 - the intents card
@@ -172,8 +178,11 @@ enum IntentsBackupSettingsViewSelfTest {
             // sits *below* the group card rather than inside it - so it is
             // read off the section rather than off `labels(in: card)`. The
             // claim is unchanged: this copy states what it really publishes.
+            // Set-2's split card says it in its own words when it holds the
+            // rows, so both places are read.
             let sectionFoot = controller.debugSections(in: .intents)
                 .compactMap { $0.footLabel?.stringValue }
+                + (controller.debugSplitCard(in: .intents).map { labels(in: $0) } ?? [])
             check(sectionFoot.contains(where: { $0.contains("unbundled") || $0.contains("Metadata.appintents") || $0.contains("Registered with the system") }),
                   "the card states this copy's real registration status rather than implying five live actions")
         }
