@@ -59,9 +59,9 @@ enum ReviewTourLabSelfTest {
         let (_, connectionBad) = ReviewTourLab.parse(tour: "new snippet\nsshconfig")
         check(connectionBad.count == 2, "a bad record kind and a missing path must be 2 errors, got \(connectionBad)", &ok)
 
-        // The Home fit verbs (`fm/grandline-home-fit-implement`).
+        // The Home fit verbs (`fm/grandline-home-fit-implement`). Its
+        // `demo attention N` went with the floating bar's hub in P-03.
         let fit = """
-        demo attention 11
         demo briefing
         measure min-960x620
         renderdoc page
@@ -69,11 +69,11 @@ enum ReviewTourLabSelfTest {
         """
         let (fitSteps, fitErrors) = ReviewTourLab.parse(tour: fit)
         check(fitErrors.isEmpty, "the Home fit verbs must parse clean, got \(fitErrors)", &ok)
-        check(fitSteps == [.demoAttention(11), .demoBriefing, .measure("min-960x620"),
+        check(fitSteps == [.demoBriefing, .measure("min-960x620"),
                            .renderDoc("page"), .probe],
               "the Home fit verbs parsed to \(fitSteps)", &ok)
-        let (_, fitBad) = ReviewTourLab.parse(tour: "demo attention lots\nmeasure\nrenderdoc")
-        check(fitBad.count == 3, "a bad count and two missing names must be 3 errors, got \(fitBad)", &ok)
+        let (_, fitBad) = ReviewTourLab.parse(tour: "demo attention 11\nmeasure\nrenderdoc")
+        check(fitBad.count == 3, "the removed attention verb and two missing names must be 3 errors, got \(fitBad)", &ok)
 
         // The layout-break verbs (`fm/grandline-layout-breaks-refresh-reply`).
         let breaks = "demo decision\nfleet reply\ndemo refresh\ndemo loading merge\nmeasurewindow after\norderfront"

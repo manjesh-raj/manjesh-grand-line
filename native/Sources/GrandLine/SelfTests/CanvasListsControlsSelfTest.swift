@@ -59,12 +59,9 @@ enum CanvasListsControlsSelfTest {
         defer { HelmMotion.reducedOverrideForTests = nil }
 
         let cases: [(String, () -> String?)] = [
-            ("C1 the hub reports the answer banner's own verdict", test_c1HeroReportsTheAnswer),
-            ("C1 every space's hero glyph resolves", test_c1HeroSymbolsResolve),
+            ("C1 Home reports the answer banner's own verdict", test_c1HeroReportsTheAnswer),
             ("C1 short content is top-anchored, leftover space trails below", test_c1ContentIsTopAnchored),
             ("C1 content taller than the viewport still scrolls", test_c1TallContentStillScrolls),
-            ("C1 the hub has no header row, the other spaces have a plain one", test_c1HeroBandIsOverviewOnly),
-            ("C1 the content column uses only the columns it can fill", test_c1ComposedContentWidth),
             ("C2 a card press compresses, and composes with the hover lift", test_c2PressComposesWithHover),
             ("C2 Reduce Motion gets the end state instantly", test_c2ReduceMotionIsInstant),
             ("C2 a nested button inside a pressable view still fires", test_c2NestedButtonStillFires),
@@ -884,16 +881,11 @@ enum CanvasListsControlsSelfTest {
         // own `#if FM_SELFTESTS` block redirects every `FM_*` store override
         // for the whole process, so a bare store here reaches none of the
         // captain's real data.
-        // **Not a first-run app.** Review #3's UX13 gave the hub its own hero
-        // for a captain with nothing saved locally, and these cases run over
-        // empty scratch stores - which is exactly that state. Every case here
-        // is about how a *used* app's hub renders (the verdict band, the
-        // module grid, the lists), so one seeded task is what puts them in the
-        // state they are written for. `NavigationCoherenceSelfTest` asserts
-        // the first-run hero itself, in both directions.
+        // One seeded task, so Home is not over entirely empty stores: every
+        // case here is about how a *used* app's Home renders.
         let shiftStore = ShiftStore()
         var seeded = ShiftTask.fresh()
-        seeded.title = "a task, so the hub is not in its first-run state"
+        seeded.title = "a task, so Home is not over empty stores"
         shiftStore.addTask(seeded)
         let canvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
@@ -914,8 +906,14 @@ enum CanvasListsControlsSelfTest {
     /// The hero is the audit's focal point, and its whole value is that it
     /// states the *one* thing the captain needs. Rendering a fabricated
     /// all-clear would be worse than rendering nothing, so what is asserted
-    /// is that every string comes from `FleetGreeting.answer` - the same
-    /// computation Overview's own banner runs.
+    /// is that the fleet's part of Home's verdict comes from
+    /// `FleetGreeting.answer` - the same computation Overview's own banner
+    /// runs.
+    ///
+    /// The floating bar's hub carried it on the attention card, and P-03 of
+    /// the 2026-11-25 full review removed that hub. Home carries it in its
+    /// greeting: the page-ground summary, or the briefing hero's pill while
+    /// the briefing is the hero.
     private static func test_c1HeroReportsTheAnswer() -> String? {
         let canvas = makeCanvas()
         let window = makeWindow(canvas.view, size: NSSize(width: 1200, height: 820))
@@ -932,56 +930,14 @@ enum CanvasListsControlsSelfTest {
 
         let expected = FleetGreeting.answer(tasks: [needs], readyCount: 0,
                                             prFetchFailure: nil, homeOk: true)
-
-        // **The verdict is on the attention card now, not on a hero band.**
-        // `fm/grandline-home-page-visual-overhaul` merged the two - the
-        // captain's reference draws one card at the top of Home - so what
-        // this case has always asserted (that the hub reports
-        // `FleetGreeting`'s own answer rather than a second computation of
-        // it) is asserted against the surface that now carries it.
-        if !canvas.heroCardHiddenForTests {
-            return "the hub still draws a hero band above its attention card"
-        }
-        let card = canvas.attentionCardForTests
-        // A parked crewmate is a row, so the card counts it and names it in
-        // its headline rather than dropping the fleet's verdict on the floor.
-        if !card.debugListText.contains(where: { $0.contains(expected.title) }) {
-            return "the attention list does not carry the answer's own '\(expected.title)', "
-                 + "got \(card.debugListText)"
-        }
-        if !card.debugHeadline.lowercased().contains(expected.title.prefix(1).lowercased()
-                                                     + expected.title.dropFirst().lowercased()) {
-            return "the headline '\(card.debugHeadline)' does not name the answer's own "
-                 + "'\(expected.title)'"
-        }
-        if card.debugEyebrow != "NEEDS ATTENTION \u{00B7} 1" {
-            return "the eyebrow should count the verdict as one open row, got '\(card.debugEyebrow)'"
-        }
-
-        // Off Overview there is no verdict to report, so the badge must not
-        // claim one. `.neutral` is the only slot that says nothing; a domain
-        // hue's `fallbackTint` resolves rose to `.critical` and would paint
-        // an alert on a space that measured nothing.
-        canvas.select(space: .stores)
-        canvas.debugRenderNow()
-        if canvas.heroCardHiddenForTests {
-            return "a space that is not the hub still needs its header row to name itself"
-        }
-        if canvas.heroTintForTests != .neutral {
-            return "the Stores hero claims \(canvas.heroTintForTests); a space with no verdict must be .neutral"
-        }
-        if !canvas.greetingForTests.kicker.isEmpty {
-            return "the Stores hero shows a kicker ('\(canvas.greetingForTests.kicker)') - it has no state to report"
-        }
-        return nil
-    }
-
-    /// `NSImage(systemSymbolName:)` returns nil silently, and this app has
-    /// shipped an invisible icon exactly that way before.
-    private static func test_c1HeroSymbolsResolve() -> String? {
-        for space in DaylightSpace.allCases where
-            NSImage(systemSymbolName: space.heroSymbol, accessibilityDescription: nil) == nil {
-            return "\(space).heroSymbol '\(space.heroSymbol)' does not resolve"
+        let says = canvas.debugGreetingOnGround
+            ? canvas.debugGreetingSummary
+            : (canvas.debugBriefingHero?.debugContent.status?.text ?? "")
+        var clause = expected.title.lowercased()
+        if clause.hasSuffix(".") { clause.removeLast() }
+        if clause.isEmpty { return "fixture: the answer has no title, so the check below is vacuous" }
+        if !says.lowercased().contains(clause) {
+            return "Home says \"\(says)\", which does not carry the answer's own '\(expected.title)'"
         }
         return nil
     }
@@ -1000,25 +956,28 @@ enum CanvasListsControlsSelfTest {
         let window = makeWindow(canvas.view, size: NSSize(width: 1400, height: 900))
         defer { window.orderOut(nil) }
 
-        // Engineering is one of the sparse spaces the finding names - the one
-        // where centring was most visible and where top-anchoring has the
-        // most leftover space to leave trailing below.
-        canvas.select(space: .engineering)
+        // A sparse Home, the shape the finding names - where centring was
+        // most visible and where top-anchoring has the most leftover space
+        // to leave trailing below.
+        canvas.cardLayout = HomeCardLayout(shown: [.settings])
         canvas.view.layoutSubtreeIfNeeded()
 
         let viewport = canvas.viewportHeightForTests
         let content = canvas.contentFrameForTests
         if viewport <= 0 { return "the canvas has no viewport height to measure against" }
         guard content.height + 8 < viewport else {
-            return "this space's content (\(content.height)pt) already fills the \(viewport)pt viewport, "
+            return "this Home's content (\(content.height)pt) already fills the \(viewport)pt viewport, "
                  + "so the top-anchored case is not being exercised"
         }
         // The document is flipped, so `minY` is the gap above the content.
+        // S03 lifts it by the greeting's own ink inset while the greeting is
+        // the first thing drawn.
         let above = content.minY
-        if abs(above - HomeCanvasController.contentTopMargin) > 1 {
+        let top = HomeCanvasController.contentTopMargin
+            - (canvas.debugGreetingOnGround ? HomeCanvasController.greetingInkInset : 0)
+        if abs(above - top) > 1 {
             return "short content sits \(above)pt below the top of the page, expected "
-                 + "\(HomeCanvasController.contentTopMargin)pt - Plan B anchors it to the top instead of "
-                 + "floating it in the middle"
+                 + "\(top)pt - Plan B anchors it to the top instead of floating it in the middle"
         }
         // And the leftover space genuinely trails *below* rather than being
         // split around the content, which is the whole of the captain's
@@ -1039,12 +998,11 @@ enum CanvasListsControlsSelfTest {
     /// card past the fold.
     private static func test_c1TallContentStillScrolls() -> String? {
         let canvas = makeCanvas()
-        // Deliberately short, so Overview's cards cannot all fit: this is the
-        // case the centring constraints used to own.
+        // Deliberately short, so Home's standard cards cannot all fit: this
+        // is the case the centring constraints used to own.
         let window = makeWindow(canvas.view, size: NSSize(width: 900, height: 420))
         defer { window.orderOut(nil) }
 
-        canvas.select(space: .overview)
         canvas.debugRenderNow()
         canvas.view.layoutSubtreeIfNeeded()
 
@@ -1052,7 +1010,7 @@ enum CanvasListsControlsSelfTest {
         let document = canvas.documentHeightForTests
         let content = canvas.contentFrameForTests
         guard content.height > viewport else {
-            return "a \(viewport)pt viewport still fits this space's \(content.height)pt of content, "
+            return "a \(viewport)pt viewport still fits Home's \(content.height)pt of content, "
                  + "so the scrolling case is not being exercised"
         }
         if document + 1 < content.maxY {
@@ -1065,117 +1023,10 @@ enum CanvasListsControlsSelfTest {
         }
         // Top-anchored on the scrolling path too: content taller than the
         // viewport must still start at the top rather than being pushed down.
-        if abs(content.minY - HomeCanvasController.contentTopMargin) > 1 {
-            return "scrolling content starts \(content.minY)pt down instead of "
-                 + "\(HomeCanvasController.contentTopMargin)pt"
-        }
-        return nil
-    }
-
-    /// Plan B's hero: Overview's verdict gets a real card - a washed fill, a
-    /// tinted border, a radius and real padding - and the four spaces with
-    /// nothing to report get none of it.
-    ///
-    /// A render cannot check this: `cacheDisplay` draws a band and a bare row
-    /// equally happily, and the difference between them is which paint the
-    /// layer resolved to. So the layer is read.
-    private static func test_c1HeroBandIsOverviewOnly() -> String? {
-        let canvas = makeCanvas()
-        let window = makeWindow(canvas.view, size: NSSize(width: 1300, height: 860))
-        defer { window.orderOut(nil) }
-
-        // **The hub has no header row at all now.**
-        //
-        // C1 gave Overview a hero *band* - a washed surface in the verdict's
-        // own hue - and it was the only space that ever raised one.
-        // `fm/grandline-home-page-visual-overhaul` moved that verdict into
-        // the merged attention card, so the band has no caller and the whole
-        // second mode is deleted rather than left behind a flag that can
-        // never be true. What this case asserts is the other half of that:
-        // the four spaces that still head themselves render exactly the
-        // plain row they always did, and the hub renders none.
-        for space in DaylightSpace.allCases where space != .overview {
-            canvas.select(space: space)
-            canvas.debugRenderNow()
-            if canvas.heroCardHiddenForTests {
-                return "\(space) has no header row - it would render nameless"
-            }
-            let band = canvas.heroBandForTests
-            if band.borderWidth > 0 || band.inset > 0 {
-                return "\(space)'s header has a \(band.borderWidth)pt border and \(band.inset)pt of "
-                     + "padding - it must render as the plain row it always was"
-            }
-            if let fill = band.fill, fill.alphaComponent > 0.01 {
-                return "\(space)'s header painted a surface (alpha \(fill.alphaComponent))"
-            }
-        }
-
-        // Overview, before any fleet snapshot, and after one: no header row
-        // either way. The fixture's own discriminating power is the loop
-        // above - four spaces that really do draw one - so this is not a
-        // check that a view is simply never built.
-        canvas.select(space: .overview)
-        canvas.debugRenderNow()
-        if !canvas.heroCardHiddenForTests {
-            return "the hub drew a header row above its attention card"
-        }
-        let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
-                                     queuedCount: 0, doneCount: 0, projectsCount: 1,
-                                     watcher: WatcherHealth(status: "healthy"))
-        canvas.applyFleet(snapshot: snapshot, mergedPRs: [], prFetchFailure: nil)
-        canvas.debugRenderNow()
-        canvas.view.layoutSubtreeIfNeeded()
-        if !canvas.heroCardHiddenForTests {
-            return "the hub raised a header row once the fleet reported - the verdict belongs "
-                 + "to the attention card now"
-        }
-        // And the card really is carrying it, so this is not a check that
-        // the hub simply stopped saying anything.
-        if canvas.attentionCardHiddenForTests {
-            return "the hub has neither a header row nor an attention card"
-        }
-        if !canvas.attentionCardForTests.debugRefreshButtonVisible {
-            return "the attention card is not carrying the Refresh the band used to"
-        }
-        return nil
-    }
-
-    /// The horizontal half of C1, as arithmetic rather than as a render: a
-    /// space with fewer cards than columns must not leave the leftover column
-    /// as a one-sided void, and a space with more cards than columns must be
-    /// completely untouched.
-    ///
-    /// Pure, so it needs no window - and deliberately checks the *unchanged*
-    /// direction too, because a cap that engaged everywhere would re-create
-    /// exactly the dead gutter the captain had removed from Hosts once.
-    private static func test_c1ComposedContentWidth() -> String? {
-        let available: CGFloat = 1400
-        let columns = HelmResponsiveGrid.columns(containerWidth: available,
-                                                 minItemWidth: HomeCanvasController.minModuleWidth,
-                                                 spacing: HomeCanvasController.gridSpacing)
-        guard columns >= 3 else { return "1400pt only fits \(columns) columns; this case needs at least 3" }
-
-        // More cards than columns: full width, no cap.
-        let many = Array(repeating: DaylightModule.console, count: columns + 2)
-        let manyWidth = HomeCanvasController.composedContentWidth(available: available, modules: many)
-        if abs(manyWidth - available) > 0.5 {
-            return "a full grid was capped to \(manyWidth)pt of \(available)pt - only a space that "
-                 + "cannot fill its columns should compose"
-        }
-
-        // Fewer cards than columns: capped to what they fill, and by exactly
-        // the column arithmetic rather than some new literal.
-        let few = Array(repeating: DaylightModule.console, count: columns - 1)
-        let fewWidth = HomeCanvasController.composedContentWidth(available: available, modules: few)
-        let unit = HelmResponsiveGrid.itemWidth(containerWidth: available, columns: columns,
-                                                spacing: HomeCanvasController.gridSpacing)
-        let expected = unit * CGFloat(columns - 1) + HomeCanvasController.gridSpacing * CGFloat(columns - 2)
-        if abs(fewWidth - expected) > 0.5 {
-            return "\(columns - 1) cards asked for \(fewWidth)pt, expected \(expected)pt - the cap must "
-                 + "come from the grid's own column arithmetic, so card size never changes"
-        }
-        if fewWidth >= available {
-            return "a short row was not composed at all (\(fewWidth)pt of \(available)pt)"
+        let top = HomeCanvasController.contentTopMargin
+            - (canvas.debugGreetingOnGround ? HomeCanvasController.greetingInkInset : 0)
+        if abs(content.minY - top) > 1 {
+            return "scrolling content starts \(content.minY)pt down instead of \(top)pt"
         }
         return nil
     }

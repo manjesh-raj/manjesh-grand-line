@@ -26,12 +26,10 @@ extension HomeCanvasController {
         } else if let last = lastGoodPRs {
             // A refresh in flight. Every Fleet refresh pushes its fast
             // snapshot with `mergedPRs: nil` and the slow PR scan seconds
-            // later, so falling through to the skeleton here put the hub
+            // later, so falling through to the skeleton here put the card
             // back into its loading layout on every Refresh and every Fleet
-            // visit: the Merge queue dropped to three skeleton rows and the
-            // Morning briefing above it stretched to absorb the column
-            // (`fm/grandline-layout-breaks-refresh-reply`, 139pt to 600pt at
-            // 1512x945). The last list stays until the new one lands.
+            // visit (`fm/grandline-layout-breaks-refresh-reply`). The last
+            // list stays until the new one lands.
             prs = last
         } else if let failure = prFetchFailure {
             content.subtitle = "not read"
@@ -42,12 +40,8 @@ extension HomeCanvasController {
         } else {
             content.subtitle = "reading"
             content.toolTip = "Reading open pull requests\u{2026}"
-            // As many placeholder rows as the loaded list would get: on the
-            // hub `mergeQueueRows` measures this very card to fill its
-            // column, so a first launch's skeleton holds the column at the
-            // loaded height instead of handing it to the briefing. On the
-            // shelf the limit is `maxPeekRows`, the three it always was.
-            content.body = .skeleton(rows: mergeQueueRowLimit)
+            // As many placeholder rows as the loaded list would get.
+            content.body = .skeleton(rows: HelmModuleCard.maxPeekRows)
             return
         }
         let ready = FleetDataSource.readyToMerge(prs)
@@ -61,8 +55,7 @@ extension HomeCanvasController {
             content.body = .note("Nothing open. The queue is clear.")
             return
         }
-        content.peekRowLimit = mergeQueueRowLimit
-        let rows = prs.prefix(mergeQueueRowLimit).map { pr -> HelmModulePeekRow in
+        let rows = prs.prefix(HelmModuleCard.maxPeekRows).map { pr -> HelmModulePeekRow in
             let state: HelmModuleRowState
             switch pr.checks {
             case "green": state = .ok

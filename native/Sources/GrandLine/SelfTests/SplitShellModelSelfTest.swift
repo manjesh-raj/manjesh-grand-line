@@ -450,9 +450,12 @@ enum SplitShellModelSelfTest {
     // MARK: 3b - Home's arranged cards
 
     private static func checkHomeCardLayout(_ ok: inout Bool) {
-        // Before the captain arranges anything Home shows the hub's own cards.
+        // Before the captain arranges anything Home shows the five cards the
+        // floating bar's hub drew. Typed out, since the hub's own filter went
+        // with it in P-03 and a set derived from the layout asserts nothing.
         let standard = HomeCardLayout.standard
-        check(Set(standard.shown) == Set(DaylightModule.canvasOrder.filter { $0.isVisible(in: .overview) })
+        let hubCards: Set<DaylightModule> = [.briefing, .claudeStatus, .fleet, .mergeQueue, .health]
+        check(Set(standard.shown) == hubCards
                 && standard.shown.count == Set(standard.shown).count && !standard.shown.isEmpty,
               "the standard layout is \(standard.shown.map(\.rawValue)), not the hub's own cards", &ok)
         // Arranged to fill rows: on the 24-column grid, two full rows.
@@ -735,8 +738,10 @@ enum SplitShellModelSelfTest {
         // Home's arranged cards: the shell hands the canvas the captain's layout.
         check(shell.contains("workspace.homeCanvas.cardLayout = AppSettings.shared.homeCardLayout"),
               "the sidebar layout no longer gives Home the captain's arranged cards", &ok)
-        check(canvas.contains("var usesDashboardLayout: Bool { space == .overview && cardLayout == nil }"),
-              "Home's hub no longer keeps its dashboard when no layout is set", &ok)
+        // P-03 removed the floating bar's dashboard that a canvas with no
+        // layout used to keep, so a bare canvas shows the standard cards.
+        check(canvas.contains("var cardLayout: HomeCardLayout = .standard"),
+              "Home no longer shows the standard cards before a layout is handed in", &ok)
         // The four pages whose own tabs are a module's tabs.
         for (file, type) in [("ShiftController.swift", "ShiftController"), ("FleetController.swift", "FleetController"),
                              ("HostsController.swift", "HostsController"),

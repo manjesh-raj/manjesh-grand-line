@@ -804,8 +804,6 @@ enum ReadingListSelfTest {
               "wiring: the card and the page agree about the name")
         check(DaylightModule.readingList.symbol == RailDestination.readingList.symbol,
               "wiring: the card's fallback glyph and the page's must not disagree")
-        check(!DaylightModule.readingList.appearsOnOverview,
-              "wiring: a new module must be listed explicitly, or it silently takes a slot on Overview")
 
         check(ContextualNewAction.savedLink.owningDestination == .readingList,
               "wiring: the File menu's creation verb points at this destination")

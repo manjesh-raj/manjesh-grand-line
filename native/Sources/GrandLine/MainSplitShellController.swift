@@ -351,8 +351,9 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     /// Home's header under its title: the day, as the prototype draws it.
-    /// Home has no live subtitle of its own - its attention card says what
-    /// needs the captain - so the date is the one line that adds something.
+    /// Home has no live subtitle of its own - its greeting and briefing hero
+    /// say what needs the captain - so the date is the one line that adds
+    /// something.
     static func homeSubtitle(_ date: Date = DayRollover.now()) -> String {
         date.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
@@ -1433,18 +1434,8 @@ final class MainSplitShellController: WorkspaceShellController {
         contentPane.setHeaderAccessory(accessory)
     }
 
-    /// R2-UX-02: Home has one space in this layout, its own. A route that
-    /// still names another space (a ⌘K verb, a notification, an older saved
-    /// session) lands on Home's own cards rather than on a filter nothing on
-    /// screen can switch back from.
-    override func selectSpace(_ space: DaylightSpace) {
-        super.selectSpace(.overview)
-    }
-
-    /// Home's Customize mode, on Home's own space - the one whose cards are
-    /// the captain's to arrange.
+    /// Home's Customize mode, where its cards are the captain's to arrange.
     func setHomeCustomizing(_ customizing: Bool) {
-        if customizing, workspace.homeCanvas.selectedSpace != .overview { selectSpace(.overview) }
         workspace.homeCanvas.setCustomizing(customizing)
         refreshModuleChrome()
     }

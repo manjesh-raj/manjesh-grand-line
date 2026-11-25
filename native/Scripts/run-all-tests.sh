@@ -369,9 +369,7 @@ NEEDS_SESSION=(
   # and drives real controls. Its pure half (`FM_RUN_NEEDS_ATTENTION_TESTS`)
   # is deliberately NOT here.
   "FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"
-  # Same split again: the hub's dashboard layout reads resolved `NSView`
-  # frames out of a real window. Its arithmetic half
-  # (`FM_RUN_HOME_DASHBOARD_TESTS`) is deliberately NOT here.
+  # Home's card grid, read as resolved `NSView` frames out of a real window.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
   "FM_RUN_KEYED_LISTS_VIEW_TESTS"
   "FM_RUN_LAYOUT_STABILITY_TESTS"  # session-not-window: builds its window via ReviewTourLab.makeOffScreenShell()

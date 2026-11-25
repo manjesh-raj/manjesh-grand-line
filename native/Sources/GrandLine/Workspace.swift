@@ -1023,10 +1023,6 @@ final class Workspace {
             self?.overview.revealNeedsYou()
         }
         homeCanvas.onOpenShiftTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
-        homeCanvas.onRefresh = { [weak self] in
-            self?.overview.refreshIfNeeded()
-            self?.review.refreshIfNeeded()
-        }
         // The Claude status card's own Refresh. Overview already owns the
         // quota reading and both its readers; this forces it past the
         // freshness window rather than adding a second fetch path.

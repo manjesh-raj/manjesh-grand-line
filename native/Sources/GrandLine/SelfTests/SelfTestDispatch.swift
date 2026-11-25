@@ -2134,14 +2134,6 @@ enum SelfTestDispatch {
             exit(NeedsAttentionViewSelfTest.run() ? 0 : 1)
         }
 
-        // `fm/grandline-home-page-visual-overhaul`: the hub's hand-placed dashboard,
-        // split the same way and for the same reason as the pair above -
-        // `HomeDashboardSelfTest` is arithmetic over numbers and guards CI's
-        // blocking lane, `HomeDashboardViewSelfTest` reads resolved frames out of a
-        // real window and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
-        if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_TESTS"] == "1" {
-            exit(HomeDashboardSelfTest.run() ? 0 : 1)
-        }
         // `fm/grandline-claude-widget-refresh-shift`: `HelmModuleCard`'s header
         // keeps its status column hard against the header's trailing control on
         // every rebuild of the card. See ModuleCardHeaderStabilitySelfTest.swift.
@@ -2154,6 +2146,9 @@ enum SelfTestDispatch {
             exit(KeyedListsViewSelfTest.run() ? 0 : 1)
         }
 
+        // `fm/grandline-home-page-visual-overhaul`: Home's card grid in a real
+        // window. Its arithmetic half, `HomeDashboardSelfTest`, measured only the
+        // floating bar's hand-placed dashboard and went with it in P-03.
         if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
             exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
         }

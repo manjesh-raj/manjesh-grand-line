@@ -123,8 +123,8 @@ enum SelfTestSources {
     /// cannot make it pass vacuously.
     static let homeCanvasFiles = [
         "HomeCanvasController.swift", "HomeCanvasController+Briefing.swift",
-        "HomeCanvasController+Attention.swift", "HomeCanvasController+Customize.swift",
-        "HomeCanvasController+Dashboard.swift", "HomeCanvasController+Claude.swift",
+        "HomeCanvasController+Arrangement.swift", "HomeCanvasController+Customize.swift",
+        "HomeCanvasController+Claude.swift",
         "HomeCanvasController+Fleet.swift", "HomeCanvasController+MergeQueue.swift",
         "HomeCanvasController+Health.swift", "HomeCanvasController+Hosts.swift",
         "HomeCanvasController+ModuleCards.swift",

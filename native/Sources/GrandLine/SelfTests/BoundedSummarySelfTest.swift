@@ -80,7 +80,7 @@ enum BoundedSummarySelfTest {
 
     /// Every peek list on Home goes through the helper, so a new card cannot
     /// cut its list silently. The Merge queue is the one exception: it sets
-    /// its own height-derived budget and its own footer ("All 22 open").
+    /// its own budget and its own footer ("All 22 open").
     private static func checkEveryPeekCardIsBounded(_ ok: inout Bool) {
         print("\n-- P4: every Home peek list is bounded and says so --")
         guard let text = SelfTestSources.homeCanvasSource() else {

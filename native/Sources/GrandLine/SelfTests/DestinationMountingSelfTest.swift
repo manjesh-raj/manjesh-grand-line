@@ -317,9 +317,10 @@ enum DestinationMountingSelfTest {
                 StickyBoardStore.debugOnRead = nil
             }
             let (_, shell) = makeMountedShell()
-            // The two cards themselves live in the Stores space, which the
-            // launch does not show - so render it too, before the read lands.
-            shell.homeCanvasForTests.select(space: .stores)
+            // The two cards themselves are not among the standard ones Home
+            // launches with - so arrange them onto Home and render it too,
+            // before the read lands.
+            shell.homeCanvasForTests.cardLayout = HomeCardLayout(shown: [.readingList, .stickyBoard])
             shell.homeCanvasForTests.debugRenderNow()
             let onMain = reads.mainThreadReads
             guard onMain.isEmpty else {

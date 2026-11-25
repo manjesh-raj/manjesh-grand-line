@@ -38,6 +38,9 @@
 //      Refresh over several cycles on a real `HomeCanvasController`. This is
 //      the end-to-end reproduction, and it is the case that fails when the
 //      component is right and the wiring that rebuilds the card is not.
+//      Since P-03 removed the floating bar's hub, the widget is Home's split
+//      hero, whose header carries the reading's age rather than a chip on a
+//      good reading - so the status column it measures is the caption.
 
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file here carries it.
@@ -169,8 +172,10 @@ enum ModuleCardHeaderStabilitySelfTest {
 
     // MARK: 2 - the captain's own page
 
-    /// Drive the real Claude widget's own Refresh on a real hub, and read the
-    /// header back after every cycle.
+    /// Drive the real Claude widget's own Refresh on a real Home, and read
+    /// the header back after every cycle: the status column (the chip, or
+    /// the "Updated" caption the hero shows in its place) sits where it sat
+    /// on the first reading, hard against Refresh.
     ///
     /// The refresh is a *rebuild*: `refreshQuotaTapped` coalesces a render
     /// onto the next main-queue turn and `applyQuota` renders again when the
@@ -196,24 +201,30 @@ enum ModuleCardHeaderStabilitySelfTest {
             settle()
 
             var measured = 0
+            var firstGap: CGFloat?
             func measure(_ label: String) {
                 canvas.view.layoutSubtreeIfNeeded()
                 guard let card = canvas.moduleCardsForTests
                         .first(where: { $0.debugHeaderText.title == "Claude" }) else {
-                    fail("\(label): the hub has no Claude widget", &ok)
+                    fail("\(label): Home has no Claude widget", &ok)
                     return
                 }
-                guard let chip = card.debugChipFrameInCard,
+                guard let status = card.debugChipFrameInCard ?? card.debugHeaderCaptionAlignmentRectInCard,
                       let button = card.debugHeaderActionFrameInCard else {
-                    fail("\(label): the Claude widget's header lost its chip or its Refresh", &ok)
+                    fail("\(label): the Claude widget's header lost its status column or its Refresh", &ok)
                     return
                 }
                 measured += 1
-                let gap = button.minX - chip.maxX
-                check(abs(gap - headerSpacing) <= tolerance,
-                      "\(label): the \"\(card.debugHeaderText.chip ?? "")\" chip should sit "
-                          + "\(fmt(headerSpacing))pt before Refresh, got \(fmt(gap))pt "
-                          + "(chip at x=\(fmt(chip.minX)))", &ok)
+                let gap = button.minX - status.maxX
+                // Hard against the trailing controls: the defect left the
+                // column 575pt clear of Refresh on most rebuilds.
+                check(gap >= 0 && gap <= headerSpacing * 4,
+                      "\(label): the status column should end just before Refresh, got a "
+                          + "\(fmt(gap))pt gap (column ends at x=\(fmt(status.maxX)))", &ok)
+                guard let firstGap else { firstGap = gap; return }
+                check(abs(gap - firstGap) <= tolerance,
+                      "\(label): the status column moved: \(fmt(gap))pt before Refresh, "
+                          + "\(fmt(firstGap))pt on the first reading", &ok)
             }
 
             measure("the first reading")
@@ -278,7 +289,7 @@ enum ModuleCardHeaderStabilitySelfTest {
 
     private static func makeCanvas(_ shiftStore: ShiftStore) -> HomeCanvasController {
         var seeded = ShiftTask.fresh()
-        seeded.title = "a task, so the hub is not in its first-run state"
+        seeded.title = "a task, so Home is not over empty stores"
         shiftStore.addTask(seeded)
         let canvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,

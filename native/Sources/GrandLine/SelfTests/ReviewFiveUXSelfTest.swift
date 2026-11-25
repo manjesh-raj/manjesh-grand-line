@@ -177,9 +177,8 @@ enum ReviewFiveUXSelfTest {
         check(HomeCardLayout.standard(for: .personal).shown == [.tasks, .calendar, .notebook, .stickyBoard, .readingList, .focusTimer],
               "R5-UX-07: a Personal Home starts with \(HomeCardLayout.standard(for: .personal).shown.map(\.rawValue))", &ok)
         check(HomeCardLayout.standard(for: .operator) == .standard, "R5-UX-07: the Operator's Home changed its default cards", &ok)
-        check(DaylightModule.calendar.opens == .calendar && DaylightModule.focusTimer.opens == .shift
-                && !DaylightModule.calendar.appearsOnOverview && !DaylightModule.focusTimer.appearsOnOverview,
-              "R5-UX-07: the new cards open the wrong page or joined the floating hub", &ok)
+        check(DaylightModule.calendar.opens == .calendar && DaylightModule.focusTimer.opens == .shift,
+              "R5-UX-07: the new cards open the wrong page", &ok)
 
         // Next up: a fixed clock, and the calendar's own day words.
         var cal = Calendar.current
@@ -226,7 +225,9 @@ enum ReviewFiveUXSelfTest {
 
         // A Home with no Crew never speaks for the fleet.
         if let home = SelfTestSources.homeCanvas(read: source) {
-            check(home.contains("let answerIfAny = fleetSpeaks ? overviewAnswer() : nil"),
+            // The greeting's own read since P-03 removed the attention card
+            // whose header this guard first read.
+            check(home.contains("let fleetAnswer = crewShown ? overviewAnswer() : nil"),
                   "R5-UX-07: a Home without Crew reports on the fleet again", &ok)
         }
         // The card re-renders when the session changes, not on every tick.

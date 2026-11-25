@@ -841,36 +841,10 @@ enum ClaudeStatusCardSelfTest {
         if HomeCanvasController.claudeUsageIsCompact(forCardWidth: spanTwoWidth) {
             fail("a span-2 card asked for the compact reflow - it has the width for the grid", &ok)
         }
-        // M3: the hub's dashboard decides from its own placement. At the
-        // 960pt minimum window its 7-of-12-track card is 525.33pt - a third
-        // of a point under the shelf's span-2 width - and the width rule
-        // built it as the 364pt degraded card. The fixture's own
-        // discriminating power first: the width rule really does say compact
-        // at that width, so a pass below is about the placement.
-        let dashboardSevenTrack = HelmResponsiveGrid.proportionalWidth(
-            containerWidth: 960 - HomeCanvasController.gutter * 2, span: 7,
-            spacing: HomeCanvasController.gridSpacing)
-        if !HomeCanvasController.claudeUsageIsCompact(forCardWidth: dashboardSevenTrack) {
-            fail("fixture drifted: the shelf's width rule no longer calls a \(dashboardSevenTrack)pt "
-                 + "card compact, so the dashboard case below would pass vacuously", &ok)
-        }
-        if HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 7, width: dashboardSevenTrack)) {
-            fail("a 7-track dashboard card (\(dashboardSevenTrack)pt at the minimum window) asked "
-                 + "for the degraded reflow - M3", &ok)
-        }
-        if !HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 4, width: 293)) {
-            fail("a 4-track dashboard card is a third of the row and should be the narrow form", &ok)
-        }
-        // And the other direction: a 5-track briefing that is 600pt wide at
-        // the captain's 1512pt window keeps the wide cap it always had.
-        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 5, width: 600))
-            != HelmModuleCard.maxBriefingClauses {
-            fail("a 600pt-wide 5-track briefing took the one-column clause cap", &ok)
-        }
-        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 7, width: dashboardSevenTrack))
-            != HelmModuleCard.maxBriefingClauses {
-            fail("a 7-track dashboard briefing took the one-column clause cap - M3's twin", &ok)
-        }
+        // M3's placement cases (a 7-of-12-track dashboard card is not the
+        // degraded one) measured the floating bar's hub and went with it in
+        // P-03 of the 2026-11-25 full review: every card is placed by width
+        // now.
 
         let narrow = mountCard(usageBody(for: resettingSnapshot(), now: fixtureNow(),
                                          width: HomeCanvasController.minModuleWidth),
@@ -1389,18 +1363,20 @@ enum ClaudeStatusCardSelfTest {
             return
         }
 
-        // 1. The card offers the action, and offers it *before* the
-        //    no-snapshot early return - the loading and failure states are
-        //    exactly when a captain reaches for Refresh.
+        // 1. The card offers the action, and offers it *before* it hands the
+        //    card to the hero, which draws every state including no reading
+        //    and a failed one - exactly when a captain reaches for Refresh.
+        //    (The anchor was the plain card's no-snapshot early return until
+        //    P-03 removed that card with the floating bar's hub.)
         guard let fill = canvas.range(of: "func fillClaudeStatus("),
-              let earlyReturn = canvas.range(of: "guard let snapshot = quotaSnapshot else {",
-                                             range: fill.upperBound..<canvas.endIndex) else {
-            fail("`fillClaudeStatus` no longer has its no-snapshot guard - anchor drift", &ok)
+              let hero = canvas.range(of: "fillClaudeHero(&content, width: width)",
+                                      range: fill.upperBound..<canvas.endIndex) else {
+            fail("`fillClaudeStatus` no longer hands the card to `fillClaudeHero` - anchor drift", &ok)
             return
         }
-        let beforeTheGuard = String(canvas[fill.upperBound..<earlyReturn.lowerBound])
-        if !beforeTheGuard.contains("content.headerAction") {
-            fail("the Claude card's header action is set after the no-snapshot early return, so "
+        let beforeTheHero = String(canvas[fill.upperBound..<hero.lowerBound])
+        if !beforeTheHero.contains("content.headerAction") {
+            fail("the Claude card's header action is not set before the hero fills the card, so "
                  + "the loading and failure states - the two a captain most wants to re-read - "
                  + "have no Refresh", &ok)
         }

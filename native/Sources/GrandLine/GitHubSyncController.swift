@@ -771,15 +771,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     }
 
     private func render(_ row: GitHubSyncRow) {
-        // Every status change for every row lands here, so this is the one
-        // place the header's line has to be re-read from.
-        defer { onDrillSubtitleChanged?() }
-        defer { publishForkDriftSignal() }
-        // U11: and the one place the page-level action's enablement is
-        // re-derived from, for the same reason.
-        defer { updateSyncAllEnablement() }
-        // Stage 7: and the sidebar layout's one table, which lists every row.
-        defer { renderForksTable() }
+        // Every status change for every row lands here. In the order the
+        // `defer`s this replaced ran in, last declared first: the sidebar
+        // layout's one table, which lists every row (Stage 7); U11's
+        // page-level action, whose enablement is re-derived here; the
+        // fork-drift signal; and the header's line.
+        renderForksTable()
+        updateSyncAllEnablement()
+        publishForkDriftSignal()
+        onDrillSubtitleChanged?()
     }
 
     /// UI-43 / UI-52: a dot and a word for a default state, a pill only for

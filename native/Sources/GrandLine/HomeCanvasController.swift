@@ -24,10 +24,12 @@
 //    state, and the injected stores are read from memory. The one genuinely
 //    on-disk read is the Docs runbook list, which is a small directory scan.
 //
-// 2. **Spaces are presentation state and live only here** (§5.3). The bar
-//    draws pills and reports clicks; this controller holds the selection and
-//    consults `DaylightModule.space`. Nothing else in the app - no store, no
-//    poller, no registry, no notification source - knows spaces exist.
+// 2. **It draws the captain's arranged cards and nothing else.** Which cards
+//    show, how wide and how tall is `HomeCardLayout`, which the sidebar
+//    shell hands in (`cardLayout`) and Customize edits. P-03 of the
+//    2026-11-25 full review removed the floating bar, and with it the two
+//    things this page kept only for that layout: Overview's hand-placed
+//    dashboard and the space pills' filter over the module grid.
 //
 // **Landmines this page is specifically shaped around** (AGENTS.md):
 //   - gotcha (9): a plain `NSView` document view is *not* flipped, so short
@@ -39,32 +41,18 @@
 //   - GL-20: the window-resize handler is gated on this page actually being
 //     visible, or a resize while the captain is on Console pays for the
 //     canvas's whole relayout.
-//   - gotcha (13): **there are two grids here**, and every card width in
-//     either is `HelmDaylightPriority.contentTie` (499) - below
+//   - gotcha (13): every card width in the grid is
+//     `HelmDaylightPriority.contentTie` (499) - below
 //     `NSLayoutPriorityWindowSizeStayPut` - so no card can cap the window.
-//     Off Overview it is `HelmResponsiveGrid.spanningRows(_:)`, a wrapping
-//     shelf whose column count comes from the container's real width,
-//     because the Morning briefing is two columns wide (§6.1,
-//     `DaylightModule.gridSpan` - see that enum's own note for the three
-//     passes it took to land there). On Overview it is
-//     `HelmResponsiveGrid.proportionalRow(...)`, a hand-placed twelve-track
-//     dashboard: those five widgets have relative sizes that are the design
-//     rather than a consequence of the window, and deriving the count from
-//     the width is what produced the ragged masonry the captain rejected.
-//     See `dashboardRowViews` for the placement and the two conditions
-//     under which it hands back to the wrapping grid.
-//   - The hub has **no hero band**. `fm/grandline-home-page-visual-overhaul`
-//     merged it into `NeedsAttentionCard`, because the captain's reference
-//     draws one card at the top of Home and this page drew two. `heroCard`
-//     is still built and still heads the four other spaces as the plain row
-//     it always was there; `hubHeader` is where Overview's two header
-//     strings come from now.
+//     The grid is `HelmResponsiveGrid.spanningRows(_:)` at
+//     `HomeCardGrid.columns`, with the rows `HomeCardGrid.rows` packs from
+//     the captain's widths (`buildArrangedGrid`).
 //
 // **P-05 of the 2026-11-25 full review split this file by card family**
 // (GL-36), the way `ConsoleController` was split. It had reached 5,229 lines.
 // This file keeps the class, its stored state, build, data in, render,
 // layout and the self-test surface. The rest is in `HomeCanvasController+*.swift`:
-// `+Briefing`, `+Attention`, `+Customize`, `+Dashboard`, `+Claude`, `+Fleet`,
+// `+Briefing`, `+Arrangement`, `+Customize`, `+Claude`, `+Fleet`,
 // `+MergeQueue`, `+Health`, `+Hosts` and `+ModuleCards`. The move changed no
 // statement. `private` was dropped from the class's members so the family can
 // reach them across files, so treat the whole family as private to itself.
@@ -113,49 +101,12 @@ final class HomeCanvasController: NSViewController {
     nonisolated static let minModuleWidth: CGFloat = 255
     nonisolated static let gridSpacing: CGFloat = 16
 
-    /// Which grid a card was placed by, and how much of it the card owns.
-    ///
-    /// A card's narrow-form decisions (the Claude report's stacked reflow,
-    /// the briefing's clause cap) are made from this rather than from a bare
-    /// width. The two grids answer "is this card degraded?" differently: on
-    /// the wrapping shelf a card is narrow exactly when `packRows` has put a
-    /// span-2 card into one column, which a width compared against the
-    /// shelf's two-column arithmetic tells correctly. On the hub's
-    /// proportional dashboard that same comparison is wrong by construction -
-    /// at the 960pt minimum window a 7-of-12-track card resolves to 525.33pt,
-    /// under the shelf's 526pt, and was being built as a degraded card it was
-    /// not (the scout's finding M3, 88pt of page height).
-    enum CardPlacement: Equatable {
-        /// The wrapping shelf, building this card `width` wide.
-        case shelf(width: CGFloat)
-        /// The hub's hand-placed dashboard, `span` of
-        /// `HelmResponsiveGrid.dashboardColumns` tracks, `width` wide.
-        case dashboard(span: Int, width: CGFloat)
-
-        /// The width the grid built this card for.
-        var width: CGFloat {
-            switch self {
-            case .shelf(let width), .dashboard(_, let width): return width
-            }
-        }
-
-        /// Whether this card is narrower than a span-2 card on the grid that
-        /// placed it.
-        var isNarrowerThanTwoColumns: Bool {
-            let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
-            switch self {
-            case .shelf(let width):
-                return width + 0.5 < spanTwo
-            case .dashboard(let span, let width):
-                // Narrow only when the track share *and* the width both say
-                // so. Half the track grid is the dashboard's analogue of the
-                // shelf's two columns, which is what keeps a 7-track card at
-                // 525.33pt out of the narrow form (M3); the width half keeps
-                // a 5-track briefing that resolves 600pt wide at the
-                // captain's window in the wide one, as it always was.
-                return span * 2 < HelmResponsiveGrid.dashboardColumns && width + 0.5 < spanTwo
-            }
-        }
+    /// Whether a card `width` wide is narrower than a span-2 card: two
+    /// minimum columns and the gap between them. A card's narrow-form
+    /// decisions (the briefing's clause cap, the Claude report's stacked
+    /// reflow) are made from this.
+    static func isNarrowerThanTwoColumns(_ width: CGFloat) -> Bool {
+        width + 0.5 < minModuleWidth * 2 + gridSpacing
     }
     /// The canvas gutter - the scale's 24 (UI-14), which is also the bar's
     /// own side margin, so the cards' edges line up under the bar's.
@@ -168,32 +119,23 @@ final class HomeCanvasController: NSViewController {
     /// first-content line, the same as every other page's - it was 8pt here
     /// and 24pt on half the others.
     static let contentTopMargin: CGFloat = HelmMetrics.pageContentInset
-    /// Below the last row. The hub sizes its rows to fill the viewport less
-    /// these two margins, so when S03 moved the top from 8pt to 12pt the
-    /// foot gave back the same 4pt: the rows' share of the viewport is what
-    /// it was, and at the shortest window a loading card's skeleton still
-    /// fits its row (`LayoutStabilitySelfTest`, 960x620, measured 4pt over
-    /// with the foot left at 24).
+    /// Below the last row. When S03 moved the top from 8pt to 12pt the foot
+    /// gave back the same 4pt, so the page's content area is what it was.
     static let contentBottomMargin: CGFloat = HelmMetrics.s5 - (HelmMetrics.pageContentInset - HelmMetrics.s2)
 
     // MARK: Forwarded actions (never owned)
 
     var onOpenDestination: ((RailDestination) -> Void)?
-    /// The fleet's attention row: the decisions waiting on the captain. Wired
-    /// to Crew › Needs you, which the sidebar layout draws; with nothing wired
-    /// it opens the Fleet page, as it always has.
+    /// The briefing hero's "Open Needs you": the decisions waiting on the
+    /// captain. Wired to Crew › Needs you; with nothing wired it opens the
+    /// Fleet page, as it always has.
     var onOpenCrewDecisions: (() -> Void)?
     var onOpenShiftTask: ((String) -> Void)?
-    /// The greeting row's Refresh - wired to the *existing* refresh triggers
-    /// (`FleetController.refreshIfNeeded()` and `ReviewController`'s own), so
-    /// this page still starts no work of its own.
-    var onRefresh: (() -> Void)?
     /// The Claude status card's own Refresh - wired to `FleetController`'s
     /// existing quota reading, forced past its freshness window.
     ///
-    /// Separate from `onRefresh` because the hero's Refresh re-runs Overview's
-    /// whole pass, and that pass takes the *cached* quota reading when it is
-    /// under five minutes old (`FleetController.quotaFreshness`). That is
+    /// Overview's own refresh pass takes the *cached* quota reading when it
+    /// is under five minutes old (`FleetController.quotaFreshness`). That is
     /// right for a page visit and wrong for a captain pointing at this card
     /// and asking for the number again, so this one forces a fresh
     /// `quota-axi` run. Still not a fetch of this page's own (rule 1 in this
@@ -256,9 +198,6 @@ final class HomeCanvasController: NSViewController {
     /// on failure as well as on success - so this cannot wedge on a
     /// `quota-axi` that is offline or unauthenticated.
     var isRefreshingQuota = false
-    /// When `applyFleet` last delivered a reading - UX5's hero detail line.
-    /// `nil` until the first one lands, which is the "reading now" state.
-    var fleetReadAt: Date?
     var mergedPRs: [MergedPR]?
     var prFetchFailure: String?
     /// UI-12's error state for the merge queue: the last list that was read,
@@ -283,82 +222,29 @@ final class HomeCanvasController: NSViewController {
     // P-02: `nonisolated(unsafe)` because `deinit` reads `focusTimer` from it.
     // Assigned once in `init` and never written again.
     nonisolated(unsafe) let sources: Sources
-    var space: DaylightSpace = .overview
 
     // MARK: Views
 
     let scroll = NSScrollView()
     let document = FlippedView()
     let stack = NSStackView()
-    let greetingLabel = NSTextField(labelWithString: "")
-    let subtitleLabel = NSTextField(labelWithString: "")
-    /// C1's hero: the state badge and its uppercase kicker.
-    ///
-    /// The audit's fix for "one top-left row and then 80% empty paper" is to
-    /// give the hub a focal point - "the briefing/answer banner spanning full
-    /// width with real presence (bigger type, the boat mark, weather-report
-    /// energy) above the uniform card grid". The captain's approved visual
-    /// shows exactly that: a mark, "Nothing needs you right now", the crew/PR
-    /// detail line, and Refresh.
-    ///
-    /// It renders `FleetGreeting.Answer`, which Overview's own banner already
-    /// computes - the same three-state decision and the same copy, not a
-    /// second one - so the hero and the page it links to can never disagree.
-    let heroBadge = IconTileView(size: 40, cornerRadius: 12)
-    let kickerLabel = NSTextField(labelWithString: "")
-    var heroTint: HelmTint = .accent
-    /// The app's one Refresh (`HelmButton.refresh`, UXP-08): a labelled
-    /// secondary button, because Refresh re-reads and is never what a page
-    /// is for.
-    let refreshButton = HelmButton.refresh()
-    /// Plan B's hero *band*: the surface the greeting row sits on.
-    ///
-    /// The captain reviewed C1's shipped vertical centring live and rejected
-    /// it - content floating with an empty margin above *and* below reads as
-    /// uncommitted rather than composed - and picked the finding's option (b)
-    /// instead: "give the hub one full-width hero row ... above the uniform
-    /// card grid", top-anchored, with leftover space trailing at the bottom.
-    ///
-    /// Only Overview has a verdict worth featuring. The other four spaces
-    /// name themselves and nothing more, so there the band is transparent
-    /// with no insets and the header renders as the plain row it already was
-    /// - the change there is purely that it now sits at the top of the page.
-    let heroCard = NSView()
-    var heroCardInsets: [NSLayoutConstraint] = []
-    /// The captain's "Needs Attention" card - what is due today and which
-    /// follow-ups are waiting, merged into one flat list.
-    ///
-    /// It sits between the hero and the module grid because that is where the
-    /// mockup puts it and because it is the one thing on this page that is
-    /// about the captain's own day rather than about the fleet - the grid
-    /// below it is a navigation surface, and burying an overdue task in it
-    /// would be exactly the "80% empty paper" problem C1's hero already
-    /// answered once.
-    ///
-    /// Rule 1 of this file still holds: its rows come from
-    /// `DailyReviewComposer` reading the **injected** `ShiftStore`'s
-    /// already-loaded in-memory lists, which is the same read `fillTasks`
-    /// makes two screens down. No store is constructed and nothing is
-    /// fetched.
-    let attentionCard = NeedsAttentionCard()
     let gridStack = NSStackView()
 
     // MARK: The feel pass (the sidebar layout's Home)
     //
     // The Fable second-opinion review's Stage 1, cut to the feasibility
-    // audit's items 1 to 3: the prototype's Home, drawn natively, on Home's
-    // own space in the sidebar layout. Top to bottom: a greeting as the page
+    // audit's items 1 to 3: the prototype's Home, drawn natively, in the
+    // sidebar layout. Top to bottom: a greeting as the page
     // title with a one-line summary, the Morning briefing as a gradient hero
-    // with the services ring inside it, then the captain's cards. The floating
-    // bar's hand-placed hub is left exactly as it is (`showsArrangedCards` is
-    // false there).
+    // with the services ring inside it, then the captain's cards.
     //
     // The band the feel pass drew between the hero and the cards - four KPI
     // tiles (tasks due today, PRs ready to merge, services healthy, Claude's
     // week) and the Needs attention card with its Refresh - is gone from this
     // page: the captain removed it. The hero and the cards below already carry
-    // each of those figures, so the band repeated them. The attention card
-    // stays on the floating bar's hub, where it is column 1.
+    // each of those figures, so the band repeated them. P-03 of the
+    // 2026-11-25 full review removed the floating bar's hub, the last page
+    // that drew the attention card, and the card's wiring here went with it.
     //
     // Rule 1 holds: every figure here is one this page already reads for a
     // card (the injected `ShiftStore`, the pushed fleet and quota, the health
@@ -384,26 +270,23 @@ final class HomeCanvasController: NSViewController {
     }
 
     var cards: [HelmModuleCard] = []
-    /// P2: the page's cards by module, the placement each was built for, and
+    /// P2: the page's cards by module, the width each was built for, and
     /// the layout they were built into - so a render that changes only data
     /// reconfigures these cards in place instead of rebuilding the grid.
     var cardsByModule: [DaylightModule: HelmModuleCard] = [:]
-    var cardPlacements: [DaylightModule: CardPlacement] = [:]
+    var cardWidths: [DaylightModule: CGFloat] = [:]
     var gridLayoutKey: GridLayoutKey?
-    /// The hub's own-height preferences (`dashboardColumn`), by module, so
-    /// an in-place refresh can move them with the content.
-    var dashboardOwnHeights: [DaylightModule: NSLayoutConstraint] = [:]
 
     // MARK: Home's arranged cards (the sidebar layout, modular-shell stage 4)
 
-    /// The cards Home's own space shows, which the sidebar layout sets
-    /// (`HomeCardLayout`). Nil - the floating bar - keeps the hub's
-    /// hand-placed dashboard exactly as it is.
-    var cardLayout: HomeCardLayout? {
+    /// The cards Home shows, which the sidebar layout sets from the
+    /// captain's saved arrangement (`HomeCardLayout`). A canvas nobody has
+    /// handed one shows the standard set, the same cards a new captain sees.
+    var cardLayout: HomeCardLayout = .standard {
         didSet {
             guard cardLayout != oldValue, isViewLoaded else { return }
-            // Mid-drag only the grid moves: the greeting and the attention
-            // card cannot have changed, and the drag's own card is kept.
+            // Mid-drag only the grid moves: the greeting and the hero cannot
+            // have changed, and the drag's own card is kept.
             if cardResize != nil {
                 resizeArrangedGrid()
             } else {
@@ -414,15 +297,14 @@ final class HomeCanvasController: NSViewController {
     /// Every arrangement the captain makes in Customize, for the shell to keep.
     var onCardLayoutChanged: ((HomeCardLayout) -> Void)?
     /// What Reset brings back: Home's own cards for the captain's profile
-    /// (R2-UX-01 (b)). The sidebar layout sets it; the hub's own five
+    /// (R2-UX-01 (b)). The sidebar layout sets it; the standard set
     /// otherwise.
     var standardCardLayout: HomeCardLayout = .standard
 
-    /// R2-UX-01 (c): the modules the captain's profile hides. The attention
-    /// card speaks only for modules in the sidebar: a Personal Home does not
-    /// tell a writer that their "firstmate home" is missing, that the fleet
-    /// is idle or that setup checks have not run. Empty - the floating bar,
-    /// and Operator - reports everything, exactly as before.
+    /// R2-UX-01 (c): the modules the captain's profile hides. The greeting
+    /// and the briefing hero speak only for modules in the sidebar: a
+    /// Personal Home does not tell a writer that the fleet needs them or
+    /// that services are failing. Empty - Operator - reports everything.
     var hiddenModules: Set<WorkspaceModule> = [] {
         didSet {
             guard hiddenModules != oldValue, isViewLoaded else { return }
@@ -462,21 +344,13 @@ final class HomeCanvasController: NSViewController {
     // **The 2026-10 end-to-end review's PERF-03.** AppKit posts
     // `didResizeNotification` on every frame of a live resize, and every one
     // of them reached `rebuildGrid()`. A width change defeats the in-place
-    // refresh, so each frame tore the grid down - and on the hub, before
-    // that, built six to eight throwaway probe cards and gave each a full
-    // layout pass (`fittingHeight`) to budget the columns.
+    // refresh, so each frame tore the grid down.
     //
-    // Two changes, both from the review:
-    //
-    //   - Probe heights are memoised by (content, width) - see
-    //     `probeHeight(_:width:)`. A probe is only re-measured when what it
-    //     shows or the width it is shown at has changed.
-    //   - Between `willStartLiveResize` and `didEndLiveResize` the grid keeps
-    //     its cards and only its constants move: the content width, each
-    //     card's (or hub column's) width pin, and the hub's own-height
-    //     preferences. One `rebuildGrid()` runs when the drag ends. A drag
-    //     that changes the shelf's column count, or crosses the hub's
-    //     fall-back width, still rebuilds, because that is a different grid.
+    // Between `willStartLiveResize` and `didEndLiveResize` the grid keeps its
+    // cards and only its constants move: the content width and each card's
+    // width pin. One `rebuildGrid()` runs when the drag ends. A drag that
+    // moves a card between rows still rebuilds, because that is a different
+    // grid.
 
     // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
     // this observation. Written on main only, and read once more in `deinit`.
@@ -484,67 +358,25 @@ final class HomeCanvasController: NSViewController {
     private(set) var isInLiveResize = false
 
     /// Each width pin the current grid was built with, and the span it
-    /// covers, so a live resize can move them without rebuilding. On the hub
-    /// these are the three columns' pins; on a shelf, every card's and
-    /// spacer's.
+    /// covers, so a live resize can move them without rebuilding: every
+    /// card's and spacer's.
     var gridWidthPins: [(constraint: NSLayoutConstraint, span: Int)] = []
-    /// The shelf's column count at build time - the live-resize path's test
-    /// for "same grid, new width".
-    var builtShelfColumns = 0
-
-    struct ProbeKey: Hashable {
-        let signature: String
-        let width: CGFloat
-    }
-    /// See `probeHeight(_:width:)`.
-    var probeHeights: [ProbeKey: CGFloat] = [:]
-    /// The keys the plan being computed has read, so the memo can drop
-    /// everything else once it is done - what keeps it "cleared when the
-    /// content changes" without a per-module bookkeeping of its own.
-    var probeKeysInUse: Set<ProbeKey>?
 
     #if FM_SELFTESTS
-    /// PERF-03's counters: real probe layouts, memo hits, and full grid
-    /// rebuilds (the teardown path).
-    var debugProbeMeasurements = 0
-    var debugProbeMemoHits = 0
+    /// PERF-03's counter: full grid rebuilds (the teardown path).
     var debugGridRebuilds = 0
     private(set) var debugApplyThemeCount = 0
     #endif
     var lastGridWidth: CGFloat = 0
-    /// The height the hub's columns were last budgeted for - see
-    /// `containerWidthMayHaveChanged`.
-    var lastGridHeight: CGFloat = 0
-    /// `fm/grandline-home-fit-implement`: on the hub the document is held as
-    /// tall as the viewport, at 499 - so the page fits the window and its
-    /// columns' lists absorb the room, while content that genuinely cannot
-    /// fit (the minimum window with Larger text) still wins and the page
-    /// scrolls as a fallback rather than clipping. Off the hub it is
-    /// inactive, and the other spaces stay top-anchored with the leftover
-    /// trailing below. Under `NSLayoutPriorityWindowSizeStayPut`, and inside
-    /// a scroll view, so it can never become a floor on the window (gotchas
-    /// (13) and (15)).
-    var documentFillsViewport: NSLayoutConstraint?
-    /// The attention card's full-width tie while it sits above the grid
-    /// (every space but the hub's three-column page, where it is column 1).
-    var attentionWidthTie: NSLayoutConstraint?
-    /// The Merge queue's peek rows on the hub's page, chosen from the height
-    /// its column has left (`dashboardRowViews`). The shelf keeps
-    /// `maxPeekRows`.
-    var mergeQueueRowLimit = HelmModuleCard.maxPeekRows
     /// The background services as this render sees them - see
     /// `ServiceHealthSummary`. Taken once at the top of `render()`, which the
     /// registry's observer schedules on every report, and read by the
-    /// attention card's closing note and the Health card alike: R5-BUG-02's
-    /// footer said "7/7 services healthy" beside a card reading "7/8" because
-    /// each asked the registry for itself.
+    /// greeting, the briefing hero's ring and the Health card alike:
+    /// R5-BUG-02's footer said "7/7 services healthy" beside a card reading
+    /// "7/8" because each asked the registry for itself.
     var healthSummary = ServiceHealthSummary()
-    /// Whether the hub's Health card lists its services under the ring -
-    /// set by `dashboardRowViews` when its column has the room, never on the
-    /// shelf.
-    var healthListsServices = false
-    /// C1: the content column's preferred width, retuned on every grid
-    /// rebuild from the column count the grid actually used.
+    /// C1: the content column's preferred width, retuned to the available
+    /// width on every grid rebuild.
     var contentWidthConstraint: NSLayoutConstraint?
     /// Coalesces the render requests that arrive in bursts.
     ///
@@ -614,61 +446,6 @@ final class HomeCanvasController: NSViewController {
         root.wantsLayer = true
         view = root
 
-        greetingLabel.font = HelmType.heroTitle()
-        greetingLabel.lineBreakMode = .byTruncatingTail
-        greetingLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = HelmType.body()
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // gotcha (13): the hero is the largest type on the page and would be a
-        // very effective window-width floor if left at the default.
-        for label in [greetingLabel, subtitleLabel] {
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        }
-
-        kickerLabel.font = HelmType.kicker()
-        kickerLabel.lineBreakMode = .byTruncatingTail
-        kickerLabel.translatesAutoresizingMaskIntoConstraints = false
-        kickerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        kickerLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let textStack = NSStackView(views: [kickerLabel, greetingLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = HelmMetrics.s0
-        textStack.setCustomSpacing(HelmMetrics.s1, after: kickerLabel)
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-
-        refreshButton.target = self
-        refreshButton.action = #selector(refreshTapped)
-        refreshButton.setContentHuggingPriority(.required, for: .horizontal)
-        refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let greetingRow = NSStackView(views: [heroBadge, textStack, refreshButton])
-        greetingRow.orientation = .horizontal
-        greetingRow.alignment = .centerY
-        greetingRow.distribution = .fill
-        greetingRow.spacing = HelmMetrics.s4
-        greetingRow.translatesAutoresizingMaskIntoConstraints = false
-
-        heroCard.translatesAutoresizingMaskIntoConstraints = false
-        heroCard.wantsLayer = true
-        heroCard.addSubview(greetingRow)
-        // Mutable, because the band's padding *is* the difference between a
-        // hero and a plain page header: Overview's verdict gets a real card's
-        // breathing room, and the four spaces with nothing to report get
-        // zero, which puts their row back exactly where it renders today.
-        heroCardInsets = [
-            greetingRow.leadingAnchor.constraint(equalTo: heroCard.leadingAnchor),
-            greetingRow.trailingAnchor.constraint(equalTo: heroCard.trailingAnchor),
-            greetingRow.topAnchor.constraint(equalTo: heroCard.topAnchor),
-            greetingRow.bottomAnchor.constraint(equalTo: heroCard.bottomAnchor),
-        ]
-        NSLayoutConstraint.activate(heroCardInsets)
-
         gridStack.orientation = .vertical
         gridStack.alignment = .leading
         gridStack.spacing = Self.gridSpacing
@@ -677,28 +454,19 @@ final class HomeCanvasController: NSViewController {
 
         stack.orientation = .vertical
         stack.alignment = .leading
-        // UI-14: 16 between the attention card and the dashboard, the same
-        // gap the dashboard's own rows use.
+        // UI-14: 16 between the page's rows, the same gap the grid's own
+        // rows use.
         stack.spacing = Self.gridSpacing
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         buildFeelPass()
         stack.addArrangedSubview(greetingHeader)
         stack.addArrangedSubview(briefingHero)
-        stack.addArrangedSubview(heroCard)
-        stack.addArrangedSubview(attentionCard)
         stack.addArrangedSubview(tipRow)
         stack.addArrangedSubview(gridStack)
         // The prototype's 22pt under the page title, before the hero.
         stack.setCustomSpacing(HelmMetrics.s5, after: greetingHeader)
         tipRow.isHidden = true
-
-        attentionCard.onToggleDone = { [weak self] item in self?.markAttentionItemDone(item) }
-        attentionCard.onOpenItem = { [weak self] item in self?.openAttentionItem(item) }
-        // The hero band's Refresh, moved into the card that replaced the band
-        // on this page - the same `refreshTapped`, so it still re-runs the
-        // existing triggers rather than starting work of its own.
-        attentionCard.onRefresh = { [weak self] in self?.refreshTapped() }
 
         // gotcha (9): `FlippedView`, never a plain `NSView` - y=0 must be the
         // top or short content rests against the bottom of the clip view.
@@ -721,23 +489,19 @@ final class HomeCanvasController: NSViewController {
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
 
-            // C1's horizontal half: the content column is centred and capped
-            // to the width the grid actually needs, so a space with four
-            // cards reads composed instead of left-flushed against a
-            // one-sided void.
+            // C1's horizontal half: the content column is centred between
+            // the gutters, at the width `rebuildGrid` gives it.
             //
             // Inequalities plus a 499 preferred width, never a required `==`
             // tie (gotcha (3)): a required equality here is a window-size
             // trap, and 499 keeps it under `NSLayoutPriorityWindowSizeStayPut`
-            // (gotcha (13)). The cap is derived from the grid's own column
-            // arithmetic rather than being a literal, so card size never
-            // changes - only how much empty column is left over.
+            // (gotcha (13)).
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: document.leadingAnchor, constant: Self.gutter),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -Self.gutter),
             stack.centerXAnchor.constraint(equalTo: document.centerXAnchor),
 
             // Plan B's vertical half: the content is **top-anchored**, and
-            // whatever the space cannot fill trails below it.
+            // whatever the page cannot fill trails below it.
             //
             // C1 shipped the finding's option (a) here - the document held at
             // least as tall as the viewport, the content floating inside it
@@ -751,7 +515,7 @@ final class HomeCanvasController: NSViewController {
             // these are **required equalities** rather than the inequalities
             // C1 needed to leave room to centre in. The bottom one is what
             // makes the document exactly as tall as its content, which is in
-            // turn what makes a space taller than the viewport scroll - so it
+            // turn what makes a page taller than the viewport scroll - so it
             // is load-bearing, not symmetry for its own sake, and dropping
             // back to a `<=` here would leave the document's height undriven.
             //
@@ -762,7 +526,6 @@ final class HomeCanvasController: NSViewController {
             // two required constraints in direct conflict.
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -Self.contentBottomMargin),
 
-            heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             greetingHeader.widthAnchor.constraint(equalTo: stack.widthAnchor),
             briefingHero.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -771,12 +534,6 @@ final class HomeCanvasController: NSViewController {
         let top = stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin)
         top.isActive = true
         stackTop = top
-        let attentionTie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        attentionTie.isActive = true
-        attentionWidthTie = attentionTie
-        let fills = document.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor)
-        fills.priority = HelmDaylightPriority.contentTie
-        documentFillsViewport = fills
 
         let contentWidth = stack.widthAnchor.constraint(equalToConstant: HelmResponsiveGrid.fallbackContainerWidth)
         contentWidth.priority = HelmDaylightPriority.contentTie
@@ -904,31 +661,6 @@ final class HomeCanvasController: NSViewController {
         scrollMemory.restore(scroll) { scrollToTop() }
     }
 
-
-
-    // MARK: Space filter (§5.3)
-
-    var selectedSpace: DaylightSpace { space }
-
-    /// Switch the visible module set. Rebuilds rather than toggling
-    /// `isHidden`: the row packing genuinely changes with the module count,
-    /// and an `isHidden` card left in a row would still occupy its column
-    /// (AGENTS.md gotcha (11) - only an `NSStackView`'s *arranged* subviews
-    /// leave layout when hidden, and these live inside packed rows).
-    func select(space newSpace: DaylightSpace) {
-        guard newSpace != space else { return }
-        // Only Home's own space is arranged, so leaving it ends Customize.
-        if isCustomizing, newSpace != .overview {
-            endCardResize()
-            isCustomizing = false
-            onCustomizingChanged?(false)
-        }
-        space = newSpace
-        render()
-        view.layoutSubtreeIfNeeded()
-        scrollToTop()
-    }
-
     // MARK: Data in (pushed, never fetched)
 
     /// Called by `AppShellController` whenever `FleetController`'s own refresh
@@ -939,15 +671,11 @@ final class HomeCanvasController: NSViewController {
         if debugInputsPinned { return }
         #endif
         self.fleetSnapshot = snapshot
-        // UX5: the hero's all-clear detail line is freshness now rather than a
-        // restatement of the two cards below it - see `heroDetail`. This is
-        // the moment the reading was taken.
-        self.fleetReadAt = Date()
         self.mergedPRs = mergedPRs
         self.prFetchFailure = prFetchFailure
         if let mergedPRs {
             lastGoodPRs = mergedPRs
-            lastGoodPRsAt = fleetReadAt
+            lastGoodPRsAt = Date()
         }
         guard isViewLoaded else { return }
         // Synchronous, unlike the two burst sources below: Overview's refresh
@@ -1033,10 +761,9 @@ final class HomeCanvasController: NSViewController {
     var heroActionTitles: [String] = []
 
     /// Home's "Things you can do" strip: one tip a day for the first week,
-    /// under the attention card, until the captain hides it.
+    /// above the cards, until the captain hides it.
     /// S17: the tip is a `HelmNotice` - an informational notice, so a tinted
-    /// tile and no edge, which keeps UI-4's rule that only the attention card
-    /// carries one on Home. "Hide tips" is its dismiss, remembered in
+    /// tile and no edge (UI-4). "Hide tips" is its dismiss, remembered in
     /// `AppSettings.homeTipsDismissed`.
     lazy var tipRow: HelmNotice = {
         let notice = HelmNotice(dismissTitle: "Hide tips")
@@ -1045,19 +772,6 @@ final class HomeCanvasController: NSViewController {
     }()
     var shownTip: HomeTips.Tip?
     var shownTipDay = 0
-
-    /// What the attention card was last composed from, and until when that
-    /// composition holds (R2-PERF-06). The inputs carry no clock: the clock
-    /// is `validUntil`.
-    struct AttentionComposed {
-        let inputs: DailyReviewInputs
-        let extra: [NeedsAttentionItem]
-        let clear: [String]
-        let hasItems: Bool
-        let headerTitle: String
-        let validUntil: Date
-    }
-    var lastAttention: AttentionComposed?
 
     /// A drag in progress: which card and grip, and where it started.
     struct CardResize {
@@ -1094,9 +808,7 @@ final class HomeCanvasController: NSViewController {
 
     func render() {
         healthSummary = ServiceHealthRegistry.shared.summary()
-        renderGreeting()
         renderFeelPass()
-        renderAttention()
         renderTip()
         rebuildGrid()
         applyTheme(ThemeManager.shared.theme)
@@ -1104,53 +816,20 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: Layout
 
-    /// The width C1's content column should occupy: the grid's own column
-    /// arithmetic, capped at the number of columns this space's cards can
-    /// actually fill.
-    ///
-    /// Pure and `static` so the self-test can assert the arithmetic without
-    /// mounting a page - the interesting cases are "fewer cards than columns"
-    /// (Command: compose) and "more cards than columns" (Overview: unchanged,
-    /// full width), and neither needs a window to check.
-    static func composedContentWidth(available: CGFloat, modules: [DaylightModule],
-                                     spans: (DaylightModule) -> Int = { $0.gridSpan }) -> CGFloat {
-        guard available > 0, !modules.isEmpty else { return max(available, 0) }
-        let maxColumns = HelmResponsiveGrid.columns(containerWidth: available,
-                                                    minItemWidth: minModuleWidth,
-                                                    spacing: gridSpacing)
-        let spansNeeded = modules.reduce(0) { $0 + max(1, min(spans($1), maxColumns)) }
-        let used = min(maxColumns, spansNeeded)
-        guard used < maxColumns else { return available }
-        let unit = HelmResponsiveGrid.itemWidth(containerWidth: available,
-                                                columns: maxColumns,
-                                                spacing: gridSpacing)
-        return unit * CGFloat(used) + gridSpacing * CGFloat(used - 1)
-    }
-
     func gridContainerWidth() -> CGFloat {
         let clip = scroll.contentView.bounds.width
         let usable = clip - Self.gutter * 2
         return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
     }
 
-    /// The height the hub's columns share: the viewport less the page's own
-    /// top and bottom margins.
-    func gridContainerHeight() -> CGFloat {
-        let usable = scroll.contentView.bounds.height - Self.contentTopMargin - Self.contentBottomMargin
-        return usable > 0 ? usable : 600
-    }
-
     /// GL-20's gate: only relay out when this page is actually on screen, and
-    /// only when the width (or, on the hub, the height) genuinely changed. A resize fires many times per
+    /// only when the width genuinely changed. A resize fires many times per
     /// drag; rebuilding fifteen cards on every frame of one is the exact
     /// regression `ToolsController` measured (~3.6ms -> ~20ms per frame).
     func containerWidthMayHaveChanged() {
         guard isViewLoaded, !view.isHidden else { return }
         let width = gridContainerWidth()
-        // The hub's row counts come from its height as well, so there a
-        // height change rebuilds too; every other space is width-only.
-        let heightChanged = usesDashboardLayout && abs(gridContainerHeight() - lastGridHeight) > 0.5
-        guard abs(width - lastGridWidth) > 0.5 || heightChanged else { return }
+        guard abs(width - lastGridWidth) > 0.5 else { return }
         // PERF-03: inside a drag, move the grid's constants and leave its
         // cards; `liveResizeDidEnd` rebuilds once. A rebuild needs no
         // `applyTheme` after it - every new card themes itself as it is
@@ -1168,55 +847,20 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// One live-resize frame, constants only. `false` when the new width
-    /// needs a different grid - the shelf's column count changed, or the hub
-    /// crossed the width it falls back to the shelf at - and the caller
-    /// rebuilds instead.
+    /// needs a different grid - a card crossed the width it is widened at,
+    /// which moves it between rows - and the caller rebuilds instead.
     func resizeGridInPlace(available: CGFloat) -> Bool {
-        guard let built = gridLayoutKey, built.space == space, !gridWidthPins.isEmpty else { return false }
+        guard let built = gridLayoutKey, !gridWidthPins.isEmpty else { return false }
         let modules = visibleModules()
-        guard built.modules == modules else { return false }
-        let height = gridContainerHeight()
-        if built.dashboard {
-            guard dashboardRowViewsWouldApply(available: available, modules: modules) else { return false }
-            let plan = dashboardPlan(available: available)
-            for (pin, span) in gridWidthPins {
-                pin.constant = HelmResponsiveGrid.proportionalWidth(containerWidth: available, span: span,
-                                                                   spacing: Self.gridSpacing)
-            }
-            contentWidthConstraint?.constant = available
-            attentionCard.setLayoutWidth(plan.width)
-            for module in modules {
-                guard let content = plan.contents[module] else { return false }
-                cardsByModule[module]?.configureIfChanged(content)
-            }
-            for (module, ownHeight) in plan.ownHeights {
-                dashboardOwnHeights[module]?.constant = ownHeight
-            }
-        } else if showsArrangedCards {
-            // Home's arranged grid keeps its 24 columns at every width, so a
-            // frame can only move the constants - unless a card crossed the
-            // width it is widened at, which moves it between rows.
-            guard built.spans == modules.map(cardSpan) else { return false }
-            let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
-            for (pin, span) in gridWidthPins {
-                pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
-            }
-            contentWidthConstraint?.constant = available
-            attentionCard.setLayoutWidth(available)
-        } else {
-            let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
-            let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
-                                                     spacing: Self.gridSpacing)
-            guard columns == builtShelfColumns else { return false }
-            let unit = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: Self.gridSpacing)
-            for (pin, span) in gridWidthPins {
-                pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
-            }
-            contentWidthConstraint?.constant = width
-            attentionCard.setLayoutWidth(width)
+        // The grid keeps its `HomeCardGrid.columns` at every width, so a
+        // frame can only move the constants.
+        guard built.modules == modules, built.spans == modules.map(cardSpan) else { return false }
+        let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
+        for (pin, span) in gridWidthPins {
+            pin.constant = unit * CGFloat(span) + Self.gridSpacing * CGFloat(span - 1)
         }
+        contentWidthConstraint?.constant = available
         lastGridWidth = available
-        lastGridHeight = height
         return true
     }
 
@@ -1224,11 +868,6 @@ final class HomeCanvasController: NSViewController {
         guard let clip = scroll.contentView as NSClipView? else { return }
         clip.scroll(to: NSPoint(x: 0, y: 0))
         scroll.reflectScrolledClipView(clip)
-    }
-
-    @objc func refreshTapped() {
-        onRefresh?()
-        render()
     }
 
     /// The Claude card's Refresh. The subprocess itself runs on
@@ -1264,70 +903,13 @@ final class HomeCanvasController: NSViewController {
         // window cannot make the check pass vacuously.
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        paintHeroBand(theme)
         paintTip(theme)
-        greetingLabel.font = HelmType.heroTitle()
-        greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         greetingTitle.attributedStringValue = NSAttributedString(
             string: greetingTitle.stringValue,
             attributes: HelmType.displayTitleAttributes(color: HelmTheme.nsColor(theme.chromeInkHex)))
         greetingSummary.font = .systemFont(ofSize: HelmType.scaled(Self.greetingSummarySize))
         greetingSummary.textColor = HelmTheme.mutedInk(theme)
-        // Plain `body()` on every space now. The step up to `sectionTitle()`
-        // belonged to the hub's hero band, whose detail line carried real
-        // numbers; the four spaces that still draw this row only name
-        // themselves, and the verdict's own detail line moved to the merged
-        // attention card (`hubHeader`).
-        subtitleLabel.font = HelmType.body()
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
-        // C1's hero. The kicker is `mutedInk`, never the hero's own tint:
-        // a `HelmTint` is safe as a fill or a bar and is *not* automatically
-        // safe as text (`HelmContrast`'s own rule, and the §5.7 defect this
-        // app has fixed three times). The tint reaches the badge, which is
-        // contrast-guarded by `IconTileView`, and stops there.
-        kickerLabel.font = HelmType.kicker()
-        kickerLabel.textColor = HelmTheme.mutedInk(theme)
-        heroBadge.applyTheme(theme)
-        attentionCard.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
-    }
-
-    /// Plan B's band: a real card surface, washed with the verdict's own hue.
-    ///
-    /// The captain's approved mockup draws the hero as a tinted band with its
-    /// own border sitting directly under the page chrome, with the card grid
-    /// immediately below - so the hue reaches a *fill* and a *border* and
-    /// stops there. It never reaches the copy: a `HelmTint` is safe as a fill
-    /// and is not automatically safe as text (`HelmContrast`'s own rule, and
-    /// the §5.7 defect this app has fixed four times).
-    ///
-    /// The border alpha and the flattening are `HelmAccentRow`'s, not a
-    /// second recipe - the band is the same idiom that class already uses for
-    /// a row carrying a signal, one level up. `HelmContrast.mix`, never
-    /// `NSColor.blended`: that method converts into a *calibrated* space
-    /// first, so its result drifts from the straight-sRGB composite alpha
-    /// compositing actually performs (Phase 4's segmented-tabs lesson).
-    /// The hero row's chrome, on the four spaces that still have one.
-    ///
-    /// **It is a plain row, not a band, and no longer has a second mode.**
-    /// C1 gave the hub a hero *band* - a washed surface in the verdict's own
-    /// hue, with a border, a corner radius and `heroBandPadding` of room -
-    /// and the hub is the only space that ever raised one, because it was
-    /// the only one with a verdict to feature.
-    /// `fm/grandline-home-page-visual-overhaul` moved that verdict into the
-    /// merged attention card (see `hubHeader`), so the band had no remaining
-    /// caller and its whole derivation - the wash ladder, the per-theme
-    /// contrast search that picked a step, and the padding that made a row
-    /// into a card - was unreachable code that no case could have failed
-    /// against. It is deleted rather than left behind a flag that is now
-    /// always false.
-    ///
-    /// What is left is what the other four spaces always rendered.
-    func paintHeroBand(_ theme: HelmTheme) {
-        for constraint in heroCardInsets { constraint.constant = 0 }
-        heroCard.layer?.backgroundColor = NSColor.clear.cgColor
-        heroCard.layer?.borderWidth = 0
-        heroCard.layer?.cornerRadius = 0
     }
 
     // MARK: Probe / self-test surface
@@ -1340,9 +922,8 @@ final class HomeCanvasController: NSViewController {
     #if FM_SELFTESTS
     var moduleCardsForTests: [HelmModuleCard] { cards }
     /// The grid's rows as built, so a suite can assert the *placement* and
-    /// not merely that five cards exist. The dashboard's whole subject is
-    /// which card sits where and how wide, and `cards` is a flat list that
-    /// cannot see any of it.
+    /// not merely that the cards exist: which card sits where and how wide,
+    /// which `cards`, a flat list, cannot see.
     var gridRowsForTests: [NSStackView] { gridStack.arrangedSubviews.compactMap { $0 as? NSStackView } }
     /// Whether the grid was last laid out for the width the page has now.
     /// False from the moment the clip view changes width (the sidebar
@@ -1350,16 +931,6 @@ final class HomeCanvasController: NSViewController {
     /// `containerWidthMayHaveChanged` reflows the cards - the window a suite
     /// must wait out rather than guess at with a delay (R4-PROC-01).
     var gridIsCurrentForTests: Bool { abs(gridContainerWidth() - lastGridWidth) <= 0.5 }
-    /// Whether the hub is using the hand-placed dashboard rather than the
-    /// wrapping grid. Read from the same two conditions the layout itself
-    /// takes, via the row shape it produces - never a flag set alongside it,
-    /// which could say yes while the grid said otherwise.
-    var usesDashboardLayoutForTests: Bool {
-        usesDashboardLayout
-            && dashboardRowViewsWouldApply(available: gridContainerWidth(),
-                                           modules: visibleModules())
-    }
-    var heroCardHiddenForTests: Bool { heroCard.isHidden }
     var visibleModulesForTests: [DaylightModule] { visibleModules() }
     /// Customize's tray while it is in the page, or nil.
     var customizeTrayForTests: HomeCustomizeTray? { customizeTray.superview == nil ? nil : customizeTray }
@@ -1370,38 +941,13 @@ final class HomeCanvasController: NSViewController {
     /// The size badge, which is in the page only while a card is dragged.
     var sizeBadgeForTests: HomeCardSizeBadge { sizeBadge }
     func cardForTests(_ module: DaylightModule) -> HelmModuleCard? { cardsByModule[module] }
-    /// The captain's Needs Attention card, so a suite can drive the real card
-    /// on the real page rather than a card it built itself - which is what
-    /// proves the wiring as well as the render.
-    var attentionCardForTests: NeedsAttentionCard { attentionCard }
-    /// REL-04: the verdict the hub's header and attention row are built from.
+    /// REL-04: the fleet verdict the greeting and the briefing hero read.
     var overviewAnswerForTests: FleetGreeting.Answer? { overviewAnswer() }
-    var attentionCardHiddenForTests: Bool { attentionCard.isHidden }
-    var greetingForTests: (title: String, subtitle: String, kicker: String) {
-        (greetingLabel.stringValue, subtitleLabel.stringValue, kickerLabel.stringValue)
-    }
-    /// C1's hero badge, for the suite that asserts it reports a verdict on
-    /// Overview and only an identity elsewhere.
-    var heroTintForTests: HelmTint { heroTint }
-    var heroBadgeHiddenForTests: Bool { heroBadge.isHidden }
     /// Plan B's layout: where the top-anchored content column actually sits
     /// inside the document.
     var contentFrameForTests: CGRect { stack.frame }
-    /// The hero row's resolved chrome - a paint this app cannot see any
-    /// other way, since `cacheDisplay` renders a surface and a bare row
-    /// equally happily.
-    ///
-    /// There is no `isBanner` any more: the banner had exactly one caller,
-    /// the hub, and the hub has no hero row at all now (`heroCardHiddenForTests`).
-    var heroBandForTests: (fill: NSColor?, borderWidth: CGFloat, radius: CGFloat, inset: CGFloat) {
-        (heroCard.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
-         heroCard.layer?.borderWidth ?? 0,
-         heroCard.layer?.cornerRadius ?? 0,
-         heroCardInsets.first(where: { $0.firstAttribute == .leading })?.constant ?? 0)
-    }
     var documentHeightForTests: CGFloat { document.frame.height }
     var viewportHeightForTests: CGFloat { scroll.contentView.bounds.height }
-    var gridRowCountForTests: Int { gridStack.arrangedSubviews.count }
     /// Force one synchronous render, bypassing the coalescing hop - so a
     /// self-test can establish a known starting state before driving the
     /// signal it is actually testing.
@@ -1445,28 +991,12 @@ final class HomeCanvasController: NSViewController {
     /// with no reading to keep.
     var debugQuota: (snapshot: QuotaSnapshot?, failure: String?) { (quotaSnapshot, quotaFailure) }
 
-    /// A fabricated attention summary, rendered in place of the one the
-    /// digest would compose. The tour lab's `demo attention N` and
-    /// `HomeFitSelfTest` use it to put an exact number of rows on the page
-    /// without seeding a Tasks store with dated tasks.
-    /// P5: the attention card's rows, as its list holds them.
-    var debugAttentionRows: [NSView] { attentionCard.debugRows }
-    /// How many times the attention card's digest has been composed.
-    var debugDigestCount = 0
-    var debugAttentionCard: NeedsAttentionCard { attentionCard }
-    /// R2-UX-01 (c): the attention card's signal rows and closing notes, as
-    /// this page composes them now.
-    var debugSignalAttentionIDs: [String] { signalAttentionItems().map(\.id) }
-    var debugClearNotes: [String] { clearNotes() }
-    var debugAttentionOverride: NeedsAttentionSummary?
-    var debugAttentionSubline = "1 decision waiting - the crew is holding for you."
     /// The scroll view's document, for a render of the whole page rather
     /// than the part that fits the window.
     var debugDocumentView: NSView { document }
 
     /// The page's geometry as text: the viewport, the document, the overflow
-    /// between them, the attention card and every module card's resolved and
-    /// fitting heights. The tour lab's `measure` verb prints it; the numbers
+    /// between them and every module card's resolved and fitting heights. The tour lab's `measure` verb prints it; the numbers
     /// in the Home fit history entry came from it.
     func debugMeasureLines() -> [String] {
         view.layoutSubtreeIfNeeded()
@@ -1476,11 +1006,6 @@ final class HomeCanvasController: NSViewController {
         out.append("document height \(f(document.frame.height))")
         out.append("overflow \(f(document.frame.height - scroll.contentView.bounds.height))")
         out.append("grid width \(f(lastGridWidth))")
-        out.append("attention card \(f(attentionCard.frame.width))x\(f(attentionCard.frame.height))"
-                   + " fit \(f(attentionCard.fittingSize.height))")
-        for (index, row) in attentionCard.debugRows.enumerated() {
-            out.append("  attention row \(index) h \(f(row.frame.height))")
-        }
         for card in cards {
             out.append("card \(card.debugHeaderText.title) \(f(card.frame.width))x\(f(card.frame.height))"
                        + " fit \(f(card.fittingSize.height))")

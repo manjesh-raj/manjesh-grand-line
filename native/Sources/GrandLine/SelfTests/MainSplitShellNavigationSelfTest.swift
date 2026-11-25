@@ -618,12 +618,6 @@ enum MainSplitShellNavigationSelfTest {
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "Home still shows the previous page's actions", &ok)
-        // R2-UX-02: Home has one space here, its own. A route that still
-        // names another one lands on Home's own cards.
-        shell.selectSpace(.operations)
-        settle(shell)
-        check(shell.debugHomeCanvas.selectedSpace == .overview && shell.debugCurrentDestination == .homeCanvas,
-              "a route naming the Operations space filtered Home to \(shell.debugHomeCanvas.selectedSpace)", &ok)
 
         // The badge is the bell's own count, from the one store. (`debugReset`
         // tells no observer, so the first real change is what the toolbar sees.)
@@ -717,8 +711,7 @@ enum MainSplitShellNavigationSelfTest {
         let canvas = shell.debugHomeCanvas
         // The feel pass draws the briefing as the hero above the grid, so the
         // grid is the arranged cards less that one (`checkHomeFeelPass`).
-        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing }
-                && !canvas.usesDashboardLayoutForTests,
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing },
               "Home shows \(canvas.visibleModulesForTests.map(\.rawValue)), not its arranged cards", &ok)
         check(shell.toolbar.debugModuleActionButton?.title == "Customize", "Home offers no Customize", &ok)
         // Claude's card carries a header action (Refresh), which the arranging
@@ -921,8 +914,11 @@ enum MainSplitShellNavigationSelfTest {
         check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
         check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
         // The captain removed the band between the hero and the cards: no
-        // KPI tiles and no Needs attention card on Home's arranged space.
-        check(canvas.attentionCardHiddenForTests, "Home still draws the Needs attention card under the hero", &ok)
+        // KPI tiles and no Needs attention card on Home.
+        func findsAttentionCard(_ view: NSView) -> Bool {
+            (!view.isHidden && view is NeedsAttentionCard) || view.subviews.contains { findsAttentionCard($0) }
+        }
+        check(!findsAttentionCard(canvas.view), "Home still draws the Needs attention card under the hero", &ok)
         func findsCaption(_ view: NSView, _ words: String) -> Bool {
             if !view.isHidden, let label = view as? NSTextField, label.stringValue == words { return true }
             return view.subviews.contains { !$0.isHidden && findsCaption($0, words) }

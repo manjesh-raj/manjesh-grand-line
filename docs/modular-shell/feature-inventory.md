@@ -31,6 +31,7 @@ The captain reversed that: the floating bar, its space pills, drill header, quic
 Settings › Appearance has no Window layout row.
 A stored `fm.workspaceLayout` (and the bar's `fm.quickAccess`) is removed once at launch (`AppSettings.retireFloatingBarLayout`), so an install that had chosen the floating bar opens on the sidebar.
 The chrome rows below name the sidebar shell's code only, and the rows for menu items, page actions and preferences that existed only for the floating bar were removed with it.
+Home's own floating-bar parts went in P-03's second part: the hand-placed dashboard, the space filter over the card grid, the Needs Attention column with its Refresh, and the first-run hero copy, so their rows are gone too.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.
@@ -122,7 +123,8 @@ One row per `RailDestination`. The route id stays the deep-link id after the con
 
 ## Space pills
 
-The five pills that filter Home's card grid today.
+The five pills that filtered Home's card grid in the floating bar.
+A space still names a destination's area in its Recents kicker.
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
@@ -482,7 +484,6 @@ The shell's public routes, the notification categories and buttons, the App Inte
 | `link.route.selectSessionByShortcut` | Route `selectSessionByShortcut` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; since R2-ARCH-05 its callers reach it on `workspace.navigator` directly, with no shell forward) |  |
 | `link.route.selectSettings` | Route `selectSettings` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; since R2-ARCH-05 its callers reach it on `workspace.navigator` directly, with no shell forward) |  |
 | `link.route.selectSnippets` | Route `selectSnippets` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (moved there in stage 2; since R2-ARCH-05 its callers reach it on `workspace.navigator` directly, with no shell forward) |  |
-| `link.route.selectSpace` | Route `selectSpace` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (space pills become sidebar groups; the call selects Home's matching card set until step 5) |  |
 | `link.route.show` | Route `show` | AppShellController - called by menus, ⌘K, notifications, App Intents, menu bar extras or Home | Navigator (show(route) for every destination; stage 2 extracts it) |  |
 | `link.route.openModule` | Route `openModule` | WorkspaceShellController - the Go menu's module rows (R2-UX-02); the sidebar layout reopens the module's last tab | Sidebar (the same as the module's sidebar row) |  |
 | `link.route.openModuleTab` | Route `openModuleTab` | WorkspaceShellController - the Go menu's tab rows (R2-UX-02) | Toolbar (the same as clicking the module's tab) |  |
@@ -812,7 +813,6 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.HelmPlateCard` | HelmPlateCard controls | `deleteClicked`, `openClicked` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmRevealableSecretField` | HelmRevealableSecretField controls | `toggleReveal` | Every module (a shared component; it travels with each page that uses it) |  |
 | `action.HelmZoomStepper` | HelmZoomStepper controls | `larger`, `reset`, `smaller` | Every module (a shared component; it travels with each page that uses it) |  |
-| `action.HomeCanvasController` | HomeCanvasController controls | `refreshTapped` | Home (Hide tips, R5-UX-03's first-week strip, is the tip notice's own dismiss since S17: `action.HelmNotice`) |  |
 | `action.HomeCardLayout` | HomeCardLayout controls | `WorkspaceSidebarMenuItem.fire`, `addClicked`, `doneClicked`, `earlierClicked`, `hideClicked`, `laterClicked`, `resetClicked`, `resetSizeClicked` | Home (Customize: the tray's Add a Card, Reset Layout and Done, and each card's Reset Size, earlier, later and hide; the size itself is dragged from the card's edges) |  |
 | `action.HomeCardStyle` | HomeCardStyle controls | `Dispatcher.pick` | Home (the palette button on the Claude usage and Fleet hero cards: Size - Narrow, Default, Full width - on Home's own arranged cards, Colour - the theme accent (the theme's hero colour, which a palette may pin), seven presets or a custom colour that stay as picked in every theme - wherever the card is drawn, and Hide from Home on Home's own arranged cards) |  |
 | `action.HostEditorController` | HostEditorController controls | `advancedToggled`, `deleteHost`, `editPortForwarding`, `panelCancelClicked`, `panelMenuClicked`, `panelMenuItemPicked`, `panelPrimaryClicked`, `panelSaveClicked`, `panelTestClicked`, `pickColor`, `pickIcon`, `pillClicked` | Connections › Hosts (host editor) |  |
@@ -1052,8 +1052,8 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 |---|---|---|---|---|
 | `chrome.wordmark` | The app's logo tile and "Grand Line" wordmark | Bar, leading edge, on Home | Sidebar (the workspace header at the top of the sidebar: Grand Line, this Mac, in the gradient's ink with a translucent glyph tile since Sb-4) | `WorkspaceSidebar.swift` `final class WorkspaceSidebarHeader` |
 | `chrome.sidebarHeaderRule` | A divider and room between the account header and Home | Not in the app | Sidebar (stage 6 drew a 1pt rule here; the feel pass put a search pill here; since the captain's change the toolbar's Search and ⌘K, on every page, are the way in, and an 8pt gap separates the header from Home) | `WorkspaceSidebar.swift` `static let headerGap` |
-| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; R2-UX-02 retired Home's spaces in the sidebar layout, so Home is its own arranged cards and Customize adds any other space's card) | `MainSplitShellController.swift` `override func selectSpace(_ space: DaylightSpace)` |
-| `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `DaylightSpace.swift` `func isVisible(in space` |
+| `chrome.spacePills` | Five space pills that filter Home's card grid | Bar, centre, on Home | Sidebar (the modules are the map; R2-UX-02 retired Home's spaces in the sidebar layout, and since P-03 Home is its own arranged cards and Customize adds any other space's card) | `WorkspaceSidebar.swift` `final class WorkspaceSidebarController` |
+| `chrome.spaceFilter` | Home's canvas shows one space's cards at a time | Home canvas, picked by a pill | Home (Customize adds any card to Home; the module pages are one sidebar click away) | `HomeCardLayout.swift` `final class HomeCustomizeTray` |
 | `chrome.drillBack` | Back to Home from any page | Bar's drill header back chevron | Toolbar (back and forward buttons at the leading edge) | `WorkspaceToolbar.swift` `@objc private func navigationClicked`; `NavigationHistory.swift` `struct NavigationHistory` |
 | `chrome.drillTitle` | The page's tile and title | Bar's drill header | Toolbar (the crumb names the module and its group - R2-UX-05 made it the one place that does: the content column carries the page's live line under it, and in the sidebar layout Crew's greeting and Settings' hero are that line) | `WorkspaceToolbar.swift` `func setCrumb(group: String?, module: String)`; `WorkspaceModuleHeader.swift` `final class WorkspaceModuleHeader` |
 | `chrome.drillSubtitle` | A page's live subtitle (counts, sync state) | Bar's drill header, from each page's `drillHeaderSubtitle` | Every module (the line at the top of the content column, the same live text, and the only thing there since R2-UX-05; Home's is the date, Crew's In flight is its live counts, Settings' is the category's description, and Connections and Console have none) | `DestinationRegistry.swift` `var drillHeaderSubtitle: String? { get }`; `MainSplitShellController.swift` `override func workspaceSubtitleMayHaveChanged()`; `MainSplitShellController.swift` `static func homeSubtitle(` |
@@ -1106,13 +1106,11 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `surface.home.greeting` | Time-of-day greeting with the fleet verdict | Home hero | Home (the page heading and its subtitle) | `HomeCanvasController+Briefing.swift` `func renderGreeting` |
-| `surface.home.needsAttention` | Needs you: due-today tasks, crew decisions and failing checks, with inline Reply | Home's attention column | Home (the Needs you card, first in the default set) | `NeedsAttentionCard.swift` `final class NeedsAttentionCard` |
+| `surface.home.greeting` | Time-of-day greeting with the fleet verdict | Home hero | Home (the page heading and its subtitle) | `HomeCanvasController+Briefing.swift` `func renderFeelPass` |
 | `surface.home.briefing` | Morning briefing paragraph, Regenerate and Dismiss until tomorrow | Home card | Home (Morning briefing card) | `MorningBriefingCard.swift` `final class MorningBriefingCard` |
 | `surface.home.claudeUsage` | Claude's five quota figures as a usage report | Home card | Home (Claude card) | `HomeCanvasController+Claude.swift` `func fillClaudeStatus` |
 | `surface.home.mergeQueue` | Merge queue with Merge on the ready PRs | Home card | Home (Merge queue card) | `HomeCanvasController+MergeQueue.swift` `func fillMergeQueue` |
-| `surface.home.firstRun` | First-run invitation copy when nothing is saved yet | Home hero | Home (unchanged copy) | `HomeCanvasController+Attention.swift` `static func firstRunHeroCopy` |
-| `surface.home.customize` | Customize Home: reorder, size, hide and restore cards | Not in the app today | Home (new: the configurable card set from the prototype) | `DaylightSpace.swift` `var appearsOnOverview: Bool` |
+| `surface.home.customize` | Customize Home: reorder, size, hide and restore cards | Not in the app today | Home (new: the configurable card set from the prototype) | `HomeCanvasController+Customize.swift` `func setCustomizing` |
 
 ## Crew
 

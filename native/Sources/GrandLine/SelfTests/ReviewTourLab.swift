@@ -86,9 +86,6 @@ enum ReviewTourLab {
         /// reading - the same shape as the captain's own Home screenshot - so
         /// a tour can render Home with real content and no firstmate home.
         case demoHome
-        /// Put exactly this many fabricated attention rows on Home, in the
-        /// captain's own shape (`demoAttentionSummary`).
-        case demoAttention(Int)
         /// Seed a three-clause Morning briefing.
         case demoBriefing
         /// Seed the Tasks page's (scratch) store with the shapes a real
@@ -392,10 +389,6 @@ enum ReviewTourLab {
                 guard ["claude", "fleet", "merge"].contains(card) else { return .failure(.badArgument(argument)) }
                 return .success(.demoLoading(card))
             }
-            if argument.hasPrefix("attention "),
-               let count = Int(argument.dropFirst("attention ".count)), count >= 0 {
-                return .success(.demoAttention(count))
-            }
             guard argument == "home" else { return .failure(.badArgument(argument)) }
             return .success(.demoHome)
         case "ux":
@@ -648,12 +641,6 @@ enum ReviewTourLab {
                 seedDemoHome(shell.debugHomeCanvas)
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("demo home")
-            case .demoAttention(let count):
-                let canvas = shell.debugHomeCanvas
-                canvas.debugAttentionOverride = demoAttentionSummary(count: count)
-                canvas.debugRenderNow()
-                shell.view.layoutSubtreeIfNeeded()
-                log.append("demo attention \(count)")
             case .demoBriefing:
                 seedDemoBriefing()
                 shell.debugHomeCanvas.debugRenderNow()
@@ -1553,6 +1540,9 @@ enum ReviewTourLab {
     /// `count` attention rows in the captain's own shape: his two overdue
     /// follow-ups and the fleet decision first (his screenshot), then the
     /// kinds the digest can add, up to its own maximum of eleven.
+    /// `NeedsAttentionViewSelfTest` renders it into a standalone card; the
+    /// `demo attention N` verb that put it on Home went with the floating
+    /// bar's hub in P-03.
     static func demoAttentionSummary(count: Int) -> NeedsAttentionSummary {
         let pool: [NeedsAttentionItem] = [
             NeedsAttentionItem(id: "f1", kind: .followUp, source: "Follow-up",
@@ -1606,10 +1596,6 @@ enum ReviewTourLab {
             clearNotes: [ServiceHealthRegistry.shared.summary().allHealthyNote,
                          "Claude plan limits comfortable"].compactMap { $0 })
     }
-
-    /// The most rows `demoAttentionSummary` can produce, which is the most
-    /// the digest's own caps allow (5 due tasks, 3 follow-ups, 3 signals).
-    static let demoAttentionMaximum = 11
 
     /// Module-card heights at the widths Home's columns take at the three
     /// window sizes the fit suite checks, measured in a bare host view.

@@ -628,12 +628,10 @@ extension AppDelegate {
         // at two repo docs with no other entry point. Their removal drops
         // the now-dead `openRepoDoc`/`openSetupGuide`/`openReadme` helpers
         // (their only callers) and `AppShellController`'s
-        // `selectSpaceByShortcut(_:)`/`toggleTheme()` menu-item wrappers
-        // (`selectSpace(_:)` itself is still very much alive - it's what
-        // `DaylightBarController`'s own space pills call; only the
-        // `NSMenuItem`-shaped `⌘1`-`⌘5` wrapper around it is gone. Same for
-        // `ThemeManager.shared.toggle()`, still called directly by
-        // `DaylightBarController`'s own theme-toggle button).
+        // `selectSpaceByShortcut(_:)`/`toggleTheme()` menu-item wrappers.
+        // (`selectSpace(_:)` outlived them while `DaylightBarController`'s
+        // space pills called it, and went with the floating bar in P-03 of
+        // the 2026-11-25 full review.)
         //
         // The Tab menu (new / duplicate / rename / close / reconnect / jump
         // to tab N) is a separate, later removal
