@@ -38,7 +38,10 @@
 // Secrets and Launchers cards and attention banner these cases first read.
 // The same GL-14 properties are asserted on what the page draws now: the
 // secrets table's own empty row, its record rows, and S-1's split card (its
-// headline, its body and its launcher rows).
+// headline, its body and its launcher rows). The launchers' count is that
+// card's header line, and their actions are its rows' own View Fix buttons:
+// the undrawn launchers table these cases read for a while went in the
+// P-03 sweep.
 
 #if FM_SELFTESTS
 
@@ -116,8 +119,10 @@ enum VaultLoadingStateSelfTest {
             return "a failed read renders \"\(subtitle)\", which does not tell the captain the read failed"
         }
         // The counts must not read as zero either.
-        if controller.debugSecretsBadge == "0" || controller.debugToolsBadge == "0" {
-            return "count badges show 0/0 for a failed read (secrets=\(controller.debugSecretsBadge), tools=\(controller.debugToolsBadge))"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        if controller.debugSecretsBadge == "0" || launchers.contains("0") {
+            return "the counts show zero for a failed read (secrets=\(controller.debugSecretsBadge), "
+                + "launchers=\"\(launchers)\")"
         }
         // And the card bodies must say so, not show the "no saved secrets
         // yet" copy that invites the captain to add one.
@@ -145,8 +150,9 @@ enum VaultLoadingStateSelfTest {
         guard subtitle.contains("0 secrets") else {
             return "a genuinely empty vault renders \"\(subtitle)\" instead of a real zero"
         }
-        guard controller.debugSecretsBadge == "0", controller.debugToolsBadge == "0" else {
-            return "badges read \(controller.debugSecretsBadge)/\(controller.debugToolsBadge) for a real zero"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        guard controller.debugSecretsBadge == "0", launchers.hasSuffix("\u{00B7} 0") else {
+            return "the counts read \(controller.debugSecretsBadge) and \"\(launchers)\" for a real zero"
         }
         guard let text = controller.debugSecretsTablePlaceholderText,
               text.lowercased().contains("no saved secrets yet") else {
@@ -166,8 +172,9 @@ enum VaultLoadingStateSelfTest {
         guard records.count == 2 else {
             return "2 secrets rendered \(records.count) rows"
         }
-        guard controller.debugSecretsBadge == "2", controller.debugToolsBadge == "1" else {
-            return "badges read \(controller.debugSecretsBadge)/\(controller.debugToolsBadge) for 2 secrets and 1 tool"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        guard controller.debugSecretsBadge == "2", launchers.hasSuffix("\u{00B7} 1") else {
+            return "the counts read \(controller.debugSecretsBadge) and \"\(launchers)\" for 2 secrets and 1 tool"
         }
         guard let subtitle = controller.drillHeaderSubtitle, subtitle.contains("2 secrets") else {
             return "the drill subtitle lost its real counts: \(controller.drillHeaderSubtitle ?? "nil")"
@@ -247,20 +254,18 @@ enum VaultLoadingStateSelfTest {
         let (window, controller) = mounted()
         defer { window.contentView = nil }
         controller.debugRender(secrets: [], tools: [nodeTool, VaultTool(name: "claude", commands: ["claude"], status: .hardened)])
-        let rows = controller.debugToolTableRows
+        // S-1's rows are what the page draws for the launchers. Re-check
+        // lives on the fix sheet (`theFixSheetShowsCopyableCommandsAndRunsNothing`).
+        let rows = controller.debugHeroSplit?.debugRows ?? []
         guard rows.count == 2 else { return "expected 2 launcher rows, got \(rows.count)" }
-        guard case .title(_, let subtitle, _, _, _, _)? = rows[0].cells["launcher"],
-              subtitle?.contains("symbolic link") == true else {
-            return "the table row's subtitle is not the doctor's message"
+        guard rows[0].debugDetail.contains("symbolic link") else {
+            return "the issue row's detail is not the doctor's message: \(rows[0].debugDetail)"
         }
-        guard rows[0].primary?.title == "View Fix\u{2026}", rows[0].activate != nil else {
+        guard rows[0].fixButton?.title == "View Fix\u{2026}", rows[0].onFix != nil else {
             return "an issue row has no way to open its fix steps"
         }
-        guard rows[0].menu.map(\.title) == ["Re-check"] else {
-            return "an issue row's menu is \(rows[0].menu.map(\.title)), expected only Re-check"
-        }
-        guard rows[1].primary == nil, rows[1].activate == nil, rows[1].menu.isEmpty else {
-            return "a hardened launcher grew an action it has nothing to do with"
+        guard rows[1].fixButton == nil else {
+            return "a hardened launcher grew a View Fix button it has nothing to do with"
         }
         return nil
     }
@@ -282,8 +287,7 @@ enum VaultLoadingStateSelfTest {
             return "a failed re-check cleared the reading it could not replace: \"\(said())\" \(states())"
         }
         controller.debugFinishRecheck("node", VaultTool(name: "node", commands: ["npm"], status: .hardened))
-        guard controller.debugToolTableRows.filter(\.isRecord).count == 2,
-              controller.debugHeroSplit?.debugRows.count == 2 else {
+        guard controller.debugHeroSplit?.debugRows.count == 2 else {
             return "a re-check changed the number of launchers"
         }
         guard states() == ["Hardened", "1 issue"] else {

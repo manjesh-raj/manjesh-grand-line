@@ -23,7 +23,7 @@
 //
 // This view owns rendering only. Every action is a closure back to
 // `ConsoleController`, which owns the store and the attach points - the same
-// forward-don't-own convention `HostsListSection`/`SchedulesCardView` follow.
+// forward-don't-own convention `SchedulesCardView` follows.
 
 import AppKit
 

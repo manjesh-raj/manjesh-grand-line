@@ -64,9 +64,6 @@ enum DaylightSpace: String, CaseIterable {
         case .engineering: return "Engineering"
         }
     }
-
-    /// The 1-based index this space's `⌘N` shortcut carries.
-    var shortcutIndex: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
 }
 
 /// Every module the canvas can render.

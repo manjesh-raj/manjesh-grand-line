@@ -1781,8 +1781,8 @@ enum SelfTestDispatch {
         // `fm/grandline-codepreview-file-sidebar`: Code Preview's snippet list, split
         // the same way - `CodePreviewSidebarSelfTest` is pure logic (the list's order,
         // the filter, the icon table, the remembered visibility and width, the ⌘B menu
-        // item) and runs in CI; `CodePreviewSidebarViewSelfTest` mounts the real page
-        // in a real window and is in NEEDS_SESSION.
+        // item) and runs in CI. The list in a real window has had no suite of its
+        // own since P-03 part 2.
         if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS"] == "1" {
             exit(CodePreviewSidebarSelfTest.run() ? 0 : 1)
         }
@@ -2061,8 +2061,8 @@ enum SelfTestDispatch {
 
         // The row-width/button-visibility contract that regressed a second time when
         // #227 ported this row into a reused NSTableView cell view without carrying
-        // forward the "reused row, toggling button visibility" fix
-        // `HostsListRecordView` already established. See
+        // forward the "reused row, toggling button visibility" fix the Hosts
+        // page's list rows had already established. See
         // ReviewPRRowButtonLayoutSelfTest.swift's header.
         if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"] == "1" {
             exit(ReviewPRRowButtonLayoutSelfTest.run() ? 0 : 1)
@@ -2104,14 +2104,6 @@ enum SelfTestDispatch {
             exit(MorningBriefingSelfTest.run() ? 0 : 1)
         }
 
-        // F20 (`fm/grandline-feature-f20-daily-review-briefing`): the daily review's
-        // composer - what is due, which follow-ups are waiting, and the stated-gap
-        // rule (a section that could not be read says so rather than showing a
-        // zero). Pure logic, so it guards the blocking CI lane.
-        if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_TESTS"] == "1" {
-            exit(DailyReviewSelfTest.run() ? 0 : 1)
-        }
-
         // `fm/grandline-remove-today-calendar-1792553365`: the Today page and the
         // calendar integration stay removed - no destination, no space pill, no
         // source that names them, no calendar usage description in either bundle,
@@ -2120,18 +2112,6 @@ enum SelfTestDispatch {
         // scratch file, so it guards the blocking CI lane.
         if ProcessInfo.processInfo.environment["FM_RUN_TODAY_CALENDAR_REMOVAL_TESTS"] == "1" {
             exit(TodayCalendarRemovalSelfTest.run() ? 0 : 1)
-        }
-
-        // The Home page's Needs Attention card - the captain's move of the Today
-        // page's "Due today" and "Follow-ups" sections. Same split for the same
-        // reason: `NeedsAttentionSelfTest` is a function over a struct and guards
-        // CI's blocking lane, `NeedsAttentionViewSelfTest` mounts the real hub in a
-        // real window and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
-        if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_TESTS"] == "1" {
-            exit(NeedsAttentionSelfTest.run() ? 0 : 1)
-        }
-        if ProcessInfo.processInfo.environment["FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"] == "1" {
-            exit(NeedsAttentionViewSelfTest.run() ? 0 : 1)
         }
 
         // `fm/grandline-claude-widget-refresh-shift`: `HelmModuleCard`'s header
@@ -2147,8 +2127,8 @@ enum SelfTestDispatch {
         }
 
         // `fm/grandline-home-page-visual-overhaul`: Home's card grid in a real
-        // window. Its arithmetic half, `HomeDashboardSelfTest`, measured only the
-        // floating bar's hand-placed dashboard and went with it in P-03.
+        // window. Its arithmetic half measured only the floating bar's
+        // hand-placed dashboard and went with it in P-03.
         if ProcessInfo.processInfo.environment["FM_RUN_HOME_DASHBOARD_VIEW_TESTS"] == "1" {
             exit(HomeDashboardViewSelfTest.run() ? 0 : 1)
         }

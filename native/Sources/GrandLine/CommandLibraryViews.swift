@@ -121,8 +121,8 @@ final class CommandLibraryPageView: NSObject {
     /// that one button's compression resistance once capped the whole app
     /// window's minimum width); three more `.required`-hugging buttons would
     /// be three more chances to reintroduce it. A menu on a single control is
-    /// also the idiom `HostsListSection`'s own `⋯` overflow already
-    /// establishes for exactly this.
+    /// also the idiom `SchedulesCardView`'s own `⋯` overflow
+    /// (`buildOverflowMenu`) follows for exactly this.
     private let detailExplainButton = HelmButton(title: "AI", variant: .quiet, symbol: "sparkles", target: nil, action: nil)
     private let detailFavoriteButton = HelmButton(title: "Favorite", variant: .quiet, symbol: "star", target: nil, action: nil)
     private let detailContentContainer = NSView()

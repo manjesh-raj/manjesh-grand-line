@@ -720,8 +720,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // Tools and Docs by name for exactly this - and this page's top is a
         // `HelmPageToolbar` that never moves. What scrolls under it is the
         // editor, so the boundary is the card's own top edge, which is the
-        // treatment D5(a) already gives a card-hosted list (`HostsListSection`
-        // is the reference). Adding it to the bar instead would draw a line
+        // treatment D5(a) gives a card-hosted list. Adding it to the bar instead would draw a line
         // at an edge nothing passes.
         scrollEdge = HelmScrollEdgeHairline(atTopOf: editorCard, in: editorCard)
         webView.onScrolledAwayFromTop = { [weak self] scrolled in

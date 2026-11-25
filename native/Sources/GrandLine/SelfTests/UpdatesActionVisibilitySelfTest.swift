@@ -54,7 +54,7 @@
 //
 // **Why this suite reads `alphaValue` and not a render.** `cacheDisplay` -
 // this repo's screenshot substitute - draws an `alphaValue = 0` view
-// visibly (see `HostsListSection`'s own note), so a render cannot see this
+// visibly (AGENTS.md's "Verifying native UI bugs" rules), so a render cannot see this
 // class of bug at all. Nor can an `isHidden` check, for the same reason the
 // captain's buttons still worked.
 //

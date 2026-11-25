@@ -334,18 +334,22 @@ enum MainSplitShellNavigationSelfTest {
                   "Tasks' \(tab) tab grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         }
         // A column that does come back - Notebook's Pages, put away and
-        // brought back through `pageForcesCollapse`, the switch Tasks' own
-        // Weekly review used before stage 7 - takes its room from the page.
+        // brought back by Toggle Sidebar, unanimated - takes its room from
+        // the page. (Tasks' Weekly review used to force its column away; P-03
+        // removed that switch with the column.)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let sidebarBefore = shell.debugSidebarIsCollapsed
         if let split = (shell.debugSlotController(.notebook) as? HelmSplitPageHosting)?.splitPage {
             let column = split.debugSidebarWidth
             check(!split.isSidebarCollapsed && column > 0, "Notebook opened without its Pages column", &ok)
-            split.pageForcesCollapse = true
+            let savedMotion = HelmMotion.reducedOverrideForTests
+            HelmMotion.reducedOverrideForTests = true
+            defer { HelmMotion.reducedOverrideForTests = savedMotion }
+            split.toggleSidebar(nil)
             settle(shell)
             check(split.isSidebarCollapsed, "Notebook's column did not step aside", &ok)
-            split.pageForcesCollapse = false
+            split.toggleSidebar(nil)
             settle(shell)
             check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - column) < 0.5,
                   "back again, Notebook's column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
@@ -911,11 +915,8 @@ enum MainSplitShellNavigationSelfTest {
         check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
         check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
         // The captain removed the band between the hero and the cards: no
-        // KPI tiles and no Needs attention card on Home.
-        func findsAttentionCard(_ view: NSView) -> Bool {
-            (!view.isHidden && view is NeedsAttentionCard) || view.subviews.contains { findsAttentionCard($0) }
-        }
-        check(!findsAttentionCard(canvas.view), "Home still draws the Needs attention card under the hero", &ok)
+        // KPI tiles on Home. (The Needs attention card that sat there was
+        // deleted in the P-03 sweep, so there is no type left to look for.)
         func findsCaption(_ view: NSView, _ words: String) -> Bool {
             if !view.isHidden, let label = view as? NSTextField, label.stringValue == words { return true }
             return view.subviews.contains { !$0.isHidden && findsCaption($0, words) }

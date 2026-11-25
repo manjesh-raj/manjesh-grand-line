@@ -162,25 +162,21 @@ enum DaylightModuleSelfTest {
         // showed (`isVisible(in:)`, Overview's trimmed set). The table itself
         // still says which space a card belongs to.
 
-        // §5.4's copy, and the shortcut indices `⌘1`…`⌘5` carry.
-        // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
-        // literal list is restated here rather than derived, exactly as
-        // `checkSpaceTable`'s own header requires. A "Today" pill sat
-        // leftmost for a while and was removed with its page
-        // (`fm/grandline-remove-today-calendar-1792553365`), which gave Home
-        // \u{2318}1 back.
+        // §5.4's copy, in order. Review #3 §7 renamed the first pill
+        // "Overview" -> "Home"; the literal list is restated here rather than
+        // derived, exactly as `checkSpaceTable`'s own header requires. A
+        // "Today" pill sat leftmost for a while and was removed with its page
+        // (`fm/grandline-remove-today-calendar-1792553365`). The spaces' own
+        // `⌘N` index went with the floating bar's pills in P-03: the Go
+        // menu's chords open sidebar items now.
         let expectedTitles = ["Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)
         }
-        for (index, space) in DaylightSpace.allCases.enumerated() where space.shortcutIndex != index + 1 {
-            fail("\(space.rawValue) should map to \u{2318}\(index + 1), reports \u{2318}\(space.shortcutIndex)", &ok)
-        }
-
         if ok {
             print("  OK - 4 spaces x their locked modules, \(overviewOnly.count) Overview-only, "
-                  + "\(DaylightSpace.allCases.count) spaces in shortcut order")
+                  + "\(DaylightSpace.allCases.count) spaces in order")
         }
     }
 
@@ -456,22 +452,24 @@ enum DaylightModuleSelfTest {
             print("   \(title) (x\(scale)), card \(HelmModuleCard.standardHeight)pt:")
             for (name, body) in bodies { measure(name, body, width: narrow) }
             measure("paragraph", .paragraph(capped), width: spanTwo)
-            // The Claude usage report, at the span-2 width it is really
-            // built for and carrying the widest realistic figures.
+            // The Claude usage card as Home draws it - the split hero, its
+            // panel beside the usage report - at the span-2 width it is
+            // really built for and carrying the widest realistic figures.
             //
-            // **This is the one body kind that is deliberately allowed past
-            // the card's floor**, on the captain's own instruction - so what
+            // **This is a body kind that is deliberately allowed past the
+            // card's floor**, on the captain's own instruction - so what
             // `measure` checks for it is the same thing it checks for every
             // other body (the content fits the area the card gives it, so
             // nothing is clipped), against a card that has grown rather than
             // against the floor.
-            measure("usageReport", .usageReport(usageSections, compact: false), width: spanTwo)
-            // And the same report on a card `packRows` degraded to one
-            // column, which reflows into stacked rows rather than truncating.
-            measure("usageReport-1col",
-                    .usageReport(usageSections,
-                                 compact: HomeCanvasController.claudeUsageIsCompact(forCardWidth: narrow)),
-                    width: narrow)
+            func claudeCard(_ width: CGFloat) -> HelmModuleCard.Body {
+                .heroSplit(.init(headline: "Fable limit reached", body: nil, ring: nil,
+                                 detail: .report(usageSections), layout: .init(cardWidth: width)))
+            }
+            measure("heroSplit", claudeCard(spanTwo), width: spanTwo)
+            // And the same card one column wide, where the panel becomes a
+            // band across the top and the report runs under it.
+            measure("heroSplit-1col", claudeCard(narrow), width: narrow)
             // And the same paragraph on a briefing `packRows` has degraded to
             // one column, which takes the narrower cap.
             measure("paragraph-1col",

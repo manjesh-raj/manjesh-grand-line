@@ -72,23 +72,6 @@ extension HomeCanvasController {
         width < claudeShortLabelWidth
     }
 
-    /// Whether this card is narrow enough to need the report's stacked
-    /// reflow rather than its aligned four-column grid.
-    ///
-    /// The same threshold `claudeStripColumnsPerRow` used, and for the same
-    /// reason: `HelmResponsiveGrid.packRows` degrades a span-2 card to one
-    /// column in a single-column grid, and at that width the grid's three
-    /// content columns leave the bar a stub. This is the direct analogue of
-    /// the mockup's own `@media (max-width: 560px)` rule, which reflows the
-    /// same four fields the same way - title and figure on one line, the bar
-    /// full width beneath, the reset caption under that.
-    ///
-    /// The card pays height, never a reading. Nothing is dropped in either
-    /// layout, which is the property the strip already had when it wrapped.
-    static func claudeUsageIsCompact(forCardWidth width: CGFloat) -> Bool {
-        isNarrowerThanTwoColumns(width)
-    }
-
     /// The report's two sections, in the mockup's order. `static` so a suite
     /// can assert the mapping from a fabricated snapshot without mounting a
     /// canvas.
@@ -101,9 +84,7 @@ extension HomeCanvasController {
     /// rather than synonyms for "unknown".
     /// - Parameter headerCarriesVerdict: UI-8 - when the card's header already
     ///   says the plan's verdict ("Comfortable"), the Plan limits section
-    ///   keeps only its title rather than saying it a second time. A compact
-    ///   card drops the header word (see `fillClaudeStatus`), so there the
-    ///   section keeps it.
+    ///   keeps only its title rather than saying it a second time.
     /// - Parameter shortLabels: the dense form at a narrow column's width -
     ///   "Session" / "Week" / "Fable" and the reset time without its
     ///   "Resets" word. The long reset sentence stays on each row's hover
@@ -467,7 +448,6 @@ extension HomeCanvasController {
     /// report's own rows, so no figure, threshold or short-label rule moves.
     func fillClaudeHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
         let layout = HelmModuleCard.HeroLayout(cardWidth: width)
-        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
         let panel = Self.claudeHeroPanel(snapshot: quotaSnapshot, failure: quotaFailure, fetchedAt: quotaFetchedAt)
 
         if let snapshot = quotaSnapshot {
@@ -485,19 +465,31 @@ extension HomeCanvasController {
             if layout == .narrow { content.toolTip = updated } else { content.headerCaption = updated }
         }
 
+        content.body = Self.claudeHeroBody(snapshot: quotaSnapshot, failure: quotaFailure, panel: panel,
+                                           width: width)
+        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
+        content.headerMenu = styleMenu(for: .claudeStatus)
+    }
+
+    /// The split hero's body for a reading, at a card `width`: the panel
+    /// beside (or above) the usage report, or a stated gap, or the skeleton.
+    /// `static` so a suite renders exactly what Home draws from a fabricated
+    /// snapshot, with `now` pinned for the reset captions.
+    static func claudeHeroBody(snapshot: QuotaSnapshot?, failure: String?, panel: ClaudeHeroPanel,
+                               width: CGFloat, now: Date = Date()) -> HelmModuleCard.Body {
+        let layout = HelmModuleCard.HeroLayout(cardWidth: width)
+        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
         let detail: HelmModuleCard.HeroSplit.Detail
-        if let snapshot = quotaSnapshot {
-            detail = .report(Self.claudeUsageSections(
-                for: snapshot, headerCarriesVerdict: true,
-                shortLabels: Self.claudeUsesShortLabels(forCardWidth: detailWidth)))
-        } else if let failure = quotaFailure {
+        if let snapshot {
+            detail = .report(claudeUsageSections(
+                for: snapshot, now: now, headerCarriesVerdict: true,
+                shortLabels: claudeUsesShortLabels(forCardWidth: detailWidth)))
+        } else if let failure {
             detail = .note(failure)
         } else {
             detail = .loading
         }
-        content.body = .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
-                                                           ring: panel.ring, detail: detail, layout: layout))
-        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
-        content.headerMenu = styleMenu(for: .claudeStatus)
+        return .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
+                                                   ring: panel.ring, detail: detail, layout: layout))
     }
 }

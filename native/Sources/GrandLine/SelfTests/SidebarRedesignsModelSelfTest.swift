@@ -167,8 +167,7 @@ enum SidebarRedesignsModelSelfTest {
 
     private static func checkKnowledgeHasNoTree(_ ok: inout Bool) {
         let sources = FeatureInventorySelfTest.appSources()
-        guard sources.count > 100, let shell = code("MainSplitShellController.swift"),
-              let notebook = code("NotebookController.swift") else {
+        guard sources.count > 100, let shell = code("MainSplitShellController.swift") else {
             fail("could not read the app's sources - the guard would pass vacuously", &ok)
             return
         }
@@ -181,8 +180,6 @@ enum SidebarRedesignsModelSelfTest {
         check(!sources.contains { $0.0 == "KnowledgeTree" }, "KnowledgeTree.swift is back", &ok)
         check(shell.contains("body.leadingAnchor.constraint(equalTo: root.leadingAnchor)") && !shell.contains("columnHost"),
               "the content pane has a column beside the body again", &ok)
-        check(!notebook.contains("pageForcesCollapse = true"),
-              "Notebook puts its own page column away again - the tree was the reason it did", &ok)
     }
 
     // MARK: 4 - Setup's summary cards

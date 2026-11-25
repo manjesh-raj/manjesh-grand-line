@@ -26,8 +26,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     let scroll = NSScrollView()
     let contentStack = NSStackView()
 
-    /// GL-16: see `UpdatesController.checkAllPill` - a clear-coloured
-    /// `HoverHighlightView` renders identically to the plain `NSView` this
+    /// GL-16: a clear-coloured `HoverHighlightView` renders identically to the plain `NSView` this
     /// was and inherits the shared press/focus/keyboard behaviour.
     private let syncPill = HoverHighlightView()
     /// UI-19: "Synced" is the default state, so it is a dot and a word; every

@@ -69,9 +69,6 @@ final class HelmSplitPage: NSSplitViewController {
         /// The column floats on the page ground, and the gutter is the
         /// separation: a clear divider.
         case pageGround
-        /// The column sits on the page ground with a hairline between it and
-        /// the content (Tasks): the divider is that line.
-        case pageGroundWithEdge
         /// The column runs edge to edge in its own fill, edged by the divider.
         case sidePanel
     }
@@ -290,8 +287,8 @@ final class HelmSplitPage: NSSplitViewController {
     /// The standard command (View > Show/Hide Sidebar, ⌃⌘S), animated - what
     /// a sidebar-behaviour item would have answered, for this plain one.
     override func toggleSidebar(_ sender: Any?) {
-        // A column the page has put away is not the captain's to bring back
-        // from here - Tasks' only belongs to its board.
+        // A column the width rule has put away is not the captain's to bring
+        // back from here - the page has no room for it.
         guard !collapseIsForced else { return }
         collapsedByCaptain.toggle()
         applyCollapse(animated: true)
@@ -308,16 +305,6 @@ final class HelmSplitPage: NSSplitViewController {
 
     /// The captain's own choice, from Toggle Sidebar or a drag.
     private var collapsedByCaptain = false
-
-    /// Set by a page whose column only belongs to some of its views (Tasks'
-    /// column goes with its board). Forcing a collapse does not forget the
-    /// captain's own choice: lifting it restores whatever they had.
-    var pageForcesCollapse = false {
-        didSet {
-            guard pageForcesCollapse != oldValue else { return }
-            applyCollapse(animated: false)
-        }
-    }
 
     /// 1.2.0: below this width of the split's own view the sidebar is put
     /// away, and above it the captain's own choice comes back. `nil` (the
@@ -372,7 +359,10 @@ final class HelmSplitPage: NSSplitViewController {
     }
 
     /// Whether anything other than the captain is holding the column away.
-    private var collapseIsForced: Bool { pageForcesCollapse || isNarrow }
+    /// The width rule (`collapsesBelowWidth`) is the one thing that can. It
+    /// does not forget the captain's own choice: lifting it restores whatever
+    /// they had.
+    private var collapseIsForced: Bool { isNarrow }
 
     private func applyCollapse(animated: Bool) {
         setSidebarCollapsed(collapseIsForced || collapsedByCaptain, animated: animated)
@@ -410,7 +400,7 @@ final class HelmSplitPage: NSSplitViewController {
     override func splitViewDidResizeSubviews(_ notification: Notification) {
         super.splitViewDidResizeSubviews(notification)
         // A drag that collapses or reopens the column is the captain's choice
-        // too, unless the page is forcing it.
+        // too, unless the width rule is holding it away.
         // A column of one width has no drag (`preferredSidebarWidth`), so its
         // pane only collapses by Toggle Sidebar or by a squeeze, which is not
         // the captain's choice.
@@ -418,9 +408,10 @@ final class HelmSplitPage: NSSplitViewController {
         reportCollapseIfChanged()
     }
 
-    /// Fired when the column collapses or reopens, by any route: a page
-    /// forcing it, Toggle Sidebar, or a drag. A page whose content placement
-    /// depends on the column being there (Tasks, UXP-03) re-derives it here.
+    /// Fired when the column collapses or reopens, by any route: the width
+    /// rule, Toggle Sidebar, or a drag. A page whose content placement depends
+    /// on the column being there (Hosts, Health, DevOps Hub) re-derives it
+    /// here.
     var onSidebarCollapseChanged: ((Bool) -> Void)?
     private var lastReportedCollapse: Bool?
 

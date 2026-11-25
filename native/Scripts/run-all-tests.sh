@@ -245,7 +245,6 @@ FM_RUN_SESSION_RESTORE_TESTS 12
 FM_RUN_SETTINGS_REDESIGN_TESTS 11
 FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS 11
 FM_RUN_TERMINAL_DISPLAY_GATING_TESTS 11
-FM_RUN_HOME_DASHBOARD_VIEW_TESTS 11
 FM_RUN_SIDEBAR_PAGE_FIXES_TESTS 10
 FM_RUN_WHITEBOARD_VIEW_TESTS 10
 "
@@ -365,10 +364,6 @@ NEEDS_SESSION=(
   # real window. Its pure half (`FM_RUN_PONEGLYPH_TOTP_TESTS`) carries the RFC
   # 6238 vectors and the recovery wrap, and is deliberately NOT here.
   "FM_RUN_PONEGLYPH_TOTP_VIEW_TESTS"
-  # The Home page's Needs Attention card mounts the real hub in a real window
-  # and drives real controls. Its pure half (`FM_RUN_NEEDS_ATTENTION_TESTS`)
-  # is deliberately NOT here.
-  "FM_RUN_NEEDS_ATTENTION_VIEW_TESTS"
   # Home's card grid, read as resolved `NSView` frames out of a real window.
   "FM_RUN_HOME_DASHBOARD_VIEW_TESTS"
   "FM_RUN_KEYED_LISTS_VIEW_TESTS"
@@ -593,10 +588,6 @@ NEEDS_SESSION=(
   # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
   # covers the logic half and does run in CI.
   "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
-  # Code Preview's snippet list: mounts the real page in a real window and
-  # drives the list's rows, keyboard, hide/show and resize handle, and measures
-  # the editor's width with the list shown and hidden. FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS
-  # covers the logic half (order, filter, icons, preferences) and does run in CI.
   # The Code page's sidebar-layout presentation (the Workbench concept):
   # mounts the real page in a real window, adopts the layout, runs real
   # sandboxed shell fixtures into the Run results dock, reads Monaco's own

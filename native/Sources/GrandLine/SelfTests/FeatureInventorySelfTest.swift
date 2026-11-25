@@ -668,11 +668,6 @@ enum FeatureInventorySelfTest {
     // MARK: - Source helpers
 
     /// The app's sources, comments stripped, keyed by file stem.
-    ///
-    /// R2-ARCH-04: a page's floating-bar presentation is an extension of the
-    /// same type in `<Page>+Classic.swift`, so its text is read as part of
-    /// `<Page>` - its rows, its actions and its evidence tokens are still that
-    /// page's, under the ids they always had.
     private static let cachedSources: [(String, String)] = {
         let files: [(String, String)] = (SelfTestSources.appSourceFiles() ?? []).compactMap { url in
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -682,8 +677,7 @@ enum FeatureInventorySelfTest {
         // are read as `main`, so the menu's actions keep their `action.main` id.
         let delegateParts = Set(SelfTestSources.appDelegateFiles.dropFirst().map { ($0 as NSString).deletingPathExtension })
         func page(_ stem: String) -> String {
-            if delegateParts.contains(stem) { return "main" }
-            return stem.hasSuffix("+Classic") ? String(stem.dropLast("+Classic".count)) : stem
+            delegateParts.contains(stem) ? "main" : stem
         }
         // `main.swift` first, then the delegate's parts in their own order, so
         // a guard reading positions inside `main` reads them as they ran.

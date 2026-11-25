@@ -78,7 +78,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// note gives for pairing it with import.
     private let recoveryButton = HelmButton(title: "", variant: .quiet, symbol: "shield.lefthalf.filled")
 
-    private var listContainer: NSView!
+    private var tableContainer: NSView!
     /// The search row over the table, kept so the clipboard countdown can
     /// show and hide its pill in it.
     private var filterRowView: HelmFilterBar?
@@ -202,13 +202,13 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         root.wantsLayer = true
         view = root
 
-        buildListContainer()
+        buildTableContainer()
         unlockView.onCreate = { [weak self] password in self?.createVault(password) }
         unlockView.onUnlock = { [weak self] password in self?.attemptUnlock(password) }
         unlockView.onUnlockWithTouchID = { [weak self] in self?.attemptTouchIDUnlock() }
         unlockView.onUnlockWithRecoveryKey = { [weak self] code in self?.attemptRecoveryUnlock(code) }
 
-        for child in [unlockView, listContainer!] as [NSView] {
+        for child in [unlockView, tableContainer!] as [NSView] {
             child.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(child)
             NSLayoutConstraint.activate([
@@ -264,9 +264,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// `NSLayoutPriorityWindowSizeStayPut`, so this page can never stop the
     /// window shrinking. `AppShellBodyWidthSelfTest` sweeps every destination
     /// for exactly that.
-    private func buildListContainer() {
+    private func buildTableContainer() {
         let container = NSView()
-        listContainer = container
+        tableContainer = container
 
         searchField.onTextChanged = { [weak self] text in
             guard let self else { return }
@@ -314,7 +314,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             pane.addSubview(child)
         }
         splitPage = split
-        let tableMinimum = card.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.listMinimumWidth)
+        let tableMinimum = card.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.tableMinimumWidth)
         tableMinimum.priority = HelmDaylightPriority.contentTie
         filterRowView = filterRow
 
@@ -344,7 +344,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// The narrowest the credential table is allowed to get before the window
     /// itself has to give. Held *below* `NSLayoutPriorityWindowSizeStayPut` so
     /// it can never become a window-width floor.
-    static let listMinimumWidth: CGFloat = 300
+    static let tableMinimumWidth: CGFloat = 300
 
     /// Every callback the inspector needs. The gate, the audit event and the
     /// clipboard all stay on the page - the panel only ever asks.
@@ -353,10 +353,6 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
         inspector.onDelete = { [weak self] credential in self?.confirmDelete(id: credential.id) }
         inspector.onCopy = { [weak self] credential in self?.copyValue(id: credential.id) }
         inspector.onCopyAccount = { [weak self] credential in self?.copyAccount(id: credential.id) }
-        inspector.onClose = { [weak self] in
-            self?.selectedID = nil
-            self?.render()
-        }
         inspector.onReveal = { [weak self] credential, completion in
             guard let self else { return completion(false) }
             // Defence in depth, kept verbatim from the sheet this panel
@@ -431,7 +427,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
 
     private func render() {
         let unlocked = store.isUnlocked
-        listContainer.isHidden = !unlocked
+        tableContainer.isHidden = !unlocked
         unlockView.isHidden = unlocked
         for action in drillHeaderActions { action.isHidden = !unlocked }
 
@@ -1251,7 +1247,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     var debugAddButton: HelmButton { addButton }
     var debugLockButton: HelmButton { lockButton }
     var debugSettingsButton: HelmButton { settingsButton }
-    var debugIsListShowing: Bool { !listContainer.isHidden }
+    var debugIsTableShowing: Bool { !tableContainer.isHidden }
     var debugIsUnlockShowing: Bool { !unlockView.isHidden }
     var debugRevealedIDs: Set<String> { revealedIDs }
     var debugClipboardPillVisible: Bool { !clipboardPill.isHidden }
@@ -1396,8 +1392,6 @@ enum LAContextFactory {
 extension CredentialVaultController: WorkspaceInspectorSource {
 
     func buildSidebarPresentation() {
-        // The inspector lives in the shell's pane, which draws its own head.
-        inspector.hostInWorkspaceInspector()
         credentialTable.actionsAlwaysVisible = true
         credentialTable.accessibilityName = "Credentials"
         credentialTable.onSelect = { [weak self] key in

@@ -336,7 +336,6 @@ enum PageRedesignsSelfTest {
         let page = shell.debugPoneglyph
         let table = page.debugCredentialTable
         check(onScreen(table.card), "the credential table is not on screen", &ok)
-        check(page.debugInspector.isHostedInWorkspaceInspector, "the credential inspector is still the page's own column", &ok)
         check(!page.debugInspector.isDescendant(of: page.view), "the credential inspector is still inside the page", &ok)
         let titles = table.debugRows.compactMap { row -> String? in
             if case .title(let text, _, _, _, _, _)? = row.cells["name"] { return text }
@@ -391,7 +390,17 @@ enum PageRedesignsSelfTest {
         check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector,
               "the credential inspector is not in the shell's inspector", &ok)
         check(shell.inspector.debugTitle == aws.title, "the inspector is titled \"\(shell.inspector.debugTitle)\"", &ok)
-        check(page.debugInspector.debugCloseButton.isHidden, "the credential inspector draws a second close button", &ok)
+        // The shell's close button is the inspector's only one (the panel
+        // lost its own head in the P-03 sweep). It closes the pane and
+        // deletes nothing, and the toolbar's inspector button opens it again.
+        shell.inspector.debugCloseButton.performClick(nil)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed, "the shell's close button did not close the credential inspector", &ok)
+        check(store.credentials.count == 7, "closing the credential inspector changed the vault", &ok)
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector button has no action", &ok)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector,
+              "the inspector button did not bring the credential inspector back", &ok)
         check(table.selectedKey == aws.id, "the table let go of the selected credential", &ok)
         // A theme change keeps the table's selection (measured: a reload once
         // dropped it with no notification).
@@ -485,11 +494,9 @@ enum PageRedesignsSelfTest {
         // It has to land before the fixture does, or it lands on top of it.
         check(waitUntil(timeout: 10) { !vault.debugIsReading }, "Automic Vault's own read never finished", &ok)
         let secrets = vault.debugSecretsTable
-        // S-1: the launchers are the split card's rows; their table is kept
-        // current but not drawn.
+        // S-1: the launchers are the split card's rows.
         check(onScreen(secrets.card) && onScreen(vault.debugHeroSplit),
               "Automic Vault's secrets table or split card is not on screen", &ok)
-        check(!onScreen(vault.debugToolsTable.card), "the launchers' table still shows beside the split card", &ok)
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "STAGING_DB_PASSWORD")],
                           tools: [VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
         settle(shell)
@@ -497,11 +504,10 @@ enum PageRedesignsSelfTest {
               "the secrets table lists \(secrets.debugRows.compactMap(\.key))", &ok)
         check(secrets.debugMenuTitles(key: "GITHUB_TOKEN") == ["Run Injected\u{2026}", "Copy Name"],
               "a secret row's actions are \(secrets.debugMenuTitles(key: "GITHUB_TOKEN"))", &ok)
-        let status = vault.debugToolsTable.debugRows.first?.cells["status"]
-        if case .status(let text, let tint)? = status {
-            check(text == "2 issues" && tint == .warn, "the launcher's status reads \(text)", &ok)
+        if let launcher = vault.debugHeroSplit?.debugRows.first {
+            check(launcher.debugState == "2 issues", "the launcher's status reads \(launcher.debugState)", &ok)
         } else {
-            fail("the launcher row has no status", &ok)
+            fail("the split card has no launcher row", &ok)
         }
         // B1: a read that failed is not an empty list.
         vault.debugRender(secrets: nil, tools: nil)
@@ -544,7 +550,7 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
-        check(notebook.splitPage?.pageForcesCollapse == false && notebook.splitPage?.isSidebarCollapsed == false
+        check(notebook.splitPage?.isSidebarCollapsed == false
                 && onScreen(notebook.debugSidebar),
               "Notebook's page column is not showing in the sidebar layout", &ok)
         let pages = Set(notebook.debugPages.map(\.title))

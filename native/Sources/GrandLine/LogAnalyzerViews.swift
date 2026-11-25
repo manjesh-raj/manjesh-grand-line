@@ -2,8 +2,8 @@
 //
 // `fm/grandline-log-analyzer-build`: the list/pane subviews behind
 // `LogAnalyzerController`. Split out of that controller for the same reason
-// `ReviewPRListView`/`HostsListSection`/`ShiftProjectDetailView` are split
-// out of theirs - the page controller stays about *flow* (input, analyze,
+// `ReviewPRListView`/`ShiftProjectDetailView` are split out of theirs - the
+// page controller stays about *flow* (input, analyze,
 // act) while each list stays about rendering one kind of row.
 //
 // **Every list here is a view-based `NSTableView`, never an `NSStackView` of

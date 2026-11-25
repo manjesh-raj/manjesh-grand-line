@@ -1036,7 +1036,10 @@ enum E2ETestingPolicySelfTest {
     /// GitHub Sync's classic rows), and `WorkspaceBodySelfTest` joined it
     /// with the cases of one of them that measure code the sidebar shell
     /// still runs.
-    private static let windowBackedSuiteCeiling = 123
+    ///
+    /// 122 after the P-03 sweep deleted Home's Needs attention card, which
+    /// nothing drew any more, and `NeedsAttentionViewSelfTest` with it.
+    private static let windowBackedSuiteCeiling = 122
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

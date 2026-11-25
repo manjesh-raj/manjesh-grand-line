@@ -247,6 +247,9 @@ final class VaultHeroSplitView: NSView {
     #if FM_SELFTESTS
     var debugRows: [VaultLauncherRowView] { rowViews }
     var debugFootButtons: [HelmButton] { panel.debugFootButtons }
+    /// The launchers' header line, which carries their count once a read
+    /// has landed and no count before one.
+    var debugHeader: String { headerLabel.stringValue }
     #endif
 }
 

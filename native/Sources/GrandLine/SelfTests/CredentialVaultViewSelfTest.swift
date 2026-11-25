@@ -420,7 +420,7 @@ enum CredentialVaultViewSelfTest {
         // list.
         let (controller, store) = mounted(scratch, name: "gate", window: window, createVault: false)
         check(controller.debugIsUnlockShowing, "a page with no vault should show the gate")
-        check(!controller.debugIsListShowing, "a page with no vault should not show the list")
+        check(!controller.debugIsTableShowing, "a page with no vault should not show the list")
         check(controller.drillHeaderSubtitle == "Not set up yet",
               "the drill subtitle should say the vault is not set up, got \(String(describing: controller.drillHeaderSubtitle))")
         // None of the page actions make sense behind the gate.
@@ -431,7 +431,7 @@ enum CredentialVaultViewSelfTest {
         // Create it for real, then confirm the page swaps to the list.
         _ = store.createVault(masterPassword: "view-test-password")
         controller.debugRender()
-        check(controller.debugIsListShowing, "the list should show once the vault is unlocked")
+        check(controller.debugIsTableShowing, "the list should show once the vault is unlocked")
         check(!controller.debugIsUnlockShowing, "the gate should be hidden once unlocked")
         check(!controller.debugAddButton.isHidden, "Add should be available once unlocked")
 
@@ -554,7 +554,7 @@ enum CredentialVaultViewSelfTest {
         check(renderThreads.allSatisfy { $0 },
               "REL-20: every render the create fires is on the main thread, got \(renderThreads)")
         controller.debugRender()
-        check(controller.debugIsListShowing, "REL-20: the page shows the list after a real create")
+        check(controller.debugIsTableShowing, "REL-20: the page shows the list after a real create")
 
         // R4-UX-02: the recovery step was left on (its default), so the real
         // Create opened the recovery kit once the vault existed.
@@ -1195,11 +1195,10 @@ enum CredentialVaultViewSelfTest {
         check(!inspector.debugSecretLabel.stringValue.contains("aws-root-value"),
               "the value must not be on screen before Reveal")
 
-        // Closing the panel drops the selection without touching the store.
-        inspector.debugCloseButton.performClick(nil)
-        check(inspector.credential == nil, "the close button should empty the panel")
-        check(controller.debugSelectedID == nil, "...and drop the page's selection")
-        check(store.credentials.count == 1, "...and delete nothing")
+        // The panel has no close button of its own: the shell's inspector
+        // pane draws the only one, and `PageRedesignsSelfTest`'s Secrets
+        // case clicks it.
+        check(store.credentials.count == 1, "showing the panel should delete nothing")
     }
 
     /// A selection that stops being visible must not leave the panel showing a

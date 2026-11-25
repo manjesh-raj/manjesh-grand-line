@@ -16,8 +16,7 @@
 // busy namespace is hundreds of rows, so both are exactly the shape that
 // pathology finds. The task brief says as much in as many words.
 //
-// Rows are fixed-height (`DiffResultView`/`HostsListSection`'s simpler
-// convention) rather than `usesAutomaticRowHeights`: a log line does not wrap
+// Rows are fixed-height (`DiffResultView`'s simpler convention) rather than `usesAutomaticRowHeights`: a log line does not wrap
 // (it scrolls horizontally, like a terminal) and a resource row is one line
 // of columns, so nothing here needs measurement.
 

@@ -197,7 +197,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
 
     // MARK: Cases
 
-    /// The value `checkAllPill.layer.backgroundColor` reports right after a
+    /// The value `the pill's layer.backgroundColor` reports right after a
     /// fresh `loadView()` pass, with no theme round trip and no hover. If
     /// this were the #278/#279 cache-guard shape, this is where it would
     /// show up as the *wrong* color (the underlying value would never reach
@@ -213,13 +213,13 @@ enum UpdatesRefreshButtonThemeSelfTest {
 
         let accent = HelmTheme.nsColor(theme.accentHex)
         guard sameColor(controller.pill.layer?.backgroundColor, accent) else {
-            print("  FAIL checkAllPill.layer.backgroundColor does not match \(theme.id)'s accent " +
+            print("  FAIL the pill's layer.backgroundColor does not match \(theme.id)'s accent " +
                   "immediately after loadView() - got " +
                   "\(String(describing: controller.pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is \(theme.id)'s accent right after loadView(), with no theme round trip")
+        print("  ok   the pill's fill is \(theme.id)'s accent right after loadView(), with no theme round trip")
     }
 
     /// The same read, but after a dark -> light round trip on an
@@ -240,12 +240,12 @@ enum UpdatesRefreshButtonThemeSelfTest {
 
         let accent = HelmTheme.nsColor(light.accentHex)
         guard sameColor(controller.pill.layer?.backgroundColor, accent) else {
-            print("  FAIL checkAllPill.layer.backgroundColor is wrong after a theme round trip - got " +
+            print("  FAIL the pill's layer.backgroundColor is wrong after a theme round trip - got " +
                   "\(String(describing: controller.pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is still \(light.id)'s accent after a dark -> light round trip")
+        print("  ok   the pill's fill is still \(light.id)'s accent after a dark -> light round trip")
     }
 
     /// **The actual regression guard.** Drives a real mouse enter/exit
@@ -255,7 +255,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
     /// theme's accent again, not `.clear`.
     ///
     /// Confirmed to catch the real regression: with `applyTheme()` reverted
-    /// to writing `checkAllPill.layer?.backgroundColor = accent.cgColor`
+    /// to writing `pill.layer?.backgroundColor = accent.cgColor`
     /// directly (never touching `normalColor`/`hoverColor`), this case
     /// fails by name - the fill reads back as `.clear` after `mouseExited`,
     /// reproducing the captain's exact "washed out" symptom.
@@ -280,19 +280,19 @@ enum UpdatesRefreshButtonThemeSelfTest {
         pill.mouseExited(with: event)
 
         if isClear(pill.layer?.backgroundColor) {
-            print("  FAIL a hover enter/exit cycle stranded checkAllPill's fill at .clear - this is " +
+            print("  FAIL a hover enter/exit cycle stranded the pill's fill at .clear - this is " +
                   "the exact \"washed out\" bug: the icon/label now sit on the bare page background " +
                   "instead of the theme's accent")
             ok = false
             return
         }
         guard sameColor(pill.layer?.backgroundColor, accent) else {
-            print("  FAIL after a hover cycle, checkAllPill's fill is neither the accent nor clear - got " +
+            print("  FAIL after a hover cycle, the pill's fill is neither the accent nor clear - got " +
                   "\(String(describing: pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is restored to \(theme.id)'s accent after a hover enter/exit cycle")
+        print("  ok   the pill's fill is restored to \(theme.id)'s accent after a hover enter/exit cycle")
     }
 }
 

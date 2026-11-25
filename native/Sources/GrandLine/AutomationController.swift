@@ -189,10 +189,10 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// The app's one page-level Refresh control - the same
     /// `HelmButton(.primary)` + `arrow.clockwise` recipe `ReviewController`,
     /// `VaultController`, `KubernetesController`, `FleetController` and
-    /// `HomeCanvasController` already use. Deliberately NOT a copy of
-    /// `UpdatesController.checkAllPill`: that one is a hand-rolled
-    /// `HoverHighlightView` because it swaps for a progress bar and a live
-    /// count inside its own toolbar row, and `HelmButton(.primary)` resolves
+    /// `HomeCanvasController` already use. Deliberately NOT a copy of the
+    /// hand-rolled `HoverHighlightView` pill Updates' own toolbar row used to
+    /// carry: that one swapped for a progress bar and a live count inside its
+    /// row, and `HelmButton(.primary)` resolves
     /// to exactly the same accent fill and label pairing - so this is the
     /// shared definition to reuse rather than a sixth copy of that bespoke
     /// recipe (`fm/grandline-refresh-button-consistency`).

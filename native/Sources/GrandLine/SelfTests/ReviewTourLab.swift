@@ -1537,66 +1537,6 @@ enum ReviewTourLab {
             sources: ["fleet", "tasks", "quota"], shiftTaskID: nil)
     }
 
-    /// `count` attention rows in the captain's own shape: his two overdue
-    /// follow-ups and the fleet decision first (his screenshot), then the
-    /// kinds the digest can add, up to its own maximum of eleven.
-    /// `NeedsAttentionViewSelfTest` renders it into a standalone card; the
-    /// `demo attention N` verb that put it on Home went with the floating
-    /// bar's hub in P-03.
-    static func demoAttentionSummary(count: Int) -> NeedsAttentionSummary {
-        let pool: [NeedsAttentionItem] = [
-            NeedsAttentionItem(id: "f1", kind: .followUp, source: "Follow-up",
-                               text: "Follow up with Nithin on SRE bot response reviews",
-                               chipText: "Overdue 27 days \u{00B7} since 18 Sep", tone: .late, actionTitle: "Open"),
-            NeedsAttentionItem(id: "f2", kind: .followUp, source: "Follow-up",
-                               text: "AWS Backup Service Failure Notification",
-                               chipText: "Overdue 9 days \u{00B7} since 6 Oct", tone: .late, actionTitle: "Open"),
-            NeedsAttentionItem(id: "signal.fleet", kind: .signal(.fleet), source: "Fleet",
-                               text: "1 task needs your call",
-                               meta: "1 decision waiting - the crew is holding for you.",
-                               chipText: "Needs you", tone: .risk, actionTitle: "Open",
-                               headlineClause: "1 task needs your call"),
-            NeedsAttentionItem(id: "t1", kind: .task, source: "Task", text: "Renew the staging TLS certificate",
-                               meta: "Infra", chipText: "Overdue 2 days \u{00B7} since 13 Oct", tone: .late,
-                               actionTitle: "Start"),
-            NeedsAttentionItem(id: "t2", kind: .task, source: "Task", text: "Review the Q4 on-call rota",
-                               meta: "SRE", chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
-            NeedsAttentionItem(id: "f3", kind: .followUp, source: "Follow-up",
-                               text: "Ping Priya about the Vault hardening checklist",
-                               chipText: "Overdue 1 day \u{00B7} since 14 Oct", tone: .late, actionTitle: "Open"),
-            NeedsAttentionItem(id: "t3", kind: .task, source: "Task",
-                               text: "Rotate the GitHub deploy key for grand-line",
-                               chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
-            NeedsAttentionItem(id: "t4", kind: .task, source: "Task",
-                               text: "Write the postmortem for the 9 Oct outage",
-                               meta: "Postmortems", chipText: "Overdue 5 days \u{00B7} since 10 Oct", tone: .late,
-                               actionTitle: "Start"),
-            NeedsAttentionItem(id: "t5", kind: .task, source: "Task", text: "Clean up the old EKS node groups",
-                               chipText: "Due today", tone: .dueToday, actionTitle: "Start"),
-            NeedsAttentionItem(id: "signal.claude", kind: .signal(.claudeUsage), source: "Claude usage",
-                               text: "Extra usage is near the spend cap", meta: "Team plan",
-                               chipText: "92%", tone: .risk, actionTitle: "View usage",
-                               headlineClause: "Claude is near its spend cap"),
-            NeedsAttentionItem(id: "signal.checks", kind: .signal(.sessionChecks), source: "Session checks",
-                               text: "Tool updates haven\u{2019}t been checked yet this session",
-                               chipText: "1 check not run", tone: .info, actionTitle: "Open \(PlaceName.of(.bootstrap))"),
-        ]
-        let items = Array(pool.prefix(max(0, min(count, pool.count))))
-        let state: NeedsAttentionSummary.State = items.isEmpty
-            ? .allClear
-            : (items.contains { $0.tone == .late } ? .late : .risk)
-        return NeedsAttentionSummary(
-            state: state,
-            eyebrow: NeedsAttentionComposer.eyebrow(state: state, openCount: items.count),
-            headline: NeedsAttentionComposer.headline(state: state, items: items, hidden: 0,
-                                                      allClearHeadline: "Nothing needs you right now."),
-            items: items, overflowNote: nil, gaps: [],
-            // R5-BUG-02: the services note is the registry's own, never a
-            // fixed "7/7" beside a Health card counting the live registry.
-            clearNotes: [ServiceHealthRegistry.shared.summary().allHealthyNote,
-                         "Claude plan limits comfortable"].compactMap { $0 })
-    }
-
     /// Module-card heights at the widths Home's columns take at the three
     /// window sizes the fit suite checks, measured in a bare host view.
     static func componentProbe() -> [String] {
@@ -1633,14 +1573,10 @@ enum ReviewTourLab {
         let peek = (0..<3).map { HelmModulePeekRow(state: .idle, text: "Open pull request \($0)", value: "No checks") }
         for width in [293.0, 477.0, 613.0] as [CGFloat] {
             out.append("-- width \(Int(width))")
-            let wide = HomeCanvasController.claudeUsageSections(for: snapshot, headerCarriesVerdict: true)
-            out.append("claude grid \(height("Claude", .usageReport(wide, compact: false), width: width, chip: .ok("Comfortable")))")
-            let dense = HomeCanvasController.claudeUsageSections(
-                for: snapshot, headerCarriesVerdict: true,
-                shortLabels: HomeCanvasController.claudeUsesShortLabels(forCardWidth: width))
-            out.append("claude dense \(height("Claude", .usageReportDense(dense), width: width, chip: .ok("Comfortable")))")
-            out.append("claude stacked \(height("Claude", .usageReport(HomeCanvasController.claudeUsageSections(for: snapshot), compact: true), width: width))")
-            out.append("kpis no note \(height("Fleet", .kpis(note: nil, items: [.count(0, caption: "Working"), .count(20, caption: "Done today"), .count(31, caption: "Queued")]), width: width))")
+            let panel = HomeCanvasController.claudeHeroPanel(snapshot: snapshot, failure: nil, fetchedAt: now, now: now)
+            let claude = HomeCanvasController.claudeHeroBody(snapshot: snapshot, failure: nil, panel: panel,
+                                                             width: width, now: now)
+            out.append("claude split hero \(height("Claude", claude, width: width, chip: panel.chip))")
             out.append("ring \(height("Health", .ring(value: 7, total: 7, title: "Healthy", note: "All 7 services healthy."), width: width))")
             out.append("peek 3 + footer \(height("Merge", .peekRows(peek), width: width, footer: .init(caption: "Showing 3 of 22", actionTitle: "All 22 open")))")
         }

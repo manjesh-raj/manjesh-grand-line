@@ -14,8 +14,8 @@
 //   - **A `HelmCard`**, so the table is the same one bordered surface every
 //     other list in the app sits on.
 //   - **A view-based `HelmTableView`**, with `.plain` style and no system
-//     selection highlight, for the reason `HostsListSection` gives (audit
-//     §5.2: `.sourceList` installs the private system-accent material). The
+//     selection highlight, because `.sourceList` installs the private
+//     system-accent material (audit §5.2). The
 //     row view paints selection and hover itself, from the theme's own accent
 //     wash and `HelmFlatList.rowHoverColor` - the recipes `HelmAccentRow` uses.
 //   - **Its own header strip** rather than an `NSTableHeaderView`: the stock
@@ -1397,8 +1397,8 @@ private final class HelmDataTableGroupCell: NSView {
     }
 }
 
-/// The table's empty state, as one quiet caption with its action - the
-/// card-level recipe `HostsListSection` uses (UI-46).
+/// The table's empty state, as one quiet caption with its action - UI-46's
+/// card-level recipe.
 private final class HelmDataTableEmptyCell: NSView {
     private let state: HelmEmptyState
     private let button: HelmButton?

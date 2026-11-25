@@ -137,7 +137,6 @@ enum HelmKitSourceGuardSelfTest {
         "HelmKit.swift",
         "HelmModuleCard.swift",
         "HelmPlateCard.swift",
-        "NeedsAttentionCard.swift",
         "ShiftBoardViews.swift",
         "ShiftController.swift",
         "ShiftListViews.swift",
@@ -211,8 +210,6 @@ enum HelmKitSourceGuardSelfTest {
         "ToolsController.swift": 3,
         "UnifiedSearch.swift": 3,
         "UpdatesController.swift": 1,
-        // R2-ARCH-04 moved one of the page's two out of its main file.
-        "UpdatesController+Classic.swift": 1,
         "VaultController.swift": 10,
         "WhiteboardComposerPopover.swift": 2,
         "WhiteboardDSLPopover.swift": 1,

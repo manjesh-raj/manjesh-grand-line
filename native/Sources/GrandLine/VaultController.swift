@@ -75,12 +75,12 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private var installStatus: DependencyStatus = .unknown
     private var isInstallBusy = false
 
-    /// UI4: the Secrets and Verified Launchers card headers' counts are real
-    /// pills, not bare monospaced digits floating in the header. Each starts
-    /// at `?` rather than `0` for GL-14's reason - the page has not looked
-    /// yet, and "no secrets" is a different claim from "not asked".
+    /// UI4: the Secrets card header's count is a real pill, not bare
+    /// monospaced digits floating in the header. It starts at `?` rather than
+    /// `0` for GL-14's reason - the page has not looked yet, and "no secrets"
+    /// is a different claim from "not asked". The launchers' count is S-1's
+    /// card's own header line (`VaultHeroSplitView`).
     private let secretsCountBadge = HelmCountBadge(text: "?")
-    private let toolsCountBadge = HelmCountBadge(text: "?")
     /// The page's primary action, at the toolbar's far right
     /// (`workspacePrimaryAction`).
     private let addSecretButton = HelmButton(title: "+ Add Secret", variant: .primary)
@@ -153,20 +153,14 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     // MARK: The presentation (`buildSidebarPresentation`, at the end of this file)
 
-    // Secrets and Verified Launchers are the shared table, under their card
-    // headers.
+    // Secrets are the shared table, under their card header.
     private lazy var secretsTable = HelmDataTable(columns: [
         .init(id: "secret", title: "Secret", width: 260, minWidth: 180, flexible: true),
         .init(id: "status", title: "Status", width: 140, hiddenBelow: 560),
     ], actionsWidth: 172)
-    private lazy var toolsTable = HelmDataTable(columns: [
-        .init(id: "launcher", title: "Launcher", width: 260, minWidth: 180, flexible: true),
-        .init(id: "status", title: "Status", width: 170),
-    ], actionsWidth: 172)
     /// S-1 on the page-redesign board, which the captain kept for this tab:
     /// the launchers' verdict on a gradient beside the launchers themselves
-    /// (`VaultHeroSplit.swift`). It is what the page draws for the launchers;
-    /// `toolsTable` is built and kept current but not drawn.
+    /// (`VaultHeroSplit.swift`). It is what the page draws for the launchers.
     private lazy var heroSplit = VaultHeroSplitView()
     private var isLoadingSnapshot = false
     private var isRecheckingTool = false
@@ -454,11 +448,9 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         let notInstalled = installStatus == .notInstalled
         secretsTable.card.isHidden = notInstalled
-        toolsTable.card.isHidden = notInstalled
 
         // B1: "?" rather than "0" for a count this page does not have.
         secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
-        toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
         renderTables()
 
         applyTheme()
@@ -718,9 +710,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         // fell back to before this pass - the same rule `HelmCard`'s own
         // header title/subtitle already follow.
         secretsCountBadge.applyTheme(theme)
-        toolsCountBadge.applyTheme(theme)
         secretsTable.applyTheme(theme)
-        toolsTable.applyTheme(theme)
         // The amber tone is the theme's own, so the card is re-filled.
         renderHeroSplit()
         recipePanel.applyTheme(theme)
@@ -762,14 +752,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// fixture `debugRender` drew before it landed.
     var debugIsReading: Bool { isInstallBusy || isLoadingSnapshot }
 
-    /// B1: what the two count badges are showing right now.
+    /// B1: what the Secrets count badge is showing right now.
     var debugSecretsBadge: String { secretsCountBadge.text }
-    var debugToolsBadge: String { toolsCountBadge.text }
-    /// UI4's probe surface: the badges themselves, so a suite can assert the
-    /// pill is painted rather than only that the digits are right.
-    var debugCountBadges: [HelmCountBadge] { [secretsCountBadge, toolsCountBadge] }
-    /// The Verified Launchers rows, as the (undrawn) table is given them.
-    var debugToolTableRows: [HelmDataTable.Row] { toolTableRows() }
+    /// UI4's probe surface: the badge itself, so a suite can assert the pill
+    /// is painted rather than only that the digits are right.
+    var debugSecretsCountBadge: HelmCountBadge { secretsCountBadge }
     /// The path a real finished re-check takes into the page, minus the subprocess.
     func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
@@ -779,7 +766,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
         for row in secretsTable.debugRows { if case .empty(_, _, let body) = row.kind { return body } }
         return nil
     }
-    var debugToolsTable: HelmDataTable { toolsTable }
     var debugHeroSplit: VaultHeroSplitView? { heroSplit }
     #endif
 }
@@ -1207,30 +1193,23 @@ extension VaultController {
         // the recipe card.
         contentStack.insertArrangedSubview(heroSplit, at: 0)
         heroSplit.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        for table in [secretsTable, toolsTable] {
-            table.sizesToFitRows = true
-            table.card.translatesAutoresizingMaskIntoConstraints = false
-        }
+        secretsTable.sizesToFitRows = true
+        secretsTable.card.translatesAutoresizingMaskIntoConstraints = false
         contentStack.insertArrangedSubview(secretsTable.card, at: 1)
         secretsTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         secretsTable.accessibilityName = "Secrets"
-        toolsTable.accessibilityName = "Verified launchers"
         // R2-UX-04: the header carries the count, and Add Secret is the
         // toolbar's far-right button (`workspacePrimaryAction`) - nothing
-        // lives in a card header. The launchers' table is built and kept
-        // current but not drawn: S-1's card shows the launchers.
+        // lives in a card header. S-1's card shows the launchers.
         secretsTable.card.setHeader(symbol: "lock.fill", tint: .good, title: "Secrets",
                                     subtitle: "Keychain-backed, this device only",
                                     actions: [secretsCountBadge])
-        toolsTable.card.setHeader(symbol: "checkmark.shield.fill", tint: .violet, title: "Verified Launchers",
-                                  subtitle: "From av doctor --json", actions: [toolsCountBadge])
         applyTheme()
         renderTables()
     }
 
     private func renderTables() {
         secretsTable.setRows(secretTableRows())
-        toolsTable.setRows(toolTableRows())
         renderHeroSplit()
     }
 
@@ -1283,33 +1262,6 @@ extension VaultController {
             }
             row.activate = { [weak self] in self?.presentInjectSheet(preselected: secret.name) }
             row.menu = [.init(title: "Copy Name", symbol: "doc.on.doc") { [weak self] in self?.copySecretName(secret.name) }]
-            return row
-        }
-    }
-
-    private func toolTableRows() -> [HelmDataTable.Row] {
-        guard let tools else { return [unreadRow(noun: "verified launchers")] }
-        guard !tools.isEmpty else {
-            return [.empty(symbol: "checkmark.shield", title: "",
-                           body: "No verified launchers registered with Automic Vault yet.")]
-        }
-        return tools.map { tool in
-            var row = HelmDataTable.Row.record(tool.name)
-            let hardened: Bool
-            if case .hardened = tool.status { hardened = true } else { hardened = false }
-            row.cells = [
-                "launcher": .title(tool.name, subtitle: Self.launcherDetail(tool), subtitleIsCode: false,
-                                   symbol: "checkmark.shield.fill", tint: hardened ? .good : .warn, tintHex: nil),
-                "status": .status(hardened ? "Hardened" : tool.status.label, tint: hardened ? .good : .warn),
-            ]
-            if !hardened {
-                row.primary = .init(title: "View Fix\u{2026}", symbol: "wrench.and.screwdriver") { [weak self] in
-                    self?.presentIssueSheet(for: tool)
-                }
-                row.pinsPrimary = true
-                row.activate = { [weak self] in self?.presentIssueSheet(for: tool) }
-                row.menu = [.init(title: "Re-check", symbol: "arrow.clockwise") { [weak self] in self?.recheck(tool.name) }]
-            }
             return row
         }
     }

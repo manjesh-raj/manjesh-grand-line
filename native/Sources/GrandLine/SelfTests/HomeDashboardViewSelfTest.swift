@@ -78,9 +78,8 @@ enum HomeDashboardViewSelfTest {
     /// drawn against.
     private static let wide = NSSize(width: 1512, height: 945)
 
-    /// One `ShiftStore` per case, pointed at its own scratch directory - the
-    /// same arrangement `NeedsAttentionViewSelfTest` documents, and for its
-    /// reason: every bare store in the process otherwise shares one
+    /// One `ShiftStore` per case, pointed at its own scratch directory,
+    /// because every bare store in the process otherwise shares one
     /// directory, so one case's seeded rows become the next case's fixture.
     private static func withScratchShift(_ body: (ShiftStore) -> Void) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)

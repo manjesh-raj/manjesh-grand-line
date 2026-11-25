@@ -131,8 +131,9 @@ final class SchedulesCardView: NSObject {
             self.searchQuery = trimmed
             self.rebuild()
             // The sidebar's counts are "how many match *under the current
-            // search*", so typing has to move them - the same contract
-            // `CredentialVaultSidebar.setCounts` already carries.
+            // search*", so typing has to move them - the same contract the
+            // credential vault's hero column carries
+            // (`CredentialVaultController.renderHeroColumn`).
             self.onStateChanged?()
         }
 
@@ -278,7 +279,7 @@ final class SchedulesCardView: NSObject {
 
     /// Each collection's count, computed against the *current* search - so the
     /// sidebar says where the matches are rather than only what exists, which
-    /// is the same contract `CredentialVaultSidebar.setCounts` already has.
+    /// is the same contract `CredentialVaultController.renderHeroColumn` has.
     ///
     /// Counted off the very array the rows render, so a count and its list can
     /// never disagree within a frame.
@@ -534,7 +535,7 @@ final class SchedulesCardView: NSObject {
         // priority at all - so without `.fill` plus stack-level hugging here
         // AND required content hugging on each control, the solver's tie-break
         // can stretch whichever of them it likes across the row.
-        // `HostsListSection`'s identical `actions` stack is the reference.
+        // `ReviewPRListView`'s row cell carries the same fix.
         actions.distribution = .fill
         actions.translatesAutoresizingMaskIntoConstraints = false
         actions.setHuggingPriority(.required, for: .horizontal)
@@ -784,8 +785,7 @@ final class SchedulesCardView: NSObject {
     }
 
     /// One array builds both the overflow menu and (were a context menu added)
-    /// any other presentation of the same actions, so the two cannot drift -
-    /// the same reasoning `HostsListSection` records for its own rows.
+    /// any other presentation of the same actions, so the two cannot drift.
     private func buildOverflowMenu(for schedule: AutomationSchedule) -> NSMenu {
         let menu = NSMenu()
         // AppKit auto-enables a menu item whose target responds to its action,

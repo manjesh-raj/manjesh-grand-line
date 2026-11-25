@@ -1532,7 +1532,7 @@ extension HostsController: ModuleTabHosting {
     /// like every other page's; beside the column it is the board's 20pt past
     /// it.
     func refreshContentLeading() {
-        let collapsed = splitPage.map { $0.isSidebarCollapsed || $0.pageForcesCollapse } ?? true
+        let collapsed = splitPage.map(\.isSidebarCollapsed) ?? true
         contentLeading?.constant = collapsed ? HelmMetrics.pageGutter : HelmMetrics.s5 - HelmSplitPage.dividerThickness
     }
 }

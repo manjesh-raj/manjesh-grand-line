@@ -248,24 +248,23 @@ enum Audit3UIFixesSelfTest {
             let vault = VaultController()
             laidOut(vault, width: 1100, height: 700)
 
-            check(vault.debugCountBadges.count == 2,
-                  "both header counts are `HelmCountBadge`s (found \(vault.debugCountBadges.count))",
+            // The Secrets card's header count. The launchers' count is S-1's
+            // card's own header line, which has no pill to paint.
+            let badge = vault.debugSecretsCountBadge
+            badge.layoutSubtreeIfNeeded()
+            check((badge.debugFill?.alphaComponent ?? 0) > 0.01,
+                  "the count badge paints a pill rather than sitting bare",
                   &ok)
-            for badge in vault.debugCountBadges {
-                badge.layoutSubtreeIfNeeded()
-                check((badge.debugFill?.alphaComponent ?? 0) > 0.01,
-                      "the count badge paints a pill rather than sitting bare",
-                      &ok)
-                check(badge.debugCornerRadius >= HelmCountBadge.height / 2 - 0.01,
-                      "the pill is a capsule (radius \(badge.debugCornerRadius))",
-                      &ok)
-            }
+            check(badge.debugCornerRadius >= HelmCountBadge.height / 2 - 0.01,
+                  "the pill is a capsule (radius \(badge.debugCornerRadius))",
+                  &ok)
             // GL-14, and the thing the render showed: a bare `0` beside a
             // subtitle reading "Checking Automic Vault…" is a confident count
             // the page has not earned.
-            check(vault.debugSecretsBadge == "?" && vault.debugToolsBadge == "?",
-                  "before the first read both counts read ? rather than 0 "
-                  + "(\(vault.debugSecretsBadge)/\(vault.debugToolsBadge))",
+            let launchers = vault.debugHeroSplit?.debugHeader ?? ""
+            check(vault.debugSecretsBadge == "?" && !launchers.contains(where: \.isNumber),
+                  "before the first read neither count claims a number "
+                  + "(secrets \(vault.debugSecretsBadge), launchers \"\(launchers)\")",
                   &ok)
             // The loading state, from the moment the page exists. The floating
             // bar's cards drew a D3 skeleton here; P-03 of the 2026-11-25
