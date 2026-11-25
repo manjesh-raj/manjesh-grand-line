@@ -619,6 +619,8 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     /// the one thing a self-test cannot infer from the view's appearance.
     var debugIsDragging: Bool { isDraggingCard }
     var debugRow: HelmAccentRow { row }
+    /// The due caption the card paints, in either style.
+    var debugDue: String? { usesWorkspaceStyle ? workspaceCard.debugDue : row.debugMetaText }
     func debugLiftedSnapshotSize() -> NSSize? { liftedSnapshot()?.size }
     #endif
 }

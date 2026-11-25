@@ -20,7 +20,7 @@ struct DevOpsHubWords: Equatable {
     /// What the hero's pills do.
     enum Action: Equatable {
         case start, cancel, retry, stop, showHere, openInBrowser, settings, changePort, chooseFolder,
-             showInFinder, openPrivacySettings, copyCloneCommand
+             showInFinder, openPrivacySettings, copyCloneCommand, reloadSite
 
         var title: String {
             switch self {
@@ -36,6 +36,7 @@ struct DevOpsHubWords: Equatable {
             case .showInFinder: return "Show in Finder"
             case .openPrivacySettings: return "Open Privacy Settings"
             case .copyCloneCommand: return "Copy Clone Command"
+            case .reloadSite: return "Reload"
             }
         }
 
@@ -43,7 +44,7 @@ struct DevOpsHubWords: Equatable {
             switch self {
             case .start: return "play.fill"
             case .stop: return "stop.fill"
-            case .retry: return "arrow.clockwise"
+            case .retry, .reloadSite: return "arrow.clockwise"
             case .openInBrowser: return "safari"
             case .chooseFolder: return "folder"
             default: return nil
@@ -79,6 +80,9 @@ struct DevOpsHubWords: Equatable {
         case loading(Double)
         /// Serving, and set not to show it here on its own.
         case runningNotShown
+        /// Serving, but the site's page crashed twice in a row and the web
+        /// view stopped reloading it (full review 2026-11-25, B-05).
+        case siteKeepsCrashing
     }
 
     static func kicker(_ project: LocalProject) -> String { "DevOps Hub \u{00B7} \(project.name)" }
@@ -126,6 +130,17 @@ struct DevOpsHubWords: Equatable {
                     Check(mark: listening ? .working : .pending, title: "Loading the site",
                           detail: listening ? "\(Int((progress * 100).rounded()))%" : "Next"),
                 ])
+
+        case .siteKeepsCrashing:
+            return DevOpsHubWords(
+                kicker: kicker, headline: "This site keeps crashing",
+                body: "\(name)\u{2019}s page stopped twice in a minute, so Grand Line stopped reloading it. "
+                    + "The server is still running at \(address). Reload tries again, and your browser may say why.",
+                tone: .red, progress: nil, actions: [.reloadSite, .openInBrowser, .stop],
+                checksTitle: "Running",
+                checks: [folderCheck, addressCheck,
+                         Check(mark: .failed, title: "The page stopped twice",
+                               detail: "Its web content process ended twice within a minute.")])
 
         case .runningNotShown:
             return DevOpsHubWords(

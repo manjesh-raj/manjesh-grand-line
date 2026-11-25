@@ -717,8 +717,17 @@ enum PageRedesignsSelfTest {
         // hold the window at its own width. Measured with the real course
         // before the fix: the window stayed at 1513.
         resize(window, width: 1100, shell)
-        check(abs(window.frame.width - 1100) < 1 && cards.showsBand,
+        // T-02 of the 2026-11-25 review: the band moves in on a later layout
+        // turn than the resize, and one fixed `settle` was not always enough
+        // on CI's runner (run 45150476006). Wait for the settled state, and
+        // say which half was missing.
+        _ = waitUntil(timeout: 10) {
+            shell.view.layoutSubtreeIfNeeded()
+            return abs(window.frame.width - 1100) < 1 && cards.showsBand
+        }
+        check(abs(window.frame.width - 1100) < 1,
               "with a project's view hidden the window stayed \(window.frame.width)pt wide", &ok)
+        check(cards.showsBand, "at 1100pt the cards' column did not move into the band", &ok)
         resize(window, width: 1512, shell)
 
         // Open, then the window's Back: the project view is a place in the

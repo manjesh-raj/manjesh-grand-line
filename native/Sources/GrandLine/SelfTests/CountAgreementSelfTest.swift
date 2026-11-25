@@ -172,7 +172,9 @@ enum CountAgreementSelfTest {
               "W12: an unreadable hosts.json reads as 'Hosts 0'", &ok)
         check(code("ReviewController.swift").contains("if !isTotalFailure { onReadyToMergeCountChanged?("),
               "W14: a scan that reached no forge withdraws the bell's ready-to-merge row", &ok)
-        check(code("CompactMode.swift").contains("forName: .NSCalendarDayChanged"),
+        // B-01 moved this onto `DayRollover`, which also turns the day over
+        // on waking past midnight.
+        check(code("CompactMode.swift").contains("dayObserver = DayRollover.observe {"),
               "W15: the menu-bar overdue count does not turn over at midnight", &ok)
         check(code("ScheduleRunner.swift").contains("publishSetupStepResults(answers, gatheredAt: startedAt)"),
               "W17: the scheduled drift check does not publish what it read", &ok)

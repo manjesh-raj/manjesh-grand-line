@@ -167,6 +167,8 @@ final class TaskCalendarController: NSViewController {
     var scale: ShiftCalendarScale { calendarView.scale }
     func show(scale: ShiftCalendarScale) { calendarView.show(scale: scale) }
     func showToday() { calendarView.showToday() }
+    /// B-01: redraw the page's today marker after midnight.
+    func dayDidChange(from previousDay: String) { calendarView.dayDidChange(from: previousDay) }
     /// The sidebar layout's toolbar carries Today and the periods, and its
     /// card wears Cal-8's hero head in place of the page's own header, as
     /// T-4's bands are the sidebar layout's too.

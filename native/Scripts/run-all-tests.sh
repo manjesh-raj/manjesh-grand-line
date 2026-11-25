@@ -55,6 +55,11 @@
 #                                           # re-run each failed suite once at
 #                                           # the end, to name the flaky ones.
 #                                           # The run still fails either way.
+#   ./Scripts/run-all-tests.sh --rerun-failed --accept-flaky
+#                                           # CI's windowed lane on main only: a
+#                                           # suite that failed and then passed
+#                                           # is a warning, not a failure. Both
+#                                           # results are kept. See below.
 #   ./Scripts/run-all-tests.sh --history=.build/suite-history.json
 #                                           # append this run's per-suite
 #                                           # results to a JSON history and
@@ -103,6 +108,7 @@ CI_MODE=0
 SESSION_ONLY=0
 SHARD=""
 RERUN_FAILED=0
+ACCEPT_FLAKY=0
 HISTORY=""
 LANE=""
 REQUESTED=()
@@ -116,6 +122,7 @@ for arg in "$@"; do
     --session-only) SESSION_ONLY=1 ;;
     --shard=*) SHARD="${arg#--shard=}" ;;
     --rerun-failed) RERUN_FAILED=1 ;;
+    --accept-flaky) ACCEPT_FLAKY=1 ;;
     --history=*) HISTORY="${arg#--history=}" ;;
     --lane=*) LANE="${arg#--lane=}" ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -123,6 +130,11 @@ for arg in "$@"; do
     *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
+
+if [ "$ACCEPT_FLAKY" -eq 1 ] && [ "$RERUN_FAILED" -eq 0 ]; then
+  echo "--accept-flaky needs --rerun-failed: a suite is only flaky once it has passed on its re-run" >&2
+  exit 2
+fi
 
 SHARD_INDEX=0
 SHARD_COUNT=0
@@ -1157,6 +1169,44 @@ if [ "$RERUN_FAILED" -eq 1 ] && [ ${#FAILED[@]} -gt 0 ]; then
   done
 fi
 
+# --- Accepting a flake on main (T-02 of the 2026-11-25 review) --------------
+#
+# `--accept-flaky` is for one place: CI's window-backed lane on a push to
+# `main`. There, a suite that failed and then passed on its re-run no longer
+# fails the run. Main went red on three of eight merges for suites each pull
+# request had passed (a timing assertion on a busy runner), nobody re-ran
+# main, and a red default branch that is usually a flake hides the day it is
+# a real regression.
+#
+# What it does not do, so it cannot hide a defect:
+#   - A suite that fails both times still fails the run.
+#   - A pull request's run never passes it, so a flake still blocks the merge
+#     that introduces or worsens it, and is fixed there.
+#   - Both results are kept: the suite stays `flaky` in `--history`, is named
+#     below and in the job summary, and gets a GitHub warning annotation.
+#     `native/CI-FLAKES.md` is where a suite that keeps doing this is tracked.
+ACCEPTED_FLAKY=()
+if [ "$ACCEPT_FLAKY" -eq 1 ] && [ ${#FLAKY[@]} -gt 0 ]; then
+  STILL_FAILED=()
+  for flag in "${FAILED[@]}"; do
+    accepted=0
+    for flaky in "${FLAKY[@]}"; do
+      [ "$flag" = "$flaky" ] && accepted=1
+    done
+    if [ "$accepted" -eq 1 ]; then ACCEPTED_FLAKY+=("$flag"); else STILL_FAILED+=("$flag"); fi
+  done
+  FAILED=("${STILL_FAILED[@]+"${STILL_FAILED[@]}"}")
+  for flag in "${ACCEPTED_FLAKY[@]}"; do
+    printf 'ACCEPTED    %s - failed, then passed on re-run; recorded as flaky, not failing main\n' "$flag"
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      printf '::warning title=Flaky suite::%s failed, then passed on its re-run. Both results are in the suite history; see native/CI-FLAKES.md.\n' "$flag"
+    fi
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      printf -- '- Flaky on main (failed, then passed on re-run): `%s`\n' "$flag" >> "$GITHUB_STEP_SUMMARY"
+    fi
+  done
+fi
+
 # --- Python suites -------------------------------------------------------
 #
 # Only in a selection that is meant to be exhaustive: an explicit
@@ -1261,7 +1311,9 @@ fi
 if [ ${#TIMEDOUT[@]} -gt 0 ]; then
   printf 'timed out: %s\n' "${TIMEDOUT[*]}"
 fi
-if [ ${#FLAKY[@]} -gt 0 ]; then
+if [ ${#ACCEPTED_FLAKY[@]} -gt 0 ]; then
+  printf 'failed, then passed on re-run (flaky - accepted on main, recorded): %s\n' "${ACCEPTED_FLAKY[*]}"
+elif [ ${#FLAKY[@]} -gt 0 ]; then
   printf 'failed, then passed on re-run (likely flaky - the run still fails): %s\n' "${FLAKY[*]}"
 fi
 if [ ${#FAILED_TWICE[@]} -gt 0 ]; then

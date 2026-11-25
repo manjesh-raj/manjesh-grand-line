@@ -1609,7 +1609,7 @@ extension ShiftStore {
 
     /// Every open task and pending follow-up the two predicates keep - the
     /// page passes its project filter for both, so the counts follow it.
-    func summary(now: Date = Date(), calendar: Calendar = .current,
+    func summary(now: Date = DayRollover.now(), calendar: Calendar = .current,
                  includingTask: (ShiftTask) -> Bool = { _ in true },
                  includingFollowUp: (ShiftFollowUp) -> Bool = { _ in true }) -> Summary {
         let startOfToday = calendar.startOfDay(for: now)

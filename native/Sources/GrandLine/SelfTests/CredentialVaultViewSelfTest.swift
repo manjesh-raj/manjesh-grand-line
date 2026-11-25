@@ -92,6 +92,7 @@ enum CredentialVaultViewSelfTest {
         checkSelectionFollowsTheList(scratch: scratch, window: window, check)
         checkLockClearsTheInspector(scratch: scratch, window: window, check)
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
+        checkAStaleTouchIDKeyIsSaid(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
         checkExactlyOneSwitchPerToggleRow(check)
         checkSetupGuidanceIsNotTruncated(window: window, check)
@@ -1284,6 +1285,31 @@ enum CredentialVaultViewSelfTest {
         let offersCreate = buttonTitles.contains { $0.lowercased().contains("create") }
         check(!offersCreate,
               "an unreadable vault must offer NO create action - it would write over real credentials. Visible buttons: \(buttonTitles)")
+    }
+
+    /// Full review 2026-11-25, B-03: when the stored Touch ID key no longer
+    /// opens the vault, the gate says so and keeps saying it. The handler
+    /// used to show the message and then re-render, and the re-render put the
+    /// gate back in its unlock mode, which clears the message - so the Touch
+    /// ID button vanished with no word about why.
+    ///
+    /// Enters where the store's completion lands: a real stale key needs a
+    /// Keychain item and a Touch ID prompt, which no suite may raise.
+    private static func checkAStaleTouchIDKeyIsSaid(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- B-03: a stale Touch ID key is said on the gate, not cleared by its re-render --")
+        let (controller, store) = mounted(scratch, name: "stale-touch-id", window: window)
+        controller.debugLockButton.performClick(nil)
+        check(!store.isUnlocked && controller.debugIsUnlockShowing, "B-03 fixture: Lock did not show the gate")
+        let gate = controller.debugUnlockView
+        check(!gate.debugMessageVisible, "B-03 fixture: the gate already shows \(gate.debugMessageText)")
+
+        controller.debugHandleUnlockOutcome(.staleTouchIDKey)
+        controller.view.layoutSubtreeIfNeeded()
+        check(controller.debugIsUnlockShowing, "B-03: a stale Touch ID key left the gate")
+        check(gate.debugMessageText == CredentialVaultController.staleTouchIDKeyMessage,
+              "B-03: after a stale Touch ID key the gate says \"\(gate.debugMessageText)\"")
+        check(gate.debugMessageVisible, "B-03: the stale Touch ID key's message is hidden")
+        check(gate.debugIsLit, "B-03: the message is in a form the chest still hides")
     }
 
     /// L3: the change-password section says that rotating the master password

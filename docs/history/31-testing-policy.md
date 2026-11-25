@@ -286,3 +286,28 @@ Two things came with it:
 
 One local trap, measured while timing the checks: a single check took 904s in one local run and 3.3s in the next, on a machine with a load average of 21.
 A local per-check time from a loaded or sleeping machine is not a measurement, so the split used CI's.
+
+## The recurring CI failures (full review 2026-11-25, T-01 and T-02)
+
+### T-01: the nightly ThreadSanitizer run
+
+The nightly run failed every night from 2026-11-19 on, on four reports, and nothing said so.
+
+- `DocsRunbookStore.debugInitCount` and `SRELead.claudePathOverrideForTests` are behind locks (GL-28).
+- `DevOpsHubModelSelfTest.fetch` hands URLSession's answer across under a lock.
+- SwiftTerm's `LocalProcess` writes `running` and `childfd` from its PTY read queue while the main thread reads them.
+  That is vendored code with no seam, so it is two narrow suppressions (`race:LocalProcess.childStopped`, `race:LocalProcess.childProcessRead`) with their reason in `tsan-suppressions.txt`, not an eleventh patch.
+  A local TSan build ran the three failing suites clean, including the second `childfd` report that only appeared once the first was suppressed.
+  The race itself fires rarely, so the patterns were also proved against a small TSan program with a deliberate race in methods of the same names: two warnings and exit 134 without the file, none with it.
+- A scheduled run now keeps its state on one GitHub issue, "Nightly ThreadSanitizer run is failing", opened or commented on by a failing run and closed by the next green one.
+  The review suggested the app's weekly "Manual checks due" schedule instead, but that runs weekly and would need a GitHub token in the app.
+
+### T-02: window-backed flakes on main
+
+Main went red on three of eight merges for suites each pull request had passed.
+
+- The three checks wait on what they assert instead of a fixed pump: the Daylight cards' render (the 2s bound is now 15s, and a timeout says so), the Connect button's window, and the settled window width with the band moved in.
+  The last one's message used to blame the width when the band was the missing half.
+- `run-all-tests.sh --accept-flaky`, passed by CI's windowed job on a push to main only: a suite that failed and then passed on its re-run is a warning annotation and a job summary line, and stays `flaky` in the history.
+  A suite that fails twice still fails, and a pull request's run never accepts a flake.
+- `native/CI-FLAKES.md` is the tracked list, with the three fixed here.

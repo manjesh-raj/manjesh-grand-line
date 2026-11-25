@@ -2214,10 +2214,22 @@ enum DaylightModuleSelfTest {
     /// intact (PR #504's first run). This waits for the event rather than for
     /// time; the assertion after it is unchanged, so wiring that never renders
     /// still fails - after `timeout` instead of after 40ms.
-    private static func pumpMainQueue(timeout: TimeInterval = 2, until landed: () -> Bool) {
-        let deadline = Date().addingTimeInterval(timeout)
+    ///
+    /// Full review 2026-11-25, T-02: 2s was still a guess at the runner's
+    /// speed. On main (runs 44731186275 and 45150476006) the Engineering
+    /// cards' first published pass had not rendered after 2s, failing five
+    /// checks that passed on the re-run moments later. The bound is now
+    /// generous, which costs a passing run nothing because the wait ends the
+    /// moment the render lands, and a timeout says it was one, so a real
+    /// wiring break reads differently from a slow runner.
+    private static func pumpMainQueue(timeout: TimeInterval = 15, until landed: () -> Bool) {
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeout)
         while !landed(), Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        if !landed() {
+            print("  NOTE the canvas had not rendered the awaited state after \(Int(Date().timeIntervalSince(started)))s")
         }
     }
 

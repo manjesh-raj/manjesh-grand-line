@@ -258,7 +258,24 @@ enum SRELead {
     /// disposable fake-`claude` script so a real per-tab SRE Lead round trip
     /// (start, ask, tear down) can be driven end to end with no real
     /// network/auth dependency. `nil` in production.
-    static var claudePathOverrideForTests: String?
+    ///
+    /// Behind a lock (full review 2026-11-25, T-01): `resolveClaude()` reads
+    /// it on SRE Lead's background queue while a suite sets it on main, and
+    /// the nightly ThreadSanitizer run reported that as a race (GL-28).
+    static var claudePathOverrideForTests: String? {
+        get {
+            claudePathOverrideLock.lock()
+            defer { claudePathOverrideLock.unlock() }
+            return claudePathOverrideStorage
+        }
+        set {
+            claudePathOverrideLock.lock()
+            claudePathOverrideStorage = newValue
+            claudePathOverrideLock.unlock()
+        }
+    }
+    private static let claudePathOverrideLock = NSLock()
+    private static var claudePathOverrideStorage: String?
 
     /// Find the `claude` binary by checking the usual Homebrew/`/usr/local`
     /// locations as well as `PATH` - a Finder-launched GUI app inherits a

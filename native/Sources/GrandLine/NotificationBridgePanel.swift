@@ -304,7 +304,13 @@ final class NotificationBridgePanelViewController: NSViewController {
     private var lastRenderSignature: String?
 
     /// Injectable, as on the classic panel.
-    var clock: () -> Date = { Date() }
+    var clock: () -> Date = { DayRollover.now() }
+    /// B-01: the head's turn-over at midnight (`DayRollover`).
+    private var dayRolloverToken: NSObjectProtocol?
+
+    deinit {
+        if let dayRolloverToken { NotificationCenter.default.removeObserver(dayRolloverToken) }
+    }
 
     /// How a snooze menu is shown: popped up under the button that asked for
     /// it. A suite swaps this to read the menu, because a real pop-up enters
@@ -326,6 +332,13 @@ final class NotificationBridgePanelViewController: NSViewController {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 320))
         root.wantsLayer = true
         view = root
+        // Full review 2026-11-25, B-01: the head's kicker names the day, and
+        // an open panel left over midnight reloads only when something
+        // arrives. The render signature carries the day, so this redraws.
+        dayRolloverToken = DayRollover.observe { [weak self] _, _ in
+            guard let self, self.view.window?.isVisible == true else { return }
+            self.reload()
+        }
 
         footerLabel.translatesAutoresizingMaskIntoConstraints = false
         buildHeroHead()

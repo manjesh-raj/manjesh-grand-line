@@ -4,7 +4,7 @@
 // written down, with a guard. The table itself is in `HelmMotion.swift`'s
 // header; this suite is what keeps it true.
 //
-// Four things are asserted:
+// Five things are asserted:
 //
 // 1. **The table's three values**, and that they are ordered (a state change
 //    is quicker than a move, which is quicker than an arrival).
@@ -27,6 +27,11 @@
 //    start state, and lands the end state with nothing animating under Reduce
 //    Motion. `HoverPressEasingSelfTest` asserts the same thing on the real
 //    components inside a window; this is the half the blocking CI lane runs.
+// 5. **`PaneMotionQueue`** (full review 2026-11-25, B-02): a pane request
+//    made while that pane eases is held, the newest one wins, a request for
+//    the running change's own target cancels an earlier held one, and the
+//    completion hands back exactly one request. `ConnectionsCardsSelfTest`
+//    drives the real inspector through it in a window.
 //
 // Run with:
 //   swift build && FM_RUN_MOTION_TABLE_TESTS=1 .build/debug/GrandLine; echo $?
@@ -55,6 +60,7 @@ enum MotionTableSelfTest {
         checkAnimateLayersEasesAChange(&ok)
         checkAnimateLayersPicksUpAnEntrance(&ok)
         checkAnimateLayersUnderReduceMotion(&ok)
+        checkPaneMotionQueue(&ok)
         print(ok ? "MotionTableSelfTest: all checks passed" : "MotionTableSelfTest: FAILED")
         return ok
     }
@@ -279,6 +285,32 @@ enum MotionTableSelfTest {
     }
 
     // MARK: Helpers
+
+    /// B-02: one eased change per pane, and the newest request applied from
+    /// its completion.
+    private static func checkPaneMotionQueue(_ ok: inout Bool) {
+        typealias Request = PaneMotionQueue.Request
+        var queue = PaneMotionQueue()
+        check(!queue.queue(collapsed: true, animated: true, current: false),
+              "B-02: a request with nothing in flight was held instead of applied", &ok)
+        check(queue.finish() == nil, "B-02: an idle queue handed back a request", &ok)
+
+        // An eased close is running: the pane's `isCollapsed` is already true.
+        queue.inFlight = true
+        check(queue.queue(collapsed: false, animated: true, current: true),
+              "B-02: a reopen during an eased close was not held", &ok)
+        check(queue.pending == Request(collapsed: false, animated: true),
+              "B-02: the held reopen is \(String(describing: queue.pending))", &ok)
+        // The newest request wins, and one for the running change's own
+        // target means there is nothing left to do once it lands.
+        check(queue.queue(collapsed: true, animated: false, current: true) && queue.pending == nil,
+              "B-02: a close during a close left \(String(describing: queue.pending)) held", &ok)
+        _ = queue.queue(collapsed: false, animated: false, current: true)
+        check(queue.finish() == Request(collapsed: false, animated: false) && !queue.inFlight,
+              "B-02: the completion did not hand back the newest request", &ok)
+        check(queue.finish() == nil && !queue.queue(collapsed: true, animated: true, current: false),
+              "B-02: a request was handed back twice, or held after the change finished", &ok)
+    }
 
     private static func loadSources() -> [(name: String, code: [String])]? {
         guard let files = SelfTestSources.appSourceFiles(), !files.isEmpty else { return nil }

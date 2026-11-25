@@ -26,6 +26,16 @@
 # The suppression file is `native/Scripts/tsan-suppressions.txt`. Every entry
 # there names the third-party code it covers and why it is not this app's
 # race; an entry for this app's own code is a bug to fix instead.
+#
+# T-01 of the 2026-11-25 review: this lane failed every night for at least
+# four nights on the same four reports, and nothing said so - it is not a
+# required check, and a red scheduled run notifies nobody. A red nightly that
+# nobody reads is worse than none, because the day a real race lands it is
+# one more line in a job that is already failing. So a scheduled run now
+# keeps its state on one GitHub issue ("Nightly ThreadSanitizer run is
+# failing"): a failed run opens it, or comments on the open one, and the next
+# green run closes it. An issue notifies the repository's watchers, which a
+# red cross in the Actions list does not.
 
 name: Sanitizers
 
@@ -38,6 +48,11 @@ on:
     paths:
       - '.github/workflows/sanitizers.yml'
       - 'native/Scripts/tsan-suppressions.txt'
+
+permissions:
+  contents: read
+  # The tracking issue below, and nothing else.
+  issues: write
 
 concurrency:
   group: sanitizers-${{ github.ref }}
@@ -93,3 +108,35 @@ jobs:
           FM_SUITE_TIMEOUT: "1500"
           TSAN_OPTIONS: "halt_on_error=0 second_deadlock_stack=1 suppressions=${{ github.workspace }}/native/Scripts/tsan-suppressions.txt"
         run: ./Scripts/run-all-tests.sh --ci --no-build --rerun-failed
+
+      - name: Keep the nightly's state on its tracking issue
+        # Scheduled runs only: a hand-started run or a pull request's is
+        # someone already looking. Never fails the job, so the verdict above is
+        # the job's own.
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        continue-on-error: true
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Nightly ThreadSanitizer run is failing"
+          number="$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" \
+            --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")"
+          if [ "$STATUS" = success ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$REPO" --comment "The nightly run is green again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "Still failing: $RUN_URL"
+          else
+            gh issue create --repo "$REPO" --title "$title" --body "$(printf '%s\n\n%s\n\n%s\n' \
+              "The nightly ThreadSanitizer run (\`.github/workflows/sanitizers.yml\`) failed: $RUN_URL" \
+              "Each failing suite is named in the run's log as \`FAIL\`, with the race report under it. A race in this app's own code is fixed with a lock or a queue hop (GL-28); a third-party race goes in \`native/Scripts/tsan-suppressions.txt\` with its reason." \
+              "This issue is commented on by every failing scheduled run and closed by the next green one.")"
+          fi

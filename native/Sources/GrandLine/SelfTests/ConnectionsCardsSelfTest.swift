@@ -66,7 +66,8 @@ enum ConnectionsCardsSelfTest {
             settle(shell)
             for check in [checkGroupedOnFirstShow, checkTagMatch, checkTagOverflow, checkFindOrConnect, checkSplitButtons, checkKeyCards,
                           checkHostCards, checkFlatHostGrid, checkHostCardKeyboard, checkGridReflow, checkRecentHosts,
-                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkAFormsInspectorStaysOnItsPage, checkSSHConfigImport] {
+                          checkHostPanel, checkNewHostPanel, checkUnsavedChanges, checkKeyPanel, checkNewKeyPanel, checkAFormsInspectorStaysOnItsPage, checkSSHConfigImport,
+                          checkTheInspectorReopensWhileClosing] {
                 var ok = true
                 check(shell, window, &ok)
                 allOK = allOK && ok
@@ -1051,6 +1052,75 @@ enum ConnectionsCardsSelfTest {
         if ok { print("  OK   a form's inspector stays on Connections, and the toolbar's holds across pages") }
     }
 
+    // MARK: B-02
+
+    /// Full review 2026-11-25, B-02: the inspector asked for again while its
+    /// eased close is still running. Measured in the tour lab before the fix:
+    /// the window went from 1512 to 1037pt and the New Host form never showed,
+    /// because the second request started a second animation on the same
+    /// split view item while the first one's completion was still to run.
+    ///
+    /// Both requests are made in one run-loop turn, with motion on, which is
+    /// the only way to reach the overlap. A real click cannot be that fast;
+    /// a keyboard macro, a Shortcuts action or a code path that closes and
+    /// reopens the pane can.
+    private static func checkTheInspectorReopensWhileClosing(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                             _ ok: inout Bool) {
+        resize(window, width: 1512, shell)
+        let hosts = showHosts(shell)
+        shell.debugResetInspectorPreference()
+        settle(shell)
+        defer {
+            hosts.hostPanel?.cancelPanel()
+            hosts.hostsGrid.setSelected(nil, notify: true)
+            shell.debugResetInspectorPreference()
+            settle(shell)
+        }
+        guard selectHost("edge-proxy-01", hosts, shell) != nil, !shell.debugInspectorIsCollapsed else {
+            return fail("B-02 fixture: selecting a host did not open its form in the inspector", &ok)
+        }
+        let width = window.frame.width
+
+        let pane = shell.inspector.view
+        var paneShows: CGFloat { pane.isHiddenOrHasHiddenAncestor ? 0 : pane.visibleRect.width }
+        /// Every eased pane change landed and the pane is open on the form,
+        /// at the window's own width: the state the checks below read.
+        func landed() -> Bool {
+            shell.view.layoutSubtreeIfNeeded()
+            return WorkspaceMotion.debugPaneMotionsInFlight == 0 && !shell.debugInspectorIsCollapsed
+                && shell.inspector.hostedContentView === hosts.hostPanel?.view
+                && paneShows > WorkspaceInspectorController.width - 1 && abs(window.frame.width - width) < 1
+        }
+
+        // Motion on, for this check only: every suite here pins it off, and
+        // CI's runners have Reduce Motion on, so nothing would ease.
+        HelmMotion.reducedOverrideForTests = false
+        shell.setInspectorShown(false)
+        // The fixture's discriminating power: the close really is eased, so
+        // the request below lands while it runs.
+        check(WorkspaceMotion.debugPaneMotionsInFlight > 0, "B-02 fixture: the inspector's close did not ease", &ok)
+        hosts.newHost()
+        HelmMotion.reducedOverrideForTests = true
+        // Waits on the state itself, never on a fixed pump: the completion
+        // that applies the held request runs when the close's animation ends,
+        // which a loaded runner can stretch well past its 180ms.
+        let deadline = Date().addingTimeInterval(10)
+        while !landed(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+
+        check(WorkspaceMotion.debugPaneMotionsInFlight == 0, "B-02: a pane motion was still running after 10s", &ok)
+        check(abs(window.frame.width - width) < 1,
+              "B-02: the window went from \(width) to \(window.frame.width)pt when the inspector reopened while closing",
+              &ok)
+        check(!shell.debugInspectorIsCollapsed, "B-02: the inspector stayed closed after New Host asked for it", &ok)
+        check(hosts.hostPanelKey == HostsController.newHostPanelKey && hosts.hostPanel != nil
+                && shell.inspector.hostedContentView === hosts.hostPanel?.view
+                && shell.inspector.debugTitle == "New Host",
+              "B-02: the inspector shows \(shell.inspector.debugTitle), not the New Host form", &ok)
+        check(paneShows > WorkspaceInspectorController.width - 1,
+              "B-02: \(paneShows)pt of the inspector pane shows, so the form is mounted but not on screen", &ok)
+        if ok { print("  OK   B-02: the inspector reopened while closing keeps the window and shows the form") }
+    }
+
     // MARK: X1
 
     private static func checkSSHConfigImport(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
@@ -1279,7 +1349,13 @@ enum ConnectionsCardsSelfTest {
         // away it is back.
         check(hosts.heroColumnShowing && button.isHidden, "C-4: the Connect button shows beside the hero column", &ok)
         hosts.splitPage?.toggleSidebar(nil)
-        settle(shell)
+        // T-02 of the 2026-11-25 review: the button comes back once the split
+        // page has laid out without its hero column, which a fixed `settle`
+        // did not always reach on CI (run 45116596604). Wait for it.
+        let shown = Date().addingTimeInterval(10)
+        repeat {
+            settle(shell)
+        } while (button.window == nil || button.isHiddenOrHasHiddenAncestor) && Date() < shown
         defer { hosts.splitPage?.toggleSidebar(nil); settle(shell) }
         check(button.window != nil && !button.isHiddenOrHasHiddenAncestor, "H3: the Connect button is not on screen", &ok)
         let field = hosts.debugSearchField

@@ -57,7 +57,7 @@ enum ShiftHeroWords {
 
     /// The band for the page's counts. `summary` is `nil` for a store that
     /// failed to read, which is never drawn as zeroes.
-    static func band(summary: ShiftStore.Summary?, doneLastWeek: Int, now: Date = Date()) -> Band {
+    static func band(summary: ShiftStore.Summary?, doneLastWeek: Int, now: Date = DayRollover.now()) -> Band {
         let kicker = "Tasks \u{00B7} \(kickerFormatter.string(from: now))"
         guard let summary else {
             return Band(kicker: kicker, headline: "Your tasks could not be read.", figures: nil, ring: nil,
@@ -85,7 +85,7 @@ enum ShiftHeroWords {
     /// A lane's detail line: what in it is late or due, from each item's due
     /// day and time. "1 overdue · 1 due today", then "2 due tomorrow", then
     /// "Nothing due soon" - or `empty` for a lane with nothing in it.
-    static func laneDetail(dues: [(date: String?, time: String?)], empty: String, now: Date = Date(),
+    static func laneDetail(dues: [(date: String?, time: String?)], empty: String, now: Date = DayRollover.now(),
                            calendar: Calendar = .current) -> String {
         guard !dues.isEmpty else { return empty }
         let today = calendar.startOfDay(for: now)

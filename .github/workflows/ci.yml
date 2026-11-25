@@ -496,9 +496,16 @@ jobs:
         # and skips the handful that need the captain's own machine (see
         # CI_UNSUPPORTED in the script, where each entry carries its measured
         # reason).
+        #
+        # On a push to main only, `--accept-flaky` (T-02 of the 2026-11-25
+        # review): a suite that failed and then passed on its re-run is a
+        # warning annotation and a `flaky` entry in the history, not a red
+        # main. A suite that fails twice still fails, and a pull request's
+        # run never passes a flake, so it is fixed before it merges.
         run: >-
           ./Scripts/run-all-tests.sh --session-only --ci --no-build --shard=${{ matrix.shard }}/${{ matrix.of }}
           --rerun-failed --history="$RUNNER_TEMP/suite-history.json"
+          ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && '--accept-flaky' || '' }}
 
       - name: Keep the suite history for the next run
         if: ${{ !cancelled() }}

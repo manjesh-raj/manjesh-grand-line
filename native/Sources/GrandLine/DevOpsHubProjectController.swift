@@ -73,6 +73,9 @@ final class DevOpsHubProjectController: NSViewController {
     private var loadedOrigin: [String: URL] = [:]
     private var finished: Set<String> = []
     private var progress: [String: Double] = [:]
+    /// B-05: projects whose site crashed twice in a row, so their web view
+    /// stopped reloading it. The page says so until Reload or a stop.
+    private var crashing: Set<String> = []
     /// Projects whose site was asked for with "Show It Here"
     /// while "Show the site when it's ready" is off.
     private var shownOnRequest: Set<String> = []
@@ -354,6 +357,7 @@ final class DevOpsHubProjectController: NSViewController {
     private func phase(for project: LocalProject) -> DevOpsHubWords.Phase? {
         let state = registry.state(of: project.id)
         guard case .running = state else { return .project(state) }
+        if crashing.contains(project.id) { return .siteKeepsCrashing }
         guard project.opensWhenReady || shownOnRequest.contains(project.id) else { return .runningNotShown }
         if finished.contains(project.id) { return nil }
         return .loading(progress[project.id] ?? 0)
@@ -390,14 +394,17 @@ final class DevOpsHubProjectController: NSViewController {
             // The web view is built the first time a site runs, never for a
             // project that has only been looked at.
             let web = webView(for: project.id)
+            web.siteName = project.name
             guard loadedOrigin[project.id] != project.origin else { return }
             loadedOrigin[project.id] = project.origin
             finished.remove(project.id)
+            crashing.remove(project.id)
             progress[project.id] = 0
             web.load(origin: project.origin)
         } else if loadedOrigin[project.id] != nil {
             loadedOrigin[project.id] = nil
             finished.remove(project.id)
+            crashing.remove(project.id)
             progress[project.id] = nil
             shownOnRequest.remove(project.id)
             webViews[project.id]?.unload()
@@ -418,6 +425,11 @@ final class DevOpsHubProjectController: NSViewController {
         web.onFinished = { [weak self] in
             guard let self, self.loadedOrigin[id] != nil else { return }
             self.finished.insert(id)
+            if id == self.projectID { self.render() }
+        }
+        web.onKeepsCrashing = { [weak self] in
+            guard let self, self.loadedOrigin[id] != nil else { return }
+            self.crashing.insert(id)
             if id == self.projectID { self.render() }
         }
         web.applyTheme(ThemeManager.shared.theme)
@@ -564,7 +576,7 @@ final class DevOpsHubProjectController: NSViewController {
     static func action(forIdentifier identifier: String) -> DevOpsHubWords.Action? {
         let all: [DevOpsHubWords.Action] = [.start, .cancel, .retry, .stop, .showHere, .openInBrowser, .settings,
                                             .changePort, .chooseFolder, .showInFinder, .openPrivacySettings,
-                                            .copyCloneCommand]
+                                            .copyCloneCommand, .reloadSite]
         return all.first { Self.identifier(for: $0) == identifier }
     }
 
@@ -590,6 +602,8 @@ final class DevOpsHubProjectController: NSViewController {
             Self.showInFinder(project.folder)
         case .openPrivacySettings:
             Self.openFilesAndFoldersSettings()
+        case .reloadSite:
+            reloadSite(id)
         case .copyCloneCommand:
             guard let command = project.cloneCommand else { return }
             NSPasteboard.general.clearContents()
@@ -609,7 +623,7 @@ final class DevOpsHubProjectController: NSViewController {
             NSPasteboard.general.setString(project.origin.absoluteString, forType: .string)
             Feedback.report("Address copied", kind: .done, persistence: .transient, in: view)
         case .reload:
-            webViews[project.id]?.reload()
+            reloadSite(project.id)
         case .openInBrowser:
             WebNavigationPolicy.openExternally(project.origin, from: "DevOps Hub")
         case .restart:
@@ -622,7 +636,19 @@ final class DevOpsHubProjectController: NSViewController {
     /// Reload the site (⌘R on the page).
     func reloadSite() {
         guard let project, registry.state(of: project.id).isRunning else { return }
-        webViews[project.id]?.reload()
+        reloadSite(project.id)
+    }
+
+    /// Every Reload: the strip's, ⌘R and the crash state's. After a crash
+    /// the page shows the load's progress again rather than a blank site.
+    private func reloadSite(_ id: String) {
+        let wasCrashing = crashing.remove(id) != nil
+        if wasCrashing {
+            finished.remove(id)
+            progress[id] = 0
+        }
+        webViews[id]?.reload()
+        if wasCrashing, id == projectID { render() }
     }
 
     /// The folder in Finder, or the nearest folder above it that exists.

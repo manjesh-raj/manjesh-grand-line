@@ -735,10 +735,16 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
             // re-renders because the Touch ID button has to go - the store
             // removed the key that made it offerable, so leaving it on screen
             // would offer a second tap that cannot work either.
-            unlockView.showMessage("The stored Touch ID key no longer matches this vault - unlock with your password.")
+            // Full review 2026-11-25, B-03: render first. `render()` puts the
+            // gate back in its unlock mode, and `setMode` clears the message,
+            // so a message shown before it was gone before it was seen.
             render()
+            unlockView.showMessage(Self.staleTouchIDKeyMessage)
         }
     }
+
+    static let staleTouchIDKeyMessage =
+        "The stored Touch ID key no longer matches this vault - unlock with your password."
 
     private static func humanDelay(_ seconds: TimeInterval) -> String {
         let whole = Int(seconds.rounded(.up))
@@ -1354,6 +1360,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions, H
     /// Reveal button and check what it does once the vault is locked.
     func debugSelectCredential(id: String) { selectCredential(id: id) }
     func debugLockTapped() { lockTapped() }
+    /// Where the store's unlock completion lands, for an outcome a suite
+    /// cannot produce for real (a stale Touch ID key needs the Keychain).
+    func debugHandleUnlockOutcome(_ outcome: VaultUnlockOutcome) { handleUnlockOutcome(outcome) }
     var debugCredentialTable: HelmDataTable { credentialTable }
     var debugTOTPCellIDs: Set<String> { Set(totpCells.keys) }
     func debugTOTPCell(_ id: String) -> CredentialTOTPCell? { totpCells[id] }

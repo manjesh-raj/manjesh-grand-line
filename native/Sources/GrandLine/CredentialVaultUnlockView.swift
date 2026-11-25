@@ -553,6 +553,7 @@ final class CredentialVaultUnlockView: NSView {
     var debugSubtitleText: String { subtitleLabel.stringValue }
     var debugPrimaryTitle: String { primaryButton.title }
     var debugMessageText: String { messageLabel.stringValue }
+    var debugMessageVisible: Bool { !messageLabel.isHiddenOrHasHiddenAncestor && !messageLabel.stringValue.isEmpty }
     func debugClickRecoveryLink() { recoveryLinkClicked() }
     func debugTypeRecoveryKey(_ code: String) { recoveryField.stringValue = code }
     func debugClickPrimary() { primaryClicked() }

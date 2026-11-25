@@ -66,9 +66,9 @@ final class WorkspaceSignalsMonitor {
         // locked, as nothing could have unlocked it.
         GrandLineServices.shared.whenVaultIsBuilt { [weak self] store in self?.follow(store) }
         // "Due today" turns over at midnight with no store change.
-        dayObserver = NotificationCenter.default.addObserver(
-            forName: .NSCalendarDayChanged, object: nil, queue: .main
-        ) { [weak self] _ in self?.readTasks() }
+        // B-01: `DayRollover`, so a Mac asleep at midnight turns it over on
+        // waking too.
+        dayObserver = DayRollover.observe { [weak self] _, _ in self?.readTasks() }
     }
 
     // MARK: Readings
