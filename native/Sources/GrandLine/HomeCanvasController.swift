@@ -110,8 +110,8 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
-    static let minModuleWidth: CGFloat = 255
-    static let gridSpacing: CGFloat = 16
+    nonisolated static let minModuleWidth: CGFloat = 255
+    nonisolated static let gridSpacing: CGFloat = 16
 
     /// Which grid a card was placed by, and how much of it the card owns.
     ///
@@ -280,7 +280,9 @@ final class HomeCanvasController: NSViewController {
     /// which is the honest state at launch rather than a fabricated summary.
     var strawHatState: StrawHatCanvasState?
 
-    let sources: Sources
+    // P-02: `nonisolated(unsafe)` because `deinit` reads `focusTimer` from it.
+    // Assigned once in `init` and never written again.
+    nonisolated(unsafe) let sources: Sources
     var space: DaylightSpace = .overview
 
     // MARK: Views
@@ -448,10 +450,12 @@ final class HomeCanvasController: NSViewController {
     var resizeHandles: [DaylightModule: [HomeCardResizeHandle]] = [:]
     /// The size a card is being dragged to, on that card.
     let sizeBadge = HomeCardSizeBadge()
-    var themeToken: ThemeObservation?
-    var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
-    var windowResizeObserver: NSObjectProtocol?
-    var clipResizeObserver: NSObjectProtocol?
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var themeToken: ThemeObservation?
+    nonisolated(unsafe) var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
+    nonisolated(unsafe) var windowResizeObserver: NSObjectProtocol?
+    nonisolated(unsafe) var clipResizeObserver: NSObjectProtocol?
 
     // MARK: Live resize (PERF-03)
     //
@@ -474,7 +478,9 @@ final class HomeCanvasController: NSViewController {
     //     that changes the shelf's column count, or crosses the hub's
     //     fall-back width, still rebuilds, because that is a different grid.
 
-    var liveResizeObservers: [NSObjectProtocol] = []
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var liveResizeObservers: [NSObjectProtocol] = []
     private(set) var isInLiveResize = false
 
     /// Each width pin the current grid was built with, and the span it
@@ -570,8 +576,10 @@ final class HomeCanvasController: NSViewController {
     /// What the Focus timer card last said about the session, so a tick
     /// that changes nothing it shows asks for no render.
     var focusCardKey: String?
-    var focusTimerToken: UUID?
-    var dayRolloverToken: NSObjectProtocol?
+    // P-02: `nonisolated(unsafe)` because `deinit` is nonisolated and removes
+    // this observation. Written on main only, and read once more in `deinit`.
+    nonisolated(unsafe) var focusTimerToken: UUID?
+    nonisolated(unsafe) var dayRolloverToken: NSObjectProtocol?
 
     /// B-01: one render while Home can be seen; a hidden Home renders when
     /// it is shown again.
@@ -786,8 +794,14 @@ final class HomeCanvasController: NSViewController {
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
         ) { [weak self] note in
-            guard let self, (note.object as? NSWindow) === self.view.window else { return }
-            self.containerWidthMayHaveChanged()
+            // P-02: `queue: .main` delivers on main; this says so to the compiler.
+            // `Notification` is not `Sendable`, so the closure carries the
+            // sender's identity, which `===` compared before.
+            let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated {
+                guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                self.containerWidthMayHaveChanged()
+            }
         }
         // The clip view can narrow without the window resizing: a legacy
         // scroller appears when the content first overflows on a Mac set to
@@ -805,21 +819,33 @@ final class HomeCanvasController: NSViewController {
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willStartLiveResizeNotification, object: nil, queue: .main
             ) { [weak self] note in
-                guard let self, (note.object as? NSWindow) === self.view.window else { return }
-                self.isInLiveResize = true
+                // `Notification` is not `Sendable`, so the closure carries the
+                // sender's identity, which `===` compared before.
+                let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated {
+                    guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                    self.isInLiveResize = true
+                }
             },
             NotificationCenter.default.addObserver(
                 forName: NSWindow.didEndLiveResizeNotification, object: nil, queue: .main
             ) { [weak self] note in
-                guard let self, (note.object as? NSWindow) === self.view.window else { return }
-                self.liveResizeDidEnd()
+                // `Notification` is not `Sendable`, so the closure carries the
+                // sender's identity, which `===` compared before.
+                let sender = (note.object as? NSWindow).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated {
+                    guard let self, sender == self.view.window.map(ObjectIdentifier.init) else { return }
+                    self.liveResizeDidEnd()
+                }
             },
         ]
         scroll.contentView.postsFrameChangedNotifications = true
         clipResizeObserver = NotificationCenter.default.addObserver(
             forName: NSView.frameDidChangeNotification, object: scroll.contentView, queue: .main
         ) { [weak self] _ in
-            DispatchQueue.main.async { self?.containerWidthMayHaveChanged() }
+            // The hop is the point here (the next main-queue turn, not inside
+            // the layout pass that moved the clip), so it stays.
+            DispatchQueue.main.async { [weak self] in self?.containerWidthMayHaveChanged() }
         }
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
