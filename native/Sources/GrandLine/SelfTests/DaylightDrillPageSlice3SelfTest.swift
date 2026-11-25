@@ -508,27 +508,9 @@ enum DaylightDrillPageSlice3SelfTest {
             print("  FAIL setting a hue is a no-op on \(o.id) - then nothing proves the row must not set it there")
             ok = false
         }
-        // The mechanism above is per-theme by construction, so the remaining
-        // failure is a *call site* that sets the hue unconditionally - which
-        // would restyle a `.primary` on all twelve other palettes while every
-        // assertion above still passed. A source guard is the only thing that
-        // can see that, since `applyThemeToRow` is private and the wrong
-        // behaviour renders as a plausible button either way.
-        if let dir = SelfTestSources.appSourceDirectory(),
-           let text = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"),
-                                  encoding: .utf8) {
-            let hueLines = text.split(separator: "\n", omittingEmptySubsequences: false)
-                .filter { $0.contains("updateButton.domainHue") }
-            if hueLines.isEmpty {
-                print("  FAIL UpdatesController no longer sets the update button's domain hue at all")
-                ok = false
-            } else if let bad = hueLines.first(where: { !$0.contains("theme.isDaylight") }) {
-                print("  FAIL the update button's hue is set unconditionally: \(bad.trimmingCharacters(in: .whitespaces))")
-                ok = false
-            }
-        } else {
-            print("  skip source guard - could not locate the app's source directory")
-        }
+        // A source guard on Updates' row Update button used to sit here. P-03
+        // of the 2026-11-25 review removed that button with the floating bar's
+        // category cards; the page's one Update is its table row's action.
         if ok { print("  OK - corrected amber under Daylight, accentHex elsewhere, and the hue genuinely matters") }
     }
 

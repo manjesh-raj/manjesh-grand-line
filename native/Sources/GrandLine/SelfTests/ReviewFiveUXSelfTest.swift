@@ -322,9 +322,8 @@ enum ReviewFiveUXSelfTest {
               "R5-UX-08: a failed npm check reads \(npm)", &ok)
         if let updates = source("UpdatesController.swift"), let health = source("HealthCardView.swift") {
             check(updates.contains("let subtitle = failed ? Self.failureExplanation(row).rowLine : nil")
-                    && updates.contains("row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail")
                     && updates.contains("detail.fields.append(.init(\"What to do\", failure.whatToDo))"),
-                  "R5-UX-08: an Updates row no longer says what to do in both layouts and its details", &ok)
+                  "R5-UX-08: an Updates row no longer says what to do in its table row and its details", &ok)
             check(health.components(separatedBy: "FailureExplainer.explain(service: service").count == 3,
                   "R5-UX-08: a Health row no longer says what to do in both layouts", &ok)
         }

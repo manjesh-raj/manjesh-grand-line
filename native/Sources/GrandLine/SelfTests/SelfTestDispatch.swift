@@ -2303,15 +2303,6 @@ enum SelfTestDispatch {
             exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
         }
 
-        // A real, captain-reported bug on Setup > GitHub Sync and Setup > Updates:
-        // rows reporting the identical status ("In Sync", "Update Available")
-        // rendered with two different status-pill treatments at once, because the
-        // pill was painted only on a *status* change while a theme change left it
-        // alone - see StatusPillThemeSelfTest.swift's header for the root cause.
-        if ProcessInfo.processInfo.environment["FM_RUN_STATUS_PILL_THEME_TESTS"] == "1" {
-            exit(StatusPillThemeSelfTest.run() ? 0 : 1)
-        }
-
         // `fm/grandline-session-switcher`: the persistent live-session strip, the
         // Hosts list's per-row live state, the ⌘K palette's pinned "Active sessions"
         // group and the ⌘⌃1…9 / ⌘] / ⌘[ shortcut arithmetic. Window-backed (it mounts

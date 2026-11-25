@@ -454,7 +454,6 @@ NEEDS_SESSION=(
   # The status pill's one-treatment-per-status guarantee: mounts the real
   # GitHub Sync and Updates pages in a real window and drives real theme
   # changes through them.
-  "FM_RUN_STATUS_PILL_THEME_TESTS"
   # The Updates page's action-column visibility guard: mounts the real page
   # in a real window and reads each row's rendered action alpha back.
   "FM_RUN_UPDATES_ACTION_VISIBILITY_TESTS"

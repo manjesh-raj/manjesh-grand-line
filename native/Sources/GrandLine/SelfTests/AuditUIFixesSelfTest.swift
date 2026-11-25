@@ -243,27 +243,27 @@ enum AuditUIFixesSelfTest {
     /// claim about an answer the page does not have - the same GL-14 shape as
     /// B1. `setupSummaryLine` already applied this rule to the header; the
     /// tiles never followed.
-    /// Behavioural since UI-44 moved the four numbers onto a `HelmKPIStrip`:
-    /// a page that has not checked anything shows the catalog size and a
-    /// dash for each derived count - never "0 up to date".
+    /// Behavioural since UI-44 moved the four numbers onto a `HelmKPIStrip`.
+    /// P-03 of the 2026-11-25 review removed that strip with the floating
+    /// bar: the page's figures are Setup's hero row now (Sup-1). So the same
+    /// property is asked of it - a page that has not checked anything says
+    /// so, and no figure on the hero reads as a confident zero.
     private static func test_b9_tiles() -> String? {
         let controller = UpdatesController()
         let window = mount(controller.view, width: 1100, height: 900)
         defer { window.contentView = nil }
-        let values = controller.debugSummaryValues
-        guard values.count == 4 else { return "the Updates summary has \(values.count) figures, want 4" }
         // The discriminating half: the page really is unchecked at mount.
         guard controller.drillHeaderSubtitle?.contains("not checked") == true else {
             return "the fixture is not unchecked (\(controller.drillHeaderSubtitle ?? "nil")) - the check would be vacuous"
         }
-        let dash = "\u{2014}"
-        guard values[1] == dash, values[2] == dash else {
-            return "the Updates summary no longer distinguishes \"not checked yet\" from a real zero: \(values)"
+        let hero = controller.debugSetupSummary
+        guard hero.debugHeadline.contains("not been checked") else {
+            return "an unchecked Updates page's hero reads \"\(hero.debugHeadline)\", not that nothing was checked"
         }
-        // "Tools tracked" is the catalog's own size and must stay a real
-        // number throughout - going unknown there would be its own bug.
-        guard let total = Int(values[0]), total > 0 else {
-            return "the Tools tracked figure stopped reporting the catalog size: \(values[0])"
+        let values = hero.debugValues
+        guard !values.isEmpty else { return "the Updates hero shows no figures at all" }
+        if values.contains("0") {
+            return "the Updates hero shows a confident zero before any check: \(values)"
         }
         return nil
     }

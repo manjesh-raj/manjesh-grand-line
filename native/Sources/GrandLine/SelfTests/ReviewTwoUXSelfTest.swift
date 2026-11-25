@@ -753,7 +753,10 @@ enum ReviewTwoUXSelfTest {
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
-        check(!notebook.debugPageToolbarIsShown, "Notebook still draws its own toolbar row", &ok)
+        func pageToolbars(in view: NSView) -> Int {
+            (view is HelmPageToolbar ? 1 : 0) + view.subviews.reduce(0) { $0 + pageToolbars(in: $1) }
+        }
+        check(pageToolbars(in: notebook.view) == 0, "Notebook still draws its own toolbar row", &ok)
         let popUp = notebook.debugToolbarModePopUp
         check(!shell.toolbar.debugPageActions.contains { $0 === popUp },
               "Notebook's view mode is in the window toolbar again (R5-UI-01)", &ok)

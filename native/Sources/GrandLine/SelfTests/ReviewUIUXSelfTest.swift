@@ -788,28 +788,32 @@ enum ReviewUIUXSelfTest {
             let controller = UpdatesController()
             controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
             controller.view.layoutSubtreeIfNeeded()
-            let states = controller.debugRowActionStates
+            // P-03 of the 2026-11-25 review: the floating bar's per-row
+            // buttons went with it, so U10 is asked of the Tools table's own
+            // row action - the one control a row carries.
+            func actions() -> [String?] {
+                controller.debugToolsTable.debugRows.filter(\.isRecord).map { $0.primary?.title }
+            }
+            let states = actions()
             guard states.count > 5 else {
                 return "the page rendered \(states.count) rows, so this case could not tell a gated "
                      + "button from an empty page"
             }
             // Unchecked on first render, so every row legitimately offers
             // Check - the state the review saw, and the one this fix keeps.
-            guard states.allSatisfy({ !$0.checkHidden }) else {
-                return "an unchecked row hides its own Check button, which is the only thing that "
-                     + "can change it"
+            guard states.allSatisfy({ $0 == "Check" }) else {
+                return "an unchecked row does not offer its own Check, which is the only thing that "
+                     + "can change it: \(states)"
             }
             for index in 0 ..< states.count { controller.debugSetStatus(.upToDate, atRow: index) }
-            let settled = controller.debugRowActionStates
-            guard settled.allSatisfy({ $0.checkHidden && $0.updateHidden }) else {
-                let offenders = settled.filter { !$0.checkHidden || !$0.updateHidden }.map(\.name)
-                return "an up-to-date row still carries an action: \(offenders) (review U10)"
+            let settled = actions()
+            guard settled.allSatisfy({ $0 == nil }) else {
+                return "an up-to-date row still carries an action: \(settled) (review U10)"
             }
             controller.debugSetStatus(.updateAvailable, atRow: 0)
-            let withUpdate = controller.debugRowActionStates[0]
-            guard withUpdate.checkHidden, !withUpdate.updateHidden else {
-                return "a row with an update available shows Check=\(!withUpdate.checkHidden), "
-                     + "Update=\(!withUpdate.updateHidden) - it should carry Update alone"
+            let withUpdate = actions()[0]
+            guard withUpdate == "Update" else {
+                return "a row with an update available offers \(withUpdate ?? "nothing") - it should carry Update alone"
             }
 
             // The toast's own band. A page whose content runs to the window's

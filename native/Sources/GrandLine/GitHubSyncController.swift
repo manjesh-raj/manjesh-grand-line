@@ -50,35 +50,10 @@ final class GitHubSyncRow {
     /// replace the reason with a bare "Diverged" - and cleared by the next
     /// action, or by a check that finds nothing left to sync.
     var problem: GitHubSyncProblem?
-    var isLogExpanded = false
     /// True while either a check or a sync is running for this row - guards
     /// against double-firing the same row from two places (a row's own
     /// button and "Sync all" running concurrently).
     var isBusy = false
-
-    let iconTile = IconTileView()
-    let nameLabel = NSTextField(labelWithString: "")
-    let detailLabel = NSTextField(labelWithString: "")
-    let pill = HelmStatusPill()
-    /// D3: a redacted pill in the shape of the status that is coming - see
-    /// `UpdatesController`'s own `statusSkeleton` for the reasoning.
-    let statusSkeleton = HelmSkeletonRow(shape: .pill)
-    let progressLabel = NSTextField(labelWithString: "")
-    let syncButton = HelmButton(title: "", variant: .secondary)
-    let detailsButton = NSButton()
-    let logField = NSTextField(wrappingLabelWithString: "")
-    let logContainer = NSView()
-    let rowContainer = HoverHighlightView()
-    let trailingStack = ToolRowLayout.ActionStack()
-
-    var toolRowViews: ToolRowLayout.Views {
-        ToolRowLayout.Views(
-            iconTile: iconTile, nameLabel: nameLabel, detailLabel: detailLabel,
-            pill: pill, trailingStack: trailingStack,
-            detailsButton: detailsButton, logField: logField, logContainer: logContainer,
-            rowContainer: rowContainer
-        )
-    }
 
     init(repo: GitHubSyncRepoConfig) { self.repo = repo }
 }
@@ -99,15 +74,12 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private var readingsToken: BackgroundSignalsPoller.CountsObservation?
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
-    private var cards: [HelmCard] = []
-    private var separators: [NSView] = []
     private var hasCheckedOnce = false
     private var isSyncingAll = false
 
     // MARK: The sidebar layout's state (stage 7)
 
     private var pageStack: NSStackView?
-    private var reposCardView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
     /// figures. Sync All and Refresh are its pills.
     private lazy var setupSummary: SetupHeroRow = {
@@ -184,66 +156,14 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        // Review #3's UI5. Two separate findings on this page, and one
-        // rearrangement answers both:
-        //
-        //  - A whole card titled "Sync All" whose entire content was a button
-        //    titled "Sync All". A card is a container for a *section*; when the
-        //    section is one control, the card is the control's label written
-        //    twice with a border round it.
-        //  - "Checking\u{2026} (0/8)" floating alone in an otherwise empty
-        //    40pt row. That row is this page's toolbar, and `beginCheckingAll`
-        //    hides the Refresh pill while a sweep runs - so for the length of
-        //    the sweep the row holds one small string and nothing else.
-        //
-        // Both actions belong to the repo list: Sync All syncs the rows below
-        // it, and Refresh re-checks those same rows. So they move into the
-        // Repos card's own header, which is where this app puts a section's
-        // actions everywhere else (Vault's "+ Add Secret", Poneglyph's list
-        // header). The page then has one card, the actions are attached to
-        // what they act on, and there is no row left for anything to float in.
-        buildToolbarControls()
-        let syncAllSummary = buildSyncAllSummary()
-
-        var rowViews: [NSView] = []
-        for (index, row) in rows.enumerated() {
-            rowViews.append(buildRow(row))
-            if index < rows.count - 1 {
-                rowViews.append(separator())
-            }
-        }
-        let rowsStack = NSStackView(views: rowViews)
-        rowsStack.orientation = .vertical
-        rowsStack.alignment = .leading
-        rowsStack.spacing = 10
-        rowsStack.translatesAutoresizingMaskIntoConstraints = false
-        for v in rowViews { v.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true }
-
-        // The summary line Sync All writes sits at the top of the list it
-        // describes, where the "Sync All" card used to carry it.
-        let reposBody = NSStackView(views: [syncAllSummary, rowsStack])
-        reposBody.orientation = .vertical
-        reposBody.alignment = .leading
-        reposBody.spacing = 10
-        reposBody.translatesAutoresizingMaskIntoConstraints = false
-        rowsStack.widthAnchor.constraint(equalTo: reposBody.widthAnchor).isActive = true
-        syncAllSummary.widthAnchor.constraint(equalTo: reposBody.widthAnchor).isActive = true
-
-        let reposCard = HelmCard()
-        _ = reposCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
-                                title: "Repos (\(rows.count))",
-                                actions: [refreshProgressLabel, refreshPill, syncAllButton])
-        reposCard.setBody(reposBody, insets: HelmCard.contentInsets)
-        cards.append(reposCard)
+        configureSyncAllButton()
 
         // S03: the page frame - scroll, flipped document, gutter and the
-        // first-content line - is `HelmPageScaffold`'s.
+        // first-content line - is `HelmPageScaffold`'s. The page's cards are
+        // the sidebar presentation's (`buildSidebarPresentation`).
         let scaffold = HelmPageScaffold(spacing: 14, bottomInset: 20)
         scaffold.install(in: root)
-        for block in [reposCard] { scaffold.addContent(block) }
-        let stack = scaffold.stack
-        pageStack = stack
-        reposCardView = reposCard
+        pageStack = scaffold.stack
         scrollView = scaffold.scrollView
 
         for row in rows { render(row) }
@@ -307,91 +227,20 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    // MARK: Card chrome
-
-    /// One `HelmCard` per page section - the shared container from
-    /// `HelmDesignSystem.swift`, replacing this file's own copy of a helper
-    /// that was byte-for-byte identical in four controllers (audit §3.2).
-    private func card(icon: String, title: String, content: NSView) -> HelmCard {
-        let card = HelmCard()
-        card.setHeader(symbol: icon, title: title)
-        card.setBody(content, insets: HelmCard.contentInsets)
-        cards.append(card)
-        return card
-    }
-
-    private func separator() -> NSView {
-        let v = NSView()
-        v.wantsLayer = true
-        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        separators.append(v)
-        return v
-    }
-
-    // MARK: Toolbar
-
-    /// This page's read-only "re-check every fork" affordance.
-    ///
-    /// Deliberately the shared `HelmRefreshPill` rather than a second copy of
-    /// Setup > Updates' own recipe: the captain asked for "the same refresh
-    /// button as Updates", and one definition is what makes that true a
-    /// release from now. It sits at the trailing edge of the page's first
-    /// row - the position Updates' own pill holds in its toolbar row, and the
-    /// space this page's deleted subtitle used to occupy.
-    ///
-    /// **It is not a quieter "Sync All".** That button is this page's one
-    /// mutating action (it fast-forwards real forks on GitHub); this one only
-    /// re-runs `GitHubSyncSource.check` per repo, which is exactly what
-    /// `viewWillAppear` already does on a first visit. Keeping the two
-    /// visually distinct is why this is a small trailing pill and Sync All
-    /// stays the labelled primary button inside its own card.
-    private let refreshPill = HelmRefreshPill(
-        title: "Refresh", tooltip: "Re-check every fork's sync status")
-
-    /// Swapped in for the pill while a re-check is in flight, the same way
-    /// `UpdatesController` swaps its own pill for a progress readout - a
-    /// sweep that shells out to `gh` per repo takes long enough that a
-    /// button which merely stopped responding would read as broken.
-    private let refreshProgressLabel = NSTextField(labelWithString: "")
+    /// Refresh, from the window toolbar: re-check every fork. A sweep that
+    /// shells out to `gh` per repo takes a while, so its progress is the
+    /// Forks card's subtitle until it finishes.
     private var isCheckingAll = false
-
-    /// UI5: the page's two actions, configured for the Repos card header's own
-    /// trailing action cluster rather than for a toolbar row of their own.
-    ///
-    /// `HelmCard.setHeader(actions:)` owns the placement now, which is what
-    /// removes the row this page used to hand-lay-out for gotcha (10)/(12)'s
-    /// reasons (a `.gravityAreas` stack has no rule for who absorbs the slack,
-    /// and a bare `NSView()` spacer has no intrinsic size to hug with). The
-    /// progress readout still yields and truncates rather than becoming a
-    /// window-width floor - see its compression resistance below.
-    private func buildToolbarControls() {
-        refreshPill.setAction(target: self, action: #selector(refreshTapped))
-
-        refreshProgressLabel.setScaledFont(ofSize: 11, weight: .medium)
-        refreshProgressLabel.isHidden = true
-        refreshProgressLabel.lineBreakMode = .byTruncatingTail
-        refreshProgressLabel.translatesAutoresizingMaskIntoConstraints = false
-        // `fm/grandline-bootstrap-window-shrink`: a single-line label whose
-        // text is data, left at `NSTextField`'s default 750 compression
-        // resistance, is a hard floor on the whole window's width - above
-        // `NSLayoutPriorityWindowSizeStayPut` (500). It yields and truncates.
-        refreshProgressLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-    }
 
     @objc private func refreshTapped() { checkAll() }
 
     // MARK: Sync All
 
     private let syncAllButton = HelmButton(title: "", variant: .primary)
-    private let syncAllSummaryLabel = NSTextField(wrappingLabelWithString: "")
+    /// What the last Sync All run said, which its toast repeats.
+    private var syncAllSummary = ""
 
-    /// UI5: what the Sync All button leaves behind - the run's own summary
-    /// sentence, now at the top of the list it is about. The button itself
-    /// moved into that list's card header; see `loadView`.
-    ///
-    /// Hidden until a run has actually written something, so an untouched page
-    /// does not carry an empty line where a sentence will one day be.
-    private func buildSyncAllSummary() -> NSView {
+    private func configureSyncAllButton() {
         syncAllButton.title = "Sync All"
         syncAllButton.target = self
         syncAllButton.action = #selector(syncAllTapped)
@@ -399,21 +248,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // U11: the page opens with every row `.unknown`, so the button starts
         // disabled rather than waiting for the first `render(_:)` to notice.
         updateSyncAllEnablement()
-
-        syncAllSummaryLabel.setScaledFont(ofSize: 11.5)
-        syncAllSummaryLabel.preferredMaxLayoutWidth = 500
-        syncAllSummaryLabel.isHidden = syncAllSummaryLabel.stringValue.isEmpty
-        syncAllSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        return syncAllSummaryLabel
     }
 
-    /// UI5: the summary line lives in the repo list's body now, so it has to
-    /// appear with its first sentence rather than reserving an empty line for
-    /// one. Every write goes through here so that stays true.
-    private func setSyncAllSummary(_ text: String) {
-        syncAllSummaryLabel.stringValue = text
-        syncAllSummaryLabel.isHidden = text.isEmpty
-    }
+    private func setSyncAllSummary(_ text: String) { syncAllSummary = text }
 
     @objc private func syncAllTapped() { requestSyncAll() }
 
@@ -496,7 +333,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                     } else {
                         kind = .warning
                     }
-                    Toast.show(in: container, message: "GitHub Sync: \(syncAllSummaryLabel.stringValue)", kind: kind)
+                    Toast.show(in: container, message: "GitHub Sync: \(syncAllSummary)", kind: kind)
                 }
                 return
             }
@@ -517,17 +354,10 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         runNext(0)
     }
 
-    // MARK: Row building
-
-    func row(for sender: NSButton) -> GitHubSyncRow? {
-        guard let raw = sender.identifier?.rawValue else { return nil }
-        return rows.first { $0.repo.fullName == raw }
-    }
-
     // MARK: Check
 
     /// Re-checks every repo. Reached both from `viewWillAppear`'s first-visit
-    /// sweep and from the Refresh pill, so the two can never drift apart
+    /// sweep and from the toolbar's Refresh, so the two can never drift apart
     /// about what a "check" is.
     ///
     /// A row already busy (its own Sync now, or a Sync All in flight) is
@@ -537,14 +367,11 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private func checkAll() {
         guard !isCheckingAll else { return }
         isCheckingAll = true
-        refreshPill.isHidden = true
-        refreshProgressLabel.isHidden = false
         refreshButton.isEnabled = false
         setupSummary.render()
 
         let total = rows.count
-        refreshProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
-        forksSubtitle.stringValue = refreshProgressLabel.stringValue
+        forksSubtitle.stringValue = "Checking\u{2026} (0/\(total))"
         guard total > 0 else {
             finishCheckAll()
             return
@@ -555,8 +382,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             check(row) { [weak self] in
                 guard let self else { return }
                 completed += 1
-                self.refreshProgressLabel.stringValue = "Checking\u{2026} (\(completed)/\(total))"
-                self.forksSubtitle.stringValue = self.refreshProgressLabel.stringValue
+                self.forksSubtitle.stringValue = "Checking\u{2026} (\(completed)/\(total))"
                 if completed == total { self.finishCheckAll() }
             }
         }
@@ -571,9 +397,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// actions visibly distinct.
     private func finishCheckAll() {
         isCheckingAll = false
-        // The window toolbar carries Refresh instead of the pill.
-        refreshPill.isHidden = true
-        refreshProgressLabel.isHidden = true
         refreshButton.isEnabled = true
         renderForksSubtitle()
         // Anything the notification popover asked for while this sweep was
@@ -957,45 +780,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         defer { updateSyncAllEnablement() }
         // Stage 7: and the sidebar layout's one table, which lists every row.
         defer { renderForksTable() }
-        row.detailLabel.stringValue = row.detail
-        row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
-
-        // The pill itself is painted by `applyThemeToRow` (called at the end
-        // of this method), not here - see that method's own note for why the
-        // theme pass has to be the single owner of it.
-        let busy = row.status == .checking || row.status == .syncing
-        row.syncButton.isHidden = busy || !row.status.needsSync
-        row.syncButton.title = row.status.showsMergeUpstream ? "Merge upstream\u{2026}" : "Sync now"
-        row.statusSkeleton.isHidden = !busy
-        row.progressLabel.isHidden = !busy
-        row.progressLabel.stringValue = row.status == .syncing ? "Syncing\u{2026}" : "Checking\u{2026}"
-
-        row.syncButton.isEnabled = !row.isBusy
-        row.rowContainer.alphaValue = row.isBusy ? 0.6 : 1.0
-
-        applyThemeToRow(row)
-        // One row's change can make the page uniform, or stop it being so,
-        // so every row's status is re-decided rather than only this one's.
-        applyStatusVisibility()
     }
-
-    /// UI-52: a row says its status only when it differs from the page's.
-    ///
-    /// The rule is `ToolRowLayout.statusHidden`: the drill header already
-    /// says "8 forks · not checked yet" once, and eight copies of the same
-    /// word beside eight chevrons say nothing more.
-    private func applyStatusVisibility() {
-        let hidden = ToolRowLayout.statusHidden(rows.map { row in
-            let (word, _, style) = pillVisuals(row.status)
-            return (word, style, row.status == .checking || row.status == .syncing)
-        })
-        for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
-    }
-
-    #if FM_SELFTESTS
-    /// UI-52: which rows currently show their status, in page order.
-    var debugVisibleStatusRows: [Bool] { rows.map { !$0.pill.isHidden } }
-    #endif
 
     /// UI-43 / UI-52: a dot and a word for a default state, a pill only for
     /// one that is not. Tints, never the terminal's ANSI slots (UI-32).
@@ -1016,61 +801,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     // MARK: Theme
 
-    private func applyThemeToRow(_ row: GitHubSyncRow) {
-        let failed = row.status == .checkFailed || row.status == .syncFailed || row.status.isDiverged
-        // "Needs attention" = the existing `failed`/diverged signal above,
-        // plus `showsSyncButton`'s own `.behind` case - a fork genuinely
-        // behind upstream is worth a look even before any sync attempt has
-        // failed (`fm/grandline-setup-attention-row-style`). Both
-        // predicates already exist; this only composes them, no new
-        // detection. `.inSync`/`.notAFork`/`.unknown` (and a busy
-        // `.checking`/`.syncing`) keep today's flat/compact look.
-        let needsAttention = failed || row.status.needsSync
-        // UI-43: the row that asks the captain to act keeps its button at rest.
-        ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
-        let (pillText, pillTint, pillStyle) = pillVisuals(row.status)
-        let pillColorHex = pillTint.hex(in: theme)
-        // The status pill is painted HERE rather than in `render` - a real,
-        // captain-reported bug lived on that split. `ToolRowLayout.pill`
-        // resolves a fill and a label tone for one specific theme and bakes
-        // both into the layer; nothing re-resolves them later, and
-        // `ToolRowLayout.applyTheme` below deliberately never touches the
-        // pill (it is passed as one of `build`'s `statusViews`, not as part
-        // of `Views`' own chrome). So while the pill was painted only from
-        // `render` - i.e. only when a row's *status* changed - a theme switch
-        // left every pill wearing the palette it was last painted in, and
-        // because each repo's check completes on its own schedule, a switch
-        // mid-sweep left the rows that had already reported wearing the old
-        // theme and the rest wearing the new one: eight rows all reading
-        // "In Sync", rendered in two different treatments at once. Painting
-        // it from the theme pass closes that by construction, since `render`
-        // ends by calling this method - one owner, reached by both a status
-        // change and a theme change.
-        //
-        // `theme:` is passed explicitly rather than left to the parameter's
-        // `ThemeManager.shared.theme` default: this controller keeps its own
-        // `theme` copy, and a pill resolved against a different theme than
-        // the row around it is exactly the class of split this fixes.
-        row.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
-        let attentionHex = needsAttention ? pillColorHex : nil
-        ToolRowLayout.applyTheme(
-            row.toolRowViews, theme: theme, detailFailed: failed,
-            cardStyle: needsAttention, attentionHex: attentionHex, accentBar: needsAttention
-        )
-        row.progressLabel.textColor = HelmTheme.mutedInk(theme)
-    }
-
     private func applyTheme() {
         guard isViewLoaded else { return }
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        for card in cards { card.applyTheme(theme) }
-        for v in separators {
-            v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
-        }
-        syncAllSummaryLabel.textColor = HelmTheme.mutedInk(theme)
-        refreshPill.applyTheme(theme)
-        refreshProgressLabel.textColor = HelmTheme.mutedInk(theme)
-        for row in rows { applyThemeToRow(row) }
         forksTable.applyTheme(theme)
         forksSubtitle.textColor = HelmTheme.mutedInk(theme)
         applyPausedCard()
@@ -1097,15 +829,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         render(rows[index])
     }
 
-    /// What the pill is ACTUALLY painted with, read back off the layer and the
-    /// label rather than re-derived - the whole bug was that the painted value
-    /// and the current theme had drifted apart, so a check that re-derives
-    /// cannot see it.
-    func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
-        guard rows.indices.contains(index) else { return nil }
-        let row = rows[index]
-        return (row.pill.layer?.backgroundColor, row.pill.label.textColor, row.pill.label.stringValue)
-    }
     #endif
 
 }
@@ -1122,8 +845,6 @@ extension GitHubSyncController: WorkspacePrimaryActionProviding, WorkspaceInspec
 
     func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
-        reposCardView?.isHidden = true
-        refreshPill.isHidden = true
         stack.insertArrangedSubview(setupSummary, at: 0)
         pausedCard.isHidden = true
         stack.insertArrangedSubview(pausedCard, at: 1)
@@ -1368,7 +1089,6 @@ extension GitHubSyncController: WorkspacePrimaryActionProviding, WorkspaceInspec
 
 #if FM_SELFTESTS
 extension GitHubSyncController {
-    var debugReposCardShown: Bool { !(reposCardView?.isHidden ?? true) }
     var debugIsCheckingAll: Bool { isCheckingAll }
     var debugForksTable: HelmDataTable { forksTable }
     var debugSetupSummary: SetupHeroRow { setupSummary }

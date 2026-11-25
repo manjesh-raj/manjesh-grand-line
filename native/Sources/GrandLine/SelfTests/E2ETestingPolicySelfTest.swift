@@ -1030,11 +1030,13 @@ enum E2ETestingPolicySelfTest {
     /// joined the lane, and raising that bound was the alternative turned
     /// down.
     ///
-    /// 124 after P-03 of the 2026-11-25 review removed the floating-bar
-    /// layout: the suites that only measured it left the lane, and
-    /// `WorkspaceBodySelfTest` joined it with the cases of one of them that
-    /// measure code the sidebar shell still runs.
-    private static let windowBackedSuiteCeiling = 124
+    /// 123 after P-03 of the 2026-11-25 review removed the floating-bar
+    /// layout: the suites that only measured it left the lane (the last of
+    /// them `StatusPillThemeSelfTest`, whose pills went with Updates' and
+    /// GitHub Sync's classic rows), and `WorkspaceBodySelfTest` joined it
+    /// with the cases of one of them that measure code the sidebar shell
+    /// still runs.
+    private static let windowBackedSuiteCeiling = 123
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

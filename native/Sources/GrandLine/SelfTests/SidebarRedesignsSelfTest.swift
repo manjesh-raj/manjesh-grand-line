@@ -998,8 +998,6 @@ enum SidebarRedesignsSelfTest {
                     return false
                 }
         }
-        check(!updates.debugCategoryCardsShown && !updates.debugStatsStripShown,
-              "Updates still draws its category cards or its stat strip", &ok)
         check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
         let rows = updates.debugToolsTable.debugRows
         let groups = rows.compactMap { row -> String? in
@@ -1059,7 +1057,6 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.githubSync)
         settle(shell)
         _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
-        check(!github.debugReposCardShown, "GitHub sync still draws its Repos card", &ok)
         // GL-14: a test process refuses `gh`, so every check failed - which
         // the subtitle used to report as "all in sync".
         let subtitle = github.drillHeaderSubtitle ?? ""

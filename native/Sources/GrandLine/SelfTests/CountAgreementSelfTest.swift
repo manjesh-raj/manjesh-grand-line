@@ -178,8 +178,8 @@ enum CountAgreementSelfTest {
               "W15: the menu-bar overdue count does not turn over at midnight", &ok)
         check(code("ScheduleRunner.swift").contains("publishSetupStepResults(answers, gatheredAt: startedAt)"),
               "W17: the scheduled drift check does not publish what it read", &ok)
-        check(code("UpdatesController.swift").contains("caption: \"Tools tracked\""),
-              "W2: the catalog's size is captioned as if every tool were installed", &ok)
+        // W2's "Tools tracked" caption went with Updates' stat strip (P-03 of
+        // the 2026-11-25 review); the page's counts are Setup's hero now.
     }
 }
 

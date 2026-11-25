@@ -52,65 +52,16 @@ final class UpdateRow {
     /// captain's password - `UpdateOutcome.terminalCommand`. Cleared by the
     /// next check, which re-asks the machine.
     var terminalCommand: String?
-    var isLogExpanded = false
     var isBusy = false
     /// When the answer this row shows was gathered - a real check's own
     /// time, which for a kept or shared answer is earlier than when it was
     /// shown (R2-PERF-05).
     var checkedAt: Date?
 
-    let iconTile = IconTileView()
-    let nameLabel = NSTextField(labelWithString: "")
-    let detailLabel = NSTextField(labelWithString: "")
-    let pill = HelmStatusPill()
-    /// D3: the status column's placeholder is a redacted pill in the shape
-    /// of the status that is coming, not a grey system spinner. The finding's
-    /// own scope limit is kept - a spinner inside a button the captain just
-    /// pressed is feedback for *their* action and stays - but this one was
-    /// standing in for a *status* that had not arrived, which is exactly the
-    /// case skeletons are for.
-    let statusSkeleton = HelmSkeletonRow(shape: .pill)
-    let progressLabel = NSTextField(labelWithString: "Updating\u{2026}")
-    let checkButton = HelmButton(title: "Check", variant: .secondary, size: .small)
-    let updateButton = HelmButton(title: "Update", variant: .primary, size: .small)
-    /// `.notInstalled`-only action, styled deliberately unlike `updateButton`
-    /// (inline/link-style rather than a bordered rounded button) so it reads
-    /// as "go elsewhere," not "click to install here" - see the file header.
-    let installInBootstrapButton = HelmButton(title: "Install in \(PlaceName.short(.bootstrap)) \u{2192}", variant: .quiet, size: .small)
-    /// Shown in place of Update when the update needs a password: opens the
-    /// exact command in a Console tab, where `sudo` has a terminal to ask in.
-    let runInTerminalButton = HelmButton(title: "Run in Terminal", variant: .primary, size: .small)
-    let detailsButton = NSButton()
-    let logField = NSTextField(wrappingLabelWithString: "")
-    let logContainer = NSView()
-    let rowContainer = HoverHighlightView()
-    /// Swapped between [pill, checkButton, updateButton] and
-    /// [spinner, progressLabel] depending on `isBusy`.
-    let trailingStack = ToolRowLayout.ActionStack()
-
-    /// This row's fields, packaged for the shared `ToolRowLayout` assembly.
-    var toolRowViews: ToolRowLayout.Views {
-        ToolRowLayout.Views(
-            iconTile: iconTile, nameLabel: nameLabel, detailLabel: detailLabel,
-            pill: pill, trailingStack: trailingStack,
-            detailsButton: detailsButton, logField: logField, logContainer: logContainer,
-            rowContainer: rowContainer
-        )
-    }
-
     init(item: DependencyItem) { self.item = item }
 }
 
 final class UpdatesController: NSViewController, DaylightDrillActions {
-
-    /// One category card's rows + the separators between them, kept so the
-    /// search field can hide non-matching rows and collapse the separator
-    /// that would otherwise sit next to a hidden row - see `applyFilter`.
-    struct CategorySection {
-        let background: NSView
-        let rows: [UpdateRow]
-        let separators: [NSView]
-    }
 
     /// `String`-backed so it can be the id `HelmSegmentedTabs` hands back - the
     /// shared component deals in caller-owned ids rather than indices.
@@ -122,16 +73,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private var isUpdatingAll = false
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
-    var cards: [HelmCard] = []
-    private var separators: [NSView] = []
-    var categorySections: [CategorySection] = []
 
-    /// The summary strip's four tiles. Each themes itself; this list is what
-    /// `renderStats` writes the numbers into and `applyTheme` hands the theme to.
-    /// UI-44: the page's four numbers as one flat strip, not four boxes.
-    let summaryStrip = HelmKPIStrip()
-    /// One per category card, themed with the page.
-    var groupHeaders: [HelmSectionHeader] = []
     /// The tool filter, in the app's own search well (Phase 0's raw-input
     /// purge). This is the audit's screenshot-5 brown field: a stock
     /// `NSSearchField` whose only theming was a forced `appearance`, which
@@ -163,7 +105,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     // MARK: The sidebar layout's state (stage 7)
 
     private var pageStack: NSStackView?
-    private var statsRowView: NSView?
     /// Sup-1: Setup's hero, with this tab's verdict over the module's five
     /// figures. Check for updates is its pill.
     private lazy var setupSummary: SetupHeroRow = {
@@ -221,24 +162,16 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        let statsRow = buildStatsRow()
         let toolbarRow = buildToolbarRow()
-        var sections: [NSView] = [statsRow, toolbarRow]
-        for category in DependencyCatalog.categoryOrder {
-            let categoryRows = rows.filter { $0.item.category == category }
-            guard !categoryRows.isEmpty else { continue }
-            sections.append(card(icon: iconFor(category: category), title: category, rows: categoryRows))
-        }
 
         // S03: the page frame - scroll, flipped document, gutter and the
-        // first-content line - is `HelmPageScaffold`'s.
+        // first-content line - is `HelmPageScaffold`'s. The filter row is the
+        // one block built here; the hero and the Tools table are the sidebar
+        // presentation's (`buildSidebarPresentation`).
         let scaffold = HelmPageScaffold(spacing: HelmMetrics.s4, bottomInset: Toast.reservedBottomSpace)
         scaffold.install(in: root)
-        for block in sections { scaffold.addContent(block) }
-        let stack = scaffold.stack
-        // UI-33's scale: 16 between sections. The top is the page frame's (S03).
-        pageStack = stack
-        statsRowView = statsRow
+        scaffold.addContent(toolbarRow)
+        pageStack = scaffold.stack
         scrollView = scaffold.scrollView
 
         for row in rows { render(row) }
@@ -288,49 +221,11 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Toolbar (segmented filter + search + Refresh)
 
-    /// A prominent, labeled, accent-colored pill (icon + "Refresh") - the
-    /// captain's mockup showed this as the page's clear primary action, not a
-    /// bare icon glyph, superseding cockpit-native-updates-polish's earlier
-    /// borderless-icon-button decision for this control.
-    ///
-    /// The recipe itself now lives in `HelmRefreshPill` (which carries the
-    /// rest of that history, including why it is a `HoverHighlightView`
-    /// rather than an `NSButton`), extracted so Setup > GitHub Sync could
-    /// carry "the same button" and have that stay true - see
-    /// `fm/grand-line-github-sync-page-refresh-cleanup`. This page renders
-    /// exactly as it did before that extraction; every metric moved rather
-    /// than being re-chosen.
-    /// X8 (review UX): titled "Check all", not "Refresh".
-    ///
-    /// The review asked for "a single Check all plus per-row actions only
-    /// when something is available". U10 did the second half - a row that is
-    /// up to date now carries no button at all - and this is the first. On a
-    /// page where most rows deliberately offer nothing, the one bulk control
-    /// has to say what it does on its face: "Refresh" named the gesture
-    /// (re-draw this page) rather than the work (go and ask thirteen tools),
-    /// and the only thing that said so was a tooltip nobody hovers when every
-    /// row already looks settled.
-    ///
-    /// `HelmRefreshPill` is unchanged and GitHub Sync's own pill keeps
-    /// "Refresh" - there the rows *are* the thing being refreshed, and this
-    /// is a label decision per page rather than a component one.
-    private let checkAllPill = HelmRefreshPill(
-        title: "Check all", tooltip: "Check every tool for updates", prominent: true)
     private let checkAllProgressBar = HelmProgressBar()
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
 
     #if FM_SELFTESTS
-    /// GL-16-style probe surface: exposes the exact view a self-test needs
-    /// to read to prove the Refresh pill's fill survives a hover cycle,
-    /// without loosening any of this file's own access levels for
-    /// production callers.
-    var checkAllPillForTests: HoverHighlightView { checkAllPill }
-
-    /// X8: the page's one bulk control, by the label it wears.
-    var debugCheckAllTitle: String { checkAllPill.debugTitle }
-    var debugCheckAllIsVisible: Bool { !checkAllPill.isHidden }
-
     /// Set every row's status to `statuses` (by catalog order) and run the
     /// page's **real** `renderStats()` choke point.
     ///
@@ -368,8 +263,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // the explicit width above is what holds this column, and the toolbar
         // stack's own `.fill` distribution does the rest.
 
-        checkAllPill.setAction(target: self, action: #selector(checkAllTapped))
-
         // G4: the app's own bar, which already handles theme + tint - a stock
         // determinate `NSProgressIndicator` is the one control on this page
         // still drawing system chrome.
@@ -386,7 +279,8 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
 
         // S16: the row is a `HelmFilterBar`: the scope tabs, the search, and
-        // the Refresh pill (or its progress while a sweep runs) trailing.
+        // the sweep's progress trailing while one runs. Check for updates is
+        // the window toolbar's (`workspacePrimaryAction`).
         toolbarBar.activeFilterCount = { [weak self] in
             guard let self else { return 0 }
             return self.searchField.stringValue.trimmingCharacters(in: .whitespaces).isEmpty ? 0 : 1
@@ -397,7 +291,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     }
 
     private lazy var toolbarBar = HelmFilterBar(scope: filterTabs, search: searchField,
-                                                trailing: [checkAllProgressLabel, checkAllProgressBar, checkAllPill])
+                                                trailing: [checkAllProgressLabel, checkAllProgressBar])
 
     /// A trailing control's visibility, through the bar so a fold never shows
     /// what the page has hidden.
@@ -405,7 +299,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         toolbarBar.setPageHidden(view, hidden)
     }
 
-    // The Refresh pill is this page's explicit re-check affordance - it must
+    // Check for updates is this page's explicit re-check affordance - it must
     // always bypass `DependencyCheckCache` and run the real 13-item sweep,
     // never serve a hit that another page happened to cache moments ago.
     // `viewWillAppear`'s automatic first-visit call is the one place that
@@ -443,7 +337,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             }
         }
         isCheckingAll = true
-        setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = false
         setupSummary.render()
         setToolbarHidden(checkAllProgressBar, false)
@@ -468,8 +361,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     private func finishCheckAll() {
         isCheckingAll = false
-        // The window toolbar carries Check for updates instead.
-        setToolbarHidden(checkAllPill, true)
         checkForUpdatesButton.isEnabled = true
         setToolbarHidden(checkAllProgressBar, true)
         setToolbarHidden(checkAllProgressLabel, true)
@@ -556,22 +447,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // After the publish, so the hero's verdict reads the counts its tiles
         // were just given.
         setupSummary.render()
-        let summary = self.summary
-        // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
-        // while 13 checks are still running is a confident claim about an
-        // answer this page does not have yet - GL-14. Only the two *derived*
-        // counts go unknown. "Tools tracked" is the catalog's own size and
-        // is true before any check runs - it was captioned "Tools installed",
-        // which it is not when a tool is missing. R2-BUG-03: "Need attention" is the
-        // header's own count, not a second one that left out failed checks.
-        let known = summary.isKnown
-        summaryStrip.configure([
-            .init(.value("\(summary.total)"), caption: "Tools tracked"),
-            known ? .count(summary.upToDate, caption: StateWord.upToDate.label) : .init(.unread, caption: StateWord.upToDate.label),
-            known ? .count(summary.needsAttention, caption: "Need attention", tintWhenNonZero: .warn)
-                  : .init(.unread, caption: "Need attention"),
-            .init(.value(relativeLastChecked()), caption: "Last checked"),
-        ], theme: theme)
         toolsLastChecked.stringValue = lastCheckedAt == nil ? "not checked yet" : "checked \(relativeLastChecked())"
     }
 
@@ -683,22 +558,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         renderToolsTable()
     }
 
-    // MARK: Card chrome
-
-    func separator() -> NSView {
-        let v = NSView()
-        v.wantsLayer = true
-        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        separators.append(v)
-        return v
-    }
-
-    // MARK: Row
-
-    func row(for sender: NSButton) -> UpdateRow? {
-        guard let raw = sender.identifier?.rawValue else { return nil }
-        return rows.first { $0.item.id == raw }
-    }
 
     // MARK: Check
 
@@ -719,7 +578,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
         row.status = .checking
         row.detail = "Checking\u{2026}"
-        row.checkButton.isEnabled = false
         render(row)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let checked = DependencyCheckCache.shared.checkDated(row.item, forceRefresh: forceRefresh)
@@ -743,7 +601,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.log = outcome.log
         row.terminalCommand = nil
         row.checkedAt = gatheredAt
-        row.checkButton.isEnabled = true
         render(row)
     }
 
@@ -925,55 +782,11 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Render
 
-    /// UI-51: a row shows its status only when it differs from the page's
-    /// most common quiet state, which the drill header already states once
-    /// ("13 tools · not checked yet") - `ToolRowLayout.statusHidden`, the rule
-    /// GitHub Sync uses. Re-decided for every row on any change, because one
-    /// row's change can move the page's baseline.
-    private func applyStatusVisibility() {
-        let hidden = ToolRowLayout.statusHidden(rows.map { row in
-            let (word, _, style) = pillVisuals(row)
-            return (word, style, row.status == .checking || row.status == .updating)
-        })
-        for (row, hide) in zip(rows, hidden) { row.pill.isHidden = hide }
-    }
-
     private func render(_ row: UpdateRow) {
-        // R5-UX-08: the floating bar's row too says why and what to do.
-        let failed = row.status == .checkFailed || row.status == .updateFailed
-        row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail
-        row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
-
-        // The pill itself is painted by `applyThemeToRow` (called further
-        // down this method), not here - see that method's own note for why
-        // the theme pass has to be the single owner of it.
-        let busy = row.status == .checking || row.status == .updating
-        // U10: not in every state - see `DependencyStatus.showsCheckButton`.
-        row.checkButton.isHidden = busy || !row.status.showsCheckButton
-        // `.notInstalled` shows the distinct "Install in Bootstrap ->" link
-        // instead of Update - every other status that `showsUpdateButton`
-        // keeps its existing Update button unchanged.
-        let needsTerminal = row.terminalCommand != nil
-        row.updateButton.isHidden = busy || !row.status.showsUpdateButton || row.status == .notInstalled || needsTerminal
-        row.runInTerminalButton.isHidden = busy || !needsTerminal
-        row.installInBootstrapButton.isHidden = busy || row.status != .notInstalled
-        row.statusSkeleton.isHidden = !busy
-        row.progressLabel.isHidden = !busy
-        row.progressLabel.stringValue = row.status == .updating ? "Updating\u{2026}" : "Checking\u{2026}"
-
-        let disabled = row.isBusy
-        row.checkButton.isEnabled = !disabled
-        row.updateButton.isEnabled = !disabled
-        row.installInBootstrapButton.isEnabled = !disabled
-        row.runInTerminalButton.isEnabled = !disabled
-        row.rowContainer.alphaValue = disabled ? 0.6 : 1.0
-
-        applyThemeToRow(row)
-        applyStatusVisibility()
         renderStats()
-        // A status change can move this row in/out of the "Needs attention"
-        // set - keep the current filter's visible rows in sync.
-        if !categorySections.isEmpty { applyFilter() }
+        // A status change can move this row in or out of the "Needs
+        // attention" set, so the table is re-filtered too.
+        applyFilter()
     }
 
     /// UI-43: a row's status is a dot and a word while it is the default
@@ -1000,135 +813,20 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
-        // The pill owns its own fill, and that is load-bearing rather than
-        // tidy. The line this replaced wrote `checkAllPill.layer?
-        // .backgroundColor` straight to the CALayer, bypassing
-        // `HoverHighlightView`'s own `normalColor`/`hoverColor` tracking - so
-        // the first hover cycle's `mouseExited` repainted from a `normalColor`
-        // nobody had set, stranding the fill at `.clear` until the next theme
-        // change wrote the accent straight back in. That was a real,
-        // captain-reported light-mode bug (`UpdatesRefreshButtonThemeSelfTest`
-        // carries the full account). It now lives inside `HelmRefreshPill`,
-        // which is most of the reason that pill is a shared component: a
-        // second page cannot re-derive it wrong.
-        checkAllPill.applyTheme(theme)
         // G4: the shared bar carries its own theme + hue, so this page's own
         // theme pass has to hand it over - it does not observe on its own.
         checkAllProgressBar.applyTheme(theme, hue: RailDestination.updates.domainHue)
         checkAllProgressLabel.textColor = HelmTheme.mutedInk(theme)
         filterTabs.applyTheme(theme)
-        for card in cards { card.applyTheme(theme) }
-        for header in groupHeaders { header.applyTheme(theme) }
-        for v in separators {
-            v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
-        }
-        summaryStrip.applyTheme(theme)
-        for row in rows { applyThemeToRow(row) }
         toolsTable.applyTheme(theme)
         toolsLastChecked.textColor = HelmTheme.mutedInk(theme)
         renderToolsTable()
-    }
-
-    private func applyThemeToRow(_ row: UpdateRow) {
-        let failed = row.status == .checkFailed || (row.status == .updateFailed && row.terminalCommand == nil)
-        // Reuses `showsUpdateButton` - the exact predicate already driving
-        // the "Needs Attention" filter segment above - as "this row is
-        // worth a card/accent-bar treatment," and `pillVisuals` for its
-        // color, rather than inventing a second notion of "needs attention"
-        // (`fm/grandline-setup-attention-row-style`). A healthy row
-        // (`.upToDate`, `.unknown`, or a busy `.checking`/`.updating`) keeps
-        // the exact flat/compact look it always has.
-        let needsAttention = row.status.showsUpdateButton
-        // UI-43: the row that asks the captain to act keeps its button at rest.
-        ToolRowLayout.setActionsPinned(row.toolRowViews, needsAttention)
-        let (pillText, pillTint, pillStyle) = pillVisuals(row)
-        let pillColorHex = pillTint.hex(in: theme)
-        // The status pill is painted HERE rather than in `render`, for the
-        // reason `GitHubSyncController.applyThemeToRow` states in full: the
-        // pill bakes one theme's fill and label tone into its layer, nothing
-        // re-resolves them, and `ToolRowLayout.applyTheme` below never
-        // touches it - so painting it only on a *status* change left a theme
-        // switch mid-sweep with some rows' pills in the old palette and the
-        // rest in the new one. The captain saw exactly that here: two rows
-        // both reading "Update Available", one a light tan pill and the other
-        // a solid dark one, while the amber card border they share (derived
-        // from `attentionHex` below, which was already re-resolved on every
-        // theme pass) matched correctly on both.
-        row.pill.configure(text: pillText, tint: pillTint, style: pillStyle, theme: theme)
-        let attentionHex = needsAttention ? pillColorHex : nil
-        // §7's "the update row is a warn signal row with an amber primary
-        // Update". The warn half was already true - `.updateAvailable`
-        // resolves `ansiHex[3]`, the palette's own amber - and §6.5's Daylight
-        // branch in `ToolRowLayout.applyTheme` is what turns the border tint
-        // into the bar-plus-wash signal treatment. This is the button half:
-        // Setup's own domain hue (§2.2 gives amber to Setup as one area), run
-        // through `DaylightPalette.primaryButtonFill`'s §2.4 correction so the
-        // white label clears 4.5:1.
-        //
-        // Set per theme rather than once, because `domainHue` also changes a
-        // `.primary` button on the twelve palettes (from `accentHex` to the
-        // fallback tint) - `nil` there keeps every other palette byte-identical.
-        row.updateButton.domainHue = theme.isDaylight ? RailDestination.updates.domainHue : nil
-        row.runInTerminalButton.domainHue = theme.isDaylight ? RailDestination.updates.domainHue : nil
-        ToolRowLayout.applyTheme(
-            row.toolRowViews, theme: theme, detailFailed: failed,
-            cardStyle: needsAttention, attentionHex: attentionHex, accentBar: needsAttention
-        )
-        row.progressLabel.textColor = HelmTheme.mutedInk(theme)
     }
 
     #if FM_SELFTESTS
     // MARK: Probe surface (debug builds only, GL-27)
 
     var debugRowCount: Int { rows.count }
-
-    /// What one row's action column is ACTUALLY painted with, for the
-    /// regression guard on the captain-reported "the Check button is missing
-    /// on some rows" bug (`UpdatesActionVisibilitySelfTest`).
-    ///
-    /// `actionsAlpha` is the reading that matters and is why this reads back
-    /// rather than re-deriving: the bug hid the buttons with `alphaValue`,
-    /// never `isHidden`, so every `isHidden`-shaped check - and every
-    /// `cacheDisplay` render, which ignores `alphaValue` - passed while the
-    /// captain was looking at an empty gap.
-    struct DebugRowActionState {
-        let id: String
-        let name: String
-        let category: String
-        let actionsAlpha: CGFloat
-        let checkHidden: Bool
-        let updateHidden: Bool
-    }
-
-    var debugRowActionStates: [DebugRowActionState] {
-        rows.map {
-            DebugRowActionState(id: $0.item.id,
-                                name: $0.item.name,
-                                category: $0.item.category,
-                                actionsAlpha: $0.toolRowViews.trailingStack.alphaValue,
-                                checkHidden: $0.checkButton.isHidden,
-                                updateHidden: $0.updateButton.isHidden)
-        }
-    }
-
-    /// The summary strip's four figures, as rendered (UI-44).
-    var debugSummaryValues: [String] { summaryStrip.debugValues }
-
-    /// The row's hover target and its action column, so a suite can drive
-    /// the real `HoverHighlightView` hover path (UI-43).
-    func debugRowContainer(atRow index: Int) -> HoverHighlightView? {
-        rows.indices.contains(index) ? rows[index].rowContainer : nil
-    }
-    func debugRowTrailingStack(atRow index: Int) -> NSStackView? {
-        rows.indices.contains(index) ? rows[index].trailingStack : nil
-    }
-
-    /// The real Check button, so a test can drive its own hover feedback
-    /// rather than asserting a colour it computed itself.
-    func debugCheckButton(atRow index: Int) -> HelmButton? {
-        rows.indices.contains(index) ? rows[index].checkButton : nil
-    }
 
     /// Drives the real status-change path a completed check takes.
     func debugSetStatus(_ status: DependencyStatus, atRow index: Int) {
@@ -1146,20 +844,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         apply(outcome, to: rows[index])
     }
 
-    /// The row's real buttons and detail, as rendered.
-    func debugRowButtons(atRow index: Int) -> (update: HelmButton, runInTerminal: HelmButton, detail: String)? {
-        guard rows.indices.contains(index) else { return nil }
-        return (rows[index].updateButton, rows[index].runInTerminalButton, rows[index].detailLabel.stringValue)
-    }
-
-    /// What the pill is ACTUALLY painted with - see
-    /// `GitHubSyncController.debugPillPaint` for why this reads back rather
-    /// than re-derives.
-    func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
-        guard rows.indices.contains(index) else { return nil }
-        let row = rows[index]
-        return (row.pill.layer?.backgroundColor, row.pill.label.textColor, row.pill.label.stringValue)
-    }
     #endif
 
 }
@@ -1178,9 +862,6 @@ extension UpdatesController: WorkspacePrimaryActionProviding, WorkspaceInspector
 
     func buildSidebarPresentation() {
         guard let stack = pageStack else { return }
-        statsRowView?.isHidden = true
-        for card in cards { card.isHidden = true }
-        setToolbarHidden(checkAllPill, true)
         stack.insertArrangedSubview(setupSummary, at: 0)
         setupSummary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         toolsLastChecked.font = HelmType.caption()
@@ -1382,10 +1063,6 @@ extension DependencyKind {
 
 #if FM_SELFTESTS
 extension UpdatesController {
-    /// Whether any of the floating bar's category cards, or its stat strip,
-    /// is drawn.
-    var debugCategoryCardsShown: Bool { cards.contains { !$0.isHidden } }
-    var debugStatsStripShown: Bool { !(statsRowView?.isHidden ?? true) }
     var debugToolsTable: HelmDataTable { toolsTable }
     var debugSetupSummary: SetupHeroRow { setupSummary }
     var debugCheckForUpdatesButton: HelmButton { checkForUpdatesButton }

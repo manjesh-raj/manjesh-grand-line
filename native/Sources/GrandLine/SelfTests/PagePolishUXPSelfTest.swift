@@ -24,7 +24,6 @@ enum PagePolishUXPSelfTest {
         let cases: [(String, () -> Bool)] = [
             ("uxp01ReviewKeepsRealCountsOnAPartialFailure", uxp01ReviewKeepsRealCountsOnAPartialFailure),
             ("uxp02ProjectCardsRepaintOnAThemeSwitch", uxp02ProjectCardsRepaintOnAThemeSwitch),
-            ("uxp18ListPanelSaysHowManyMoreRows", uxp18ListPanelSaysHowManyMoreRows),
             ("uxp08EveryPageShowsAtMostOnePrimaryButton", uxp08EveryPageShowsAtMostOnePrimaryButton),
             ("uxp08EveryRefreshComesFromTheOneFactory", uxp08EveryRefreshComesFromTheOneFactory),
             ("uxp08RefreshPillWearsTheSecondaryPalette", uxp08RefreshPillWearsTheSecondaryPalette),
@@ -163,23 +162,6 @@ enum PagePolishUXPSelfTest {
             task.status = .todo
             store.addTask(task)
         }
-    }
-
-    /// Seven open tasks on the List view: My Tasks shows four rows and says
-    /// "3 more below". It used to show four with nothing to say.
-    private static func uxp18ListPanelSaysHowManyMoreRows() -> Bool {
-        var ok = true
-        withScratchShiftStore { store in
-            seedPlainTasks(store, count: 7)
-            let (window, shift) = mountShift(store)
-            defer { _ = window }
-            shift.debugShowView("list")
-            shift.view.layoutSubtreeIfNeeded()
-            let hints = shift.debugPanelOverflowHints
-            check(hints.tasks == "3 more below",
-                  "UXP-18: My Tasks should say \"3 more below\", said \"\(hints.tasks)\"", &ok)
-        }
-        return ok
     }
 
     // MARK: UXP-08
@@ -405,8 +387,15 @@ enum PagePolishUXPSelfTest {
         }
         walk(body)
         check(states.count == 1, "UXP-11: an empty notebook draws \(states.count) empty states, want one", &ok)
-        check(newPageButtons == 1,
-              "UXP-11: an empty notebook offers New page \(newPageButtons) times in the page, want once", &ok)
+        // R2-UX-04: New page is the toolbar's far-right primary, so the one
+        // offer is there and the page's body adds none of its own.
+        // By identity: below `compactToolbarActionsBelow` the toolbar draws
+        // it as its plus alone, so its title is not the test.
+        let primary = shell.workspace.notebook.workspacePrimaryAction
+        let toolbarOffer = primary != nil && shell.toolbar.debugPrimaryAction === primary
+        check(toolbarOffer && newPageButtons == 0,
+              "UXP-11: an empty notebook offers New page \(newPageButtons) times in the page and "
+                + "\(toolbarOffer ? "once" : "not") in the toolbar, want only the toolbar's", &ok)
         check(!sawPreviewTitle, "UXP-11: the preview card shows with no page to preview", &ok)
         return ok
     }

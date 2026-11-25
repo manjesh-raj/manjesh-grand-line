@@ -129,8 +129,8 @@ enum UpdatesFailureSelfTest {
         return nil
     }
 
-    /// The toast, the drill header, the strip and the scheduled tool check
-    /// all render `UpdatesSummary`. A source guard, because the toast is
+    /// The toast, the drill header and the scheduled tool check all render
+    /// `UpdatesSummary`. A source guard, because the toast is
     /// raised at the end of a real 13-tool sweep that a headless suite does
     /// not run, and the strip is the one place the old second count lived.
     private static func test_r2Bug03OneSummaryEverywhere() -> String? {
@@ -143,9 +143,8 @@ enum UpdatesFailureSelfTest {
             return "the sweep's toast no longer renders UpdatesSummary, its words and its kind"
         }
         guard page.contains("summary.subtitle") else { return "the drill header no longer renders UpdatesSummary" }
-        guard page.contains("summary.needsAttention, caption: \"Need attention\"") else {
-            return "the strip's Need attention is a second count again"
-        }
+        // The strip's own "Need attention" went with the floating bar's stat
+        // strip (P-03 of the 2026-11-25 review); its count is the header's.
         guard !page.contains("update\\(updateCount == 1") else { return "the old updates-available toast is back" }
         guard runner.contains("UpdatesSummary(statuses)"), !runner.contains("$0.showsUpdateButton }.count") else {
             return "the scheduled tool check counts failed checks as updates again"
