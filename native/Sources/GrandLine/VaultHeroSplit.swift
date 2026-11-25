@@ -1,8 +1,7 @@
 // Grand Line - native macOS app.
 //
 // Secrets › Automic Vault's split card: S-1 on the page-redesign board, which
-// the captain kept for this tab when Secrets took S-3's hero column. Sidebar
-// layout only; the floating bar's page is unchanged.
+// the captain kept for this tab when Secrets took S-3's hero column.
 //
 // One card, two halves. On the left, a `HelmHeroColumn` in its band layout:
 // the launchers' verdict, a ring of how many are hardened, and View Fix when
@@ -14,8 +13,9 @@
 // surface - is the kit's `HelmHeroSplitCard` (7.1.0), which Dictation's Dic-1
 // fills too; this file fills it with the launchers.
 //
-// It replaces the page's attention banner and its Verified Launchers table in
-// this layout: both said what the card says now. Every action is the page's
+// It replaced the page's attention banner and its Verified Launchers list,
+// which went with the floating bar (P-03 of the 2026-11-25 review): both said
+// what the card says now. Every action is the page's
 // own (`presentIssueSheet`), and B1's three states stay three - still reading,
 // could not read, and read - so a read that did not happen never draws an
 // all-clear (GL-14).
@@ -288,7 +288,7 @@ final class VaultLauncherRowView: NSView {
         addSubview(rule)
         nameLabel.stringValue = tool.name
         nameLabel.font = .systemFont(ofSize: HelmType.scaled(13), weight: .semibold)
-        detailLabel.stringValue = isHardened ? "Hardened, 0 issues" : (tool.issueSummary ?? tool.status.label + " found")
+        detailLabel.stringValue = VaultController.launcherDetail(tool)
         detailLabel.toolTip = detailLabel.stringValue
         detailLabel.font = HelmType.caption()
         for label in [nameLabel, detailLabel] {

@@ -202,11 +202,11 @@ enum UIUXProposalsSelfTest {
         let workbench = source("CodePreviewWorkbench.swift")
         check(workbench.contains("HelmPageSidebar.Band()") && !workbench.contains("quickActionsCard"),
               "S04: Code's snippets and quick actions are one band, not two cards", &ok)
-        // Hosts' plain column went with its floating-bar presentation (P-03 of
-        // the 2026-11-25 review); its split pane holds the hero column.
-        for page in ["ShiftController.swift", "CredentialVaultSidebar.swift"] {
-            check(source(page).contains("HelmPageSidebar(surface: .plain)"), "S04: \(page) keeps its plain column", &ok)
-        }
+        // Hosts' and Poneglyph's plain columns went with their floating-bar
+        // presentations (P-03 of the 2026-11-25 review); each split pane holds
+        // its hero column.
+        check(source("ShiftController.swift").contains("HelmPageSidebar(surface: .plain)"),
+              "S04: ShiftController.swift keeps its plain column", &ok)
     }
 
     // MARK: - S12
@@ -242,8 +242,10 @@ enum UIUXProposalsSelfTest {
 
     /// An informational notice has no edge and a warning or a failure has
     /// one in its own hue; the kicker, title, body and actions are what was
-    /// asked; a dismiss hides the notice and tells the caller; and the four
-    /// pages that drew their own banner now use this one.
+    /// asked; a dismiss hides the notice and tells the caller; and the pages
+    /// that drew their own banner now use this one. Automic Vault's banner
+    /// went with its floating-bar presentation (P-03 of the 2026-11-25
+    /// review), and S-1's split card says what it said.
     private static func checkOneNoticeRecipe(_ ok: inout Bool) {
         for theme in [HelmTheme.daylight, HelmTheme.dusk] {
             for tint in [HelmTint.info, .accent, .good, .warn, .critical] {
@@ -274,14 +276,11 @@ enum UIUXProposalsSelfTest {
         check(notice.isHidden && dismissed, "S17: the dismiss hides the notice and tells the caller", &ok)
 
         guard sourcesAvailable else { print("  SKIP: S17 source half, no app sources"); return }
-        for page in ["HomeCanvasController.swift", "VaultController.swift", "GitHubSyncController.swift",
-                     "FleetController.swift"] {
+        for page in ["HomeCanvasController.swift", "GitHubSyncController.swift", "FleetController.swift"] {
             check(source(page).contains("HelmNotice("), "S17: \(page) draws its notice with HelmNotice", &ok)
         }
         check(!source("SetupSummary.swift").contains("class SetupPausedPushNotice"),
               "S17: GitHub sync's private notice card is gone", &ok)
-        check(!source("VaultController.swift").contains("attentionBanner.layer?.backgroundColor"),
-              "S17: Secrets' filled amber band is gone", &ok)
         check(!source("HomeCanvasController.swift").contains("tipRow = HelmAccentRow"),
               "S17: Home's tip is no longer an edged accent row", &ok)
     }

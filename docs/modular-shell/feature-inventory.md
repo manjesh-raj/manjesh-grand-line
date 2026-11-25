@@ -33,6 +33,8 @@ A stored `fm.workspaceLayout` (and the bar's `fm.quickAccess`) is removed once a
 The chrome rows below name the sidebar shell's code only, and the rows for menu items, page actions and preferences that existed only for the floating bar were removed with it.
 Home's own floating-bar parts went in P-03's second part: the hand-placed dashboard, the space filter over the card grid, the Needs Attention column with its Refresh, and the first-run hero copy, so their rows are gone too.
 So did the Hosts page's: its nav column (the Workspace and Tools rows, the keychain card and the user row), its Workspace panel and shortcut hints, its detail column and its accent-row lists, so the rows for that column, those hints and those lists' controls are gone.
+Poneglyph's went too: its plain Vault, Kinds and Collections column (the hero column holds those rows) and its grouped credential list with that list's Reveal, Copy, 2FA code, menu and drag reorder (the credential table has every one of them), so the rows for that column and that list are gone.
+So did Automic Vault's: its attention banner with View Fix (S-1's split card says it and has View Fix), and its Secrets and Verified Launchers accent-row cards.
 
 Stage 4 consolidates the sidebar shell's 29 page rows into Home and the seventeen modules, in the module table only: a module's children are its tabs in the window toolbar, and every route still lands on its own page.
 Where a module's tabs are one page's own tabs (Tasks' views, Crew's In flight and Log, Connections' Hosts, Keys and Snippets, Kubernetes' Cluster and Log Tail), the toolbar drives the page through `ModuleTabHosting`.
@@ -621,14 +623,10 @@ The rows and headers of every page's own column (`HelmPageSidebar`): literal one
 
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
-| `nav.CredentialCategory.apiKey` | Poneglyph column: API keys | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.cloud` | Poneglyph column: Cloud & AWS | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.email` | Poneglyph column: Email | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialCategory.other` | Poneglyph column: Other | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.All credentials` | Poneglyph column: All credentials | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Collections` | Poneglyph column: Collections | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Kinds` | Poneglyph column: Kinds | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
-| `nav.CredentialVaultSidebar.Vault` | Poneglyph column: Vault | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) |  |
+| `nav.CredentialCategory.apiKey` | Poneglyph column: API keys | Poneglyph column | Secrets › Secrets (a row of the vault's hero column, S-3) |  |
+| `nav.CredentialCategory.cloud` | Poneglyph column: Cloud & AWS | Poneglyph column | Secrets › Secrets (a row of the vault's hero column, S-3) |  |
+| `nav.CredentialCategory.email` | Poneglyph column: Email | Poneglyph column | Secrets › Secrets (a row of the vault's hero column, S-3) |  |
+| `nav.CredentialCategory.other` | Poneglyph column: Other | Poneglyph column | Secrets › Secrets (a row of the vault's hero column, S-3) |  |
 | `nav.NotebookController.Pages` | Notebook column: Pages | Notebook column | Knowledge › Notebook (the page's own Pages column, in both layouts) |  |
 | `nav.ReadingListController.Added today` | Reading List column: Added today | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
 | `nav.ReadingListController.Everything` | Reading List column: Everything | Reading List column | Knowledge › Reading list (the tab's own filter column, unchanged) |  |
@@ -767,8 +765,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ConsoleController+Toolbar` | ConsoleController+Toolbar controls | `analyzeLogsTapped`, `herdrRestartButtonClicked`, `incidentButtonClicked`, `newShellTab`, `refreshBlockView`, `showFind`, `tailLogsTapped`, `toggleBlockView`, `toggleComposer`, `toggleDragForwarding`, `toggleKubeContextBadge`, `toggleQuotaUsage`, `toggleSRELead` | Console (the toolbar above the terminal, unchanged) |  |
 | `action.CredentialVaultController` | CredentialVaultController controls | `addTapped`, `clearClipboardNow`, `lockTapped`, `recoveryTapped`, `settingsTapped` | Secrets › Secrets |  |
 | `action.CredentialVaultEditorController` | CredentialVaultEditorController controls | `deleteTapped`, `pasteTOTPFromClipboard`, `toggleGenerator` | Secrets › Secrets |  |
-| `action.CredentialVaultInspector` | CredentialVaultInspector controls | `closeClicked`, `copyAccountClicked`, `copyClicked`, `deleteClicked`, `editClicked`, `revealClicked` | Inspector (the credential inspector, hosted in the shell's pane without its own head; the floating bar keeps its column) |  |
-| `action.CredentialVaultListSection` | CredentialVaultListSection controls | `copyClicked`, `copyCodeClicked`, `overflowClicked`, `overflowItemPicked`, `revealClicked` | Secrets › Secrets (the floating bar's list; the sidebar layout draws the table) |  |
+| `action.CredentialVaultInspector` | CredentialVaultInspector controls | `closeClicked`, `copyAccountClicked`, `copyClicked`, `deleteClicked`, `editClicked`, `revealClicked` | Inspector (the credential inspector, hosted in the shell's pane without its own head) |  |
 | `action.CredentialVaultRecoverySheet` | CredentialVaultRecoverySheet controls | `chooseFile`, `copyCode`, `printCard`, `printNewKey`, `removeKey`, `runImport`, `savePDF` | Secrets › Secrets |  |
 | `action.CredentialVaultSettingsController` | CredentialVaultSettingsController controls | `changePasswordClicked`, `syncNowClicked` | Secrets › Secrets |  |
 | `action.CredentialVaultTable` | CredentialVaultTable controls | `copyClicked`, `revealClicked` | Secrets › Secrets (a credential row's Reveal, Copy and 2FA code, in the sidebar layout's table) |  |
@@ -889,7 +886,7 @@ Every selector a control targets, one row per file, with the selectors listed in
 | `action.ToolsController` | ToolsController controls | `newShellTab`, `toolCardClicked` | Tools |  |
 | `action.UnifiedSearch` | UnifiedSearch controls | `clicked` | Toolbar (the search field and its ⌘K palette) |  |
 | `action.UpdatesController` | UpdatesController controls | `checkAllTapped` | Setup › Updates |  |
-| `action.VaultController` | VaultController controls | `addSecretTapped`, `attentionFixTapped`, `cancel`, `checkBackupTapped`, `closeTapped`, `confirm`, `exportRecipeTapped`, `refreshTapped` | Secrets › Automic Vault |  |
+| `action.VaultController` | VaultController controls | `addSecretTapped`, `cancel`, `checkBackupTapped`, `closeTapped`, `confirm`, `exportRecipeTapped`, `refreshTapped` | Secrets › Automic Vault |  |
 | `action.VaultLauncherIssueSheet` | VaultLauncherIssueSheet controls | `closeTapped`, `copyTapped`, `recheckTapped` | Secrets › Automic Vault (a launcher's fix steps) |  |
 | `action.WelcomeSheetController` | WelcomeSheetController controls | `backTapped`, `copyCommandTapped`, `nextTapped`, `skipTapped` | Window (first-run welcome sheet; the profile step is the sidebar layout's, R2-UX-01, and its choices are `HelmChoiceCard`s and the look step's are theme tiles since S25) |  |
 | `action.WhiteboardComposerPopover` | WhiteboardComposerPopover controls | `appendToggled`, `exampleClicked`, `generateClicked`, `startOverClicked` | Whiteboard |  |
@@ -944,7 +941,6 @@ Every view that registers for dragged types.
 | ID | Feature | Today | New shell | Evidence |
 |---|---|---|---|---|
 | `drop.CodePreviewController` | Drop a file onto Code Preview to open it | CodePreviewController | Code |  |
-| `drop.CredentialVaultListSection` | Drag credentials to reorder them | CredentialVaultListSection | Secrets › Secrets (the floating bar's list; the sidebar layout's table reorders the same way) |  |
 | `drop.HelmDataTable` | Drag table rows to reorder them | HelmDataTable | Secrets › Secrets (the credential table, within a category) |  |
 | `drop.KeyEditorController` | Drop a private key file into the SSH key editor | KeyEditorController | Connections › Keys (key editor) |  |
 | `drop.LogAnalyzerController` | Drop a log file onto the Log Analyzer | LogAnalyzerController | Logs |  |
@@ -1185,11 +1181,11 @@ Step 5 deletes the bar; until each row's Evidence names the new shell's code, th
 |---|---|---|---|---|
 | `surface.poneglyph.unlock` | Unlock the vault with the password or Touch ID | Poneglyph page | Secrets › Secrets (lock state also on the sidebar item) | `CredentialVaultStore.swift` `func unlockWithTouchID` |
 | `surface.poneglyph.list` | Credential list, inspector, copy, reveal and TOTP ring | Poneglyph page | Secrets › Secrets (a table whose rows keep Reveal, Copy and the live 2FA code; the credential inspector is the shell's inspector) | `PoneglyphTOTPViews.swift` `final class TOTPRingView`; `CredentialVaultController.swift` `private func renderTable()`; `CredentialVaultTable.swift` `final class CredentialTOTPCell` |
-| `surface.poneglyph.kinds` | Filter credentials by kind: logins, 2FA codes, secure notes | Poneglyph column | Secrets › Secrets (the vault's own filter column, unchanged) | `CredentialVaultSidebar.swift` `title: "2FA codes"` |
+| `surface.poneglyph.kinds` | Filter credentials by kind: logins, 2FA codes, secure notes | Poneglyph column | Secrets › Secrets (the Kinds rows of the vault's hero column, S-3) | `CredentialVaultController.swift` `case .twoFactor: return "2FA codes"` |
 | `surface.poneglyph.import` | Import credentials from a CSV export | Poneglyph page | Secrets › Secrets (unchanged) | `CredentialVaultImport.swift` `enum CredentialVaultImport` |
 | `surface.poneglyph.recovery` | Recovery key enrolment and a printable recovery kit | Poneglyph page | Secrets › Secrets (unchanged) | `CredentialVaultRecovery.swift` `enum CredentialVaultRecovery` |
 | `surface.poneglyph.generator` | Password generator | Poneglyph editor | Secrets › Secrets (unchanged) | `PasswordGeneratorPanel.swift` `PasswordGeneratorPanel` |
-| `surface.vault.panel` | Automic Vault secret names, hardeners and recipes | Vault page | Secrets › Automic Vault (secret names and verified launchers as tables under their cards; the recipe card is unchanged) | `VaultRecipe.swift` `struct VaultRecipe`; `VaultController.swift` `func buildSidebarPresentation()` |
+| `surface.vault.panel` | Automic Vault secret names, hardeners and recipes | Vault page | Secrets › Automic Vault (S-1's split card with the verified launchers, then the secret names as a table under their card; the recipe card is unchanged) | `VaultRecipe.swift` `struct VaultRecipe`; `VaultController.swift` `func buildSidebarPresentation()` |
 
 ## Observe and Workbench
 

@@ -336,7 +336,6 @@ enum PageRedesignsSelfTest {
         let page = shell.debugPoneglyph
         let table = page.debugCredentialTable
         check(onScreen(table.card), "the credential table is not on screen", &ok)
-        check(!onScreen(page.debugList.card), "the floating bar's credential list still shows", &ok)
         check(page.debugInspector.isHostedInWorkspaceInspector, "the credential inspector is still the page's own column", &ok)
         check(!page.debugInspector.isDescendant(of: page.view), "the credential inspector is still inside the page", &ok)
         let titles = table.debugRows.compactMap { row -> String? in
@@ -491,7 +490,6 @@ enum PageRedesignsSelfTest {
         check(onScreen(secrets.card) && onScreen(vault.debugHeroSplit),
               "Automic Vault's secrets table or split card is not on screen", &ok)
         check(!onScreen(vault.debugToolsTable.card), "the launchers' table still shows beside the split card", &ok)
-        check(vault.debugSecretRows.allSatisfy { !onScreen($0) }, "the floating bar's secret rows still show", &ok)
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "STAGING_DB_PASSWORD")],
                           tools: [VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
         settle(shell)

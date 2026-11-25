@@ -237,7 +237,7 @@ enum VaultLoadingStateSelfTest {
             return "the card's launcher row does not carry the doctor's message: "
                 + "\(card.debugRows.map(\.debugDetail))"
         }
-        guard (controller.toolRowContent(nodeTool).meta ?? "").contains("symbolic link") else {
+        guard VaultController.launcherDetail(nodeTool).contains("symbolic link") else {
             return "the launcher row does not carry the doctor's message"
         }
         return nil
@@ -270,20 +270,27 @@ enum VaultLoadingStateSelfTest {
         defer { window.contentView = nil }
         let other = VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 1))
         controller.debugRender(secrets: [], tools: [nodeTool, other])
+        // What S-1's card says about the launchers, and each launcher row's
+        // state, in order.
+        func said() -> String {
+            guard let card = controller.debugHeroSplit else { return "" }
+            return [card.panel.debugKicker, card.panel.debugHeadline, card.panel.debugBody ?? ""].joined(separator: " ")
+        }
+        func states() -> [String] { controller.debugHeroSplit?.debugRows.map(\.debugState) ?? [] }
         controller.debugFinishRecheck("node", nil)
-        guard controller.debugAttentionBannerText.contains("node, terraform") else {
-            return "a failed re-check cleared the reading it could not replace: \(controller.debugAttentionBannerText)"
+        guard said().contains("2 to fix"), states() == ["1 issue", "1 issue"] else {
+            return "a failed re-check cleared the reading it could not replace: \"\(said())\" \(states())"
         }
         controller.debugFinishRecheck("node", VaultTool(name: "node", commands: ["npm"], status: .hardened))
         guard controller.debugToolTableRows.filter(\.isRecord).count == 2,
               controller.debugHeroSplit?.debugRows.count == 2 else {
             return "a re-check changed the number of launchers"
         }
-        guard !controller.debugAttentionBannerText.contains("node") else {
-            return "node is still named in the banner after a clean re-check: \(controller.debugAttentionBannerText)"
+        guard states() == ["Hardened", "1 issue"] else {
+            return "node's row did not take its clean re-check, or terraform's changed: \(states())"
         }
-        guard controller.debugAttentionBannerText.hasPrefix("terraform needs attention") else {
-            return "the other launcher's reading was disturbed: \(controller.debugAttentionBannerText)"
+        guard said().contains("1 to fix"), said().contains("terraform needs attention"), !said().contains("node") else {
+            return "the card still names node after a clean re-check, or lost terraform: \"\(said())\""
         }
         return nil
     }

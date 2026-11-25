@@ -240,10 +240,10 @@ enum Audit3UIFixesSelfTest {
         }
     }
 
-    // MARK: UI4 - the Vault header count is a pill, and its cards load
+    // MARK: UI4 - the Vault header count is a pill, and the page says it is loading
 
     private static func checkVaultHeaderCountIsAPillAndCardsLoad(_ ok: inout Bool) {
-        print("\n-- UI4: the Vault count is a pill, and its two cards show a loading state --")
+        print("\n-- UI4: the Vault count is a pill, and the page shows a loading state --")
         withScratchEnv {
             let vault = VaultController()
             laidOut(vault, width: 1100, height: 700)
@@ -267,10 +267,17 @@ enum Audit3UIFixesSelfTest {
                   "before the first read both counts read ? rather than 0 "
                   + "(\(vault.debugSecretsBadge)/\(vault.debugToolsBadge))",
                   &ok)
-            // D3's skeleton, in both cards, from the moment the page exists.
-            check(vault.debugSkeletonCount == 2,
-                  "both cards show a D3 skeleton while the first read is in flight "
-                  + "(found \(vault.debugSkeletonCount))",
+            // The loading state, from the moment the page exists. The floating
+            // bar's cards drew a D3 skeleton here; P-03 of the 2026-11-25
+            // review removed them, and the secrets table's own still-reading
+            // row and S-1's card say it now.
+            let placeholder = vault.debugSecretsTablePlaceholderText ?? ""
+            check(placeholder.contains("once av answers"),
+                  "the secrets table says it is still reading before the first read (\"\(placeholder)\")",
+                  &ok)
+            let kicker = vault.debugHeroSplit?.panel.debugKicker ?? ""
+            check(kicker.hasSuffix("Checking"),
+                  "the launchers' card says it is still checking before the first read (\"\(kicker)\")",
                   &ok)
         }
     }

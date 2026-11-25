@@ -92,11 +92,11 @@ struct VaultTool: Equatable {
 }
 
 extension VaultSource {
-    /// The banner above the cards. It names the launcher and the problem, so
-    /// the captain does not have to find a row to learn what is wrong. `nil`
-    /// when nothing needs attention.
-    /// S17: the same reading as a notice's title and body, plus the one tool
-    /// whose fix the notice can open (nil when several need attention).
+    /// What needs attention, as a title and a body that name the launcher and
+    /// the problem, so the captain does not have to find a row to learn what
+    /// is wrong, plus the one tool whose fix can be opened from it (nil when
+    /// several need attention). `nil` when nothing needs attention. S-1's
+    /// split card says it (`VaultHeroWords`).
     static func attentionNotice(for tools: [VaultTool]) -> (title: String, body: String, tool: VaultTool?)? {
         let needing = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }
         guard let first = needing.first else { return nil }
@@ -109,16 +109,6 @@ extension VaultSource {
         }
         return ("\(needing.count) tools need attention",
                 needing.map(\.name).joined(separator: ", ") + ". See Verified Launchers below.", nil)
-    }
-
-    static func attentionBannerText(for tools: [VaultTool]) -> String? {
-        let needing = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }
-        guard let first = needing.first else { return nil }
-        if needing.count == 1 {
-            guard let summary = first.issueSummary else { return "\(first.name) needs attention - see Verified Launchers below." }
-            return "\(first.name) needs attention: \(summary)"
-        }
-        return "\(needing.count) tools need attention: \(needing.map(\.name).joined(separator: ", ")) - see Verified Launchers below."
     }
 }
 

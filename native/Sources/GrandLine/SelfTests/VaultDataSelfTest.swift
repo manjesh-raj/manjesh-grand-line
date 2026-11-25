@@ -107,19 +107,24 @@ enum VaultDataSelfTest {
         check("an unclosed backtick yields no command",
               VaultToolIssue(kind: "k", message: "m", remediation: "run `av harden", stubPath: nil, targetPath: nil).commands == [])
 
-        // The launcher row's subtitle and the banner say the problem.
+        // The launcher row's subtitle and S-1's card say the problem.
         check("the row subtitle is the doctor's message", detailed.first?.issueSummary == nodeIssue?.message)
         check("a second issue is counted, not dropped",
               VaultTool(name: "t", commands: [], status: .needsAttention(issueCount: 2),
                         issues: [VaultToolIssue(kind: "a", message: "first", remediation: "", stubPath: nil, targetPath: nil),
                                  VaultToolIssue(kind: "b", message: "second", remediation: "", stubPath: nil, targetPath: nil)]).issueSummary == "first (+1 more)")
         check("a tool with only a count has no summary", VaultTool(name: "t", commands: [], status: .needsAttention(issueCount: 1)).issueSummary == nil)
-        check("the banner names the launcher and the problem",
-              VaultSource.attentionBannerText(for: detailed)?.contains("node needs attention: hardened launcher /usr/local/bin/npm is a symbolic link") == true)
-        check("no banner when nothing needs attention", VaultSource.attentionBannerText(for: [VaultTool(name: "c", commands: [], status: .hardened)]) == nil)
-        check("the banner for several tools lists them",
-              VaultSource.attentionBannerText(for: [VaultTool(name: "a", commands: [], status: .needsAttention(issueCount: 1)),
-                                                    VaultTool(name: "b", commands: [], status: .needsAttention(issueCount: 1))])?.hasPrefix("2 tools need attention: a, b") == true)
+        let notice = VaultSource.attentionNotice(for: detailed)
+        check("the notice names the launcher and the problem",
+              notice?.title == "node needs attention"
+                && notice?.body.contains("Hardened launcher /usr/local/bin/npm is a symbolic link") == true
+                && notice?.tool?.name == "node")
+        check("no notice when nothing needs attention",
+              VaultSource.attentionNotice(for: [VaultTool(name: "c", commands: [], status: .hardened)]) == nil)
+        let several = VaultSource.attentionNotice(for: [VaultTool(name: "a", commands: [], status: .needsAttention(issueCount: 1)),
+                                                        VaultTool(name: "b", commands: [], status: .needsAttention(issueCount: 1))])
+        check("the notice for several tools lists them and opens no one fix",
+              several?.title == "2 tools need attention" && several?.body.hasPrefix("a, b.") == true && several?.tool == nil)
         check("re-check refuses a name that is not a safe token", VaultSource.recheckTool(named: "--all") == nil)
 
         // MARK: child PATH order (Automic Vault's launchers live in /usr/local/bin)

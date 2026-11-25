@@ -6,13 +6,18 @@
 // Four places emptied a stack and rebuilt every row on each refresh: the
 // Command Library's left column, the Reading List grid, the Vault page's
 // secrets and launchers, and the Hosts page's tag strip (the host list
-// itself is an `NSTableView` that already reuses its cells). Each now
-// reconciles through `HelmKeyedRows`. The property that proves it is
-// **identity**: after a refresh that changed nothing, the very same row
-// objects are on screen - not equal copies - and after one that changed one
-// item, every other row is still the same object. Each case also asserts the
-// rendered text is unchanged, because the brief was "without changing what
-// the captain sees".
+// itself is an `NSTableView` that already reuses its cells). Each reconciled
+// through `HelmKeyedRows`. The property that proves it is **identity**: after
+// a refresh that changed nothing, the very same row objects are on screen -
+// not equal copies - and after one that changed one item, every other row is
+// still the same object. Each case also asserts the rendered text is
+// unchanged, because the brief was "without changing what the captain sees".
+//
+// The Vault page's two stacks went with its floating-bar presentation (P-03
+// of the 2026-11-25 review). Its secrets are a `HelmDataTable` now, which
+// reuses its cells the way the host list does, and its launchers are S-1's
+// split card, so its case asserts what a refresh shows rather than row
+// identity.
 //
 // Window-backed: every case reads real arranged subviews after a real layout
 // pass in an `OffScreenProbe` window.
@@ -32,7 +37,7 @@ enum KeyedListsViewSelfTest {
         var ok = true
         checkTheCommandLibraryColumnKeepsItsRows(&ok)
         checkTheReadingListGridKeepsItsCards(&ok)
-        checkTheVaultListsKeepTheirRows(&ok)
+        checkTheVaultPageFollowsARefresh(&ok)
         checkTheHostsTagStripKeepsItsChips(&ok)
         print("KeyedListsViewSelfTest: \(ok ? "all checks passed" : "FAILED")")
         return ok
@@ -148,41 +153,44 @@ enum KeyedListsViewSelfTest {
 
     // MARK: Vault
 
-    /// Injection: empty the stacks before reconciling and every row is new.
-    private static func checkTheVaultListsKeepTheirRows(_ ok: inout Bool) {
+    /// What a refresh shows on the Vault page: the secrets table's rows and
+    /// the split card's launchers follow the snapshot, a launcher's new
+    /// status reaches its row, and an empty snapshot is the empty state.
+    private static func checkTheVaultPageFollowsARefresh(_ ok: inout Bool) {
         autoreleasepool {
             let controller = VaultController()
             let window = mount(controller.view)
             defer { window.orderOut(nil) }
+            func secretKeys() -> [String] { controller.debugSecretsTable.debugRows.compactMap(\.key) }
+            func launchers() -> [String] { controller.debugHeroSplit?.debugRows.map(\.tool.name) ?? [] }
             let secrets = ["GITHUB_TOKEN", "NPM_TOKEN", "AWS_PROFILE"].map(VaultSecret.init(name:))
             let tools = [VaultTool(name: "brew", commands: ["brew"], status: .hardened),
                          VaultTool(name: "gh", commands: ["gh"], status: .hardened)]
             controller.debugRender(secrets: secrets, tools: tools)
-            let secretRows = ids(controller.debugSecretRows)
-            let toolRows = ids(controller.debugToolRows)
-            check(secretRows.count == 3 && toolRows.count == 2,
-                  "PERF-05: the fixture should show 3 secrets and 2 launchers", &ok)
+            check(secretKeys() == secrets.map(\.name) && launchers() == ["brew", "gh"],
+                  "PERF-05: the fixture should show 3 secrets and 2 launchers, got \(secretKeys()) and \(launchers())",
+                  &ok)
 
             controller.debugRender(secrets: secrets, tools: tools)
-            check(ids(controller.debugSecretRows) == secretRows && ids(controller.debugToolRows) == toolRows,
-                  "PERF-05: an unchanged snapshot replaced the Vault page's rows", &ok)
+            check(secretKeys() == secrets.map(\.name) && launchers() == ["brew", "gh"],
+                  "PERF-05: an unchanged snapshot changed the Vault page's rows", &ok)
 
-            // One launcher starts needing attention: its row is reconfigured,
-            // the other stays, and a new secret adds exactly one row.
+            // One launcher starts needing attention: its row says so, the
+            // other stays, and a new secret adds exactly one row at the end.
             controller.debugRender(secrets: secrets + [VaultSecret(name: "OPENAI_KEY")],
                                    tools: [tools[0], VaultTool(name: "gh", commands: ["gh"],
                                                                status: .needsAttention(issueCount: 2))])
-            check(ids(controller.debugToolRows) == toolRows,
-                  "PERF-05: a launcher's status change rebuilt the launcher rows", &ok)
-            check(Array(ids(controller.debugSecretRows).prefix(3)) == secretRows
-                    && controller.debugSecretRows.count == 4,
-                  "PERF-05: one new secret should add one row and keep the other three", &ok)
-            check(controller.debugToolRows.last.map { text($0).lowercased().contains("needs attention") } == true,
-                  "PERF-05: the kept launcher row did not show its new status", &ok)
+            check(launchers() == ["brew", "gh"],
+                  "PERF-05: a launcher's status change changed the launchers, got \(launchers())", &ok)
+            check(secretKeys() == secrets.map(\.name) + ["OPENAI_KEY"],
+                  "PERF-05: one new secret should add one row and keep the other three, got \(secretKeys())", &ok)
+            let rows = controller.debugHeroSplit?.debugRows ?? []
+            check(rows.first?.debugState == "Hardened" && rows.last?.debugState == "2 issues",
+                  "PERF-05: the launcher rows did not show their statuses: \(rows.map(\.debugState))", &ok)
 
-            // And back to a state view: the keyed rows leave cleanly.
+            // And back to a state view: the rows leave cleanly.
             controller.debugRender(secrets: [], tools: [])
-            check(controller.debugSecretRows.isEmpty && controller.debugSecretsPlaceholderText != nil,
+            check(secretKeys().isEmpty && controller.debugSecretsTablePlaceholderText != nil && launchers().isEmpty,
                   "PERF-05: an empty snapshot should show the empty state and no rows", &ok)
         }
     }
