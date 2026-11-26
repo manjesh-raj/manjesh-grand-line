@@ -102,7 +102,13 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     enum Presentation {
         case window
         case panel
+        /// UX-26: a 560pt sheet over the page, the connection and the
+        /// authentication side by side.
+        case sheet
     }
+
+    /// UX-26: the sheet's width.
+    static let sheetWidth: CGFloat = 560
 
     let presentation: Presentation
 
@@ -178,7 +184,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     // MARK: Fields
 
     /// The window's big lead field, or the panel's first Connection field.
-    private lazy var labelField = presentation == .panel
+    private lazy var labelField = presentation != .window
         ? HelmTextField(placeholder: "Defaults to the address")
         : HelmTextField(placeholder: "Name this host", style: .lead)
     private let addressField = HelmTextField(placeholder: "hostname or IP")
@@ -259,15 +265,18 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     override func loadView() {
         let panel = presentation == .panel
+        let sheet = presentation == .sheet
         let form = HelmFormSheet(title: editing == nil ? "New Host" : "Edit Host",
                                  scrolls: true,
-                                 maxContentWidth: panel ? Self.panelContentWidth : Self.maxContentWidth,
+                                 maxContentWidth: panel ? Self.panelContentWidth
+                                     : sheet ? Self.sheetWidth - 2 * HelmMetrics.s5 : Self.maxContentWidth,
                                  domainHue: RailDestination.hosts.domainHue,
                                  chrome: panel ? .panel : .sheet,
                                  sectionStyle: .cards, wellSurface: .raised)
         self.form = form
         form.autoresizingMask = [.width, .height]
-        form.setFrameSize(NSSize(width: panel ? WorkspaceInspectorController.width : 640, height: 780))
+        form.setFrameSize(NSSize(width: panel ? WorkspaceInspectorController.width : sheet ? Self.sheetWidth : 640,
+                                 height: sheet ? Self.sheetHeight : 780))
         view = form
         form.onApplyTheme = { [weak self] theme in
             // The icon/colour swatches carry the host's own chosen accent, not
@@ -290,17 +299,41 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         }
 
         labelField.stringValue = editing?.label ?? ""
-        if !panel { form.addLead(issueWrapped(labelField, .label)) }
-
-        form.addSection("Connection", number: "01")
-        if panel { form.addField("Name", issueWrapped(labelField, .label)) }
+        if !panel && !sheet { form.addLead(issueWrapped(labelField, .label)) }
         addressField.stringValue = editing?.address ?? ""
-        form.addField("Address", issueWrapped(addressField, .address))
         portField.stringValue = editing.map { String($0.port) } ?? "22"
         portField.formatter = intFormatter()
         usernameField.stringValue = editing?.username ?? ""
-        form.addFieldColumns([("Port", issueWrapped(portField, .port)),
-                              ("Username", issueWrapped(usernameField, .username))])
+
+        if sheet {
+            // UX-26: the connection on the left and the authentication on
+            // the right, so nothing is stacked in one narrow column.
+            buildKeyChooser()
+            keyPicker.onNewKey = { [weak self] in self?.presentNewKeySheet(preset: nil) }
+            keyPicker.onImport = { [weak self] in self?.presentNewKeySheet(preset: .importFile) }
+            let portRow = NSStackView(views: [form.labelledField("Port", issueWrapped(portField, .port)),
+                                              form.labelledField("Username", issueWrapped(usernameField, .username))])
+            portRow.orientation = .horizontal
+            portRow.distribution = .fillEqually
+            portRow.spacing = HelmMetrics.s2
+            let connection = Self.sheetColumn(number: "01", title: "Connection", views: [
+                form.labelledField("Name", issueWrapped(labelField, .label)),
+                form.labelledField("Address", issueWrapped(addressField, .address)),
+                portRow,
+            ])
+            let keychainNote = NSTextField(wrappingLabelWithString:
+                "The private key stays in the macOS Keychain. Touch ID or your Mac password unlocks it when you connect.")
+            keychainNote.font = HelmType.caption()
+            keychainNote.textColor = HelmField.mutedInk(ThemeManager.shared.theme)
+            let authentication = Self.sheetColumn(number: "02", title: "Authentication", views: [keyPicker, keychainNote])
+            form.addColumns([connection, authentication])
+        } else {
+            form.addSection("Connection", number: "01")
+            if panel { form.addField("Name", issueWrapped(labelField, .label)) }
+            form.addField("Address", issueWrapped(addressField, .address))
+            form.addFieldColumns([("Port", issueWrapped(portField, .port)),
+                                  ("Username", issueWrapped(usernameField, .username))])
+        }
         // The wrapped fields are not the form's own rows, so they take the
         // sheet's hue here. The window's lead name field has no well.
         for field in [labelField, addressField, portField, usernameField, jumpViaField] where field !== labelField || panel {
@@ -311,22 +344,29 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
             self?.fieldsChanged()
         }
         environmentPicker.select(editing?.group)
-        form.addField("Environment", environmentPicker)
+        if sheet {
+            form.addSection("Environment", number: "03")
+            form.addRow(environmentPicker)
+        } else {
+            form.addField("Environment", environmentPicker)
 
-        form.addSection("Authentication", number: "02")
-        buildKeyChooser()
-        keyPicker.onNewKey = { [weak self] in self?.presentNewKeySheet(preset: nil) }
-        keyPicker.onImport = { [weak self] in self?.presentNewKeySheet(preset: .importFile) }
-        form.addRow(keyPicker)
-        form.addInfoCard(symbol: "lock.fill",
-                         text: "The private key stays in the macOS Keychain. This host stores only the key\u{2019}s id, "
-                             + "never key material. Touch ID or your Mac password unlocks it when you connect.")
+            form.addSection("Authentication", number: "02")
+            buildKeyChooser()
+            keyPicker.onNewKey = { [weak self] in self?.presentNewKeySheet(preset: nil) }
+            keyPicker.onImport = { [weak self] in self?.presentNewKeySheet(preset: .importFile) }
+            form.addRow(keyPicker)
+            form.addInfoCard(symbol: "lock.fill",
+                             text: "The private key stays in the macOS Keychain. This host stores only the key\u{2019}s id, "
+                                 + "never key material. Touch ID or your Mac password unlocks it when you connect.")
+        }
 
-        form.addSection("Appearance", number: "03")
+        // UX-26: the sheet numbers its Environment section 03.
+        let shift = sheet ? 1 : 0
+        form.addSection("Appearance", number: String(format: "%02d", 3 + shift))
         form.addRow(form.labelledField("Icon", buildIconPicker()))
         form.addRow(form.labelledField("Colour", buildColorPicker()))
 
-        form.addSection("Organization", number: "04")
+        form.addSection("Organization", number: String(format: "%02d", 4 + shift))
         groupField.stringValue = editing?.group ?? ""
         groupField.delegate = self
         let tagsColumn = NSStackView(views: [tagInputField, tagsChipsFlow])
@@ -345,7 +385,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
                               form.labelledField("Tags", tagsColumn)])
         }
 
-        let advancedStart = form.addSection("Advanced", number: "05", actions: panel ? [advancedToggle] : [])
+        let advancedStart = form.addSection("Advanced", number: String(format: "%02d", 5 + shift),
+                                            actions: panel ? [advancedToggle] : [])
         agentForwardRow.isOn = editing?.agentForward ?? false
         blockViewRow.isOn = editing?.blockViewOptIn ?? false
         kubeContextBadgeRow.isOn = editing?.kubeContextBadgeOptIn ?? false
@@ -1147,7 +1188,45 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// still just orders out rather than deallocating, ready for the next
     /// Add/Edit call to set a fresh `contentViewController` on it.
     private func closeEditor() {
-        view.window?.close()
+        // Gotcha (6): a presented sheet is dismissed; a window is closed.
+        if presentation == .sheet, presentingViewController != nil {
+            dismiss(self)
+        } else {
+            view.window?.close()
+        }
+    }
+
+    /// UX-26: the sheet's height, room for the two columns and the sections
+    /// under them before the form scrolls.
+    static let sheetHeight: CGFloat = 640
+
+    /// UX-26: one of the sheet's two columns: a numbered kicker, then its
+    /// fields, each as wide as the column.
+    static func sheetColumn(number: String, title: String, views: [NSView]) -> NSView {
+        let kicker = NSTextField(labelWithString: "\(number) \(title.uppercased())")
+        kicker.font = HelmType.kicker()
+        kicker.textColor = HelmField.mutedInk(ThemeManager.shared.theme)
+        // A spacer at the foot takes any height the row gives the column
+        // beside a taller one, so its fields stay together at the top.
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.init(1), for: .vertical)
+        let stack = NSStackView(views: [kicker] + views + [spacer])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.distribution = .fill
+        stack.spacing = HelmMetrics.s2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            view.setContentHuggingPriority(.required, for: .vertical)
+            (view as? NSStackView)?.setHuggingPriority(.required, for: .vertical)
+        }
+        stack.setAccessibilityElement(true)
+        stack.setAccessibilityRole(.group)
+        stack.setAccessibilityLabel(title)
+        return stack
     }
 }
 

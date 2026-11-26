@@ -24,6 +24,7 @@ enum ReviewFourUXSelfTest {
         checkHomeHealthIsAHeroCard(&ok)
         checkUpdatesGroupByState(&ok)
         checkTheWelcomeShowsEachSidebar(&ok)
+        checkTheHostSheetHasTwoColumns(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -219,6 +220,27 @@ enum ReviewFourUXSelfTest {
             check(cards.count == WorkspaceProfile.allCases.count && cards.allSatisfy { $0.accessory is WelcomeSidebarPreview },
                   "UX-24: a profile card has no sidebar preview", &ok)
             check(!all(HelmHeroSurface.self, in: sheet.view).isEmpty, "UX-24: the welcome sheet has no hero head", &ok)
+        }
+    }
+
+    // MARK: UX-26
+
+    /// The Add Host sheet is 560pt wide, with the connection on the left and
+    /// the authentication on the right, top-aligned.
+    private static func checkTheHostSheetHasTwoColumns(_ ok: inout Bool) {
+        autoreleasepool {
+            let editor = HostEditorController(host: nil, keyStore: SSHKeyStore(), snippets: [], presentation: .sheet)
+            editor.loadView()
+            editor.view.layoutSubtreeIfNeeded()
+            check(abs(editor.view.frame.width - HostEditorController.sheetWidth) < 0.5,
+                  "UX-26: the sheet is \(editor.view.frame.width)pt wide", &ok)
+            let address = editor.debugAddressField.convert(editor.debugAddressField.bounds, to: editor.view)
+            let name = editor.debugLabelField.convert(editor.debugLabelField.bounds, to: editor.view)
+            let keys = editor.debugKeyPicker.convert(editor.debugKeyPicker.bounds, to: editor.view)
+            check(keys.minX > address.maxX && keys.width > 150 && address.width > 150,
+                  "UX-26: authentication (\(keys)) is not beside the connection (\(address))", &ok)
+            check(abs(name.height - address.height) < 1 && abs(address.minY - name.minY) < 90,
+                  "UX-26: the name field (\(name)) is not a field like the address (\(address))", &ok)
         }
     }
 }

@@ -325,6 +325,8 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// H6: the host form in the side panel, and which record it is for -
     /// a host's id, or `newHostPanelKey` (H10). `HostsController+Panel.swift`.
     var hostPanel: HostEditorController?
+    /// UX-26: the Add or Edit Host sheet while it is up.
+    weak var hostSheet: HostEditorController?
     var hostPanelKey: String?
     /// Set while the panel's save writes the store, whose reload must not
     /// rebuild the form mid-save.
@@ -1258,8 +1260,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// ⌘N / the toolbar's Add Host: add a new host.
     @objc func newHost() {
         select(tab: .hosts)
-        // H10: a new host is an empty form in the side panel.
-        openNewHostPanel()
+        // UX-26: a new host is a 560pt sheet over the page, with room for
+        // its fields. The inspector stays for reading a host.
+        presentHostSheet(for: nil)
     }
 
     /// The Hosts menu's Quick Connect: focus the quick-connect field.
@@ -1372,8 +1375,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     }
 
     func presentKeyEditor(for key: SSHKey?, preset: KeyEditorController.Preset? = nil) {
-        // K7 and K8: a key is edited, and a new one made, in the side panel.
-        if let key { openKeyPanel(forEditing: key, preset: preset) } else { openNewKeyPanel(preset: preset) }
+        // UX-26: a new key is made in a sheet over the page. Editing a key
+        // keeps K7's form in the side panel, which reads its details.
+        if let key { openKeyPanel(forEditing: key, preset: preset) } else { presentKeySheet(preset: preset) }
     }
 
     /// Create mode: `SSHKeyStore.addNew` writes the Keychain secrets before

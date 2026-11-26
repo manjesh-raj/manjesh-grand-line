@@ -943,7 +943,7 @@ enum ReviewTourLab {
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("\(step)")
             case .newRecord(let kind):
-                if kind == "key" { shell.workspace.hostsPanel.openNewKeyPanel(preset: nil) } else { shell.workspace.hostsPanel.newHost() }
+                if kind == "key" { shell.workspace.hostsPanel.openNewKeyPanel(preset: nil) } else { shell.workspace.hostsPanel.openNewHostPanel() }
                 RunLoop.main.run(until: Date().addingTimeInterval(0.1))
                 shell.view.layoutSubtreeIfNeeded()
                 log.append("new \(kind)")
@@ -1087,6 +1087,16 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-26: the Add Host sheet, rendered on its own.
+        case "hostsheet":
+            guard parts.count == 2 else { return "ux hostsheet FAILED - want hostsheet <name>" }
+            let hosts = shell.workspace.hostsPanel
+            let editor = HostEditorController(host: nil, keyStore: hosts.keyStore, snippets: [],
+                                              keyUsage: HostsController.keyUsage(hosts.hostStore.hosts), presentation: .sheet)
+            editor.loadView()
+            editor.view.layoutSubtreeIfNeeded()
+            let url = outputDirectory.appendingPathComponent("\(parts[1]).png")
+            return writePNG(of: editor.view, to: url) ? "ux hostsheet -> \(url.path)" : "ux hostsheet FAILED - no bitmap"
         // UX-15: a DevOps Hub project with a built dist folder, shown running.
         case "devopsrunning":
             let registry = LocalProjectRegistry.shared

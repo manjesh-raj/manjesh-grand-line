@@ -66,6 +66,61 @@ extension HostsController {
         }
     }
 
+    // MARK: UX-26 - Add and Edit as a sheet
+
+    /// The Add or Edit Host sheet over the page: the connection and the
+    /// authentication side by side, 560pt wide. Save writes the store the
+    /// way the panel's Save does, and selects the host.
+    func presentHostSheet(for host: Host?) {
+        guard mayLeaveHostPanel(for: nil) else { return }
+        let others = hostStore.hosts.filter { $0.id != host?.id }.map(\.label)
+        let editor = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets,
+                                          existingLabels: Set(others + ["Firstmate"]),
+                                          keyUsage: Self.keyUsage(hostStore.hosts), presentation: .sheet)
+        editor.onSave = { [weak self] saved in self?.hostSheetSaved(saved) }
+        editor.onDelete = { [weak self] id in
+            DispatchQueue.main.async {
+                guard let self, let host = self.hostStore.host(id: id) else { return }
+                self.confirmDeleteHost(host)
+            }
+        }
+        hostSheet = editor
+        #if FM_SELFTESTS
+        if Self.suppressesKeyEditorPresentationForTests { return }
+        #endif
+        presentAsSheet(editor)
+    }
+
+    private func hostSheetSaved(_ saved: Host) {
+        if hostStore.host(id: saved.id) != nil {
+            hostStore.update(saved)
+        } else {
+            hostStore.add(saved)
+        }
+        Toast.show(in: view, message: "\u{201C}\(saved.label)\u{201D} saved")
+        hostsGrid.setSelected(saved.id.uuidString, notify: false)
+        hostsTable.setSelectedKey(saved.id.uuidString, notify: false)
+        hostSheet = nil
+        refreshDetailPanel()
+    }
+
+    /// UX-26: New Key's sheet, in `preset`'s mode.
+    func presentKeySheet(preset: KeyEditorController.Preset?) {
+        select(tab: .keys)
+        let editor = KeyEditorController(key: nil, presentation: .sheet)
+        editor.preset = preset
+        editor.onSave = { [weak self] newKey, privateKeyData, passphrase in
+            self?.keyPanelCreated(newKey, privateKeyData: privateKeyData, passphrase: passphrase)
+            self?.refreshDetailPanel()
+        }
+        #if FM_SELFTESTS
+        lastKeyEditorForTests = editor
+        if Self.suppressesKeyEditorPresentationForTests { return }
+        #endif
+        presentAsSheet(editor)
+        DispatchQueue.main.async { [weak editor] in editor?.beginPreset() }
+    }
+
     // MARK: X1 - import from ~/.ssh/config
 
     static let importPanelTitle = "Import from SSH Config"
