@@ -124,8 +124,10 @@ enum ReviewFiveUXSelfTest {
                 && WorkspaceModule.tasks.tabs.contains { $0.name == "Calendar" },
               "R5-UX-04: Tasks' Calendar tab is no longer a shortcut to the Calendar", &ok)
         if let shift = source("ShiftController.swift"), let shell = source("MainSplitShellController.swift") {
-            check(shift.contains("tasksView == .calendar ? [calendarTodayButton] : []"),
-                  "R5-UX-04: the Calendar's toolbar lost Today", &ok)
+            // UI-05 of full review 4: the head's Today is the one, beside
+            // its arrows; the toolbar's second copy went.
+            check(!shift.contains("calendarTodayButton"),
+                  "UI-05: the Calendar's toolbar has a second Today", &ok)
             check(shell.contains("} else if let calendar = shownCalendar {"),
                   "R5-UX-04: the shell no longer draws the Calendar's own tabs", &ok)
         }

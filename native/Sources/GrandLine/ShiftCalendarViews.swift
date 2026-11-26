@@ -1803,10 +1803,11 @@ final class ShiftCalendarView: NSView {
             if total > 0 { nouns.append(total == 1 ? "1 task" : "\(total) tasks") }
             if followUps > 0 { nouns.append(followUps == 1 ? "1 follow-up" : "\(followUps) follow-ups") }
             var text = nouns.joined(separator: " and ") + " " + period
+            // UI-05: the head's own words for the same thing.
             if projected == 1 {
-                text += ", 1 of them a repeat date not yet created"
+                text += ", 1 of them an upcoming repeat"
             } else if projected > 1 {
-                text += ", \(projected) of them repeat dates not yet created"
+                text += ", \(projected) of them upcoming repeats"
             }
             parts.append(text)
         } else if unscheduled + overdueTasks + overdueFollowUps > 0 {

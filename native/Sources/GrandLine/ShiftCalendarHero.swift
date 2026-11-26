@@ -197,9 +197,17 @@ final class ShiftCalendarHeroHead: NSView {
     }
 
     /// How many of the period's dates are a repeat rule's, not yet tasks -
-    /// the caption's clause the head says now (Cf-4).
+    /// the caption's clause the head says now (Cf-4). UI-05 of full review 4:
+    /// said on the quiet line under the title as "4 upcoming repeats". The
+    /// kicker said "4 repeat dates not yet created", which is how the store
+    /// works rather than what the captain sees, and wrapped it to two lines.
     var repeatDates = 0 {
-        didSet { if repeatDates != oldValue { applyKicker(); updateHeight() } }
+        didSet { if repeatDates != oldValue { applyRepeats(); updateHeight() } }
+    }
+
+    /// "4 upcoming repeats", or nil for none.
+    static func repeatsLine(_ count: Int) -> String? {
+        count > 0 ? "\(count) upcoming repeat\(count == 1 ? "" : "s")" : nil
     }
 
     /// The head's height changed: the page has to leave a new amount of the
@@ -211,6 +219,8 @@ final class ShiftCalendarHeroHead: NSView {
     private let glyph = NSImageView()
     private let kickerLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
+    /// UI-05: the quiet line under the title.
+    private let repeatsLabel = NSTextField(labelWithString: "")
     private lazy var previousButton = HelmButton(title: "", variant: .secondary, size: .small,
                                                  symbol: "chevron.left", target: self,
                                                  action: #selector(previousTapped))
@@ -295,10 +305,16 @@ final class ShiftCalendarHeroHead: NSView {
         // edge of the words' column (gotcha (12): stack-level priorities).
         titleRow.setHuggingPriority(.defaultHigh, for: .horizontal)
         titleRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        let text = NSStackView(views: [kickerRow, titleRow])
+        repeatsLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+        repeatsLabel.lineBreakMode = .byTruncatingTail
+        repeatsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        repeatsLabel.setAccessibilityElement(false)
+        repeatsLabel.isHidden = true
+        let text = NSStackView(views: [kickerRow, titleRow, repeatsLabel])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = HelmMetrics.s1
+        text.detachesHiddenViews = true
         for stack in [kickerRow, text] {
             stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
             stack.setHuggingPriority(.defaultLow, for: .horizontal)
@@ -426,25 +442,32 @@ final class ShiftCalendarHeroHead: NSView {
         // The week and day views draw their own date axis; the month grid's
         // weekday names are this head's.
         weekdayRow.isHidden = scale != .month
-        setAccessibilityLabel("\(words.kicker). \(words.title)")
         applyKicker()
+        applyRepeats()
         applyTheme(theme)
         applyWidthRules()
         updateHeight()
     }
 
-    /// The kicker, with the period's repeat dates when it has any.
+    /// The kicker: the page and the date, one line.
     private func applyKicker() {
-        var kicker = words?.kicker ?? ""
-        if repeatDates > 0 {
-            kicker += " \u{00B7} \(repeatDates) repeat date\(repeatDates == 1 ? "" : "s") not yet created"
-        }
+        let kicker = words?.kicker ?? ""
         kickerLabel.stringValue = kicker.uppercased()
         let palette = HelmHeroSurface.palette(accent: HelmContrast.components(HelmTheme.nsColor(theme.heroAccentHex)),
                                               quietInk: Double(Self.quietInkAlpha))
         let quiet = HelmContrast.color(palette.ink).withAlphaComponent(Self.quietInkAlpha)
         kickerLabel.attributedStringValue = NSAttributedString(
             string: kickerLabel.stringValue, attributes: HelmType.kickerAttributes(color: quiet))
+    }
+
+    /// The quiet line, and the words VoiceOver reads for the head.
+    private func applyRepeats() {
+        let line = Self.repeatsLine(repeatDates)
+        repeatsLabel.stringValue = line ?? ""
+        repeatsLabel.isHidden = line == nil
+        if let words {
+            setAccessibilityLabel(["\(words.kicker). \(words.title)", line].compactMap { $0 }.joined(separator: ". "))
+        }
     }
 
     /// Cf-4: what the three menus say, or `nil` for none.
@@ -480,6 +503,7 @@ final class ShiftCalendarHeroHead: NSView {
         kickerLabel.attributedStringValue = NSAttributedString(
             string: kickerLabel.stringValue, attributes: HelmType.kickerAttributes(color: quiet))
         titleLabel.textColor = ink
+        repeatsLabel.textColor = quiet
         ringCaption.textColor = quiet
         weekdayRow.color = quiet
         for button in [previousButton, nextButton, todayButton] { button.heroInk = ink }
@@ -548,6 +572,8 @@ final class ShiftCalendarHeroHead: NSView {
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }
     var debugKicker: String { kickerLabel.stringValue }
+    /// UI-05: the quiet line under the title, or nil while it is hidden.
+    var debugRepeatsLine: String? { repeatsLabel.isHiddenOrHasHiddenAncestor ? nil : repeatsLabel.stringValue }
     var debugFigures: HelmKPIStrip? { figures.isHidden ? nil : figures }
     var debugRing: HelmRingGauge? { ringColumn.isHidden || words?.ring == nil ? nil : ring }
     var debugPalette: HelmHeroSurface.Palette? { surface.palette }

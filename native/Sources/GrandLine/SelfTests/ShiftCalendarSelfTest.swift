@@ -598,7 +598,7 @@ enum ShiftCalendarSelfTest {
         check(ShiftCalendarView.subtitle(total: 0, projected: 0) == "Nothing scheduled this month.",
               "an empty period with no open work is stated, never left blank (GL-14)")
         let mixed = ShiftCalendarView.subtitle(total: 5, projected: 3)
-        check(mixed == "5 tasks this month, 3 of them repeat dates not yet created",
+        check(mixed == "5 tasks this month, 3 of them upcoming repeats",
               "projections are counted apart from real tasks, got \"\(mixed)\"")
         let withFollowUps = ShiftCalendarView.subtitle(total: 2, projected: 0, followUps: 1, period: "this week")
         check(withFollowUps == "2 tasks and 1 follow-up this week",
@@ -617,7 +617,7 @@ enum ShiftCalendarSelfTest {
         tray.openTasks = 3
         tray.datedRecords = 1
         let full = ShiftCalendarView.subtitle(total: 24, projected: 9, tray: tray)
-        check(full == "24 tasks this month, 9 of them repeat dates not yet created · 2 unscheduled · 1 overdue",
+        check(full == "24 tasks this month, 9 of them upcoming repeats · 2 unscheduled · 1 overdue",
               "the caption counts dated, unscheduled and overdue work, got \"\(full)\"")
         let quietWeek = ShiftCalendarView.subtitle(total: 0, projected: 0, tray: tray, period: "this week")
         check(quietWeek == "Nothing dated this week · 2 unscheduled · 1 overdue",
