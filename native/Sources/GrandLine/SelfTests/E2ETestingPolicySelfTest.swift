@@ -1041,7 +1041,7 @@ enum E2ETestingPolicySelfTest {
     ///
     /// 122 after the P-03 sweep deleted Home's Needs attention card, which
     /// nothing drew any more, and `NeedsAttentionViewSelfTest` with it.
-    private static let windowBackedSuiteCeiling = 122
+    private static let windowBackedSuiteCeiling = 121
 
     /// R5-PROC-02 of review #5: the app target builds with
     /// `-strict-concurrency=targeted`, and CI's build job fails on any warning

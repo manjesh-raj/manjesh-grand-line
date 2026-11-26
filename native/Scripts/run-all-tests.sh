@@ -216,7 +216,6 @@ FM_RUN_DESTINATION_MOUNTING_TESTS 124
 FM_RUN_REVIEW2_UX_TESTS 122
 FM_RUN_SETTINGS_SPLIT_CARDS_VIEW_TESTS 61
 FM_RUN_SHIFT_CALENDAR_VIEW_TESTS 55
-FM_RUN_HERO_CARDS_VIEW_TESTS 47
 FM_RUN_PAGE_POLISH_UXP_TESTS 42
 FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS 42
 FM_RUN_SETTINGS_SIDEBAR_TESTS 42
@@ -474,7 +473,6 @@ NEEDS_SESSION=(
   # real rasterised pixel back. The column-mapping half is pure logic, but
   # "the five columns are actually painted, equally wide and legibly" is not.
   "FM_RUN_CLAUDE_STATUS_CARD_TESTS"
-  "FM_RUN_HERO_CARDS_VIEW_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"
   # The theme split: a real console's terminal against its real page, and the
