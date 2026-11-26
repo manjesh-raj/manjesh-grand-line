@@ -29,6 +29,7 @@ enum ReviewFourUXSelfTest {
         checkAskTheCrewStartsWithThingsToAsk(&ok)
         checkTheConsoleStartPage(&ok)
         checkTheTaskInspectorWords(&ok)
+        checkTheWeeklyReviewWords(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -411,6 +412,53 @@ enum ReviewFourUXSelfTest {
         let unread = TaskInspectorWords.activityLines(task: task, entries: [], unreadable: true, now: noon, calendar: calendar)
         check(unread.count == 2 && unread.last?.contains("could not be read") == true,
               "UX-04: an unreadable activity log reads \(unread)", &ok)
+    }
+
+    // MARK: UX-05
+
+    /// The review's queue, its verdict and its last sentence.
+    private static func checkTheWeeklyReviewWords(_ ok: inout Bool) {
+        let calendar = Calendar.current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0,
+                                 of: calendar.date(from: DateComponents(year: 2026, month: 11, day: 26)) ?? Date()) ?? Date()
+        func day(_ offset: Int) -> String {
+            let parts = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: offset, to: noon) ?? noon)
+            return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        }
+        var project = ShiftProject.fresh()
+        project.name = "Infra hardening"
+        func task(_ id: String, due: Int?, project: ShiftProject? = nil) -> ShiftTask {
+            var t = ShiftTask.fresh(now: noon)
+            t.id = id
+            t.title = id
+            t.dueDate = due.map(day)
+            t.projectID = project?.id
+            return t
+        }
+        let active = [task("late-1", due: -1), task("late-2", due: -2, project: project), task("moving", due: 3),
+                      task("undated", due: nil), task("fine", due: 5), task("both", due: -3)]
+        let pushed = [ShiftPushedBackItem(id: "moving", title: "moving", count: 3, projectName: nil),
+                      ShiftPushedBackItem(id: "both", title: "both", count: 2, projectName: nil),
+                      ShiftPushedBackItem(id: "gone", title: "gone", count: 4, projectName: nil)]
+        let queue = ShiftReviewWords.decisions(active: active, pushedBack: pushed, projects: [project],
+                                               now: noon, calendar: calendar)
+        check(queue.map(\.id) == ["both", "late-2", "late-1", "moving", "undated"],
+              "UX-05: the review's queue is \(queue.map(\.id))", &ok)
+        check(queue.first?.meta == "overdue 3 days \u{00B7} moved twice"
+                && queue.dropFirst().first?.meta == "Infra hardening \u{00B7} overdue 2 days"
+                && queue.last?.meta == "no date",
+              "UX-05: the decisions say \(queue.map(\.meta))", &ok)
+        let verdict = ShiftReviewWords.verdict(queue)
+        check(verdict.headline == "5 things to decide before next week."
+                && verdict.body == "3 overdue, 1 pushed back more than once, 1 with no date. About three minutes.",
+              "UX-05: the verdict reads \(verdict.headline) / \(verdict.body)", &ok)
+        check(ShiftReviewWords.verdict([]).headline == "Nothing to decide before next week.",
+              "UX-05: an empty review does not say there is nothing to decide", &ok)
+        check(ShiftReviewWords.summary(done: 1, moved: 2, dropped: 1, skipped: 0, nextWeek: 3)
+                == "You finished 1, moved 2 and dropped 1. 3 things are due next week.",
+              "UX-05: the summary reads \(ShiftReviewWords.summary(done: 1, moved: 2, dropped: 1, skipped: 0, nextWeek: 3))", &ok)
+        check(ShiftReviewWords.kicker(now: noon, calendar: calendar).hasPrefix("Weekly review \u{00B7} "),
+              "UX-05: the kicker reads \(ShiftReviewWords.kicker(now: noon, calendar: calendar))", &ok)
     }
 }
 

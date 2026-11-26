@@ -1026,27 +1026,28 @@ enum SidebarRedesignsSelfTest {
               "Tasks' tabs are \(tasks.moduleTabNames)", &ok)
         clickTab("Weekly review", shell)
         check(tasks.debugHeroBand == nil, "the band and its filters show over Weekly review", &ok)
-        let cards = tasks.debugReviewCards
-        check(cards.map(\.debugCaption) == ["Completed this week", "Focus time", "Overdue", "Follow-ups open",
-                                            "Coming up next week"],
-              "Weekly review's cards are \(cards.map(\.debugCaption))", &ok)
+        // UX-05: the review's own band carries the week's done count and
+        // focus time; overdue, follow-ups and next week are its verdict and
+        // the agenda under it.
+        let band = tasks.reviewBand
         let summary = shell.workspace.shiftStore.weeklySummary()
-        check(cards[0].debugValue == "\(summary.completedCount)" && cards[0].debugDetail?.isEmpty == false,
-              "Completed this week reads \(cards[0].debugValue), want \(summary.completedCount) and a comparison", &ok)
-        check(cards[2].debugValue == "\(tasks.counts().overdue)", "Overdue reads \(cards[2].debugValue)", &ok)
+        check(band.debugFigures.map(\.caption) == ["Done this week", "Focus time"],
+              "Weekly review's figures are \(band.debugFigures.map(\.caption))", &ok)
+        check(band.debugFigures.first?.count == "\(summary.completedCount)",
+              "Done this week reads \(band.debugFigures.first?.count ?? "-"), want \(summary.completedCount)", &ok)
         // The floating bar's strip counts the tasks pushed back 2+ times; here
         // that figure is the Pushed back panel's own count.
         check(tasks.debugPushedBackCount == "\(summary.pushedBack.count)",
               "Pushed back repeatedly counts \(tasks.debugPushedBackCount ?? "nothing"), "
                   + "want \(summary.pushedBack.count)", &ok)
         // Focus time is the focus log's: none, then what was logged.
-        check(cards[1].debugValue == "None yet", "Focus time with no sessions reads \(cards[1].debugValue)", &ok)
+        check(band.debugFigures.last?.count == "None", "Focus time with no sessions reads \(band.debugFigures.last?.count ?? "-")", &ok)
         if let task = shell.workspace.shiftStore.activeTasks.first {
             shell.workspace.shiftStore.logFocusSession(taskID: task.id, taskTitle: task.title, seconds: 3000)
             clickTab("Board", shell)
             clickTab("Weekly review", shell)
-            check(cards[1].debugValue == FocusTimerFormat.total(3000) && cards[1].debugDetail?.contains("1 task") == true,
-                  "Focus time reads \(cards[1].debugValue) / \(cards[1].debugDetail ?? "-") after a 50 minute session", &ok)
+            check(band.debugFigures.last?.count == FocusTimerFormat.total(3000),
+                  "Focus time reads \(band.debugFigures.last?.count ?? "-") after a 50 minute session", &ok)
         }
         // Back from Weekly review is where the floating bar's column used to
         // return (the review put it away), so it is where it would come back.

@@ -1100,6 +1100,13 @@ enum ReviewTourLab {
             shell.view.window?.makeFirstResponder(all[index])
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             return "ux boardfocus"
+        // UX-05: Weekly review's Start review, then optionally Skip N times.
+        case "reviewstart":
+            let shift = shell.workspace.shift
+            shift.reviewBand.startButton.performClick(nil)
+            for _ in 0..<(parts.count > 1 ? Int(parts[1]) ?? 0 : 0) { shift.reviewWalkCard.skipButton.performClick(nil) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux reviewstart \(shift.reviewWalkCard.debugCount) \(shift.reviewWalkCard.debugTitle)"
         // UX-04: open a board card the way a click does, so its task fills
         // the inspector.
         case "boardopen":

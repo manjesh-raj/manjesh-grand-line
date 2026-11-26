@@ -14,6 +14,73 @@ enum ReviewFourWindowChecks {
 
     static func checkTasks(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL, _ ok: inout Bool) {
         checkTheTaskOpensInTheInspector(shell, window, &ok)
+        checkTheWeeklyReviewWalks(shell, window, &ok)
+    }
+
+    // MARK: UX-05 - a review you do
+
+    /// Weekly review opens on its hero with a verdict and Start review. The
+    /// walk asks about one task at a time: D through the card's own keyDown
+    /// finishes the task, Skip moves on, and the end is one sentence that
+    /// Save to Notebook keeps.
+    private static func checkTheWeeklyReviewWalks(_ shell: MainSplitShellController, _ window: NSWindow,
+                                                  _ ok: inout Bool) {
+        print("\n-- UX-05: Weekly review walks the decisions --")
+        let store = shell.workspace.shiftStore
+        let shift = shell.workspace.shift
+        shift.selectModuleTab(named: "Weekly review")
+        settle(shell, 0.3)
+        let band = shift.reviewBand
+        let walk = shift.reviewWalkCard
+        let queue = shift.reviewDecisions()
+        guard queue.count >= 2 else { return fail("UX-05: the fixture leaves \(queue.count) decisions, want two or more", &ok) }
+        check(!band.isHiddenOrHasHiddenAncestor && band.window != nil
+                && band.debugHeadline == "\(queue.count) things to decide before next week."
+                && !band.startButton.isHidden && walk.isHidden,
+              "UX-05: the band reads \(band.debugHeadline), Start shown \(!band.startButton.isHidden), walk hidden \(walk.isHidden)", &ok)
+        check(band.frame.minY < walk.frame.minY || walk.isHidden, "UX-05: the band is not at the top of the tab", &ok)
+
+        band.startButton.performClick(nil)
+        settle(shell, 0.2)
+        check(!walk.isHidden && walk.debugCount == "1 of \(queue.count)" && walk.debugTitle == queue[0].title
+                && window.firstResponder === walk && band.startButton.isHidden,
+              "UX-05: Start review shows \(walk.debugCount) \(walk.debugTitle), keyboard on the card "
+                + "\(window.firstResponder === walk)", &ok)
+        check(abs(walk.debugFillFraction - 1 / CGFloat(queue.count)) < 0.02,
+              "UX-05: the progress bar is \(walk.debugFillFraction) through", &ok)
+
+        // D, through the card's own keyDown as a key press reaches it.
+        let first = queue[0].id
+        if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                        timestamp: ProcessInfo.processInfo.systemUptime,
+                                        windowNumber: window.windowNumber, context: nil, characters: "d",
+                                        charactersIgnoringModifiers: "d", isARepeat: false, keyCode: 2) {
+            window.sendEvent(event)
+        }
+        settle(shell, 0.2)
+        check(!store.activeTasks.contains(where: { $0.id == first }) && walk.debugCount == "2 of \(queue.count)",
+              "UX-05: D left \(walk.debugCount), first task still open \(store.activeTasks.contains(where: { $0.id == first }))", &ok)
+
+        for _ in 1..<queue.count { walk.skipButton.performClick(nil) }
+        settle(shell, 0.2)
+        let nextWeek = store.weeklySummary().upcomingCount
+        let expected = ShiftReviewWords.summary(done: 1, moved: 0, dropped: 0, skipped: queue.count - 1, nextWeek: nextWeek)
+        check(walk.debugTitle == expected && !walk.saveButton.isHidden,
+              "UX-05: the review ends on \(walk.debugTitle), want \(expected)", &ok)
+        if let notebook = GrandLineServices.shared.notebookStore {
+            let before = notebook.listPages().count
+            walk.saveButton.performClick(nil)
+            settle(shell, 0.2)
+            check(notebook.listPages().count == before + 1 && !walk.saveButton.isEnabled,
+                  "UX-05: Save to Notebook left the notebook at \(notebook.listPages().count) pages", &ok)
+        } else {
+            print("  SKIP UX-05: no Notebook is registered in this fixture, so Save to Notebook is not measured")
+        }
+        walk.closeButton.performClick(nil)
+        settle(shell, 0.2)
+        check(walk.isHidden && shift.reviewWalk == nil, "UX-05: Close left the review showing", &ok)
+        shift.selectModuleTab(named: "Board")
+        settle(shell, 0.2)
     }
 
     // MARK: UX-04 - the task beside the board
