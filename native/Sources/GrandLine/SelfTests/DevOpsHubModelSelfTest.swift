@@ -790,9 +790,33 @@ enum DevOpsHubModelSelfTest {
               "not started reads \(card(.notStarted))", &ok)
         check(card(.starting).primary == .cancel && card(.starting).tint == .warn, "starting reads \(card(.starting))", &ok)
         let live = card(.running(since: now.addingTimeInterval(-12 * 60)))
-        check(live.subtitle == "127.0.0.1:7420" && live.status == "Running \u{00B7} up 12 min" && live.primary == .stop
-                && live.tint == .good && live.menu.contains(.copyAddress) && live.menu.first == .stop,
+        // UX-15: a running card's line says what it serves; its uptime is spoken.
+        check(live.subtitle == "127.0.0.1:7420" && live.status == "Project folder, this Mac only" && live.primary == .stop
+                && live.tint == .good && live.menu.contains(.copyAddress) && live.menu.first == .stop
+                && live.accessibilityLabel.contains("Running, up 12 min"),
               "running reads \(live)", &ok)
+        let counted = DevOpsHubCardWords.make(project: atlas, state: .running(since: now), now: now, servedFiles: 214)
+        check(counted.status == "Project folder, 214 files, this Mac only",
+              "UX-15: a counted running card reads \(counted.status ?? "-")", &ok)
+        let dist = atlas.folder.appendingPathComponent("dist", isDirectory: true)
+        check(DevOpsHubCardWords.servedLine(project: atlas, servedFolder: dist, files: 1) == "dist folder, 1 file, this Mac only"
+                && DevOpsHubCardWords.servedLine(project: atlas, servedFolder: dist, files: LocalProjectPreflight.countLimit)
+                    == "dist folder, over \(LocalProjectPreflight.countLimit) files, this Mac only",
+              "UX-15: a build folder's line is wrong", &ok)
+        // UX-15: the page takes a dropped folder and refuses a file.
+        let board = NSPasteboard(name: NSPasteboard.Name("fm-devops-hub-drop-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        let folder = FileManager.default.temporaryDirectory
+        board.clearContents()
+        board.writeObjects([folder as NSURL])
+        check(DevOpsHubFolderDropView.droppedFolder(fromPasteboard: board)?.standardizedFileURL == folder.standardizedFileURL,
+              "UX-15: a dropped folder is not accepted", &ok)
+        let file = folder.appendingPathComponent("ux15-\(UUID().uuidString).txt")
+        try? Data("x".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        board.clearContents()
+        board.writeObjects([file as NSURL])
+        check(DevOpsHubFolderDropView.droppedFolder(fromPasteboard: board) == nil, "UX-15: a dropped file was accepted", &ok)
         let port = card(.failed(.portInUse(holder: "python3 (pid 48211)")))
         check(port.status == "Port 7420 in use" && port.primary == .retry && port.tint == .critical
                 && port.accessibilityLabel.hasSuffix("Port 7420 in use by python3 (pid 48211)"),

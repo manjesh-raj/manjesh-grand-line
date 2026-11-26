@@ -703,7 +703,8 @@ enum PageRedesignsSelfTest {
         settle(shell)
         check(page.mode == .cards && !cards.view.isHidden && registry.state(of: id).isRunning,
               "Projects left the page on \(page.mode) with \(registry.state(of: id))", &ok)
-        check(cards.heroWords?.headline == "1 project running." && card.debugStatus?.hasPrefix("Running") == true
+        // UX-15: a running card's line says what it serves.
+        check(cards.heroWords?.headline == "1 project running." && card.debugStatus?.hasSuffix("this Mac only") == true
                 && card.debugSubtitle == "127.0.0.1:\(project.port)",
               "the cards read \(cards.heroWords?.headline ?? "-") / \(card.debugStatus ?? "-")", &ok)
         // Gotchas (13) and (15): the project view is hidden now, and nothing
@@ -726,7 +727,14 @@ enum PageRedesignsSelfTest {
 
         // Open, then the window's Back: the project view is a place in the
         // history, so Back steps to the cards.
+        // UX-15: a running card's second icon copies its address. Return
+        // (the card's own activation) opens it.
+        let savedBoard = NSPasteboard.general.string(forType: .string)
         card.debugActionButtons[1].performClick(nil)
+        check(NSPasteboard.general.string(forType: .string)?.contains("127.0.0.1:\(project.port)") == true,
+              "UX-15: a running card's second icon did not copy its address", &ok)
+        if let savedBoard { copyToPasteboard(savedBoard) }
+        card.debugKey(36, characters: "\r")
         settle(shell)
         check(page.mode == .project(id) && page.projectView.debugShowsSite,
               "the card's Open left the page on \(page.mode)", &ok)
@@ -736,7 +744,7 @@ enum PageRedesignsSelfTest {
 
         // The DevOps Hub row, clicked while a project shows, goes back to
         // the cards. From another page it opens the hub as it was left.
-        card.debugActionButtons[1].performClick(nil)
+        card.debugKey(36, characters: "\r")
         settle(shell)
         shell.workspace.navigator.show(.health)
         settle(shell)

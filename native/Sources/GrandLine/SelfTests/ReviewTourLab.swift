@@ -1087,6 +1087,23 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-15: a DevOps Hub project with a built dist folder, shown running.
+        case "devopsrunning":
+            let registry = LocalProjectRegistry.shared
+            let site = outputDirectory.appendingPathComponent("demo-site", isDirectory: true)
+            let dist = site.appendingPathComponent("dist", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dist, withIntermediateDirectories: true)
+            for name in ["index.html", "app.js", "style.css"] {
+                try? Data("<p>demo</p>".utf8).write(to: dist.appendingPathComponent(name))
+            }
+            var project = LocalProject.devopsAtlas
+            project.folderOverride = site.path
+            LocalProjectStore.save([project], at: registry.debugStoreURL)
+            registry.debugReload()
+            registry.debugSetState(.running(since: registry.clock().addingTimeInterval(-12 * 60)), for: project.id)
+            shell.workspace.devopsHub.showCards()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux devopsrunning"
         // UX-21: Code's Sandboxed chip, which opens the facts in the inspector.
         case "sandboxchip":
             shell.workspace.codePreview.sandboxChip.performClick(nil)

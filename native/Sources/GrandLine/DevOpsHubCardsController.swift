@@ -32,6 +32,8 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
         var action: (String, DevOpsHubCardWords.Action) -> Void = { _, _ in }
         var edit: (String) -> Void = { _ in }
         var add: () -> Void = {}
+        /// UX-15: a folder dropped on the page, to add as a project.
+        var addFolder: (URL) -> Void = { _ in }
     }
 
     var handlers = Handlers()
@@ -105,7 +107,9 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
     // MARK: Build
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
+        // UX-15: a folder dropped anywhere on the cards adds a project.
+        let root = DevOpsHubFolderDropView(frame: NSRect(x: 0, y: 0, width: 1100, height: 700))
+        root.onDropFolder = { [weak self] folder in self?.handlers.addFolder(folder) }
         root.wantsLayer = true
         view = root
         buildSplit(in: root)
@@ -436,7 +440,9 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
 
     private func card(for project: LocalProject) -> HelmCardGrid.Card {
         let id = project.id
-        let words = DevOpsHubCardWords.make(project: project, state: registry.state(of: id), now: registry.clock())
+        let state = registry.state(of: id)
+        let words = DevOpsHubCardWords.make(project: project, state: state, now: registry.clock(),
+                                            servedFiles: registry.folderCount(of: id)?.files)
         var card = HelmCardGrid.Card(key: id, symbol: "shippingbox", tint: .accent, tintHex: nil,
                                      title: project.name, subtitle: words.subtitle,
                                      accessibilityLabel: words.accessibilityLabel)
@@ -447,9 +453,15 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
             .init(symbol: words.primary.symbol, label: "\(words.primary.title) \(project.name)") { [weak self] in
                 self?.handlers.primary(id, words.primary)
             },
-            .init(symbol: DevOpsHubCardWords.openSymbol, label: "Open \(project.name)") { [weak self] in
-                self?.handlers.open(id)
-            },
+            // UX-15: a running card's address is one press from the
+            // clipboard. Opening is still the card's own click.
+            state.isRunning
+                ? .init(symbol: "doc.on.doc", label: "Copy \(words.subtitle)") { [weak self] in
+                    self?.handlers.action(id, .copyAddress)
+                }
+                : .init(symbol: DevOpsHubCardWords.openSymbol, label: "Open \(project.name)") { [weak self] in
+                    self?.handlers.open(id)
+                },
             .init(symbol: DevOpsHubCardWords.editSymbol, label: "Edit \(project.name)\u{2019}s settings") { [weak self] in
                 self?.handlers.edit(id)
             },
@@ -467,12 +479,15 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
 
     /// The grid's last card, after the projects: Add Project, as the hosts
     /// grid leads with its built-in card.
+    /// UX-15: the add card says a folder can be dropped.
+    static let addCardSubtitle = "Drop a folder on this page"
+
     private func addCard() -> HelmCardGrid.Card {
         var card = HelmCardGrid.Card(key: Self.addCardKey, symbol: "plus", tint: .neutral, tintHex: nil,
-                                     title: "Add a project", subtitle: "A folder with an index.html",
+                                     title: "Add a project", subtitle: Self.addCardSubtitle,
                                      accessibilityLabel: "Add a project")
         card.subtitleIsCode = false
-        card.detail = "Served on this Mac only"
+        card.detail = "It needs an index.html at its top"
         card.activate = { [weak self] in self?.handlers.add() }
         card.actions = [.init(symbol: "plus", label: "Add a project") { [weak self] in self?.handlers.add() }]
         return card
@@ -554,4 +569,62 @@ final class DevOpsHubCardsController: NSViewController, HelmSplitPageHosting {
         renderProjects()
     }
     #endif
+}
+
+/// UX-15: DevOps Hub's cards view takes a dropped folder, which opens Add a
+/// project filled in from it. Only a folder is accepted; the sheet still
+/// checks it for an `index.html` and asks for a name and a port.
+final class DevOpsHubFolderDropView: NSView {
+    var onDropFolder: ((URL) -> Void)?
+    private var isHighlighted = false {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// The dragged folder, or nil: the decision, so a suite drives the real
+    /// accept or refuse without a drag session.
+    static func droppedFolder(fromPasteboard pasteboard: NSPasteboard) -> URL? {
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self],
+                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              urls.count == 1, let url = urls.first else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return nil
+        }
+        return url
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let accepted = Self.droppedFolder(fromPasteboard: sender.draggingPasteboard) != nil
+        isHighlighted = accepted
+        return accepted ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) { isHighlighted = false }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isHighlighted = false
+        guard let folder = Self.droppedFolder(fromPasteboard: sender.draggingPasteboard) else { return false }
+        onDropFolder?(folder)
+        return true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard isHighlighted else { return }
+        let accent = HelmTheme.nsColor(ThemeManager.shared.theme.accentHex)
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 3, dy: 3),
+                                xRadius: HelmMetrics.rCard, yRadius: HelmMetrics.rCard)
+        accent.withAlphaComponent(0.06).setFill()
+        path.fill()
+        accent.withAlphaComponent(0.75).setStroke()
+        path.lineWidth = 2
+        path.stroke()
+    }
 }

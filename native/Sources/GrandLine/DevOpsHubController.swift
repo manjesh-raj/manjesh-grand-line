@@ -89,7 +89,8 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
             primary: { [weak self] id, primary in self?.perform(primary, on: id) },
             action: { [weak self] id, action in self?.perform(action, on: id) },
             edit: { [weak self] id in self?.presentSettings(projectID: id) },
-            add: { [weak self] in self?.presentAddProject() })
+            add: { [weak self] in self?.presentAddProject() },
+            addFolder: { [weak self] folder in self?.presentAddProject(folder: folder) })
         projectView.onBack = { [weak self] in self?.showCards() }
         projectView.onEditSettings = { [weak self] id in self?.presentSettings(projectID: id) }
         registryObserver = NotificationCenter.default.addObserver(
@@ -244,9 +245,9 @@ final class DevOpsHubController: NSViewController, HelmSplitPageHosting, Workspa
     }
 
     /// Add Project: the same sheet with a name, suggesting the next free port.
-    func presentAddProject() {
+    func presentAddProject(folder: URL? = nil) {
         let sheet = DevOpsHubSettingsSheet.adding(port: registry.nextFreePort(),
-                                                  takenPorts: Set(registry.projects.map(\.port)))
+                                                  takenPorts: Set(registry.projects.map(\.port)), folder: folder)
         sheet.onSave = { [weak self] draft in
             guard let self, let added = self.registry.add(draft) else { return }
             Feedback.report("\(added.name) added", kind: .done, persistence: .transient, in: self.view)
