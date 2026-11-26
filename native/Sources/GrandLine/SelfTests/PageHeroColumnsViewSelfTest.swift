@@ -241,9 +241,37 @@ enum PageHeroColumnsViewSelfTest {
         ReviewTourLab.seedDemoHealth(health)
         health = showHealth(shell)
         let column = health.debugHealthCard.heroColumn
-        check(column.debugPalette == red, "H-4: a column with a failing service is not red", &ok)
+        // UX-18: one failing service of eight keeps the accent; the pill
+        // under the kicker and the ring's arc carry the state.
+        check(column.debugPalette == accent && column.debugStatusPill != nil
+                && column.debugStatusPill.map { $0.convert($0.bounds, to: column).minY } != nil,
+              "UX-18: one failing service turned the column red, or it shows no status pill", &ok)
+        check(health.debugHealthCard.heroWords(ServiceHealthRegistry.shared.summary()).ringState == .bad,
+              "UX-18: the ring's arc does not carry the failure", &ok)
+        // UX-18: the failing row offers Copy error beside Retry now.
+        let rows = health.debugHealthCard.debugServicesTable.debugRows
+        if let dotfiles = rows.first(where: { $0.key == HealthService.dotfilesAutoSync.rawValue }) {
+            check((dotfiles.accessory as? HelmButton)?.title == HealthCardView.copyErrorTitle
+                    && dotfiles.menu.contains { $0.title == HealthCardView.copyErrorTitle },
+                  "UX-18: the failing row has no Copy error", &ok)
+            let saved = NSPasteboard.general.string(forType: .string)
+            (dotfiles.accessory as? HelmButton)?.performClick(nil)
+            check(NSPasteboard.general.string(forType: .string)?.contains("git push was rejected") == true,
+                  "UX-18: Copy error did not put the row's error on the pasteboard", &ok)
+            if let saved { copyToPasteboard(saved) }
+        } else {
+            fail("UX-18: the table has no Dotfiles auto-sync row", &ok)
+        }
+
         check(column.debugHeadline.hasPrefix(HealthService.dotfilesAutoSync.title),
               "H-4: the failing headline reads \(column.debugHeadline)", &ok)
+        // Most services failing is an outage, and the column is red.
+        for service in HealthService.allCases.prefix(6) {
+            for _ in 0..<3 { ServiceHealthRegistry.shared.recordFailure(service, "outage") }
+        }
+        health = showHealth(shell)
+        check(health.debugHealthCard.heroColumn.debugPalette == red,
+              "UX-18: most services failing did not turn the column red", &ok)
 
         clearHealth()
         health = showHealth(shell)

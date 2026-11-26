@@ -28,7 +28,9 @@ struct HealthHeroWords: Equatable {
     enum Tone: Equatable {
         /// The theme's accent.
         case accent
-        /// Something is failing: the theme's red.
+        /// UX-18: most services are failing - a real outage - so the whole
+        /// column is the theme's red. One failing service keeps the accent
+        /// and says so in its ring and its pill.
         case failing
         /// Nothing has reported: the accent, dimmed (GL-14).
         case unknown
@@ -56,13 +58,26 @@ struct HealthHeroWords: Equatable {
     /// Whether the foot offers Copy diagnostics: while something needs
     /// attention, next to it.
     let offersDiagnostics: Bool
+    /// UX-18: the state as a pill under the kicker - "1 failing",
+    /// "2 failed their last run" - or `nil` when nothing needs attention.
+    var status: Status? = nil
+
+    struct Status: Equatable {
+        enum State: Equatable { case failing, degraded }
+        let text: String
+        let state: State
+    }
 
     static func == (a: HealthHeroWords, b: HealthHeroWords) -> Bool {
         a.headline == b.headline && a.body == b.body && a.ring?.healthy == b.ring?.healthy
             && a.ring?.total == b.ring?.total && a.ringCaption == b.ringCaption && a.ringState == b.ringState
             && a.tone == b.tone && a.buckets == b.buckets && a.retryable == b.retryable
-            && a.offersDiagnostics == b.offersDiagnostics
+            && a.offersDiagnostics == b.offersDiagnostics && a.status == b.status
     }
+
+    /// UX-18: the column turns red only when more than half of the
+    /// services that reported are failing.
+    static func isOutage(failing: Int, total: Int) -> Bool { total > 0 && failing * 2 > total }
 
     /// The order the buckets stack in, the board's.
     static let bucketOrder: [ServiceHealthSummary.Bucket] = [.healthy, .degraded, .failing, .notRun]
@@ -94,11 +109,15 @@ struct HealthHeroWords: Equatable {
         var body: String
         let tone: Tone
         let ringState: HelmModuleRowState
+        var status: Status?
         if !failing.isEmpty {
-            tone = .failing
-            // On a red column the arc stays in the ink: the column already
-            // says it, and a red arc on red would not read.
-            ringState = .ok
+            // UX-18: the lamp is red, not the wall. A red column is kept for
+            // an outage, and there the arc stays in the ink: the column
+            // already says it, and a red arc on red would not read.
+            let outage = isOutage(failing: failing.count, total: summary.total)
+            tone = outage ? .failing : .accent
+            ringState = outage ? .ok : .bad
+            status = Status(text: "\(failing.count) failing", state: .failing)
             if failing.count == 1, let entry = failing.first {
                 headline = "\(entry.service.title) has failed \(entry.state.consecutiveFailures) runs in a row."
             } else {
@@ -108,6 +127,8 @@ struct HealthHeroWords: Equatable {
         } else if !degraded.isEmpty {
             tone = .accent
             ringState = .warn
+            status = Status(text: degraded.count == 1 ? "1 recent failure" : "\(degraded.count) recent failures",
+                            state: .degraded)
             if degraded.count == 1, let entry = degraded.first {
                 headline = "\(entry.service.title) failed its last run."
             } else {
@@ -132,7 +153,7 @@ struct HealthHeroWords: Equatable {
         }
         return HealthHeroWords(headline: headline, body: body, ring: (summary.healthy, summary.total),
                                ringCaption: caption, ringState: ringState, tone: tone, buckets: buckets,
-                               retryable: retryable, offersDiagnostics: !attention.isEmpty)
+                               retryable: retryable, offersDiagnostics: !attention.isEmpty, status: status)
     }
 
     /// The newest failure among `entries`, as one sentence.

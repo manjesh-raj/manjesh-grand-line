@@ -127,8 +127,9 @@ final class HelmHeroColumn: NSView {
         var headline: String
         var body: String?
         var ring: Ring?
-        /// 1.5.0, `.band` only: a verdict as a glass pill at the band's top
-        /// right, in place of a ring. `nil` draws none.
+        /// 1.5.0: a verdict as a glass pill at a band's top right, in place
+        /// of a ring, and since 1.8.0 under a `.column`'s kicker. A `.panel`
+        /// draws none. `nil` draws none.
         var status: Status? = nil
     }
 
@@ -523,6 +524,13 @@ final class HelmHeroColumn: NSView {
         } else {
             add(kickerRow, to: topStack)
             topStack.setCustomSpacing(HelmMetrics.s2, after: kickerRow)
+            // 1.8.0: a `.column`'s status sits under its kicker, the state
+            // as a pill rather than as the column's colour (UX-18).
+            if let status = header.status {
+                statusPill.configure(text: status.text)
+                add(statusPill, to: topStack, fills: false)
+                topStack.setCustomSpacing(HelmMetrics.s2 + 2, after: statusPill)
+            }
             add(headlineLabel, to: topStack)
             topStack.setCustomSpacing(HelmMetrics.s1 + 2, after: headlineLabel)
             if !bodyLabel.isHidden {
@@ -547,7 +555,7 @@ final class HelmHeroColumn: NSView {
             }
             for view in footViews { add(view, to: footStack, fills: !(view is HelmButton)) }
         }
-        statusPill.isHidden = !(isBand && header.status != nil)
+        statusPill.isHidden = !((isBand || arrangement == .column) && header.status != nil)
         setAccessibilityLabel([header.kicker, header.headline, header.body].compactMap { $0 }
             .filter { !$0.isEmpty }.joined(separator: ". "))
         applyTheme(theme)
@@ -853,8 +861,16 @@ final class HelmHeroColumn: NSView {
         if arrangement == .band, width > 0 {
             for case let grid as HelmHeroTileGrid in bandViews { grid.layoutWidth = floor(width) }
         }
+        if arrangement == .column, header.status != nil {
+            statusPill.maxWidth = max(0, floor(width))
+        }
         if arrangement == .band, header.ring != nil {
             width -= Self.bandRingSide + HelmMetrics.s3 + 120 + HelmMetrics.s5
+            // 1.8.0: a band can carry both, Health's ring and its pill.
+            if header.status != nil {
+                statusPill.maxWidth = min(HelmHeroCard.statusMaxWidth, floor(width * 0.45))
+                width -= statusPill.fittingSize.width + HelmMetrics.s5
+            }
         } else if arrangement == .band, header.status != nil {
             statusPill.maxWidth = min(HelmHeroCard.statusMaxWidth, floor(width * 0.45))
             width -= statusPill.fittingSize.width + HelmMetrics.s5

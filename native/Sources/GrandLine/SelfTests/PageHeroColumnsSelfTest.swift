@@ -139,12 +139,28 @@ enum PageHeroColumnsSelfTest {
             entry(.scheduledAutomations),
         ])
         let failing = HealthHeroWords.make(summary, canRetry: { $0 != .backgroundSignals }, relative: relative)
-        check(failing.tone == .failing, "Health: a failing service leaves the column \(failing.tone), not red", &ok)
+        // UX-18: one service failing of four is not an outage. The column
+        // keeps the accent, and the ring's arc and a pill say it instead.
+        check(failing.tone == .accent && failing.ringState == .bad
+                && failing.status == .init(text: "1 failing", state: .failing),
+              "UX-18: one failing service paints the column \(failing.tone) with a \(failing.ringState) arc "
+                + "and \(String(describing: failing.status))", &ok)
         check(failing.headline == "Dotfiles auto-sync has failed 3 runs in a row.",
               "Health: the failing headline reads \"\(failing.headline)\"", &ok)
         check(failing.body == "Last error 2 minutes ago: git push was rejected.",
               "Health: the failing body reads \"\(failing.body)\"", &ok)
-        check(failing.ringState == .ok, "Health: a red column's ring arc is \(failing.ringState), not the ink", &ok)
+        // Most services failing is an outage: the red column, its arc in the ink.
+        let outage = HealthHeroWords.make(ServiceHealthSummary([
+            entry(.backgroundSignals, success: 900, failures: 3, detail: "a"),
+            entry(.dotfilesAutoSync, success: 900, failures: 3, detail: "b"),
+            entry(.docsSync, success: 900, failures: 3, detail: "c"),
+            entry(.fleetTasks, success: 30),
+        ]), canRetry: { _ in true }, relative: relative)
+        check(outage.tone == .failing && outage.ringState == .ok && outage.status?.text == "3 failing",
+              "UX-18: three of four failing is \(outage.tone) with a \(outage.ringState) arc", &ok)
+        check(!HealthHeroWords.isOutage(failing: 2, total: 4) && HealthHeroWords.isOutage(failing: 3, total: 5)
+                && !HealthHeroWords.isOutage(failing: 0, total: 0),
+              "UX-18: the outage line is not more than half", &ok)
         check(failing.buckets.map(\.count) == [1, 1, 1, 1], "Health: the buckets count \(failing.buckets.map(\.count))", &ok)
         check(failing.retryable == [.dotfilesAutoSync] && failing.offersDiagnostics,
               "Health: the foot offers \(failing.retryable) and diagnostics \(failing.offersDiagnostics)", &ok)
@@ -154,6 +170,8 @@ enum PageHeroColumnsSelfTest {
         let degraded = HealthHeroWords.make(ServiceHealthSummary([entry(.docsSync, success: 600, failures: 1),
                                                                   entry(.fleetTasks, success: 30)]),
                                             canRetry: { _ in false }, relative: relative)
+        check(degraded.status == .init(text: "1 recent failure", state: .degraded),
+              "UX-18: a recent failure's pill reads \(String(describing: degraded.status))", &ok)
         check(degraded.tone == .accent && degraded.ringState == .warn,
               "Health: a recent failure is \(degraded.tone) with a \(degraded.ringState) arc, not the accent with amber", &ok)
         check(degraded.headline == "Docs & runbooks sync failed its last run.",
@@ -561,9 +579,10 @@ enum PageHeroColumnsSelfTest {
                                            body: "Body", ring: nil, status: .init(text: "Watcher healthy", tint: .good))
         column.configure(header: header, sections: [], foot: [strip], tone: .init(colour: .themeAccent),
                          bandViews: [row, tiles], footRule: true)
-        // A column draws none of the band's options.
-        check(column.debugStatusPill == nil && column.debugFootRule == nil && row.superview == nil && tiles.superview == nil,
-              "1.5.0: a `.column` drew the band's status pill, foot rule or band views", &ok)
+        // A column draws none of the band's other options. Since 1.8.0 it
+        // draws the status, as a pill under its kicker (UX-18).
+        check(column.debugStatusPill != nil && column.debugFootRule == nil && row.superview == nil && tiles.superview == nil,
+              "1.8.0: a `.column` drew the band's foot rule or band views, or no status pill", &ok)
         column.setArrangement(.band)
         let palette = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
         let ink = HelmContrast.color(palette.ink)

@@ -98,7 +98,7 @@ final class HealthCardView: NSObject {
             .init(id: "lastRun", title: "Last run", width: 150, hiddenBelow: 600, fitsContent: true),
             .init(id: "runs", title: "Recent runs", width: 110, hiddenBelow: HealthCardView.allColumnsWidth,
                   fitsContent: true),
-        ], actionsWidth: 110)
+        ], actionsWidth: 236)
         table.sizesToFitRows = true
         table.subtitleLines = 2
         // The prototype shows Retry on the failing row at rest.
@@ -175,8 +175,13 @@ final class HealthCardView: NSObject {
                                 label: "\(ring.healthy)/\(ring.total)", caption: words.ringCaption,
                                 spoken: "\(ring.healthy) of \(ring.total) services healthy", state: words.ringState)
         }
+        // UX-18: the state as a glass pill under the kicker, its dot the
+        // state's hue lifted onto the gradient.
+        let status = words.status.map {
+            HelmHeroColumn.Status(text: $0.text, tint: $0.state == .failing ? .critical : .warn)
+        }
         let header = HelmHeroColumn.Header(symbol: "waveform.path.ecg", kicker: "Background services",
-                                           headline: words.headline, body: words.body, ring: ring)
+                                           headline: words.headline, body: words.body, ring: ring, status: status)
         let rows = words.buckets.map { row -> HelmHeroRow in
             let figure = row.count.map(String.init) ?? "\u{2014}"
             return HelmHeroRow(leading: .figure(figure, quiet: (row.count ?? 0) == 0),
@@ -290,9 +295,44 @@ final class HealthCardView: NSObject {
         ]
         let needsAttention = state.verdict == .degraded || state.verdict == .failing
         if needsAttention, let retry = retryActions[service] {
-            row.primary = .init(title: "Retry", symbol: "arrow.clockwise", run: retry)
+            row.primary = .init(title: Self.retryTitle, symbol: "arrow.clockwise", run: retry)
+        }
+        // UX-18: the failing row's own error, ready to paste into an issue
+        // or a message, beside Retry now.
+        if needsAttention, let failure = state.lastFailureDetail, !failure.isEmpty {
+            let copy = HelmDataTable.Action(title: Self.copyErrorTitle, symbol: "doc.on.doc") {
+                copyToPasteboard(Self.errorReport(service: service, state: state, detail: failure))
+                Feedback.report("Copied \(service.title)'s error.", kind: .done, persistence: .transient, in: nil)
+            }
+            row.menu.append(copy)
+            let button = HelmButton(title: Self.copyErrorTitle, variant: .secondary, size: .small, symbol: "doc.on.doc")
+            button.toolTip = "Copy \(service.title)'s last error"
+            let target = HealthCopyErrorTarget(copy.run)
+            copyErrorTargets[service] = target
+            button.target = target
+            button.action = #selector(HealthCopyErrorTarget.run)
+            row.accessory = button
         }
         return row
+    }
+
+    /// UX-18: each row's Copy error target, held while its button is.
+    private var copyErrorTargets: [HealthService: HealthCopyErrorTarget] = [:]
+
+    /// UX-18: the failing row's two actions.
+    static let retryTitle = "Retry now"
+    static let copyErrorTitle = "Copy error"
+
+    /// What Copy error puts on the pasteboard: the service, when it last
+    /// failed and how many times in a row, and the error itself.
+    static func errorReport(service: HealthService, state: ServiceHealthState, detail: String) -> String {
+        var lines = [service.title]
+        if let when = state.lastFailure {
+            lines.append("Last failed \(ISO8601DateFormatter().string(from: when))"
+                         + (state.consecutiveFailures > 1 ? ", \(state.consecutiveFailures) runs in a row" : ""))
+        }
+        lines.append(detail)
+        return lines.joined(separator: "\n")
     }
 
     private let healthStack = NSStackView()
@@ -928,4 +968,11 @@ final class HealthCardView: NSObject {
     /// Rebuild now, whether or not the card is on screen.
     func debugRebuild() { rebuild() }
     #endif
+}
+
+/// UX-18: a row's Copy error button's target.
+final class HealthCopyErrorTarget: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func run() { action() }
 }
