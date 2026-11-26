@@ -408,12 +408,20 @@ enum AccessibilitySelfTest {
             // registers on `NSWorkspace`'s center, which is where macOS posts
             // the change (two observers on the default center had been dead).
             // Either spelling is an observer; `DisplayAccessibilitySelfTest`
-            // fails one on the wrong center.
+            // fails one on the wrong center. Full review 4's PF-01 moved the
+            // lock screen's observer into `DecorativeMotionGate`, which
+            // registers the same `observeChanges` (asserted below), so owning
+            // a gate counts as observing.
             if file != "HelmUIComponents.swift",
                !text.contains("accessibilityDisplayOptionsDidChangeNotification"),
-               !text.contains("HelmDisplayAccessibility.observeChanges") {
+               !text.contains("HelmDisplayAccessibility.observeChanges"),
+               !text.contains("DecorativeMotionGate") {
                 fail("\(file) checks Reduce Motion but never observes changes to it - the setting would need a relaunch", &ok)
             }
+        }
+        let gate = (try? String(contentsOf: dir.appendingPathComponent("DecorativeMotionGate.swift"), encoding: .utf8)) ?? ""
+        if !gate.contains("HelmDisplayAccessibility.observeChanges") {
+            fail("DecorativeMotionGate.swift no longer observes Reduce Motion, so the scenes it gates would need a relaunch", &ok)
         }
         print("  OK - lock screen, module hover lift, dictation HUD and hover fade all consult it")
     }
