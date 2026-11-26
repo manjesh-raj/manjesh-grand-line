@@ -85,6 +85,8 @@ final class ShiftCalendarWebView: WKWebView {
     var onViewSelected: ((String) -> Void)?
     /// An event was clicked. The id is the task's, also for a projection.
     var onOpenTask: ((String) -> Void)?
+    /// F-01: a meeting's chip, with its rectangle when the page measured it.
+    var onOpenMeeting: ((String, NSRect?) -> Void)?
     /// A follow-up's event was clicked.
     var onOpenFollowUp: ((String) -> Void)?
     /// A day (or, in week and day view, a time slot) was double-clicked.
@@ -294,6 +296,11 @@ final class ShiftCalendarWebView: WKWebView {
             onViewSelected?(view)
         case "open":
             guard let id = body["taskID"] as? String else { return }
+            // F-01: a meeting opens its own read-only card.
+            if (body["kind"] as? String) == "meeting" {
+                onOpenMeeting?(id, anchorRect(body["rect"]))
+                return
+            }
             if (body["kind"] as? String) == ShiftCalendarEntry.Kind.followUp.rawValue {
                 onOpenFollowUp?(id)
             } else if (body["projected"] as? Bool) != true, let anchor = anchorRect(body["rect"]),

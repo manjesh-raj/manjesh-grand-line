@@ -2256,6 +2256,13 @@ enum SelfTestDispatch {
             exit(PageWindowsSelfTest.run() ? 0 : 1)
         }
 
+        // F-01 of full review 4: the Mac's calendars beside the tasks - free gaps,
+        // the next free hour, the read-only payload, the bridge's meeting click,
+        // Home's sentence and the rebuilt web bundle. Headless; EventKit unasked.
+        if ProcessInfo.processInfo.environment["FM_RUN_MAC_CALENDAR_TESTS"] == "1" {
+            exit(MacCalendarSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

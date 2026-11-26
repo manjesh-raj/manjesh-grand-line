@@ -1246,3 +1246,18 @@ html.gl-hero[data-first-day='7'] .sx__month-grid-day:not(.is-leading-or-trailing
 html.gl-hero .sx__month-grid-day:not(.sx__month-grid-day--dragover):has(.sx__is-today)::before {
   box-shadow: var(--gl-shadow-cell), inset 0 0 0 1.5px color-mix(in srgb, var(--sx-color-primary) 55%, transparent);
 }
+
+/* F-01 of full review 4: a meeting from the Mac's own calendars. Read-only,
+ * so it is striped rather than solid and keeps the arrow cursor - the
+ * mock-up's "striped blocks are read-only meetings". A click still opens its
+ * card, so it keeps the pointer. The stripe is drawn in
+ * the chip's own ink at a low alpha, so it reads on every palette. */
+.sx__event.gl-meeting {
+  background-image: repeating-linear-gradient(135deg, transparent 0 7px,
+    color-mix(in srgb, currentColor 9%, transparent) 7px 14px) !important;
+}
+.sx__event.gl-meeting .sx__time-grid-event-title,
+.sx__event.gl-meeting .sx__month-grid-event-title,
+.sx__event.gl-meeting .sx__date-grid-event-text {
+  font-weight: 500;
+}

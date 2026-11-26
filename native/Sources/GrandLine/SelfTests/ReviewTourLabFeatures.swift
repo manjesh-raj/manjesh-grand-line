@@ -24,6 +24,7 @@
 //     ux reader <article|highlights|notext>   F-03: the Reading list's reader (goto readingList first)
 //     ux pagewindow <notebook|stickyBoard|console> <name>  F-15: pop the page out and render its window
 //     ux timerwindow <name>           F-15: the focus timer in its own window
+//     ux meetings seed                F-01: a week of meetings, as if the Mac's calendars were allowed
 //
 // GL-27: debug builds only.
 
@@ -33,7 +34,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader", "pagewindow", "timerwindow"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader", "pagewindow", "timerwindow", "meetings"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -99,6 +100,9 @@ extension ReviewTourLab {
             }
             view.layoutSubtreeIfNeeded()
             return done(writePNG(of: view, to: url(name)), name)
+        case "meetings":
+            seedMeetings()
+            return "ux meetings seed"
         case "runmode":
             return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":
@@ -209,6 +213,39 @@ extension ReviewTourLab {
         let deadline = Date().addingTimeInterval(5)
         while !finished, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return "ux expiry seed (\(monitor.store.state.items.count) items, \(monitor.store.state.filed.count) filed)"
+    }
+
+    /// F-01's demo: the mock-up's week of meetings around today, from two
+    /// calendars, with EventKit never asked.
+    static func seedMeetings() {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        func at(_ day: Int, _ h: Int, _ m: Int = 0) -> Date {
+            calendar.date(byAdding: .minute, value: h * 60 + m, to: calendar.date(byAdding: .day, value: day, to: today)!)!
+        }
+        func meeting(_ title: String, _ start: Date, _ minutes: Int, work: Bool = true) -> MacMeeting {
+            MacMeeting(id: "demo-\(title.hashValue)-\(start.timeIntervalSince1970)", title: title, start: start,
+                       end: start.addingTimeInterval(TimeInterval(minutes * 60)), isAllDay: false,
+                       calendarID: work ? "work" : "personal", calendarTitle: work ? "Work" : "Personal",
+                       calendarSource: work ? "Exchange" : "iCloud", colorHex: work ? "3D6BE8" : "189A6E",
+                       location: work ? "https://zoom.us/j/9988774471" : nil, organizer: work ? "Priya Raman" : nil,
+                       attendeeCount: work ? 6 : 0)
+        }
+        var all: [MacMeeting] = []
+        for day in -2...3 { all.append(meeting("Platform stand-up", at(day, 9, 30), 15)) }
+        all += [meeting("1:1 with Priya", at(-2, 14), 30), meeting("Incident review", at(-1, 10), 45),
+                meeting("Dentist", at(-1, 16), 45, work: false),
+                meeting("4.20 release review", at(0, 11), 45), meeting("Lunch with Arjun", at(0, 12, 30), 60, work: false),
+                meeting("Vendor call: PagerDuty", at(0, 15, 30), 45),
+                meeting("Quarterly planning", at(1, 10), 120), meeting("Hiring sync", at(1, 13), 45),
+                meeting("Team lunch", at(2, 12, 30), 60, work: false)]
+        MacCalendarSource.shared.accessProvider = { .granted }
+        MacCalendarSource.shared.calendarsProvider = {
+            [MacCalendarInfo(id: "work", title: "Work", source: "Exchange", colorHex: "3D6BE8"),
+             MacCalendarInfo(id: "personal", title: "Personal", source: "iCloud", colorHex: "189A6E")]
+        }
+        MacCalendarSource.shared.meetingsProvider = { interval in all.filter { interval.contains($0.start) } }
+        AppSettings.shared.macCalendarsShown = true
     }
 
     /// F-03's demo: a saved article with two highlights, opened in the reader;

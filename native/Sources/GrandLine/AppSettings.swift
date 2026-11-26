@@ -24,6 +24,8 @@ final class AppSettings {
 
     private enum Keys {
         static let expiryLeadDays = "fm.expiry.leadDays"
+        static let macCalendarsShown = "fm.macCalendars.shown"
+        static let macCalendarsHidden = "fm.macCalendars.hidden"
         static let spotlightEnabled = "fm.spotlight.enabled"
         static let spotlightDisabledKinds = "fm.spotlight.disabledKinds"
         static let spotlightLockedMode = "fm.spotlight.lockedMode"
@@ -409,6 +411,19 @@ final class AppSettings {
     /// default: the grid is one flat run of cards, the way the Keys grid is,
     /// and each card names its group. An unset key reads as off, so nothing
     /// a captain saved before this existed changes what they see.
+    /// F-01: show the Mac's calendars beside the tasks. Off until the captain
+    /// presses "Show my calendars" and allows access.
+    var macCalendarsShown: Bool {
+        get { defaults.bool(forKey: Keys.macCalendarsShown) }
+        set { defaults.set(newValue, forKey: Keys.macCalendarsShown) }
+    }
+
+    /// F-01: the Mac calendars the captain turned off, by identifier.
+    var macCalendarsHidden: Set<String> {
+        get { Set(defaults.stringArray(forKey: Keys.macCalendarsHidden) ?? []) }
+        set { defaults.set(newValue.sorted(), forKey: Keys.macCalendarsHidden) }
+    }
+
     /// F-04: write tasks, notes, links, sticky notes and runbooks to the
     /// system's Spotlight index. On by default; unset reads as on.
     var spotlightEnabled: Bool {

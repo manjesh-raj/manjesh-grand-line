@@ -357,6 +357,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>Dictation uses your microphone to capture speech while you hold Right Option, so it can transcribe and paste it at your cursor.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Dictation uses Speech Recognition (on-device when available) to turn what you say into text.</string>
+    <!-- F-01: the Mac's own calendars in Tasks > Calendar, read-only through
+         EventKit. Asked only when "Show my calendars" is pressed. macOS 14+
+         reads the full-access key; 13 reads the older one. -->
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Grand Line shows the meetings already in your Calendar app beside your tasks, read-only. Nothing is copied off this Mac and no account is added.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Grand Line shows the meetings already in your Calendar app beside your tasks, read-only. Nothing is copied off this Mac and no account is added.</string>
     <!-- F-10: Services > Send to Grand Line. Each NSMessage is a method on
          GrandLineServicesProvider (GrandLineServicesMenu.swift), and
          GrandLineServicesSelfTest checks the two lists agree. -->

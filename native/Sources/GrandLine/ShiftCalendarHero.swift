@@ -68,6 +68,15 @@ enum ShiftCalendarHeroWords {
         let figures: Figures
         /// `nil` when nothing is open, which is no fraction at all.
         let ring: Ring?
+        /// F-01: the Mac's meetings this week and today's free time, when
+        /// the calendars are shown. `nil` keeps the head as it was.
+        var meetings: Meetings? = nil
+    }
+
+    /// F-01: what the head says about the Mac's own calendars.
+    struct Meetings: Equatable {
+        let thisWeek: Int
+        let freeToday: TimeInterval
     }
 
     /// The head for what the calendar holds. `summary` is the Tasks page's
@@ -77,7 +86,7 @@ enum ShiftCalendarHeroWords {
     static func head(scale: ShiftCalendarScale, focusedDay: String?, range: (start: String, end: String)?,
                      tasks: [ShiftTask], followUps: [ShiftFollowUp], tray: ShiftCalendarTray,
                      summary: ShiftStore.Summary?, now: Date = DayRollover.now(), calendar: Calendar = .current,
-                     locale: Locale = .current) -> Head {
+                     locale: Locale = .current, meetings: Meetings? = nil) -> Head {
         let kicker = "Calendar \u{00B7} \(ShiftHeroWords.kickerFormatter.string(from: now))"
         let open = tasks.filter { $0.status != .completed && $0.status != .cancelled }
         let pending = followUps.filter { $0.status == .pending }
@@ -99,7 +108,7 @@ enum ShiftCalendarHeroWords {
         return Head(kicker: kicker,
                     title: title(scale: scale, focusedDay: focusedDay, range: range, now: now,
                                  calendar: calendar, locale: locale),
-                    figures: figures, ring: ring)
+                    figures: figures, ring: ring, meetings: meetings)
     }
 
     /// The period on screen, as the page's own header used to name it: the
@@ -243,6 +252,11 @@ final class ShiftCalendarHeroHead: NSView {
     private lazy var colourMenuButton = HelmButton(title: "Colour by Priority", variant: .secondary, size: .small,
                                                    symbol: "chevron.down", target: self,
                                                    action: #selector(colourMenuTapped))
+    /// F-01: the Mac's calendars - ask, pick, or say access is off.
+    private(set) lazy var calendarsMenuButton = HelmButton(title: "Show my calendars", variant: .secondary, size: .small,
+                                                           symbol: "chevron.down", target: self,
+                                                           action: #selector(calendarsMenuTapped))
+    var onShowCalendarsMenu: ((NSView) -> Void)?
     private let menuRow = NSStackView()
     private var topRowUnderMenus: NSLayoutConstraint!
     private var topRowAtTop: NSLayoutConstraint!
@@ -342,7 +356,7 @@ final class ShiftCalendarHeroHead: NSView {
         addSubview(topRow)
         addSubview(weekdayRow)
 
-        for button in [scopeMenuButton, projectMenuButton, colourMenuButton] {
+        for button in [scopeMenuButton, projectMenuButton, colourMenuButton, calendarsMenuButton] {
             button.symbolTrailing = true
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -354,6 +368,8 @@ final class ShiftCalendarHeroHead: NSView {
         scopeMenuButton.setAccessibilityLabel("Which tasks to show")
         projectMenuButton.setAccessibilityLabel("Project")
         colourMenuButton.setAccessibilityLabel("Colour calendar chips by")
+        calendarsMenuButton.toolTip = "Show the calendars already on this Mac, read-only"
+        calendarsMenuButton.setAccessibilityLabel("Calendars from this Mac")
         menuRow.orientation = .horizontal
         menuRow.alignment = .centerY
         menuRow.spacing = HelmMetrics.s2
@@ -423,12 +439,23 @@ final class ShiftCalendarHeroHead: NSView {
         self.scale = scale
         titleLabel.stringValue = words.title
         let figures = words.figures
-        self.figures.configure([
-            .count(figures.thisWeek, caption: "This week"),
-            .count(figures.overdue, caption: "Overdue"),
-            .count(figures.followUps, caption: "Follow-ups"),
-            .count(figures.unscheduled, caption: "Unscheduled"),
-        ], theme: theme)
+        if let meetings = words.meetings {
+            // F-01: with the Mac's calendars shown, the meetings and the free
+            // time take the follow-up and unscheduled tiles' places.
+            self.figures.configure([
+                .count(figures.thisWeek, caption: "Tasks this week"),
+                .count(meetings.thisWeek, caption: "Meetings"),
+                .count(figures.overdue, caption: "Overdue"),
+                .figure(MacCalendarRules.duration(meetings.freeToday), caption: "Free today"),
+            ], theme: theme)
+        } else {
+            self.figures.configure([
+                .count(figures.thisWeek, caption: "This week"),
+                .count(figures.overdue, caption: "Overdue"),
+                .count(figures.followUps, caption: "Follow-ups"),
+                .count(figures.unscheduled, caption: "Unscheduled"),
+            ], theme: theme)
+        }
         if let ring = words.ring {
             self.ring.configure(fraction: Double(ring.dated) / Double(max(1, ring.open)),
                                 text: "\(ring.dated)/\(ring.open)")
@@ -512,7 +539,7 @@ final class ShiftCalendarHeroHead: NSView {
         let darker = HelmContrast.relativeLuminance(palette.start) < HelmContrast.relativeLuminance(palette.end)
             ? palette.start : palette.end
         let deep = HelmContrast.color(darker)
-        for button in [scopeMenuButton, projectMenuButton, colourMenuButton] { button.heroInk = ink }
+        for button in [scopeMenuButton, projectMenuButton, colourMenuButton, calendarsMenuButton] { button.heroInk = ink }
         scopeMenuButton.heroSelection = filters?.scopeNarrows == true ? deep : nil
         projectMenuButton.heroSelection = filters?.projectNarrows == true ? deep : nil
         figures.heroInk = ink
@@ -568,6 +595,13 @@ final class ShiftCalendarHeroHead: NSView {
     @objc private func scopeMenuTapped() { onShowScopeMenu?(scopeMenuButton) }
     @objc private func projectMenuTapped() { onShowProjectMenu?(projectMenuButton) }
     @objc private func colourMenuTapped() { onShowColourMenu?(colourMenuButton) }
+    @objc private func calendarsMenuTapped() { onShowCalendarsMenu?(calendarsMenuButton) }
+
+    /// F-01: "Calendars: Work, Personal", "Show my calendars" or "Calendars off".
+    func setCalendarsTitle(_ title: String) {
+        guard calendarsMenuButton.title != title else { return }
+        calendarsMenuButton.title = title
+    }
 
     #if FM_SELFTESTS
     var debugTitle: String { titleLabel.stringValue }

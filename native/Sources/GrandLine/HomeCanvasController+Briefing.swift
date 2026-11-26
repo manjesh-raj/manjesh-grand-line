@@ -60,12 +60,19 @@ extension HomeCanvasController {
         let fleetTint = fleetAnswer.flatMap { $0.tint == .good ? nil : $0.tint }
         let fleetNeedsCaptain = HomeBriefingHero.offersNeedsYou(crewShown: crewShown,
                                                                 tasks: fleetSnapshot?.tasks ?? [])
+        // F-01: the first meeting still to come today, from the Mac's own
+        // calendars when they are shown.
+        let firstMeeting = MacCalendarSource.shared.isShowing
+            ? MacCalendarRules.firstMeeting(after: now, meetings: MacCalendarSource.shared.meetings(on: now))
+                .map { MacCalendarRules.firstMeetingSentence($0, now: now) }
+            : nil
         let facts = HomeGreeting.Facts(
             dueToday: hiddenModules.contains(.tasks) ? nil : counts?.due,
             overdue: counts?.overdue,
             fleetNeedsYou: fleetAnswer.flatMap { $0.tint == .good ? nil : $0.title },
             prsReady: crewShown ? prsReady : nil,
-            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil)
+            servicesFailing: healthShown && healthSummary.total > 0 ? healthSummary.failing : nil,
+            firstMeeting: firstMeeting)
         greetingTitle.stringValue = HomeGreeting.title(
             captain: HomeGreeting.captainName(fleetCaptain: fleetSnapshot?.captain), now: now)
         greetingSummary.stringValue = HomeGreeting.summary(facts, now: now)

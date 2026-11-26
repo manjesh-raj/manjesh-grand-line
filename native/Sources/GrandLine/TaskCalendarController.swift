@@ -99,6 +99,20 @@ final class TaskCalendarController: NSViewController {
         ])
 
         calendarView.onOpenTask = { [weak self] id in self?.openTask(id: id) }
+        // F-01: "Prep task before it" on a meeting's card - a task due half
+        // an hour before the meeting, on its day.
+        calendarView.onAddPrepTask = { [weak self] meeting in
+            guard let self else { return }
+            var task = ShiftTask.fresh()
+            task.title = "Prep: \(meeting.title)"
+            let prep = meeting.isAllDay ? meeting.start : meeting.start.addingTimeInterval(-30 * 60)
+            let (day, time) = ShiftDateFormatting.components(from: prep)
+            task.dueDate = day
+            task.dueTime = meeting.isAllDay ? nil : time
+            task.description = "Before \(meeting.title) (\(meeting.calendarTitle))."
+            self.store.addTask(task)
+            Toast.show(in: self.view, message: "Task added: \(task.title)")
+        }
         calendarView.onOpenFollowUp = { [weak self] id in self?.openFollowUp(id: id) }
         calendarView.onAddTask = { [weak self] day, time in self?.addTask(on: day, time: time) }
         calendarView.onMoveTask = { [weak self] id, day, time in self?.rescheduleTask(id: id, to: day, time: time) }

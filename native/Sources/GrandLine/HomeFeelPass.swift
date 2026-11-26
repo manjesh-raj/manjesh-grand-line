@@ -27,6 +27,10 @@ enum HomeGreeting {
         var fleetNeedsYou: String? = nil
         var prsReady: Int?
         var servicesFailing: Int?
+        /// F-01: "Your first meeting is Platform stand-up at 9:30, in 18
+        /// minutes." when the Mac's calendars are shown and one is still to
+        /// come today. Said after the day's tasks, never in the short verdict.
+        var firstMeeting: String? = nil
     }
 
     /// The captain's name: the fleet's own (`FM_CAPTAIN`, which the Fleet
@@ -45,7 +49,7 @@ enum HomeGreeting {
 
     /// The date, then one sentence of what is worth knowing first.
     static func summary(_ facts: Facts, now: Date = Date()) -> String {
-        "\(date(now)). \(sentence(facts))"
+        "\(date(now)). \(sentence(facts))" + (facts.firstMeeting.map { " \($0)" } ?? "")
     }
 
     /// "Monday, 23 November" - the summary's first words, and the briefing

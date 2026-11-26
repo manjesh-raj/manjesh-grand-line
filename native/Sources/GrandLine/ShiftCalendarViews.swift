@@ -462,6 +462,32 @@ enum ShiftCalendarPayload {
 
     static let timedBlockMinutes = 30
 
+    /// F-01: one of the Mac's meetings, read-only: never movable, never
+    /// completable, and drawn striped (`gl-meeting`).
+    static func meeting(_ meeting: MacMeeting) -> [String: Any] {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = meeting.isAllDay ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm"
+        let end = meeting.isAllDay ? meeting.end.addingTimeInterval(-1) : meeting.end
+        return [
+            "id": "meeting:\(meeting.id)",
+            "taskID": meeting.id,
+            "kind": "meeting",
+            "title": meeting.title,
+            "start": f.string(from: meeting.start),
+            "end": f.string(from: max(meeting.start, end)),
+            "allDay": meeting.isAllDay,
+            "calendarId": MacCalendarRules.calendarID(for: meeting),
+            "projected": false,
+            "completed": false,
+            "skipped": false,
+            "movable": false,
+            "completable": false,
+            "menu": false,
+            "meeting": true,
+        ]
+    }
+
     /// The Unscheduled tray, for `setTray`.
     ///
     /// Every word the page shows is decided here, where a self-test can read
@@ -560,7 +586,7 @@ enum ShiftCalendarPayload {
         ]
     }
 
-    private static func minutes(of hhmm: String) -> Int? {
+    static func minutes(of hhmm: String) -> Int? {
         let parts = hhmm.split(separator: ":")
         guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]),
               (0..<24).contains(h), (0..<60).contains(m) else { return nil }
@@ -930,6 +956,10 @@ enum ShiftCalendarPalette {
     ///
     /// Coloured by project, every project and No project get one too. The
     /// categories stay, because a follow-up keeps its own.
+    /// F-01: the meeting slots, one per identity hue.
+    static func meetingCalendarID(_ hue: HelmDomainHue) -> String { "meeting-\(hue.rawValue)" }
+    static var meetingCalendarIDs: [String] { HelmDomainHue.allCases.map(meetingCalendarID) }
+
     static func calendars(for theme: HelmTheme, colouring: ShiftCalendarColouring = .priority,
                           projects: [ShiftProject] = []) -> [String: Any] {
         var out: [String: Any] = [:]
@@ -938,6 +968,11 @@ enum ShiftCalendarPalette {
         }
         for category in ShiftCalendarCategory.allCases {
             add(category.rawValue, colours(for: category, theme: theme))
+        }
+        // F-01: a slot per identity hue for the Mac's meetings, so a meeting
+        // takes its calendar's nearest colour with no reconfigure.
+        for hue in HelmDomainHue.allCases {
+            add(meetingCalendarID(hue), colours(tintHex: hue.categoricalHex, theme: theme))
         }
         if colouring == .project {
             for project in projects {
@@ -1151,6 +1186,11 @@ enum ShiftCalendarQuickAdd {
 /// nothing for it.
 final class ShiftCalendarView: NSView {
 
+    /// F-01: the Mac's meetings in the visible period, read-only.
+    private(set) var meetings: [MacMeeting] = []
+    var meetingSource: MacCalendarSource = .shared
+    private var meetingPopover: NSPopover?
+
     /// Opens the task behind an event, through the one task editor
     /// (`ShiftRecordSheets`).
     var onOpenTask: ((String) -> Void)?
@@ -1305,9 +1345,13 @@ final class ShiftCalendarView: NSView {
         }
         webView.onViewSelected = { [weak self] view in self?.adoptSelectedView(view) }
         webView.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
+        webView.onOpenMeeting = { [weak self] id, rect in
+            guard let self else { return }
+            self.showMeeting(id: id, anchor: rect.map { self.convert($0, from: self.webView) })
+        }
         webView.onOpenFollowUp = { [weak self] id in self?.onOpenFollowUp?(id) }
         webView.onAddTask = { [weak self] day, time in self?.onAddTask?(day, time) }
-        webView.onMoveTask = { [weak self] id, day, time in self?.onMoveTask?(id, day, time) }
+        webView.onMoveTask = { [weak self] id, day, time in self?.moveTaskAvoidingMeetings(id: id, day: day, time: time) }
         webView.onMoveFollowUp = { [weak self] id, day, time in self?.onMoveFollowUp?(id, day, time) }
         webView.onMoveOccurrence = { [weak self] id, slot, day, time in self?.onMoveOccurrence?(id, slot, day, time) }
         webView.onOccurrenceMenu = { [weak self] id, slot, skipped, rect in
@@ -1324,6 +1368,11 @@ final class ShiftCalendarView: NSView {
         // decide, so this view answers it itself.
         webView.onQuickAddParse = { [weak self] day, text, seq in self?.answerQuickAddParse(day: day, text: text, seq: seq) }
         webView.onTrayCollapse = { [weak self] collapsed in self?.setTrayCollapsed(collapsed) }
+        heroHead.onShowCalendarsMenu = { [weak self] anchor in self?.showCalendarsMenu(from: anchor) }
+        meetingSource.observe { [weak self] in
+            self?.pushEvents()
+            self?.refreshHeads()
+        }
 
         applyTheme(ThemeManager.shared.theme)
         refreshCaption()
@@ -1496,8 +1545,10 @@ final class ShiftCalendarView: NSView {
         }
         heroHead.configure(ShiftCalendarHeroWords.head(scale: scale, focusedDay: focusedDay, range: visibleRange,
                                                        tasks: tasks, followUps: followUps, tray: tray,
-                                                       summary: pageSummary, now: now),
+                                                       summary: pageSummary, now: now,
+                                                       meetings: meetingFigures(now: now)),
                            scale: scale)
+        heroHead.setCalendarsTitle(calendarsTitle())
         trayHead.configure(count: tray.unscheduledCount, collapsed: trayCollapsed)
         if trayHeadWidth.constant != trayHead.trayWidth { trayHeadWidth.constant = trayHead.trayWidth }
         pushHeads()
@@ -1725,13 +1776,186 @@ final class ShiftCalendarView: NSView {
     /// and hands them to the page when it is up.
     private func pushEvents() {
         let entries = visibleEntries()
+        meetings = meetingSource.isShowing || meetingSource.meetingsProvider != nil
+            ? meetingSource.meetings(in: visibleInterval()) : []
         lastEventsPayload = entries.map { ShiftCalendarPayload.event(for: $0, colouring: colouring) }
+            + meetings.map(ShiftCalendarPayload.meeting)
         refreshCaption(entries: entries)
         guard isConfigured else { return }
         webView.call("setEvents", payload: ["events": lastEventsPayload]) { result in
             if case .failure(let error) = result {
                 AppLog.lifecycle.error("task calendar: setEvents failed: \(error.message, privacy: .public)")
             }
+        }
+    }
+
+    /// F-01: the visible period as an interval, for EventKit.
+    private func visibleInterval() -> DateInterval {
+        let calendar = Calendar.current
+        if let visibleRange, let s = ShiftDateFormatting.date(from: visibleRange.start),
+           let e = ShiftDateFormatting.date(from: visibleRange.end) {
+            return DateInterval(start: s, end: calendar.date(byAdding: .day, value: 1, to: e) ?? e)
+        }
+        let (s, days) = ShiftCalendarModel.range(for: Date(), scale: .month, calendar: calendar)
+        return DateInterval(start: s, end: calendar.date(byAdding: .day, value: days, to: s) ?? s)
+    }
+
+    // MARK: F-01 - the Mac's calendars
+
+    /// This week's meetings and today's free time, or nil when the calendars
+    /// are not shown.
+    func meetingFigures(now: Date = Date()) -> ShiftCalendarHeroWords.Meetings? {
+        guard meetingSource.isShowing || meetingSource.meetingsProvider != nil else { return nil }
+        let calendar = Calendar.current
+        guard let week = calendar.dateInterval(of: .weekOfYear, for: now) else { return nil }
+        let thisWeek = meetingSource.meetings(in: week).filter { !$0.isAllDay }.count
+        let free = MacCalendarRules.freeGaps(on: now, meetings: meetingSource.meetings(on: now), from: now)
+            .reduce(0) { $0 + $1.duration }
+        return .init(thisWeek: thisWeek, freeToday: free)
+    }
+
+    func calendarsTitle() -> String {
+        switch meetingSource.access {
+        case .notAsked: return "Show my calendars"
+        case .denied: return "Calendars off"
+        case .granted:
+            guard AppSettings.shared.macCalendarsShown else { return "Calendars hidden" }
+            let hidden = AppSettings.shared.macCalendarsHidden
+            let shown = meetingSource.calendars().filter { !hidden.contains($0.id) }.map(\.title)
+            if shown.isEmpty { return "No calendars" }
+            return "Calendars: " + (shown.count <= 2 ? shown.joined(separator: ", ") : "\(shown.count) on")
+        }
+    }
+
+    /// Ask once; once allowed, pick which calendars; refused, say where to
+    /// turn it on.
+    private func showCalendarsMenu(from anchor: NSView) {
+        let menu = NSMenu()
+        switch meetingSource.access {
+        case .notAsked:
+            menu.addItem(sleeveItem("Show my Mac\u{2019}s calendars\u{2026}", symbol: "calendar") { [weak self] in
+                self?.askForCalendars()
+            })
+        case .denied:
+            let note = NSMenuItem(title: "Calendar access is off in System Settings, Privacy, Calendars.", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            menu.addItem(sleeveItem("Open System Settings", symbol: "gearshape") {
+                if let url = MacCalendarSource.settingsURL { NSWorkspace.shared.open(url) }
+            })
+        case .granted:
+            let shown = AppSettings.shared.macCalendarsShown
+            menu.addItem(sleeveItem(shown ? "Hide meetings" : "Show meetings", symbol: shown ? "eye.slash" : "eye") { [weak self] in
+                AppSettings.shared.macCalendarsShown = !shown
+                self?.pushEvents()
+                self?.refreshHeads()
+            })
+            menu.addItem(.separator())
+            let hidden = AppSettings.shared.macCalendarsHidden
+            for info in meetingSource.calendars() {
+                let item = sleeveItem("\(info.title) \u{00B7} \(info.source)", symbol: "circle.fill") { [weak self] in
+                    var now = AppSettings.shared.macCalendarsHidden
+                    if now.contains(info.id) { now.remove(info.id) } else { now.insert(info.id) }
+                    AppSettings.shared.macCalendarsHidden = now
+                    self?.pushEvents()
+                    self?.refreshHeads()
+                }
+                item.state = hidden.contains(info.id) ? .off : .on
+                menu.addItem(item)
+            }
+        }
+        let foot = NSMenuItem(title: "Read-only. Nothing leaves this Mac and no account is added.", action: nil, keyEquivalent: "")
+        foot.isEnabled = false
+        menu.addItem(.separator())
+        menu.addItem(foot)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.height + 4), in: anchor)
+    }
+
+    private var menuSleeves: [ClosureSleeve] = []
+
+    private func sleeveItem(_ title: String, symbol: String, _ run: @escaping () -> Void) -> NSMenuItem {
+        let sleeve = ClosureSleeve(run)
+        menuSleeves.append(sleeve)
+        let item = NSMenuItem(title: title, action: #selector(ClosureSleeve.invoke), keyEquivalent: "")
+        item.target = sleeve
+        item.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(12), weight: .medium)
+        return item
+    }
+
+    /// The one-time ask, in the mock-up's words, then the system's prompt.
+    func askForCalendars() {
+        var request = HelmConfirm.Request(
+            title: "Show your Mac\u{2019}s calendars here",
+            body: "Grand Line reads the calendars already in the Calendar app, including iCloud, Google or Exchange "
+                + "accounts added there. Read-only. Nothing is copied off this Mac and no account is added.")
+        request.confirmTitle = "Show my calendars"
+        request.cancelTitle = "Not now"
+        request.symbol = "calendar"
+        guard HelmConfirm.confirm(request) == .confirm else { return }
+        meetingSource.requestAccess { [weak self] _ in
+            self?.pushEvents()
+            self?.refreshHeads()
+        }
+    }
+
+    /// A meeting's read-only popover: when, which calendar, who, where, and
+    /// "Prep task before it".
+    private func showMeeting(id: String, anchor: NSRect?) {
+        guard let meeting = meetings.first(where: { $0.id == id }) else { return }
+        let card = MacMeetingCard(meeting: meeting)
+        card.onPrepTask = { [weak self] in
+            self?.onAddPrepTask?(meeting)
+            self?.meetingPopover?.performClose(nil)
+        }
+        let controller = NSViewController()
+        controller.view = card
+        let popover = NSPopover()
+        popover.contentViewController = controller
+        popover.behavior = .transient
+        popover.appearance = NSAppearance(named: ThemeManager.shared.theme.mode == .dark ? .darkAqua : .aqua)
+        popover.contentSize = card.fittingSize
+        meetingPopover = popover
+        guard window != nil else { return }
+        popover.show(relativeTo: anchor ?? bounds, of: self, preferredEdge: .maxX)
+    }
+
+    /// F-01: "Prep task before it" - the controller files it.
+    var onAddPrepTask: ((MacMeeting) -> Void)?
+
+    /// A timed drop onto a meeting is offered the next free gap instead; a
+    /// drop with no time, or into a free slot, goes through as it always did.
+    func moveTaskAvoidingMeetings(id: String, day: String, time: String?) {
+        guard let time, let date = ShiftDateFormatting.date(from: day),
+              let minutes = ShiftCalendarPayload.minutes(of: time),
+              let start = Calendar.current.date(byAdding: .minute, value: minutes, to: date) else {
+            onMoveTask?(id, day, time)
+            return
+        }
+        let dayMeetings = meetingSource.meetings(on: date)
+        let length = TimeInterval(ShiftCalendarPayload.timedBlockMinutes * 60)
+        guard let clash = MacCalendarRules.overlaps(start: start, length: length, meetings: dayMeetings) else {
+            onMoveTask?(id, day, time)
+            return
+        }
+        let ahead = meetingSource.meetings(in: DateInterval(start: date, duration: 7 * 86_400))
+        guard let next = MacCalendarRules.nextGap(after: start, length: 60 * 60, meetings: ahead) else {
+            Toast.show(in: self, message: "\(clash.title) is there, and no free hour shows in the next week", kind: .warning)
+            pushEvents()
+            return
+        }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_GB")
+        f.dateFormat = Calendar.current.isDate(next, inSameDayAs: date) ? "H:mm" : "EEE H:mm"
+        var request = HelmConfirm.Request(title: "\(clash.title) is at that time",
+                                          body: "The next free hour is \(f.string(from: next)). Put the task there?")
+        request.confirmTitle = "Put it there"
+        request.cancelTitle = "Keep it where I dropped it"
+        request.symbol = "calendar.badge.exclamationmark"
+        if HelmConfirm.confirm(request) == .confirm {
+            let (nextDay, nextTime) = ShiftDateFormatting.components(from: next)
+            onMoveTask?(id, nextDay, nextTime)
+        } else {
+            onMoveTask?(id, day, time)
         }
     }
 
