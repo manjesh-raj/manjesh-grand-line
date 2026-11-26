@@ -89,8 +89,9 @@ enum SettingsSidebarNavigationSelfTest {
     /// gone the page always builds its Set-2 split cards at load, and the
     /// rows each split plan takes leave their section cards, so fifteen
     /// section cards are not built. Those rows are the split cards' now
-    /// (`SettingsSplitCardsViewSelfTest`).
-    private static let expectedCardCount = 21
+    /// (`SettingsSplitCardsViewSelfTest`). Twenty-two since F-04 of full
+    /// review 4 added the Security page's Spotlight card.
+    private static let expectedCardCount = 22
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

@@ -238,6 +238,10 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     private var splitAtTop: NSLayoutConstraint!
     /// F-05: the write view under the memo strip, or at the card's top.
     private var memoStripTies: (underStrip: NSLayoutConstraint, atTop: NSLayoutConstraint)?
+    /// F-05: the strip's own pins, active only while it shows. A hidden view
+    /// is still in the window's constraint graph (gotcha (15)), and the
+    /// strip's fixed row would otherwise set the Notebook's floor.
+    private var memoStripPins: [NSLayoutConstraint] = []
 
     /// F-05: shows the memo strip for a memo page, and moves the text below
     /// it. Collapsing by swapping the text's top, never by a zero height on
@@ -245,8 +249,17 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
     func refreshMemoStrip(content: String) {
         memoStrip.show(content: content)
         guard let ties = memoStripTies else { return }
-        ties.underStrip.isActive = !memoStrip.isHidden
-        ties.atTop.isActive = memoStrip.isHidden
+        // Order matters: release the old top before pinning the new one,
+        // and pin the strip before the text is tied under it.
+        if memoStrip.isHidden {
+            ties.underStrip.isActive = false
+            NSLayoutConstraint.deactivate(memoStripPins)
+            ties.atTop.isActive = true
+        } else {
+            ties.atTop.isActive = false
+            NSLayoutConstraint.activate(memoStripPins)
+            ties.underStrip.isActive = true
+        }
     }
 
     /// F-05: "Make a task from a line" on a memo page.
@@ -631,10 +644,12 @@ final class NotebookController: NSViewController, DaylightDrillActions, HelmSpli
         let textUnderStrip = writeView.topAnchor.constraint(equalTo: memoStrip.bottomAnchor, constant: HelmMetrics.s2)
         let textAtTop = writeView.topAnchor.constraint(equalTo: body.topAnchor)
         memoStripTies = (textUnderStrip, textAtTop)
-        NSLayoutConstraint.activate([
+        memoStripPins = [
             memoStrip.leadingAnchor.constraint(equalTo: body.leadingAnchor, constant: HelmMetrics.s4),
             memoStrip.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -HelmMetrics.s4),
             memoStrip.topAnchor.constraint(equalTo: body.topAnchor, constant: HelmMetrics.s3),
+        ]
+        NSLayoutConstraint.activate([
             writeView.leadingAnchor.constraint(equalTo: body.leadingAnchor),
             writeView.trailingAnchor.constraint(equalTo: body.trailingAnchor),
             writeView.bottomAnchor.constraint(equalTo: body.bottomAnchor),

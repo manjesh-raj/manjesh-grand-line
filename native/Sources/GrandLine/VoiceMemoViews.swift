@@ -522,8 +522,11 @@ final class VoiceMemoStrip: NSView {
     private let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let kicker = NSTextField(labelWithString: "VOICE MEMO")
     private let footLabel = NSTextField(wrappingLabelWithString: "")
-    private let taskButton = HelmButton(title: "Make a task from a line", variant: .secondary, size: .small, symbol: "checkmark.circle")
-    private let copyButton = HelmButton(title: "Copy text", variant: .quiet, size: .small, symbol: "doc.on.doc")
+    // Short on purpose: the strip sits in the Notebook's write card, and its
+    // fixed row must fit the card at the narrowest window that keeps the
+    // sidebar (MainSplitShellNavigationSelfTest's no-growth sweep).
+    private let taskButton = HelmButton(title: "Make a task", variant: .secondary, size: .small, symbol: "checkmark.circle")
+    private let copyButton = HelmButton(symbol: "doc.on.doc", variant: .quiet, size: .small)
     private var player: AVAudioPlayer?
     private var timer: Timer?
     private var lines: [String] = []
@@ -547,6 +550,9 @@ final class VoiceMemoStrip: NSView {
         taskButton.action = #selector(taskTapped)
         copyButton.target = self
         copyButton.action = #selector(copyTapped)
+        copyButton.toolTip = "Copy the transcript"
+        copyButton.setAccessibilityLabel("Copy the transcript")
+        taskButton.toolTip = "Make a task from a line of the transcript"
         for view in [playButton, timeLabel, taskButton, copyButton] as [NSView] {
             view.setContentHuggingPriority(.required, for: .horizontal)
             view.setContentCompressionResistancePriority(.required, for: .horizontal)

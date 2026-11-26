@@ -385,13 +385,17 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     var expiryMonitor: ExpiryReminderMonitor? {
         didSet { expiryMonitor?.observe { [weak self] in self?.expiryResultsChanged() } }
     }
-    /// D-03: "Check again" and the reminder settings, in the Keys row.
-    lazy var keysCheckButton = HelmButton(title: "Check expiry", variant: .quiet, size: .small,
-                                          symbol: "arrow.clockwise", target: self,
-                                          action: #selector(checkExpiryTapped))
-    lazy var keysRemindersButton = HelmButton(title: "Reminders", variant: .quiet, size: .small,
-                                              symbol: "bell.badge", target: self,
-                                              action: #selector(expiryRemindersTapped(_:)))
+    /// D-03: the expiry reminders, one glyph in the Keys row. The popover
+    /// holds Check now and the settings. Two titled buttons here made the
+    /// Keys row the page's widest, and a hidden tab still sets the window's
+    /// floor (gotcha (15)), so they grew a narrow window by 186pt.
+    lazy var keysRemindersButton: HelmButton = {
+        let button = HelmButton(symbol: "bell.badge", variant: .quiet, size: .small, target: self,
+                                action: #selector(expiryRemindersTapped(_:)))
+        button.toolTip = "Expiry reminders"
+        button.setAccessibilityLabel("Expiry reminders")
+        return button
+    }()
     let expiryRemindersPopover = NSPopover()
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.

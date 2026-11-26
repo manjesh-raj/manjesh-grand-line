@@ -33,8 +33,8 @@ extension HostsController {
     }
 
     func expiryResultsChanged() {
-        keysCheckButton.isEnabled = !(expiryMonitor?.isChecking ?? false)
-        keysCheckButton.title = (expiryMonitor?.isChecking ?? false) ? "Checking\u{2026}" : "Check expiry"
+        (expiryRemindersPopover.contentViewController?.view as? ExpiryRemindersPanel)?
+            .setChecking(expiryMonitor?.isChecking ?? false)
         reloadKeysForSearch()
         renderHeroColumn()
     }
@@ -101,6 +101,8 @@ extension HostsController {
         let panel = ExpiryRemindersPanel(projects: shiftProjects()) { [weak self] in
             self?.expiryResultsChanged()
         }
+        panel.onCheckNow = { [weak self] in self?.checkExpiryTapped() }
+        panel.setChecking(expiryMonitor?.isChecking ?? false)
         let controller = NSViewController()
         controller.view = panel
         expiryRemindersPopover.contentViewController = controller
@@ -127,6 +129,21 @@ final class ExpiryRemindersPanel: NSView {
     private let projects: [(id: String, name: String)]
     private let onChange: () -> Void
     static let leadChoices = [7, 14, 30]
+    /// Runs the check now, the same check the 06:00 schedule runs.
+    var onCheckNow: (() -> Void)?
+    private lazy var checkButton = HelmButton(title: "Check now", variant: .secondary, size: .small,
+                                              symbol: "arrow.clockwise", target: self, action: #selector(checkNowTapped))
+
+    func setChecking(_ checking: Bool) {
+        checkButton.isEnabled = !checking
+        checkButton.title = checking ? "Checking\u{2026}" : "Check now"
+    }
+
+    @objc private func checkNowTapped() { onCheckNow?() }
+
+    #if FM_SELFTESTS
+    func debugCheckNow() { checkButton.performClick(nil) }
+    #endif
 
     init(projects: [(id: String, name: String)], onChange: @escaping () -> Void) {
         self.projects = projects
@@ -159,9 +176,16 @@ final class ExpiryRemindersPanel: NSView {
         projectPopup.target = self
         projectPopup.action = #selector(changed)
 
-        let title = NSTextField(labelWithString: "Expiry reminders")
-        title.font = HelmType.sectionTitle()
-        title.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        let heading = NSTextField(labelWithString: "Expiry reminders")
+        heading.font = HelmType.sectionTitle()
+        heading.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        heading.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        checkButton.setContentHuggingPriority(.required, for: .horizontal)
+        checkButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let title = NSStackView(views: [heading, checkButton])
+        title.orientation = .horizontal
+        title.alignment = .centerY
+        title.distribution = .fill
         let foot = NSTextField(wrappingLabelWithString: "Checked every morning at 06:00. A host that cannot be reached reads Unknown, never OK.")
         foot.font = HelmType.caption()
         foot.textColor = HelmTheme.mutedInk(theme)
@@ -184,7 +208,7 @@ final class ExpiryRemindersPanel: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: 380),
         ])
-        for r in rows { r.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -HelmMetrics.s4 * 2).isActive = true }
+        for r in rows + [title] { r.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -HelmMetrics.s4 * 2).isActive = true }
     }
 
     private func row(_ text: String, _ control: NSView, _ theme: HelmTheme) -> NSView {

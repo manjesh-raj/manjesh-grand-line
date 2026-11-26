@@ -38,7 +38,7 @@ extension HostsController {
         collapsed.isActive = true
         // The Hosts row's order: the search, the tab's own reading, then the
         // spacer, so Grid / List sits at the trailing edge on both tabs.
-        for view in [keySearchField, keysTouchID, spacer, keysCheckButton, keysRemindersButton,
+        for view in [keySearchField, keysTouchID, spacer, keysRemindersButton,
                      keysViewModeControl] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             keysTopRow.addArrangedSubview(view)
@@ -48,7 +48,7 @@ extension HostsController {
         keysTopRow.spacing = HelmMetrics.s3
         // Gotcha (10): only the search and the spacer flex.
         keysTopRow.distribution = .fill
-        for fixed in [keysTouchID, keysCheckButton, keysRemindersButton, keysViewModeControl] as [NSView] {
+        for fixed in [keysTouchID, keysRemindersButton, keysViewModeControl] as [NSView] {
             fixed.setContentHuggingPriority(.required, for: .horizontal)
             fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -135,7 +135,7 @@ extension HostsController {
         }
         let tls = searching ? [] : expiryTLSItems()
         let titled = !recent.isEmpty || !tls.isEmpty
-        sections.append(.init(title: titled ? "SSH keys and certificates" : nil, cards: keys.map(keyCard)))
+        sections.append(.init(title: titled ? "All keys" : nil, cards: keys.map(keyCard)))
         // D-03: TLS on saved hosts, below the keys.
         if !tls.isEmpty { sections.append(.init(title: "TLS on saved hosts", cards: tls.map(tlsExpiryCard))) }
         keysGrid.setSections(sections)
