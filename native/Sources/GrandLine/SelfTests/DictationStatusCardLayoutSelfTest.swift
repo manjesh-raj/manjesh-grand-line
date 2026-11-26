@@ -385,14 +385,17 @@ enum DictationStatusCardLayoutSelfTest {
 
         page = showDictation(shell, model: .ready, localWhisper: false, cleanup: false)
         panel = page.debugHeroCard.panel
-        check(panel.debugRing?.debugLabel == "Off", "Dic-1: the engine off reads \(panel.debugRing?.debugLabel ?? "nothing")", &ok)
-        check(panel.debugBody?.hasPrefix("Apple\u{2019}s on-device Speech, cleanup off.") == true,
-              "Dic-1: the engine and cleanup off say \"\(panel.debugBody ?? "")\"", &ok)
-        // The dimmed ring is the quiet ink, not the ink.
+        // UI-09 of full review 4: the ring says which engine listens - a
+        // microphone captioned "Apple Speech" - and says it in the ink,
+        // since Apple Speech is a working engine, not an absent reading.
+        check(panel.debugRing?.debugSymbol == "mic.fill" && panel.debugRing?.debugLabel != "Off",
+              "UI-09: the engine off draws \(panel.debugRing?.debugSymbol ?? panel.debugRing?.debugLabel ?? "nothing")", &ok)
+        check(panel.debugBody?.hasPrefix("Listening with Apple Speech, cleanup off. The local Whisper model is off.") == true,
+              "UI-09: the engine and cleanup off say \"\(panel.debugBody ?? "")\"", &ok)
         if let gauge = panel.debugRing {
             let ink = panel.ink
-            check(gauge.labelColorOverride?.alphaComponent ?? 1 < ink.alphaComponent - 0.1,
-                  "Dic-1: the engine off draws the ring at full ink", &ok)
+            check(abs((gauge.labelColorOverride?.alphaComponent ?? 0) - ink.alphaComponent) < 0.05,
+                  "UI-09: Apple Speech's ring is drawn dimmed", &ok)
         }
     }
 

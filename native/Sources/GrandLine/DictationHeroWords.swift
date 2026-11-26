@@ -108,7 +108,10 @@ struct DictationHeroWords: Equatable {
     static func engineLine(localWhisperEnabled: Bool, cleanupEnabled: Bool, model: WhisperModelState) -> String {
         let engine: String
         if !localWhisperEnabled {
-            engine = "Apple\u{2019}s on-device Speech"
+            // UI-09: the ring names the engine now, so the line says the
+            // optional local model is off - the ring's old "Off".
+            return "Listening with Apple Speech" + (cleanupEnabled ? ", cleanup on." : ", cleanup off.")
+                + " The local Whisper model is off."
         } else if case .ready = model {
             engine = "Whisper large-v3-turbo on this Mac"
         } else if case .downloading = model {
@@ -137,14 +140,17 @@ struct DictationHeroWords: Equatable {
         return vocabulary + ", " + kept
     }
 
-    /// The local model as the ring: a tick when it is here, the percentage
-    /// while it downloads, dimmed when it is absent or the engine is off.
+    /// The engine that listens, as the ring: a microphone while Apple Speech
+    /// does, and the local model's tick, or its percentage while it
+    /// downloads, once Whisper is on. UI-09 of full review 4: with Whisper
+    /// off the ring read "Off" beside a headline saying "Ready", and a
+    /// first-time captain read it as dictation being off.
     static func ring(localWhisperEnabled: Bool, model: WhisperModelState, modelBytes: Int64?) -> HelmHeroColumn.Ring {
         let size = modelBytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
         if !localWhisperEnabled {
-            return HelmHeroColumn.Ring(fraction: 0, label: "Off", caption: "Apple Speech",
-                                       spoken: "Local Whisper engine off, using Apple Speech", state: .idle,
-                                       isDimmed: true)
+            return HelmHeroColumn.Ring(fraction: 1, label: "Apple Speech", caption: "Apple Speech",
+                                       spoken: "Listening with Apple Speech. The local Whisper model is off.",
+                                       state: .ok, symbol: "mic.fill")
         }
         switch model {
         case .ready:

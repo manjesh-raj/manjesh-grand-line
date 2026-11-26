@@ -3433,6 +3433,10 @@ final class HelmRingGauge: NSView {
     private let track = CAShapeLayer()
     private let value = CAShapeLayer()
     private let label = NSTextField(labelWithString: "")
+    /// 1.4.0: a glyph in the centre in place of the label
+    /// (`configure(fraction:symbol:)`).
+    private let symbolView = NSImageView()
+    private var symbolName: String?
     private var fraction: Double = 0
 
     override convenience init(frame frameRect: NSRect) {
@@ -3454,11 +3458,18 @@ final class HelmRingGauge: NSView {
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
+        symbolView.imageScaling = .scaleNone
+        symbolView.isHidden = true
+        symbolView.setAccessibilityElement(false)
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(symbolView)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: diameter),
             heightAnchor.constraint(equalToConstant: diameter),
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            symbolView.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3479,6 +3490,7 @@ final class HelmRingGauge: NSView {
     /// worst state of what it counts - instead of the hue `applyTheme` is
     /// handed. `nil` keeps every existing call site's colour.
     func configure(value current: Int, total: Int, tint: HelmTint? = nil) {
+        showLabel()
         fraction = total > 0 ? min(1, max(0, Double(current) / Double(total))) : 0
         label.stringValue = total > 0 ? "\(current)/\(total)" : "\u{2014}"
         verdictTint = tint
@@ -3497,11 +3509,34 @@ final class HelmRingGauge: NSView {
     /// total:)` cannot express it. The label is also mono here, because a
     /// proportional `17:24` shifts sideways on every tick.
     func configure(fraction: Double, text: String, monospaced: Bool = false) {
+        showLabel()
         self.fraction = min(1, max(0, fraction))
         label.stringValue = text
         self.monospacedLabel = monospaced
         applyLabelFont()
         needsLayout = true
+    }
+
+    /// 1.4.0: an SF Symbol in the centre rather than words - a ring that
+    /// says *what* is in use rather than how much (UI-09 of full review 4:
+    /// Dictation's ring, a microphone while Apple Speech listens). The
+    /// glyph takes the label's colour. The caller says it in words through
+    /// `setSpokenLabel`.
+    func configure(fraction: Double, symbol: String) {
+        self.fraction = min(1, max(0, fraction))
+        symbolName = symbol
+        label.stringValue = ""
+        label.isHidden = true
+        symbolView.image = HelmSymbol.image(symbol, pointSize: HelmType.scaled(Self.labelSize * scale * 1.15),
+                                            weight: .semibold)
+        symbolView.isHidden = false
+        needsLayout = true
+    }
+
+    private func showLabel() {
+        symbolName = nil
+        symbolView.isHidden = true
+        label.isHidden = false
     }
 
     /// Set by `configure(fraction:text:monospaced:)`; re-read by
@@ -3590,6 +3625,7 @@ final class HelmRingGauge: NSView {
         }
         applyLabelFont()
         label.textColor = labelColorOverride ?? HelmTheme.nsColor(theme.chromeInkHex)
+        symbolView.contentTintColor = label.textColor
     }
 
     // MARK: Probe / self-test surface
@@ -3603,6 +3639,8 @@ final class HelmRingGauge: NSView {
     var debugTrackDash: [NSNumber]? { track.lineDashPattern }
     /// The centre label as drawn.
     var debugLabel: String { label.stringValue }
+    /// 1.4.0: the centre glyph's name, or nil while the label shows.
+    var debugSymbol: String? { symbolView.isHidden ? nil : symbolName }
     #endif
 }
 
