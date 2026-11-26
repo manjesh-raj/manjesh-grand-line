@@ -84,7 +84,7 @@ enum HelmKit {
         Component("HelmConfirm", "1.0.0", file: "HelmConfirm.swift"),
         Component("HelmConfirmView", "1.0.0", file: "HelmConfirm.swift"),
         // HelmDataTable.swift
-        Component("HelmDataTable", "1.0.1", file: "HelmDataTable.swift"),
+        Component("HelmDataTable", "1.1.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableActionsCell", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRowView", "1.0.0", file: "HelmDataTable.swift"),
         Component("HelmDataTableRunDotsCell", "1.0.0", file: "HelmDataTable.swift"),

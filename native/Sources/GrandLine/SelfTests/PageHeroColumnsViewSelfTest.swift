@@ -180,6 +180,7 @@ enum PageHeroColumnsViewSelfTest {
         check(tableFrame.minX > columnFrame.maxX + HelmMetrics.s4 - 0.5,
               "H-4: the table (\(tableFrame.minX)) does not start past the column (\(columnFrame.maxX))", &ok)
         let counts = ServiceHealthRegistry.shared.summary()
+        checkHealthColumnsHug(card.debugServicesTable, &ok)
         check(card.debugHeroBucketFigures == ["\(counts.total)", "0", "0", "0"],
               "H-4: an all-healthy column reads \(card.debugHeroBucketFigures)", &ok)
         check(column.debugHeadline.contains("healthy"), "H-4: the headline reads \(column.debugHeadline)", &ok)
@@ -191,6 +192,38 @@ enum PageHeroColumnsViewSelfTest {
         }
         // The column takes Toggle Sidebar like any split page's column.
         check((health as HelmSplitPageHosting).splitPage === split, "H-4: Toggle Sidebar cannot reach the column", &ok)
+    }
+
+    /// UI-07 of full review 4: Status, Last run and Recent runs are as wide
+    /// as what they hold, the service takes the rest, and a description
+    /// wraps to two lines before it is cut. The three columns sat at 150,
+    /// 150 and 110pt holding a few characters, and seven of eight
+    /// descriptions were cut at one line.
+    private static func checkHealthColumnsHug(_ table: HelmDataTable, _ ok: inout Bool) {
+        for (id, cap) in [("status", 150), ("lastRun", 150), ("runs", 110)] as [(String, CGFloat)] {
+            guard let width = table.debugColumnWidth(id) else {
+                fail("UI-07: the \(id) column is not shown at 1512", &ok)
+                continue
+            }
+            check(width < cap - 10, "UI-07: the \(id) column is \(width)pt, as wide as its old fixed \(cap)", &ok)
+        }
+        var wrapped = 0
+        for row in 0..<table.debugRows.count {
+            guard let label = table.debugSubtitleLabel(row: row), !label.isHidden, label.frame.width > 0,
+                  let font = label.font else { continue }
+            let probe = NSTextField(wrappingLabelWithString: label.stringValue)
+            probe.font = font
+            probe.maximumNumberOfLines = 0
+            let whole = probe.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width, height: 10_000)).height ?? 0
+            let line = (font.ascender - font.descender + font.leading).rounded(.up)
+            let needed = min(whole, 2 * line)
+            if whole > line * 1.5 { wrapped += 1 }
+            check(label.frame.height + 1 >= needed,
+                  "UI-07: \"\(label.stringValue)\" draws \(label.frame.height)pt of the \(needed)pt two lines give it", &ok)
+            check(label.maximumNumberOfLines == 2, "UI-07: a description may take \(label.maximumNumberOfLines) lines", &ok)
+        }
+        // The fixture can fail: some description really needs a second line.
+        check(wrapped > 0, "UI-07: fixture: no service description needs a second line at 1512", &ok)
     }
 
     private static func checkHealthTone(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
