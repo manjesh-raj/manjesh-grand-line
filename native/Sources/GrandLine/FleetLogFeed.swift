@@ -138,6 +138,128 @@ enum FleetLogFeed {
         return rows
     }
 
+    // MARK: UX-07 - the timeline
+
+    /// One line of the timeline: a day, an hour, an event, or a run of
+    /// events of the same kind folded into one line.
+    enum TimelineRow: Equatable {
+        case day(String)
+        case hour(String)
+        case event(FleetLogEvent)
+        case run(Run)
+    }
+
+    /// Consecutive events in one hour that say the same thing about the
+    /// same sort of record: "Created 8 tasks", "Created 3 projects: Infra
+    /// hardening, Release 4.20, SRE hiring".
+    struct Run: Equatable {
+        /// The first event's id, which names the run while it is expanded.
+        let id: String
+        let events: [FleetLogEvent]
+        let verb: String
+        let noun: String
+        let isExpanded: Bool
+        /// The count phrase the row sets in bold: "8 tasks".
+        var countPhrase: String { "\(events.count) \(Self.plural(noun, events.count))" }
+        /// The names it holds, when three or fewer: said after the count.
+        var names: [String] { events.compactMap { FleetLogFeed.parse($0.title)?.name } }
+        /// The whole line, as VoiceOver reads it.
+        var text: String {
+            let tail = events.count <= Self.namesShownUpTo ? ": " + names.joined(separator: ", ") : ""
+            return "\(verb) \(countPhrase)\(tail)"
+        }
+        static let namesShownUpTo = 3
+
+        static func plural(_ noun: String, _ count: Int) -> String {
+            count == 1 ? noun : noun + "s"
+        }
+    }
+
+    /// A Shift activity line, read back into its verb, the sort of record it
+    /// is about and the record's name: "Created follow-up \"Ping Nithin\""
+    /// is ("Created", "follow-up", "Ping Nithin"). `nil` for a line that is
+    /// not in that shape (a merge, a sync fix), which is never folded.
+    static func parse(_ title: String) -> (verb: String, noun: String, name: String)? {
+        guard let quote = title.firstIndex(of: "\""), title.hasSuffix("\""), quote < title.index(before: title.endIndex)
+        else { return nil }
+        let head = title[..<quote].trimmingCharacters(in: .whitespaces)
+        let name = String(title[title.index(after: quote)..<title.index(before: title.endIndex)])
+        let words = head.split(separator: " ").map(String.init)
+        guard let verb = words.first, ["Created", "Completed", "Reopened", "Deleted", "Snoozed"].contains(verb)
+        else { return nil }
+        let rest = words.dropFirst().joined(separator: " ")
+        let noun: String
+        switch rest {
+        case "": noun = "task"
+        case "project", "follow-up": noun = rest
+        default: return nil
+        }
+        return (verb, noun, name)
+    }
+
+    /// The fewest consecutive events that fold into a run.
+    static let foldsFrom = 2
+
+    /// The timeline's rows: each day, each hour inside it, and its events,
+    /// newest first, with runs folded unless their id is in `expanded`.
+    static func timelineRows(for events: [FleetLogEvent], expanded: Set<String> = [], reference: Date = Date(),
+                             calendar: Calendar = .current) -> [TimelineRow] {
+        var rows: [TimelineRow] = []
+        var currentDay: Date?
+        var currentHour: Date?
+        var index = 0
+        while index < events.count {
+            let event = events[index]
+            let day = calendar.startOfDay(for: event.date)
+            if currentDay != day {
+                currentDay = day
+                currentHour = nil
+                rows.append(.day(dayLabel(for: event.date, reference: reference, calendar: calendar)))
+            }
+            let hour = calendar.dateInterval(of: .hour, for: event.date)?.start ?? event.date
+            if currentHour != hour {
+                currentHour = hour
+                rows.append(.hour(hourFormatter.string(from: event.date)))
+            }
+            // The run this event starts: the same kind, verb and noun, in
+            // the same hour.
+            var end = index + 1
+            if let key = parse(event.title) {
+                while end < events.count, events[end].kind == event.kind,
+                      let next = parse(events[end].title), next.verb == key.verb, next.noun == key.noun,
+                      calendar.dateInterval(of: .hour, for: events[end].date)?.start == hour {
+                    end += 1
+                }
+                if end - index >= foldsFrom {
+                    let run = Run(id: event.id, events: Array(events[index..<end]), verb: key.verb, noun: key.noun,
+                                  isExpanded: expanded.contains(event.id))
+                    rows.append(.run(run))
+                    if run.isExpanded { rows += run.events.map(TimelineRow.event) }
+                    index = end
+                    continue
+                }
+            }
+            rows.append(.event(event))
+            index += 1
+        }
+        return rows
+    }
+
+    /// "11 AM", the hour heading, localised.
+    private static let hourFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("j")
+        return f
+    }()
+
+    /// "11:00", the row's own time.
+    static func time(for event: FleetLogEvent) -> String { timeFormatter.string(from: event.date) }
+
+    /// Whether `event` happened on `reference`'s day: the Today scope.
+    static func isToday(_ event: FleetLogEvent, reference: Date = Date(), calendar: Calendar = .current) -> Bool {
+        calendar.isDate(event.date, inSameDayAs: reference)
+    }
+
     // MARK: Row text
 
     /// The row's kicker: the time of day plus the kind, e.g. "10:32 AM ·

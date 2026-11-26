@@ -395,7 +395,7 @@ enum CrewHeroWords {
 
     /// One segment of Log's filter on the band.
     struct LogSegment: Equatable {
-        /// `nil` is All.
+        /// `nil` is All, or Today when `isToday`.
         let kind: FleetLogEventKind?
         /// The floating bar's own title for it (`FleetLogListView.filterItems`).
         let title: String
@@ -406,6 +406,9 @@ enum CrewHeroWords {
         /// "Merges 3", with an en space, as Hosts' and DevOps Hub's counted
         /// segments say it.
         var label: String { count.map { "\(title)\u{2002}\($0)" } ?? title }
+        /// UX-07: the Today scope, beside All, so each count says what it
+        /// counts ("Today 15", "All 23").
+        var isToday = false
     }
 
     /// What the last read of the log found, as counts. Built from the feed's
@@ -528,7 +531,9 @@ enum CrewHeroWords {
     /// each with its count when that count is known.
     static func logSegments(_ reading: LogReading) -> [LogSegment] {
         let kinds: [FleetLogEventKind?] = [nil] + FleetLogEventKind.allCases.map { $0 }
-        return kinds.map { kind in
+        let today = LogSegment(kind: nil, title: "Today", count: reading.knows(nil) ? reading.todayTotal : nil,
+                               isToday: true)
+        return [today] + kinds.map { kind in
             let count = kind.map { reading.counts[$0] ?? 0 } ?? reading.total
             return LogSegment(kind: kind, title: kind?.pluralTitle ?? "All", count: reading.knows(kind) ? count : nil)
         }

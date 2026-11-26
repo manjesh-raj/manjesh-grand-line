@@ -299,6 +299,8 @@ final class FleetController: NSViewController {
                                                size: .compact)
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
+    /// UX-07: the Today scope, today's events of every kind.
+    private var logTodayOnly = false
     private var logStore: FleetLogStore
     /// CR-1: what the Log tab last read, counted for its band. Read with the
     /// list, so the band counts exactly what the list shows.
@@ -512,6 +514,7 @@ final class FleetController: NSViewController {
         logFilters.onSelect = { [weak self] id in
             guard let self else { return }
             self.logFilterKind = FleetLogListView.kind(forFilterID: id)
+            self.logTodayOnly = id == FleetLogListView.todayFilterID
             self.renderLog()
         }
 
@@ -836,7 +839,9 @@ final class FleetController: NSViewController {
     private func renderLog() {
         let read = FleetLogFeed.read(store: logStore, shift: shiftStore)
         let all = read.events
-        let shown = FleetLogFeed.filtered(all, kind: logFilterKind)
+        var shown = FleetLogFeed.filtered(all, kind: logFilterKind)
+        // UX-07: Today is a scope of its own, every kind on today's date.
+        if logTodayOnly { shown = shown.filter { FleetLogFeed.isToday($0, reference: read.readAt) } }
         var emptyTitle: String
         var emptyBody: String
         if all.isEmpty {
@@ -844,7 +849,8 @@ final class FleetController: NSViewController {
             emptyBody = CrewHeroWords.emptyLogBody
         } else {
             emptyTitle = "Nothing here"
-            emptyBody = "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
+            emptyBody = logTodayOnly ? "Nothing has been logged today."
+                : "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
         }
         logReading = CrewHeroWords.LogReading(read)
         // CR-1, the band: an empty list under a kind that could not be read
@@ -853,8 +859,7 @@ final class FleetController: NSViewController {
             emptyTitle = unknown.title
             emptyBody = unknown.body
         }
-        logList.setRows(FleetLogFeed.rows(for: shown), theme: theme,
-                        emptyTitle: emptyTitle, emptyBody: emptyBody)
+        logList.setEvents(shown, theme: theme, emptyTitle: emptyTitle, emptyBody: emptyBody)
         // The band is the empty state of a log with nothing in it, and of
         // one that could not be read at all, so the list goes as the board
         // draws it rather than saying the same thing again under it.
@@ -1844,11 +1849,9 @@ extension FleetController {
     func renderCrewBand() {
         crewBand.isHidden = !crewBandShows
         guard crewBandShows else { return }
-        // Log's feed opens on its first day header, whose row already holds
-        // its own space above the day's name, so it sits closer under the
-        // band than the other tabs' rows do, as the board draws it.
-        contentStack.setCustomSpacing(activeTab == .log && !needsYouShowing ? 0 : NSStackView.useDefaultSpacing,
-                                      after: crewBand)
+        // UX-07: the log is one card now, so it keeps the same gap as the
+        // other tabs' content.
+        contentStack.setCustomSpacing(NSStackView.useDefaultSpacing, after: crewBand)
         let words: CrewHeroWords.Band
         var bandViews: [NSView] = []
         var briefingKey = ""
@@ -1885,7 +1888,8 @@ extension FleetController {
             // 1.6.0). Its radio roles, ← → and what it filters are the
             // strip's own and unchanged.
             for segment in words.filter {
-                logFilters.setTitle(segment.label, forID: segment.kind?.rawValue ?? FleetLogListView.allFilterID)
+                logFilters.setTitle(segment.label, forID: segment.isToday ? FleetLogListView.todayFilterID
+                                        : segment.kind?.rawValue ?? FleetLogListView.allFilterID)
             }
             foot = [logFilters]
         } else if !words.figures.isEmpty {

@@ -563,13 +563,15 @@ enum PageHeroColumnsViewSelfTest {
         let addPills = buttons(in: column).filter { ["Generate", "Import"].contains($0.title) }
         check(addPills.map(\.title) == ["Generate", "Import"] && addPills.allSatisfy { isInk($0.heroInk, column.ink) },
               "Keys: Add a key's pills are \(addPills.map(\.title)), or not in the hero's ink", &ok)
+        // UX-26: a new key is made in a sheet over the page.
         addPills.first?.performClick(nil)
         settle(shell)
-        check(hosts.keyPanelKey == HostsController.newKeyPanelKey && hosts.keyPanel?.debugMode == "generate",
-              "Keys: Generate opened \(hosts.keyPanel?.debugMode ?? "no form")", &ok)
-        hosts.keyPanel?.debugFooterButtons.first?.performClick(nil)
+        let sheet = hosts.presentedViewControllers?.compactMap { $0 as? KeyEditorController }.first
+        check(sheet?.presentation == .sheet && sheet?.debugMode == "generate",
+              "Keys: Generate opened \(sheet?.debugMode ?? "no sheet")", &ok)
+        if let sheet { hosts.dismiss(sheet) }
         settle(shell)
-        check(hosts.keyPanel == nil, "Keys: Cancel left the new key's form open", &ok)
+        check(hosts.presentedViewControllers?.isEmpty != false, "Keys: the new key's sheet stayed open", &ok)
 
         // The column follows the tab: back on Hosts it speaks for the hosts.
         hosts.selectModuleTab(named: "Hosts")

@@ -25,6 +25,7 @@ enum ReviewFourUXSelfTest {
         checkUpdatesGroupByState(&ok)
         checkTheWelcomeShowsEachSidebar(&ok)
         checkTheHostSheetHasTwoColumns(&ok)
+        checkTheCrewLogIsATimeline(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -242,6 +243,53 @@ enum ReviewFourUXSelfTest {
             check(abs(name.height - address.height) < 1 && abs(address.minY - name.minY) < 90,
                   "UX-26: the name field (\(name)) is not a field like the address (\(address))", &ok)
         }
+    }
+
+    // MARK: UX-07
+
+    /// One line per event under its day and hour, a run of the same thing
+    /// folded and opened by its id, and the Today scope beside All.
+    private static func checkTheCrewLogIsATimeline(_ ok: inout Bool) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+        func event(_ title: String, minutesAgo: Double, kind: FleetLogEventKind = .task) -> FleetLogEvent {
+            FleetLogEvent(id: title, date: noon.addingTimeInterval(-minutesAgo * 60), kind: kind, title: title)
+        }
+        let events = [
+            event("Completed \"Renew the TLS certificate\"", minutesAgo: 0),
+            event("Created \"A\"", minutesAgo: 100), event("Created \"B\"", minutesAgo: 100.5),
+            event("Created \"C\"", minutesAgo: 101), event("Created \"D\"", minutesAgo: 101.5),
+            event("Created project \"Infra\"", minutesAgo: 102), event("Created project \"Release\"", minutesAgo: 102.5),
+            event("Merged PR #12", minutesAgo: 103, kind: .merge),
+        ]
+        let rows = FleetLogFeed.timelineRows(for: events, reference: noon, calendar: calendar)
+        let shape = rows.map { row -> String in
+            switch row {
+            case .day(let text): return "day \(text)"
+            case .hour: return "hour"
+            case .event(let event): return "event \(event.title)"
+            case .run(let run): return "run \(run.text)"
+            }
+        }
+        check(shape == ["day Today", "hour", "event Completed \"Renew the TLS certificate\"", "hour",
+                        "run Created 4 tasks", "run Created 2 projects: Infra, Release", "event Merged PR #12"],
+              "UX-07: the timeline reads \(shape)", &ok)
+        let opened = FleetLogFeed.timelineRows(for: events, expanded: ["Created \"A\""], reference: noon, calendar: calendar)
+        check(opened.count == rows.count + 4, "UX-07: Show all did not open the run's four events in place", &ok)
+        check(FleetLogFeed.parse("Merged PR #12") == nil && FleetLogFeed.parse("Created follow-up \"Ping\"")?.noun == "follow-up",
+              "UX-07: the activity lines parse wrongly", &ok)
+
+        var reading = CrewHeroWords.LogReading()
+        reading.hasRead = true
+        reading.counts = [.task: 23]
+        reading.today = [.task: 15]
+        let segments = CrewHeroWords.logSegments(reading)
+        check(segments.first?.label == "Today\u{2002}15" && segments.first?.isToday == true
+                && segments.dropFirst().first?.label == "All\u{2002}23",
+              "UX-07: the scopes read \(segments.prefix(2).map(\.label))", &ok)
+        check(FleetLogListView.filterItems.prefix(2).map(\.id) == [FleetLogListView.todayFilterID, FleetLogListView.allFilterID],
+              "UX-07: the filter does not open on Today and All", &ok)
     }
 }
 
