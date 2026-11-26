@@ -385,6 +385,12 @@ enum MainSplitShellPanesSelfTest {
         resize(window, width: 1512, shell)
         var measured = 0
         var report: [String] = []
+        var heroPages: [RailDestination] = []
+        // UI-01 and UI-12: the pages the review named that show their hero
+        // in this fixture. Tasks (an empty store) and Secrets (no vault yet)
+        // show a centred empty state here instead.
+        let namedHeroPages: [RailDestination] = [.homeCanvas, .hosts, .health, .devopsHub, .vault, .updates,
+                                                 .bootstrap, .automation, .githubSync, .dictation]
         for destination in RailDestination.allCases {
             shell.workspace.navigator.show(destination)
             settle(shell)
@@ -406,10 +412,30 @@ enum MainSplitShellPanesSelfTest {
             // Tasks, its Calendar and the Sticky Board say what their line
             // said in their own band, month head and case tag (Tf-2, Cf-4,
             // Sk-1), so they give up the empty line the way Console does, and
-            // their hero starts under the toolbar.
+            // their hero starts under the toolbar. UI-01 and UI-12 of full
+            // review 4: so does every other page that opens on a hero, and
+            // all of them start it on one line, `pageContentInset` under the
+            // toolbar - measured before as 64pt on Tasks and 96pt on
+            // Connections, Health, DevOps Hub and Secrets.
             if (shell.debugSlotController(destination) as? WorkspaceHeaderLineCollapsing)?.drawsSubtitleOnHeaderLine == false {
                 check(shell.debugContentPaneHeader.isHiddenOrHasHiddenAncestor,
                       "S03: \(destination.rawValue) keeps an empty header line over its own hero", &ok)
+                let heroLine = reading.toolbarBottom + HelmMetrics.pageContentInset
+                if let ink = reading.headerInk, namedHeroPages.contains(destination) {
+                    heroPages.append(destination)
+                    check(ink >= heroLine - 1 && ink <= heroLine + 4,
+                          "S03: \(destination.rawValue)'s hero starts at \(ink)pt, want the hero line at \(heroLine) (\(reading.line))",
+                          &ok)
+                } else if let ink = reading.headerInk {
+                    // A page with no hero in this fixture (Tasks' empty
+                    // store, Secrets' set-up card, centred lower down) only
+                    // has to draw nothing above the line.
+                    measured += 1
+                    check(ink >= heroLine - 1,
+                          "S03: \(destination.rawValue) draws at \(ink)pt, above the hero line at \(heroLine) (\(reading.line))", &ok)
+                } else {
+                    report.append("\(destination.rawValue) no hero in reach")
+                }
                 continue
             }
             let slot = shell.debugContentPaneHeader.frame.height
@@ -436,8 +462,18 @@ enum MainSplitShellPanesSelfTest {
         }
         // The fixture can fail: enough pages carried content in the scan's
         // reach for a drifted page to be seen.
-        check(measured >= 20, "S03: only \(measured) pages had first content to measure (\(report))", &ok)
-        if ok { print("  OK   S03: \(measured) pages start their first content on one line under a fixed header line") }
+        check(measured + heroPages.count >= 20,
+              "S03: only \(measured + heroPages.count) pages had first content to measure (\(report))", &ok)
+        // UI-01: the hero pages the review named are among those measured on
+        // the hero line, so a page that drops the collapse fails by name
+        // rather than moving back to the other list unnoticed.
+        for page in namedHeroPages where !heroPages.contains(page) {
+            fail("S03: \(page.rawValue) does not start its hero on the hero line (\(report))", &ok)
+        }
+        if ok {
+            print("  OK   S03: \(measured) pages start their first content on one line under a fixed header line, "
+                  + "and \(heroPages.count) hero pages start their hero on one line under the toolbar")
+        }
     }
 
     // MARK: 8 - the lock

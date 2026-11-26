@@ -184,7 +184,8 @@ enum ModuleTableSelfTest {
         (.review, "Review", "arrow.triangle.branch", .green, "Open pull requests, ready to merge", .command, .crew, "Review"),
         (.logAnalyzer, "Log Analyzer", "text.magnifyingglass", .teal, "Collect, analyse and explain captured output", .operations, .logs, nil),
         (.kubernetes, "Kubernetes", "cube.transparent", .teal, "Read-only cluster browsing and multi-pod log tailing", .operations, .kubernetes, nil),
-        (.tools, "Tools", "wrench.and.screwdriver", .slate, "Nine offline utilities", .stores, .tools, nil),
+        // UI-13: the Tools page's own count, which its header line reads too.
+        (.tools, "Tools", "wrench.and.screwdriver", .slate, "\(ToolKind.allCases.count) offline utilities", .stores, .tools, nil),
         (.whiteboard, "Whiteboard", "scribble.variable", .violet, "An Excalidraw canvas, offline, with AI diagrams", .stores, .whiteboard, nil),
         (.codePreview, "Code Preview", "chevron.left.forwardslash.chevron.right", .blue, "Paste code and read it properly, synced to your config repo", .stores, .code, nil),
         (.stickyBoard, "Sticky Board", "note.text", .amber, "A freeform corkboard of quick sticky notes", .stores, .stickyBoard, nil),

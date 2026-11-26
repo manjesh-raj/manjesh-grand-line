@@ -137,6 +137,12 @@ struct WorkspaceBadge: Equatable {
     let tone: Tone
     /// What VoiceOver reads after the module's name, and the tooltip.
     let description: String
+    /// How many things this badge says are waiting on the captain: tasks
+    /// due, decisions, failing services, tools to update. Zero for a badge
+    /// that is a state rather than a queue - live sessions, projects
+    /// running, a lock, a read in flight. A collapsed sidebar section sums
+    /// it (UI-02 of full review 4), so its number always means "waiting".
+    var waiting = 0
 }
 
 extension WorkspaceSignals {
@@ -171,12 +177,14 @@ extension WorkspaceSignals {
         let failed = projects.filter { $0.mark == .failed }
         if !failed.isEmpty {
             let names = failed.map(\.name).joined(separator: ", ")
-            return WorkspaceBadge(mark: .dot, tone: .alarm, description: "\(names) failed to start")
+            return WorkspaceBadge(mark: .dot, tone: .alarm, description: "\(names) failed to start",
+                                  waiting: failed.count)
         }
         let missing = projects.filter { $0.mark == .attention }
         if !missing.isEmpty {
             let names = missing.map(\.name).joined(separator: ", ")
-            return WorkspaceBadge(mark: .dot, tone: .attention, description: "\(names): folder not found")
+            return WorkspaceBadge(mark: .dot, tone: .attention, description: "\(names): folder not found",
+                                  waiting: missing.count)
         }
         let running = projects.filter { $0.mark == .live }.count
         if running > 0 {
@@ -202,7 +210,8 @@ extension WorkspaceSignals {
                                   description: "Reading the crew\u{2019}s state")
         case .read(let waiting, _):
             guard waiting > 0 else { return nil }
-            return WorkspaceBadge(mark: .count("\(waiting)"), tone: .attention, description: Self.waiting(waiting))
+            return WorkspaceBadge(mark: .count("\(waiting)"), tone: .attention, description: Self.waiting(waiting),
+                                  waiting: waiting)
         case .failed(let last, let lastReadAt, let failedAt):
             let failed = "Couldn\u{2019}t read the crew\u{2019}s state at \(Self.clock(failedAt))"
             guard let last, let lastReadAt else {
@@ -210,7 +219,8 @@ extension WorkspaceSignals {
             }
             guard last > 0 else { return nil }
             return WorkspaceBadge(mark: .count("\(last)"), tone: .attention,
-                                  description: "\(Self.waiting(last)) when last read, at \(Self.clock(lastReadAt)). \(failed)")
+                                  description: "\(Self.waiting(last)) when last read, at \(Self.clock(lastReadAt)). \(failed)",
+                                  waiting: last)
         }
     }
 
@@ -225,7 +235,8 @@ extension WorkspaceSignals {
         case .unknown, .reading: return nil
         case .read(let due, _):
             guard due.total > 0 else { return nil }
-            return WorkspaceBadge(mark: .count("\(due.total)"), tone: .neutral, description: describe(due))
+            return WorkspaceBadge(mark: .count("\(due.total)"), tone: .neutral, description: describe(due),
+                                  waiting: due.total)
         case .failed(let last, let lastReadAt, let failedAt):
             let failed = "Couldn\u{2019}t read every task file at \(Self.clock(failedAt))"
             guard let last, last.total > 0 else {
@@ -233,7 +244,7 @@ extension WorkspaceSignals {
             }
             let when = lastReadAt.map { " when last read, at \(Self.clock($0))" } ?? ""
             return WorkspaceBadge(mark: .count("\(last.total)"), tone: .neutral,
-                                  description: "\(describe(last))\(when). \(failed)")
+                                  description: "\(describe(last))\(when). \(failed)", waiting: last.total)
         }
     }
 
@@ -243,18 +254,20 @@ extension WorkspaceSignals {
         case .locked: return WorkspaceBadge(mark: .symbol("lock.fill"), tone: .neutral, description: "Poneglyph is locked")
         case .unreadable:
             return WorkspaceBadge(mark: .symbol("exclamationmark.triangle.fill"), tone: .alarm,
-                                  description: "Poneglyph\u{2019}s vault file can\u{2019}t be read")
+                                  description: "Poneglyph\u{2019}s vault file can\u{2019}t be read", waiting: 1)
         }
     }
 
     private func healthBadge(now: Date) -> WorkspaceBadge? {
         if !failingServices.isEmpty {
-            return WorkspaceBadge(mark: .dot, tone: .alarm, description: Self.failing(failingServices))
+            return WorkspaceBadge(mark: .dot, tone: .alarm, description: Self.failing(failingServices),
+                                  waiting: failingServices.count)
         }
         if !degradedServices.isEmpty {
             let names = degradedServices.map(\.title).joined(separator: ", ")
             let checks = degradedServices.count == 1 ? "a failed check" : "failed checks"
-            return WorkspaceBadge(mark: .dot, tone: .attention, description: "\(names): \(checks), not failing yet")
+            return WorkspaceBadge(mark: .dot, tone: .attention, description: "\(names): \(checks), not failing yet",
+                                  waiting: degradedServices.count)
         }
         return nil
     }
@@ -269,7 +282,8 @@ extension WorkspaceSignals {
             return WorkspaceBadge(mark: .count(Self.scanningMark), tone: .neutral, description: "Checking for updates")
         case .read(let count, _):
             guard count > 0 else { return nil }
-            return WorkspaceBadge(mark: .count("\(count)"), tone: .neutral, description: describe(count))
+            return WorkspaceBadge(mark: .count("\(count)"), tone: .neutral, description: describe(count),
+                                  waiting: count)
         case .failed(let last, let lastReadAt, let failedAt):
             let failed = "The latest check failed at \(Self.clock(failedAt))"
             guard let last else {
@@ -277,7 +291,8 @@ extension WorkspaceSignals {
             }
             guard last > 0 else { return nil }
             let when = lastReadAt.map { " as of \(Self.clock($0))" } ?? ""
-            return WorkspaceBadge(mark: .count("\(last)"), tone: .neutral, description: "\(describe(last))\(when). \(failed)")
+            return WorkspaceBadge(mark: .count("\(last)"), tone: .neutral, description: "\(describe(last))\(when). \(failed)",
+                                  waiting: last)
         }
     }
 }

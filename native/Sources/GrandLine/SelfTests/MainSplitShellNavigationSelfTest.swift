@@ -659,6 +659,35 @@ enum MainSplitShellNavigationSelfTest {
         check(items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.recents }?.menuFormRepresentation?.action != nil,
               "Recents does nothing from the overflow menu", &ok)
 
+        // UI-08 of full review 4: at 1512 an open inspector takes 320pt of
+        // the toolbar's room, and the full toolbar does not fit beside it -
+        // AppKit clipped the crumb at its leading edge ("rk › Connections").
+        // The toolbar goes compact instead: the crumb gives up its group,
+        // keeps the page's name whole, and outlasts Quick Connect and the
+        // module's action, since the window itself is not narrow.
+        shell.workspace.navigator.show(.hosts)
+        settle(shell)
+        check(shell.toolbar.debugCrumb.hasPrefix("Work"), "fixture: the crumb has no group to drop (\(shell.toolbar.debugCrumb))", &ok)
+        shell.setInspectorShown(true)
+        settle(shell)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed, "UI-08: fixture: the inspector did not open", &ok)
+        check(shell.toolbar.debugIsCompact, "UI-08: at 1512 beside the open inspector the toolbar is not compact", &ok)
+        check(shell.toolbar.debugCrumb == "Connections",
+              "UI-08: beside the inspector the crumb reads \"\(shell.toolbar.debugCrumb)\", want the page's name alone", &ok)
+        check(shell.toolbar.toolbar.items.first { $0.itemIdentifier == WorkspaceToolbar.ItemID.crumb }?.visibilityPriority
+                == WorkspaceToolbar.crumbPriority,
+              "UI-08: beside the inspector the crumb yields before Quick Connect", &ok)
+        shell.setInspectorShown(false)
+        settle(shell)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        settle(shell)
+        check(!shell.toolbar.debugIsCompact && shell.toolbar.debugCrumb.hasPrefix("Work"),
+              "UI-08: with the inspector closed the crumb reads \"\(shell.toolbar.debugCrumb)\"", &ok)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell)
+
         // The light/dark toggle flips the theme within its family.
         let before = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(before) }
