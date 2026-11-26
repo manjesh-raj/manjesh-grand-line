@@ -15,6 +15,40 @@ enum ReviewFourWindowChecks {
     static func checkTasks(_ shell: MainSplitShellController, _ window: NSWindow, _ scratch: URL, _ ok: inout Bool) {
         checkTheTaskOpensInTheInspector(shell, window, &ok)
         checkTheWeeklyReviewWalks(shell, window, &ok)
+        checkTheNotebookWrites(shell, window, &ok)
+    }
+
+    // MARK: UX-12 - write in one pane
+
+    /// The Notebook opens in Write. Typing into the pane, with the keyboard
+    /// in it, saves the page after a pause and not on the keystroke, and the
+    /// save coming back leaves the caret where it was.
+    private static func checkTheNotebookWrites(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- UX-12: the Notebook writes in one pane --")
+        let store = shell.workspace.notebookStore
+        let page = store.createPage(title: "Write check", content: "# Write check\nfirst line")
+        let notebook = shell.workspace.notebook
+        shell.workspace.navigator.show(.notebook)
+        settle(shell, 0.3)
+        notebook.openPage(id: page.id)
+        settle(shell, 0.2)
+        check(notebook.debugMode == .write && !notebook.debugWriteCardHidden && notebook.debugEditorCardHidden
+                && notebook.debugWriteCard.window != nil && notebook.debugWriteCard.frame.width > 300,
+              "UX-12: the Notebook opened in \(notebook.debugMode), Write card hidden \(notebook.debugWriteCardHidden)", &ok)
+        let text = notebook.writeView.textView
+        window.makeFirstResponder(text)
+        text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+        text.insertText(" and more", replacementRange: text.selectedRange())
+        check(store.page(id: page.id)?.content == "# Write check\nfirst line" && notebook.writeView.debugHasPendingEdit,
+              "UX-12: the keystroke saved at once rather than after a pause", &ok)
+        waitUntil(2) { store.page(id: page.id)?.content == "# Write check\nfirst line and more" }
+        check(store.page(id: page.id)?.content == "# Write check\nfirst line and more",
+              "UX-12: the pause did not save the page: \(store.page(id: page.id)?.content ?? "-")", &ok)
+        settle(shell, 0.2)
+        check(window.firstResponder === text && text.selectedRange().location == (text.string as NSString).length,
+              "UX-12: the save took the caret to \(text.selectedRange().location)", &ok)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell, 0.2)
     }
 
     // MARK: UX-05 - a review you do

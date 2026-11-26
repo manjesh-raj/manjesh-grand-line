@@ -771,7 +771,8 @@ enum ReviewTwoUXSelfTest {
         popUp.selectItem(at: 2)
         _ = popUp.sendAction(popUp.action, to: popUp.target)
         settle(shell)
-        check(notebook.debugMode == .preview, "picking Preview in the toolbar left Notebook in \(notebook.debugMode)", &ok)
+        // UX-12: the three modes are Write, Split and Source.
+        check(notebook.debugMode == .edit, "picking Source in the toolbar left Notebook in \(notebook.debugMode)", &ok)
         notebook.debugSetMode(.split)
         settle(shell)
         check(popUp.titleOfSelectedItem == "Split", "the header's view mode did not follow the page (\(popUp.titleOfSelectedItem ?? ""))", &ok)

@@ -31,6 +31,7 @@ enum ReviewFourUXSelfTest {
         checkTheTaskInspectorWords(&ok)
         checkTheWeeklyReviewWords(&ok)
         checkTheCommandsPage(&ok)
+        checkTheNotebookWritesInOnePane(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -543,6 +544,43 @@ enum ReviewFourUXSelfTest {
                         && narrowed.commandRowCount == inCategory + (describe.category == chip ? 1 : 0),
                       "UX-10: the \(chip) chip shows \(narrowed.commandRowCount) rows, want \(inCategory)", &ok)
             }
+        }
+    }
+
+    // MARK: UX-12
+
+    /// Write: the spans it paints, marks hidden off the caret's line and
+    /// dimmed on it, edits reported after a pause, and Write as the default.
+    private static func checkTheNotebookWritesInOnePane(_ ok: inout Bool) {
+        let text = "# Ideas\n- **Ask Nami** about [[On-call handbook|the handbook]]\nRun `a **b**` now"
+        let spans = NotebookLiveMarkdown.spans(in: text)
+        func has(_ kind: NotebookLiveMarkdown.Kind, _ words: String) -> Bool {
+            spans.contains { $0.kind == kind && (text as NSString).substring(with: $0.range) == words }
+        }
+        check(has(.mark, "# ") && has(.heading(1), "Ideas") && has(.structure, "- ") && has(.bold, "Ask Nami")
+                && has(.link("On-call handbook"), "the handbook") && has(.mark, "On-call handbook|")
+                && has(.code, "a **b**") && !has(.bold, "b"),
+              "UX-12: the spans are \(spans.map { "\($0.kind)=\((text as NSString).substring(with: $0.range))" })", &ok)
+        let outline = NotebookController.outline(of: "# One\n```\n# not a heading\n```\n## Two\n#nospace")
+        check(outline.map(\.title) == ["One", "Two"] && outline.map(\.level) == [1, 2],
+              "UX-12: the outline reads \(outline.map(\.title))", &ok)
+        check(NotebookController.ViewMode.allCases.map(\.title) == ["Write", "Split", "Source"],
+              "UX-12: the modes are \(NotebookController.ViewMode.allCases.map(\.title))", &ok)
+
+        autoreleasepool {
+            let write = NotebookWriteView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+            var edits: [(String, String)] = []
+            write.onEdit = { edits.append(($0, $1)) }
+            write.show(id: "ideas", content: "# Ideas\nplain line")
+            // The caret sits at the start, on the heading's line: its mark shows.
+            check(write.debugIsDrawn(at: 0) && write.debugFontSize(at: 2) > write.debugFontSize(at: 9),
+                  "UX-12: on its own line the heading's mark is hidden, or the heading is not larger", &ok)
+            let end = (write.textView.string as NSString).length
+            write.textView.setSelectedRange(NSRange(location: end, length: 0))
+            write.restyle()
+            check(!write.debugIsDrawn(at: 0) && write.debugIsDrawn(at: 2),
+                  "UX-12: off the caret's line the heading's # still shows", &ok)
+            // The typing half needs a key window: ReviewFourWindowChecks.
         }
     }
 }

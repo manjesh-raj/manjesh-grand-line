@@ -1115,6 +1115,17 @@ enum ReviewTourLab {
             page?.openCommand(id: describe.id)
             page?.debugSetParameter("pod", to: "checkout-worker-7d9")
             return "ux cmdfill \(page?.debugPreview ?? "-")"
+        // UX-12: open a Notebook page with the caret at its end, so the
+        // Write pane shows the last line's marks.
+        case "notebookopen":
+            let notebook = shell.workspace.notebook
+            guard parts.count > 1 else { return "ux notebookopen FAILED - no page id" }
+            notebook.openPage(id: parts[1])
+            let text = notebook.writeView.textView
+            shell.view.window?.makeFirstResponder(text)
+            text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux notebookopen \(notebook.debugCurrentPageID ?? "-")"
         // UX-05: Weekly review's Start review, then optionally Skip N times.
         case "reviewstart":
             let shift = shell.workspace.shift
@@ -1606,10 +1617,11 @@ enum ReviewTourLab {
     static func seedDemoKnowledge(_ workspace: Workspace) {
         let notebook = workspace.notebookStore
         _ = notebook.createPage(title: "On-call handbook", folder: "Team",
-                                content: "# On-call handbook\n\nWho to page, and when. See [[Edge architecture]].\n")
+                                content: "# On-call handbook\n\nWho to page, and when. See [[Edge architecture]] and [[Ideas]].\n")
         _ = notebook.createPage(title: "Edge architecture", folder: "Team",
                                 content: "# Edge architecture\n\nTwo proxies behind one load balancer.\n")
-        _ = notebook.createPage(title: "Ideas", content: "# Ideas\n\n- A runbook for certificate rotation\n")
+        _ = notebook.createPage(title: "Ideas", content: "# Ideas\n\n- A runbook for certificate rotation, linked from "
+                                    + "[[On-call handbook]]\n- **Ask Nami** to plan the 4.20 freeze")
         let runbooks = workspace.docsRunbookStore
         _ = runbooks.createRunbook(title: "Rotate a TLS certificate",
                                    content: "# Rotate a TLS certificate\n\n1. Check what is expiring.\n"

@@ -45,10 +45,15 @@ protocol WorkspaceInspectorSource: AnyObject {
     /// (H11: a host form with unsaved changes) asks the captain first, and
     /// answers `false` if they cancel.
     func inspectorShouldClose() -> Bool
+    /// The captain opened the inspector themselves (the toolbar's button,
+    /// ⌥⌘I). A page whose details show only on request (UX-12: the
+    /// Notebook's outline and links) takes that as the request.
+    func inspectorWillOpen()
 }
 
 extension WorkspaceInspectorSource {
     func inspectorShouldClose() -> Bool { true }
+    func inspectorWillOpen() {}
 }
 
 /// A page with one primary action, which the sidebar layout draws at the
