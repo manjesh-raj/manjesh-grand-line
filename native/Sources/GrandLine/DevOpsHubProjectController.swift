@@ -351,6 +351,16 @@ final class DevOpsHubProjectController: NSViewController {
         return nil
     }
 
+    /// The page's own check, with the count from the last Start once it has
+    /// landed (PF-02): Start counts the folder again in the background.
+    private func shownPreflight(for project: LocalProject) -> LocalProjectPreflight.Outcome? {
+        let checked = preflight[project.id]
+        if case .ready? = checked, let count = registry.folderCount(of: project.id) {
+            return .ready(files: count.files, bytes: count.bytes)
+        }
+        return checked
+    }
+
     // MARK: Render
 
     /// What the page is in for the shown project.
@@ -379,7 +389,7 @@ final class DevOpsHubProjectController: NSViewController {
             renderStrip()
             return
         }
-        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: preflight[project.id],
+        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: shownPreflight(for: project),
                                         now: registry.clock())
         self.words = words
         heroStage.isHidden = false
@@ -714,7 +724,7 @@ final class DevOpsHubProjectController: NSViewController {
     /// capture (starting, loading). Assertions never use it.
     func debugShowHero(phase: DevOpsHubWords.Phase) {
         guard let project else { return }
-        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: preflight[project.id],
+        let words = DevOpsHubWords.make(project: project, phase: phase, preflight: shownPreflight(for: project),
                                         now: registry.clock())
         self.words = words
         heroStage.isHidden = false

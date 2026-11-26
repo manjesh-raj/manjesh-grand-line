@@ -278,6 +278,14 @@ enum LocalProjectStore {
 
 /// What Start checks, in order, before it binds the port. Pure over the file
 /// system, so a suite asserts every outcome against a scratch folder.
+///
+/// Full review 4, PF-02: the checks come in two weights. `gate(folder:)` is
+/// the folder and its `index.html` - a few `stat`s, safe on the main thread,
+/// and all Start needs to decide. `count(folder:)` walks up to `countLimit`
+/// files and reads two resource values for each, so it never runs on the
+/// main thread: Start hands it to a utility queue and publishes the count
+/// when it lands (`LocalProjectRegistry.folderCount(of:)`). `check(folder:)`
+/// is both, for a caller that is already off the main thread.
 enum LocalProjectPreflight {
 
     enum Outcome: Equatable {
@@ -295,7 +303,17 @@ enum LocalProjectPreflight {
     /// The most files the count walks, so a huge folder never stalls Start.
     static let countLimit = 20_000
 
+    /// The gate and the count, for a caller already off the main thread.
     static func check(folder: URL) -> Outcome {
+        if let refused = gate(folder: folder) { return refused }
+        let (files, bytes) = count(folder: folder)
+        return .ready(files: files, bytes: bytes)
+    }
+
+    /// The cheap half: nil when the folder is there, readable and has an
+    /// `index.html`, or the reason Start refuses. One directory listing and
+    /// a few `stat`s, so Start runs it on the main thread.
+    static func gate(folder: URL) -> Outcome? {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -309,6 +327,16 @@ enum LocalProjectPreflight {
         var indexIsDirectory: ObjCBool = false
         guard fm.fileExists(atPath: folder.appendingPathComponent("index.html").path, isDirectory: &indexIsDirectory),
               !indexIsDirectory.boolValue else { return .indexMissing }
+        return nil
+    }
+
+    /// The slow half: the files and bytes under `folder`, up to
+    /// `countLimit` files. Never on the main thread.
+    static func count(folder: URL) -> (files: Int, bytes: Int64) {
+        #if FM_SELFTESTS
+        if Thread.isMainThread { debugMainThreadCounts.increment() }
+        #endif
+        let fm = FileManager.default
         var files = 0
         var bytes: Int64 = 0
         let enumerator = fm.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
@@ -319,6 +347,18 @@ enum LocalProjectPreflight {
             files += 1
             bytes += Int64(values.fileSize ?? 0)
         }
-        return .ready(files: files, bytes: bytes)
+        return (files, bytes)
     }
+
+    #if FM_SELFTESTS
+    /// How many counts ran on the main thread: zero, since PF-02.
+    static let debugMainThreadCounts = LockedCounter()
+
+    final class LockedCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() { lock.lock(); count += 1; lock.unlock() }
+        var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+    }
+    #endif
 }

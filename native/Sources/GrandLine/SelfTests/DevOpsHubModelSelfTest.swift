@@ -47,7 +47,8 @@ enum DevOpsHubModelSelfTest {
 
     static func run() -> Bool {
         var ok = true
-        for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight, checkRunner,
+        for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight,
+                      checkStartNeverWalksTheFolderOnMain, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
                       checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing] {
             var caseOK = true
@@ -295,6 +296,58 @@ enum DevOpsHubModelSelfTest {
         }
         check(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000))?.hasPrefix("899 files, ") == true,
               "the folder detail reads \(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000)) ?? "-")", &ok)
+    }
+
+    // MARK: 4a - Start never walks the folder on main (full review 4, PF-02)
+
+    /// Start runs on the main thread, and at launch for a project marked to
+    /// start then. It decides on the cheap checks alone and counts the files
+    /// on a utility queue, publishing the count when it lands.
+    private static func checkStartNeverWalksTheFolderOnMain(_ ok: inout Bool) {
+        print("\n-- PF-02: Start counts the folder off the main thread --")
+        let (root, _) = makeSite()
+        let stub = StubServer()
+        let (registry, url) = makeRegistry(folder: root, stub: stub)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let id = LocalProject.devopsAtlas.id
+        var notes = 0
+        let observer = NotificationCenter.default.addObserver(forName: LocalProjectRegistry.didChange, object: registry,
+                                                              queue: nil) { _ in notes += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        // The fixture's own power: counting on main is what the recorder sees.
+        let baseline = LocalProjectPreflight.debugMainThreadCounts.value
+        _ = LocalProjectPreflight.count(folder: root)
+        check(LocalProjectPreflight.debugMainThreadCounts.value == baseline + 1,
+              "fixture: a count on the main thread was not recorded, so this check could not fail", &ok)
+
+        let before = LocalProjectPreflight.debugMainThreadCounts.value
+        registry.start(id)
+        check(LocalProjectPreflight.debugMainThreadCounts.value == before,
+              "Start walked the folder on the main thread", &ok)
+        check(registry.state(of: id) == .starting, "Start did not go on to bind: \(registry.state(of: id))", &ok)
+        check(registry.folderCount(of: id) == nil, "the count was there before the walk could have run", &ok)
+        let notesBefore = notes
+        let deadline = Date().addingTimeInterval(5)
+        while registry.folderCount(of: id) == nil, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        }
+        if let count = registry.folderCount(of: id) {
+            check(count.files >= 3 && count.bytes > 0, "the published count is \(count)", &ok)
+            check(notes > notesBefore, "the count landed without a change notification", &ok)
+        } else {
+            fail("the folder's count never landed", &ok)
+        }
+        check(LocalProjectPreflight.debugMainThreadCounts.value == before,
+              "the count ran on the main thread after all", &ok)
+        registry.stop(id)
+        // The refusals still come from the cheap half, at once.
+        var missing = LocalProject.devopsAtlas
+        missing.folderOverride = root.appendingPathComponent("nope").path
+        registry.update(missing)
+        registry.start(id)
+        check(registry.state(of: id) == .folderNotFound(noIndex: false),
+              "a missing folder is \(registry.state(of: id)) straight after Start", &ok)
+        if ok { print("  OK   the gate decides on main, the count lands from a utility queue") }
     }
 
     // MARK: 5 - the runner

@@ -69,6 +69,10 @@ final class LocalProjectRegistry {
     private var servers: [String: LocalServing] = [:]
     /// A start in flight, so a Stop before the listener is ready wins.
     private var startTokens: [String: UUID] = [:]
+    /// PF-02: the last count of each project's folder, published when the
+    /// background walk lands, and the walk in flight.
+    private var folderCounts: [String: (files: Int, bytes: Int64)] = [:]
+    private var countTokens: [String: UUID] = [:]
 
     private let storeURL: URL
     private let makeServer: (LocalProject) -> LocalServing
@@ -92,6 +96,9 @@ final class LocalProjectRegistry {
     func state(of id: String) -> LocalProjectState { states[id] ?? .notStarted }
 
     func counters(of id: String) -> LocalStaticServer.Counters? { servers[id]?.currentCounters }
+
+    /// The files and bytes the last Start counted, once the count has landed.
+    func folderCount(of id: String) -> (files: Int, bytes: Int64)? { folderCounts[id] }
 
     var runningCount: Int { projects.filter { state(of: $0.id).isRunning }.count }
 
@@ -183,22 +190,26 @@ final class LocalProjectRegistry {
         case .starting, .running: return
         default: break
         }
-        switch LocalProjectPreflight.check(folder: project.folder) {
-        case .folderMissing:
+        // PF-02: only the cheap checks here. This runs on the main thread,
+        // and at launch for a project marked to start then, so the walk over
+        // the folder's files goes to a utility queue below.
+        switch LocalProjectPreflight.gate(folder: project.folder) {
+        case .folderMissing?:
             states[id] = .folderNotFound(noIndex: false)
             notify()
             return
-        case .indexMissing:
+        case .indexMissing?:
             states[id] = .folderNotFound(noIndex: true)
             notify()
             return
-        case .notReadable(let reason):
+        case .notReadable(let reason)?:
             states[id] = .failed(.notReadable(reason))
             notify()
             return
-        case .ready:
+        case .ready?, nil:
             break
         }
+        countFolder(id, folder: project.folder)
         let token = UUID()
         startTokens[id] = token
         states[id] = .starting
@@ -237,6 +248,24 @@ final class LocalProjectRegistry {
             }
         }
     }
+
+    /// Count the folder off the main thread and publish the count when it
+    /// lands. A newer Start's count wins over an older one still walking.
+    private func countFolder(_ id: String, folder: URL) {
+        let token = UUID()
+        countTokens[id] = token
+        countQueue.async { [weak self] in
+            let count = LocalProjectPreflight.count(folder: folder)
+            DispatchQueue.main.async {
+                guard let self, self.countTokens[id] == token else { return }
+                self.countTokens[id] = nil
+                self.folderCounts[id] = count
+                self.notify()
+            }
+        }
+    }
+
+    private let countQueue = DispatchQueue(label: "com.manjesh.grandline.local-project-count", qos: .utility)
 
     /// Close the listener. The port is free at once.
     func stop(_ id: String, reason: StopReason = .stopped) {
