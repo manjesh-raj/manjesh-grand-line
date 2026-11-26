@@ -20,6 +20,7 @@ enum ReviewFourUXSelfTest {
         defer { HelmMotion.reducedOverrideForTests = nil }
         var ok = true
         checkTheToolbarNamesItsShortcuts(&ok)
+        checkSettingsStaysInReach(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -74,6 +75,55 @@ enum ReviewFourUXSelfTest {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         check(items[WorkspaceToolbar.ItemID.crumb]?.label == "Location" && items[WorkspaceToolbar.ItemID.search]?.label == "Search",
               "UX-25: going back to icons did not give the view items their names back", &ok)
+    }
+
+    // MARK: UX-28
+
+    /// Settings sits in the sidebar's foot, out of the list, lit when it
+    /// shows and lined up with the rows above; the list fades only while it
+    /// continues below.
+    private static func checkSettingsStaysInReach(_ ok: inout Bool) {
+        let roots = WorkspaceSidebarModel.roots(sessions: [])
+        let listed = roots.flatMap { [$0] + $0.children }.map(\.entry)
+        check(!listed.contains(.module(.settings)) && listed.contains(.module(.setup)),
+              "UX-28: Settings is still a row in the list, or Setup left with it", &ok)
+        check(WorkspaceGoMenu.chord(for: .settings) == WorkspaceGoMenu.chord(for: .settings, hidden: []),
+              "UX-28: the foot moved Settings' chord", &ok)
+
+        autoreleasepool {
+            let sidebar = WorkspaceSidebarController()
+            sidebar.loadView()
+            sidebar.view.frame = NSRect(x: 0, y: 0, width: MainSplitShellController.sidebarWidth, height: 360)
+            sidebar.view.layoutSubtreeIfNeeded()
+            sidebar.viewDidLayout()
+            let foot = sidebar.debugFoot
+            check(foot.frame.minY <= HelmMetrics.s2 + 0.5 && foot.frame.height > 0,
+                  "UX-28: the foot is not at the sidebar's bottom (\(foot.frame))", &ok)
+            check(sidebar.debugListFades, "UX-28: a list that continues below does not fade", &ok)
+            // The foot's glyph lines up with the rows' glyphs.
+            if let row = sidebar.debugCell(for: .module(.home)) as? WorkspaceSidebarPageCell {
+                let listX = row.debugIcon.convert(row.debugIcon.bounds, to: sidebar.view).minX
+                let footX = foot.debugCell.debugIcon.convert(foot.debugCell.debugIcon.bounds, to: sidebar.view).minX
+                check(abs(listX - footX) < 1, "UX-28: the foot's glyph is at x \(footX), the rows' at \(listX)", &ok)
+            } else {
+                fail("UX-28: the list built no Home row", &ok)
+            }
+            let scroll = sidebar.debugScrollView
+            let documentHeight = sidebar.outlineView.frame.height
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, documentHeight - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            sidebar.viewDidLayout()
+            check(!sidebar.debugListFades, "UX-28: the list still fades scrolled to its end", &ok)
+            sidebar.select(.rail(.settings))
+            check(foot.debugIsLit && sidebar.outlineView.selectedRow < 0,
+                  "UX-28: showing Settings does not light the foot, or lights a list row too", &ok)
+            sidebar.select(.rail(.homeCanvas))
+            check(!foot.debugIsLit, "UX-28: the foot stays lit on Home", &ok)
+            var opened: WorkspaceModule?
+            sidebar.onSelectModule = { opened = $0 }
+            foot.row.performPrimaryAction()
+            check(opened == .settings, "UX-28: the foot did not open Settings", &ok)
+        }
     }
 }
 

@@ -69,7 +69,8 @@ enum SplitShellModelSelfTest {
             if case .module(let module) = node.entry { return module }
             return nil
         }
-        check(fromTree == listed, "the tree's module rows \(fromTree.map(\.rawValue)) are not the listed modules", &ok)
+        // UX-28: Settings is the sidebar's foot, not a row in the tree.
+        check(fromTree == listed.filter { $0 != WorkspaceSidebarModel.footModule }, "the tree's module rows \(fromTree.map(\.rawValue)) are not the listed modules", &ok)
         check(roots.first?.entry == .module(.home), "Home is not the sidebar's first row", &ok)
     }
 

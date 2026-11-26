@@ -192,7 +192,9 @@ enum ReviewTwoUXModelSelfTest {
             if case .section(let title) = node.entry { return title }
             return nil
         }
-        check(sections == ["Work", "Workbench", "Machine"], "the Personal sidebar's headings are \(sections)", &ok)
+        // UX-28: Personal's Machine group held only Settings, which is the
+        // sidebar's foot now, so the group draws no heading.
+        check(sections == ["Work", "Workbench"], "the Personal sidebar's headings are \(sections)", &ok)
         // The stored set never holds Home or Settings, whatever is written.
         withScratchSettings("hidden") { settings in
             settings.hiddenModules = [.home, .settings, .logs]

@@ -243,12 +243,14 @@ enum SidebarRedesignsSelfTest {
             let heading = outline.rect(ofRow: work)
             return heading.minY >= clip.bounds.minY - 0.5 && heading.maxY <= clip.bounds.maxY + 0.5
         }
-        shell.workspace.navigator.show(.settings)
+        // UX-28: Settings is the sidebar's foot and scrolls nothing, so the
+        // fixture visits the list's own last row, Setup.
+        shell.workspace.navigator.show(WorkspaceModule.setup.primaryRoute)
         settle(shell)
-        // Discriminating power: the visit to Settings really has to leave the
+        // Discriminating power: the visit to Setup really has to leave the
         // heading out of sight, or the next assertion holds without the fix.
         check(clip.bounds.minY > outline.rect(ofRow: work).minY + 1,
-              "fixture: at 1100x760 Settings did not scroll the Work heading out of sight "
+              "fixture: at 1100x760 Setup did not scroll the Work heading out of sight "
               + "(list at \(clip.bounds.minY), heading at \(outline.rect(ofRow: work).minY))", &ok)
         shell.workspace.navigator.show(.docs)
         settle(shell)
@@ -633,7 +635,8 @@ enum SidebarRedesignsSelfTest {
         // DevOps Hub made it 26. Its projects are cards on its page now, not
         // rows under it. At 950pt the list still overflows, so the whole-list
         // sweep runs where the default set fits.
-        check(outline.numberOfRows == 26, "the default sidebar with one session should be 26 rows, got \(outline.numberOfRows)", &ok)
+        // UX-28 took Settings out of the list into the sidebar's foot: 25.
+        check(outline.numberOfRows == 25, "the default sidebar with one session should be 25 rows, got \(outline.numberOfRows)", &ok)
         var fits = window.frame
         fits.size.height = Self.defaultSetFitsHeight
         window.setFrame(fits, display: false)
@@ -670,7 +673,7 @@ enum SidebarRedesignsSelfTest {
               "the fixture should overflow by less than one row, got \(shortOverflow)pt", &ok)
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
-        if let bottom = WorkspaceSidebarModel.listedModules().last {
+        if let bottom = WorkspaceSidebarModel.listedModules().last(where: { $0 != WorkspaceSidebarModel.footModule }) {
             shell.workspace.navigator.show(bottom.primaryRoute)
             settle(shell)
             let lit = outline.rect(ofRow: outline.selectedRow)
