@@ -12,11 +12,18 @@
 //   2. **The same over a real loopback listener**: it answers on 127.0.0.1,
 //      a second listener on the port is `.portInUse`, and the port is free
 //      again once it stops.
+//   2a. **Ranges and media** (full review 4, PF-03): 206 with
+//      `Content-Range`, 416 past the end, the media types, a big file
+//      streamed from disk and arriving intact, and no response built on the
+//      listener's queue.
+//   2b. **Connection limits** (S-03): past the cap a connection is closed at
+//      once, and one that sends no head is closed at its deadline.
 //   3. **The store** keeps a newer build's keys (`passthrough`), reads an
 //      older file's missing fields as their defaults (GL-01), seeds
 //      devops-atlas, and resolves the default folder to scratch in a test
 //      process, never the real clone.
 //   4. **Preflight** says missing, no index.html, or ready with the count.
+//   4a. **Start never walks the folder on main** (PF-02).
 //   5. **The runner**: every transition, a Stop that beats a slow start, the
 //      last run it records, and the port holder named from `lsof`.
 //   6. **The words** for every state, and their tones and actions.
@@ -48,7 +55,7 @@ enum DevOpsHubModelSelfTest {
     static func run() -> Bool {
         var ok = true
         for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight,
-                      checkStartNeverWalksTheFolderOnMain, checkRunner,
+                      checkStartNeverWalksTheFolderOnMain, checkRangesAndMedia, checkConnectionLimits, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
                       checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing] {
             var caseOK = true
@@ -146,9 +153,10 @@ enum DevOpsHubModelSelfTest {
     /// The answer arrives on URLSession's own queue, so it crosses to this
     /// thread under a lock. The nightly ThreadSanitizer run reported the bare
     /// `result` and `done` as a race (full review 2026-11-25, T-01).
-    static func fetch(_ url: URL, host: String? = nil, timeout: TimeInterval = 5) -> (Int, Data)? {
+    static func fetch(_ url: URL, host: String? = nil, range: String? = nil, timeout: TimeInterval = 5) -> (Int, Data)? {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         if let host { request.setValue(host, forHTTPHeaderField: "Host") }
+        if let range { request.setValue(range, forHTTPHeaderField: "Range") }
         final class Answer: @unchecked Sendable {
             private let lock = NSLock()
             private var value: (Int, Data)?
@@ -296,6 +304,158 @@ enum DevOpsHubModelSelfTest {
         }
         check(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000))?.hasPrefix("899 files, ") == true,
               "the folder detail reads \(DevOpsHubWords.folderDetail(.ready(files: 899, bytes: 67_000_000)) ?? "-")", &ok)
+    }
+
+    // MARK: 2a - ranges, media and big files (full review 4, PF-03)
+
+    /// A byte pattern a slice can be checked against: byte `i` is `i % 251`.
+    static func pattern(_ count: Int) -> Data { Data((0..<count).map { UInt8($0 % 251) }) }
+
+    private static func checkRangesAndMedia(_ ok: inout Bool) {
+        print("\n-- PF-03: ranges, media types, and big files streamed off the listener's queue --")
+        let (root, _) = makeSite()
+        let fm = FileManager.default
+        try? fm.createDirectory(at: root.appendingPathComponent("media"), withIntermediateDirectories: true)
+        let clip = pattern(1000)
+        let bigSize = LocalStaticServer.inlineBodyLimit * 2 + 12_345
+        let big = pattern(bigSize)
+        try? clip.write(to: root.appendingPathComponent("media/clip.mp4"))
+        try? big.write(to: root.appendingPathComponent("media/big.webm"))
+        let serve = { (data: Data) in LocalStaticServer.response(forRequest: data, root: root, port: 7420) }
+        func ranged(_ target: String, _ range: String, extra: String = "") -> LocalStaticServer.Response {
+            serve(request(target, extra: "Range: \(range)\r\n\(extra)"))
+        }
+
+        let whole = serve(request("/media/clip.mp4"))
+        check(whole.status == 200 && whole.header("Accept-Ranges") == "bytes" && whole.header("Content-Type") == "video/mp4",
+              "a video is \(whole.status) \(whole.header("Content-Type") ?? "-") with Accept-Ranges \(whole.header("Accept-Ranges") ?? "none")", &ok)
+        let first = ranged("/media/clip.mp4", "bytes=0-3")
+        check(first.status == 206 && first.body == clip.prefix(4) && first.header("Content-Range") == "bytes 0-3/1000"
+                && first.header("Content-Length") == "4",
+              "bytes=0-3 is \(first.status) \(first.header("Content-Range") ?? "-")", &ok)
+        let tail = ranged("/media/clip.mp4", "bytes=-10")
+        check(tail.status == 206 && tail.body == clip.suffix(10) && tail.header("Content-Range") == "bytes 990-999/1000",
+              "bytes=-10 is \(tail.status) \(tail.header("Content-Range") ?? "-")", &ok)
+        let open = ranged("/media/clip.mp4", "bytes=900-")
+        check(open.status == 206 && open.body == clip.suffix(100), "bytes=900- is \(open.status)", &ok)
+        let past = ranged("/media/clip.mp4", "bytes=5000-")
+        check(past.status == 416 && past.header("Content-Range") == "bytes */1000",
+              "a range past the end is \(past.status) \(past.header("Content-Range") ?? "-")", &ok)
+        check(ranged("/media/clip.mp4", "bytes=0-1,4-5").status == 200, "two ranges are not answered whole", &ok)
+        if let etag = whole.header("ETag") {
+            check(ranged("/media/clip.mp4", "bytes=0-3", extra: "If-Range: \(etag)\r\n").status == 206,
+                  "a matching If-Range lost the range", &ok)
+        }
+        check(ranged("/media/clip.mp4", "bytes=0-3", extra: "If-Range: \"stale\"\r\n").status == 200,
+              "a stale If-Range still got a part of a file that changed", &ok)
+        for (ext, type) in [("mp4", "video/mp4"), ("webm", "video/webm"), ("mp3", "audio/mpeg"), ("m4a", "audio/mp4")] {
+            check(LocalStaticServer.mimeType(for: URL(fileURLWithPath: "/a/x.\(ext)")) == type,
+                  ".\(ext) is \(LocalStaticServer.mimeType(for: URL(fileURLWithPath: "/a/x.\(ext)")))", &ok)
+        }
+        // A big body is streamed from disk, not read into memory.
+        let bigResponse = serve(request("/media/big.webm"))
+        check(bigResponse.status == 200 && bigResponse.body.isEmpty && bigResponse.file?.length == Int64(bigSize)
+                && bigResponse.header("Content-Length") == "\(bigSize)",
+              "a \(bigSize)-byte file was not streamed: body \(bigResponse.body.count), file \(String(describing: bigResponse.file))", &ok)
+
+        // Over a real listener: the streamed file arrives whole, a range of
+        // it arrives exact, and no response is built on the listener's queue.
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port)
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port)
+            _ = start(server)
+        }
+        defer { server.stop() }
+        // The recorder's own power: a response built on that queue is counted.
+        let recorded = LocalStaticServer.debugResponsesOnListenerQueue.value
+        server.debugBuildOnListenerQueue(request("/", port: port))
+        check(LocalStaticServer.debugResponsesOnListenerQueue.value == recorded + 1,
+              "fixture: a response built on the listener's queue was not recorded", &ok)
+        let before = LocalStaticServer.debugResponsesOnListenerQueue.value
+        let origin = LocalStaticServer.origin(port: port)
+        let streamed = fetch(origin.appendingPathComponent("media/big.webm"))
+        check(streamed?.0 == 200 && streamed?.1 == big,
+              "the streamed file arrived as \(streamed?.0 ?? 0), \(streamed?.1.count ?? 0) of \(bigSize) bytes, intact \(streamed?.1 == big)", &ok)
+        let start = Int64(LocalStaticServer.inlineBodyLimit) + 7
+        let end = start + Int64(LocalStaticServer.inlineBodyLimit) + 100
+        let slice = fetch(origin.appendingPathComponent("media/big.webm"), range: "bytes=\(start)-\(end)")
+        check(slice?.0 == 206 && slice?.1 == big.subdata(in: Int(start)..<Int(end + 1)),
+              "a streamed range arrived as \(slice?.0 ?? 0), \(slice?.1.count ?? 0) bytes", &ok)
+        check(LocalStaticServer.debugResponsesOnListenerQueue.value == before,
+              "a response was built on the listener's queue", &ok)
+    }
+
+    // MARK: 2b - connection limits (full review 4, S-03)
+
+    /// A bare TCP client, so a suite can hold a connection open without
+    /// sending anything, as a misbehaving local process would.
+    final class RawClient {
+        private let fd: Int32
+
+        init?(port: UInt16) {
+            fd = socket(AF_INET, SOCK_STREAM, 0)
+            guard fd >= 0 else { return nil }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let connected = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            guard connected == 0 else { Darwin.close(fd); return nil }
+        }
+
+        deinit { Darwin.close(fd) }
+
+        /// Whether the server closed this connection within `timeout`.
+        func closed(within timeout: TimeInterval) -> Bool {
+            var wait = timeval(tv_sec: Int(timeout), tv_usec: Int32((timeout - floor(timeout)) * 1_000_000))
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &wait, socklen_t(MemoryLayout<timeval>.size))
+            var byte: UInt8 = 0
+            let n = recv(fd, &byte, 1, 0)
+            return n == 0 || (n < 0 && errno == ECONNRESET)
+        }
+    }
+
+    private static func checkConnectionLimits(_ ok: inout Bool) {
+        print("\n-- S-03: at most N open connections, and an idle one is closed --")
+        let (root, _) = makeSite()
+        let limits = LocalStaticServer.Limits(maxConnections: 2, headTimeout: 1.5)
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port, limits: limits)
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port, limits: limits)
+            _ = start(server)
+        }
+        defer { server.stop() }
+        func waitFor(_ condition: () -> Bool, _ seconds: TimeInterval = 3) {
+            let deadline = Date().addingTimeInterval(seconds)
+            while !condition(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        }
+        guard let first = RawClient(port: port), let second = RawClient(port: port) else {
+            fail("could not open two raw connections to \(port)", &ok)
+            return
+        }
+        waitFor { server.debugOpenConnections == 2 }
+        check(server.debugOpenConnections == 2, "the server holds \(server.debugOpenConnections) of 2 idle connections", &ok)
+        if let third = RawClient(port: port) {
+            check(third.closed(within: 1), "a connection past the cap of 2 was kept open", &ok)
+        }
+        check(server.currentCounters.refused == 1, "refused \(server.currentCounters.refused) connections, want 1", &ok)
+        // Not closed before its time.
+        check(!first.closed(within: 0.2), "an idle connection was closed long before its deadline", &ok)
+        check(first.closed(within: 4) && second.closed(within: 4), "an idle connection outlived its 1.5s deadline", &ok)
+        waitFor { server.debugOpenConnections == 0 }
+        check(server.debugOpenConnections == 0 && server.currentCounters.timedOut == 2,
+              "after the deadline \(server.debugOpenConnections) stay open, \(server.currentCounters.timedOut) timed out", &ok)
+        // A request sent in time is answered, and the freed slots take it.
+        check(fetch(LocalStaticServer.origin(port: port))?.0 == 200, "a prompt request was not answered", &ok)
     }
 
     // MARK: 4a - Start never walks the folder on main (full review 4, PF-02)
