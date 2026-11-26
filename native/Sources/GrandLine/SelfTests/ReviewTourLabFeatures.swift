@@ -11,6 +11,7 @@
 //                                     against fake TLS answers (run `demo hosts` first)
 //     ux expiry panel <name>          D-03: the reminder settings popover
 //     ux spotlight <name>             F-04: Settings' "Show in Spotlight" section, alone
+//     ux grabtext <copied|nothing|locked> <name>   F-06: the result card
 //
 // GL-27: debug builds only.
 
@@ -20,7 +21,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -31,6 +32,17 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "grabtext":
+            guard let file = rest.dropFirst().first else { return "ux grabtext FAILED - want a state and a name" }
+            let states: [String: ScreenTextGrab.State] = [
+                "copied": .copied(ScreenTextGrabSelfTest.commands + ["kubectl -n prod get pods -l app=checkout-worker -w"]),
+                "nothing": .nothingFound, "locked": .locked,
+            ]
+            guard let state = states[name] else { return "ux grabtext FAILED - unknown state \(name)" }
+            let view = ScreenTextResultView()
+            view.render(state, theme: ThemeManager.shared.theme)
+            view.layoutSubtreeIfNeeded()
+            return done(renderFixed(view, size: view.fittingSize, to: url(file)), file)
         case "spotlight":
             guard let settings = shell.debugSlotController(.settings) as? SettingsController else {
                 return "ux spotlight FAILED - goto settings first"

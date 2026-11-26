@@ -411,6 +411,13 @@ extension AppDelegate {
         self.quickCaptureMenuItem = quickCaptureItem
         applyQuickCaptureMenuChord(AppSettings.shared.quickCaptureShortcut)
         shiftMenu.addItem(quickCaptureItem)
+        // F-06: drag over anything on screen and get its words. ⌥⌘7 matches
+        // the capture panel's ⌘7 tile, and was free in this menu.
+        let grabTextItem = NSMenuItem(title: "Grab Text from Screen", action: #selector(AppDelegate.grabTextFromScreen),
+                                      keyEquivalent: "7").withSymbol("text.viewfinder")
+        grabTextItem.keyEquivalentModifierMask = [.command, .option]
+        grabTextItem.target = self
+        shiftMenu.addItem(grabTextItem)
 
         // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
         //

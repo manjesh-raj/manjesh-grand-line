@@ -123,6 +123,8 @@ struct CaptureFiler {
 /// still typing.
 final class CaptureRootView: NSView {
     var onDestinationChord: ((CaptureDestination) -> Bool)?
+    /// F-06: ⌘7, Grab text.
+    var onGrabTextChord: (() -> Bool)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // AGENTS.md gotcha (21): `KeyChord.relevantModifierMask` (⌘⌥⌃⇧), not
@@ -134,9 +136,12 @@ final class CaptureRootView: NSView {
         guard flags == .command,
               let characters = event.charactersIgnoringModifiers,
               characters.count == 1,
-              let digit = Int(characters),
-              let destination = CaptureDestination.forChordDigit(digit)
+              let digit = Int(characters)
         else { return super.performKeyEquivalent(with: event) }
+        if digit == CaptureDestinationTile.grabTextDigit { return onGrabTextChord?() ?? false }
+        guard let destination = CaptureDestination.forChordDigit(digit) else {
+            return super.performKeyEquivalent(with: event)
+        }
         return onDestinationChord?(destination) ?? false
     }
 }
@@ -215,8 +220,16 @@ final class CaptureKeycap: NSView {
 /// the light shows where Return goes. Every other tile is the card with a
 /// hairline, as the board draws them.
 final class CaptureDestinationTile: HoverHighlightView {
-    let destination: CaptureDestination
+    /// `nil` for F-06's Grab text tile, which starts an action rather than
+    /// filing to a store.
+    let destination: CaptureDestination?
+    private let tileTitle: String
+    private let tileSymbol: String
+    private let tileHue: HelmDomainHue
     var onClick: (() -> Void)?
+
+    /// F-06: the ⌘7 tile's chord digit.
+    static let grabTextDigit = 7
 
     /// The board's 28pt wash tile.
     static let iconSide: CGFloat = 28
@@ -238,12 +251,29 @@ final class CaptureDestinationTile: HoverHighlightView {
     private var currentTheme = ThemeManager.shared.theme
     private(set) var palette: HelmHeroSurface.Palette?
 
-    init(destination: CaptureDestination) {
+    convenience init(destination: CaptureDestination) {
+        self.init(destination: destination, title: destination.title, symbol: destination.symbol,
+                  hue: destination.hue, digit: destination.chordDigit,
+                  label: "File as \(destination.title), command \(destination.chordDigit)")
+    }
+
+    /// F-06: the Grab text tile - drag over anything on screen and get its
+    /// words.
+    static func grabText() -> CaptureDestinationTile {
+        CaptureDestinationTile(destination: nil, title: "Grab text", symbol: "text.viewfinder", hue: .slate,
+                               digit: grabTextDigit, label: "Grab text from the screen, command \(grabTextDigit)")
+    }
+
+    private init(destination: CaptureDestination?, title: String, symbol: String, hue: HelmDomainHue,
+                 digit: Int, label: String) {
         self.destination = destination
-        chordCap = CaptureKeycap("\u{2318}\(destination.chordDigit)")
+        tileTitle = title
+        tileSymbol = symbol
+        tileHue = hue
+        chordCap = CaptureKeycap("\u{2318}\(digit)")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        accessibilityLabelOverride = "File as \(destination.title), command \(destination.chordDigit)"
+        accessibilityLabelOverride = label
         accessibilityRoleOverride = .button
         onAccessibilityPress = { [weak self] in self?.onClick?() }
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(clicked)))
@@ -275,7 +305,7 @@ final class CaptureDestinationTile: HoverHighlightView {
         iconBox.addSubview(icon)
         iconBox.addSubview(glassTile)
 
-        nameLabel.stringValue = destination.title
+        nameLabel.stringValue = tileTitle
         nameLabel.alignment = .center
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -331,8 +361,8 @@ final class CaptureDestinationTile: HoverHighlightView {
         // routes through `HelmContrast.tintedSurface`). `identityHex` rather
         // than a semantic tint: a tile says "this is the Sticky Board", never
         // "this is a warning".
-        icon.configure(symbol: destination.symbol, tint: .accent, pointSize: Self.glyphPointSize)
-        icon.overrideFill(hex: destination.hue.identityHex(in: theme))
+        icon.configure(symbol: tileSymbol, tint: .accent, pointSize: Self.glyphPointSize)
+        icon.overrideFill(hex: tileHue.identityHex(in: theme))
         icon.applyTheme(theme)
         nameLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
         if isDefault {
@@ -348,9 +378,9 @@ final class CaptureDestinationTile: HoverHighlightView {
                 glassTile.layer?.borderColor = ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha).cgColor
                 layer?.borderWidth = 0
             }
-            glassGlyph.image = HelmSymbol.image(destination.symbol, pointSize: Self.glyphPointSize,
+            glassGlyph.image = HelmSymbol.image(tileSymbol, pointSize: Self.glyphPointSize,
                                                 weight: .semibold, hierarchicalColor: ink,
-                                                accessibilityDescription: destination.title)
+                                                accessibilityDescription: tileTitle)
             nameLabel.textColor = ink
             chordCap.paint(fill: ink.withAlphaComponent(PopoverHeroHeader.glassFillAlpha),
                            border: ink.withAlphaComponent(PopoverHeroHeader.glassBorderAlpha), ink: ink)
@@ -477,9 +507,10 @@ final class CaptureChip: HoverHighlightView {
 
 final class ShiftQuickCaptureController: NSWindowController {
 
-    /// The panel's fixed width - the mockup's own 600pt, which is what six
-    /// tiles need before "Credential" starts truncating.
-    static let panelWidth: CGFloat = 600
+    /// The panel's fixed width. The mockup's own 600pt was what six tiles
+    /// needed before "Credential" starts truncating; F-06's seventh tile
+    /// (Grab text) takes it to 680, the same width per tile.
+    static let panelWidth: CGFloat = 680
 
     /// How long a filed capture's confirmation stands in the head before the
     /// panel closes. Unchanged from the status line it replaced.
@@ -524,6 +555,10 @@ final class ShiftQuickCaptureController: NSWindowController {
     private let sectionLabel = NSTextField(labelWithString: "FILE IT AS")
     private let tileRow = NSStackView()
     private var tiles: [CaptureDestinationTile] = []
+    /// F-06: the ⌘7 tile.
+    let grabTextTile = CaptureDestinationTile.grabText()
+    /// F-06: starts a screen text grab. Wired by the app delegate.
+    var onGrabText: (() -> Void)?
     // R2-UX-01 (c): what it does, rather than who does it - the crew is an
     // operator's word, and this panel is everyone's. CP-1 draws it with the
     // sparkle the board gives it, for the same reason.
@@ -606,6 +641,10 @@ final class ShiftQuickCaptureController: NSWindowController {
         root.layer?.masksToBounds = true
         root.onDestinationChord = { [weak self] destination in
             self?.file(to: destination)
+            return true
+        }
+        root.onGrabTextChord = { [weak self] in
+            self?.grabText()
             return true
         }
         panel.contentView = root
@@ -783,6 +822,10 @@ final class ShiftQuickCaptureController: NSWindowController {
             tiles.append(tile)
             tileRow.addArrangedSubview(tile)
         }
+        // F-06: ⌘7 Grab text, after the six filing tiles. Not in `tiles`:
+        // it files nothing, so it is never the lit default.
+        grabTextTile.onClick = { [weak self] in self?.grabText() }
+        tileRow.addArrangedSubview(grabTextTile)
 
         crewButton.toolTip = AITransparency.willSendToClaude("what you captured")
         crewButton.target = self
@@ -879,6 +922,13 @@ final class ShiftQuickCaptureController: NSWindowController {
     /// The one way out, from every path (Escape, a hand-off, a filed capture's
     /// confirmation). P3 of the polish report: fades rather than vanishing,
     /// and orders out once the fade lands unless the captain reopened it.
+    /// F-06: close the panel, then start the grab once it is out of the way
+    /// of the crosshair.
+    func grabText() {
+        dismiss()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.onGrabText?() }
+    }
+
     private func dismiss() {
         guard let window else { return }
         isOpen = false
@@ -1166,6 +1216,7 @@ final class ShiftQuickCaptureController: NSWindowController {
         hintLabel.stringValue = CaptureHeroWords.hint
         paintStatus(theme)
         for tile in tiles { tile.applyTheme(theme) }
+        grabTextTile.applyTheme(theme)
     }
 
     #if FM_SELFTESTS

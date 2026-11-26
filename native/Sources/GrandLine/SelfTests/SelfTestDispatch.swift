@@ -2207,6 +2207,13 @@ enum SelfTestDispatch {
             exit(SpotlightIndexSelfTest.run() ? 0 : 1)
         }
 
+        // F-06 of full review 4: grab text from the screen - a real Vision read of
+        // drawn text, the flow against a fake crosshair and a private pasteboard,
+        // the lock refusal and the capture panel's cmd-7. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_SCREEN_TEXT_GRAB_TESTS"] == "1" {
+            exit(ScreenTextGrabSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

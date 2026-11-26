@@ -304,6 +304,9 @@ enum AppLockedSurface {
     /// F-04: a Spotlight result chosen while the app is locked. It opens a
     /// task, note, link, sticky note or runbook, so it waits for the unlock.
     case spotlightResult
+    /// F-06: grab text from the screen. The system crosshair draws over the
+    /// lock screen, so a grab is refused before it starts while locked.
+    case grabText
 }
 
 final class AppLockGate {

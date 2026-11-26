@@ -113,8 +113,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
     lazy var shiftQuickCapture: ShiftQuickCaptureController = {
         let capture = ShiftQuickCaptureController(filer: appShell.workspace.makeCaptureFiler())
+        capture.onGrabText = { [weak self] in self?.screenTextGrab.start() }
         return capture
     }()
+    /// F-06: grab text from the screen, filed through the same filer.
+    lazy var screenTextGrab: ScreenTextGrab = {
+        let grab = ScreenTextGrab(filer: appShell.workspace.makeCaptureFiler())
+        grab.onUnlock = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.appShell.view.window?.makeKeyAndOrderFront(nil)
+        }
+        return grab
+    }()
+
+    /// F-06: Shift > Grab Text from Screen.
+    @objc func grabTextFromScreen() { screenTextGrab.start() }
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     /// F23: publishes the widget snapshot and drains what a tapped widget
     /// button queued. Holds no store of its own - the `ShiftStore` above and
