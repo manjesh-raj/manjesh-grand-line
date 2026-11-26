@@ -475,6 +475,21 @@ enum PageHeroColumnsViewSelfTest {
         check(split.isSidebarCollapsed && !hosts.heroColumnShowing, "C-4: a narrow page keeps the column open", &ok)
         check(hosts.hostsGrid.debugSectionTitles.first == "Recent",
               "C-4: with the column away the grid has no Recent row (\(hosts.hostsGrid.debugSectionTitles))", &ok)
+        // UX-27: the page keeps its hero as Health's band over the tabs: the
+        // verdict, the ring and Quick connect.
+        if let column = hosts.heroColumn {
+            let band = frame(of: column, in: hosts.view)
+            let grid = frame(of: hosts.hostsGrid, in: hosts.view)
+            check(hosts.heroIsBand && column.arrangement == .band && column.window != nil && !column.isHiddenOrHasHiddenAncestor,
+                  "UX-27: with the column away the page shows no hero band", &ok)
+            check(column.debugRing != nil && hosts.heroQuickConnectField.isDescendant(of: column)
+                    && hosts.heroQuickConnectField.window != nil,
+                  "UX-27: the band lost its ring or Quick connect", &ok)
+            check(band.height > 0 && band.minY >= grid.maxY - 0.5,
+                  "UX-27: the band (\(band)) does not sit above the grid (\(grid))", &ok)
+        } else {
+            fail("UX-27: Connections built no hero column", &ok)
+        }
         shell.setInspectorShown(false)
         settle(shell)
         check(abs(window.frame.width - 1512) < 0.5, "C-4: closing the inspector left the window at \(window.frame.width)", &ok)
@@ -482,6 +497,8 @@ enum PageHeroColumnsViewSelfTest {
         check(abs(split.sidebarPane.frame.width - (HelmMetrics.pageGutter + HelmHeroColumn.width)) < 0.5,
               "C-4: the column came back \(split.sidebarPane.frame.width)pt wide", &ok)
         check(!hosts.hostsGrid.debugSectionTitles.contains("Recent"), "C-4: Recent did not move back into the column", &ok)
+        check(!hosts.heroIsBand && hosts.heroColumn?.arrangement == .column && hosts.heroColumn?.superview === split.sidebarPane,
+              "UX-27: widening the page left the hero as a band", &ok)
         // Toggle Sidebar puts it away too, and is remembered across a width change.
         split.toggleSidebar(nil)
         settle(shell)
