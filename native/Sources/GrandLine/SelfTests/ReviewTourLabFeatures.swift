@@ -34,7 +34,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader", "pagewindow", "timerwindow", "meetings"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage", "reader", "pagewindow", "timerwindow", "meetings", "dayplan"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -103,6 +103,8 @@ extension ReviewTourLab {
         case "meetings":
             seedMeetings()
             return "ux meetings seed"
+        case "dayplan":
+            return dayPlanStage(shell, stage: name, file: rest.dropFirst().first, url: url)
         case "runmode":
             return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":
@@ -213,6 +215,66 @@ extension ReviewTourLab {
         let deadline = Date().addingTimeInterval(5)
         while !finished, Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return "ux expiry seed (\(monitor.store.state.items.count) items, \(monitor.store.state.filed.count) filed)"
+    }
+
+    /// F-02's stages. The clock is pinned to today at 9:41 (18:05 for Close
+    /// the day), so a render does not depend on when the tour runs.
+    ///
+    ///  - `pick <file>` / `place <file>`: the sheet's two steps, rendered.
+    ///  - `save`: saves the default plan and starts the first focus session,
+    ///    leaving the clock at 9:50 for a Home render.
+    ///  - `close <file>`: Close the day with the first task ticked.
+    ///  - `empty <file>`: step 1 on a day with nothing due.
+    static func dayPlanStage(_ shell: WorkspaceShellController, stage: String, file: String?,
+                             url: (String) -> URL) -> String {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        func at(_ h: Int, _ m: Int) -> Date { today.addingTimeInterval(TimeInterval(h * 3600 + m * 60)) }
+        let store = shell.workspace.shiftStore
+        let meetings = MacCalendarSource.shared.isShowing ? MacCalendarSource.shared.meetings(on: at(12, 0)) : []
+        func render(_ view: NSView, _ file: String?) -> String {
+            guard let file else { return "ux dayplan \(stage) FAILED - want a name" }
+            view.layoutSubtreeIfNeeded()
+            let written = renderFixed(view, size: view.fittingSize, to: url(file))
+            return written ? "ux dayplan -> \(url(file).path)" : "ux dayplan FAILED - nothing to cache for \(file)"
+        }
+        switch stage {
+        case "pick", "place":
+            let sheet = PlanMyDaySheet(store: store, plans: .shared, meetings: meetings,
+                                       timer: shell.workspace.focusTimer, clock: { at(9, 41) })
+            sheet.loadView()
+            if stage == "place" { sheet.debugNext() }
+            return render(sheet.view, file)
+        case "save":
+            let sheet = PlanMyDaySheet(store: store, plans: .shared, meetings: meetings,
+                                       timer: shell.workspace.focusTimer, clock: { at(9, 41) })
+            sheet.loadView()
+            sheet.debugNext()
+            DayRollover.nowOverrideForTests = at(9, 50)
+            shell.workspace.focusTimer.clock = { at(9, 50) }
+            sheet.debugSave()
+            shell.workspace.homeCanvas.setNeedsRender()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux dayplan save (\(DayPlanStore.shared.plan(on: at(9, 41))?.items.count ?? 0) planned)"
+        case "close":
+            guard let plan = DayPlanStore.shared.plan(on: at(9, 41)) else { return "ux dayplan close FAILED - no plan; run save first" }
+            let sheet = CloseTheDaySheet(plan: plan, store: store, plans: .shared, meetingCount: meetings.count,
+                                         clock: { at(18, 5) })
+            sheet.loadView()
+            sheet.debugRows.first?.debugClickBadge()
+            sheet.debugSetNote("Waiting on the CA to sign the staging cert. Chase at 10.")
+            return render(sheet.view, file)
+        case "empty":
+            let quiet = [DayPlanSelfTest.task("Book the quarterly DR drill", due: DayPlanRules.dayString(at(12, 0).addingTimeInterval(14 * 86400))),
+                         DayPlanSelfTest.task("Review the on-call runbook", priority: .low)]
+            return DayPlanSelfTest.withStores(quiet) { quietStore, plans, _ in
+                let sheet = PlanMyDaySheet(store: quietStore, plans: plans, meetings: [], timer: nil, clock: { at(9, 41) })
+                sheet.loadView()
+                return render(sheet.view, file)
+            }
+        default:
+            return "ux dayplan FAILED - unknown stage \(stage)"
+        }
     }
 
     /// F-01's demo: the mock-up's week of meetings around today, from two

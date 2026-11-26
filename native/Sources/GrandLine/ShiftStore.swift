@@ -1234,6 +1234,22 @@ final class ShiftStore {
         return ids.count
     }
 
+    /// F-02: focused seconds per task on `reference`'s own day, for Close the
+    /// day's "focus 52 min" beside each planned task.
+    func focusSecondsTodayByTask(reference: Date = Date()) -> [String: Int] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: reference)
+        var totals: [String: Int] = [:]
+        for entry in recentActivityEntries(monthsBack: 1, reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let targetID = entry.targetID, let seconds = entry.durationSeconds, seconds > 0,
+                  let at = ShiftStore.iso8601Date(entry.timestamp),
+                  cal.startOfDay(for: at) == today else { continue }
+            totals[targetID, default: 0] += seconds
+        }
+        return totals
+    }
+
     /// How many distinct tasks were focused in the last `days` days, today
     /// included - the "4 tasks with a timer" under the sidebar layout's
     /// Focus time card (stage 7), over the same days its chart draws.

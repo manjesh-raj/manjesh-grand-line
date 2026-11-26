@@ -144,6 +144,18 @@ final class Workspace {
         monitor.onOpenTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
         return monitor
     }()
+    /// F-02: the 9:00 Plan my day and 18:00 Close the day entries in the bell.
+    private(set) lazy var dayPlanNudger: DayPlanNudger = {
+        let nudger = DayPlanNudger(store: shiftStore)
+        nudger.onOpen = { [weak self] nudge in
+            guard let self else { return }
+            self.navigator.show(.homeCanvas)
+            DispatchQueue.main.async {
+                if nudge == .morning { self.homeCanvas.presentPlanMyDay() } else { self.homeCanvas.presentCloseTheDay() }
+            }
+        }
+        return nudger
+    }()
     let snippetStore: SnippetStore
     let dictationStore: DictationStore
     let commandLibraryStore: CommandLibraryStore
@@ -875,6 +887,8 @@ final class Workspace {
         // D-03: the morning expiry check. `start()` does nothing in a suite
         // or a tour, which run a check by hand against fakes.
         expiryMonitor.start()
+        // F-02: same rule, never armed in a suite or a tour.
+        dayPlanNudger.start()
         lock.prepareForLock = { [unowned self] in self.prepareForLock() }
         lock.resumeAfterUnlock = { [unowned self] in self.hosts.forEachConsole { $0.resumeAfterUnlock() } }
         content.hostPages = { [unowned self] in Array(self.hosts.hostConsoles.values) }
@@ -1082,6 +1096,8 @@ final class Workspace {
             self?.overview.revealNeedsYou()
         }
         homeCanvas.onOpenShiftTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
+        // F-02: a plan saved or closed anywhere re-draws Home's hero.
+        DayPlanStore.shared.observe { [weak self] in self?.homeCanvas.setNeedsRender() }
         // The Claude status card's own Refresh. Overview already owns the
         // quota reading and both its readers; this forces it past the
         // freshness window rather than adding a second fetch path.

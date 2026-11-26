@@ -349,21 +349,26 @@ final class VoiceMemoHUDView: NSView {
     private var tasks: [VoiceMemoHUD.State.TaskChoice] = []
     private var progressValue: Double = 0
 
+    /// The recording dot is a circle and the progress bar a capsule, so
+    /// each radius is half its side.
+    static let dotSide: CGFloat = 10
+    static let barHeight: CGFloat = 4
+
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 100))
         wantsLayer = true
         layer?.cornerRadius = HelmMetrics.dSurface
         layer?.masksToBounds = true
         dot.wantsLayer = true
-        dot.layer?.cornerRadius = 5
+        dot.layer?.cornerRadius = Self.dotSide / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = .systemFont(ofSize: HelmType.scaled(14), weight: .semibold)
         detailLabel.font = HelmType.caption()
         detailLabel.preferredMaxLayoutWidth = Self.width - 40
         progress.wantsLayer = true
-        progress.layer?.cornerRadius = 2
+        progress.layer?.cornerRadius = Self.barHeight / 2
         progressFill.wantsLayer = true
-        progressFill.layer?.cornerRadius = 2
+        progressFill.layer?.cornerRadius = Self.barHeight / 2
         progress.translatesAutoresizingMaskIntoConstraints = false
         progressFill.translatesAutoresizingMaskIntoConstraints = false
         progress.addSubview(progressFill)
@@ -389,9 +394,9 @@ final class VoiceMemoHUDView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             widthAnchor.constraint(equalToConstant: Self.width),
-            dot.widthAnchor.constraint(equalToConstant: 10),
-            dot.heightAnchor.constraint(equalToConstant: 10),
-            progress.heightAnchor.constraint(equalToConstant: 4),
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
+            progress.heightAnchor.constraint(equalToConstant: Self.barHeight),
             progress.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40),
             progressFill.leadingAnchor.constraint(equalTo: progress.leadingAnchor),
             progressFill.topAnchor.constraint(equalTo: progress.topAnchor),

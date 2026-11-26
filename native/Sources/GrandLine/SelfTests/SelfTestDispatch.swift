@@ -2249,6 +2249,13 @@ enum SelfTestDispatch {
             exit(ReaderModeSelfTest.run() ? 0 : 1)
         }
 
+        // F-02 of full review 4: plan my day and close it - the groups, the cap,
+        // placing around meetings, drag and resize, the first focus session,
+        // Home's hero, Close the day, the bell's nudges and the store. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_DAY_PLAN_TESTS"] == "1" {
+            exit(DayPlanSelfTest.run() ? 0 : 1)
+        }
+
         // F-15 of full review 4: a page in its own window - the same view moves,
         // the placeholder takes its visibility, it comes back pinned, one window
         // per page, the lock, and the focus timer window. Headless.
