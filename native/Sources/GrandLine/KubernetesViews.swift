@@ -130,6 +130,27 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        loadingRows.translatesAutoresizingMaskIntoConstraints = false
+        loadingRows.isHidden = true
+        addSubview(loadingRows)
+        NSLayoutConstraint.activate([
+            loadingRows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s2),
+            loadingRows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.s2),
+            loadingRows.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
+        ])
+    }
+
+    /// UI-11 of full review 4: skeleton rows while a real read is in flight
+    /// and nothing has been read yet - the one moment they mean "loading".
+    /// The page's idle state, before a feed tab, is its setup steps instead.
+    private let loadingRows = HelmSkeletonList(rows: 4)
+
+    var showsLoading = false {
+        didSet {
+            guard showsLoading != oldValue else { return }
+            loadingRows.isHidden = !showsLoading
+            scroll.isHidden = showsLoading
+        }
     }
 
     /// Replaces the whole table. Columns are rebuilt only when they actually

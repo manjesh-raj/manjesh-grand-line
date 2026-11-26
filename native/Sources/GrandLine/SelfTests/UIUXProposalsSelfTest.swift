@@ -539,17 +539,40 @@ enum UIUXProposalsSelfTest {
 
     // MARK: - S23
 
-    /// Before a feed tab exists the page shows the Pods table's header and
-    /// skeleton rows, naming the namespace; the session card's explanation
-    /// is one line.
+    /// Before a feed tab exists the page shows the Pods table's header,
+    /// naming the namespace; the session card's explanation is one line.
+    /// UI-11 of full review 4: under it, the three setup steps rather than
+    /// skeleton rows, which said "loading" while nothing was. The skeleton
+    /// is the cluster table's, while its first real read is in flight.
     private static func checkKubernetesShowsItsShape(_ ok: inout Bool) {
+        let idle = KubeSetupSteps.make(sessionLabel: "DEV Bastion", connected: true, connectedAt: nil,
+                                       feedTabPicked: false)
+        check(idle.progress == "1 of 3" && idle.steps.map(\.isDone) == [true, false, false]
+                && idle.steps.map(\.isNext) == [false, true, false],
+              "UI-11: a live session with no feed tab reads \(idle.progress), next \(idle.steps.map(\.isNext))", &ok)
+        check(idle.steps.map(\.title) == ["Connect to DEV Bastion", "Log in to the box that has kubectl",
+                                         "Pick the tab this page may type into"],
+              "UI-11: the steps read \(idle.steps.map(\.title))", &ok)
+        let down = KubeSetupSteps.make(sessionLabel: "DEV Bastion", connected: false, connectedAt: nil,
+                                       feedTabPicked: false)
+        check(down.progress == "0 of 3" && down.steps.first?.isNext == true,
+              "UI-11: a session that is not connected starts at step 1 (\(down.progress))", &ok)
+        let picked = KubeSetupSteps.make(sessionLabel: "DEV Bastion", connected: true, connectedAt: nil,
+                                         feedTabPicked: true)
+        check(picked.progress == "3 of 3" && !picked.steps.contains(where: \.isNext),
+              "UI-11: a picked feed tab ticks every step (\(picked.progress))", &ok)
         guard sourcesAvailable else { print("  SKIP: S23, no app sources"); return }
         let page = source("KubernetesController.swift"), render = source("KubernetesController+Render.swift")
-        check(page.contains("HelmSkeletonList(rows: 4)") && page.contains("titleLabel: NSTextField(labelWithString: \"Pods\")"),
-              "S23: the pending table is the Pods header over skeleton rows", &ok)
-        check(render.contains("pendingTablePreview.isHidden = !(hasScope && !ready)"),
-              "S23: the skeleton shows exactly while a scope has no feed tab", &ok)
-        check(render.contains("appears once a feed tab is logged in"), "S23: its header names the namespace", &ok)
+        let views = source("KubernetesViews.swift")
+        check(page.contains("titleLabel: NSTextField(labelWithString: \"Pods\")") && !page.contains("HelmSkeletonList("),
+              "UI-11: the pending Pods card still draws skeleton rows", &ok)
+        check(render.contains("setupSteps.isHidden = !(hasScope && !ready)")
+                && render.contains("pendingTablePreview.isHidden = !(hasScope && !ready)"),
+              "UI-11: the steps and the Pods header show exactly while a scope has no feed tab", &ok)
+        check(views.contains("HelmSkeletonList(rows: 4)")
+                && render.contains("clusterTable.showsLoading = isRefreshingCluster && lastRefreshedAt == nil"),
+              "UI-11: the skeleton is no longer the cluster table's first read", &ok)
+        check(render.contains("namespace show here after step 3"), "S23: its header names the namespace", &ok)
         check(!page.contains("Typing into the feed tab yourself pauses automated commands until it goes quiet again.\")"),
               "S23: the session card's explanation is shorter, keeping the pause warning", &ok)
     }

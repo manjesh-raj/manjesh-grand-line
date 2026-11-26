@@ -21,9 +21,16 @@ extension KubernetesController {
         feedSection.isHidden = !hasScope
         let ready = hasScope && feedTabID != nil
         workArea.isHidden = !ready
-        // S23: the table's shape while the feed tab is still to be picked.
+        // S23: the table's place while the feed tab is still to be picked,
+        // under UI-11's setup steps.
         pendingTablePreview.isHidden = !(hasScope && !ready)
-        pendingTableSubtitle.stringValue = "\(namespace) \u{00B7} appears once a feed tab is logged in"
+        setupSteps.isHidden = !(hasScope && !ready)
+        pendingTableSubtitle.stringValue = "Pods in the \(namespace) namespace show here after step 3."
+        if hasScope, !ready, let hostID = scopeHostID, let session = sessions.session(for: hostID) {
+            setupSteps.configure(KubeSetupSteps.make(sessionLabel: session.label, connected: session.isConnected,
+                                                     connectedAt: session.startedAt, feedTabPicked: feedTabID != nil),
+                                 theme: theme)
+        }
 
         clusterContainer.isHidden = !(ready && pageTab == .cluster)
         tailContainer.isHidden = !(ready && pageTab == .logTail)
@@ -129,9 +136,8 @@ extension KubernetesController {
         guard feedTabID != nil, let bridge else {
             retryFeedButton.isHidden = true
             feedStatusLabel.stringValue =
-                "Pick a tab on \(session.label) for this page to type into, or duplicate one. "
-                + "It must be logged all the way in to the box that has kubectl - that hop is password-gated by policy, so it is one manual login per session, then hands-free. "
-                + "Your other tabs are never touched."
+                // UI-11: the steps under this card say the rest, one line each.
+                "Pick a tab on \(session.label) for this page to type into, or duplicate one."
             return
         }
         let name = feedTabName ?? "a tab"
@@ -211,6 +217,8 @@ extension KubernetesController {
     func renderClusterTable() {
         guard isViewLoaded else { return }
         renderClusterStatus(running: isRefreshingCluster)
+        // UI-11: skeleton rows only while the first real read is in flight.
+        clusterTable.showsLoading = isRefreshingCluster && lastRefreshedAt == nil && clusterMessage == nil
         switch clusterTab {
         case .pods:
             let showsMetrics = pods.contains { $0.cpu != nil }
@@ -373,6 +381,7 @@ extension KubernetesController {
         root.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         sessionCard.applyTheme(theme)
         pendingTablePreview.applyTheme(theme)
+        setupSteps.applyTheme(theme)
         scopeTabs?.applyTheme(theme)
         scopeEmptyState.applyTheme(theme)
         pageTabs.applyTheme(theme)
@@ -503,6 +512,10 @@ extension KubernetesController {
     var debugLogLines: [KubeLogLine] { merger.visibleLines(errorsOnly: errorsOnly) }
     var debugSelectedPods: [String] { selectedPods }
     var debugFeedStatusText: String { isViewLoaded ? feedStatusLabel.stringValue : "" }
+    /// UI-11: the setup steps as drawn, or nil while the card is hidden.
+    var debugSetupSteps: KubeSetupSteps? {
+        isViewLoaded && !setupSteps.isHiddenOrHasHiddenAncestor ? setupSteps.steps : nil
+    }
     var debugRetryVisible: Bool { isViewLoaded && !retryFeedButton.isHidden }
     var debugTailStatusText: String { isViewLoaded ? tailStatusLabel.stringValue : "" }
     var debugClusterStatusText: String { isViewLoaded ? clusterStatusLabel.stringValue : "" }
