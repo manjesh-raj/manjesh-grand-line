@@ -120,6 +120,14 @@ final class Workspace {
     // because a lazy initialiser runs long after `init` has returned.
     let hostStore: HostStore
     let keyStore: SSHKeyStore
+    /// D-03: key and certificate expiry reminders, checked every morning.
+    private(set) lazy var expiryMonitor: ExpiryReminderMonitor = {
+        let monitor = ExpiryReminderMonitor(keys: { [weak self] in self?.keyStore.keys ?? [] },
+                                            hosts: { [weak self] in self?.hostStore.hosts ?? [] },
+                                            shiftStore: shiftStore)
+        monitor.onOpenTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
+        return monitor
+    }()
     let snippetStore: SnippetStore
     let dictationStore: DictationStore
     let commandLibraryStore: CommandLibraryStore
@@ -138,6 +146,7 @@ final class Workspace {
         hostsPanel.onAddOrEdit = { [weak self] host in self?.onPresentHostEditor?(host) }
         hostsPanel.onRunSnippet = { [weak self] snippet in self?.onRunSnippet?(snippet) }
         hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
+        hostsPanel.expiryMonitor = expiryMonitor
         // Hosts is the first migrated page whose *actions* change while it is
         // on screen: §6.4's cluster carries the add action for the tab that is
         // showing, and the three tabs add three different records. Same shape
@@ -828,6 +837,9 @@ final class Workspace {
                                           focusTimer: focusTimer,
                                           docsRunbookStore: docsRunbookStore,
                                           logAnalyzerStore: logAnalyzerStore)
+        // D-03: the morning expiry check. `start()` does nothing in a suite
+        // or a tour, which run a check by hand against fakes.
+        expiryMonitor.start()
         lock.prepareForLock = { [unowned self] in self.prepareForLock() }
         lock.resumeAfterUnlock = { [unowned self] in self.hosts.forEachConsole { $0.resumeAfterUnlock() } }
         content.hostPages = { [unowned self] in Array(self.hosts.hostConsoles.values) }

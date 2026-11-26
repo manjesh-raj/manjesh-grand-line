@@ -2193,6 +2193,13 @@ enum SelfTestDispatch {
         // D-05 of full review 4: the incident's Markdown postmortem draft - the
         // command entry, the draft's facts and prompts, the options, redaction
         // and the card's export panel. Headless. See IncidentExportSelfTest.swift.
+        // D-03 of full review 4: key and certificate expiry reminders - the OpenSSH
+        // certificate reader against ssh-keygen fixtures, the filing rule, the
+        // schedule and the monitor against a fake TLS probe. Headless, no network.
+        if ProcessInfo.processInfo.environment["FM_RUN_EXPIRY_REMINDER_TESTS"] == "1" {
+            exit(ExpiryReminderSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

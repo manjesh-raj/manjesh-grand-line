@@ -38,7 +38,8 @@ extension HostsController {
         collapsed.isActive = true
         // The Hosts row's order: the search, the tab's own reading, then the
         // spacer, so Grid / List sits at the trailing edge on both tabs.
-        for view in [keySearchField, keysTouchID, spacer, keysViewModeControl] as [NSView] {
+        for view in [keySearchField, keysTouchID, spacer, keysCheckButton, keysRemindersButton,
+                     keysViewModeControl] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             keysTopRow.addArrangedSubview(view)
         }
@@ -47,7 +48,7 @@ extension HostsController {
         keysTopRow.spacing = HelmMetrics.s3
         // Gotcha (10): only the search and the spacer flex.
         keysTopRow.distribution = .fill
-        for fixed in [keysTouchID, keysViewModeControl] as [NSView] {
+        for fixed in [keysTouchID, keysCheckButton, keysRemindersButton, keysViewModeControl] as [NSView] {
             fixed.setContentHuggingPriority(.required, for: .horizontal)
             fixed.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -132,7 +133,11 @@ extension HostsController {
             section.singleRow = true
             sections.append(section)
         }
-        sections.append(.init(title: recent.isEmpty ? nil : "All keys", cards: keys.map(keyCard)))
+        let tls = searching ? [] : expiryTLSItems()
+        let titled = !recent.isEmpty || !tls.isEmpty
+        sections.append(.init(title: titled ? "SSH keys and certificates" : nil, cards: keys.map(keyCard)))
+        // D-03: TLS on saved hosts, below the keys.
+        if !tls.isEmpty { sections.append(.init(title: "TLS on saved hosts", cards: tls.map(tlsExpiryCard))) }
         keysGrid.setSections(sections)
         if keys.isEmpty, !keyStore.keys.isEmpty {
             keysGrid.setEmptyState(symbol: "line.3.horizontal.decrease.circle", title: "No matching keys",
@@ -167,14 +172,29 @@ extension HostsController {
         // compares against `ssh-keygen -l`.
         card.subtitleTruncation = .byTruncatingMiddle
         card.chip = (key.type.displayName, "Type: " + key.type.displayName)
+        // D-03: the key's expiry, once a check has read it.
+        let expiry = expiryItem(forKey: key)
+        if let expiry, expiry.kind != .plainKey {
+            card.status = ExpiryWords.status(for: expiry, now: Date(), leadDays: expiryLeadDays)
+        }
         var badges: [HelmCardGrid.Badge] = [
             .init(symbol: "server.rack", text: users.count == 1 ? "1 host" : "\(users.count) hosts",
                   toolTip: users.isEmpty ? "No host uses this key" : "Used by " + users.map(\.label).joined(separator: ", ")),
         ]
         if key.hasPassphrase { badges.append(.init(symbol: "lock.fill", toolTip: "Passphrase in the Keychain")) }
-        if key.certificate?.isEmpty == false { badges.append(.init(symbol: "checkmark.seal", toolTip: "Has a certificate")) }
-        badges.append(.init(symbol: "clock", text: Self.lastUsedText(key.lastUsedAt),
-                            toolTip: key.lastUsedAt.map { "Last used " + Self.relativeText($0) } ?? "Not used to connect yet"))
+        // The expiry status already says there is a certificate.
+        if key.certificate?.isEmpty == false, card.status == nil {
+            badges.append(.init(symbol: "checkmark.seal", toolTip: "Has a certificate"))
+        }
+        if let expiry, expiryTaskFiled(for: expiry) {
+            badges.append(.init(symbol: "checklist", toolTip: "Task filed: a renewal task is on the Tasks board"))
+        }
+        // A card with an expiry status has less room; the expiry outranks
+        // when the key was last used, which the detail panel still shows.
+        if card.status == nil {
+            badges.append(.init(symbol: "clock", text: Self.lastUsedText(key.lastUsedAt),
+                                toolTip: key.lastUsedAt.map { "Last used " + Self.relativeText($0) } ?? "Not used to connect yet"))
+        }
         card.badges = badges
         card.actions = [
             .init(symbol: "doc.on.doc", label: "Copy \(key.label)'s public key") { copyToPasteboard(key.publicKey) },

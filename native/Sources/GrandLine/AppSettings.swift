@@ -23,6 +23,9 @@ final class AppSettings {
     private let defaults: UserDefaults
 
     private enum Keys {
+        static let expiryLeadDays = "fm.expiry.leadDays"
+        static let expiryChecksTLS = "fm.expiry.checksTLS"
+        static let expiryProjectID = "fm.expiry.projectID"
         static let fontSize = "fm.fontSize"
         static let uiTextScale = "fm.uiTextScale"
         static let defaultShellCwd = "fm.defaultShellCwd"
@@ -403,6 +406,26 @@ final class AppSettings {
     /// default: the grid is one flat run of cards, the way the Keys grid is,
     /// and each card names its group. An unset key reads as off, so nothing
     /// a captain saved before this existed changes what they see.
+    /// D-03: how many days before an expiry its task is filed. Unset reads
+    /// as 0, which the monitor treats as the default 14.
+    var expiryLeadDays: Int {
+        get { defaults.integer(forKey: Keys.expiryLeadDays) }
+        set { defaults.set(newValue, forKey: Keys.expiryLeadDays) }
+    }
+
+    /// D-03: probe saved hosts on 443 for their TLS certificate's expiry. On
+    /// by default (the captain's product call), so unset reads as on.
+    var expiryChecksTLS: Bool {
+        get { defaults.object(forKey: Keys.expiryChecksTLS) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Keys.expiryChecksTLS) }
+    }
+
+    /// D-03: the project expiry tasks are filed in, or none.
+    var expiryProjectID: String? {
+        get { defaults.string(forKey: Keys.expiryProjectID) }
+        set { defaults.set(newValue, forKey: Keys.expiryProjectID) }
+    }
+
     var hostsGrouped: Bool {
         get { defaults.bool(forKey: Keys.hostsGrouped) }
         set { defaults.set(newValue, forKey: Keys.hostsGrouped) }

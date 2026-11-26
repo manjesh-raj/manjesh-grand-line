@@ -102,8 +102,11 @@ extension HostsController {
                                 label: "\(ring.inUse)/\(ring.total)", caption: words.ringCaption,
                                 spoken: "\(ring.inUse) of \(ring.total) saved keys used by a host", state: .ok)
         }
+        // D-03: once an expiry check has run, the hero leads with it.
+        let expiry = expiryHeroWords()
         let header = HelmHeroColumn.Header(symbol: "key.fill", kicker: "Keys",
-                                           headline: words.headline, body: words.body, ring: ring)
+                                           headline: expiry?.headline ?? words.headline,
+                                           body: expiry?.body ?? words.body, ring: expiry?.ring ?? ring)
 
         heroRecentRuns = []
         func pill(title: String, symbol: String, toolTip: String, run: @escaping () -> Void) -> HelmButton {
@@ -144,7 +147,9 @@ extension HostsController {
 
         column.configure(
             header: header,
-            sections: [
+            sections: (expiryHeroRows().isEmpty ? [] : [
+                HelmHeroColumn.Section(title: "Next to expire", trailing: nil, views: expiryHeroRows()),
+            ]) + [
                 .init(title: "Recent keys", trailing: recent.isEmpty ? nil : "\(recent.count)", views: recentRows),
                 .init(title: "Add a key", trailing: nil, views: [addRow]),
             ],

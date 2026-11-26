@@ -380,6 +380,19 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
     /// Touch ID's state in the Keys row: it is a fact about where keys are
     /// kept.
     private(set) lazy var keysTouchID = HelmStatusPill(style: .dotWord)
+    /// D-03: the expiry check the workspace owns. Setting it subscribes the
+    /// Keys tab to its results.
+    var expiryMonitor: ExpiryReminderMonitor? {
+        didSet { expiryMonitor?.observe { [weak self] in self?.expiryResultsChanged() } }
+    }
+    /// D-03: "Check again" and the reminder settings, in the Keys row.
+    lazy var keysCheckButton = HelmButton(title: "Check expiry", variant: .quiet, size: .small,
+                                          symbol: "arrow.clockwise", target: self,
+                                          action: #selector(checkExpiryTapped))
+    lazy var keysRemindersButton = HelmButton(title: "Reminders", variant: .quiet, size: .small,
+                                              symbol: "bell.badge", target: self,
+                                              action: #selector(expiryRemindersTapped(_:)))
+    let expiryRemindersPopover = NSPopover()
     /// The selected record's name, or `nil` with nothing selected - what
     /// `inspectorContent` hands the shell.
     private var inspectorTitle: String?
