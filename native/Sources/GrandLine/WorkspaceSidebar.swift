@@ -371,7 +371,9 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         // UX-28: the fade is a mask on the list, so the gradient under it
         // shows through, whatever the palette.
         scrollView.wantsLayer = true
-        listFade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            listFade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        }
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listMoved),
                                                name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
