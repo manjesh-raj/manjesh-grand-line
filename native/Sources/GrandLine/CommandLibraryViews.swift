@@ -1921,7 +1921,7 @@ final class CommandLibraryPanelRow: HoverHighlightView {
         let lines = NSStackView(views: [row, subtitleLabel])
         lines.orientation = .vertical
         lines.alignment = .leading
-        lines.spacing = 1
+        lines.spacing = HelmMetrics.s0
         lines.detachesHiddenViews = true
         lines.translatesAutoresizingMaskIntoConstraints = false
         addSubview(lines)

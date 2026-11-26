@@ -354,6 +354,9 @@ final class ShiftReviewWalkCard: NSView {
         case finished(summary: String, saved: Bool)
     }
 
+    /// The progress bar's thickness; its ends are fully round.
+    static let trackHeight: CGFloat = 6
+
     var onDone: (() -> Void)?
     var onReschedule: ((NSView) -> Void)?
     var onDrop: (() -> Void)?
@@ -405,7 +408,7 @@ final class ShiftReviewWalkCard: NSView {
             countLabel.trailingAnchor.constraint(equalTo: countChip.trailingAnchor, constant: -9),
             countLabel.topAnchor.constraint(equalTo: countChip.topAnchor, constant: 3),
             countLabel.bottomAnchor.constraint(equalTo: countChip.bottomAnchor, constant: -3),
-            track.heightAnchor.constraint(equalToConstant: 6),
+            track.heightAnchor.constraint(equalToConstant: Self.trackHeight),
             fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
             fill.topAnchor.constraint(equalTo: track.topAnchor),
             fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
@@ -521,9 +524,9 @@ final class ShiftReviewWalkCard: NSView {
         countChip.layer?.cornerRadius = HelmMetrics.rChip + 3
         countChip.layer?.backgroundColor = HelmField.fill(theme).cgColor
         countLabel.textColor = ink
-        track.layer?.cornerRadius = 3
+        track.layer?.cornerRadius = Self.trackHeight / 2
         track.layer?.backgroundColor = HelmField.fill(theme).cgColor
-        fill.layer?.cornerRadius = 3
+        fill.layer?.cornerRadius = Self.trackHeight / 2
         fill.layer?.backgroundColor = accent.cgColor
     }
 

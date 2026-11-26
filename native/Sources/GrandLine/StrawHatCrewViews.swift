@@ -238,7 +238,7 @@ final class StrawHatCrewStrip: NSView {
             let column = NSStackView(views: [tile, name, role])
             column.orientation = .vertical
             column.alignment = .centerX
-            column.spacing = 1
+            column.spacing = HelmMetrics.s0
             column.setCustomSpacing(HelmMetrics.s1, after: tile)
             column.setAccessibilityElement(true)
             column.setAccessibilityRole(.group)

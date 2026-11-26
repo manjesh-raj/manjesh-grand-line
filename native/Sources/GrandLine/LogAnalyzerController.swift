@@ -194,6 +194,28 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// The analysis tab's right-hand column, which the sidebar layout opens
     /// with the summary cards, the patterns and the likely cause.
     private var analysisRightColumn: NSStackView!
+    /// UX-16: the analysis tab's own stack: the cause's hero, the evidence
+    /// beside the patterns, the input, then the rest.
+    private var analysisSplit: NSStackView!
+    private var rawPaneProportion: NSLayoutConstraint?
+    private var rawPaneHeight: NSLayoutConstraint?
+    /// UX-16: the likely cause as the tab's hero.
+    let causeHero = HelmHeroColumn()
+    private var evidenceRow: NSStackView?
+    /// The input folds to `foldedLines` once there is an analysis to read.
+    private var inputFolded = true
+    static let foldedLines = 5
+    private lazy var showAllButton: HelmButton = {
+        let button = HelmButton(title: "Show all", variant: .quiet, size: .small, target: self, action: #selector(showAllTapped))
+        button.toolTip = "Show every line of the input"
+        return button
+    }()
+    private lazy var heroCopyButton: HelmButton = {
+        let button = HelmButton(title: "Copy", variant: .secondary, size: .small, target: self, action: #selector(copyRootCause))
+        button.toolTip = "Copy the likely cause"
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        return button
+    }()
     /// The probable root cause card's body, which takes the follow-up
     /// actions in the sidebar layout.
     private var rootCauseBody: NSStackView!
@@ -826,9 +848,9 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
             rawPane.topAnchor.constraint(equalTo: paneHost.topAnchor, constant: 0),
             rawPane.bottomAnchor.constraint(equalTo: paneHost.bottomAnchor, constant: 0),
         ]
-        NSLayoutConstraint.activate(rawPaneInsets + [
-            paneHost.heightAnchor.constraint(equalToConstant: 620),
-        ])
+        let height = paneHost.heightAnchor.constraint(equalToConstant: 620)
+        rawPaneHeight = height
+        NSLayoutConstraint.activate(rawPaneInsets + [height])
         applyRawPaneInsets()
         rawPaneCard.setBody(paneHost, insets: NSEdgeInsets())
         cards.append(rawPaneCard)
@@ -874,6 +896,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         }
 
         let split = NSStackView(views: [rawPaneCard, rightColumn])
+        analysisSplit = split
         split.orientation = .horizontal
         split.distribution = .fill
         split.alignment = .top
@@ -890,6 +913,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
                                                             constant: -split.spacing / 2)
         proportion.priority = NSLayoutConstraint.Priority(499)
         proportion.isActive = true
+        rawPaneProportion = proportion
         rawPaneCard.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         rightColumn.setHuggingPriority(.defaultLow, for: .horizontal)
         return split
@@ -2215,6 +2239,7 @@ extension LogAnalyzerController {
         renderComparePickers()
         renderAINotice()
         renderSidebarSummary()
+        renderCauseHero()
         applyTheme()
         onDrillSubtitleChanged?()
     }
@@ -3001,29 +3026,133 @@ extension LogAnalyzerController: WorkspacePrimaryActionProviding {
 
         // The right column opens with the summary, the patterns and the
         // likely cause.
-        let metrics = metricsStrip
         // The table's own card, under a header - one surface, as Keys' is.
         _ = patternsTable.card.setHeader(symbol: "square.stack.3d.up", tint: .neutral, title: "Patterns",
                                          subtitle: "Repeated lines, collapsed into one pattern each")
-        for (index, view) in [metrics, patternsTable.card as NSView].enumerated() {
-            analysisRightColumn.insertArrangedSubview(view, at: index)
-            view.widthAnchor.constraint(equalTo: analysisRightColumn.widthAnchor).isActive = true
-        }
+        // UX-16: the answer first. The tab is one column: the likely cause as
+        // a hero, its evidence beside the patterns, the input folded to five
+        // lines, then the summary, findings, next steps and commands.
         analysisRightColumn.removeArrangedSubview(rootCauseCard)
-        analysisRightColumn.insertArrangedSubview(rootCauseCard, at: 2)
-        _ = rootCauseCard.setHeader(symbol: "sparkles", tint: .accent, title: "Likely cause",
-                                    actions: [rootCauseConfidencePill, rootCauseCopyButton])
+        rootCauseCard.removeFromSuperview()
+        let row = NSStackView(views: [rootCauseCard, patternsTable.card])
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = HelmMetrics.s3
+        row.translatesAutoresizingMaskIntoConstraints = false
+        evidenceRow = row
+        // The evidence card is as tall as the patterns beside it, with its
+        // sections packed at the top: the slack goes to a spacer at the foot
+        // rather than between the sections (gotcha (12): stack priorities).
+        rootCauseBody.distribution = .fill
+        for stack in [evidenceStack, missingEvidenceStack] {
+            stack.setHuggingPriority(.required, for: .vertical)
+        }
+        let foot = NSView()
+        foot.translatesAutoresizingMaskIntoConstraints = false
+        foot.setContentHuggingPriority(.init(1), for: .vertical)
+        rootCauseBody.addArrangedSubview(foot)
+        rawPaneProportion?.isActive = false
+        analysisSplit.orientation = .vertical
+        analysisSplit.alignment = .leading
+        analysisSplit.removeArrangedSubview(rawPaneCard)
+        analysisSplit.removeArrangedSubview(analysisRightColumn)
+        causeHero.setArrangement(.band)
+        causeHero.translatesAutoresizingMaskIntoConstraints = false
+        causeHero.setAccessibilityLabel("Likely cause")
+        for view in [causeHero, row, rawPaneCard as NSView, analysisRightColumn as NSView] {
+            analysisSplit.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: analysisSplit.widthAnchor).isActive = true
+        }
+        investigateButton.heroProminent = true
+        rawPaneCard.setHeader(symbol: "doc.plaintext", tint: .neutral,
+                              titleLabel: NSTextField(labelWithString: "Input"),
+                              subtitleLabel: inputSummaryLabel,
+                              actions: [showAllButton, wrapLinesButton, inputClearButton])
 
-        // The follow-up actions go under the likely cause they act on.
+        // The follow-up actions go under the likely cause they act on, and
+        // onto its hero once there is one (`placeCauseActions`).
         contentStack.removeArrangedSubview(actionBar)
         actionBar.removeFromSuperview()
-        rootCauseBody.addArrangedSubview(actionBar)
-        actionBar.widthAnchor.constraint(equalTo: rootCauseBody.widthAnchor).isActive = true
+        placeCauseActions(onHero: false)
 
         renderInvestigation()
     }
 
     var workspacePrimaryAction: NSView? { analyzeButton }
+
+    /// The actions on the hero (with its Copy), or under the likely cause
+    /// in its card when there is no cause to lead with.
+    fileprivate func placeCauseActions(onHero: Bool) {
+        let onHeroNow = actionBar.isDescendant(of: causeHero)
+        guard actionBar.superview == nil || onHeroNow != onHero else { return }
+        actionBar.removeFromSuperview()
+        if onHero {
+            if heroCopyButton.superview == nil { actionBar.insertArrangedSubview(heroCopyButton, at: 2) }
+        } else {
+            if actionBar.arrangedSubviews.contains(heroCopyButton) {
+                actionBar.removeArrangedSubview(heroCopyButton)
+                heroCopyButton.removeFromSuperview()
+            }
+            func clearInk(_ view: NSView) {
+                if let button = view as? HelmButton { button.heroInk = nil; button.heroSelection = nil }
+                view.subviews.forEach(clearInk)
+            }
+            clearInk(actionBar)
+            rootCauseBody.addArrangedSubview(actionBar)
+            actionBar.widthAnchor.constraint(equalTo: rootCauseBody.widthAnchor).isActive = true
+        }
+    }
+
+    /// UX-16: the hero, from the analysis's likely cause; the evidence card
+    /// under it. With no cause yet the hero stands down and the card leads
+    /// with the cause's own words, as it always did.
+    fileprivate func renderCauseHero() {
+        guard causeHero.superview != nil else { return }
+        let root = investigation.analysis?.ai?.rootCause
+        causeHero.isHidden = root == nil
+        rootCauseSummaryLabel.isHidden = root != nil
+        rootCauseExplanationLabel.isHidden = root != nil || rootCauseExplanationLabel.stringValue.isEmpty
+        if let root {
+            let lines = investigation.evidence.reduce(0) { $0 + $1.lineCount }
+            _ = rootCauseCard.setHeader(symbol: "checkmark.seal", tint: .good, title: "Evidence", actions: [])
+            placeCauseActions(onHero: true)
+            causeHero.configure(header: .init(symbol: "sparkles",
+                                              kicker: "Likely cause \u{00B7} \(lines == 1 ? "1 line" : "\(lines.formatted()) lines") analysed",
+                                              headline: root.summary,
+                                              body: root.explanation.isEmpty ? nil : root.explanation,
+                                              status: .init(text: "\(root.confidence.displayName.prefix(1).uppercased() + root.confidence.displayName.dropFirst()) confidence",
+                                                            tint: root.confidence.tint)),
+                                sections: [], foot: [actionBar], tone: .init(colour: .themeAccent))
+        } else {
+            _ = rootCauseCard.setHeader(symbol: "sparkles", tint: .accent, title: "Likely cause",
+                                        actions: [rootCauseConfidencePill, rootCauseCopyButton])
+            causeHero.configure(header: .init(symbol: "sparkles", kicker: "Likely cause", headline: "", body: nil),
+                                sections: [], foot: [], tone: .init(colour: .themeAccent))
+            placeCauseActions(onHero: false)
+        }
+        applyInputFold()
+    }
+
+    /// Five lines of the input once there is an analysis to read; all of it
+    /// before, and whenever the captain asks.
+    fileprivate func applyInputFold() {
+        let lines = investigation.evidence.reduce(0) { $0 + $1.lineCount + 1 }
+        let folds = inputFolded && investigation.analysis != nil && lines > Self.foldedLines
+        let row = LogRawPaneView.rowHeight + rawPane.tableView.intercellSpacing.height
+        let inset: CGFloat = theme.isDaylight ? 28 : 0
+        // One row more than the lines shown: the table's own top inset and
+        // the horizontal scroller take about that.
+        rawPaneHeight?.constant = folds ? ceil(CGFloat(Self.foldedLines + 1) * row) + 6 + inset : 620
+        showAllButton.isHidden = investigation.analysis == nil || lines <= Self.foldedLines
+        showAllButton.title = folds ? "Show all" : "Show less"
+        showAllButton.toolTip = folds ? "Show every line of the input" : "Fold the input to its first \(Self.foldedLines) lines"
+    }
+
+    @objc fileprivate func showAllTapped() {
+        inputFolded.toggle()
+        applyInputFold()
+    }
 
     /// "Log Analyzer · 1,284 lines", as the prototype's header reads, with
     /// the state of the analysis after it.
@@ -3061,9 +3190,6 @@ extension LogAnalyzerController: WorkspacePrimaryActionProviding {
             patternsTable.setRows([])
             return
         }
-        let counts = severityCountsForCurrentAnalysis(analysis)
-        metricsStrip.configure(Self.metricItems(errors: counts.errors, warnings: counts.warnings,
-                                                patterns: analysis.local.groups.count), theme: theme)
         var rows = analysis.local.groups.map { group -> HelmDataTable.Row in
             var row = HelmDataTable.Row.record(group.pattern)
             row.cells = [
@@ -3118,6 +3244,9 @@ extension LogAnalyzerController {
     var debugPatternsTable: HelmDataTable { patternsTable }
     var debugAnalyzeButton: HelmButton { analyzeButton }
     var debugActionBarIsUnderTheLikelyCause: Bool { actionBar.superview === rootCauseBody }
+    var debugActionBarIsOnTheHero: Bool { actionBar.isDescendant(of: causeHero) }
+    var debugRawPaneHeight: CGFloat { rawPaneHeight?.constant ?? 0 }
+    var debugShowAllButton: HelmButton { showAllButton }
     var debugInputSummary: String { inputSummaryLabel.stringValue }
     var debugInputControls: [NSView] { inputControls.arrangedSubviews }
     var debugHintIsShown: Bool { !inputHintLabel.isHidden }
