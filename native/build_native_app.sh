@@ -357,6 +357,42 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>Dictation uses your microphone to capture speech while you hold Right Option, so it can transcribe and paste it at your cursor.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Dictation uses Speech Recognition (on-device when available) to turn what you say into text.</string>
+    <!-- F-10: Services > Send to Grand Line. Each NSMessage is a method on
+         GrandLineServicesProvider (GrandLineServicesMenu.swift), and
+         GrandLineServicesSelfTest checks the two lists agree. -->
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict><key>default</key><string>Send to Grand Line…</string></dict>
+            <key>NSMessage</key>
+            <string>sendToGrandLine</string>
+            <key>NSPortName</key>
+            <string>Grand Line</string>
+            <key>NSSendTypes</key>
+            <array><string>public.utf8-plain-text</string><string>public.url</string></array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict><key>default</key><string>New Grand Line Task from Selection</string></dict>
+            <key>NSMessage</key>
+            <string>newTaskFromSelection</string>
+            <key>NSPortName</key>
+            <string>Grand Line</string>
+            <key>NSSendTypes</key>
+            <array><string>public.utf8-plain-text</string></array>
+        </dict>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict><key>default</key><string>Add Page to Grand Line Reading List</string></dict>
+            <key>NSMessage</key>
+            <string>addPageToReadingList</string>
+            <key>NSPortName</key>
+            <string>Grand Line</string>
+            <key>NSSendTypes</key>
+            <array><string>public.url</string><string>public.utf8-plain-text</string></array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST

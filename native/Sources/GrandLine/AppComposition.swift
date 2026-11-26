@@ -126,6 +126,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return grab
     }()
 
+    /// F-10: the Services menu's provider. Files through the capture filer.
+    lazy var servicesProvider: GrandLineServicesProvider = {
+        let provider = GrandLineServicesProvider(filer: appShell.workspace.makeCaptureFiler())
+        provider.onUnlock = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.appShell.view.window?.makeKeyAndOrderFront(nil)
+        }
+        return provider
+    }()
+
     /// F-06: Shift > Grab Text from Screen.
     @objc func grabTextFromScreen() { screenTextGrab.start() }
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
@@ -1061,6 +1071,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // off the launch path (GL-12).
         spotlightIndexer.start()
         GrandLineServices.shared.spotlightIndexer = spotlightIndexer
+        // F-10: Services > Send to Grand Line. The menu items themselves are
+        // Info.plist's `NSServices` (build_native_app.sh).
+        if !ProcessMode.current.isIsolated {
+            NSApp.servicesProvider = servicesProvider
+            NSUpdateDynamicServices()
+        }
     }
 
     /// Review #3's UX13: the first-run welcome sheet.

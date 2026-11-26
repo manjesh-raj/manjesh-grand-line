@@ -12,6 +12,7 @@
 //     ux expiry panel <name>          D-03: the reminder settings popover
 //     ux spotlight <name>             F-04: Settings' "Show in Spotlight" section, alone
 //     ux grabtext <copied|nothing|locked> <name>   F-06: the result card
+//     ux sendto <open|locked> <name>  F-10: the Services filing panel
 //
 // GL-27: debug builds only.
 
@@ -21,7 +22,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -32,6 +33,14 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "sendto":
+            guard let file = rest.dropFirst().first else { return "ux sendto FAILED - want a state and a name" }
+            let view = SendToGrandLineView()
+            let selection = ServiceSelection(text: GrandLineServicesMenuSelfTest.hpa, url: GrandLineServicesMenuSelfTest.page,
+                                             sourceApp: "Safari")
+            view.configure(selection, locked: name == "locked", theme: ThemeManager.shared.theme)
+            view.layoutSubtreeIfNeeded()
+            return done(renderFixed(view, size: view.fittingSize, to: url(file)), file)
         case "grabtext":
             guard let file = rest.dropFirst().first else { return "ux grabtext FAILED - want a state and a name" }
             let states: [String: ScreenTextGrab.State] = [

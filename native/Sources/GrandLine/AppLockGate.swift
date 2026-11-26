@@ -307,6 +307,9 @@ enum AppLockedSurface {
     /// F-06: grab text from the screen. The system crosshair draws over the
     /// lock screen, so a grab is refused before it starts while locked.
     case grabText
+    /// F-10: the Services menu's "Send to Grand Line" items, which file the
+    /// captain's data while another app is frontmost.
+    case servicesMenu
 }
 
 final class AppLockGate {

@@ -2214,6 +2214,13 @@ enum SelfTestDispatch {
             exit(ScreenTextGrabSelfTest.run() ? 0 : 1)
         }
 
+        // F-10 of full review 4: Services > Send to Grand Line - the selection, the
+        // drafts, the provider's filing and lock refusal, Info.plist's NSServices
+        // against the provider's selectors, and the filing panel. Headless.
+        if ProcessInfo.processInfo.environment["FM_RUN_SERVICES_MENU_TESTS"] == "1" {
+            exit(GrandLineServicesMenuSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }
