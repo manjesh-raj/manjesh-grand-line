@@ -111,6 +111,7 @@ enum HelmContrastSelfTest {
         checkGradientTileRecipe(&ok)
         checkTextSelectionContrast(&ok)
         checkTerminalCard(&ok)
+        checkEveryPopoverHeroHeaderSubtitle(&ok)
         print(ok ? "== contrast: PASS ==" : "== contrast: FAIL ==")
         return ok
     }

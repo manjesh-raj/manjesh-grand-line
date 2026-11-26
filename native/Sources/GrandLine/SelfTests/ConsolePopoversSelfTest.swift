@@ -220,7 +220,8 @@ enum ConsolePopoversSelfTest {
                 || usage.debugRows.first?.debugDetail.hasPrefix("Resets in 2h 30m") == true,
               "the Session row reads \(usage.debugRows.first?.debugDetail ?? "nothing")", &ok)
         check(!usage.debugWarningVisible && !usage.debugErrorVisible, "a healthy reading shows a warning or an error", &ok)
-        let palette = HelmHeroSurface.palette(for: theme)
+        // The palette the header painted: the quiet-ink one since review 4's A-01.
+        let palette = usage.debugHeroHeader.palette ?? HelmHeroSurface.palette(for: theme)
         let ink = HelmContrast.color(palette.ink)
         check(close(color(usage.debugRings.first?.gauge.debugArcColor), ink),
               "a comfortable ring's arc is not the hero ink", &ok)
@@ -408,8 +409,7 @@ enum ConsolePopoversSelfTest {
                 HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: HelmMetrics.rPanel,
                                           daylightRadius: HelmMetrics.rPanel)
                 card.layer?.masksToBounds = true
-                let hero = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white,
-                                             insets: NSEdgeInsets(top: 12, left: 12, bottom: 13, right: 12))
+                let hero = ConsoleController.makeSRELeadHero()
                 hero.set(title: "SRE Lead", subtitle: "DEV Bastion \u{00B7} read-only kubectl")
                 hero.applyTheme(theme)
                 let pill = HelmStatusPill()

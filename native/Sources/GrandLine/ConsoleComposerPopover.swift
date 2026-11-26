@@ -218,7 +218,8 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
     }
     private(set) var phase: Phase = .idle
 
-    private let header = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white)
+    private let header = PopoverHeroHeader(symbol: "sparkles", tileStyle: .white,
+                                           quietInk: HelmHeroColumn.quietInkAlpha)
 
     private var targetTabName: String?
 
@@ -747,6 +748,7 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
     }
     func debugClickCopy() { copyButton.performClick(nil) }
     var debugIntentTextView: NSTextView { intentTextView }
+    var debugHeroHeader: PopoverHeroHeader { header }
     #endif
 }
 
@@ -804,6 +806,7 @@ extension ConsoleComposerController {
     func debugClickCopy() { content.debugClickCopy() }
     func debugApplyTheme(_ theme: HelmTheme) { content.applyTheme(theme) }
     var debugIntentTextView: NSTextView { content.debugIntentTextView }
+    var debugHeroHeader: PopoverHeroHeader { content.debugHeroHeader }
 }
 
 /// The states a suite or a render can put the Compose popover in.
