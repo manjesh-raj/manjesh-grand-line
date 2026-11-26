@@ -23,6 +23,7 @@ enum ReviewFourUXSelfTest {
         checkSettingsStaysInReach(&ok)
         checkHomeHealthIsAHeroCard(&ok)
         checkUpdatesGroupByState(&ok)
+        checkTheWelcomeShowsEachSidebar(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -192,6 +193,33 @@ enum ReviewFourUXSelfTest {
                 && UpdatesGroup.actionTitle(.upToDate, count: 3, setupName: "x") == nil
                 && UpdatesGroup.actionTitle(.notChecked, count: 3, setupName: "x") == nil,
               "UX-22: the group actions are wrong", &ok)
+    }
+
+    // MARK: UX-24
+
+    /// Each profile's card pictures the sidebar it gives, every listed module
+    /// once in the sidebar's order, and the step's words are on the gradient.
+    private static func checkTheWelcomeShowsEachSidebar(_ ok: inout Bool) {
+        for profile in WorkspaceProfile.allCases {
+            let lines = WelcomeSheetController.sidebarPreviewLines(for: profile)
+            let names = lines.flatMap { $0.components(separatedBy: " \u{00B7} ") }
+            let listed = WorkspaceSidebarModel.listedModules(hidden: profile.hiddenModules).map(\.title)
+            check(names == listed && lines.first == "Home"
+                    && lines.allSatisfy { $0.components(separatedBy: " \u{00B7} ").count <= WelcomeSheetController.previewPerLine },
+                  "UX-24: \(profile.title)'s preview reads \(lines), want \(listed)", &ok)
+        }
+        autoreleasepool {
+            let sheet = WelcomeSheetController()
+            sheet.loadView()
+            sheet.view.layoutSubtreeIfNeeded()
+            func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+                view.subviews.flatMap { ($0 as? T).map { [$0] } ?? [] + all(type, in: $0) }
+            }
+            let cards = all(HelmChoiceCard.self, in: sheet.view)
+            check(cards.count == WorkspaceProfile.allCases.count && cards.allSatisfy { $0.accessory is WelcomeSidebarPreview },
+                  "UX-24: a profile card has no sidebar preview", &ok)
+            check(!all(HelmHeroSurface.self, in: sheet.view).isEmpty, "UX-24: the welcome sheet has no hero head", &ok)
+        }
     }
 }
 

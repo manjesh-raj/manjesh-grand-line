@@ -116,6 +116,12 @@ final class WelcomeSheetController: NSViewController {
     private let profileStack = NSStackView()
     /// S25: equal-weight choice cards, the description inside each.
     private var profileCards: [(profile: WorkspaceProfile, card: HelmChoiceCard)] = []
+    /// UX-24: the choice cards' sidebar pictures.
+    private var previews: [WelcomeSidebarPreview] = []
+    /// UX-24: the step's words on the hero gradient, as the rest of the app
+    /// opens its pages.
+    private let head = NSView()
+    private let headSurface = HelmHeroSurface()
     /// The sheet's width; its height comes from its tallest step.
     static let sheetWidth: CGFloat = 560
     private let commandWell = NSTextField(labelWithString: "")
@@ -182,12 +188,37 @@ final class WelcomeSheetController: NSViewController {
         footer.spacing = HelmMetrics.s2
         footer.translatesAutoresizingMaskIntoConstraints = false
 
-        let column = NSStackView(views: [stepLabel, titleLabel, blurbLabel, bodyContainer])
+        // UX-24: the kicker, the question and its line on the gradient.
+        head.translatesAutoresizingMaskIntoConstraints = false
+        head.wantsLayer = true
+        head.layer?.cornerRadius = HelmMetrics.rCard
+        head.layer?.masksToBounds = true
+        headSurface.translatesAutoresizingMaskIntoConstraints = false
+        head.addSubview(headSurface)
+        let words = NSStackView(views: [stepLabel, titleLabel, blurbLabel])
+        words.orientation = .vertical
+        words.alignment = .leading
+        words.spacing = HelmMetrics.s1 + 2
+        words.translatesAutoresizingMaskIntoConstraints = false
+        head.addSubview(words)
+        let headInset = HelmMetrics.s4
+        NSLayoutConstraint.activate([
+            headSurface.leadingAnchor.constraint(equalTo: head.leadingAnchor),
+            headSurface.trailingAnchor.constraint(equalTo: head.trailingAnchor),
+            headSurface.topAnchor.constraint(equalTo: head.topAnchor),
+            headSurface.bottomAnchor.constraint(equalTo: head.bottomAnchor),
+            words.leadingAnchor.constraint(equalTo: head.leadingAnchor, constant: headInset),
+            words.trailingAnchor.constraint(equalTo: head.trailingAnchor, constant: -headInset),
+            words.topAnchor.constraint(equalTo: head.topAnchor, constant: headInset),
+            words.bottomAnchor.constraint(equalTo: head.bottomAnchor, constant: -headInset),
+            blurbLabel.widthAnchor.constraint(equalTo: words.widthAnchor),
+        ])
+        let column = NSStackView(views: [head, bodyContainer])
         column.orientation = .vertical
         column.alignment = .leading
-        column.spacing = HelmMetrics.s3
+        column.spacing = HelmMetrics.s4
         column.translatesAutoresizingMaskIntoConstraints = false
-        blurbLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        head.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         bodyContainer.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
 
         root.addSubview(column)
@@ -318,6 +349,10 @@ final class WelcomeSheetController: NSViewController {
         for profile in WorkspaceProfile.allCases {
             let card = HelmChoiceCard(title: profile.title, body: profile.summary)
             card.onPick = { [weak self] in self?.profilePicked(profile) }
+            // UX-24: each choice shows the sidebar it produces.
+            let preview = WelcomeSidebarPreview(lines: Self.sidebarPreviewLines(for: profile))
+            card.accessory = preview
+            previews.append(preview)
             profileStack.addArrangedSubview(card)
             profileCards.append((profile, card))
         }
@@ -371,9 +406,14 @@ final class WelcomeSheetController: NSViewController {
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.wantsLayer = true
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        blurbLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        stepLabel.textColor = HelmField.mutedInk(theme)
+        // UX-24: the head's words in the hero's ink.
+        let palette = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
+        headSurface.apply(palette)
+        let ink = HelmContrast.color(palette.ink)
+        titleLabel.textColor = ink
+        blurbLabel.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
+        stepLabel.textColor = ink.withAlphaComponent(HelmHeroColumn.quietInkAlpha)
+        for preview in previews { preview.apply(palette) }
         commandWell.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         HelmField.applySunken(to: commandBox, theme: theme)
         // The chosen palette and the chosen profile read as chosen.
@@ -392,6 +432,24 @@ final class WelcomeSheetController: NSViewController {
     deinit {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
+
+    /// UX-24: the sidebar a profile produces, as the preview's lines: Home,
+    /// then each group's modules, up to three to a line, in the sidebar's
+    /// own order. Settings is the sidebar's foot (UX-28), so it ends the
+    /// last line. Pure, so CI's blocking lane asserts it.
+    static func sidebarPreviewLines(for profile: WorkspaceProfile) -> [String] {
+        let hidden = profile.hiddenModules
+        var lines = [WorkspaceModule.home.title]
+        for group in WorkspaceGroup.allCases {
+            let titles = WorkspaceSidebarModel.modules(in: group, hidden: hidden).map(\.title)
+            for start in stride(from: 0, to: titles.count, by: Self.previewPerLine) {
+                lines.append(titles[start..<min(start + Self.previewPerLine, titles.count)].joined(separator: " \u{00B7} "))
+            }
+        }
+        return lines
+    }
+
+    static let previewPerLine = 3
 
     #if FM_SELFTESTS
     var debugStepIndex: Int { stepIndex }
@@ -413,5 +471,88 @@ final class WelcomeSheetController: NSViewController {
     var debugBackIsHidden: Bool { backButton.isHidden }
     var debugCommandWellIsHidden: Bool { commandBox.isHidden }
     var debugThemeGridIsHidden: Bool { themeGrid.isHidden }
+    #endif
+}
+
+/// UX-24: a choice card's picture of the sidebar it produces - the sidebar's
+/// own gradient and ink, one line per row, a hairline between them.
+final class WelcomeSidebarPreview: NSView {
+    private let surface = HelmHeroSurface()
+    private let stack = NSStackView()
+    private var labels: [NSTextField] = []
+    private var rules: [NSView] = []
+    let lines: [String]
+
+    init(lines: [String]) {
+        self.lines = lines
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = HelmMetrics.rRow
+        layer?.masksToBounds = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("The sidebar: " + lines.joined(separator: ", "))
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(surface)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                let rule = NSView()
+                rule.wantsLayer = true
+                rule.translatesAutoresizingMaskIntoConstraints = false
+                rule.heightAnchor.constraint(equalToConstant: 1).isActive = true
+                stack.addArrangedSubview(rule)
+                rule.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+                rules.append(rule)
+            }
+            let label = NSTextField(labelWithString: line)
+            label.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.translatesAutoresizingMaskIntoConstraints = false
+            let row = NSView()
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+                label.topAnchor.constraint(equalTo: row.topAnchor, constant: Self.rowPadding),
+                label.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -Self.rowPadding),
+            ])
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            labels.append(label)
+        }
+        let inset = HelmMetrics.s3
+        NSLayoutConstraint.activate([
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+            surface.topAnchor.constraint(equalTo: topAnchor),
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -HelmMetrics.s2),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    static let rowPadding: CGFloat = 4
+
+    func apply(_ palette: HelmHeroSurface.Palette) {
+        surface.apply(palette)
+        let ink = HelmContrast.color(palette.ink)
+        for label in labels { label.textColor = ink }
+        for rule in rules { rule.layer?.backgroundColor = ink.withAlphaComponent(HelmHeroColumn.ruleAlpha).cgColor }
+    }
+
+    #if FM_SELFTESTS
+    var debugLabels: [NSTextField] { labels }
     #endif
 }

@@ -30,6 +30,20 @@ final class HelmChoiceCard: NSView {
     private let bodyLabel = NSTextField(wrappingLabelWithString: "")
     private let check = NSImageView()
     private var theme: HelmTheme = ThemeManager.shared.theme
+    private let column = NSStackView()
+
+    /// 1.1.0: a view under the description, as wide as it - a picture of
+    /// what the choice gives (UX-24's sidebar preview). `nil` draws none.
+    var accessory: NSView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            guard let accessory else { return }
+            accessory.translatesAutoresizingMaskIntoConstraints = false
+            column.addArrangedSubview(accessory)
+            column.setCustomSpacing(HelmMetrics.s3, after: bodyLabel)
+            accessory.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+    }
 
     init(title: String, body: String) {
         super.init(frame: .zero)
@@ -57,7 +71,7 @@ final class HelmChoiceCard: NSView {
         titleRow.alignment = .centerY
         titleRow.spacing = HelmMetrics.s2
         titleRow.translatesAutoresizingMaskIntoConstraints = false
-        let column = NSStackView(views: [titleRow, bodyLabel])
+        column.setViews([titleRow, bodyLabel], in: .leading)
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = HelmMetrics.s1

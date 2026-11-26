@@ -474,8 +474,12 @@ enum UIUXProposalsSelfTest {
         check(sheet.debugProfileCards.last?.isSelected == true, "S25: the right arrow moves the choice to the next card", &ok)
         check(sheet.debugThemeCards.count == AppThemeFamily.members(of: .classic).count,
               "S25: the look step shows the seven family tiles", &ok)
-        check(sheet.preferredContentSize.height > 200 && sheet.preferredContentSize.height < 470,
-              "S25: the sheet hugs its content (\(sheet.preferredContentSize.height)pt, was a fixed 470)", &ok)
+        // UX-24 added each profile's sidebar picture, so the tallest step
+        // is taller; the sheet still hugs it rather than a fixed height.
+        check(sheet.preferredContentSize.height > 200
+                && abs(sheet.preferredContentSize.height - ceil(sheet.view.fittingSize.height)) < 1,
+              "S25: the sheet hugs its content (\(sheet.preferredContentSize.height)pt against "
+                + "\(sheet.view.fittingSize.height)pt)", &ok)
         check(abs(sheet.view.frame.height - sheet.preferredContentSize.height) < 0.5,
               "S25: the sheet's frame is its content's height", &ok)
     }
