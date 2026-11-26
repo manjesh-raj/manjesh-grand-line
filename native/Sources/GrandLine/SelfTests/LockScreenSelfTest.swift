@@ -67,6 +67,7 @@ enum LockScreenSelfTest {
                       checkSharedComponentsAndNoLiterals,
                       checkAuthFlowUntouched,
                       checkLoopingAnimationsStopOnUnlock,
+                      checkLoopsHoldStillWhileNobodyLooks,
                       checkTheLampGate] {
             var ok = true
             check(&ok)
@@ -601,6 +602,70 @@ enum LockScreenSelfTest {
             fail(&ok, "LockPresenter.showLock no longer restarts them, so a re-lock would show a frozen scene")
         }
         if ok { print("  attached while locked, detached on unlock, re-attached on re-lock, and both call sites present") }
+    }
+
+    // MARK: 6b - nobody looking (full review 4, PF-01)
+
+    /// The loops stop while the app is inactive, the window is occluded or
+    /// Low Power Mode is on, the lit lamp shows Reduce Motion's still beam,
+    /// and everything comes back when the condition clears. Each condition
+    /// is pinned on `DecorativeMotionGate` and then announced by posting the
+    /// real notification, so the change enters through the observer the app
+    /// registers rather than a test hook one call inside it.
+    private static func checkLoopsHoldStillWhileNobodyLooks(_ ok: inout Bool) {
+        print("LockScreenSelfTest: the scene holds still while the app is inactive, occluded or in Low Power Mode (PF-01)")
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer {
+            HelmMotion.reducedOverrideForTests = savedReduced
+            DecorativeMotionGate.resetOverridesForTests()
+        }
+        let controller = LockScreenController()
+        let window = mount(controller)
+        defer { window.contentView = nil; controller.stopAnimations() }
+        controller.apply(.locked(subtitle: "Grand Line is locked."))
+        controller.restartAnimationsIfNeeded()
+        controller.debugKeyDown()
+        let lighthouse = controller.debugLighthouse
+        func moving() -> Bool {
+            controller.debugLoopingAnimationsAttached && lighthouse.debugLensTurning && lighthouse.debugFogDrifting
+        }
+        func still() -> Bool {
+            !controller.debugLoopingAnimationsAttached && !lighthouse.debugLensTurning && !lighthouse.debugFogDrifting
+        }
+        // The check's own power: everything is moving before anything is pinned.
+        guard controller.debugIsLit, moving() else {
+            fail(&ok, "the lit scene is not moving to begin with (lit=\(controller.debugIsLit)), so this check would pass vacuously")
+            return
+        }
+        let center = NotificationCenter.default
+        let cases: [(String, (Bool) -> Void, () -> Void)] = [
+            ("the app resigned active",
+             { DecorativeMotionGate.appActiveOverrideForTests = !$0 },
+             { center.post(name: NSApplication.didResignActiveNotification, object: nil) }),
+            ("the window was occluded",
+             { DecorativeMotionGate.windowVisibleOverrideForTests = !$0 },
+             { center.post(name: NSWindow.didChangeOcclusionStateNotification, object: window) }),
+            ("Low Power Mode came on",
+             { DecorativeMotionGate.lowPowerOverrideForTests = $0 },
+             { center.post(name: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil) }),
+        ]
+        for (name, pin, announce) in cases {
+            pin(true)
+            announce()
+            if !still() { fail(&ok, "\(name), but the scene kept moving") }
+            if !controller.debugIsLit { fail(&ok, "\(name), and the lamp went out - holding still must keep the gate as it was") }
+            if lighthouse.debugGlassOpacity != 1 { fail(&ok, "\(name), and the lit lamp lost its glass (the still beam is drawn lit)") }
+            pin(false)
+            announce()
+            if !moving() { fail(&ok, "\(name) and then cleared, but the scene did not move again") }
+        }
+        // A notification about another window says nothing about this one.
+        DecorativeMotionGate.windowVisibleOverrideForTests = false
+        center.post(name: NSWindow.didChangeOcclusionStateNotification, object: NSObject())
+        if !moving() { fail(&ok, "another window's occlusion change stopped this scene") }
+        DecorativeMotionGate.resetOverridesForTests()
+        if ok { print("  inactive, occluded and Low Power each hold the lit scene still, and clearing each brings it back") }
     }
 
     // MARK: 7 - the lamp gate (L-2)

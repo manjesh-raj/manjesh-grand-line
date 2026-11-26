@@ -187,6 +187,30 @@ enum CredentialVaultViewSelfTest {
               "S-1: shut means the page dark, the dome down and the lining folded")
         check(chest.debugSeamPulsing, "S-1: light leaks from the seam while shut")
 
+        // PF-01 (full review 4): nobody looking holds the chest still - the
+        // app inactive, the window occluded, Low Power Mode - and it moves
+        // again when that clears. Each condition is pinned and then announced
+        // with the real notification, so it enters through the gate's own
+        // observer.
+        do {
+            let center = NotificationCenter.default
+            let conditions: [(String, (Bool) -> Void, () -> Void)] = [
+                ("the app resigned active", { DecorativeMotionGate.appActiveOverrideForTests = !$0 },
+                 { center.post(name: NSApplication.didResignActiveNotification, object: nil) }),
+                ("the window was occluded", { DecorativeMotionGate.windowVisibleOverrideForTests = !$0 },
+                 { center.post(name: NSWindow.didChangeOcclusionStateNotification, object: gate.window) }),
+                ("Low Power Mode came on", { DecorativeMotionGate.lowPowerOverrideForTests = $0 },
+                 { center.post(name: Notification.Name.NSProcessInfoPowerStateDidChange, object: nil) }),
+            ]
+            for (name, pin, announce) in conditions {
+                pin(true); announce()
+                check(!chest.debugSeamPulsing && chest.holdsStill, "PF-01: \(name), but the shut chest's seam kept pulsing")
+                pin(false); announce()
+                check(chest.debugSeamPulsing && !chest.holdsStill, "PF-01: \(name) and then cleared, but the seam did not pulse again")
+            }
+            DecorativeMotionGate.resetOverridesForTests()
+        }
+
         // Not while the app is locked: those keys are the app password, typed
         // on the lock screen in front of this page.
         AppLockGate.shared.setLocked(true)
@@ -203,6 +227,13 @@ enum CredentialVaultViewSelfTest {
         check(chest.debugFlyingCount > 0, "S-1: opening throws coins and gems")
         check(chest.debugTwinkling && chest.debugRaysLooping && !chest.debugSeamPulsing,
               "S-1: the open chest twinkles and its rays sway, and the seam stops")
+        DecorativeMotionGate.appActiveOverrideForTests = false
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+        check(!chest.debugTwinkling && !chest.debugRaysLooping && gate.debugIsLit,
+              "PF-01: an inactive app left the open chest twinkling, or shut it")
+        DecorativeMotionGate.appActiveOverrideForTests = nil
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        check(chest.debugTwinkling && chest.debugRaysLooping, "PF-01: the open chest did not move again on activation")
         check(fieldIsFirstResponder(), "S-1: opening the chest left the field focused")
 
         // The arrow submits exactly what Return does.

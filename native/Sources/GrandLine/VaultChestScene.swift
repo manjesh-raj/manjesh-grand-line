@@ -16,7 +16,9 @@
 // rays' sway, the twinkles) is a repeating Core Animation, and every one
 // stops when the gate is hidden (`stopLoops`), so a locked vault left on
 // screen costs nothing on the main thread and a hidden one costs nothing at
-// all (GL-13).
+// all (GL-13). Since full review 4's PF-01 they also stop while the app is
+// inactive, the window is occluded or Low Power Mode is on
+// (`setHoldsStill`, driven by the gate's `DecorativeMotionGate`).
 //
 // This type owns layers only. `CredentialVaultUnlockView` decides when the
 // chest is open, owns the form and the unlock handshake, and never lets the
@@ -69,6 +71,9 @@ final class VaultChestScene {
     private(set) var isOpen = false { didSet { updateLabels() } }
     private var touchID = false
     private var reducedMotion = false
+    /// PF-01: the gate's `DecorativeMotionGate` says nobody is looking, so
+    /// the scene shows its Reduce Motion picture until it says otherwise.
+    private(set) var holdsStill = false
     private var hovering = false
     private var checking = false
     private var light = VaultChestArt.Light.forDarkRegister(false)
@@ -324,7 +329,7 @@ final class VaultChestScene {
             hold.opacity = 0
             seam.opacity = 0
             seamGlow.opacity = 0
-            sparkles.opacity = reducedMotion ? 0 : 1
+            sparkles.opacity = reducedMotion || holdsStill ? 0 : 1
             padlock.transform = Self.padlockOpen
         }
         startLoops()
@@ -359,7 +364,7 @@ final class VaultChestScene {
         fade(glow, to: 1, duration: 0.7 * k, delay: 0.32 * k)
         fade(formGlow, to: 1, duration: 0.7 * k, delay: 0.32 * k)
         fade(hold, to: 0, duration: 0.8 * k, delay: 0.3 * k)
-        fade(sparkles, to: 1, duration: 0.01, delay: 0.38 * k)
+        fade(sparkles, to: holdsStill ? 0 : 1, duration: 0.01, delay: 0.38 * k)
         burst(count: fast ? 4 : 14, height: 210, spread: 300, delay: 0.38 * k)
         startLoops()
     }
@@ -467,8 +472,18 @@ final class VaultChestScene {
 
     // MARK: Loops
 
+    /// Holds the scene still, or lets it move again. Still is what Reduce
+    /// Motion draws: no endless loop, and no twinkling stars in an open chest.
+    func setHoldsStill(_ still: Bool) {
+        guard still != holdsStill else { return }
+        holdsStill = still
+        HelmMotion.withoutImplicitAnimation { sparkles.opacity = isOpen && !still && !reducedMotion ? 1 : 0 }
+        if still { stopEndlessLoops() } else { startLoops() }
+    }
+
     /// Starts whichever loops the current state wants. Idempotent.
     func startLoops() {
+        guard !holdsStill else { stopEndlessLoops(); return }
         let reduced = reducedMotion || HelmMotion.isReduced
         if isOpen {
             stopLoop(seam, "pulse"); stopLoop(seamGlow, "pulse")
@@ -496,9 +511,14 @@ final class VaultChestScene {
 
     /// Stops every loop and every flying coin: the gate is no longer on screen.
     func stopLoops() {
+        stopEndlessLoops()
+        fx.sublayers?.forEach { $0.removeFromSuperlayer() }
+    }
+
+    /// Every repeating animation, and nothing else.
+    private func stopEndlessLoops() {
         for (layer, key) in [(seam, "pulse"), (seamGlow, "pulse"), (rays, "sway"), (rays, "pulse")] { stopLoop(layer, key) }
         for star in stars { star.removeAnimation(forKey: "twinkle") }
-        fx.sublayers?.forEach { $0.removeFromSuperlayer() }
     }
 
     private static func twinkle(offset: CFTimeInterval) -> CAAnimation {
