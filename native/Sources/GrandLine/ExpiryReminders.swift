@@ -361,7 +361,14 @@ final class TLSExpiryProbe: NSObject, URLSessionTaskDelegate {
         case failed(String)
     }
 
-    private var leaf: SecCertificate?
+    /// GL-28: written from the challenge (the async delegate method runs on
+    /// the concurrency pool, not the delegate queue) and read on completion.
+    private let leafLock = NSLock()
+    private var leafStorage: SecCertificate?
+    private var leaf: SecCertificate? {
+        get { leafLock.lock(); defer { leafLock.unlock() }; return leafStorage }
+        set { leafLock.lock(); leafStorage = newValue; leafLock.unlock() }
+    }
     private var completion: ((Outcome) -> Void)?
     private var session: URLSession?
 
@@ -385,14 +392,17 @@ final class TLSExpiryProbe: NSObject, URLSessionTaskDelegate {
         session.dataTask(with: request).resume()
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    /// The async form, not the completion-handler one: CI's macOS 15 SDK
+    /// declares that handler `@Sendable` and the macOS 26 SDK does not, so
+    /// either spelling warns on one of them, and the build fails on warnings.
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
            let trust = challenge.protectionSpace.serverTrust,
            let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let first = chain.first {
             leaf = first
         }
-        completionHandler(.cancelAuthenticationChallenge, nil)
+        return (.cancelAuthenticationChallenge, nil)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
