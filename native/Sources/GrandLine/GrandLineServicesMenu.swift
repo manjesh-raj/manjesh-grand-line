@@ -37,6 +37,9 @@ struct ServiceSelection: Equatable {
     /// Reads a Services pasteboard: plain text, a URL, or both. A selection
     /// that is itself a single URL becomes the link.
     static func read(_ pasteboard: NSPasteboard, sourceApp: String?) -> ServiceSelection? {
+        // R2-SEC-03: a selection marked as a secret (a password manager's
+        // concealed copy) is never read, so it is never filed.
+        guard !CredentialVaultClipboard.isConcealed(pasteboard) else { return nil }
         let text = (pasteboard.string(forType: .string) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         var url = pasteboard.string(forType: .URL)
             ?? (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?.first?.absoluteString

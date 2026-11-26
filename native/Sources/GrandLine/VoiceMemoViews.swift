@@ -52,14 +52,14 @@ final class VoiceMemoController {
     }
 
     /// A memo shorter than this was a slip of the key, and is dropped.
-    static let minimumDuration: TimeInterval = 0.6
+    static let minimumRecordingSeconds: TimeInterval = 0.6
 
     init() {
         hotkey.onStart = { [weak self] in self?.keyDown() }
         hotkey.onStop = { [weak self] in self?.keyUp() }
         hud.onDestination = { [weak self] destination in self?.choose(destination) }
         hud.onDiscard = { [weak self] in self?.discard() }
-        hud.onOpenSettings = { url in NSWorkspace.shared.open(url) }
+        hud.onOpenSettings = { [weak self] url in self?.openPrivacySettings(url) }
         hud.onAllowAccessibility = { _ = DictationPermissions.requestAccessibility() }
     }
 
@@ -112,7 +112,7 @@ final class VoiceMemoController {
         guard let recorder else { return }
         self.recorder = nil
         let duration = recorder.stop()
-        guard duration >= Self.minimumDuration else {
+        guard duration >= Self.minimumRecordingSeconds else {
             recorder.discard()
             hud.hide()
             return
@@ -244,6 +244,13 @@ final class VoiceMemoController {
             progress?(1)
         })
         return page.id
+    }
+
+    /// Opens one of this controller's own System Settings panes, and nothing
+    /// else - the HUD hands back the URL it was given.
+    func openPrivacySettings(_ url: URL) {
+        guard [Self.microphoneSettingsURL, Self.accessibilitySettingsURL].contains(url) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     static let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")

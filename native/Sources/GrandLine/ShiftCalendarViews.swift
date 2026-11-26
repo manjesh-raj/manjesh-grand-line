@@ -1302,6 +1302,9 @@ final class ShiftCalendarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         build()
+        // F-01: a meeting's card shows who and where, so it closes on the
+        // way into the lock (§5.1(b)).
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.meetingPopover }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -1840,9 +1843,7 @@ final class ShiftCalendarView: NSView {
             let note = NSMenuItem(title: "Calendar access is off in System Settings, Privacy, Calendars.", action: nil, keyEquivalent: "")
             note.isEnabled = false
             menu.addItem(note)
-            menu.addItem(sleeveItem("Open System Settings", symbol: "gearshape") {
-                if let url = MacCalendarSource.settingsURL { NSWorkspace.shared.open(url) }
-            })
+            menu.addItem(sleeveItem("Open System Settings", symbol: "gearshape") { MacCalendarSource.openPrivacySettings() })
         case .granted:
             let shown = AppSettings.shared.macCalendarsShown
             menu.addItem(sleeveItem(shown ? "Hide meetings" : "Show meetings", symbol: shown ? "eye.slash" : "eye") { [weak self] in

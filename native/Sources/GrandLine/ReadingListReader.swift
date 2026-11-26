@@ -257,6 +257,8 @@ final class ReaderArticleExtractor: NSObject, WKNavigationDelegate {
         self.webView = webView
         self.completion = completion
         let timer = Timer(timeInterval: Self.timeout, repeats: false) { [weak self] _ in self?.finish(nil) }
+        // Audit 3.4: a give-up deadline can be a second late.
+        timer.tolerance = 1
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         load(webView)

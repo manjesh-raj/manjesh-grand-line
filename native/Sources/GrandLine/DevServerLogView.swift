@@ -71,6 +71,7 @@ final class DevServerLogView: NSView {
     var renderedText: String { textView.string }
 
     func applyTheme(_ theme: HelmTheme) {
+        HelmSelection.apply(to: textView, theme: theme)
         // The one card surface (the component index), not a hand-rolled one.
         HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rCard)
         headLabel.textColor = HelmTheme.mutedInk(theme)

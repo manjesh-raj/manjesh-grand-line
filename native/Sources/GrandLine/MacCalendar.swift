@@ -267,6 +267,11 @@ final class MacCalendarSource {
     }
 
     static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")
+
+    /// System Settings, Privacy, Calendars: a fixed pane.
+    static func openPrivacySettings() {
+        if let url = settingsURL { NSWorkspace.shared.open(url) }
+    }
 }
 
 // MARK: - A meeting's card

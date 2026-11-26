@@ -163,13 +163,13 @@ enum VoiceMemoPage {
         guard let range = content.range(of: markerPrefix) else { return nil }
         let tail = content[range.upperBound...].prefix { $0 != ">" }
         var id: String?
-        var duration: TimeInterval = 0
+        var seconds: TimeInterval = 0
         for part in tail.split(separator: " ") {
             if part.hasPrefix("id=") { id = String(part.dropFirst(3)) }
-            if part.hasPrefix("duration="), let value = Double(part.dropFirst(9)) { duration = value }
+            if part.hasPrefix("duration="), let value = Double(part.dropFirst(9)) { seconds = value }
         }
         guard let id, !id.isEmpty, id.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else { return nil }
-        return Marker(id: id, duration: duration)
+        return Marker(id: id, duration: seconds)
     }
 
     /// The transcript's lines, without their timestamps, for "Make a task

@@ -404,6 +404,9 @@ final class HostsController: NSViewController, DaylightDrillActions, HelmSplitPa
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         super.init(nibName: nil, bundle: nil)
+        // D-03: the Reminders popover names keys and hosts, so it closes on
+        // the way into the lock (§5.1(b)).
+        AppLockGate.shared.registerLockDismissiblePopover(owner: self) { [weak self] in self?.expiryRemindersPopover }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

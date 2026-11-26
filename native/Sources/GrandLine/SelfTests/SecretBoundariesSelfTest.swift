@@ -204,6 +204,9 @@ extension SecretBoundariesSelfTest {
         "SettingsController.swift openAccessibilitySettings": "a fixed System Settings pane",
         "ShiftController.swift openFailedFile": "the app's own store file that failed to read",
         "DevOpsHubProjectController.swift openFilesAndFoldersSettings": "a fixed System Settings pane",
+        "MacCalendar.swift openCalendar": "F-01: Calendar.app, a fixed path",
+        "MacCalendar.swift openPrivacySettings": "F-01: a fixed System Settings pane (Privacy, Calendars)",
+        "VoiceMemoViews.swift openPrivacySettings": "F-05: one of two fixed System Settings panes, checked against both",
     ]
 
     static func checkEveryDataDerivedOpenIsSchemeChecked(_ sources: ProductionSources, _ ok: inout Bool) {

@@ -171,7 +171,7 @@ enum IncidentPostmortemExport {
                 lines.append("_No runbook ran during this incident._")
             } else {
                 for run in runs {
-                    let detail = run.detail.map { " \u{2014} \($0)" } ?? ""
+                    let detail = run.detail.map { " - \($0)" } ?? ""
                     lines.append("- \(clock(run.at, timeZone: timeZone)) \(run.title)\(detail)")
                 }
             }

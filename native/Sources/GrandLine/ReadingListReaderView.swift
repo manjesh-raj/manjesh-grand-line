@@ -162,8 +162,10 @@ final class ReadingListReaderView: NSView, NSTextViewDelegate {
     static func attributed(_ article: ReaderArticle, theme: HelmTheme, offsets: inout [Int]) -> NSAttributedString {
         let out = NSMutableAttributedString()
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let serif = NSFont(name: "New York", size: HelmType.scaled(17)) ?? NSFont(name: "Georgia", size: HelmType.scaled(17))
-            ?? .systemFont(ofSize: HelmType.scaled(17))
+        // The system's own serif design (New York), never a named face: J1
+        // retired the Georgia serif everywhere else in the app.
+        let base = NSFont.systemFont(ofSize: HelmType.scaled(17))
+        let serif = base.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: base.pointSize) } ?? base
         offsets = []
         for (i, block) in article.blocks.enumerated() {
             if i > 0 { out.append(NSAttributedString(string: "\n")) }
@@ -270,6 +272,7 @@ final class ReadingListReaderView: NSView, NSTextViewDelegate {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        HelmSelection.apply(to: textView, theme: theme)
         metaLabel.textColor = HelmTheme.mutedInk(theme)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         noTextTitle.textColor = HelmTheme.nsColor(theme.chromeInkHex)

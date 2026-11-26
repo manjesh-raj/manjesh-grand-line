@@ -210,6 +210,10 @@ These tables are **complete in both directions**, and that is a check rather tha
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |
 | `FM_STICKY_BOARD_DIR` | The Sticky Board's `notes.yaml`. Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_CODE_PREVIEW_DIR` | The Code Preview panel's snippet files. Falls back to `FM_SHIFT_DIR`, then the synced clone |
+| `FM_DAY_PLAN_DIR` | Plan my day's `plans.json` (F-02): the last month of daily plans and the bell's nudge record. Defaults under the app's data root |
+| `FM_EXPIRY_DIR` | Key and certificate expiry reminders' `state.json` (D-03): the last check and the tasks already filed. Defaults under the app's data root |
+| `FM_READER_ARTICLES_DIR` | The Reading list's saved reader-mode text (F-03), one file per link. Defaults under the app's data root |
+| `FM_VOICE_MEMO_DIR` | Voice memo audio (F-05), kept on this Mac only. Defaults under the app's data root |
 | `FM_NOTEBOOK_DIR` | The Notebook's page tree (`GrandLineDocs/notebook/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_READING_LIST_DIR` | The Reading List's `links.yaml` and its per-host favicon cache (`GrandLineDocs/reading-list/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
