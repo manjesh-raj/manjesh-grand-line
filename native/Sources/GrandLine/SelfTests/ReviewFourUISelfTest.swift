@@ -213,7 +213,7 @@ enum ReviewFourUISelfTest {
     // MARK: R4-UI-09 - Snippets
 
     private static func checkSnippetsSayWhy(_ ok: inout Bool) {
-        let panel = SnippetExpansionPanel(style: .inline)
+        let panel = SnippetExpansionPanel()
         panel.setState(enabled: false, trusted: false, armed: false, triggerCount: 0)
         check(!panel.debugGrantButtonIsHidden, "the fixture shows no Grant access - the check is vacuous", &ok)
         check(panel.debugGrantReason?.contains("Accessibility") == true,

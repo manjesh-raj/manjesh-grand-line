@@ -124,7 +124,7 @@ enum ReviewFiveUXSelfTest {
                 && WorkspaceModule.tasks.tabs.contains { $0.name == "Calendar" },
               "R5-UX-04: Tasks' Calendar tab is no longer a shortcut to the Calendar", &ok)
         if let shift = source("ShiftController.swift"), let shell = source("MainSplitShellController.swift") {
-            check(shift.contains("tasksView == .calendar && drawsSidebarLayout ? [calendarTodayButton] : []"),
+            check(shift.contains("tasksView == .calendar ? [calendarTodayButton] : []"),
                   "R5-UX-04: the Calendar's toolbar lost Today", &ok)
             check(shell.contains("} else if let calendar = shownCalendar {"),
                   "R5-UX-04: the shell no longer draws the Calendar's own tabs", &ok)
@@ -161,8 +161,11 @@ enum ReviewFiveUXSelfTest {
                           "R5-UX-06: a Personal Console's tab row still holds an operator tool", &ok)
                 }
                 AppSettings.shared.setProfile(.operator)
-                check(console.operatorToolViews.allSatisfy { $0.isDescendant(of: console.view) },
-                      "R5-UX-06: choosing Operator again did not bring the tools back", &ok)
+                // The window toolbar holds the cluster and re-reads
+                // `pageToolViews`; the page's own tab row holds none of it.
+                let back = titles()
+                check(operatorTools.allSatisfy { title in back.contains { $0.hasPrefix(title) } },
+                      "R5-UX-06: choosing Operator again did not bring the tools back (\(back))", &ok)
             }
         }
     }
@@ -174,9 +177,8 @@ enum ReviewFiveUXSelfTest {
         check(HomeCardLayout.standard(for: .personal).shown == [.tasks, .calendar, .notebook, .stickyBoard, .readingList, .focusTimer],
               "R5-UX-07: a Personal Home starts with \(HomeCardLayout.standard(for: .personal).shown.map(\.rawValue))", &ok)
         check(HomeCardLayout.standard(for: .operator) == .standard, "R5-UX-07: the Operator's Home changed its default cards", &ok)
-        check(DaylightModule.calendar.opens == .calendar && DaylightModule.focusTimer.opens == .shift
-                && !DaylightModule.calendar.appearsOnOverview && !DaylightModule.focusTimer.appearsOnOverview,
-              "R5-UX-07: the new cards open the wrong page or joined the floating hub", &ok)
+        check(DaylightModule.calendar.opens == .calendar && DaylightModule.focusTimer.opens == .shift,
+              "R5-UX-07: the new cards open the wrong page", &ok)
 
         // Next up: a fixed clock, and the calendar's own day words.
         var cal = Calendar.current
@@ -223,7 +225,9 @@ enum ReviewFiveUXSelfTest {
 
         // A Home with no Crew never speaks for the fleet.
         if let home = SelfTestSources.homeCanvas(read: source) {
-            check(home.contains("let answerIfAny = fleetSpeaks ? overviewAnswer() : nil"),
+            // The greeting's own read since P-03 removed the attention card
+            // whose header this guard first read.
+            check(home.contains("let fleetAnswer = crewShown ? overviewAnswer() : nil"),
                   "R5-UX-07: a Home without Crew reports on the fleet again", &ok)
         }
         // The card re-renders when the session changes, not on every tick.
@@ -319,9 +323,8 @@ enum ReviewFiveUXSelfTest {
               "R5-UX-08: a failed npm check reads \(npm)", &ok)
         if let updates = source("UpdatesController.swift"), let health = source("HealthCardView.swift") {
             check(updates.contains("let subtitle = failed ? Self.failureExplanation(row).rowLine : nil")
-                    && updates.contains("row.detailLabel.stringValue = failed ? Self.failureExplanation(row).rowLine : row.detail")
                     && updates.contains("detail.fields.append(.init(\"What to do\", failure.whatToDo))"),
-                  "R5-UX-08: an Updates row no longer says what to do in both layouts and its details", &ok)
+                  "R5-UX-08: an Updates row no longer says what to do in its table row and its details", &ok)
             check(health.components(separatedBy: "FailureExplainer.explain(service: service").count == 3,
                   "R5-UX-08: a Health row no longer says what to do in both layouts", &ok)
         }

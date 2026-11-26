@@ -714,10 +714,6 @@ enum WhiteboardSelfTest {
 
         check(DaylightModule.whiteboard.opens == .whiteboard, "the module should open the whiteboard destination")
         check(DaylightModule.whiteboard.space == .stores, "the whiteboard module belongs to Stores")
-        check(!DaylightModule.whiteboard.appearsOnOverview,
-              "the whiteboard should not add an eighteenth card back onto the trimmed Overview canvas")
-        check(DaylightModule.whiteboard.isVisible(in: .stores), "it must render on its own space")
-        check(!DaylightModule.whiteboard.isVisible(in: .overview), "it must not render on Overview")
         check(DaylightModule.whiteboard.gridSpan == 1, "only the briefing is a wide card")
         check(DaylightModule.space(forDestination: .whiteboard) == .stores,
               "the destination-to-space derivation should find it")

@@ -231,7 +231,7 @@ extension FleetController {
         // (it validates before typing anything - see `FleetActions.resolveKey`).
         let decisions = FleetActions.openDecisions(taskID: taskID)
         let composer: FleetReplyInput
-        if drawsSidebarLayout, let task = currentNeedsTasks.first(where: { $0.id == taskID }) {
+        if let task = currentNeedsTasks.first(where: { $0.id == taskID }) {
             // RP-2: the row's Reply, now its Cancel, rides on the card's head
             // as the ghost × - the same identifier and the same action, so a
             // second press closes it exactly as the row's did.

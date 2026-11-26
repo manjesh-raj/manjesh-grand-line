@@ -38,7 +38,7 @@ extension HomeCanvasController {
         briefingHero.isHidden = true
     }
 
-    /// The greeting and the hero, on Home's arranged space only.
+    /// The greeting and the hero.
     ///
     /// Hg-2 (the five-screen redesign board): while the briefing is drawn as
     /// the hero, the greeting is the hero's own title and the day's verdict
@@ -46,12 +46,10 @@ extension HomeCanvasController {
     /// the briefing hidden by the captain's layout, or nothing to say, or
     /// Customize drawing it as a card - the greeting keeps its own row.
     func renderFeelPass(now: Date = DayRollover.now()) {
-        let on = showsArrangedCards
-        let greetingOnGround = on && !briefingIsHero
+        let greetingOnGround = !briefingIsHero
         greetingHeader.isHidden = !greetingOnGround
         briefingHero.isHidden = !briefingIsHero
         stackTop?.constant = Self.contentTopMargin - (greetingOnGround ? Self.greetingInkInset : 0)
-        guard on else { return }
 
         let counts = HomeTaskCounts(store: sources.shiftStore, now: now)
         var prsReady: Int?
@@ -151,7 +149,7 @@ extension HomeCanvasController {
 
     func renderTip(now: Date = Date()) {
         let settings = AppSettings.shared
-        guard space == .overview, let first = settings.homeTipsFirstShown,
+        guard let first = settings.homeTipsFirstShown,
               let tip = HomeTips.tip(firstShown: first, now: now, dismissed: settings.homeTipsDismissed,
                                      tips: HomeTips.all()) else {
             shownTip = nil
@@ -187,125 +185,12 @@ extension HomeCanvasController {
         Toast.show(in: view, message: "Tips hidden. \u{2318}/ lists the shortcuts for any page.")
     }
 
-    /// §5.4's copy. Overview reuses `FleetGreeting`'s time-of-day logic and
-    /// the answer-banner summary Overview itself renders - the same two
-    /// functions, not a second implementation - and every other space shows
-    /// its own fixed pair.
-    func renderGreeting() {
-        // C1: on every space the hero is badge + kicker + headline + detail.
-        // Off Overview there is no fleet answer to report, so the space names
-        // itself and the badge carries that space's own identity hue - never
-        // a semantic tint, which would be claiming a state this page has not
-        // measured.
-        guard space == .overview else {
-            heroCard.isHidden = false
-            setHero(tint: nil,
-                    symbol: space.heroSymbol,
-                    kicker: "",
-                    title: space.title,
-                    detail: space.subtitle)
-            return
-        }
-        // **The hub has no hero band any more.**
-        //
-        // `fm/grandline-home-page-visual-overhaul`: the captain's reference
-        // draws one card at the top of Home - tile, eyebrow, headline,
-        // freshness subline, Refresh - and the app drew two, a hero band
-        // saying "Nothing needs you right now / Fleet read just now" over a
-        // Needs Attention card saying "All clear / Nothing is due". Two cards
-        // one above the other, each reporting a different half of the same
-        // question, is exactly the duplication review #3's UX5 objected to on
-        // this very page, and the reference resolves it by merging them.
-        //
-        // So on Overview the band is hidden - which for an *arranged* subview
-        // really does take it out of the layout (gotcha (15)'s one such case)
-        // - and `renderAttention` below builds the whole header from the same
-        // `FleetGreeting.Answer` this function used to. Nothing was deleted:
-        // every branch that used to `setHero` here now decides a field of
-        // that card instead, and the four other spaces are untouched.
-        heroCard.isHidden = true
-    }
-
-    /// The four header fields the merged attention card takes over from the
-    /// hero band, for **Overview only**.
-    ///
-    /// Every branch below was a `setHero` call in `renderGreeting` before the
-    /// merge, in the same order and with the same copy. What changed is only
-    /// where the strings land: `title` becomes the card's all-clear headline
-    /// (used when the list is empty, which is exactly when the old hero's
-    /// title was the only thing on screen) and `detail` becomes its subline.
-    ///
-    /// A card with rows writes its own headline from those rows, so `title`
-    /// is deliberately *not* forced on it - the reference's card says "Two
-    /// things are late." over its list rather than repeating a fleet
-    /// all-clear above rows that contradict it. The one verdict that must not
-    /// be lost that way is a fleet that needs the captain, and that is not
-    /// dropped either: it becomes a row of its own (see `fleetAttentionItem`),
-    /// so it is counted, named in the headline and given a button.
-    func hubHeader(hasItems: Bool) -> (title: String, detail: String) {
-        // Review #3's UX13: "a guided 'your first host / your first task'
-        // empty state on the canvas" for a genuinely first-run state.
-        //
-        // **It must never hide a verdict that needs the captain**, which is
-        // why this is not simply "no local data -> show the invitation". The
-        // three stores it counts are *local* - saved hosts, tasks, sticky
-        // notes - and none of them is what `FleetGreeting` reports on: a
-        // crewmate can be parked on a decision while this machine has nothing
-        // saved on it at all (a new Mac, a second user, a fresh clone), and a
-        // cheerful "Welcome aboard" over a task that is blocked waiting for an
-        // answer would be strictly worse than the all-clear this finding
-        // already objects to.
-        //
-        // So a needs-you answer wins, and the invitation is shown only where
-        // the header would otherwise be reporting nothing worth reading:
-        // before the first fetch lands, or over a genuine all-clear. Caught
-        // by `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly
-        // that combination - a parked fleet task over empty local stores.
-        //
-        // It is additionally safe under the merge for a second reason worth
-        // stating: this title is only ever *shown* when the list is empty, so
-        // an invitation cannot appear over rows that need doing even if the
-        // guard above were ever weakened.
-        // R5-UX-01 / R5-UX-07: a profile that hides Crew has no fleet to hear
-        // from, so the header never reports on one - not "Fleet read just
-        // now", and not "No firstmate home was found" to someone who needs
-        // none.
-        let fleetSpeaks = !hiddenModules.contains(.crew)
-        let answerIfAny = fleetSpeaks ? overviewAnswer() : nil
-        let nothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
-        // `hasItems` is the other half of the guard, and it is the one the
-        // merge added. The invitation replaces **both** header strings, so
-        // showing it over a list would put "Nothing is saved here yet" under
-        // a headline counting rows - measured in an off-screen render, where
-        // it read as two cards' worth of copy disagreeing with each other.
-        // PERF-01: an unloaded sticky board is not an empty one, so the
-        // first-run invitation waits for the store rather than reading the
-        // file before the first frame (or claiming "nothing is saved").
-        if !hasItems, nothingUrgent, sources.stickyBoardStore.isLoaded,
-           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
-                                                tasks: sources.shiftStore.activeTasks.count,
-                                                notes: sources.stickyBoardStore.activeNotes.count) {
-            return (firstRun.title, firstRun.detail)
-        }
-        guard fleetSpeaks else {
-            return (FleetGreeting.timeOfDay(), "What is due today, from your tasks and follow-ups.")
-        }
-        guard let answer = answerIfAny else {
-            // GL-14: nothing has been measured yet, so the header says so
-            // rather than rendering an all-clear it cannot stand behind -
-            // and the subline states the gap rather than claiming a
-            // freshness for a reading that has not happened.
-            return (FleetGreeting.timeOfDay(), "The fleet hasn\u{2019}t been read yet.")
-        }
-        return (answer.title, heroDetail(for: answer))
-    }
-
     /// `FleetGreeting`'s verdict over the snapshot this page was handed, or
     /// `nil` before the first one arrives.
     ///
-    /// One definition, called by both `hubHeader` and `fleetAttentionItem` -
-    /// the headline and the row that backs it must be derived from the same
-    /// answer or the card can count a verdict it is not showing.
+    /// One definition, read by the greeting's summary, the hero's status
+    /// pill and its "Open Needs you" - so they cannot disagree about the
+    /// fleet.
     func overviewAnswer() -> FleetGreeting.Answer? {
         fleetSnapshot.map {
             FleetGreeting.answer(tasks: $0.tasks, prs: prReading, homeOk: $0.homeOk)
@@ -328,10 +213,9 @@ extension HomeCanvasController {
 
     // MARK: Module content (§6.1's table)
 
-    /// `placement` is where the grid put this card. Only the briefing and the
-    /// Claude report read it, to pick their narrow forms - see
-    /// `CardPlacement`.
-    func content(for module: DaylightModule, placement: CardPlacement) -> HelmModuleCard.Content {
+    /// `width` is the width the grid built this card at. The briefing reads
+    /// it to pick its narrow form, and the hero cards to pick their layout.
+    func content(for module: DaylightModule, width: CGFloat) -> HelmModuleCard.Content {
         var content = HelmModuleCard.Content(
             title: module.title,
             subtitle: "",
@@ -341,15 +225,15 @@ extension HomeCanvasController {
             body: .note(""))
 
         switch module {
-        case .briefing: fillBriefing(&content, placement: placement)
-        case .claudeStatus: fillClaudeStatus(&content, placement: placement)
-        case .fleet: fillFleet(&content, placement: placement)
+        case .briefing: fillBriefing(&content, width: width)
+        case .claudeStatus: fillClaudeStatus(&content, width: width)
+        case .fleet: fillFleetHero(&content, width: width)
         case .strawHat: fillStrawHat(&content)
         case .tasks: fillTasks(&content)
         case .mergeQueue: fillMergeQueue(&content)
         case .console: fillConsole(&content)
         case .health: fillHealth(&content)
-        case .hosts: fillHosts(&content, placement: placement)
+        case .hosts: fillHosts(&content, width: width)
         case .updates: fillUpdates(&content)
         case .bootstrap: fillBootstrap(&content)
         case .automation: fillAutomation(&content)
@@ -389,7 +273,7 @@ extension HomeCanvasController {
         f.dateStyle = .none
         return f
     }()
-    func fillBriefing(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
+    func fillBriefing(_ content: inout HelmModuleCard.Content, width: CGFloat) {
         guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
             content.subtitle = AppSettings.shared.morningBriefingEnabled
                 ? "not generated yet today"
@@ -415,7 +299,7 @@ extension HomeCanvasController {
         // silent caps" failure. The trailing line is a plain `.none`-target
         // clause, so it renders as text inside the same paragraph and needs no
         // new mechanism.
-        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(for: placement)))
+        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(forCardWidth: width)))
         let hidden = record.clauses.count - clauses.count
         if hidden > 0 {
             clauses.append(BriefingClause(text: "+\(hidden) more in \(PlaceName.of(.overview)).", target: .none))
@@ -431,14 +315,6 @@ extension HomeCanvasController {
     /// to one column in a single-column grid - and its paragraph has to shrink
     /// with it or it overflows the fixed card height and is clipped.
     static func briefingClauseCap(forCardWidth width: CGFloat) -> Int {
-        briefingClauseCap(for: .shelf(width: width))
-    }
-
-    /// The same decision from the card's placement - see `CardPlacement` for
-    /// why the dashboard cannot use the shelf's width arithmetic.
-    static func briefingClauseCap(for placement: CardPlacement) -> Int {
-        placement.isNarrowerThanTwoColumns
-            ? HelmModuleCard.maxNarrowBriefingClauses
-            : HelmModuleCard.maxBriefingClauses
+        isNarrowerThanTwoColumns(width) ? HelmModuleCard.maxNarrowBriefingClauses : HelmModuleCard.maxBriefingClauses
     }
 }

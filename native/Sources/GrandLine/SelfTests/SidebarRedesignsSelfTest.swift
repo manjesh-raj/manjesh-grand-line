@@ -727,14 +727,17 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.shift)
         settle(shell)
         clickTab("Board", shell)
-        check(tasks.drawsSidebarLayout, "Tasks did not adopt its sidebar presentation", &ok)
-        check(!tasks.debugSidebarIsVisible, "Tasks still draws its own page column beside the board", &ok)
+        check(!drawsPageColumn(tasks.view), "Tasks still draws its own page column beside the board", &ok)
         // Tf-2: the band is the page's filters.
         guard let band = tasks.debugHeroBand else {
             fail("Tasks has no band to filter from", &ok)
             return
         }
         check(band.window != nil, "Tasks' band is not on screen", &ok)
+        // ...and it starts at the page's gutter, with nothing to its left.
+        let bandLeading = band.convert(band.bounds, to: tasks.view).minX
+        check(abs(bandLeading - HelmMetrics.pageGutter) < 0.5,
+              "Tasks' band starts \(bandLeading)pt into the page, want the \(HelmMetrics.pageGutter)pt gutter", &ok)
 
         // New task at the toolbar's far right, after Search.
         let ids = shell.toolbar.debugItemIdentifiers
@@ -850,12 +853,16 @@ enum SidebarRedesignsSelfTest {
         mine.title = "Chase the vendor about the renewal quote"
         mine.followUpAt = ShiftDateFormatting.components(from: Date()).dateStr
         store.addFollowUp(mine)
-        clickTab("Board", shell)
+        // The List tab draws the Follow-ups card. On a Board wide enough for
+        // four lanes Follow-ups is a lane instead (R4-UI-09), and the card
+        // is put away.
+        clickTab("List", shell)
         tasks.render()
         settle(shell)
 
         let table = tasks.debugFollowUpsTable
-        check(!table.card.isHidden && table.card.window != nil, "the Follow-ups card is not on the Board page", &ok)
+        check(!table.card.isHiddenOrHasHiddenAncestor && table.card.window != nil,
+              "the Follow-ups card is not on the List page", &ok)
         check(table.debugHeaderTitles.contains("Follow-up") && table.debugHeaderTitles.contains("Due"),
               "the Follow-ups table's columns are \(table.debugHeaderTitles)", &ok)
         let keys = table.debugRows.compactMap(\.key)
@@ -980,10 +987,22 @@ enum SidebarRedesignsSelfTest {
             check(cards[1].debugValue == FocusTimerFormat.total(3000) && cards[1].debugDetail?.contains("1 task") == true,
                   "Focus time reads \(cards[1].debugValue) / \(cards[1].debugDetail ?? "-") after a 50 minute session", &ok)
         }
-        // Back from Weekly review is where the floating bar's column returns
-        // (the review puts it away), so it is where it would come back here.
+        // Back from Weekly review is where the floating bar's column used to
+        // return (the review put it away), so it is where it would come back.
         clickTab("Board", shell)
-        check(!tasks.debugSidebarIsVisible, "back on Board from Weekly review, Tasks draws its page column again", &ok)
+        check(!drawsPageColumn(tasks.view), "back on Board from Weekly review, Tasks draws its page column again", &ok)
+        if let band = tasks.debugHeroBand {
+            let bandLeading = band.convert(band.bounds, to: tasks.view).minX
+            check(abs(bandLeading - HelmMetrics.pageGutter) < 0.5,
+                  "back on Board from Weekly review, Tasks' band starts \(bandLeading)pt into the page", &ok)
+        } else {
+            fail("back on Board from Weekly review, Tasks' band is not showing", &ok)
+        }
+    }
+
+    /// Whether a page draws a column of its own (`HelmPageSidebar`).
+    private static func drawsPageColumn(_ view: NSView) -> Bool {
+        view is HelmPageSidebar || view.subviews.contains(where: drawsPageColumn)
     }
 
     // MARK: 4 - Setup
@@ -999,8 +1018,6 @@ enum SidebarRedesignsSelfTest {
                     return false
                 }
         }
-        check(updates.debugDrawsSidebarLayout && !updates.debugCategoryCardsShown && !updates.debugStatsStripShown,
-              "Updates still draws its category cards or its stat strip", &ok)
         check(updates.debugSetupSummary.window != nil, "Updates has no Setup hero", &ok)
         let rows = updates.debugToolsTable.debugRows
         let groups = rows.compactMap { row -> String? in
@@ -1060,7 +1077,6 @@ enum SidebarRedesignsSelfTest {
         shell.workspace.navigator.show(.githubSync)
         settle(shell)
         _ = waitUntil(timeout: 15) { !github.debugIsCheckingAll }
-        check(github.debugDrawsSidebarLayout && !github.debugReposCardShown, "GitHub sync still draws its Repos card", &ok)
         // GL-14: a test process refuses `gh`, so every check failed - which
         // the subtitle used to report as "all in sync".
         let subtitle = github.drillHeaderSubtitle ?? ""
@@ -1107,7 +1123,7 @@ enum SidebarRedesignsSelfTest {
         let steps = shell.workspace.bootstrap
         shell.workspace.navigator.show(.bootstrap)
         settle(shell)
-        check(steps.debugDrawsSidebarLayout && !steps.debugFullSetupCardShown, "Setup steps still draws its own run card", &ok)
+        check(!steps.debugFullSetupCardShown, "Setup steps still draws its own run card", &ok)
         check(shell.toolbar.debugPrimaryAction === steps.debugRunFullSetupButton, "Run full setup is not the far-right button", &ok)
         for kind in SetupStepKind.allCases {
             guard let details = steps.debugDetailsButton(kind) else {
@@ -1137,7 +1153,7 @@ enum SidebarRedesignsSelfTest {
         let automation = shell.workspace.automation
         shell.workspace.navigator.show(.automation)
         settle(shell)
-        check(automation.debugDrawsSidebarLayout && !automation.debugRunCardShown, "Automation still draws its run card", &ok)
+        check(!automation.debugRunCardShown, "Automation still draws its run card", &ok)
         check(shell.toolbar.debugPrimaryAction === automation.debugRunButton, "Run Automation is not the far-right button", &ok)
         let rows = automation.debugAutomationRows
         let titles = rows.map(\.titleLabel.stringValue)

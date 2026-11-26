@@ -142,40 +142,8 @@ enum DaylightModuleSelfTest {
     private static let overviewOnly: Set<DaylightModule> =
         [.briefing, .claudeStatus, .fleet]
 
-    /// `fm/grandline-overview-canvas-trim`'s own captain decision, restated
-    /// as literal data for the same reason `lockedMembership` above is: a
-    /// test that reads `appearsOnOverview` to check `appearsOnOverview`
-    /// asserts nothing. That decision named six modules as staying on the
-    /// Overview canvas after a screenshot review.
-    ///
-    /// It is **seven** now, and the seventh is the captain's own explicit
-    /// later ask: `fm/polish-straw-hat-overview-card-and-voice-c8d3` is him
-    /// saying he expected the Straw Hat Pirates chat to be its own Overview
-    /// card "like the Console card" rather than a tab inside Fleet's page.
-    /// Raising the count is exactly the deliberate two-place edit this
-    /// literal exists to force.
-    ///
-    /// It is **eight** now. `fm/grandline-claude-status-card-implement` is the
-    /// captain picking a design for a Claude quota readout on the Home page
-    /// and saying "we can start implementing this" - which, like the Straw
-    /// Hat card before it, is him asking for a card on the landing rather
-    /// than a surface he has to navigate to. Raising the count is exactly the
-    /// deliberate two-place edit this literal exists to force.
-    ///
-    /// It is **five** now, and this is the first edit to shrink it.
-    /// `fm/grandline-home-card-reorg` is the captain reviewing the live Home
-    /// page and naming three cards to take off it: Straw Hat Pirates (moved to
-    /// the Command space, so it is in `lockedMembership` above now), Console
-    /// and Schedules. Console and Schedules keep their `space` untouched -
-    /// each already renders a card on Command and Operations respectively, and
-    /// repeating it on Home is exactly the duplication the original trim
-    /// existed to remove. Lowering the count is the same deliberate two-place
-    /// edit this literal exists to force as raising it.
-    private static let overviewVisibleModules: Set<DaylightModule> =
-        [.briefing, .claudeStatus, .fleet, .mergeQueue, .health]
-
     private static func checkSpaceTable(_ ok: inout Bool) {
-        print("\n-- space filter: the table matches the locked captain decision --")
+        print("\n-- space table: the table matches the locked captain decision --")
 
         for (space, expected) in lockedMembership {
             let actual = Set(DaylightModule.allCases.filter { $0.space == space })
@@ -189,127 +157,26 @@ enum DaylightModuleSelfTest {
             fail("Overview-only set should be \(overviewOnly.map(\.rawValue).sorted()), got \(actualOverviewOnly.map(\.rawValue).sorted())", &ok)
         }
 
-        // Overview shows exactly the trimmed set (five since
-        // `fm/grandline-home-card-reorg`); each other space shows only its
-        // own.
-        let onOverview = Set(DaylightModule.allCases.filter { $0.isVisible(in: .overview) })
-        if onOverview != overviewVisibleModules {
-            fail("Overview should show exactly \(overviewVisibleModules.map(\.rawValue).sorted()), "
-                 + "showed \(onOverview.map(\.rawValue).sorted())", &ok)
-        }
-        for (space, expected) in lockedMembership {
-            let visible = Set(DaylightModule.allCases.filter { $0.isVisible(in: space) })
-            if visible != expected {
-                fail("\(space.rawValue) should show exactly its own modules, showed \(visible.map(\.rawValue).sorted())", &ok)
-            }
-            for module in overviewOnly where module.isVisible(in: space) {
-                fail("\(module.rawValue) must appear only on Overview, but is visible in \(space.rawValue)", &ok)
-            }
-        }
+        // P-03 of the 2026-11-25 full review removed the floating bar's
+        // space filter, and with it the checks on what each space's canvas
+        // showed (`isVisible(in:)`, Overview's trimmed set). The table itself
+        // still says which space a card belongs to.
 
-        // Every one of the twelve trimmed-from-Overview modules must still be
-        // fully reachable on its own space's canvas - the trim removes a
-        // card from Overview specifically, never the module, its destination,
-        // or its own canvas presence. A module that fell out of both would be
-        // a real regression this suite has to catch, not just assume away.
-        let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
-        // 12 from the original trim, plus Runbooks, Postmortems
-        // (`fm/grandline-docs-split-runbooks-postmortems`), Whiteboard
-        // (`fm/grand-line-whiteboard-excalidraw`), Kubernetes
-        // (`fm/grandline-k8s-cluster-tail`), Sticky Board
-        // (`fm/grandline-sticky-board`) and Code Preview
-        // (`fm/grandline-monaco-code-preview`) - all six new modules with
-        // `appearsOnOverview == false`, matching their space siblings. The
-        // Kubernetes card in particular has nothing to show without a live
-        // session and a chosen feed tab, so it belongs on Operations beside
-        // Log Analyzer rather than on the pulse-check hub; Sticky Board and
-        // Code Preview are Stores utilities like every one of their
-        // neighbours there.
-        //
-        // The literal is deliberate: the captain's own trim decision names the
-        // six that *stay*, so a module quietly gaining an Overview card is the
-        // regression this catches. Adding a module means bumping this by one
-        // and saying why, which is what every line above did.
-        //
-        // 18 -> 19: `fm/implement-grand-line-secrets-vault-poneg-ad` added
-        // `.poneglyph` (Setup's fifth tab - Automic Vault's hardening panel at
-        // the time, the captain's own credential vault since
-        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`). It is trimmed
-        // from Overview like every other Setup card - and this check is what
-        // caught it defaulting to *visible* there, which would have put a
-        // seventh card on Overview against the captain's own locked decision.
-        //
-        // 20 -> 21: `fm/grandline-feature-f1-notebook` added `.notebook`
-        // (F1 of full review #3 §8). It is a Stores utility like Docs,
-        // Runbooks and Postmortems beside it, so it is trimmed from Overview
-        // for the same reason they are - the canvas's seven cards are the
-        // captain's own locked decision, and a notebook is a surface you open
-        // when you have something to write down rather than one you check in
-        // on each morning.
-        // `fm/grandline-feature-f4-reading-list` made it 22, adding the Reading
-        // List (F4 of the same section) on the same reasoning: a link inbox is
-        // a Stores surface you open when you have something to file or
-        // something to read, not one you check in on each morning.
-        // 22 -> 25: `fm/grandline-home-card-reorg` took `.strawHat`, `.console`
-        // and `.schedules` off Home on the captain's own review of the live
-        // page. All three have a real space, so all three are still reachable
-        // on their own canvas - which is exactly what the loop below this
-        // asserts, and is why "trimmed" has never meant "removed".
-        // 25 -> 27: R5-UX-07's Calendar and Focus timer cards, which a
-        // Personal Home places itself; the hub's seven stay the captain's.
-        if trimmed.count != 27 {
-            fail("expected exactly 27 modules trimmed from Overview, got \(trimmed.count): "
-                 + "\(trimmed.map(\.rawValue).sorted())", &ok)
-        }
-        for module in trimmed {
-            guard let ownSpace = module.space else {
-                fail("\(module.rawValue) is trimmed from Overview but has no other space to live in - "
-                     + "it would be unreachable from the canvas entirely", &ok)
-                continue
-            }
-            if !module.isVisible(in: ownSpace) {
-                fail("\(module.rawValue) is trimmed from Overview but is not visible in its own "
-                     + "space (\(ownSpace.rawValue)) either", &ok)
-            }
-        }
-        // Its destination - the thing a click, the nav, or `⌘K` actually
-        // opens - is untouched by this trim: the module's card is
-        // presentation, `RailDestination` is the functional path, and every
-        // one of these twelve is still driven through its real drill page
-        // (mount, title, back button) by `checkCanvasAndDrillHeader`'s own
-        // `RailDestination.allCases` loop below, unaffected by which modules
-        // Overview shows.
-
-        // Every module belongs somewhere reachable, and every space has
-        // something in it - a pill filtering to nothing is a dead end.
-        for space in DaylightSpace.allCases {
-            if DaylightModule.allCases.filter({ $0.isVisible(in: space) }).isEmpty {
-                fail("space \(space.rawValue) has no modules at all", &ok)
-            }
-        }
-
-        // §5.4's copy, and the shortcut indices `⌘1`…`⌘5` carry.
-        // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
-        // literal list is restated here rather than derived, exactly as
-        // `checkSpaceTable`'s own header requires. A "Today" pill sat
-        // leftmost for a while and was removed with its page
-        // (`fm/grandline-remove-today-calendar-1792553365`), which gave Home
-        // \u{2318}1 back.
+        // §5.4's copy, in order. Review #3 §7 renamed the first pill
+        // "Overview" -> "Home"; the literal list is restated here rather than
+        // derived, exactly as `checkSpaceTable`'s own header requires. A
+        // "Today" pill sat leftmost for a while and was removed with its page
+        // (`fm/grandline-remove-today-calendar-1792553365`). The spaces' own
+        // `⌘N` index went with the floating bar's pills in P-03: the Go
+        // menu's chords open sidebar items now.
         let expectedTitles = ["Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)
         }
-        for (index, space) in DaylightSpace.allCases.enumerated() where space.shortcutIndex != index + 1 {
-            fail("\(space.rawValue) should map to \u{2318}\(index + 1), reports \u{2318}\(space.shortcutIndex)", &ok)
-        }
-        for space in DaylightSpace.allCases where space.subtitle.isEmpty {
-            fail("\(space.rawValue) has no subtitle copy", &ok)
-        }
-
         if ok {
-            print("  OK - 4 spaces x their locked modules, \(overviewOnly.count) Overview-only, Overview trimmed to "
-                  + "\(overviewVisibleModules.count), \(DaylightSpace.allCases.count) pills in shortcut order")
+            print("  OK - 4 spaces x their locked modules, \(overviewOnly.count) Overview-only, "
+                  + "\(DaylightSpace.allCases.count) spaces in order")
         }
     }
 
@@ -344,7 +211,7 @@ enum DaylightModuleSelfTest {
     // `checkUniformCardHeight` below, which needs a real window.
 
     private static func checkUniformCardSizing(_ ok: inout Bool) {
-        print("\n-- grid: every module card the same size, on every space --")
+        print("\n-- grid: every module card the same size --")
 
         // Column count is monotonic in width and never below one.
         var previous = 0
@@ -377,112 +244,10 @@ enum DaylightModuleSelfTest {
             fail("\(module.rawValue) should span 2 columns, got \(module.gridSpan)", &ok)
         }
 
-        // The real grid, at several real widths, for every space - including
-        // the partial-last-row case, which is what a lone leftover card
-        // stretching to fill its row would look like.
-        for space in DaylightSpace.allCases {
-            let modules = DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
-            for container in [CGFloat(560), 820, 1100, 1512, 1900] {
-                let columns = HelmResponsiveGrid.columns(containerWidth: container,
-                                                         minItemWidth: HomeCanvasController.minModuleWidth,
-                                                         spacing: HomeCanvasController.gridSpacing)
-                let unit = HelmResponsiveGrid.itemWidth(containerWidth: container,
-                                                        columns: columns,
-                                                        spacing: HomeCanvasController.gridSpacing)
-                let rows = HelmResponsiveGrid.spanningRows(
-                    modules,
-                    spans: { $0.gridSpan },
-                    containerWidth: container,
-                    minItemWidth: HomeCanvasController.minModuleWidth,
-                    spacing: HomeCanvasController.gridSpacing
-                ) { module, width in
-                    let v = NSView()
-                    v.identifier = NSUserInterfaceItemIdentifier("\(module.rawValue)|\(width)")
-                    v.translatesAutoresizingMaskIntoConstraints = false
-                    return v
-                }
-
-                for (index, row) in rows.enumerated() {
-                    // Every cell's width is an explicit constraint on this
-                    // path, and every one of them must sit below the window's
-                    // own stay-put priority or a card becomes a window-width
-                    // floor (gotcha (13)) - the failure `AppShellBody-
-                    // WidthSelfTest` reproduces end to end.
-                    var rowWidth: CGFloat = 0
-                    for view in row.arrangedSubviews {
-                        let widths = view.constraints.filter { $0.firstAttribute == .width }
-                        guard let width = widths.first, widths.count == 1 else {
-                            fail("\(space.rawValue) at \(container)pt: row \(index) has a cell with "
-                                 + "\(widths.count) width constraints, expected exactly 1", &ok)
-                            continue
-                        }
-                        if width.priority != HelmDaylightPriority.contentTie {
-                            fail("\(space.rawValue) at \(container)pt: a cell's width is priority "
-                                 + "\(width.priority.rawValue), expected "
-                                 + "\(HelmDaylightPriority.contentTie.rawValue) - above 500 it caps the window", &ok)
-                        }
-                        // A cell is one column, or two columns plus the gap
-                        // between them. Nothing else.
-                        let single = abs(width.constant - unit) < 0.01
-                        let double = abs(width.constant - (unit * 2 + HomeCanvasController.gridSpacing)) < 0.01
-                        if !(single || (double && columns >= 2)) {
-                            fail("\(space.rawValue) at \(container)pt: a cell is \(width.constant)pt, "
-                                 + "which is neither one column (\(unit)) nor two", &ok)
-                        }
-                        rowWidth += width.constant
-                    }
-                    // The row fills its container exactly - no overflow, and
-                    // no short row left stretching its cards.
-                    let gaps = HomeCanvasController.gridSpacing * CGFloat(max(0, row.arrangedSubviews.count - 1))
-                    if abs(rowWidth + gaps - container) > 0.5 {
-                        fail("\(space.rawValue) at \(container)pt: row \(index) resolves to "
-                             + "\(rowWidth + gaps)pt, not the container's \(container)pt", &ok)
-                    }
-                }
-
-                // Every module placed exactly once, in order.
-                let placed = rows.flatMap { $0.arrangedSubviews }
-                    .compactMap { $0.identifier?.rawValue.split(separator: "|").first.map(String.init) }
-                if placed != modules.map(\.rawValue) {
-                    fail("\(space.rawValue) at \(container)pt: laid out \(placed), expected "
-                         + "\(modules.map(\.rawValue))", &ok)
-                }
-
-                // At two or more columns the briefing is genuinely built for
-                // the double width - not handed one column's worth and left
-                // to wrap.
-                if columns >= 2, modules.contains(.briefing) {
-                    let built = rows.flatMap { $0.arrangedSubviews }
-                        .first { $0.identifier?.rawValue.hasPrefix("briefing|") == true }?
-                        .identifier?.rawValue.split(separator: "|").last.flatMap { Double($0) }
-                    let expected = Double(unit * 2 + HomeCanvasController.gridSpacing)
-                    if let built, abs(built - expected) > 0.01 {
-                        fail("\(space.rawValue) at \(container)pt: the briefing card was built for "
-                             + "\(built)pt, expected \(expected)pt", &ok)
-                    } else if built == nil {
-                        fail("\(space.rawValue) at \(container)pt: no briefing cell was built", &ok)
-                    }
-                }
-            }
-        }
-
-        // Engineering's own lineup, in order - the captain's second
-        // refinement, stated as the list they asked for.
-        // `fm/implement-grand-line-secrets-vault-poneg-ad` had added
-        // `.poneglyph` between GitHub Sync and Settings, and
-        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapped which
-        // feature `.poneglyph` shows (see `VaultController.swift`'s header)
-        // with no change to its position here. `fm/move-poneglyph-to-stores-space-282a`
-        // then moved `.poneglyph` itself out of Engineering into Stores (see
-        // `DaylightSpace.swift`'s `space` table), so it no longer appears in
-        // this lineup at all. `.settings` stays last, as the captain's own
-        // refinement put it.
-        let engineering = DaylightModule.canvasOrder.filter { $0.isVisible(in: .engineering) }
-        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .settings]
-        if engineering != expected {
-            fail("Engineering should show \(expected.map(\.rawValue)) in that order, got "
-                 + "\(engineering.map(\.rawValue))", &ok)
-        }
+        // The real grid for every space, and Engineering's own lineup, were
+        // the floating bar's wrapping shelf. P-03 of the 2026-11-25 full
+        // review removed it; Home's arranged grid is `HomeCardGrid`'s, which
+        // `MainSplitShellNavigationSelfTest` measures in a real window.
         for module in [DaylightModule.updates, .bootstrap, .automation, .githubSync] {
             if module.opens == .updates && module != .updates {
                 fail("\(module.rawValue) opens .updates - each Setup card must open its own page", &ok)
@@ -518,8 +283,8 @@ enum DaylightModuleSelfTest {
         }
 
         if ok {
-            print("  OK - briefing wide + every other cell one column, on 5 spaces x 5 widths, "
-                  + "Engineering's five cards, packing math")
+            print("  OK - briefing and Claude wide, every other module one column, the four Setup cards' "
+                  + "own pages, packing math")
         }
     }
 
@@ -687,22 +452,24 @@ enum DaylightModuleSelfTest {
             print("   \(title) (x\(scale)), card \(HelmModuleCard.standardHeight)pt:")
             for (name, body) in bodies { measure(name, body, width: narrow) }
             measure("paragraph", .paragraph(capped), width: spanTwo)
-            // The Claude usage report, at the span-2 width it is really
-            // built for and carrying the widest realistic figures.
+            // The Claude usage card as Home draws it - the split hero, its
+            // panel beside the usage report - at the span-2 width it is
+            // really built for and carrying the widest realistic figures.
             //
-            // **This is the one body kind that is deliberately allowed past
-            // the card's floor**, on the captain's own instruction - so what
+            // **This is a body kind that is deliberately allowed past the
+            // card's floor**, on the captain's own instruction - so what
             // `measure` checks for it is the same thing it checks for every
             // other body (the content fits the area the card gives it, so
             // nothing is clipped), against a card that has grown rather than
             // against the floor.
-            measure("usageReport", .usageReport(usageSections, compact: false), width: spanTwo)
-            // And the same report on a card `packRows` degraded to one
-            // column, which reflows into stacked rows rather than truncating.
-            measure("usageReport-1col",
-                    .usageReport(usageSections,
-                                 compact: HomeCanvasController.claudeUsageIsCompact(forCardWidth: narrow)),
-                    width: narrow)
+            func claudeCard(_ width: CGFloat) -> HelmModuleCard.Body {
+                .heroSplit(.init(headline: "Fable limit reached", body: nil, ring: nil,
+                                 detail: .report(usageSections), layout: .init(cardWidth: width)))
+            }
+            measure("heroSplit", claudeCard(spanTwo), width: spanTwo)
+            // And the same card one column wide, where the panel becomes a
+            // band across the top and the report runs under it.
+            measure("heroSplit-1col", claudeCard(narrow), width: narrow)
             // And the same paragraph on a briefing `packRows` has degraded to
             // one column, which takes the narrower cap.
             measure("paragraph-1col",

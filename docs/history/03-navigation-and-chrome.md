@@ -1811,3 +1811,62 @@ Two findings on the way:
 - `FM_RUN_TERMINAL_SELECTION_RENDER_TESTS` fails on this machine on an unchanged `main` too, so it is not this change.
 
 Part 2 follows in its own pull request: each page builds its sidebar presentation at load, so the `drawsSidebarLayout` branches, the seven `+Classic` files and Home's dashboard and spaces can go.
+
+## P-03, part 2: each page's hidden floating-bar presentation is removed (`fm/grandline-process-fixes-p03-part2`)
+
+Part 1 removed the classic shell, but every page still built its floating-bar presentation and hid it.
+Part 2 removed those presentations page by page, one commit each, then swept what the per-page commits had left behind.
+
+The commits, with `git show --shortstat`:
+
+- `4a6c92cf` port or remove more floating-bar suite cases: 23 files, +43 -1160.
+- `bae0bf12` port the Snippets, vault, 2FA, Vault-loading, Code Runner and Tasks suites to the sidebar: 15 files, +192 -819.
+- `d2099913` Notebook, GitHub Sync and Updates: 23 files, +198 -1699.
+- `262a2e0f` Home's dashboard layout, space filter, hero row and attention card: 44 files, +701 -3995.
+- `1cd0bc6b` Hosts: 28 files, +527 -3630.
+- `e554fb2c` the credential vault and Vault: 18 files, +619 -1791.
+- `90468ca9` Tasks: 17 files, +605 -2242.
+- The sweep: 56 files, +431 -4025 (with its new release-notes file).
+
+Three earlier commits on the branch prepared this: `1fa0bf70` made every page build its sidebar presentation at the end of its own `loadView` (42 files, +375 -861), and `2b263e8c` and `af10e7bd` ported the first suites and fixed the Vault page's windowless layout (8 files, +45 -341, and 1 file, +6 -1).
+
+Each page commit pinned what the page really draws to its own container instead of to the hidden view it used to sit on, and measured that nothing moved:
+
+- Hosts: the tables, grids and expansion strip pin to their tab views, at the same frames on every tab in the split shell.
+- The credential vault and Vault: the table and search row pin to the content pane, at the same frames on both pages.
+- Tasks: every Board, List, Calendar and Weekly review frame is unchanged in a standalone mount and in the shell at 1512 and 1100.
+  The one move is a project's detail cards, 16pt higher, because the zero-height Follow-ups row no longer takes a gap above them.
+
+The sweep changed no frame.
+It removed views that were never in a window (Vault's undrawn launchers table and its count badge) or always hidden (the credential inspector's own head), and kit API with no caller left.
+What it measured instead is what the ported suites read off the drawn views: the Claude card's split hero at 293, 526, 613 and 1000pt, the inspector's column width, and S-1's launcher rows.
+
+The sweep's removals:
+
+- Home's Needs Attention card, which nothing drew after `262a2e0f`, with `NeedsAttentionData` and the daily review's digest (`DailyReviewData`), which only the card read.
+- `HelmModuleCard`'s `.usageReport`, `.usageReportDense`, `.ringWithLines` and `.kpis` bodies, `HelmResponsiveGrid`'s proportional dashboard layout, and `HelmSplitPage`'s `pageForcesCollapse` and `.pageGroundWithEdge`.
+  Each was a major bump, in `docs/design-system/helm-kit-releases/2026-11-26-p03-sweep.md`.
+- `HomeCanvasController.claudeUsageIsCompact`, `FleetGreeting.Answer.metaRestatesCards` and `DaylightSpace.shortcutIndex`.
+- The credential inspector's head and `onClose`. The shell's inspector close button is the only one.
+- Comments that cited `HostsListSection`, `HostsListRecordView`, `CredentialVaultSidebar.setCounts` or `UpdatesController.checkAllPill`, and two feature-inventory rows that said "the floating bar keeps" a sheet or a window.
+
+Suites deleted across part 2: `CodePreviewSidebarViewSelfTest`, `FleetReplyLayoutSelfTest`, `HomeDashboardSelfTest` and `StatusPillThemeSelfTest` in the page commits, and `NeedsAttentionViewSelfTest`, `NeedsAttentionSelfTest` and `DailyReviewSelfTest` in the sweep.
+The window-backed ceiling in `E2ETestingPolicySelfTest` is 122.
+
+Suites ported in the sweep:
+
+- `ClaudeStatusCardSelfTest` mounts the split hero Home really builds (`HomeCanvasController.claudeHeroBody`, new for this), and the cases that measured the sectioned report's verdict words and its stacked reflow went with that body.
+- `VaultLoadingStateSelfTest`, `Audit3UIFixesSelfTest` and `PageRedesignsSelfTest` read S-1's launcher rows and header count instead of the undrawn table and badge.
+- `PageRedesignsSelfTest` clicks the shell's inspector close for the credential inspector, and `CredentialVaultViewSelfTest` no longer clicks the panel's hidden one.
+- `MainSplitShellNavigationSelfTest` puts Notebook's column away with Toggle Sidebar instead of `pageForcesCollapse`.
+- `DaylightModuleSelfTest` measures the split hero where it measured `.usageReport`.
+
+One finding from the port, left as it is because this sweep changes no behaviour: a Claude card between the split hero's 400pt narrow threshold and the 526pt span-2 minimum gets a report about 250pt wide beside its panel, and there the spend caption ("$137.62 of $140") paints truncated.
+Measured at 477pt, the old floating-bar page column, which is no longer a width Home's grid hands this card by default.
+
+Deliberately left:
+
+- The Tasks board's own `adoptWorkspaceStyle` and its classic card style in `ShiftBoardViews.swift`.
+- The Projects card on a project's detail page.
+- `HostsController.setModuleTabControlHidden`, a no-op that `ModuleTabHosting` still requires, because Crew's page implements it for real.
+- 37 other feature-inventory rows that still say "the floating bar keeps" something. They became wrong in part 1, not here.

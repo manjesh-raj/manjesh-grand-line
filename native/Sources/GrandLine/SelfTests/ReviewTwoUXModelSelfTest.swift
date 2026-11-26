@@ -313,10 +313,9 @@ enum ReviewTwoUXModelSelfTest {
             let code = text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             check(!code.contains { $0.contains(phrase) }, "\(file) still says \"\(phrase)\" to every user", &ok)
         }
-        if let home = SelfTestSources.homeCanvas(read: source) {
-            check(home.contains("crew ? fleetAttentionItem() : nil") && home.contains("setup ? sessionChecksAttentionItem() : nil"),
-                  "Home's attention card no longer leaves out the fleet and Setup rows for a profile that hides them", &ok)
-        }
+        // The guard on Home's attention card leaving out the fleet and Setup
+        // rows is gone with the card (P-03); `ReviewTwoUXSelfTest` checks the
+        // greeting does the same.
     }
 
     // MARK: R2-UX-03 - module chords and keyboard parity

@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // P-05 of the 2026-11-25 full review (GL-36), part of `HomeCanvasController`'s
-// decomposition by card family: Customize: hiding, sizing and colouring a card, dragging a card's size, rebuilding the grid, and each card's style menu.
+// decomposition by card family: Customize: hiding, sizing and colouring a card, dragging a card's size, building the grid and its cards, and each card's style menu.
 //
 // Split out verbatim along the controller's own `// MARK:` seams. No statement
 // changed in the move; `private` was dropped so the family can reach its own
@@ -14,12 +14,9 @@ extension HomeCanvasController {
 
     // MARK: Customize
 
-    /// Enter or leave Customize. Only Home's own space, and only with a
-    /// layout to arrange - the floating bar has none.
+    /// Enter or leave Customize.
     func setCustomizing(_ customizing: Bool) {
-        let customizing = customizing && cardLayout != nil
         guard customizing != isCustomizing else { return }
-        if customizing, space != .overview { space = .overview }
         // A drag still in progress ends with Customize. Left running, the
         // rebuild below keeps its card, strip and grips included, and that
         // card shows Customize's controls in place of its own until Home is
@@ -39,31 +36,32 @@ extension HomeCanvasController {
 
     /// The captain changed the arrangement: keep it, tell the shell, redraw.
     func arrange(_ change: (inout HomeCardLayout) -> Void) {
-        guard var layout = cardLayout else { return }
+        var layout = cardLayout
         change(&layout)
         guard layout != cardLayout else { return }
         cardLayout = layout
         onCardLayoutChanged?(layout)
     }
 
-    /// The tray sits above the attention card while Customize is on.
+    /// The tray sits above the tip and the cards while Customize is on.
     func placeCustomizeTray() {
-        let wanted = isCustomizing && showsArrangedCards
+        let wanted = isCustomizing
         if wanted, customizeTray.superview !== stack {
-            stack.insertArrangedSubview(customizeTray, at: stack.arrangedSubviews.firstIndex(of: heroCard) ?? 1)
+            stack.insertArrangedSubview(customizeTray, at: stack.arrangedSubviews.firstIndex(of: tipRow) ?? 2)
             customizeTray.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         } else if !wanted, customizeTray.superview === stack {
             stack.removeArrangedSubview(customizeTray)
             customizeTray.removeFromSuperview()
         }
-        customizeTray.hiddenCards = cardLayout?.hidden ?? []
+        customizeTray.hiddenCards = cardLayout.hidden
     }
 
     /// A card's controls while Customize is on: reset its size, earlier,
     /// later and hide, over the card's own header actions - and the grips on
     /// its edges that size it.
     func attachCustomizeStrip(to card: HelmModuleCard, module: DaylightModule) {
-        guard isCustomizing, showsArrangedCards, let layout = cardLayout else { return }
+        guard isCustomizing else { return }
+        let layout = cardLayout
         let strip = HomeCardCustomizeStrip(cardTitle: module.title, hasCustomSize: layout.hasCustomSize(module),
                                            canMoveEarlier: layout.canMove(module, by: -1),
                                            canMoveLater: layout.canMove(module, by: 1))
@@ -100,7 +98,8 @@ extension HomeCanvasController {
 
 
     func beginCardResize(_ module: DaylightModule, edge: HomeCardResizeHandle.Edge, at windowPoint: NSPoint) {
-        guard isCustomizing, showsArrangedCards, let layout = cardLayout, let card = cardsByModule[module] else { return }
+        guard isCustomizing, let card = cardsByModule[module] else { return }
+        let layout = cardLayout
         var base = layout
         if edge.resizesWidth { keepDrawnRow(of: module, in: &base, available: gridContainerWidth()) }
         cardResize = CardResize(module: module, edge: edge, start: document.convert(windowPoint, from: nil),
@@ -121,7 +120,7 @@ extension HomeCanvasController {
     /// the preview - Home is laid out again at that size, so its neighbours
     /// reflow under the pointer - and nothing is kept until the drag ends.
     func dragCardResize(to windowPoint: NSPoint) {
-        guard let resize = cardResize, cardLayout != nil else { return }
+        guard let resize = cardResize else { return }
         if let event = NSApp?.currentEvent, event.type == .leftMouseDragged { document.autoscroll(with: event) }
         let point = document.convert(windowPoint, from: nil)
         let available = gridContainerWidth()
@@ -151,7 +150,8 @@ extension HomeCanvasController {
         cardResize = nil
         sizeBadge.removeFromSuperview()
         for handle in resizeHandles[resize.module] ?? [] { handle.isActive = false }
-        guard let layout = cardLayout, layout != resize.startLayout else { return }
+        let layout = cardLayout
+        guard layout != resize.startLayout else { return }
         cardStrips[resize.module]?.setHasCustomSize(layout.hasCustomSize(resize.module))
         onCardLayoutChanged?(layout)
     }
@@ -200,39 +200,29 @@ extension HomeCanvasController {
     /// the same key lay out identically, so the second can reuse the first's
     /// cards (P2).
     struct GridLayoutKey: Equatable {
-        var space: DaylightSpace
         var modules: [DaylightModule]
-        /// Each card's span, which the captain can change on Home.
+        /// Each card's span, which the captain can change.
         var spans: [Int]
-        /// Each card's own height on Home, -1 for one that takes its row's.
-        var heights: [CGFloat] = []
-        /// How many cards each of Home's arranged rows holds: the same spans
-        /// can break into rows differently once the window makes room in one.
-        var rowLengths: [Int] = []
+        /// Each card's own height, -1 for one that takes its row's.
+        var heights: [CGFloat]
+        /// How many cards each row holds: the same spans can break into rows
+        /// differently once the window makes room in one.
+        var rowLengths: [Int]
         /// Customize puts controls on every card, so toggling it rebuilds.
         var customizing: Bool
-        var dashboard: Bool
         var width: CGFloat
-        /// The hub's columns are budgeted from the height; the shelf's are not.
-        var height: CGFloat
     }
 
     func rebuildGrid() {
         let available = gridContainerWidth()
         lastGridWidth = available
-        lastGridHeight = gridContainerHeight()
         let modules = visibleModules()
-
-        // Overview is hand-placed - see `dashboardRowViews` for why, and for
-        // the two conditions under which it declines and this falls through
-        // to the wrapping grid below.
-        let dashboard = usesDashboardLayout && dashboardRowViewsWouldApply(available: available, modules: modules)
 
         // P2: a render that changed only data keeps the grid and its cards.
         // Rebuilding them is what made Home flash on every fleet refresh and
         // dropped a card's hover; it also re-registered every card's theme
         // observer and re-solved the whole grid.
-        if refreshGridInPlace(available: available, modules: modules, dashboard: dashboard) { return }
+        if refreshGridInPlace(available: available, modules: modules) { return }
 
         #if FM_SELFTESTS
         debugGridRebuilds += 1
@@ -249,113 +239,21 @@ extension HomeCanvasController {
             row.removeFromSuperview()
         }
         gridWidthPins.removeAll()
-        builtShelfColumns = 0
         cards.removeAll()
         cardsByModule.removeAll()
-        cardPlacements.removeAll()
-        dashboardOwnHeights.removeAll()
+        cardWidths.removeAll()
         cardStrips.removeAll()
         resizeHandles.removeAll()
         gridLayoutKey = nil
 
         placeCustomizeTray()
-        placeAttentionCard(inDashboard: dashboard)
-        documentFillsViewport?.isActive = dashboard
-        if dashboard,
-           let rows = dashboardRowViews(available: available, modules: modules) {
-            // The dashboard uses the full width by construction: its spans
-            // sum to the whole track grid, so there is no leftover column to
-            // turn into margin the way `composedContentWidth` does for a
-            // space with fewer cards than columns.
-            contentWidthConstraint?.constant = available
-            for row in rows {
-                gridStack.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-                gridWidthPins += row.arrangedSubviews.enumerated().compactMap { index, column in
-                    Self.widthPin(of: column).map { ($0, Self.dashboardSpans[min(index, Self.dashboardSpans.count - 1)]) }
-                }
-            }
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: [], customizing: false, dashboard: true,
-                                          width: available, height: lastGridHeight)
-            return
-        }
-
-        if showsArrangedCards {
-            buildArrangedGrid(available: available, modules: modules, keeping: kept)
-            return
-        }
-
-        // C1: use only as many columns as this space has cards to fill, and
-        // let the column that is left over become margin on both sides
-        // instead of a one-sided void on the right.
-        //
-        // The card *size* is unchanged - `unit` is still derived from the
-        // full available width and the full column count, which is what the
-        // captain's uniform-height decision (and the uniform-width rule that
-        // came with it) rests on. Only how many of those columns the content
-        // occupies changes.
-        let width = Self.composedContentWidth(available: available, modules: modules, spans: cardSpan)
-        contentWidthConstraint?.constant = width
-        // R2-A11Y-05: the full-width card is told its width as a column is,
-        // so its headline wraps to two lines and its single lines truncate.
-        // Told nothing, a long verdict stayed on one line and ran past the
-        // card and out of the window - measured in the tour lab at 1100 and
-        // 1512, and at the Larger text scale it hid Refresh as well.
-        attentionCard.setLayoutWidth(width)
-
-        // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
-        // columns and every other module spans one (`DaylightModule.gridSpan`).
-        // Uniform *width* still comes from the layout rather than from
-        // anything a card asks for - a span-1 card is exactly one column in
-        // every row - and this path carries the same partial-row padding that
-        // stops a lone leftover card stretching, expressed in columns rather
-        // than cells. Uniform *height* is per row (`equalHeights` below):
-        // full review #3's PF2 turned `HelmModuleCard`'s fixed height into a
-        // floor, so a row of one-line cards is now as short as its content.
-        let rows = HelmResponsiveGrid.spanningRows(
-            modules,
-            spans: cardSpan,
-            containerWidth: width,
-            minItemWidth: Self.minModuleWidth,
-            spacing: Self.gridSpacing,
-            // PF2: a card is content-sized now, so uniformity is per row.
-            // Every card joins its row's tie, the Claude card included
-            // (`fm/grandline-widget-polish`): the captain wants it as tall as
-            // Fleet and Hosts beside it.
-            equalHeights: true
-        ) { [weak self] module, cardWidth in
-            guard let self else { return NSView() }
-            let card = self.makeCard(for: module, placement: .shelf(width: cardWidth))
-            self.attachCustomizeStrip(to: card, module: module)
-            return card
-        }
-
-        let columns = HelmResponsiveGrid.columns(containerWidth: width, minItemWidth: Self.minModuleWidth,
-                                                 spacing: Self.gridSpacing)
-        let unit = HelmResponsiveGrid.itemWidth(containerWidth: width, columns: columns, spacing: Self.gridSpacing)
-        builtShelfColumns = columns
-        for row in rows {
-            gridStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
-            // Each cell's span, read back off the width it was built at - the
-            // inverse of `spanningRows`' own `unit * span + spacing * (span - 1)`.
-            gridWidthPins += row.arrangedSubviews.compactMap { cell in
-                Self.widthPin(of: cell).map {
-                    ($0, max(1, Int((($0.constant + Self.gridSpacing) / (unit + Self.gridSpacing)).rounded())))
-                }
-            }
-        }
-        if Set(cardsByModule.keys) == Set(modules) {
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map(cardSpan),
-                                          customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0)
-        }
+        buildArrangedGrid(available: available, modules: modules, keeping: kept)
     }
 
     /// Home's arranged cards: the captain's widths, in `HomeCardGrid.columns`
-    /// across the whole width, and their heights. The same row builder as
-    /// the shelf below, at a fixed column count, so a card left at its own
-    /// size draws exactly as it did when sizes were fixed.
+    /// across the whole width, and their heights. `spanningRows` at a fixed
+    /// column count, so a card left at its own size draws exactly as it did
+    /// when sizes were fixed.
     ///
     /// The content is not composed into fewer columns (C1): the captain sized
     /// these cards against the full width, and a row they left short is
@@ -363,8 +261,7 @@ extension HomeCanvasController {
     func buildArrangedGrid(available: CGFloat, modules: [DaylightModule],
                                    keeping kept: (module: DaylightModule, card: HelmModuleCard)?) {
         contentWidthConstraint?.constant = available
-        attentionCard.setLayoutWidth(available)
-        let placed = shownLayout.map { arrangedRows(of: $0, available: available) } ?? []
+        let placed = arrangedRows(of: shownLayout, available: available)
         var spans: [DaylightModule: Int] = [:]
         for placement in placed.joined() where modules.indices.contains(placement.index) {
             spans[modules[placement.index]] = placement.span
@@ -384,7 +281,6 @@ extension HomeCanvasController {
             packedRows: placed
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
-            let placement = CardPlacement.shelf(width: cardWidth)
             let card: HelmModuleCard
             if let kept, kept.module == module {
                 // Off its old row, and without the width and height that row
@@ -395,19 +291,18 @@ extension HomeCanvasController {
                 }
                 NSLayoutConstraint.deactivate(own)
                 kept.card.removeFromSuperview()
-                kept.card.configureIfChanged(self.content(for: module, placement: placement))
+                kept.card.configureIfChanged(self.content(for: module, width: cardWidth))
                 card = kept.card
                 self.cards.append(card)
                 self.cardsByModule[module] = card
-                self.cardPlacements[module] = placement
+                self.cardWidths[module] = cardWidth
             } else {
-                card = self.makeCard(for: module, placement: placement)
+                card = self.makeCard(for: module, width: cardWidth)
             }
             self.attachCustomizeStrip(to: card, module: module)
             return card
         }
         let unit = HomeCardGrid.unitWidth(containerWidth: available, spacing: Self.gridSpacing)
-        builtShelfColumns = HomeCardGrid.columns
         for row in rows {
             gridStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
@@ -418,11 +313,10 @@ extension HomeCanvasController {
             }
         }
         if Set(cardsByModule.keys) == Set(modules) {
-            gridLayoutKey = GridLayoutKey(space: space, modules: modules, spans: modules.map { spans[$0] ?? 1 },
+            gridLayoutKey = GridLayoutKey(modules: modules, spans: modules.map { spans[$0] ?? 1 },
                                           heights: modules.map { heights[$0].flatMap { $0 } ?? -1 },
                                           rowLengths: placed.map(\.count),
-                                          customizing: isCustomizing, dashboard: false,
-                                          width: available, height: 0)
+                                          customizing: isCustomizing, width: available)
         }
         view.layoutSubtreeIfNeeded()
         updateSizeBadge()
@@ -432,7 +326,7 @@ extension HomeCanvasController {
     /// one moves in place; anything that can change which row a card is on
     /// lays the grid out again, keeping the dragged card.
     func resizeArrangedGrid() {
-        guard let resize = cardResize, let built = gridLayoutKey, built.space == space, !built.dashboard,
+        guard let resize = cardResize, let built = gridLayoutKey,
               let card = cardsByModule[resize.module] else {
             rebuildGrid()
             return
@@ -462,32 +356,17 @@ extension HomeCanvasController {
     /// a new card would be, so "refreshed in place" and "built fresh" render
     /// the same; only the card objects - their chrome, hover state and theme
     /// observers - and the rows holding them survive.
-    func refreshGridInPlace(available: CGFloat, modules: [DaylightModule], dashboard: Bool) -> Bool {
-        guard let previous = gridLayoutKey, previous.space == space, previous.modules == modules,
-              previous.spans == (dashboard ? [] : modules.map(cardSpan)),
-              previous.heights == (dashboard ? [] : arrangedHeightKey(modules)),
-              previous.rowLengths == (dashboard ? [] : arrangedRowLengths(available: available)),
-              previous.customizing == (dashboard ? false : isCustomizing),
-              previous.dashboard == dashboard, abs(previous.width - available) <= 0.5,
+    func refreshGridInPlace(available: CGFloat, modules: [DaylightModule]) -> Bool {
+        guard let previous = gridLayoutKey, previous.modules == modules,
+              previous.spans == modules.map(cardSpan),
+              previous.heights == arrangedHeightKey(modules),
+              previous.rowLengths == arrangedRowLengths(available: available),
+              previous.customizing == isCustomizing, abs(previous.width - available) <= 0.5,
               Set(cardsByModule.keys) == Set(modules) else { return false }
-        if dashboard {
-            guard abs(previous.height - lastGridHeight) <= 0.5 else { return false }
-            let plan = dashboardPlan(available: available)
-            for module in modules {
-                guard let content = plan.contents[module] else { return false }
-                cardsByModule[module]?.configure(content)
-            }
-            // The column's own-height preferences follow the content, which
-            // is everything a rebuild would have re-measured.
-            for (module, height) in plan.ownHeights {
-                dashboardOwnHeights[module]?.constant = height
-            }
-            return true
-        }
         var contents: [DaylightModule: HelmModuleCard.Content] = [:]
         for module in modules {
-            guard let placement = cardPlacements[module] else { return false }
-            contents[module] = content(for: module, placement: placement)
+            guard let width = cardWidths[module] else { return false }
+            contents[module] = content(for: module, width: width)
         }
         for module in modules {
             if let content = contents[module] { cardsByModule[module]?.configure(content) }
@@ -495,10 +374,9 @@ extension HomeCanvasController {
         return true
     }
 
-    /// The heights a built arranged grid is keyed on: -1 for a card that
-    /// takes its row's height, and nothing at all off Home's arranged cards.
+    /// The heights a built grid is keyed on: -1 for a card that takes its
+    /// row's height.
     func arrangedHeightKey(_ modules: [DaylightModule]) -> [CGFloat] {
-        guard showsArrangedCards, let shownLayout else { return [] }
         let available = gridContainerWidth()
         return modules.map { module in
             guard shownLayout.size(of: module).height != nil else { return -1 }
@@ -507,33 +385,75 @@ extension HomeCanvasController {
         }
     }
 
-    /// The attention card is column 1 of the hub's three-column page, and a
-    /// full-width card above the grid everywhere else (where it is hidden
-    /// off the hub, and where the hub falls back to the wrapping grid).
-    /// Moved rather than rebuilt, so its rows, its scroll position and its
-    /// minute tick survive a rebuild.
-    func placeAttentionCard(inDashboard: Bool) {
-        // `proportionalRow` pins a column's width with a constant on the view
-        // itself, which outlives the row it was made for - so the last
-        // rebuild's pin is dropped before this one adds its own.
-        attentionCard.removeConstraints(attentionCard.constraints.filter {
-            $0.firstItem === attentionCard && $0.secondItem == nil && $0.firstAttribute == .width
-        })
-        if inDashboard {
-            if attentionCard.superview === stack {
-                stack.removeArrangedSubview(attentionCard)
-                attentionCard.removeFromSuperview()
-                attentionWidthTie = nil
-            }
+    // MARK: Building a card
+
+    /// The width pin `spanningRows` puts on a cell: a constant width at
+    /// `contentTie`, on the view itself.
+    static func widthPin(of view: NSView) -> NSLayoutConstraint? {
+        view.constraints.last {
+            $0.firstItem === view && $0.secondItem == nil && $0.firstAttribute == .width
+                && $0.priority == HelmDaylightPriority.contentTie
+        }
+    }
+
+    /// A card built only to be measured - not added to `cards`, so it is
+    /// never themed, mounted or handed to a test as one of the page's own.
+    static func probeCard(_ content: HelmModuleCard.Content) -> HelmModuleCard {
+        let card = HelmModuleCard()
+        card.configure(content)
+        return card
+    }
+
+    /// `view`'s height at `width`, after a real layout pass in a scratch
+    /// host. The pass matters: a wrapping label sets its wrap width in
+    /// `layout()` (gotcha (22)), so a bare `fittingSize` measures a two-line
+    /// sentence as one line - measured, 6pt over at 960x620.
+    /// `view` must not be in a hierarchy yet; it leaves the host on return.
+    static func fittingHeight(of view: NSView, width: CGFloat) -> CGFloat {
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 2000))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.widthAnchor.constraint(equalToConstant: width),
+        ])
+        host.layoutSubtreeIfNeeded()
+        let height = view.fittingSize.height
+        view.removeFromSuperview()
+        return height
+    }
+
+    func makeCard(for module: DaylightModule, width: CGFloat) -> HelmModuleCard {
+        let card = HelmModuleCard()
+        card.configure(content(for: module, width: width))
+        // While the captain arranges Home a click on a card must not take
+        // them off it.
+        card.onOpen = { [weak self] in
+            guard let self, !self.isCustomizing else { return }
+            self.onOpenDestination?(module.opens)
+        }
+        card.onFollowLink = { [weak self] target in
+            guard let self, !self.isCustomizing else { return }
+            self.follow(target)
+        }
+        cards.append(card)
+        cardsByModule[module] = card
+        cardWidths[module] = width
+        return card
+    }
+
+    /// The briefing's clause links, from the briefing card and from the
+    /// hero's tiles. `HomeBriefingHero.page(of:)` is where each target goes
+    /// (and why two of them differ from Overview's own briefing card).
+    func follow(_ target: BriefingTarget) {
+        // The one Shift task a `.tasks` clause is about, when the app itself
+        // resolved there is exactly one; otherwise the clause's page.
+        if target == .tasks, let id = AppSettings.shared.morningBriefingRecord?.shiftTaskID {
+            onOpenShiftTask?(id)
             return
         }
-        attentionCard.setLayoutWidth(0)
-        guard attentionCard.superview !== stack else { return }
-        attentionCard.removeFromSuperview()
-        stack.insertArrangedSubview(attentionCard, at: 1)
-        let tie = attentionCard.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        tie.isActive = true
-        attentionWidthTie = tie
+        if let page = HomeBriefingHero.page(of: target) { onOpenDestination?(page) }
     }
 
     // MARK: The hero cards (the widget-style board's picks)
@@ -557,12 +477,13 @@ extension HomeCanvasController {
     }
 
     /// The style menu for `module` as it stands now. Size and Hide are
-    /// offered only on Home's own arranged cards, which are the only cards
-    /// with a width and a place the captain owns.
+    /// offered only on a card the captain's arrangement shows, which is the
+    /// only kind with a width and a place the captain owns.
     func makeStyleMenu(for module: DaylightModule) -> HomeCardStyleMenu {
         var sizing: HomeCardStyleMenu.Sizing?
         var hide: (() -> Void)?
-        if showsArrangedCards, let layout = cardLayout, layout.shown.contains(module) {
+        let layout = cardLayout
+        if layout.shown.contains(module) {
             sizing = HomeCardStyleMenu.Sizing(
                 current: HomeCardSizeMode(columns: layout.size(of: module).columns),
                 choose: { [weak self] mode in self?.setCardSize(mode, for: module) })
@@ -579,7 +500,7 @@ extension HomeCanvasController {
     /// brings the card back, and the toast says so, with an Undo that puts
     /// back the arrangement as it was (GL-33).
     func hideCard(_ module: DaylightModule) {
-        guard let before = cardLayout else { return }
+        let before = cardLayout
         arrange { $0.hide(module) }
         guard isViewLoaded, cardLayout != before else { return }
         Toast.showUndo(in: view, message: "\(module.title) hidden. Add it back from Customize.") { [weak self] in

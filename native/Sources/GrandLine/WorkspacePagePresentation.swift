@@ -1,29 +1,17 @@
 // Grand Line - native macOS app.
 //
-// How a page draws itself in the sidebar layout - the later page work of the
+// What a page offers the sidebar shell's chrome - the later page work of the
 // modular-shell migration (the host table and its inspector, the credential
 // table and Crew's Needs you), and the pages stage 7 redesigned (Tasks and
-// Setup's four tabs). Knowledge's tree was here too until stage 7 removed it.
+// Setup's four tabs).
 //
-// The floating bar and the sidebar layout host the same 29 page controllers
-// (`Workspace`). A redesigned page keeps its floating-bar presentation exactly
-// as it was, and switches to its sidebar one when the sidebar shell first
-// shows it. The layout is chosen at launch (`AppSettings.workspaceLayout`), so
-// a page lives its whole life in one presentation: nothing here ever switches
-// back.
-//
-// Two small protocols rather than one, because they are separate decisions:
-// Crew's Needs you is a new view with nothing to inspect, and a page could
-// fill the inspector without drawing anything differently.
+// Each page builds its sidebar presentation at the end of its own `loadView`
+// (`buildSidebarPresentation`). Until P-03 of the 2026-11-25 review removed
+// the floating bar, a page kept its floating-bar presentation and switched on
+// the shell's first show, through a `SidebarLayoutAdopting` protocol that no
+// longer exists.
 
 import AppKit
-
-/// A page that draws itself differently in the sidebar layout.
-protocol SidebarLayoutAdopting: AnyObject {
-    /// Switch to the sidebar layout's presentation. Called once, the first
-    /// time the sidebar shell shows the page, and never in the floating bar.
-    func adoptSidebarLayout()
-}
 
 /// What the sidebar shell's inspector shows for the page's selection.
 struct WorkspaceInspectorContent {

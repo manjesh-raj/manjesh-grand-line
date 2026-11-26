@@ -103,7 +103,7 @@ enum HelmKit {
         Component("HelmMetrics", "1.1.0", file: "HelmDesignSystem.swift"),
         Component("HelmPageToolbar", "1.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmPopUpButton", "1.0.0", file: "HelmDesignSystem.swift"),
-        Component("HelmResponsiveGrid", "1.1.0", file: "HelmDesignSystem.swift"),
+        Component("HelmResponsiveGrid", "2.0.0", file: "HelmDesignSystem.swift"),
         Component("HelmSegmentedTabs", "1.3.0", file: "HelmDesignSystem.swift"),
         Component("HelmType", "1.2.0", file: "HelmDesignSystem.swift"),
         // HelmDensity.swift
@@ -165,7 +165,7 @@ enum HelmKit {
         Component("HelmScrollEdgeHairline", "1.0.0", file: "HelmListMotion.swift"),
         // HelmModuleCard.swift
         Component("HelmDaylightPriority", "1.0.0", file: "HelmModuleCard.swift"),
-        Component("HelmModuleCard", "1.5.0", file: "HelmModuleCard.swift"),
+        Component("HelmModuleCard", "2.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModuleChip", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModulePeekRow", "1.0.0", file: "HelmModuleCard.swift"),
         Component("HelmModuleRowState", "1.0.0", file: "HelmModuleCard.swift"),
@@ -200,7 +200,7 @@ enum HelmKit {
         Component("HelmSplitButton", "1.0.0", file: "HelmSplitButton.swift"),
         // HelmSplitPage.swift
         Component("HelmHitTransparentView", "1.0.0", file: "HelmSplitPage.swift"),
-        Component("HelmSplitPage", "1.2.0", file: "HelmSplitPage.swift"),
+        Component("HelmSplitPage", "2.0.0", file: "HelmSplitPage.swift"),
         Component("HelmSplitPageHosting", "1.0.0", file: "HelmSplitPage.swift"),
         // HelmSymbol.swift
         Component("HelmSymbol", "1.1.0", file: "HelmSymbol.swift"),

@@ -117,15 +117,17 @@ enum DaylightDrillPageSlice6SelfTest {
     /// Thirty-five since the Security page gained its Power card (the
     /// lid-closed switch). Thirty-six since it gained its Xcode card (the
     /// Metal Toolchain switch).
-    private static let expectedCardCount = 36
-
+    /// Twenty-one since P-03 of the 2026-11-25 review: the page builds its
+    /// Set-2 split cards at load, and the rows a split plan takes leave their
+    /// section cards.
+    private static let expectedCardCount = 21
 
     static func run() -> Bool {
         var allOK = true
         for check in [checkDrillConformances, checkOldCaptionsAreGone,
                       checkToolsGridUsesModulePlates, checkPlateNoteFits,
                       checkPlatesDoNotAccumulate,
-                      checkCodeEditorsAreWells, checkSettingsDetailPaneIsThemeIndependent,
+                      checkCodeEditorsAreWells, 
                       checkToggleRecipe, checkSharedPill, checkNoWindowWidthFloor,
                       checkSettingsRendersOnFirstLoad, checkARingNoteTooLongEndsInAnEllipsis] {
             var ok = true
@@ -293,12 +295,12 @@ enum DaylightDrillPageSlice6SelfTest {
         let settingsWindow = mount(settings)
         defer { _ = settingsWindow }
         // R2-UX-08: the local-storage claim was on this page three times. It
-        // is the column footer's alone now, so the line names the category
-        // and the footer carries the claim - once, not zero times.
-        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.title,
+        // is the column footer's alone now. R2-UX-05: the column names the
+        // category, so the line is its description.
+        guard let line = settings.drillHeaderSubtitle, line == settings.debugSelectedCategory.heroDescription,
               !line.contains("locally"), settings.debugFooterText.hasPrefix("Stored locally") else {
             print("  FAIL Settings' subtitle is \"\(settings.drillHeaderSubtitle ?? "nil")\" and its footer "
-                  + "\"\(settings.debugFooterText)\" - want the category's name, and the local-storage claim in the footer")
+                  + "\"\(settings.debugFooterText)\" - want the category's description, and the local-storage claim in the footer")
             ok = false
             return
         }
@@ -655,107 +657,6 @@ enum DaylightDrillPageSlice6SelfTest {
 
     // MARK: 6. Settings' detail pane (§7's two-column arrangement, replaced
     // by the sidebar redesign in `fm/grandline-settings-page-sidebar-redesign`)
-
-    /// **This case used to assert §7's two-column card layout.** That layout
-    /// is gone: Settings is now a sidebar-navigated master/detail page, and
-    /// the detail pane stacks one category's cards in a single capped column.
-    ///
-    /// What the case is *for* has not changed, and it is the thing
-    /// `fm/grandline-settings-layout-theme-dependent-fix` established -
-    /// **selecting a theme changes colours and never structure.** The
-    /// structural property being asserted is simply the new one: the same
-    /// category shows the same cards, at the same width, whichever theme is
-    /// active, and the pane never falls back to a second column.
-    private static func checkSettingsDetailPaneIsThemeIndependent(_ ok: inout Bool) {
-        print("\n-- §7: Settings' detail pane is category-driven, not theme-driven --")
-        let restore = ThemeManager.shared.theme
-        defer { ThemeManager.shared.setTheme(restore) }
-
-        ThemeManager.shared.setTheme(daylight)
-        let settings = makeSettings()
-        let window = mount(settings, width: 1500)
-        defer { _ = window }
-        settings.view.layoutSubtreeIfNeeded()
-
-        // See `expectedCardCount` for the number and why it is a literal.
-        // Every other card count in this file derives from this one.
-        guard settings.debugGroupCards.count == expectedCardCount else {
-            print("  FAIL Settings has \(settings.debugGroupCards.count) cards, "
-                  + "want \(expectedCardCount)")
-            ok = false
-            return
-        }
-        // Every card belongs to exactly one category, so the seven panes
-        // partition the ten cards. A card added without a category would be
-        // unreachable, which is the one thing this redesign must never do.
-        let mapped = SettingsController.Category.allCases.flatMap { settings.debugGroupCards(in: $0) }
-        if mapped.count != settings.debugGroupCards.count {
-            print("  FAIL \(mapped.count) of \(settings.debugGroupCards.count) cards are reachable from a category")
-            ok = false
-        }
-
-        // The fingerprint: for each category, which cards the pane holds and
-        // how wide it lays them out.
-        func fingerprint(_ page: SettingsController) -> [String] {
-            SettingsController.Category.allCases.map { category in
-                page.select(category)
-                page.view.layoutSubtreeIfNeeded()
-                let widths = page.debugMountedGroupCards.map { ($0.frame.width * 10).rounded() / 10 }
-                let xs = Set(page.debugMountedGroupCards.compactMap { card in
-                    card.superview.map { ((($0.convert(card.frame.origin, to: page.view)).x) * 10).rounded() / 10 }
-                })
-                return "\(category.rawValue):\(page.debugMountedGroupCards.count) w=\(widths) x=\(xs.sorted())"
-            }
-        }
-
-        let daylightPrint = fingerprint(settings)
-        // A pane has exactly as many distinct leading edges as it has
-        // columns: one for every ordinary page, two for the one the captain's
-        // reference draws wide (`.page.wide`, App Intents & Shortcuts). This
-        // window is 1500pt, which is well over the breakpoint below which
-        // that page collapses back to one column - so the wide page really
-        // should be showing two here, and a single edge would mean the
-        // collapse fired when it should not have.
-        for category in SettingsController.Category.allCases {
-            settings.select(category)
-            settings.view.layoutSubtreeIfNeeded()
-            let xs = Set(settings.debugMountedGroupCards.compactMap { card in
-                card.superview.map { ((($0.convert(card.frame.origin, to: settings.view)).x) * 10).rounded() / 10 }
-            })
-            let wantColumns = category.isWide ? 2 : 1
-            if xs.count != wantColumns {
-                print("  FAIL \(category.rawValue) laid its cards at \(xs.count) distinct x positions, want \(wantColumns): \(xs.sorted())")
-                ok = false
-            }
-            for card in settings.debugMountedGroupCards where card.window == nil {
-                print("  FAIL \(category.rawValue) orphaned a card on selection")
-                ok = false
-            }
-        }
-
-        ThemeManager.shared.setTheme(otherTheme)
-        let legacy = makeSettings()
-        let legacyWindow = mount(legacy, width: 1500)
-        defer { _ = legacyWindow }
-        legacy.view.layoutSubtreeIfNeeded()
-        let legacyPrint = fingerprint(legacy)
-
-        // Discriminating power first (AGENTS.md: a check that cannot fail is
-        // worse than no check) - the fingerprint has to distinguish
-        // *something*, or matching proves nothing.
-        if Set(daylightPrint).count < 2 {
-            print("  FAIL the fingerprint is vacuous - every category reads identically: \(daylightPrint)")
-            ok = false
-        }
-        if daylightPrint != legacyPrint {
-            print("  FAIL \(otherTheme.id) lays the panes out differently from Daylight at the same width")
-            print("       daylight: \(daylightPrint)")
-            print("       \(otherTheme.id): \(legacyPrint)")
-            ok = false
-        }
-
-        if ok { print("  ok   seven panes, one column each, identical on Daylight and \(otherTheme.id) at 1500pt") }
-    }
 
     // MARK: 7. `HelmToggle` (§6.9)
 

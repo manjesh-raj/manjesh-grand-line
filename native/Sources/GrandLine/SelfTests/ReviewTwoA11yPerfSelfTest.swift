@@ -2,7 +2,9 @@
 //
 // The second full review's accessibility and performance findings
 // (R2-A11Y-03 to R2-A11Y-05, R2-PERF-01 to R2-PERF-06): the window-backed
-// half.
+// half. R2-PERF-06's case, and the Larger case's half about the attention
+// card, measured the floating bar's hub and went with it in P-03 of the
+// 2026-11-25 full review.
 //
 // Everything here needs a real window - the real sidebar shell from
 // `ReviewTourLab.makeOffScreenSplitShell()`, its real toolbar and outline
@@ -33,8 +35,7 @@ enum ReviewTwoA11yPerfSelfTest {
         defer { window.orderOut(nil) }
         settle(shell)
         for check in [checkTheLabelsSayWhatTheControlsDo, checkHealthReadsInWords, checkTheSidebarFitsAtLarger,
-                          checkAThemeChangeRepaintsTheSidebarInPlace, checkArrowKeysSettleBeforeNavigating,
-                          checkAHealthTickDoesNotRecomposeTheDigest] {
+                          checkAThemeChangeRepaintsTheSidebarInPlace, checkArrowKeysSettleBeforeNavigating] {
             var ok = true
             check(shell, window, &ok)
             allOK = allOK && ok
@@ -315,43 +316,6 @@ enum ReviewTwoA11yPerfSelfTest {
         shell.sidebar.debugSetScrollerStyle(NSScroller.preferredScrollerStyle)
         settle(shell)
         if ok { print("  OK   \(measured) rows with their widest badge, under both scroller styles, fit a \(column)pt column at \(larger)x") }
-
-        // The full-width attention card at the same scale: a long verdict
-        // wraps inside the card and leaves Refresh on it, rather than running
-        // past the card and out of the window (found in the Larger renders).
-        let canvas = shell.debugHomeCanvas
-        // The attention card lives on the hub's own page (no arranged
-        // cards): the sidebar layout's Home no longer draws it under the
-        // briefing hero, by the captain's call (Helm 7.0.0).
-        let arranged = canvas.cardLayout
-        canvas.cardLayout = nil
-        defer { canvas.cardLayout = arranged }
-        var summary = ReviewTourLab.demoAttentionSummary(count: 4)
-        summary.headline = "Two things are late, and point Grand Line at your firstmate home, and Claude is near "
-            + "its spend cap, and two more are due today."
-        canvas.debugAttentionOverride = summary
-        defer { canvas.debugAttentionOverride = nil }
-        for width: CGFloat in [1512, 1100] {
-            var wide = window.frame
-            wide.size.width = width
-            window.setFrame(wide, display: true)
-            shell.workspace.navigator.show(.homeCanvas)
-            settle(shell)
-            canvas.debugRenderNow()
-            settle(shell)
-            let card = canvas.debugAttentionCard
-            let headline = card.debugHeader.titleLabel
-            let refresh = card.debugRefreshButton
-            let inCard = { (view: NSView) in view.convert(view.bounds, to: card) }
-            check(card.debugHeadline == summary.headline, "\(width): the card shows \"\(card.debugHeadline)\"", &ok)
-            check(card.bounds.width > 0 && inCard(headline).maxX <= card.bounds.maxX + 0.5,
-                  "\(width): the headline ends at \(inCard(headline).maxX) in a \(card.bounds.width)pt card", &ok)
-            check(inCard(headline).height > headline.font.map { $0.boundingRectForFont.height * 1.5 } ?? 0,
-                  "\(width): a headline longer than the card did not wrap (\(inCard(headline).height)pt tall)", &ok)
-            check(card.debugRefreshButtonVisible && inCard(refresh).maxX <= card.bounds.maxX + 0.5,
-                  "\(width): Refresh ends at \(inCard(refresh).maxX) in a \(card.bounds.width)pt card", &ok)
-        }
-        if ok { print("  OK   the full-width attention headline wraps inside its card at 1512 and 1100") }
     }
 
     // MARK: R2-PERF-02 - a theme change repaints the sidebar in place
@@ -514,67 +478,6 @@ enum ReviewTwoA11yPerfSelfTest {
         check(opened.count == 1, "the settle opened the row a second time after Return: \(opened.map(\.title))", &ok)
         window.makeFirstResponder(nil)
         if ok { print("  OK   five ↓ presses opened one page, a click and Return open at once") }
-    }
-
-    // MARK: R2-PERF-06 - a registry tick with nothing new keeps the digest
-
-    private static func checkAHealthTickDoesNotRecomposeTheDigest(_ shell: MainSplitShellController,
-                                                                  _ window: NSWindow, _ ok: inout Bool) {
-        print("\n-- R2-PERF-06: a health tick with nothing new does not recompose the attention card --")
-        let canvas = shell.debugHomeCanvas
-        let registry = ServiceHealthRegistry.shared
-        // The hub's own page, which still draws the attention card (see
-        // `checkTheSidebarFitsAtLarger`).
-        let arranged = canvas.cardLayout
-        canvas.cardLayout = nil
-        defer { canvas.cardLayout = arranged }
-        shell.workspace.navigator.show(.homeCanvas)
-        settle(shell)
-        // One tick to settle whatever the earlier cases left, then the one
-        // that is measured.
-        registry.recordSuccess(.fleetTasks)
-        pump(timeout: 1) { false }
-        let digests = canvas.debugDigestCount
-        let renders = canvas.debugApplyThemeCount
-        registry.markRunning(.fleetTasks)
-        registry.recordSuccess(.fleetTasks)
-        pump(timeout: 0.3) { false }
-        check(canvas.debugApplyThemeCount > renders, "the tick never reached Home's render, so this measures nothing", &ok)
-        check(canvas.debugDigestCount == digests,
-              "a tick with nothing new recomposed the digest \(canvas.debugDigestCount - digests) time(s)", &ok)
-
-        // A real change to what the digest reads: a task due today.
-        let store = shell.workspace.shiftStore
-        let parts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        var task = ShiftTask.fresh()
-        task.title = "R2-PERF-06 fixture task"
-        task.dueDate = String(format: "%04d-%02d-%02d", parts.year ?? 2026, parts.month ?? 1, parts.day ?? 1)
-        store.addTask(task)
-        defer { _ = store.deleteTask(id: task.id) }
-        canvas.debugRenderNow()
-        settle(shell)
-        check(canvas.debugDigestCount == digests + 1, "a new task due today did not recompose the digest", &ok)
-        check(canvas.debugAttentionCard.debugListText.contains(task.title),
-              "the attention card does not list the new task: \(canvas.debugAttentionCard.debugListText)", &ok)
-
-        // A real change to what the card reads beside the digest: every
-        // service healthy (the clear strip says so), then one failing (it
-        // stops saying so).
-        for service in registry.knownServices() { registry.recordSuccess(service) }
-        pump(timeout: 1) { canvas.debugClearNotes.contains { $0.hasSuffix("services healthy") } }
-        settle(shell)
-        check(canvas.debugClearNotes.contains { $0.hasSuffix("services healthy") },
-              "with every service healthy the clear strip does not say so: \(canvas.debugClearNotes)", &ok)
-        let composed = canvas.debugDigestCount
-        for _ in 0..<ServiceHealthRegistry.failureThreshold {
-            registry.recordFailure(.docsSync, "R2-PERF-06 fixture failure")
-        }
-        pump(timeout: 1) { canvas.debugDigestCount > composed }
-        check(canvas.debugDigestCount > composed, "a service starting to fail did not recompose the card", &ok)
-        registry.recordSuccess(.docsSync)
-        NotificationSources.clearServiceFailing(.docsSync)
-        settle(shell)
-        if ok { print("  OK   a quiet tick repaints the subline only; a new task and a failing service recompose") }
     }
 
     static func textFields(in view: NSView) -> [NSTextField] {

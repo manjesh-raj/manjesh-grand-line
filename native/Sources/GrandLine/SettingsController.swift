@@ -228,15 +228,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
 
         /// The reference's `.page.wide`: the one page laid out in two columns.
         var isWide: Bool { self == .intents }
-
-        /// How wide this page's content column is allowed to get - the
-        /// reference's `max-width: 680px`, and `980px` for the wide one.
-        ///
-        /// A cap, not a width, and required is safe **because it is a
-        /// maximum** (gotcha (17)'s footnote to gotcha (13)): a `<=` can
-        /// never be a floor on how narrow the window may get, which a
-        /// required `==` or `>=` at this width would be.
-        var contentMaxWidth: CGFloat { isWide ? 980 : 680 }
     }
 
     /// Set-2: in the sidebar layout every page opens with a split card, whose
@@ -247,7 +238,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     static let splitPageMaxWidth: CGFloat = 900
 
     private func maxWidth(_ category: Category) -> CGFloat {
-        drawsSidebarLayout ? Self.splitPageMaxWidth : category.contentMaxWidth
+        Self.splitPageMaxWidth
     }
 
     /// One assembled page: what gets mounted, plus the pieces the controller
@@ -380,9 +371,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     var drillHeaderActions: [NSView] { [] }
 
     var drillHeaderSubtitle: String? {
-        if drawsSidebarLayout { return selectedCategory.heroDescription }
-        // R2-UX-08: the locality fact is the column footer's alone.
-        return selectedCategory.title
+        selectedCategory.heroDescription
     }
 
     // MARK: - State
@@ -399,9 +388,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private var historyIndex = 0
 
     private var pages: [Category: Page] = [:]
-    /// R2-UX-05: set once the sidebar layout shows this page
-    /// (`SidebarLayoutAdopting`).
-    private(set) var drawsSidebarLayout = false
     private var mountedCategory: Category?
 
     private var sudoTouchIDStatus: SudoTouchIDStatus = .checking
@@ -889,6 +875,10 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
                                               object: nil)
 
         refreshFromSettings()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     // MARK: - The sidebar column
@@ -1065,13 +1055,14 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         }
     }
 
-    /// The floating bar keeps the arrows; the sidebar layout's window has
-    /// its own, which walk this page's categories too (`WorkspaceHistoryPlace`).
+    /// The window has its own Back and Forward, which walk this page's
+    /// categories too (`WorkspaceHistoryPlace`), so the page's own header
+    /// row with its arrows is hidden and the scroll area starts at the top.
     private func applyHeaderRow() {
         guard let scrollTopUnderToolbar, let scrollTopAtRoot else { return }
-        toolbar.isHidden = drawsSidebarLayout
-        scrollTopUnderToolbar.isActive = !drawsSidebarLayout
-        scrollTopAtRoot.isActive = drawsSidebarLayout
+        toolbar.isHidden = true
+        scrollTopUnderToolbar.isActive = false
+        scrollTopAtRoot.isActive = true
     }
 
     private func refreshToolbar() {
@@ -1255,7 +1246,7 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     private func buildPage(_ category: Category) -> Page {
         let hero = SettingsHero(symbol: category.symbol, tint: category.tint,
                                 title: category.title, description: category.heroDescription)
-        hero.isHidden = drawsSidebarLayout
+        hero.isHidden = true
         let sections: [SettingsSection]
         switch category {
         case .appearance: sections = buildAppearanceSections()
@@ -2855,7 +2846,6 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
     static let shortcutsSearchWidth: CGFloat = 240
 
     private func refreshSplitCards() {
-        guard drawsSidebarLayout else { return }
         for category in Category.allCases { refreshSplitCard(category) }
     }
 
@@ -3392,6 +3382,11 @@ final class SettingsController: NSViewController, DaylightDrillActions, HelmSpli
         debugMountedGroupCards.filter { $0.isDescendant(of: pageContainer) }.count
     }
     var debugMountedCategory: Category? { mountedCategory }
+    /// The page's Set-2 split card, which holds the rows the split plan took
+    /// out of its sections.
+    func debugSplitCard(in category: Category) -> NSView? { pages[category]?.split }
+    /// The rows the split card took, in its own order.
+    func debugSplitRows(in category: Category) -> [SettingsRow] { pages[category]?.split?.list?.rows ?? [] }
 
     /// The theme grid's cards, in grid order.
     var debugThemeCards: [SettingsThemeCard] { themeCards }
@@ -3524,17 +3519,12 @@ final class LayoutReportingStack: NSStackView {
     }
 }
 
-// R2-UX-05: in the sidebar layout the category is named by the page's own
-// column, and its description is the module line (`drillHeaderSubtitle`), so
-// the hero would be a fourth name for one place. The floating bar has no
-// module line and keeps it.
-extension SettingsController: SidebarLayoutAdopting {
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
+// R2-UX-05: the category is named by the page's own column, and its
+// description is the module line (`drillHeaderSubtitle`), so the hero would
+// be a fourth name for one place.
+extension SettingsController {
+    func buildSidebarPresentation() {
         // Set-2's split cards are made from the pages `loadView` built.
-        _ = view
-        drawsSidebarLayout = true
-        for page in pages.values { page.hero.isHidden = true }
         buildSplitCards()
         applyHeaderRow()
         onDrillSubtitleChanged?()

@@ -322,33 +322,34 @@ enum MainSplitShellNavigationSelfTest {
     private static func checkAPageColumnNeverGrowsTheWindow(_ shell: MainSplitShellController, _ window: NSWindow,
                                                             _ ok: inout Bool) {
         resize(window, width: 1100, shell)
-        // Stage 7: Tasks' column is its filter row in this layout, so no tab
-        // brings a column out at all.
+        // Stage 7: Tasks' column became the band's filters, and P-03 removed
+        // the column itself, so no tab brings a column out at all.
         shell.workspace.navigator.show(.shift)
         settle(shell)
-        if let split = (shell.debugSlotController(.shift) as? HelmSplitPageHosting)?.splitPage {
-            for tab in ["Board", "Weekly review", "List", "Board"] {
-                clickTab(tab, shell)
-                check(split.isSidebarCollapsed, "Tasks' \(tab) tab brought its page column out", &ok)
-            }
+        check(!(shell.debugSlotController(.shift) is HelmSplitPageHosting),
+              "Tasks has a page column of its own again", &ok)
+        for tab in ["Board", "Weekly review", "List", "Board"] {
+            clickTab(tab, shell)
             check(abs(window.frame.width - 1100) < 0.5,
-                  "Tasks' tabs grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
-        } else {
-            fail("Tasks has no split page to keep its column in", &ok)
+                  "Tasks' \(tab) tab grew a 1100pt window to \(Int(window.frame.width))pt", &ok)
         }
         // A column that does come back - Notebook's Pages, put away and
-        // brought back through `pageForcesCollapse`, the switch Tasks' own
-        // Weekly review used before stage 7 - takes its room from the page.
+        // brought back by Toggle Sidebar, unanimated - takes its room from
+        // the page. (Tasks' Weekly review used to force its column away; P-03
+        // removed that switch with the column.)
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let sidebarBefore = shell.debugSidebarIsCollapsed
         if let split = (shell.debugSlotController(.notebook) as? HelmSplitPageHosting)?.splitPage {
             let column = split.debugSidebarWidth
             check(!split.isSidebarCollapsed && column > 0, "Notebook opened without its Pages column", &ok)
-            split.pageForcesCollapse = true
+            let savedMotion = HelmMotion.reducedOverrideForTests
+            HelmMotion.reducedOverrideForTests = true
+            defer { HelmMotion.reducedOverrideForTests = savedMotion }
+            split.toggleSidebar(nil)
             settle(shell)
             check(split.isSidebarCollapsed, "Notebook's column did not step aside", &ok)
-            split.pageForcesCollapse = false
+            split.toggleSidebar(nil)
             settle(shell)
             check(!split.isSidebarCollapsed && abs(split.debugSidebarWidth - column) < 0.5,
                   "back again, Notebook's column is \(split.debugSidebarWidth)pt, it was \(column)pt", &ok)
@@ -528,9 +529,9 @@ enum MainSplitShellNavigationSelfTest {
             check(host.moduleTabNames == module.tabs.filter(\.isPageTab).map(\.name),
                   "\(route.rawValue)'s own tabs are \(host.moduleTabNames), \(module.title)'s are \(module.tabs.map(\.name))", &ok)
         }
-        // The page's own control is put away while the toolbar draws it...
+        // The toolbar's tabs are the page's only switcher...
         if let shift = shell.debugSlotController(.shift) as? ShiftController {
-            check(shift.debugViewTabs.isHidden, "Tasks still draws its own view switcher under the toolbar's tabs", &ok)
+            check(!shift.debugHasOwnViewSwitcher, "Tasks draws a view switcher of its own under the toolbar's tabs", &ok)
             // ...and a switch the page makes by itself moves the toolbar's tab.
             shell.workspace.navigator.show(.shift)
             settle(shell)
@@ -551,10 +552,10 @@ enum MainSplitShellNavigationSelfTest {
                   "opening the captain's log lit \(String(describing: selectedTabName(shell))) in \(shell.currentModule.title)", &ok)
         }
         if let hosts = shell.debugSlotController(.hosts) as? HostsController {
-            // C-4: the nav column goes; the split's pane holds the hero
-            // column instead (`HostsController+HeroColumn.swift`).
-            check(hosts.sidebar.isHidden && hosts.heroColumn?.isHidden == false,
-                  "the Hosts page's own column is still out beside Connections' tabs", &ok)
+            // C-4: the split's pane holds the hero column
+            // (`HostsController+HeroColumn.swift`).
+            check(hosts.heroColumn?.isHidden == false,
+                  "the Hosts page's hero column is not out beside Connections' tabs", &ok)
         }
         if let kubernetes = shell.debugSlotController(.kubernetes) as? KubernetesController {
             check(kubernetes.pageTabs.isHidden, "Kubernetes still draws its own Cluster and Log Tail tabs", &ok)
@@ -618,12 +619,6 @@ enum MainSplitShellNavigationSelfTest {
         check(shell.toolbar.debugPageActions.isEmpty
                 && !shell.toolbar.debugItemIdentifiers.contains(WorkspaceToolbar.ItemID.pageActions),
               "Home still shows the previous page's actions", &ok)
-        // R2-UX-02: Home has one space here, its own. A route that still
-        // names another one lands on Home's own cards.
-        shell.selectSpace(.operations)
-        settle(shell)
-        check(shell.debugHomeCanvas.selectedSpace == .overview && shell.debugCurrentDestination == .homeCanvas,
-              "a route naming the Operations space filtered Home to \(shell.debugHomeCanvas.selectedSpace)", &ok)
 
         // The badge is the bell's own count, from the one store. (`debugReset`
         // tells no observer, so the first real change is what the toolbar sees.)
@@ -717,8 +712,7 @@ enum MainSplitShellNavigationSelfTest {
         let canvas = shell.debugHomeCanvas
         // The feel pass draws the briefing as the hero above the grid, so the
         // grid is the arranged cards less that one (`checkHomeFeelPass`).
-        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing }
-                && !canvas.usesDashboardLayoutForTests,
+        check(canvas.visibleModulesForTests == HomeCardLayout.standard.shown.filter { $0 != .briefing },
               "Home shows \(canvas.visibleModulesForTests.map(\.rawValue)), not its arranged cards", &ok)
         check(shell.toolbar.debugModuleActionButton?.title == "Customize", "Home offers no Customize", &ok)
         // Claude's card carries a header action (Refresh), which the arranging
@@ -921,8 +915,8 @@ enum MainSplitShellNavigationSelfTest {
         check(canvas.cardForTests(.briefing) == nil, "the briefing is drawn twice: as the hero and as a card", &ok)
         check(hero.frame.width > 600, "the hero is \(hero.frame.width)pt wide - not the page's width", &ok)
         // The captain removed the band between the hero and the cards: no
-        // KPI tiles and no Needs attention card on Home's arranged space.
-        check(canvas.attentionCardHiddenForTests, "Home still draws the Needs attention card under the hero", &ok)
+        // KPI tiles on Home. (The Needs attention card that sat there was
+        // deleted in the P-03 sweep, so there is no type left to look for.)
         func findsCaption(_ view: NSView, _ words: String) -> Bool {
             if !view.isHidden, let label = view as? NSTextField, label.stringValue == words { return true }
             return view.subviews.contains { !$0.isHidden && findsCaption($0, words) }

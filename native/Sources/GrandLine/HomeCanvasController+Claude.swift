@@ -46,9 +46,10 @@ extension HomeCanvasController {
     /// "Not reported" in the muted face with no bar at all - never a `0%` or
     /// a `$0`, which on a quota readout are real and alarming values rather
     /// than synonyms for "unknown".
-    func fillClaudeStatus(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        // On every state, including the two below: the one moment a captain
-        // most wants to re-take a reading is when the card is stating a gap.
+    func fillClaudeStatus(_ content: inout HelmModuleCard.Content, width: CGFloat) {
+        // On every state, including no reading and a failed one: the one
+        // moment a captain most wants to re-take a reading is when the card
+        // is stating a gap.
         content.headerAction = HelmModuleCard.HeaderAction(
             symbol: "arrow.clockwise",
             tooltip: isRefreshingQuota
@@ -57,103 +58,8 @@ extension HomeCanvasController {
             isBusy: isRefreshingQuota,
             handler: { [weak self] in self?.refreshQuotaTapped() })
 
-        // The captain's split hero, wherever the card is a shelf card. The
-        // floating bar's hub keeps its dense card below: that dashboard is
-        // fitted to its window, and a hero's panel is not in its budget.
-        if case let .shelf(width) = placement {
-            fillClaudeHero(&content, width: width)
-            return
-        }
-
-        guard let snapshot = quotaSnapshot else {
-            // Two genuinely different states, and they read differently.
-            if let failure = quotaFailure {
-                content.subtitle = "no reading"
-                content.chip = .warn("unavailable")
-                content.body = .note(failure)
-            } else {
-                content.subtitle = "reading"
-                content.body = .skeleton(rows: 2)
-            }
-            return
-        }
-
-        // `fm/grandline-home-fit-implement`: on the hub the report is the
-        // dense one-grid form, so the page fits its window - never the
-        // stacked reflow, which is the shelf's answer to a degraded card and
-        // costs the most height of the three. The dense form draws no section
-        // verdicts, so the header chip carries the card's one verdict always.
-        if case .dashboard = placement {
-            fillClaudeDense(&content, snapshot: snapshot, width: placement.width)
-            return
-        }
-        let compact = Self.claudeUsageIsCompact(for: placement)
-        content.subtitle = Self.claudeSubtitle(for: snapshot)
-        // UI-12's error state: a refresh that failed keeps the last reading,
-        // says how old it is and why, rather than presenting it as current.
-        if let failure = quotaFailure {
-            if let fetchedAt = quotaFetchedAt {
-                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
-            }
-            content.chip = .warn("Can't reach")
-            content.toolTip = "The last refresh failed: \(failure)"
-            content.body = .usageReport(Self.claudeUsageSections(for: snapshot), compact: compact)
-            return
-        }
-        // **A compact card's header is identity and Refresh, nothing else**,
-        // and that is a design call rather than a shrug at a layout problem.
-        // Measured at a one-column card's 255pt: the tile, a "Near spend
-        // cap" pill, the freshness caption and the Refresh leave the
-        // identity column about 60pt, which renders the plan as "Team p...".
-        // Two things have to go, and these are the two that are said twice:
-        // both section verdicts ("Comfortable", "Near cap") are painted in
-        // full a few points below the pill, and the freshness moves to the
-        // card's own hover text, which AppKit also serves to VoiceOver as
-        // the card's accessibility help (GL-16). The plan name is said
-        // nowhere else at all, which is why it is what survives.
-        let updated = quotaFetchedAt.map { Self.claudeUpdatedText(fetchedAt: $0) }
-        content.chip = compact ? nil : Self.claudeChip(for: snapshot)
-        // UI-8: one status word in the header, and the reading's age in the
-        // subtitle beside the plan ("Team plan · updated 3h ago") rather than
-        // as a second caption under the word.
-        if let fetchedAt = quotaFetchedAt, !compact {
-            content.subtitle = "\(Self.claudeSubtitle(for: snapshot)) \u{00B7} updated "
-                + HelmRelativeTime.phrase(since: fetchedAt)
-        }
-        if compact { content.toolTip = updated }
-        content.body = .usageReport(Self.claudeUsageSections(for: snapshot,
-                                                             headerCarriesVerdict: content.chip != nil),
-                                    compact: compact)
-    }
-
-    /// The hub's Claude card: `.usageReportDense`, with the verdict in the
-    /// header chip and the reading's age beside the plan. The UI-12 error
-    /// state is the same as the shelf's: the last reading stays, the chip
-    /// says it could not be refreshed, and the reason is on hover.
-    func fillClaudeDense(_ content: inout HelmModuleCard.Content, snapshot: QuotaSnapshot, width: CGFloat) {
-        content.subtitle = Self.claudeSubtitle(for: snapshot)
-        if let failure = quotaFailure {
-            if let fetchedAt = quotaFetchedAt {
-                content.subtitle += " \u{00B7} as of \(Self.briefingTimeFormatter.string(from: fetchedAt))"
-            }
-            content.chip = .warn("Can't reach")
-            content.toolTip = "The last refresh failed: \(failure)"
-        } else {
-            content.chip = Self.claudeChip(for: snapshot)
-            if let fetchedAt = quotaFetchedAt {
-                // In a narrow column the age moves to the card's hover text
-                // (and so to its VoiceOver help), the shelf's compact rule:
-                // beside the chip and Refresh it truncated to "just...".
-                if Self.claudeUsesShortLabels(forCardWidth: width) {
-                    content.toolTip = Self.claudeUpdatedText(fetchedAt: fetchedAt)
-                } else {
-                    content.subtitle += " \u{00B7} updated " + HelmRelativeTime.phrase(since: fetchedAt)
-                }
-            }
-        }
-        content.body = .usageReportDense(Self.claudeUsageSections(
-            for: snapshot, headerCarriesVerdict: true,
-            shortLabels: Self.claudeUsesShortLabels(forCardWidth: width)))
+        // The captain's split hero.
+        fillClaudeHero(&content, width: width)
     }
 
     /// Below this card width the dense grid's four columns do not fit the
@@ -164,31 +70,6 @@ extension HomeCanvasController {
 
     static func claudeUsesShortLabels(forCardWidth width: CGFloat) -> Bool {
         width < claudeShortLabelWidth
-    }
-
-    /// Whether this card is narrow enough to need the report's stacked
-    /// reflow rather than its aligned four-column grid.
-    ///
-    /// The same threshold `claudeStripColumnsPerRow` used, and for the same
-    /// reason: `HelmResponsiveGrid.packRows` degrades a span-2 card to one
-    /// column in a single-column grid, and at that width the grid's three
-    /// content columns leave the bar a stub. This is the direct analogue of
-    /// the mockup's own `@media (max-width: 560px)` rule, which reflows the
-    /// same four fields the same way - title and figure on one line, the bar
-    /// full width beneath, the reset caption under that.
-    ///
-    /// The card pays height, never a reading. Nothing is dropped in either
-    /// layout, which is the property the strip already had when it wrapped.
-    static func claudeUsageIsCompact(forCardWidth width: CGFloat) -> Bool {
-        claudeUsageIsCompact(for: .shelf(width: width))
-    }
-
-    /// The same decision from the card's placement. On the dashboard a
-    /// 7-of-12-track card is never the degraded one-column card this reflow
-    /// exists for, even where it resolves a fraction of a point under the
-    /// shelf's 526pt (M3) - see `CardPlacement`.
-    static func claudeUsageIsCompact(for placement: CardPlacement) -> Bool {
-        placement.isNarrowerThanTwoColumns
     }
 
     /// The report's two sections, in the mockup's order. `static` so a suite
@@ -203,9 +84,7 @@ extension HomeCanvasController {
     /// rather than synonyms for "unknown".
     /// - Parameter headerCarriesVerdict: UI-8 - when the card's header already
     ///   says the plan's verdict ("Comfortable"), the Plan limits section
-    ///   keeps only its title rather than saying it a second time. A compact
-    ///   card drops the header word (see `fillClaudeStatus`), so there the
-    ///   section keeps it.
+    ///   keeps only its title rather than saying it a second time.
     /// - Parameter shortLabels: the dense form at a narrow column's width -
     ///   "Session" / "Week" / "Fable" and the reset time without its
     ///   "Resets" word. The long reset sentence stays on each row's hover
@@ -569,7 +448,6 @@ extension HomeCanvasController {
     /// report's own rows, so no figure, threshold or short-label rule moves.
     func fillClaudeHero(_ content: inout HelmModuleCard.Content, width: CGFloat) {
         let layout = HelmModuleCard.HeroLayout(cardWidth: width)
-        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
         let panel = Self.claudeHeroPanel(snapshot: quotaSnapshot, failure: quotaFailure, fetchedAt: quotaFetchedAt)
 
         if let snapshot = quotaSnapshot {
@@ -587,19 +465,31 @@ extension HomeCanvasController {
             if layout == .narrow { content.toolTip = updated } else { content.headerCaption = updated }
         }
 
+        content.body = Self.claudeHeroBody(snapshot: quotaSnapshot, failure: quotaFailure, panel: panel,
+                                           width: width)
+        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
+        content.headerMenu = styleMenu(for: .claudeStatus)
+    }
+
+    /// The split hero's body for a reading, at a card `width`: the panel
+    /// beside (or above) the usage report, or a stated gap, or the skeleton.
+    /// `static` so a suite renders exactly what Home draws from a fabricated
+    /// snapshot, with `now` pinned for the reset captions.
+    static func claudeHeroBody(snapshot: QuotaSnapshot?, failure: String?, panel: ClaudeHeroPanel,
+                               width: CGFloat, now: Date = Date()) -> HelmModuleCard.Body {
+        let layout = HelmModuleCard.HeroLayout(cardWidth: width)
+        let detailWidth = HelmModuleCard.HeroSplit.detailWidth(cardWidth: width, layout: layout)
         let detail: HelmModuleCard.HeroSplit.Detail
-        if let snapshot = quotaSnapshot {
-            detail = .report(Self.claudeUsageSections(
-                for: snapshot, headerCarriesVerdict: true,
-                shortLabels: Self.claudeUsesShortLabels(forCardWidth: detailWidth)))
-        } else if let failure = quotaFailure {
+        if let snapshot {
+            detail = .report(claudeUsageSections(
+                for: snapshot, now: now, headerCarriesVerdict: true,
+                shortLabels: claudeUsesShortLabels(forCardWidth: detailWidth)))
+        } else if let failure {
             detail = .note(failure)
         } else {
             detail = .loading
         }
-        content.body = .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
-                                                           ring: panel.ring, detail: detail, layout: layout))
-        content.hero = heroTone(for: .claudeStatus, dimmed: panel.isStale)
-        content.headerMenu = styleMenu(for: .claudeStatus)
+        return .heroSplit(HelmModuleCard.HeroSplit(headline: panel.headline, body: panel.body,
+                                                   ring: panel.ring, detail: detail, layout: layout))
     }
 }

@@ -34,8 +34,8 @@
 // (multi-line, collapsible rows, needing `usesAutomaticRowHeights`), a PR
 // row's title never wraps (`HelmAccentRow.Content.titleWraps` stays `false`,
 // matching #221's own row) and its chip is a fixed-height pill, so every row
-// is a fixed height - `DiffResultView`/`HostsListSection`'s simpler
-// "fixed `rowHeight`" convention, not automatic measurement.
+// is a fixed height - `DiffResultView`'s simpler "fixed `rowHeight`"
+// convention, not automatic measurement.
 //
 // This view owns no internal scroller: `ReviewController`'s page is already
 // one big outer `NSScrollView` (see `ReviewController.loadView`), so each
@@ -67,8 +67,8 @@ private final class ReviewPRRowCellView: NSView {
         actionsRow.alignment = .centerY
         actionsRow.spacing = 6
         // The reused-row-with-toggling-button-visibility gotcha
-        // (`HostsListRecordView`'s own `actions` stack, `HostsListSection.
-        // swift`, is the reference fix): unlike the old per-render-fresh
+        // (`SchedulesCardView`'s row `actions` stack carries the same fix):
+        // unlike the old per-render-fresh
         // `prRowView`, whose `actionsRow` only ever contained the buttons
         // that should show, this cell's `reviewButton`/`mergeButton` are
         // built once and REUSED across many different `configure(pr:...)`

@@ -48,9 +48,8 @@ enum DaylightDrillPageSlice4SelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkDrillConformances, checkHeroTitlesAreGone,
+        for check in [checkDrillConformances, 
                       checkRawPaneIsADarkCard, checkRawLineContrastOnTheDarkCard,
-                      checkVaultSignalRows, checkSecretNamesAreMono,
                       checkNoWindowWidthFloor] {
             var ok = true
             check(&ok)
@@ -152,19 +151,9 @@ enum DaylightDrillPageSlice4SelfTest {
             return
         }
         analyzer.debugRender(sampleInvestigation())
-        guard let loaded = analyzer.drillHeaderSubtitle,
-              loaded.contains("source"), loaded.contains("line"), loaded.contains("finding") else {
+        // The sidebar's line counts the evidence's lines (`sidebarSubtitle`).
+        guard let loaded = analyzer.drillHeaderSubtitle, loaded.contains("line") else {
             print("  FAIL Log Analyzer's loaded subtitle does not count its own evidence: "
-                  + "\(analyzer.drillHeaderSubtitle ?? "nil")")
-            ok = false
-            return
-        }
-        // Evidence with no analysis must say so rather than implying a result.
-        var unanalyzed = sampleInvestigation()
-        unanalyzed.analysis = nil
-        analyzer.debugRender(unanalyzed)
-        guard let pending = analyzer.drillHeaderSubtitle, pending.contains("not analyzed") else {
-            print("  FAIL Log Analyzer does not distinguish loaded-but-unanalysed: "
                   + "\(analyzer.drillHeaderSubtitle ?? "nil")")
             ok = false
             return
@@ -212,30 +201,6 @@ enum DaylightDrillPageSlice4SelfTest {
     }
 
     // MARK: 2. No in-page heroes left (§6.4)
-
-    private static func checkHeroTitlesAreGone(_ ok: inout Bool) {
-        print("\n-- §6.4: no in-page hero titles on Log Analyzer / Vault --")
-        // The drill header's own title is 26pt, so anything at or above 20pt
-        // inside a page body is a second title competing with it.
-        let heroFloor: CGFloat = 20
-        let analyzer = makeLogAnalyzer()
-        analyzer.debugRender(sampleInvestigation())
-        let vault = VaultController()
-        var clean = true
-        for (name, page) in [("Log Analyzer", analyzer as NSViewController), ("Vault", vault)] {
-            let window = mount(page)
-            defer { _ = window }
-            let heroes = labels(in: page.view, atLeast: heroFloor)
-            if !heroes.isEmpty {
-                print("  FAIL \(name) still renders \(heroes.count) hero-sized label(s): "
-                      + heroes.map { "\"\($0.stringValue)\" @\(fmt($0.font?.pointSize ?? 0))" }
-                          .joined(separator: ", "))
-                ok = false
-                clean = false
-            }
-        }
-        if clean { print("  OK - both page bodies are free of hero-sized titles") }
-    }
 
     // MARK: 3. §7's raw dark card
 
@@ -344,91 +309,7 @@ enum DaylightDrillPageSlice4SelfTest {
 
     // MARK: 5. §7's signal row for launcher issues
 
-    private static func checkVaultSignalRows(_ ok: inout Bool) {
-        print("\n-- §6.5 / §7: only a launcher with real issues gets the signal wash --")
-        let restore = ThemeManager.shared.theme
-        defer { ThemeManager.shared.setTheme(restore) }
-        ThemeManager.shared.setTheme(daylight)
-
-        let vault = VaultController()
-        let window = mount(vault)
-        defer { _ = window }
-        vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN")],
-                          tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened),
-                                  VaultTool(name: "aws", commands: ["aws"],
-                                            status: .needsAttention(issueCount: 2))])
-        vault.view.layoutSubtreeIfNeeded()
-
-        let rows = vault.debugToolRows
-        guard rows.count == 2 else {
-            print("  FAIL expected 2 launcher rows, got \(rows.count)")
-            ok = false
-            return
-        }
-        let card = HelmTheme.nsColor(daylight.chromeBackgroundHex)
-        let hardened = rows[0].debugPaint()
-        let attention = rows[1].debugPaint()
-        if !sameColor(hardened.fill, card) {
-            print("  FAIL the hardened launcher row is washed - the signal treatment is on every row")
-            ok = false
-        }
-        if sameColor(attention.fill, card) {
-            print("  FAIL the needs-attention launcher row carries no signal wash")
-            ok = false
-        }
-        // A secret is a record, not a signal.
-        if let secret = vault.debugSecretRows.first, !sameColor(secret.debugPaint().fill, card) {
-            print("  FAIL a stored secret row is washed as if it needed attention")
-            ok = false
-        }
-        if !vault.debugAttentionBannerVisible {
-            print("  FAIL the attention banner is hidden with a launcher genuinely needing attention")
-            ok = false
-        }
-
-        // And the twelve palettes are untouched: the wash is Daylight-only.
-        ThemeManager.shared.setTheme(otherTheme)
-        vault.view.layoutSubtreeIfNeeded()
-        let otherCard = HelmTheme.nsColor(otherTheme.chromeBackgroundHex)
-        if !sameColor(vault.debugToolRows[1].debugPaint().fill, otherCard) {
-            print("  FAIL \(otherTheme.id) picked up the Daylight-only signal wash")
-            ok = false
-        }
-        print("  OK - washed only on the needs-attention row, only under Daylight, banner shown")
-    }
-
     // MARK: 6. §7's mono secret names
-
-    private static func checkSecretNamesAreMono(_ ok: inout Bool) {
-        print("\n-- §7: secret names render in the mono role --")
-        let vault = VaultController()
-        let window = mount(vault)
-        defer { _ = window }
-        vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN")],
-                          tools: [VaultTool(name: "gh", commands: ["gh"], status: .hardened)])
-        vault.view.layoutSubtreeIfNeeded()
-
-        guard let secret = vault.debugSecretRows.first else {
-            print("  FAIL no secret row rendered")
-            ok = false
-            return
-        }
-        let secretFont = secret.debugPaint().titleFont
-        if secretFont?.fontName != HelmType.code().fontName {
-            print("  FAIL a secret name renders in \(secretFont?.fontName ?? "nil"), "
-                  + "want \(HelmType.code().fontName)")
-            ok = false
-        }
-        // A launcher is a tool name, not an identifier the captain types -
-        // it stays in the ordinary row title face, so this is a real
-        // distinction rather than "everything on the page is mono".
-        if let tool = vault.debugToolRows.first,
-           tool.debugPaint().titleFont?.fontName == HelmType.code().fontName {
-            print("  FAIL a launcher name is mono too - the mono treatment is not carrying meaning")
-            ok = false
-        }
-        print("  OK - secret \"\(secret.debugTitle)\" is \(secretFont?.fontName ?? "nil")")
-    }
 
     // MARK: 7. No new window-width floor (AGENTS.md gotcha (13))
 

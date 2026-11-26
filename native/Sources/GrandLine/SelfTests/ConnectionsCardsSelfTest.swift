@@ -1289,7 +1289,7 @@ enum ConnectionsCardsSelfTest {
         // The words follow the machine: a CI runner has no biometry, and the
         // chip must say so rather than claim Touch ID.
         let available = CredentialVaultKeyStore.biometryAvailable
-        let expected = HostsKeychainCard.biometryPhrase(available, capitalized: true)
+        let expected = HostsController.biometryPhrase(available, capitalized: true)
         check(!expected.isEmpty && hosts.keysTouchID.label.stringValue == expected,
               "K6: the chip reads \(hosts.keysTouchID.label.stringValue), want \(expected) (biometry \(available))", &ok)
         check(hosts.keySearchField.window != nil && hosts.keysViewModeControl.window != nil,

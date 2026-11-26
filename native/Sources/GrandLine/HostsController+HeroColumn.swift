@@ -1,11 +1,11 @@
 // Grand Line - native macOS app.
 //
 // Connections' hero column (C-4 on the page-redesign board, the captain's
-// pick), in the sidebar layout only.
+// pick).
 //
-// The page's split sidebar was its nav column, which the sidebar layout puts
-// away because the toolbar carries the tabs. C-4 puts a `HelmHeroColumn` in
-// that pane instead: the session verdict and the online ring, the three hosts
+// The page's split sidebar was its nav column, which went because the
+// toolbar carries the tabs. C-4 puts a `HelmHeroColumn` in that pane
+// instead: the session verdict and the online ring, the three hosts
 // connected most recently with a Switch or Connect pill each, a Quick connect
 // field, and the Keys / Snippets / Groups figures at its foot. The host cards
 // (C-1's 98pt card, `HelmCardGrid` 1.1.0) fill the rest, two to a row.
@@ -149,8 +149,7 @@ extension HostsController {
         return split.sidebarIsWanted
     }
 
-    /// Build the column and put it in the split's sidebar pane, in place of
-    /// the nav column the sidebar layout already puts away.
+    /// Build the column and put it in the split's sidebar pane.
     func adoptHeroColumn() {
         guard heroColumn == nil, let split = splitPage else { return }
         let column = HelmHeroColumn()
@@ -167,14 +166,11 @@ extension HostsController {
                           insets: NSEdgeInsets(top: HelmMetrics.pageContentInset, left: HelmMetrics.pageGutter,
                                                bottom: HelmMetrics.pageGutter, right: 0),
                           yieldsWidth: true)
-        // The column's own width: the board's 300pt. The pane's minimum is
-        // low so the content's floor squeezes it rather than growing the
-        // window, and the width rule then puts the column away
+        // The column's own width: the board's 300pt. The split was built with
+        // a low minimum, so the content's floor squeezes it rather than
+        // growing the window, and the width rule then puts the column away
         // (`HelmSplitPage` 1.2.0).
-        let pane = HelmMetrics.pageGutter + HelmHeroColumn.width
-        split.sidebarItem.minimumThickness = HelmSplitPage.yieldingMinimumThickness
-        split.sidebarItem.maximumThickness = pane
-        split.preferredSidebarWidth = pane
+        split.preferredSidebarWidth = HelmMetrics.pageGutter + HelmHeroColumn.width
         split.onNarrowChanged = { [weak self] _ in self?.refreshFindOrConnectButton() }
         split.onSidebarCollapseChanged = { [weak self] _ in
             // Reported from inside the split's own resize; the grid's
@@ -185,16 +181,11 @@ extension HostsController {
         renderHeroColumn()
     }
 
-    /// The pane holds the hero column in the sidebar layout and the nav
-    /// column in the floating bar's, and only the nav column is ever forced
-    /// away.
+    /// The pane holds the hero column, which the width rule puts away on a
+    /// page too narrow for both it and the showing tab's top row.
     func refreshSplitColumn() {
-        guard let split = splitPage else { return }
-        let showsHero = heroColumn != nil && moduleTabControlHidden
-        sidebar.isHidden = showsHero
-        heroColumn?.isHidden = !showsHero
-        split.pageForcesCollapse = moduleTabControlHidden && !showsHero
-        split.collapsesBelowWidth = showsHero ? heroCollapseThreshold() : nil
+        guard let split = splitPage, heroColumn != nil else { return }
+        split.collapsesBelowWidth = heroCollapseThreshold()
         refreshContentLeading()
     }
 

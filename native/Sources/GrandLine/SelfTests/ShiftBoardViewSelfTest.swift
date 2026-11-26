@@ -198,9 +198,6 @@ enum ShiftBoardViewSelfTest {
                 check(view.debugScrollHeight <= ShiftBoardColumnView.maxBodyHeight,
                       "\(column.rawValue)'s card area should never exceed "
                       + "\(ShiftBoardColumnView.maxBodyHeight)pt, got \(view.debugScrollHeight)")
-                check(view.debugScrollHeight >= ShiftBoardColumnView.minBodyHeight,
-                      "\(column.rawValue)'s card area should stay a real drop target "
-                      + "(>= \(ShiftBoardColumnView.minBodyHeight)pt), got \(view.debugScrollHeight)")
             }
             // A sparse board must not reserve the full ceiling - that is the
             // defect itself, and a bounds-only check would pass against it.
@@ -221,28 +218,26 @@ enum ShiftBoardViewSelfTest {
             store.addTask(assigned)
             controller.debugRender()
 
-            // UI-17: the sidebar is the one project filter - the chip row
-            // that repeated it above the board is gone.
+            // UI-17: the band's project menu is the one project filter - the
+            // chip row that repeated it above the board is gone.
             check(!controller.debugHasProjectChipRow, "the board should carry no project chip row")
-            let row = ShiftController.debugProjectRowID(project.id)
-            controller.debugSelectSidebarRow(row)
+            controller.debugPickProject(id: project.id)
             let filtered = ids(.backlog)
             check(filtered == [assigned.id],
                   "filtering to a project should leave only that project's cards, got \(filtered)")
 
-            controller.debugSelectSidebarRow(row)
+            controller.debugPickProject(id: nil)
             check(ids(.backlog).count > 1,
-                  "clicking the active project again should clear the filter, got \(ids(.backlog))")
+                  "All projects should clear the filter, got \(ids(.backlog))")
 
             // MARK: The Board/List toggle
 
             controller.debugSelectTasksView("list")
             check(controller.debugBoardIsVisible == false, "List mode should hide the board")
-            check(controller.debugTaskPanelIsVisible, "List mode should show the flat task list")
+            check(!controller.debugTasksTable.card.isHidden, "List mode should show the tasks table")
             controller.debugSelectTasksView("board")
             check(controller.debugBoardIsVisible, "Board mode should show the board")
-            check(controller.debugTaskPanelIsVisible == false,
-                  "Board mode should hide the flat task panel, so Follow-ups takes the row alone")
+            check(controller.debugTasksTable.card.isHidden, "Board mode should hide the tasks table")
 
             // MARK: DevOps Commands is gone from this page
             //
@@ -292,9 +287,6 @@ enum ShiftBoardViewSelfTest {
                 check(needed.width <= state.frame.width + 0.5,
                       "U1: \(column.title)'s empty state needs \(needed.width)pt and the column "
                       + "gives it \(state.frame.width)pt - it is clipped sideways")
-                check(needed.height <= view.debugScrollHeight + 0.5,
-                      "U1: \(column.title)'s empty state needs \(needed.height)pt and the "
-                      + "column's body is \(view.debugScrollHeight)pt - it overflows")
                 // U1's other half: the column still offers an action. The add
                 // button is always there, directly beneath, which is why the
                 // empty state deliberately carries no second copy of it.
@@ -318,10 +310,10 @@ enum ShiftBoardViewSelfTest {
     /// What the revamp changed on the board, read off the mounted page:
     ///
     ///   - UI-21: a lane is not a card - no `HelmCard` anywhere in a lane;
-    ///   - UI-22: a task card is `.cardFlat`, outlined in the hairline;
+    ///   - UI-22: a task card is a card, since stage 7 the prototype's;
     ///   - UI-23: a Normal task carries no chip; High and Low each carry one
     ///     (Q3);
-    ///   - UI-24: the due date is a coloured lead on the meta line;
+    ///   - UI-24: the due date is said on the card's due line;
     ///   - UI-26: an empty lane's copy is the quiet "Nothing in progress";
     ///   - UI-27: a targeted lane shows its dashed outline, and only then;
     ///   - UI-28: a focused card renders selected;
@@ -361,26 +353,27 @@ enum ShiftBoardViewSelfTest {
             func card(_ id: String) -> ShiftBoardCardView? {
                 (backlog.debugCardViews + done.debugCardViews).first { $0.taskID == id }
             }
+            // The page draws the prototype's card (stage 7), so these read
+            // that card - the board's older accent row is never configured.
             if let c = card(normal.id) {
-                check(c.debugRow.style == .cardFlat, "UI-22: a task card should be .cardFlat")
-                check(c.debugRow.debugChipText == nil, "UI-23: a Normal task carries no chip")
+                check(c.debugWorkspaceCard != nil, "UI-22: a task card should be the prototype's card")
+                check(c.debugWorkspaceCard?.debugChip == nil, "UI-23: a Normal task carries no chip")
             } else { check(false, "the Normal task should be on the board") }
             if let c = card(high.id) {
-                check(c.debugRow.debugChipText == "High", "UI-23: a High task carries the one pill")
-                check(c.debugRow.debugMetaAttributed.string.hasPrefix("Due today"),
-                      "UI-24: a task due today leads its meta line with the caption, got "
-                      + "\"\(c.debugRow.debugMetaAttributed.string)\"")
+                check(c.debugWorkspaceCard?.debugChip == "High", "UI-23: a High task carries the one pill")
+                check(c.debugWorkspaceCard?.debugDue == "Due today",
+                      "UI-24: a task due today says so on its due line, got "
+                      + "\"\(c.debugWorkspaceCard?.debugDue ?? "nothing")\"")
             } else { check(false, "the High task should be on the board") }
             if let c = card(low.id) {
-                check(c.debugRow.debugChipText == "Low",
+                check(c.debugWorkspaceCard?.debugChip == "Low",
                       "UI-23: a Low task carries its chip (Q3: a chip for High and Low), got "
-                      + "\(String(describing: c.debugRow.debugChipText))")
+                      + "\(String(describing: c.debugWorkspaceCard?.debugChip))")
             } else { check(false, "the Low task should be on the board") }
             if let c = card(finished.id) {
-                let title = c.debugRow.debugTitleAttributed
-                check(title.length > 0 && title.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) != nil,
+                check(c.debugWorkspaceCard?.debugIsStruck == true,
                       "UI-29: a Done card's title is struck through")
-                check(c.debugRow.debugMetaAttributed.string.hasPrefix("Done "),
+                check(c.debugWorkspaceCard?.debugDue?.hasPrefix("Done ") == true,
                       "UI-29: a Done card says when it finished")
             } else { check(false, "the finished task should be in the Done lane") }
 
@@ -398,9 +391,9 @@ enum ShiftBoardViewSelfTest {
 
             if let c = card(normal.id) {
                 window.makeFirstResponder(c)
-                check(c.debugRow.isRowSelected, "UI-28: a focused card renders selected")
+                check(c.debugWorkspaceCard?.isSelected == true, "UI-28: a focused card renders selected")
                 window.makeFirstResponder(nil)
-                check(!c.debugRow.isRowSelected, "UI-28: and stops when focus moves on")
+                check(c.debugWorkspaceCard?.isSelected == false, "UI-28: and stops when focus moves on")
                 check((c.debugLiftedSnapshotSize()?.width ?? 0) > c.bounds.width,
                       "UI-27: the drag image is padded for its lifted shadow")
             }

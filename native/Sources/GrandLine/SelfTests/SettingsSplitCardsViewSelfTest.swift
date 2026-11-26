@@ -183,23 +183,12 @@ enum SettingsSplitCardsViewSelfTest {
 
     private static func checkNoSettingBecameUnreachable(_ shell: MainSplitShellController, _ window: NSWindow,
                                                        _ ok: inout Bool) {
-        // The floating bar's Settings, built the same way, never adopted.
-        let floating = SettingsController(hostStore: shell.workspace.hostStore, keyStore: shell.workspace.keyStore,
-                                          snippetStore: shell.workspace.snippetStore,
-                                          dictationStore: shell.workspace.dictationStore)
-        let menu = AppDelegate().buildMenu(installing: false)
-        floating.shortcutsMainMenu = { menu }
-        floating.view.frame = NSRect(x: 0, y: 0, width: 1100, height: 800)
-        floating.view.layoutSubtreeIfNeeded()
+        // P-03 of the 2026-11-25 review removed the floating bar, whose
+        // Settings this used to compare against, so what is left is that the
+        // split cards and the sections between them still hold every row.
         let sidebar = shell.workspace.settings
-        let before = Set(floating.debugRows.map(\.titleLabel.stringValue))
-        let after = Set(sidebar.debugRows.map(\.titleLabel.stringValue))
-        check(before.count > 40, "only \(before.count) rows on the floating bar's Settings - the fixture is broken", &ok)
-        // "Currently saved" is Backup's panel in the sidebar layout.
-        let missing = before.subtracting(after).subtracting(["Currently saved"])
-        check(missing.isEmpty, "rows the sidebar layout no longer draws: \(missing.sorted())", &ok)
-        check(floating.debugSplitCard(.appearance) == nil, "the floating bar's Settings drew a split card", &ok)
-        check(floating.debugAnyHeroIsShown, "the floating bar's Settings lost its hero", &ok)
+        let titles = Set(sidebar.debugRows.map(\.titleLabel.stringValue))
+        check(titles.count > 40, "only \(titles.count) rows on Settings - the split lost some", &ok)
     }
 
     private static func checkSideBySideAndStacked(_ shell: MainSplitShellController, _ window: NSWindow,

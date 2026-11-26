@@ -174,20 +174,6 @@ class WorkspaceShellController: NSViewController, WorkspaceChrome {
     @discardableResult
     func revealDestinationMap() -> Bool { false }
 
-    // MARK: Spaces (Daylight §5.3)
-
-    /// A space was picked: land on the canvas if we are not already there,
-    /// then filter it.
-    ///
-    /// Both halves live in the shell rather than in either component, which
-    /// is what keeps §5.3's rule true from both directions - the chrome does
-    /// not know what a canvas is, and the canvas does not know how to
-    /// navigate.
-    func selectSpace(_ space: DaylightSpace) {
-        workspace.homeCanvas.select(space: space)
-        workspace.navigator.show(.homeCanvas)
-    }
-
     /// R2-UX-02: the sidebar layout's Go menu rows (`WorkspaceGoMenu`) - a
     /// module, as its sidebar row opens it, and one of a module's tabs.
     @objc func selectModuleFromMenu(_ sender: NSMenuItem) {

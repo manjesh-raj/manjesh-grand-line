@@ -1049,7 +1049,7 @@ noted.
 | `HelmCard` + `HelmCard.applyCardSurface` | a hand-rolled rounded background view |
 | `HelmAccentRow` | a hand-rolled alert/record row (accent bar, badge, kicker, body, chip) |
 | `ToolRowLayout` | a hand-rolled dense checklist row (fixed columns, actions, chevron, expandable log) |
-| `HelmModuleCard.Body.usageReport` | a hand-rolled quota/budget readout on a canvas card. Rows whose bars must line up are an `NSGridView` with the bar column left unconstrained (gotcha (2)), never nested stacks, and every content priority inside sits in the 251-498 band (gotcha (13)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 526pt-to-227pt measurement |
+| `HelmModuleCard`'s usage report (the `.report` detail of `.heroSplit`) | a hand-rolled quota/budget readout on a canvas card. Rows whose bars must line up are an `NSGridView` with the bar column left unconstrained (gotcha (2)), never nested stacks, and every content priority inside sits in the 251-498 band (gotcha (13)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 526pt-to-227pt measurement |
 | `HelmKPIStrip` (`.inline` in a card, `.boxed` for a page's summary row), `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | a hand-rolled number row or stat tile (`HelmStatTile` and `HelmMetricCard` were retired into the strip), and two, three and two prior copies respectively |
 | `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
@@ -1057,7 +1057,7 @@ noted.
 | `HelmFormSheet` | a hand-built editor sheet |
 | `HelmConfirm` | an `NSAlert`, **except** where a command or binary is about to execute outside this app's control (the risk gates, the herdr restart, `beginSheetModal`) |
 | `Feedback.report(_:kind:persistence:in:)` | deciding at the call site whether something is a toast or a bell entry. State whether it is **still true after a toast would have faded** (GL-30's own dividing line) and let it route; pair a `.lasting` report with `Feedback.clear(id:)` on the path that resolves it. A blocked *decision* is still `HelmConfirm`/`DestructiveConfirm` - it needs an answer, so it needs a return path |
-| `HelmPageSidebar`, `HelmPageToolbar`, `HelmResponsiveGrid`, `HelmDrillHeader`, `HelmRefreshPill`, `HelmBarPanel`, `HelmSkeletonRow` | a per-page reimplementation of each |
+| `HelmPageSidebar`, `HelmPageToolbar`, `HelmResponsiveGrid`, `HelmRefreshPill`, `HelmBarPanel`, `HelmSkeletonRow` | a per-page reimplementation of each |
 | `HelmCountBadge` | a bare number in a card header's action slot |
 | `HelmType` roles | a literal `systemFont(ofSize:)`; `HelmMetrics` for spacing and radii |
 | `HelmMotion` | a direct `accessibilityDisplayShouldReduceMotion` read - source-guarded |
@@ -1274,7 +1274,7 @@ can correct an earlier one - and several do.
 | [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
 | [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
 | [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
-| [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): the general-user briefing, its stated-gap rule, the read-only EventKit path and the Today page it lived on - all removed except the digest Home's Needs Attention card reads |
+| [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): the general-user briefing, its stated-gap rule, the read-only EventKit path and the Today page it lived on - all removed, the last of it (the digest Home's Needs Attention card read) with that card in P-03 |
 | [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
 | [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
 | [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |

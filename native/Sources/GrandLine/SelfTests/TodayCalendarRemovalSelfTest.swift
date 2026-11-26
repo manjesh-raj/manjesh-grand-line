@@ -76,8 +76,6 @@ enum TodayCalendarRemovalSelfTest {
               "the pills should be Home, Command, Operations, Stores, Engineering, got \(titles)", &ok)
         check(DaylightSpace(rawValue: "dailyOverview") == nil,
               "the Today pill's raw value still decodes to a space", &ok)
-        check(DaylightSpace.overview.shortcutIndex == 1,
-              "Home should be \u{2318}1 again, reports \u{2318}\(DaylightSpace.overview.shortcutIndex)", &ok)
     }
 
     // MARK: 3. The sources

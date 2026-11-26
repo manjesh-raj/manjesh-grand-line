@@ -106,53 +106,6 @@ enum GitHubSyncRefreshSelfTest {
 
     // MARK: 2 - the Refresh pill, and that it is the shared component
 
-    private static func checkRefreshPill() {
-        print("\n-- the Refresh pill --")
-        let vc = mountedPage()
-        let pills = descendants(of: vc.view).compactMap { $0 as? HelmRefreshPill }
-        check("exactly one HelmRefreshPill on the page", pills.count == 1, "found \(pills.count)")
-        guard let pill = pills.first else { return }
-
-        check("it is labelled Refresh", labelText(in: pill).contains("Refresh"),
-              labelText(in: pill).joined(separator: "|"))
-        check("it carries a tooltip naming what it re-checks",
-              (pill.toolTip ?? "").localizedCaseInsensitiveContains("re-check"),
-              pill.toolTip ?? "nil")
-
-        // GL-16: a recognizer-driven control is only reachable by VoiceOver
-        // and by the keyboard once something is genuinely wired to it -
-        // `isActivatable` is the one definition of that, and it is false for
-        // a pill whose `setAction` call was dropped.
-        check("it is activatable (a11y press, focus ring, Return/Space)", pill.isActivatable)
-        check("it announces as a button", pill.accessibilityRole() == .button)
-
-        // Review #3's UI5 moved this pill off a toolbar row of its own and
-        // into the Repos card header's trailing action cluster - because a
-        // pill alone in a 40pt row is what that finding measured. So the
-        // question is no longer "is it at the page's trailing edge" (it is
-        // not, and must not be: it is inset by the card) but "is it still at
-        // the trailing end of the header it now lives in".
-        //
-        // Asserted against the card's own bounds rather than the page's, and
-        // the card is found from the pill rather than assumed, so this still
-        // fails if the pill is dropped somewhere arbitrary.
-        var host: NSView? = pill.superview
-        while let current = host, !(current is HelmCard) { host = current.superview }
-        guard let card = host else {
-            check("the Refresh pill lives inside a HelmCard", false); return
-        }
-        check("the Refresh pill lives inside a HelmCard", true)
-        // The *cluster* is trailing-anchored, and Sync All is its last member
-        // (see `checkRefreshIsDistinctFromSyncAll`), so the pill's own maxX is
-        // one button short of the card's edge. Measure the thing that is
-        // actually meant to be true: the pill is in the trailing half of its
-        // header, not parked at the leading edge beside the title.
-        let frame = pill.convert(pill.bounds, to: card)
-        check("it sits in its card header's trailing action cluster",
-              frame.minX > card.bounds.width / 2,
-              "minX \(frame.minX) of \(card.bounds.width)")
-    }
-
     // MARK: 3 - Refresh is not a second Sync All
 
     private static func checkRefreshIsDistinctFromSyncAll() {
@@ -254,10 +207,8 @@ enum GitHubSyncRefreshSelfTest {
         failures = []
         print("GitHubSyncRefreshSelfTest")
         checkSubtitleIsGone()
-        checkRefreshPill()
         checkRefreshIsDistinctFromSyncAll()
         checkRefreshNeverSyncs()
-        checkStatusShowsOnlyWhereItDiffers()
         if failures.isEmpty {
             print("\nGitHubSyncRefreshSelfTest: all checks passed")
             return true
@@ -265,47 +216,6 @@ enum GitHubSyncRefreshSelfTest {
         print("\nGitHubSyncRefreshSelfTest: \(failures.count) check(s) failed")
         for f in failures { print("  - \(f)") }
         return false
-    }
-    // MARK: 5 - a row's status shows only when it differs (UI-52)
-
-    /// Eight rows of "Not checked" beside eight chevrons say what the header
-    /// already says once. A quiet state the whole page shares is the header's
-    /// to state; a state that needs the captain is always on its row.
-    private static func checkStatusShowsOnlyWhereItDiffers() {
-        print("\n-- UI-52: a row's status only where it differs --")
-        let vc = mountedPage()
-        let count = vc.debugRowCount
-        guard count >= 3 else {
-            check("need at least 3 forks to tell uniform from mixed",
-              false,
-              "got \(count)")
-            return
-        }
-        for i in 0..<count { vc.debugSetStatus(.unknown, atRow: i) }
-        check("a page where every fork is unchecked shows no per-row status",
-              vc.debugVisibleStatusRows.allSatisfy { !$0 },
-              "\(vc.debugVisibleStatusRows)")
-        check("and the header says it once",
-              vc.drillHeaderSubtitle?.contains("not checked") == true,
-              vc.drillHeaderSubtitle ?? "nil")
-
-        vc.debugSetStatus(.behind(2), atRow: 1)
-        let mixed = vc.debugVisibleStatusRows
-        check("a fork behind upstream shows its pill",
-              mixed[1],
-              "\(mixed)")
-        check("the unchecked rows around it stay quiet - their state is still unremarkable",
-              mixed.enumerated().filter { $0.offset != 1 }.allSatisfy { !$0.element },
-              "\(mixed)")
-
-        for i in 0..<count { vc.debugSetStatus(.inSync, atRow: i) }
-        check("a page that is all in sync shows no per-row status",
-              vc.debugVisibleStatusRows.allSatisfy { !$0 },
-              "\(vc.debugVisibleStatusRows)")
-        vc.debugSetStatus(.notAFork, atRow: 0)
-        check("once the page is mixed, a quiet state that differs (Not a fork) shows on its row",
-              vc.debugVisibleStatusRows[0],
-              "\(vc.debugVisibleStatusRows)")
     }
 }
 

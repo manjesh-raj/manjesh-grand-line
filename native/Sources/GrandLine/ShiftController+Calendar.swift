@@ -4,8 +4,8 @@
 // PR 4, the captain's decision 1A).
 //
 // The calendar itself is `TaskCalendarController`, a child controller this
-// page embeds under its filter row, so the 3,500-line page does not grow a
-// calendar too (GL-36). What lives here is the glue, and it is what makes
+// page embeds in its dashboard, so the page does not grow a calendar too
+// (GL-36). What lives here is the glue, and it is what makes
 // Tasks one surface rather than two pages:
 //
 //   - **The filters are the page's.** The scope (All tasks, Due today,
@@ -18,12 +18,12 @@
 //     while this view is up, through the calendar's own `newTaskFromMenu`.
 //   - **The header's line** is the calendar's caption, so the column states
 //     what the visible period holds and what the grid cannot show (GL-14).
-//   - **Colour by Priority or Project** sits beside the filters while the
-//     calendar shows, and in the Filter menu when the row collapses.
+//   - **Colour by Priority or Project** is a menu on the month head, beside
+//     the scope and project menus (Cf-4).
 //
-// The calendar fills the visible height under the filter row
-// (`applyCalendarHeight`), and grows the page past it rather than squeezing
-// its month below `ShiftCalendarView.minimumHeight`.
+// The calendar fills the visible height of the page (`applyCalendarHeight`),
+// and grows the page past it rather than squeezing its month below
+// `ShiftCalendarView.minimumHeight`.
 
 import AppKit
 
@@ -52,9 +52,9 @@ extension ShiftController {
     /// shows, after the board, so a session that never opens it builds no
     /// web view and lays out nothing for it.
     func embedCalendarIfNeeded() {
-        // R5-UX-04: in the sidebar layout the window toolbar is the
-        // Calendar's, with Today and the periods on it.
-        calendar.setPeriodControlsInToolbar(drawsSidebarLayout)
+        // R5-UX-04: the window toolbar is the Calendar's, with Today and
+        // the periods on it.
+        calendar.setPeriodControlsInToolbar(true)
         guard calendarSection.superview == nil else { return }
         _ = view
         calendarSection.translatesAutoresizingMaskIntoConstraints = false
@@ -68,7 +68,7 @@ extension ShiftController {
         page.translatesAutoresizingMaskIntoConstraints = false
         calendarSection.addSubview(page)
         // The card's own margins overhang the section, so the card's edges
-        // line up with the filter row above it.
+        // line up with the hero band and the page's other cards.
         let insets = TaskCalendarController.cardInsets
         NSLayoutConstraint.activate([
             page.topAnchor.constraint(equalTo: calendarSection.topAnchor, constant: -insets.top),
@@ -84,43 +84,6 @@ extension ShiftController {
         calendarHeightTie = tie
         // Cf-4: the month head's menus are the page's filters.
         wireCalendarFilters()
-    }
-
-    /// S16: "Colour by" is a pop-up in the filter bar's trailing slot, where
-    /// Board and List have their sort, rather than a second set of tabs.
-    func makeColourControl() -> NSStackView {
-        let label = NSTextField(labelWithString: "Colour by")
-        label.font = HelmType.chip()
-        label.setContentHuggingPriority(.required, for: .horizontal)
-        label.setContentCompressionResistancePriority(.required, for: .horizontal)
-        let popUp = HelmPopUpButton()
-        popUp.controlSize = .small
-        popUp.addItems(withTitles: ShiftCalendarColouring.allCases.map(\.title))
-        popUp.selectItem(at: ShiftCalendarColouring.allCases.firstIndex(of: .saved) ?? 0)
-        popUp.setAccessibilityLabel("Colour calendar chips by")
-        popUp.target = self
-        popUp.action = #selector(colourPicked(_:))
-        popUp.setContentHuggingPriority(.required, for: .horizontal)
-        let stack = NSStackView(views: [label, popUp])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = HelmMetrics.s2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setHuggingPriority(.required, for: .horizontal)
-        stack.setClippingResistancePriority(.required, for: .horizontal)
-        return stack
-    }
-
-    @objc private func colourPicked(_ sender: NSPopUpButton) {
-        let all = ShiftCalendarColouring.allCases
-        guard all.indices.contains(sender.indexOfSelectedItem) else { return }
-        setCalendarColouring(all[sender.indexOfSelectedItem])
-    }
-
-    private var colourPopUp: HelmPopUpButton? { colourControl.arrangedSubviews.last as? HelmPopUpButton }
-
-    func paintColourControl(_ theme: HelmTheme) {
-        (colourControl.arrangedSubviews.first as? NSTextField)?.textColor = HelmTheme.mutedInk(theme)
     }
 
     // MARK: State
@@ -148,7 +111,6 @@ extension ShiftController {
     func setCalendarColouring(_ colouring: ShiftCalendarColouring) {
         embedCalendarIfNeeded()
         calendar.setColouring(colouring)
-        if let index = ShiftCalendarColouring.allCases.firstIndex(of: colouring) { colourPopUp?.selectItem(at: index) }
         refreshFilters()
     }
 
@@ -160,8 +122,8 @@ extension ShiftController {
 
     // MARK: Layout
 
-    /// Shows the section on the Calendar view, and holds it to the height
-    /// under the filter row while it shows. The tie is released otherwise,
+    /// Shows the section on the Calendar view, and holds it to the page's
+    /// visible height while it shows. The tie is released otherwise,
     /// because a hidden view keeps its constraints (gotcha (15)).
     func applyCalendarVisibility() {
         guard calendarSection.superview != nil else { return }
@@ -172,34 +134,20 @@ extension ShiftController {
     }
 
     /// The tie's constant: the clip view's height less what sits above and
-    /// below the section - the content's top inset, the floating bar's tab
-    /// row and its spacing, and the foot. The sidebar layout has no row
-    /// above the calendar since Cf-4: its filters are the month head's menus.
+    /// below the section - the content's top inset and the foot. There is no
+    /// row above the calendar since Cf-4: its filters are the month head's
+    /// menus.
     func applyCalendarHeight() {
         guard let tie = calendarHeightTie else { return }
-        let rowAbove: NSView? = drawsSidebarLayout ? nil : topToolbar
-        let rowHeight = rowAbove.map { $0.isHidden ? 0 : $0.fittingSize.height + contentStack.spacing } ?? 0
-        let reserved = Self.contentTopInset + rowHeight + HelmMetrics.s5
+        let reserved = Self.contentTopInset + HelmMetrics.s5
         if tie.constant != -reserved { tie.constant = -reserved }
     }
 
     /// The content stack's distance from the top of the scroll document:
-    /// the page frame's first-content line (S03), where the filter row sits.
+    /// the page frame's first-content line (S03), where the hero band sits.
     static let contentTopInset: CGFloat = HelmMetrics.pageContentInset
-
-    /// The floating bar's tab row: the sort belongs to the board and the
-    /// list, and Colour by to the calendar. In the sidebar layout the sort is
-    /// the band's menu and Colour by the calendar head's (Tf-2, Cf-4).
-    func applyTabRowAccessories() {
-        guard !drawsSidebarLayout else { return }
-        let dashboard = topLevelView == .dashboard
-        let calendar = tasksView == .calendar
-        sortPopup.isHidden = !dashboard || calendar
-        colourControl.isHidden = !dashboard || !calendar
-    }
 
     #if FM_SELFTESTS
     var debugCalendarSection: NSView { calendarSection }
-    var debugColourControl: NSStackView { colourControl }
     #endif
 }

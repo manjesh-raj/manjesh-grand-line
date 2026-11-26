@@ -31,9 +31,7 @@ enum Audit3BugFixesSelfTest {
         for check in [checkKanbanColumnFitsItsPlan,
                       checkEmptyStateWatermarkIsNeverASlab,
                       checkUpdatesToastStaysOnItsOwnPage,
-                      checkSettingsColumnsKeepCardsAtTheirOwnHeight,
                       checkDictationChipIsContentSized,
-                      checkTaskPanelShowsWholeRows,
                       checkStickyFirstNoteClearsTheHeader,
                       checkCrewHandoffRefusesARestoredPage,
                       checkStaleTouchIDKeyIsNotAWrongPassword] {
@@ -247,57 +245,6 @@ enum Audit3BugFixesSelfTest {
 
     // MARK: B9 - a card is as tall as its own content
 
-    /// B9 was measured against §7's two-column arrangement, where the short
-    /// column was stretched to the tall one's height and the slack landed on
-    /// one card (the Connection card resolving to 504pt against 133pt of
-    /// content). `fm/grandline-settings-page-sidebar-redesign` replaced that
-    /// arrangement with a sidebar and a single-column detail pane, so the
-    /// exact mechanism is gone - but **the property B9 is about is not**, and
-    /// a vertical `NSStackView` at the default `.gravityAreas` distribution
-    /// is precisely the thing that reintroduces it. The case now sweeps every
-    /// category's pane rather than one two-column render.
-    private static func checkSettingsColumnsKeepCardsAtTheirOwnHeight(_ ok: inout Bool) {
-        print("\n-- B9: a detail pane does not stretch a card past its own content --")
-        withScratchEnv {
-            let settings = SettingsController(hostStore: HostStore(), keyStore: SSHKeyStore(),
-                                              snippetStore: SnippetStore(), dictationStore: DictationStore())
-            let window = OffScreenProbe.window(width: 1512, height: 950)
-            window.contentView = settings.view
-            settings.view.frame = NSRect(x: 0, y: 0, width: 1512, height: 950)
-            settings.view.layoutSubtreeIfNeeded()
-            settings.viewDidLayout()
-            settings.view.layoutSubtreeIfNeeded()
-
-            var worst: (name: String, frame: CGFloat, fitting: CGFloat)?
-            var measured = 0
-            for category in SettingsController.Category.allCases {
-                settings.select(category)
-                settings.view.layoutSubtreeIfNeeded()
-                // Vacuity guard: a pane that mounted nothing, or mounted
-                // cards that never laid out, would pass while measuring
-                // nothing at all.
-                let mounted = settings.debugMountedGroupCards
-                guard !mounted.isEmpty, mounted.allSatisfy({ $0.frame.height > 1 }) else {
-                    fail("\(category.rawValue) mounted \(mounted.count) laid-out cards - this check is vacuous", &ok)
-                    return
-                }
-                measured += mounted.count
-                for card in mounted {
-                    let slack = card.frame.height - card.fittingSize.height
-                    if slack > 1, slack > (worst.map { $0.frame - $0.fitting } ?? 0) {
-                        worst = (category.rawValue, card.frame.height, card.fittingSize.height)
-                    }
-                }
-            }
-            if let worst {
-                fail("\(worst.name): a card is \(worst.frame)pt tall against \(worst.fitting)pt of content - "
-                     + "review #3's B9 is back", &ok)
-            } else {
-                check(true, "every one of \(measured) cards is exactly as tall as its own content", &ok)
-            }
-        }
-    }
-
     // MARK: B10 - a chip is content-sized
 
     private static func checkDictationChipIsContentSized(_ ok: inout Bool) {
@@ -327,33 +274,6 @@ enum Audit3BugFixesSelfTest {
                 if pill.width > width / 2 {
                     fail("@\(width): review #3's B10 is back - the chip is \(pill.width)pt", &ok)
                 }
-            }
-        }
-    }
-
-    // MARK: B11 - the panel shows whole rows
-
-    private static func checkTaskPanelShowsWholeRows(_ ok: inout Bool) {
-        print("\n-- B11: the My Tasks panel is a whole number of rows tall --")
-        let box = ShiftController.debugTaskFollowUpPanelBodyHeight
-        let row = ShiftTaskListView.rowHeight
-        let rows = box / row
-        check(abs(rows - rows.rounded()) < 0.01,
-              "the box (\(box)) is exactly \(rows.rounded()) rows of \(row)", &ok)
-        if abs(rows - rows.rounded()) >= 0.01 {
-            fail("review #3's B11 is back: \(rows) rows, so the last one renders sliced", &ok)
-        }
-
-        // At every chrome text scale, not just the captain's current one - a
-        // literal could not have stayed whole across them, which is why the
-        // fix derives it.
-        let saved = AppSettings.shared.uiTextScale
-        defer { ChromeTextScale.shared.setScale(saved) }
-        for step in ChromeTextScale.steps {
-            ChromeTextScale.shared.setScale(step.scale)
-            let scaledRows = ShiftController.debugTaskFollowUpPanelBodyHeight / ShiftTaskListView.rowHeight
-            if abs(scaledRows - scaledRows.rounded()) >= 0.01 {
-                fail("at \(step.title) the panel is \(scaledRows) rows tall", &ok)
             }
         }
     }

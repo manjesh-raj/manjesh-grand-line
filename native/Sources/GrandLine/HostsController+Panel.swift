@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // Hosts are edited in the side panel (H6, H10 and H11 of the captain's
-// Termius-style plan), in the sidebar layout only.
+// Termius-style plan).
 //
 // The captain's direction: "whenever we edit ... it appears as a pop-up on
 // the right side, not in the sidebar" - and the same for keys. So in this

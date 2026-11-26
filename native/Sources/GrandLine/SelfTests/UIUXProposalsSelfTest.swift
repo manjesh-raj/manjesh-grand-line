@@ -168,9 +168,10 @@ enum UIUXProposalsSelfTest {
 
     // MARK: - S04
 
-    /// The band is the default surface and paints Settings' two colours; the
-    /// pages the proposal moved hold their column in it; Tasks, Hosts and
-    /// Poneglyph keep the plain column on purpose.
+    /// The band is the default surface and paints Settings' two colours, and
+    /// the pages the proposal moved hold their column in it. Tasks', Hosts'
+    /// and Poneglyph's plain columns went with their floating-bar
+    /// presentations (P-03 of the 2026-11-25 review).
     private static func checkOneSidebarSurface(_ ok: inout Bool) {
         check(HelmPageSidebar().debugSurface == .band, "S04: a new page sidebar is a band by default", &ok)
         check(HelmPageSidebar.bandPaneWidth == HelmPageSidebar.width + 2 * HelmMetrics.pageGutter,
@@ -202,9 +203,8 @@ enum UIUXProposalsSelfTest {
         let workbench = source("CodePreviewWorkbench.swift")
         check(workbench.contains("HelmPageSidebar.Band()") && !workbench.contains("quickActionsCard"),
               "S04: Code's snippets and quick actions are one band, not two cards", &ok)
-        for page in ["ShiftController.swift", "HostsController.swift", "CredentialVaultSidebar.swift"] {
-            check(source(page).contains("HelmPageSidebar(surface: .plain)"), "S04: \(page) keeps its plain column", &ok)
-        }
+        // Hosts' and Poneglyph's split panes hold their hero columns now,
+        // and Tasks' filters are its band's.
     }
 
     // MARK: - S12
@@ -240,8 +240,10 @@ enum UIUXProposalsSelfTest {
 
     /// An informational notice has no edge and a warning or a failure has
     /// one in its own hue; the kicker, title, body and actions are what was
-    /// asked; a dismiss hides the notice and tells the caller; and the four
-    /// pages that drew their own banner now use this one.
+    /// asked; a dismiss hides the notice and tells the caller; and the pages
+    /// that drew their own banner now use this one. Automic Vault's banner
+    /// went with its floating-bar presentation (P-03 of the 2026-11-25
+    /// review), and S-1's split card says what it said.
     private static func checkOneNoticeRecipe(_ ok: inout Bool) {
         for theme in [HelmTheme.daylight, HelmTheme.dusk] {
             for tint in [HelmTint.info, .accent, .good, .warn, .critical] {
@@ -272,14 +274,11 @@ enum UIUXProposalsSelfTest {
         check(notice.isHidden && dismissed, "S17: the dismiss hides the notice and tells the caller", &ok)
 
         guard sourcesAvailable else { print("  SKIP: S17 source half, no app sources"); return }
-        for page in ["HomeCanvasController.swift", "VaultController.swift", "GitHubSyncController.swift",
-                     "FleetController.swift"] {
+        for page in ["HomeCanvasController.swift", "GitHubSyncController.swift", "FleetController.swift"] {
             check(source(page).contains("HelmNotice("), "S17: \(page) draws its notice with HelmNotice", &ok)
         }
         check(!source("SetupSummary.swift").contains("class SetupPausedPushNotice"),
               "S17: GitHub sync's private notice card is gone", &ok)
-        check(!source("VaultController.swift").contains("attentionBanner.layer?.backgroundColor"),
-              "S17: Secrets' filled amber band is gone", &ok)
         check(!source("HomeCanvasController.swift").contains("tipRow = HelmAccentRow"),
               "S17: Home's tip is no longer an edged accent row", &ok)
     }
@@ -443,8 +442,12 @@ enum UIUXProposalsSelfTest {
         for page in ["UpdatesController.swift", "LogAnalyzerController.swift", "CredentialVaultController.swift"] {
             check(source(page).contains("HelmFilterBar("), "S16: \(page) builds its filter row with HelmFilterBar", &ok)
         }
-        check(source("ShiftController+Calendar.swift").contains("HelmPopUpButton()"),
-              "S16: Calendar's Colour by is a pop-up in the trailing slot", &ok)
+        // S16 made Colour by a pop-up rather than a second set of tabs; Cf-4
+        // moved it onto the month head as a menu, beside the scope and the
+        // project.
+        check(source("ShiftController.swift").contains(
+                  "colour: { [weak self] view in self?.popUp(self?.colourMenu(), from: view) }"),
+              "S16/Cf-4: Calendar's Colour by is a menu on the month head", &ok)
     }
 
     // MARK: - S25

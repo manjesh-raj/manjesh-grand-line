@@ -336,8 +336,8 @@ enum HeroCardsViewSelfTest {
                   "the Default size is not checked for a half-row card", &ok)
             guard let full = menu.items.first(where: { $0.title == "Full width" }) else { return }
             fire(full)
-            check(canvas.cardLayout?.size(of: .fleet).columns == HomeCardGrid.columns,
-                  "Full width left the card at \(canvas.cardLayout?.size(of: .fleet).columns ?? -1) columns", &ok)
+            check(canvas.cardLayout.size(of: .fleet).columns == HomeCardGrid.columns,
+                  "Full width left the card at \(canvas.cardLayout.size(of: .fleet).columns) columns", &ok)
             check(kept?.size(of: .fleet).columns == HomeCardGrid.columns,
                   "Full width was not handed to the shell to keep", &ok)
             canvas.view.layoutSubtreeIfNeeded()
@@ -521,10 +521,10 @@ enum HeroCardsViewSelfTest {
                     window.layoutIfNeeded()
                 }
                 let before = canvas.cardLayout
-                check(before?.shown.contains(module) ?? false, "\(module.title): fixture: the card is not on Home", &ok)
+                check(before.shown.contains(module), "\(module.title): fixture: the card is not on Home", &ok)
 
                 hide()
-                check(!(canvas.cardLayout?.shown.contains(module) ?? true) && canvas.cardForTests(module) == nil,
+                check(!canvas.cardLayout.shown.contains(module) && canvas.cardForTests(module) == nil,
                       "\(module.title): Hide from Home left the card on Home", &ok)
                 check(stored.last == canvas.cardLayout, "\(module.title): the hide was not kept", &ok)
                 check(Toast.debugCount(in: canvas.view) == 1, "\(module.title): no toast said how to bring it back", &ok)
@@ -541,7 +541,7 @@ enum HeroCardsViewSelfTest {
                 check(tray?.hiddenCards.contains(module) ?? false,
                       "\(module.title): Customize's Add a Card does not offer the hidden card", &ok)
                 tray?.onAdd?(module)
-                check(canvas.cardLayout?.shown.contains(module) ?? false && canvas.cardForTests(module) != nil,
+                check(canvas.cardLayout.shown.contains(module) && canvas.cardForTests(module) != nil,
                       "\(module.title): Add a Card did not bring the card back", &ok)
                 canvas.setCustomizing(false)
             }

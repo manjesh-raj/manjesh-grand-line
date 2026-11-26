@@ -596,7 +596,6 @@ enum PageHeroColumnsSelfTest {
 
         let fleet = FleetController(shiftStore: ShiftStore())
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         // Before the first read: the band says it is reading, with no figures.
         guard let first = fleet.debugCrewBand else {
             fail("CR-1: In flight has no band before its first read", &ok)
@@ -826,22 +825,8 @@ enum PageHeroColumnsSelfTest {
                 && Calendar.current.isDateInToday(fixture.events.last?.date ?? .distantPast),
               "fixture: the scratch log reads \(fixture.events.map(\.kind))", &ok)
 
-        // The floating bar's Log: no band, its filter in the list's column
-        // with the titles it always had.
-        let floating = FleetController(shiftStore: shift, logStore: log)
-        _ = floating.view
-        floating.debugSwitchTab("log")
-        let floatingTabs = floating.debugLogFilters
-        check(floating.debugCrewBand == nil && floatingTabs.heroInk == nil && floatingTabs.superview != nil
-                && floatingTabs.debugPillsForAccessibilityTests().map { $0.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ?? "" }
-                    == FleetLogListView.filterItems.map(\.title)
-                && !floating.collapsesEmptyHeaderLine && floating.drawsSubtitleOnHeaderLine
-                && floating.debugLogList.debugRowCount == 4,
-              "CR-1: the floating bar's Log drew the band or changed its filter", &ok)
-
         let fleet = FleetController(shiftStore: shift, logStore: log)
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         fleet.selectModuleTab(named: "Log")
         guard let logBand = fleet.debugCrewBand else {
             fail("CR-1: Log opens on no band", &ok)
@@ -997,8 +982,7 @@ enum PageHeroColumnsSelfTest {
               "CR-1: task PRs over an unreadable folder are \(tasks)", &ok)
     }
 
-    /// The real page: a `ReviewController` in the sidebar layout, headless,
-    /// beside one that never adopted it (the floating bar's).
+    /// The real page: a `ReviewController`, headless.
     private static func checkTheReviewBandOnTheRealPage(_ ok: inout Bool) {
         func pr(_ n: Int, _ forge: String, _ checks: String, task: String? = nil) -> MergedPR {
             MergedPR(source: task == nil ? "forge" : "work", taskID: task, repo: "grand-line",
@@ -1012,21 +996,8 @@ enum PageHeroColumnsSelfTest {
         let accent = HelmHeroColumn.palette(for: .init(colour: .themeAccent), in: theme)
         check(dimmed != accent, "fixture: the dimmed tone is the accent's own palette", &ok)
 
-        // The floating bar's page: no band, its line, figures and block as before.
-        let floating = ReviewController()
-        _ = floating.view
-        floating.debugRender(prs)
-        check(floating.debugReviewBand == nil && floating.debugIsStatsRowVisible && floating.debugIsBodySubtitleVisible
-                && floating.debugStatTiles.map(\.caption) == ["Open PRs", "Ready to merge", "Checks running"]
-                && !floating.collapsesEmptyHeaderLine && floating.drawsSubtitleOnHeaderLine,
-              "CR-1: the floating bar's Review drew the band or lost its line and figures", &ok)
-        floating.debugRender([], scan: OpenPRsSource.FetchResult(projectsUnreadable: true))
-        check(floating.debugReviewBand == nil && floating.debugIsFailureStateVisible,
-              "CR-1: the floating bar's Review lost its failure block", &ok)
-
         let review = ReviewController()
         _ = review.view
-        review.adoptSidebarLayout()
         guard let first = review.debugReviewBand else {
             fail("CR-1: Review has no band before its first scan", &ok)
             return
@@ -1236,7 +1207,6 @@ enum PageHeroColumnsSelfTest {
 
         let fleet = FleetController(shiftStore: ShiftStore())
         _ = fleet.view
-        fleet.adoptSidebarLayout()
         fleet.selectModuleTab(named: "Needs you")
         fleet.debugRender(snapshot: snapshot(tasks), mergedPRs: [])
         guard let reply = fleet.debugReplyButton(taskID: "rp-wait") else {
@@ -1289,16 +1259,6 @@ enum PageHeroColumnsSelfTest {
                     for: .init(colour: .fixed(red: warn.0, green: warn.1, blue: warn.2)), in: ThemeManager.shared.theme),
               "RP-2: a blocked task's head is not amber", &ok)
         fleet.debugReplyButton(taskID: "rp-block")?.performClick(nil)
-
-        // The floating bar keeps today's composer under the row.
-        let classic = FleetController(shiftStore: ShiftStore())
-        _ = classic.view
-        classic.debugRender(snapshot: snapshot(tasks), mergedPRs: [])
-        classic.debugReplyButton(taskID: "rp-wait")?.performClick(nil)
-        check(classic.debugOpenReplyCard == nil && classic.debugOpenReplyComposerView != nil
-                && classic.debugComposerFollowsItsRow(taskID: "rp-wait")
-                && classic.debugReplyButton(taskID: "rp-wait")?.title == "Cancel",
-              "RP-2: the floating bar's Reply did not open today's composer under its row", &ok)
     }
 
     private static func composite(_ color: NSColor, over ground: (Double, Double, Double)) -> (Double, Double, Double) {

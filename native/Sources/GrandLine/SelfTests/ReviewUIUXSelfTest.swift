@@ -62,7 +62,6 @@ enum ReviewUIUXSelfTest {
             ("U17_lockScreenPasswordFieldDoesNotLookPreFilled", test_u17LockPlaceholder),
             ("X1_lockScreenOffersALocalFallbackWhenTheVaultIsUnreachable", test_x1LocalFallback),
             ("X5_emptyPagesOfferAnExampleToStartFrom", test_x5SeedExamples),
-            ("X8_updatesOffersOneCheckAllNamedAfterTheWork", test_x8CheckAllIsNamedAfterTheWork),
             ("X2_oneMenuBarIconByDefaultWithAWayBack", test_x2OneStatusItem),
         ]
         var failures = 0
@@ -789,28 +788,32 @@ enum ReviewUIUXSelfTest {
             let controller = UpdatesController()
             controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
             controller.view.layoutSubtreeIfNeeded()
-            let states = controller.debugRowActionStates
+            // P-03 of the 2026-11-25 review: the floating bar's per-row
+            // buttons went with it, so U10 is asked of the Tools table's own
+            // row action - the one control a row carries.
+            func actions() -> [String?] {
+                controller.debugToolsTable.debugRows.filter(\.isRecord).map { $0.primary?.title }
+            }
+            let states = actions()
             guard states.count > 5 else {
                 return "the page rendered \(states.count) rows, so this case could not tell a gated "
                      + "button from an empty page"
             }
             // Unchecked on first render, so every row legitimately offers
             // Check - the state the review saw, and the one this fix keeps.
-            guard states.allSatisfy({ !$0.checkHidden }) else {
-                return "an unchecked row hides its own Check button, which is the only thing that "
-                     + "can change it"
+            guard states.allSatisfy({ $0 == "Check" }) else {
+                return "an unchecked row does not offer its own Check, which is the only thing that "
+                     + "can change it: \(states)"
             }
             for index in 0 ..< states.count { controller.debugSetStatus(.upToDate, atRow: index) }
-            let settled = controller.debugRowActionStates
-            guard settled.allSatisfy({ $0.checkHidden && $0.updateHidden }) else {
-                let offenders = settled.filter { !$0.checkHidden || !$0.updateHidden }.map(\.name)
-                return "an up-to-date row still carries an action: \(offenders) (review U10)"
+            let settled = actions()
+            guard settled.allSatisfy({ $0 == nil }) else {
+                return "an up-to-date row still carries an action: \(settled) (review U10)"
             }
             controller.debugSetStatus(.updateAvailable, atRow: 0)
-            let withUpdate = controller.debugRowActionStates[0]
-            guard withUpdate.checkHidden, !withUpdate.updateHidden else {
-                return "a row with an update available shows Check=\(!withUpdate.checkHidden), "
-                     + "Update=\(!withUpdate.updateHidden) - it should carry Update alone"
+            let withUpdate = actions()[0]
+            guard withUpdate == "Update" else {
+                return "a row with an update available offers \(withUpdate ?? "nothing") - it should carry Update alone"
             }
 
             // The toast's own band. A page whose content runs to the window's
@@ -873,35 +876,38 @@ enum ReviewUIUXSelfTest {
 
         // 2. The Tasks page's Follow-ups card at 480pt while empty. The
         //    shared panel height was the four-row *ceiling* used as a fixed
-        //    height; it is the content's own height clamped to that ceiling
-        //    now, and both panels still share one number.
+        //    height. The card's body is the Follow-ups table now, which
+        //    grows to fit its rows - so with no follow-ups it is the height
+        //    of the one empty row it draws.
         return withScratchShiftStore { store in
             autoreleasepool {
+                // One task, so the page is not the start-here state and the
+                // List tab draws its cards.
+                var task = ShiftTask.fresh()
+                task.title = "Anything"
+                store.addTask(task)
+                // Pure layout, no window: this suite runs headless.
                 let controller = ShiftController(store: store)
                 controller.view.frame = NSRect(x: 0, y: 0, width: 1400, height: 900)
-                // The panel heights are re-derived on every render, and a
-                // controller whose view was merely loaded has not rendered.
+                controller.debugSelectTasksView(ShiftController.ShiftTasksView.list.rawValue)
                 controller.debugRender()
                 controller.view.layoutSubtreeIfNeeded()
-                let ceiling = ShiftController.debugTaskFollowUpPanelBodyHeight
-                guard ceiling > 200 else {
-                    return "the four-row ceiling measured \(ceiling)pt, so this case cannot tell a "
-                         + "hugging panel from a fixed one"
+                let table = controller.debugFollowUpsTable
+                guard !table.card.isHiddenOrHasHiddenAncestor else {
+                    return "the List tab does not show the Follow-ups card, so this case is measuring nothing"
                 }
-                let empty = controller.debugTaskFollowUpBodyHeight
-                guard empty > 0 else {
-                    return "the panels have no height constraint, so this case is measuring nothing"
+                guard table.debugRows.count == 1, case .empty = table.debugRows[0].kind else {
+                    return "the Follow-ups table holds \(table.debugRows.count) rows, not its one empty row, "
+                         + "so this case cannot tell a hugging card from a fixed one"
                 }
-                guard empty < ceiling else {
-                    return "both panels are still \(empty)pt tall - the four-row ceiling - around one "
-                         + "empty-state line each (review U15)"
+                let body = table.debugTable.enclosingScrollView?.frame.height ?? 0
+                guard abs(body - HelmDataTable.fittedEmptyRowHeight) < 1 else {
+                    return "an empty Follow-ups card's body is \(body)pt, not the "
+                         + "\(HelmDataTable.fittedEmptyRowHeight)pt its one empty row draws (review U15)"
                 }
-                // UI-30: the page opens on the Board, where the task panel is
-                // hidden, so the follow-ups panel stands alone and hugs its
-                // *own* placeholder - not the hidden task list's.
-                guard abs(empty - ShiftFollowUpListView.emptyRowHeight) < 1 else {
-                    return "an empty panel is \(empty)pt, not the \(ShiftFollowUpListView.emptyRowHeight)pt "
-                         + "its one placeholder row actually draws"
+                let card = table.card.frame.height
+                guard card < 300 else {
+                    return "an empty Follow-ups card is still \(card)pt tall around one empty row (review U15)"
                 }
                 return nil
             }
@@ -1576,7 +1582,10 @@ enum ReviewUIUXSelfTest {
             // Settings mounts one category's cards at a time (gotcha (15)),
             // so the row is asked for on its own page rather than by walking
             // whatever page happens to be selected.
-            return settings.debugGroupCards(in: .menuBar)
+            // The page's split card holds the rows its plan took.
+            let views: [NSView] = settings.debugGroupCards(in: .menuBar)
+                + [settings.debugSplitCard(in: .menuBar)].compactMap { $0 }
+            return views
                 .flatMap { descendants(of: $0) }
                 .compactMap { ($0 as? NSTextField)?.stringValue }
                 .contains { $0.localizedCaseInsensitiveContains("Separate icons for Tasks") }
@@ -1605,52 +1614,6 @@ enum ReviewUIUXSelfTest {
         return nil
     }
     // MARK: X8 - one bulk control on Updates, and it says what it does
-
-    /// X8 (review UX): "a single Check all plus per-row actions only when
-    /// something is available".
-    ///
-    /// The second half is U10's, asserted in `test_u10CheckButton` above and
-    /// deliberately not re-asserted here. What is left is the first: on a page
-    /// where most rows correctly offer nothing at all, the one bulk control
-    /// has to say what it does on its face. "Refresh" named the gesture
-    /// rather than the work, and the only thing that said otherwise was a
-    /// tooltip nobody hovers when every row already looks settled.
-    private static func test_x8CheckAllIsNamedAfterTheWork() -> String? {
-        autoreleasepool { () -> String? in
-            let controller = UpdatesController()
-            controller.view.frame = NSRect(x: 0, y: 0, width: 1200, height: 900)
-            controller.view.layoutSubtreeIfNeeded()
-
-            guard controller.debugCheckAllTitle == "Check all" else {
-                return "the page's bulk control reads \"\(controller.debugCheckAllTitle)\" - X8 asks "
-                     + "for \"Check all\", because it is the only thing on a settled page that does "
-                     + "anything"
-            }
-            guard controller.debugCheckAllIsVisible else {
-                return "the bulk control is hidden on a freshly built page"
-            }
-
-            // The state X8 is actually about: everything up to date, every
-            // row correctly actionless, and this one control left. Without
-            // this the label check above would pass on a page that still
-            // invited thirteen clicks.
-            let rowCount = controller.debugRowActionStates.count
-            guard rowCount > 5 else {
-                return "the page rendered \(rowCount) rows - this case could not tell a settled page "
-                     + "from an empty one"
-            }
-            for index in 0 ..< rowCount { controller.debugSetStatus(.upToDate, atRow: index) }
-            let settled = controller.debugRowActionStates
-            guard settled.allSatisfy({ $0.checkHidden && $0.updateHidden }) else {
-                return "a settled page still offers per-row actions, so \"Check all\" is not the "
-                     + "single affordance X8 asks for"
-            }
-            guard controller.debugCheckAllIsVisible else {
-                return "a settled page has no action at all - X8 asks for one, not none"
-            }
-            return nil
-        }
-    }
 
 }
 

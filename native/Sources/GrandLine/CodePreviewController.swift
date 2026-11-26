@@ -149,8 +149,6 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// field, so a required `width == 0` on it would be a conflict.
     private var editorBesideSidebar: NSLayoutConstraint!
     private var editorAtPageEdge: NSLayoutConstraint!
-    /// R2-UX-06: set once the sidebar layout shows this page.
-    private(set) var drawsSidebarLayout = false
     private lazy var plusButton = HelmPageToolbar.iconButton(
         symbol: "plus", tooltip: "New snippet",
         target: self, action: #selector(newSnippetTapped))
@@ -273,8 +271,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     // MARK: The sidebar layout (Workbench > Code)
 
-    /// Built once, by `adoptSidebarLayout()`; `nil` for the page's whole life
-    /// in the floating bar. See `CodePreviewWorkbench.swift` for the layout.
+    /// Built once, by `buildSidebarPresentation()`, at the end of `loadView`.
+    /// See `CodePreviewWorkbench.swift` for the layout.
     private var workbench: CodePreviewWorkbenchView?
     private let dock = CodeRunResultsDock()
     private lazy var titleRow = CodePreviewEditorTitleRow(trailing: [expandButton, editorMoreMenu.button])
@@ -474,6 +472,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         applyTheme()
         refreshStatusBar()
         refreshRunControls()
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     override func viewDidAppear() {
@@ -718,8 +720,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // Tools and Docs by name for exactly this - and this page's top is a
         // `HelmPageToolbar` that never moves. What scrolls under it is the
         // editor, so the boundary is the card's own top edge, which is the
-        // treatment D5(a) already gives a card-hosted list (`HostsListSection`
-        // is the reference). Adding it to the bar instead would draw a line
+        // treatment D5(a) gives a card-hosted list. Adding it to the bar instead would draw a line
         // at an edge nothing passes.
         scrollEdge = HelmScrollEdgeHairline(atTopOf: editorCard, in: editorCard)
         webView.onScrolledAwayFromTop = { [weak self] scrolled in
@@ -967,7 +968,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // A long name truncates on the chip, so the whole of it is one hover
         // away (the chip's own label is tail-truncated at its 240pt cap).
         chip.toolTip = name
-        if drawsSidebarLayout { chip.useFileNameTruncation(maximumWidth: Self.fileTabMaximumWidth) }
+        chip.useFileNameTruncation(maximumWidth: Self.fileTabMaximumWidth)
         let snippet = OpenSnippet(key: key, name: name, content: content, persisted: persisted, chip: chip)
 
         chip.onSelect = { [weak self] in self?.select(key: key) }
@@ -1134,9 +1135,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     }
 
     private func refreshSidebar() {
-        // Dirty keys only in the sidebar layout: the floating bar's column
-        // draws exactly what it did.
-        let dirty = drawsSidebarLayout ? Set(open.filter(\.hasPendingEdit).map(\.key)) : []
+        let dirty = Set(open.filter(\.hasPendingEdit).map(\.key))
         sidebar.setEntries(open.map { CodePreviewFileEntry(key: $0.key, name: $0.name) },
                            activeKey: currentKey, dirtyKeys: dirty)
     }
@@ -2454,11 +2453,8 @@ final class CodePreviewDropView: NSView {
     #endif
 }
 
-extension CodePreviewController: SidebarLayoutAdopting {
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+extension CodePreviewController {
+    func buildSidebarPresentation() {
         buildWorkbench()
     }
 }

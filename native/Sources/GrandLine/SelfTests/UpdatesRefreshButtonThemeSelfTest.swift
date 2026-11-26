@@ -77,6 +77,15 @@
 //   swift build && FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS=1 \
 //     .build/debug/GrandLine; echo $?
 //
+// **Where the pill lives now.** P-03 of the 2026-11-25 review removed the
+// floating-bar layout, and with it Updates' own pill: the page's re-check is
+// the window toolbar's Check for updates. The fix was always the shared
+// `HelmRefreshPill`'s (it owns its fill through `HoverHighlightView`'s own
+// colours), and other surfaces still draw one. So this suite mounts the pill
+// the way a page does - built in `loadView`, themed from a
+// `ThemeManager.observe` closure - in `PillHost`, and asks the same three
+// questions of it.
+//
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file in this directory carries it.
 #if FM_SELFTESTS
@@ -129,6 +138,24 @@ enum UpdatesRefreshButtonThemeSelfTest {
         HelmTheme.theme(id: "catppuccin-mocha") ?? HelmTheme.allThemes.first { $0.mode == .dark }!
     }
 
+    /// A page's own shape around the pill: built in `loadView`, themed from
+    /// the page's `ThemeManager.observe` closure, as Updates' was.
+    private final class PillHost: NSViewController {
+        let pill = HelmRefreshPill(title: "Check all", tooltip: "Check every tool for updates", prominent: true)
+        override func loadView() {
+            let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 720))
+            root.wantsLayer = true
+            view = root
+            pill.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(pill)
+            NSLayoutConstraint.activate([
+                pill.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 24),
+                pill.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
+            ])
+            ThemeManager.shared.observe { [weak self] theme in self?.pill.applyTheme(theme) }
+        }
+    }
+
     private static func mount(_ controller: NSViewController, width: CGFloat = 900) -> NSWindow {
         let window = OffScreenProbe.window(width: width, height: 720)
         window.contentView = controller.view
@@ -170,7 +197,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
 
     // MARK: Cases
 
-    /// The value `checkAllPill.layer.backgroundColor` reports right after a
+    /// The value `the pill's layer.backgroundColor` reports right after a
     /// fresh `loadView()` pass, with no theme round trip and no hover. If
     /// this were the #278/#279 cache-guard shape, this is where it would
     /// show up as the *wrong* color (the underlying value would never reach
@@ -180,19 +207,19 @@ enum UpdatesRefreshButtonThemeSelfTest {
         print("\n-- Updates Refresh pill: fresh light-mode load, no interaction --")
         let theme = lightTheme
         ThemeManager.shared.setTheme(theme)
-        let controller = UpdatesController()
+        let controller = PillHost()
         let window = mount(controller)
         defer { _ = window }
 
         let accent = HelmTheme.nsColor(theme.accentHex)
-        guard sameColor(controller.checkAllPillForTests.layer?.backgroundColor, accent) else {
-            print("  FAIL checkAllPill.layer.backgroundColor does not match \(theme.id)'s accent " +
+        guard sameColor(controller.pill.layer?.backgroundColor, accent) else {
+            print("  FAIL the pill's layer.backgroundColor does not match \(theme.id)'s accent " +
                   "immediately after loadView() - got " +
-                  "\(String(describing: controller.checkAllPillForTests.layer?.backgroundColor))")
+                  "\(String(describing: controller.pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is \(theme.id)'s accent right after loadView(), with no theme round trip")
+        print("  ok   the pill's fill is \(theme.id)'s accent right after loadView(), with no theme round trip")
     }
 
     /// The same read, but after a dark -> light round trip on an
@@ -204,7 +231,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
         let light = lightTheme
         let dark = darkTheme
         ThemeManager.shared.setTheme(light)
-        let controller = UpdatesController()
+        let controller = PillHost()
         let window = mount(controller)
         defer { _ = window }
 
@@ -212,13 +239,13 @@ enum UpdatesRefreshButtonThemeSelfTest {
         ThemeManager.shared.setTheme(light)
 
         let accent = HelmTheme.nsColor(light.accentHex)
-        guard sameColor(controller.checkAllPillForTests.layer?.backgroundColor, accent) else {
-            print("  FAIL checkAllPill.layer.backgroundColor is wrong after a theme round trip - got " +
-                  "\(String(describing: controller.checkAllPillForTests.layer?.backgroundColor))")
+        guard sameColor(controller.pill.layer?.backgroundColor, accent) else {
+            print("  FAIL the pill's layer.backgroundColor is wrong after a theme round trip - got " +
+                  "\(String(describing: controller.pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is still \(light.id)'s accent after a dark -> light round trip")
+        print("  ok   the pill's fill is still \(light.id)'s accent after a dark -> light round trip")
     }
 
     /// **The actual regression guard.** Drives a real mouse enter/exit
@@ -228,7 +255,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
     /// theme's accent again, not `.clear`.
     ///
     /// Confirmed to catch the real regression: with `applyTheme()` reverted
-    /// to writing `checkAllPill.layer?.backgroundColor = accent.cgColor`
+    /// to writing `pill.layer?.backgroundColor = accent.cgColor`
     /// directly (never touching `normalColor`/`hoverColor`), this case
     /// fails by name - the fill reads back as `.clear` after `mouseExited`,
     /// reproducing the captain's exact "washed out" symptom.
@@ -236,11 +263,11 @@ enum UpdatesRefreshButtonThemeSelfTest {
         print("\n-- regression: a hover cycle must restore the accent fill, not clear it --")
         let theme = lightTheme
         ThemeManager.shared.setTheme(theme)
-        let controller = UpdatesController()
+        let controller = PillHost()
         let window = mount(controller)
         defer { _ = window }
 
-        let pill = controller.checkAllPillForTests
+        let pill = controller.pill
         let accent = HelmTheme.nsColor(theme.accentHex)
         guard sameColor(pill.layer?.backgroundColor, accent) else {
             print("  FAIL pill did not start with the correct accent fill - test setup is wrong")
@@ -253,19 +280,19 @@ enum UpdatesRefreshButtonThemeSelfTest {
         pill.mouseExited(with: event)
 
         if isClear(pill.layer?.backgroundColor) {
-            print("  FAIL a hover enter/exit cycle stranded checkAllPill's fill at .clear - this is " +
+            print("  FAIL a hover enter/exit cycle stranded the pill's fill at .clear - this is " +
                   "the exact \"washed out\" bug: the icon/label now sit on the bare page background " +
                   "instead of the theme's accent")
             ok = false
             return
         }
         guard sameColor(pill.layer?.backgroundColor, accent) else {
-            print("  FAIL after a hover cycle, checkAllPill's fill is neither the accent nor clear - got " +
+            print("  FAIL after a hover cycle, the pill's fill is neither the accent nor clear - got " +
                   "\(String(describing: pill.layer?.backgroundColor))")
             ok = false
             return
         }
-        print("  ok   checkAllPill's fill is restored to \(theme.id)'s accent after a hover enter/exit cycle")
+        print("  ok   the pill's fill is restored to \(theme.id)'s accent after a hover enter/exit cycle")
     }
 }
 

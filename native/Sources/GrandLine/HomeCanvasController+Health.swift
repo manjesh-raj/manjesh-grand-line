@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // P-05 of the 2026-11-25 full review (GL-36), part of `HomeCanvasController`'s
-// decomposition by card family: the Health card: its ring summary and its service lines.
+// decomposition by card family: the Health card and its ring summary.
 //
 // Split out verbatim along the controller's own `// MARK:` seams. No statement
 // changed in the move; `private` was dropped so the family can reach its own
@@ -101,34 +101,7 @@ extension HomeCanvasController {
         content.subtitle = "background services"
         // S11: no "1 failing" pill. The ring's title says it, once.
         let summary = Self.healthRingSummary(health)
-        let lines = Self.healthServiceLines(health)
-        let spoken = health.spoken
-        content.body = healthListsServices && !lines.isEmpty
-            ? .ringWithLines(value: summary.value, total: summary.total,
-                             title: summary.title, note: summary.note, lines: lines, spoken: spoken,
-                             tint: summary.tint)
-            : .ring(value: summary.value, total: summary.total,
-                    title: summary.title, note: summary.note, spoken: spoken, tint: summary.tint)
-    }
-
-    /// One line per service for the hub's Health list, in the registry's
-    /// order, each in the Health page's own word for its state (R5-UI-04).
-    /// GL-14 holds per line: a service that has never reported says "Not run
-    /// yet" and one mid-pass says "Checking…" - neither is "Healthy", and
-    /// neither takes a state colour it has not earned.
-    ///
-    /// R2-A11Y-04's spoken ring is `ServiceHealthSummary.spoken`.
-    static func healthServiceLines(_ summary: ServiceHealthSummary) -> [HelmModulePeekRow] {
-        summary.entries.map { entry in
-            let verdict = entry.state.verdict
-            let state: HelmModuleRowState
-            switch verdict {
-            case .healthy: state = .ok
-            case .degraded: state = .warn
-            case .failing: state = .bad
-            case .running, .unknown: state = .idle
-            }
-            return HelmModulePeekRow(state: state, text: entry.service.title, value: verdict.label)
-        }
+        content.body = .ring(value: summary.value, total: summary.total,
+                             title: summary.title, note: summary.note, spoken: health.spoken, tint: summary.tint)
     }
 }

@@ -12,31 +12,12 @@ import AppKit
 
 extension HomeCanvasController {
 
-    func fillHosts(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
+    func fillHosts(_ content: inout HelmModuleCard.Content, width: CGFloat) {
         // `fm/grandline-rail-icons-batch2`: the captain's own hosts
         // artwork, replacing the plain `server.rack` glyph - matches
         // `RailDestination.drillHeaderArtwork`'s `.hosts` case.
         content.artwork = HostsIcon.image
-        // The captain's hero, wherever the card is a shelf card - the Claude
-        // and Fleet cards' rule. The floating bar's fitted hub keeps its rows.
-        if case let .shelf(width) = placement {
-            fillHostsHero(&content, width: width)
-            return
-        }
-        let hosts = sources.hostStore.hosts
-        let connected = connectedHostIDs?() ?? []
-        content.subtitle = "\(hosts.count) saved"
-        if !connected.isEmpty { content.chip = .ok("\(connected.count) live") }
-        guard !hosts.isEmpty else {
-            content.body = .note("No saved hosts yet. Add one to connect in a click.")
-            return
-        }
-        let rows = hosts.prefix(HelmModuleCard.maxPeekRows).map { host in
-            HelmModulePeekRow(state: connected.contains(host.id) ? .ok : .idle,
-                              text: host.label,
-                              value: connected.contains(host.id) ? "live" : "idle")
-        }
-        content.setBoundedPeekRows(Array(rows), total: hosts.count)
+        fillHostsHero(&content, width: width)
     }
 
     // MARK: The Hosts hero card

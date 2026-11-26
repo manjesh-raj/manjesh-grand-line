@@ -202,53 +202,6 @@ enum KeyedRefreshSelfTest {
         let last = fleet.debugInFlightRowViews.map(ObjectIdentifier.init)
         check(last == [after[1], after[2]], "after alpha finished the rows are not beta's and gamma's own", &ok)
         if ok { print("  OK   six tiles and the in-flight rows kept, updated, inserted and removed by task id") }
-
-        // The "needs you" list: a parked task keeps its row across a refresh,
-        // and an open Reply composer keeps its place under it, its text and
-        // its row's Cancel button.
-        var okNeeds = true
-        func parked(_ id: String, detail: String) -> FleetTask {
-            var t = task(id, "needs_decision", detail: detail)
-            t.state = "parked"
-            return t
-        }
-        fleet.debugRender(snapshot: snapshot([parked("delta", detail: "which region?"),
-                                              parked("echo", detail: "ship it?")], queued: 6), mergedPRs: [])
-        fleet.view.layoutSubtreeIfNeeded()
-        guard let reply = fleet.debugReplyButton(taskID: "delta") else {
-            fail("a parked task has no Reply button", &ok)
-            return
-        }
-        reply.performClick(nil)
-        fleet.view.layoutSubtreeIfNeeded()
-        guard let composer = fleet.debugOpenReplyComposerView else {
-            fail("Reply opened no composer", &ok)
-            return
-        }
-        composer.debugType("Use eu-west-1.")
-        let needsBefore = fleet.debugNeedsRowViews.map(ObjectIdentifier.init)
-        check(needsBefore.count == 3, "two parked rows and a composer should be listed, found \(needsBefore.count)", &okNeeds)
-        fleet.debugRender(snapshot: snapshot([parked("delta", detail: "which region? (asked again)"),
-                                              parked("echo", detail: "ship it?")], queued: 6), mergedPRs: [])
-        fleet.view.layoutSubtreeIfNeeded()
-        check(fleet.debugNeedsRowViews.map(ObjectIdentifier.init) == needsBefore,
-              "a refresh rebuilt the needs-you rows or moved the composer", &okNeeds)
-        check(fleet.debugOpenReplyComposerView === composer && composer.debugTextView.string == "Use eu-west-1.",
-              "a refresh lost the composer or what was typed into it", &okNeeds)
-        check(fleet.debugReplyButton(taskID: "delta")?.title == "Cancel",
-              "the open row's button reads \(fleet.debugReplyButton(taskID: "delta")?.title ?? "nil"), not Cancel", &okNeeds)
-        check(texts(in: fleet.debugNeedsRowViews[0]).contains { $0.contains("asked again") },
-              "the kept row does not show the refreshed detail", &okNeeds)
-
-        // The task with the open composer is answered elsewhere and leaves:
-        // its row and its composer go, and the other row stays.
-        fleet.debugRender(snapshot: snapshot([parked("echo", detail: "ship it?")], queued: 6), mergedPRs: [])
-        fleet.view.layoutSubtreeIfNeeded()
-        check(fleet.debugNeedsRowViews.map(ObjectIdentifier.init) == [needsBefore[2]],
-              "after delta left the list is not echo's own row alone", &okNeeds)
-        check(fleet.debugOpenReplyComposerView == nil, "the composer outlived its task", &okNeeds)
-        if okNeeds { print("  OK   needs-you rows kept by task id, with the open composer, its text and Cancel") }
-        ok = ok && okNeeds
     }
 
     // MARK: Notifications

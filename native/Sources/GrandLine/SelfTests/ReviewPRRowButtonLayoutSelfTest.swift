@@ -8,8 +8,9 @@
 // `fm/grandline-review-page-stuck-loading-fix` (#227) ported the row into a
 // reused `NSTableView` cell view (`ReviewPRRowCellView` in
 // `ReviewPRListView.swift`) without carrying the "reused row, toggling
-// button visibility" fix `HostsListRecordView` (`HostsListSection.swift`)
-// already established for the identical shape: without an explicit
+// button visibility" fix the Hosts page's list rows had already established
+// for the identical shape (`SchedulesCardView`'s row `actions` stack carries
+// it today): without an explicit
 // `.fill` distribution plus `.required` content hugging on *both* buttons
 // (not just the stack-level hugging `HelmAccentRow.buildLayout` already
 // applies to the whole `trailingAccessory`), AGENTS.md gotcha (10) applies -

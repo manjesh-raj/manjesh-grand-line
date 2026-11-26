@@ -786,12 +786,8 @@ enum CompactModeViewSelfTest {
                 .map { $0.stringValue }
             // The copy is the captain's own reference's now
             // (`fm/grandline-settings-page-redesign`), which renamed two of
-            // these three rows. "Compact mode" is a section heading beside the
-            // group rather than a card header title, and it is still a real
-            // rendered label on the page - which is what this case has always
-            // asserted.
-            check(labels.contains("Compact mode"),
-                  "Settings carries a real \"Compact mode\" section - the mode's discoverable home")
+            // these three rows. Set-2's split card holds them, under the
+            // page's own name, so there is no separate "Compact mode" heading.
             check(labels.contains("Live in the menu bar"),
                   "with the master switch's own row")
             check(labels.contains("Hide the Dock icon"),

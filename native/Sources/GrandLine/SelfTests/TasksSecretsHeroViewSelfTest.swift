@@ -373,7 +373,6 @@ enum TasksSecretsHeroViewSelfTest {
             return
         }
         check(column.isDescendant(of: split.sidebarPane), "S-3: the column is not the split's sidebar", &ok)
-        check(page.debugSidebar.isHidden, "S-3: the plain column still shows beside the hero column", &ok)
         let columnFrame = frame(of: column, in: page.view)
         let table = frame(of: page.debugCredentialTable.card, in: page.view)
         check(abs(columnFrame.width - HelmHeroColumn.width) < 1.5,
@@ -484,7 +483,6 @@ enum TasksSecretsHeroViewSelfTest {
             fail("S-1: Automic Vault has no split card", &ok)
             return
         }
-        check(!vault.debugAttentionBannerVisible, "S-1: the attention banner still shows over the card", &ok)
         check(split.panel.debugHeadline == "node needs attention.", "S-1: the card says \"\(split.panel.debugHeadline)\"", &ok)
         check(split.panel.debugRing?.debugLabel == "1/2", "S-1: the ring reads \(split.panel.debugRing?.debugLabel ?? "nothing")", &ok)
         check(split.debugRows.map(\.tool.name) == ["claude", "node"], "S-1: the rows are \(split.debugRows.map(\.tool.name))", &ok)

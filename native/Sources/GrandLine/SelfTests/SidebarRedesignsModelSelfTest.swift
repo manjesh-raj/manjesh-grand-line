@@ -167,8 +167,7 @@ enum SidebarRedesignsModelSelfTest {
 
     private static func checkKnowledgeHasNoTree(_ ok: inout Bool) {
         let sources = FeatureInventorySelfTest.appSources()
-        guard sources.count > 100, let shell = code("MainSplitShellController.swift"),
-              let notebook = code("NotebookController.swift") else {
+        guard sources.count > 100, let shell = code("MainSplitShellController.swift") else {
             fail("could not read the app's sources - the guard would pass vacuously", &ok)
             return
         }
@@ -181,8 +180,6 @@ enum SidebarRedesignsModelSelfTest {
         check(!sources.contains { $0.0 == "KnowledgeTree" }, "KnowledgeTree.swift is back", &ok)
         check(shell.contains("body.leadingAnchor.constraint(equalTo: root.leadingAnchor)") && !shell.contains("columnHost"),
               "the content pane has a column beside the body again", &ok)
-        check(!notebook.contains("pageForcesCollapse = true"),
-              "Notebook puts its own page column away again - the tree was the reason it did", &ok)
     }
 
     // MARK: 4 - Setup's summary cards
@@ -366,10 +363,14 @@ enum SidebarRedesignsModelSelfTest {
                        "heroBand.onFollowUps = { [weak self] in self?.followUpsJumpClicked() }",
                        "heroBand.onShowProjectMenu = { [weak self] view in self?.popUp(self?.projectMenu(), from: view) }",
                        "scope: { [weak self] view in self?.popUp(self?.scopeMenu(), from: view) }",
-                       "splitPage?.pageForcesCollapse = drawsSidebarLayout || view != .dashboard",
-                       "var workspacePrimaryAction: NSView? { drawsSidebarLayout ? newTaskButton : nil }",
+                       "var workspacePrimaryAction: NSView? { newTaskButton }",
                        "boardView.adoptWorkspaceStyle()"] {
             check(shift.contains(needle), "Tasks' sidebar presentation lost `\(needle)`", &ok)
+        }
+        // The band is the page's filters, so the page draws no column of its
+        // own to hold them (P-03 of the 2026-11-25 review removed it).
+        for needle in ["HelmPageSidebar(", "HelmSplitPage("] {
+            check(!shift.contains(needle), "Tasks builds a page column again: `\(needle)`", &ok)
         }
     }
 
@@ -387,7 +388,7 @@ enum SidebarRedesignsModelSelfTest {
         for (name, text, primary) in [("Updates", updates, "checkForUpdatesButton"), ("GitHub sync", github, "syncAllButton"),
                                       ("Setup steps", bootstrap, "runFullSetupButton"), ("Automation", automation, "runButton")] {
             check(text.contains("insertArrangedSubview(setupSummary, at: 0)"), "\(name) does not open on the Setup hero", &ok)
-            check(text.contains("var workspacePrimaryAction: NSView? { drawsSidebarLayout ? \(primary) : nil }"),
+            check(text.contains("var workspacePrimaryAction: NSView? { \(primary) }"),
                   "\(name)'s primary action is no longer `\(primary)`", &ok)
         }
         check(updates.contains("action: #selector(checkAllTapped)") && updates.contains("title: \"Check for updates\""),

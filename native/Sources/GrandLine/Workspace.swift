@@ -226,11 +226,6 @@ final class Workspace {
         let shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
         shift.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         shift.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
-        // The Tasks column's footer links, forwarded rather than owned - that
-        // page knows nothing about the shell or the palette
-        // (`onSearchTapped`'s own convention).
-        shift.onNavigateToDestination = { [weak self] dest in self?.navigator.show(dest) }
-        shift.onOpenCommandPalette = { [weak self] in self?.onSearchTapped?() }
         return built(.shift, shift)
     }()
 
@@ -1023,10 +1018,6 @@ final class Workspace {
             self?.overview.revealNeedsYou()
         }
         homeCanvas.onOpenShiftTask = { [weak self] id in self?.navigator.openShiftTask(id: id) }
-        homeCanvas.onRefresh = { [weak self] in
-            self?.overview.refreshIfNeeded()
-            self?.review.refreshIfNeeded()
-        }
         // The Claude status card's own Refresh. Overview already owns the
         // quota reading and both its readers; this forces it past the
         // freshness window rather than adding a second fetch path.

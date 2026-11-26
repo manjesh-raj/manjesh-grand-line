@@ -10,8 +10,8 @@
 // **What this suite is actually for.** The captain's headline requirement is
 // "one click from a stored credential to my clipboard", and his explicit
 // correction was that Reveal and Copy are *separate* actions with their own
-// icons, both on the list row itself, because he wants to copy without
-// revealing while screen sharing. Every one of those is a claim about real
+// icons, both on the credential's own table row, because he wants to copy
+// without revealing while screen sharing. Every one of those is a claim about real
 // buttons, and none of it can be checked by reading the model:
 //
 //   * Clicking the row's **Copy** button must put the value on the clipboard
@@ -87,7 +87,6 @@ enum CredentialVaultViewSelfTest {
         checkDeleteConfirmAndUndo(scratch: scratch, window: window, check)
         checkAutoLock(scratch: scratch, window: window, check)
         checkSidebarDrivesTheFilter(scratch: scratch, window: window, check)
-        checkRecordRowFitsItsHeight(scratch: scratch, window: window, check)
         checkInspectorShowsWholeValues(scratch: scratch, window: window, check)
         checkSelectionFollowsTheList(scratch: scratch, window: window, check)
         checkLockClearsTheInspector(scratch: scratch, window: window, check)
@@ -380,10 +379,37 @@ enum CredentialVaultViewSelfTest {
         return (controller, store)
     }
 
-    /// The first `.record` row's index in the list - the rows are interleaved
-    /// with category group headers, so a test must not assume row 0.
-    private static func firstRecordRow(_ list: CredentialVaultListSection) -> Int? {
-        (0..<list.debugRowCount).first { list.debugItem($0)?.isRecord == true }
+    /// The credential table's record rows, in order - the rows are
+    /// interleaved with category group headers, so a test must not assume
+    /// row 0. P-03 of the 2026-11-25 review removed the floating bar, whose
+    /// accent-row list these cases first read; the table is the page now.
+    private static func records(_ controller: CredentialVaultController) -> [HelmDataTable.Row] {
+        controller.debugCredentialTable.debugRows.filter(\.isRecord)
+    }
+
+    /// The credential's row as the table has it now. Every render builds the
+    /// rows again, row controls included, so a case re-reads the row after
+    /// anything that re-renders rather than holding the old one.
+    private static func record(_ controller: CredentialVaultController, id: String) -> HelmDataTable.Row? {
+        controller.debugCredentialTable.debugRows.first { $0.key == id }
+    }
+
+    /// A row's Touch ID mark, Reveal and Copy.
+    private static func controls(_ row: HelmDataTable.Row?) -> CredentialRowControls? {
+        row?.accessory as? CredentialRowControls
+    }
+
+    /// The name cell's second line, and whether it is in the code face (the
+    /// revealed value).
+    private static func meta(_ row: HelmDataTable.Row?) -> (text: String, isCode: Bool) {
+        if case .title(_, let subtitle, let isCode, _, _, _)? = row?.cells["name"] { return (subtitle ?? "", isCode) }
+        return ("", false)
+    }
+
+    /// The name cell's title.
+    private static func title(_ row: HelmDataTable.Row) -> String? {
+        if case .title(let text, _, _, _, _, _)? = row.cells["name"] { return text }
+        return nil
     }
 
     // MARK: Cases
@@ -394,7 +420,7 @@ enum CredentialVaultViewSelfTest {
         // list.
         let (controller, store) = mounted(scratch, name: "gate", window: window, createVault: false)
         check(controller.debugIsUnlockShowing, "a page with no vault should show the gate")
-        check(!controller.debugIsListShowing, "a page with no vault should not show the list")
+        check(!controller.debugIsTableShowing, "a page with no vault should not show the list")
         check(controller.drillHeaderSubtitle == "Not set up yet",
               "the drill subtitle should say the vault is not set up, got \(String(describing: controller.drillHeaderSubtitle))")
         // None of the page actions make sense behind the gate.
@@ -405,16 +431,17 @@ enum CredentialVaultViewSelfTest {
         // Create it for real, then confirm the page swaps to the list.
         _ = store.createVault(masterPassword: "view-test-password")
         controller.debugRender()
-        check(controller.debugIsListShowing, "the list should show once the vault is unlocked")
+        check(controller.debugIsTableShowing, "the list should show once the vault is unlocked")
         check(!controller.debugIsUnlockShowing, "the gate should be hidden once unlocked")
         check(!controller.debugAddButton.isHidden, "Add should be available once unlocked")
 
-        // An unlocked vault with no credentials shows the list's own empty row
-        // - deliberately not a third page state.
-        check(controller.debugList.debugRowCount == 1,
-              "an empty vault should render exactly one (empty-state) row, got \(controller.debugList.debugRowCount)")
-        check(controller.debugList.debugItem(0)?.isRecord == false,
-              "the one row of an empty vault should be the empty state, not a record")
+        // An unlocked vault with no credentials shows the table's own empty
+        // row - deliberately not a third page state.
+        let rows = controller.debugCredentialTable.debugRows
+        check(rows.count == 1, "an empty vault should render exactly one (empty-state) row, got \(rows.count)")
+        if case .empty? = rows.first?.kind {} else {
+            check(false, "the one row of an empty vault should be the empty state, not a record")
+        }
 
         // The real Lock button re-locks and shows the gate again.
         controller.debugLockButton.performClick(nil)
@@ -527,7 +554,7 @@ enum CredentialVaultViewSelfTest {
         check(renderThreads.allSatisfy { $0 },
               "REL-20: every render the create fires is on the main thread, got \(renderThreads)")
         controller.debugRender()
-        check(controller.debugIsListShowing, "REL-20: the page shows the list after a real create")
+        check(controller.debugIsTableShowing, "REL-20: the page shows the list after a real create")
 
         // R4-UX-02: the recovery step was left on (its default), so the real
         // Create opened the recovery kit once the vault existed.
@@ -571,16 +598,15 @@ enum CredentialVaultViewSelfTest {
                                           account: "root@682528822458", secret: secret,
                                           tags: ["prod"]))
         }
-        let list = controller.debugList
-        guard let row = firstRecordRow(list) else {
-            check(false, "the list should render a record row for the seeded credential")
+        guard let id = records(controller).first?.key else {
+            check(false, "the table should render a record row for the seeded credential")
             return
         }
-        guard let revealButton = list.debugRevealButton(row), let copyButton = list.debugCopyButton(row) else {
+        guard let copyButton = controls(record(controller, id: id))?.debugCopyButton,
+              controls(record(controller, id: id))?.debugRevealButton != nil else {
             check(false, "every row must carry BOTH a Reveal and a Copy button - the captain's explicit ask")
             return
         }
-        let id = list.debugItem(row)?.credentialID ?? ""
 
         // --- Copy: clipboard yes, screen no. ---
         let pasteboard = NSPasteboard.general
@@ -592,7 +618,7 @@ enum CredentialVaultViewSelfTest {
         check(!controller.debugRevealedIDs.contains(id),
               "Copy must NOT reveal the value on screen - the whole point of the split (screen sharing)")
         // The row still shows the account, not the secret.
-        let maskedMeta = list.debugItem(row)?.content.meta ?? ""
+        let maskedMeta = meta(record(controller, id: id)).text
         check(!maskedMeta.contains(secret),
               "after Copy the row's own text must not contain the value, got \"\(maskedMeta)\"")
         check(store.auditLog.contains { $0.kind == .copied && $0.itemID == id },
@@ -616,7 +642,7 @@ enum CredentialVaultViewSelfTest {
         // missing timestamp is the store's, a stale string is the page's.
         check(store.credential(id: id)?.lastUsedAt != nil,
               "UX9: a copy should stamp the credential's lastUsedAt")
-        let afterCopyMeta = list.debugItem(row)?.content.meta ?? ""
+        let afterCopyMeta = meta(record(controller, id: id)).text
         check(!afterCopyMeta.contains("never used"),
               "UX9: the row still reads \"\(afterCopyMeta)\" right after a copy - "
               + "the meta line is not re-rendering with the use it just recorded")
@@ -630,18 +656,17 @@ enum CredentialVaultViewSelfTest {
         check(!afterCopyMeta.contains(" in "),
               "UX9: the row put a just-happened use in the future tense: \"\(afterCopyMeta)\"")
 
-        // **A second copy, with the row already selected.** The first click
-        // also selects the row, and selection re-renders the page on its own -
-        // so a check that only ever copies once passes even with the store's
-        // own change notification removed, which is exactly the vacuous shape
-        // AGENTS.md warns about. This is the path that has nothing but
-        // `recordUse`'s `onChange` behind it.
+        // **A second copy.** A table row's Copy does not select the row, so
+        // nothing but `recordUse`'s `onChange` re-renders the page after it -
+        // the check above already depends on that alone. The second copy
+        // asserts the stamp moves again rather than sticking at the first
+        // use.
         let before = store.credential(id: id)?.lastUsedAt
-        list.debugCopyButton(row)?.performClick(nil)
+        controls(record(controller, id: id))?.debugCopyButton?.performClick(nil)
         let second = store.credential(id: id)?.lastUsedAt
         check(second != nil && second != before,
               "UX9: a second copy on an already-selected row did not re-stamp lastUsedAt")
-        let secondMeta = list.debugItem(row)?.content.meta ?? ""
+        let secondMeta = meta(record(controller, id: id)).text
         check(secondMeta.contains("used just now"),
               "UX9: copying an already-selected row left the meta line at \"\(secondMeta)\" - "
               + "nothing re-rendered it")
@@ -649,39 +674,34 @@ enum CredentialVaultViewSelfTest {
         // --- Reveal: screen yes, clipboard no. ---
         pasteboard.clearContents()
         pasteboard.setString("untouched-by-reveal", forType: .string)
-        revealButton.performClick(nil)
+        controls(record(controller, id: id))?.debugRevealButton?.performClick(nil)
         check(controller.debugRevealedIDs.contains(id), "clicking Reveal should reveal the row")
         check(pasteboard.string(forType: .string) == "untouched-by-reveal",
               "Reveal must NOT touch the clipboard")
         // The revealed value is genuinely on the row.
-        guard let revealedRow = firstRecordRow(list), let revealedItem = list.debugItem(revealedRow) else {
-            check(false, "the list should still render the row after a reveal")
-            return
-        }
-        check(revealedItem.content.meta == secret,
-              "a revealed row should show the value, got \(String(describing: revealedItem.content.meta))")
-        check(revealedItem.content.metaIsCode,
+        let revealed = meta(record(controller, id: id))
+        check(revealed.text == secret, "a revealed row should show the value, got \(revealed.text)")
+        check(revealed.isCode,
               "a revealed value should render in the code face - the visible signal that this is the secret")
-        check(revealedItem.isRevealed, "the row should report itself revealed so its glyph flips")
+        check(controls(record(controller, id: id))?.debugRevealButton?.symbolName == "eye.slash",
+              "the row should report itself revealed so its glyph flips")
         check(store.auditLog.contains { $0.kind == .revealed && $0.itemID == id },
               "Reveal should log a `revealed` audit event")
 
         // Reveal again to hide - and hiding logs nothing new.
         let revealsBefore = store.auditLog.filter { $0.kind == .revealed }.count
-        list.debugRevealButton(revealedRow)?.performClick(nil)
+        controls(record(controller, id: id))?.debugRevealButton?.performClick(nil)
         check(!controller.debugRevealedIDs.contains(id), "clicking Reveal again should re-mask the row")
         check(store.auditLog.filter { $0.kind == .revealed }.count == revealsBefore,
               "hiding a value should not log a second reveal - only putting it on screen is the event")
 
         // Locking clears every reveal, so an unlock never starts with a value
         // on screen.
-        list.debugRevealButton(revealedRow)?.performClick(nil)
+        controls(record(controller, id: id))?.debugRevealButton?.performClick(nil)
         check(!controller.debugRevealedIDs.isEmpty, "precondition: something is revealed before locking")
         controller.debugLockButton.performClick(nil)
         check(controller.debugRevealedIDs.isEmpty, "locking should clear every revealed row")
 
-        // And the row's overflow menu is what carries the rest, so routine use
-        // never needs Item Detail.
         pasteboard.clearContents()
     }
 
@@ -695,10 +715,7 @@ enum CredentialVaultViewSelfTest {
             _ = store.add(VaultCredential(title: "GitHub PAT", category: .apiKey,
                                           account: "manjesh-raj", secret: "ghp-value", tags: ["ci"]))
         }
-        let list = controller.debugList
-        func recordCount() -> Int {
-            (0..<list.debugRowCount).filter { list.debugItem($0)?.isRecord == true }.count
-        }
+        func recordCount() -> Int { records(controller).count }
         // Three records plus three category group headers.
         check(recordCount() == 3, "all three credentials should render, got \(recordCount())")
 
@@ -711,7 +728,7 @@ enum CredentialVaultViewSelfTest {
         check(recordCount() == 0,
               "search must NEVER match a secret value - it would be a disclosure channel with no audit event")
         controller.debugSetQuery("zzzz-no-match")
-        check(recordCount() == 0 && list.debugRowCount == 1,
+        check(recordCount() == 0 && controller.debugCredentialTable.debugRows.count == 1,
               "a search with no matches should render exactly the empty state")
 
         controller.debugSetQuery("")
@@ -737,8 +754,7 @@ enum CredentialVaultViewSelfTest {
         let (controller, store) = mounted(scratch, name: "delete", window: window) { store in
             _ = store.add(VaultCredential(title: "Legacy VPN credential", secret: "legacy-value", notes: "unused"))
         }
-        let list = controller.debugList
-        guard let row = firstRecordRow(list), let id = list.debugItem(row)?.credentialID else {
+        guard let id = records(controller).first?.key else {
             check(false, "the seeded credential should render")
             return
         }
@@ -747,14 +763,15 @@ enum CredentialVaultViewSelfTest {
             return
         }
         controller.debugRender()
-        check(list.debugRowCount == 1 && list.debugItem(0)?.isRecord == false,
-              "after the only credential is deleted the list should show its empty state")
+        let afterDelete = controller.debugCredentialTable.debugRows
+        check(afterDelete.count == 1 && afterDelete.first?.isRecord == false,
+              "after the only credential is deleted the table should show its empty state")
         guard case .success = store.restore(removed) else {
             check(false, "restore should succeed")
             return
         }
         controller.debugRender()
-        check(firstRecordRow(list) != nil, "an undone delete should put the row back")
+        check(record(controller, id: id) != nil, "an undone delete should put the row back")
         check(store.credential(id: id)?.secret == "legacy-value",
               "an undone delete should bring the value back intact")
         check(store.credential(id: id)?.notes == "unused", "an undone delete should bring the notes back too")
@@ -994,7 +1011,7 @@ enum CredentialVaultViewSelfTest {
     }
 
     private static func checkSidebarDrivesTheFilter(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
-        print("\n-- the sidebar filters, counts and highlights --")
+        print("\n-- the hero column's rows filter, count and highlight --")
         let (controller, _) = mounted(scratch, name: "sidebar", window: window) { store in
             _ = store.add(VaultCredential(title: "Gmail", category: .email,
                                           account: "manjesh@gmail.com", secret: "a"))
@@ -1004,57 +1021,60 @@ enum CredentialVaultViewSelfTest {
             _ = store.add(VaultCredential(title: "GitHub PAT", category: .apiKey,
                                           account: "manjesh-raj", secret: "d", tags: ["ci"]))
         }
-        let sidebar = controller.debugSidebar
-        let list = controller.debugList
-        func recordCount() -> Int {
-            (0..<list.debugRowCount).filter { list.debugItem($0)?.isRecord == true }.count
-        }
+        // The hero column's rows (S-3), which P-03 of the 2026-11-25 review
+        // left as the page's only filter column.
+        let rows = controller.debugHeroRows
+        func recordCount() -> Int { records(controller).count }
+        func counts() -> [String] { rows.map(\.debugCount) }
+        func selectedIndex() -> Int? { rows.firstIndex(where: \.isSelected) }
 
         // One "All credentials" row over one row per category, in the enum's
-        // own order - so the sidebar's shape is a function of the model rather
+        // own order - so the column's shape is a function of the model rather
         // than a hand-maintained list that can drift from it.
         // F16 added the **Kinds** axis above Collections, so the shape is
         // now All, three kinds, then one row per category - still derived
-        // from the model (`CredentialVaultSidebar.allSelections`) rather
-        // than a hand-maintained list that can drift from it.
-        check(sidebar.debugRowCount == CredentialVaultSidebar.allSelections.count,
-              "the sidebar should have one row per selection, got \(sidebar.debugRowCount)")
-        check(sidebar.debugRowTitles.first == "All credentials",
-              "the first row should be All credentials, got \(sidebar.debugRowTitles.first ?? "-")")
-        check(Array(sidebar.debugRowTitles.dropFirst(4)) == CredentialCategory.allCases.map(\.title),
-              "the collection rows should be the categories in order, got \(sidebar.debugRowTitles)")
-        check(Array(sidebar.debugRowTitles[1...3]) == ["Logins", "2FA codes", "Secure notes"],
-              "the kind rows should sit above the collections, got \(sidebar.debugRowTitles)")
-        check(sidebar.debugHeaders == ["Vault", "Kinds", "Collections"],
-              "the three section headers should be Vault, Kinds and Collections, got \(sidebar.debugHeaders)")
+        // from the model (`CredentialVaultSidebar.allSelections`).
+        let titles = rows.map(\.debugTitle)
+        guard rows.count == CredentialVaultSidebar.allSelections.count else {
+            check(false, "the column should have one row per selection, got \(rows.count)")
+            return
+        }
+        check(titles.first == "All credentials",
+              "the first row should be All credentials, got \(titles.first ?? "-")")
+        check(Array(titles.dropFirst(4)) == CredentialCategory.allCases.map(\.title),
+              "the collection rows should be the categories in order, got \(titles)")
+        check(Array(titles[1...3]) == ["Logins", "2FA codes", "Secure notes"],
+              "the kind rows should sit above the collections, got \(titles)")
+        check(controller.heroColumn?.debugSectionTitles == ["Kinds", "Collections"],
+              "the two sections should be Kinds and Collections, got \(controller.heroColumn?.debugSectionTitles ?? [])")
 
         // Counts: the All row totals, each collection reports its own. The
         // seeded four are all logins with no 2FA and no notes, so the kind
         // rows read 4 / 0 / 0 - which is also what proves the two axes are
         // counted independently rather than one being a relabelling of the
         // other.
-        check(sidebar.debugRowCounts.first == "4",
-              "All credentials should count every credential, got \(sidebar.debugRowCounts.first ?? "-")")
-        check(sidebar.debugRowCounts == ["4", "4", "0", "0", "2", "1", "1", "0"],
-              "each collection should report its own count, got \(sidebar.debugRowCounts)")
+        check(counts().first == "4",
+              "All credentials should count every credential, got \(counts().first ?? "-")")
+        check(counts() == ["4", "4", "0", "0", "2", "1", "1", "0"],
+              "each collection should report its own count, got \(counts())")
 
-        // Clicking a collection filters the list *and* moves the highlight.
+        // Pressing a collection filters the table *and* moves the highlight.
         let emailRow = 4
-        sidebar.debugClickRow(emailRow)
-        check(recordCount() == 2, "clicking Email should leave the two email credentials, got \(recordCount())")
-        check(sidebar.debugSelectedIndex == emailRow,
-              "clicking a row should select it, got \(String(describing: sidebar.debugSelectedIndex))")
+        rows[emailRow].performPrimaryAction()
+        check(recordCount() == 2, "pressing Email should leave the two email credentials, got \(recordCount())")
+        check(selectedIndex() == emailRow,
+              "pressing a row should select it, got \(String(describing: selectedIndex()))")
 
-        sidebar.debugClickRow(0)
-        check(recordCount() == 4, "clicking All credentials should bring every record back, got \(recordCount())")
-        check(sidebar.debugSelectedIndex == 0, "All credentials should be selected again")
+        rows[0].performPrimaryAction()
+        check(recordCount() == 4, "pressing All credentials should bring every record back, got \(recordCount())")
+        check(selectedIndex() == 0, "All credentials should be selected again")
 
-        // The counts are scoped by the search, which is what makes the sidebar
-        // navigation ("where are my matches") rather than a second copy of the
-        // filter chips it replaced.
+        // The counts are scoped by the search, which is what makes the column
+        // navigation ("where are my matches") rather than a second copy of
+        // the filter.
         controller.debugSetQuery("manjesh")
-        check(sidebar.debugRowCounts == ["3", "3", "0", "0", "2", "0", "1", "0"],
-              "counts should be scoped by the current search, got \(sidebar.debugRowCounts)")
+        check(counts() == ["3", "3", "0", "0", "2", "0", "1", "0"],
+              "counts should be scoped by the current search, got \(counts())")
         controller.debugSetQuery("")
 
         // F16: the kind axis really filters, not only counts. A 2FA seed on
@@ -1069,11 +1089,11 @@ enum CredentialVaultViewSelfTest {
         withTOTP.totp = VaultTOTP(secret: "JBSWY3DPEHPK3PXP")
         _ = controller.debugStore.update(withTOTP)
         controller.debugRender()
-        check(sidebar.debugRowCounts[2] == "1",
-              "the 2FA row should count the one credential with a seed, got \(sidebar.debugRowCounts[2])")
-        sidebar.debugClickRow(2)
+        check(counts()[2] == "1",
+              "the 2FA row should count the one credential with a seed, got \(counts()[2])")
+        rows[2].performPrimaryAction()
         check(recordCount() == 1, "the 2FA row should filter to that one credential, got \(recordCount())")
-        sidebar.debugClickRow(0)
+        rows[0].performPrimaryAction()
     }
 
     /// Selecting a credential fills the panel, and the panel shows the whole of
@@ -1104,15 +1124,13 @@ enum CredentialVaultViewSelfTest {
             check(false, "the page needs a seeded credential")
             return
         }
-        // Through the list's own selection, which is what a single click does -
-        // not by calling the page's selector directly.
-        let table = controller.debugList.debugTable
-        guard let row = (0..<controller.debugList.debugRowCount)
-            .first(where: { controller.debugList.debugItem($0)?.isRecord == true }) else {
+        // Through the table's own selection, which is what a single click
+        // does - not by calling the page's selector directly.
+        guard records(controller).first?.key == id else {
             check(false, "there should be a record row to click")
             return
         }
-        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        controller.debugCredentialTable.debugSelect(key: id)
         window.displayIfNeeded()
         controller.view.layoutSubtreeIfNeeded()
 
@@ -1126,6 +1144,24 @@ enum CredentialVaultViewSelfTest {
         check(inspector.debugSectionTitles == ["01 \u{00B7} Secret", "02 \u{00B7} Where it's used",
                                                "03 \u{00B7} Notes", "04 \u{00B7} History"],
               "the numbered sections should read in order, got \(inspector.debugSectionTitles)")
+
+        // The panel is the shell's inspector pane now, not a column of this
+        // page (P-03 of the 2026-11-25 review removed the floating bar, whose
+        // page drew it). So the widths below are measured where the captain
+        // sees them: the page's own inspector content, in the real
+        // `WorkspaceInspectorController`, at that pane's fixed width.
+        guard let content = controller.inspectorContent else {
+            check(false, "a selected credential should hand the shell inspector content")
+            return
+        }
+        check(content.view === inspector, "the shell's inspector should host this same panel")
+        let pane = WorkspaceInspectorController()
+        let paneWindow = OffScreenProbe.window(width: WorkspaceInspectorController.width, height: 700)
+        paneWindow.contentView = pane.view
+        pane.setContent(content)
+        paneWindow.displayIfNeeded()
+        pane.view.layoutSubtreeIfNeeded()
+        defer { pane.setContent(nil) }
 
         // The values themselves, whole.
         let rendered = inspector.debugValueLabels
@@ -1159,17 +1195,16 @@ enum CredentialVaultViewSelfTest {
         check(!inspector.debugSecretLabel.stringValue.contains("aws-root-value"),
               "the value must not be on screen before Reveal")
 
-        // Closing the panel drops the selection without touching the store.
-        inspector.debugCloseButton.performClick(nil)
-        check(inspector.credential == nil, "the close button should empty the panel")
-        check(controller.debugSelectedID == nil, "...and drop the page's selection")
-        check(store.credentials.count == 1, "...and delete nothing")
+        // The panel has no close button of its own: the shell's inspector
+        // pane draws the only one, and `PageRedesignsSelfTest`'s Secrets
+        // case clicks it.
+        check(store.credentials.count == 1, "showing the panel should delete nothing")
     }
 
     /// A selection that stops being visible must not leave the panel showing a
     /// record the captain can no longer see beside it.
     private static func checkSelectionFollowsTheList(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
-        print("\n-- the selection follows what the list is showing --")
+        print("\n-- the selection follows what the table is showing --")
         let (controller, store) = mounted(scratch, name: "selection", window: window) { store in
             _ = store.add(VaultCredential(title: "Gmail", category: .email,
                                           account: "manjesh@gmail.com", secret: "a"))
@@ -1185,17 +1220,23 @@ enum CredentialVaultViewSelfTest {
         // Filtered out by a search.
         controller.debugSetQuery("gmail")
         check(controller.debugInspector.credential == nil,
-              "a credential filtered out of the list should drop out of the panel too")
+              "a credential filtered out of the table should drop out of the panel too")
         controller.debugSetQuery("")
 
-        // Filtered out by a collection. Row 4 is Email, the first
-        // *category* row since F16 put the three Kinds rows above them -
-        // and Email is the one collection this cloud credential is not in.
+        // Filtered out by a collection. Row 4 of the hero column is Email,
+        // the first *category* row since F16 put the three Kinds rows above
+        // them - and Email is the one collection this cloud credential is
+        // not in.
+        let heroRows = controller.debugHeroRows
+        guard heroRows.count > 4, heroRows[4].debugTitle == CredentialCategory.email.title else {
+            check(false, "the hero column's fifth row should be Email, got \(heroRows.map(\.debugTitle))")
+            return
+        }
         controller.debugSelectCredential(id: aws.id)
-        controller.debugSidebar.debugClickRow(4)
+        heroRows[4].performPrimaryAction()
         check(controller.debugInspector.credential == nil,
               "a credential outside the selected collection should drop out of the panel")
-        controller.debugSidebar.debugClickRow(0)
+        heroRows[0].performPrimaryAction()
 
         // Deleted out from under the panel.
         controller.debugSelectCredential(id: aws.id)
@@ -1203,46 +1244,6 @@ enum CredentialVaultViewSelfTest {
         _ = store.delete(id: aws.id)
         check(controller.debugInspector.credential == nil,
               "deleting the selected credential should empty the panel")
-    }
-
-    /// A record row's content has to fit the fixed `rowHeight` the table gives
-    /// it - and this is a regression guard for a real defect this redesign
-    /// introduced and then fixed, not a precaution.
-    ///
-    /// Dropping the per-row category kicker (the group header directly above
-    /// every row already names it) meant passing `kicker: ""`, and
-    /// `HelmAccentRow` rendered that as a full, empty text line: the kicker
-    /// label was the one label in that component never hidden when empty, while
-    /// `metaLabel` had been for its whole life. On a table with a fixed
-    /// `rowHeight` an extra line is not empty space - it pushed the meta line
-    /// past the card's bottom edge and clipped its descenders, so
-    /// `manjesh@gmail.com` rendered with the tails of its `j` and `g` sliced
-    /// off. Measured rather than eyeballed: the row's own fitting height
-    /// against what the list gives it.
-    private static func checkRecordRowFitsItsHeight(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
-        print("\n-- a record row's content fits the row it is given --")
-        let (controller, _) = mounted(scratch, name: "rowfit", window: window) { store in
-            // Descenders in both lines, and a long account, so a clipped or
-            // overflowing row shows up rather than happening to fit.
-            _ = store.add(VaultCredential(title: "Gmail, personal (jpg)", category: .email,
-                                          account: "manjesh.p@pramata.com", secret: "a", tags: ["personal"]))
-        }
-        let list = controller.debugList
-        guard let row = (0..<list.debugRowCount).first(where: { list.debugItem($0)?.isRecord == true }),
-              let accentRow = list.debugAccentRow(row) else {
-            check(false, "there should be a record row to measure")
-            return
-        }
-        let given = CredentialVaultListSection.recordRowHeight
-        let needed = accentRow.fittingSize.height
-        check(needed > 0, "the measured row had no height at all")
-        check(needed <= given,
-              "a record row needs \(needed)pt but the list gives it \(given)pt - its meta line is clipped")
-
-        // The structural half: the kicker is genuinely gone rather than drawn
-        // in the background colour, which would leave the line paid for.
-        check(accentRow.debugKickerText.isEmpty,
-              "a vault row should carry no kicker - its group header names the category")
     }
 
     private static func checkUnreadableNeverOffersCreate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
@@ -1510,7 +1511,7 @@ enum CredentialVaultViewSelfTest {
         return count
     }
 
-    // MARK: The list is actually on screen
+    // MARK: The table is actually on screen
 
     /// The saved credential must be **visible**, not merely present in the
     /// data source.
@@ -1518,7 +1519,7 @@ enum CredentialVaultViewSelfTest {
     /// The captain's report: "In the top it says one credential saved.
     /// However, in the UI I am not able to see anything." Both halves of that
     /// were true at once, which is what made it hard to find - the store held
-    /// the credential, `renderList` built the right rows, the table reported
+    /// the credential, the page built the right rows, the table reported
     /// the right `numberOfRows`, and the drill subtitle said "1 credential".
     /// What was wrong was **geometry**: `HelmCard`'s vertical chain had two
     /// free heights against one equation for a headerless card whose body has
@@ -1527,9 +1528,12 @@ enum CredentialVaultViewSelfTest {
     ///
     /// So this asserts the *shape on screen* rather than the model. A row
     /// count check alone passed throughout the bug - the rows were there - and
-    /// so did every other case in this file.
+    /// so did every other case in this file. The defect was found on the
+    /// floating bar's credential list; P-03 of the 2026-11-25 review removed
+    /// that list, and the same shape is asserted on the credential table that
+    /// replaced it.
     ///
-    /// **It mounts a real `AppShellController`, and that is the whole reason
+    /// **It mounts the real shell, and that is the whole reason
     /// it reproduces.** The defect was an ambiguity, so which way it resolved
     /// depended on the surrounding hierarchy: measured, the same page built
     /// standalone - with its frame set by hand, as every other case here does,
@@ -1539,7 +1543,7 @@ enum CredentialVaultViewSelfTest {
     /// either (measured: `false` on both sides of the fix), so there is no
     /// cheaper deterministic stand-in for the real thing.
     private static func checkListBodyFillsItsCard(_ check: (Bool, String) -> Void) {
-        print("\n-- the list is on screen, not just in the data source --")
+        print("\n-- the credential table is on screen, not just in the data source --")
         let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
@@ -1574,30 +1578,31 @@ enum CredentialVaultViewSelfTest {
         window.displayIfNeeded()
         shell.view.layoutSubtreeIfNeeded()
 
-        let list = controller.debugList
-        // The brief's own ask: the list's item count matches what the vault
-        // reports. Kept even though it passed throughout the bug - it is the
-        // half that would catch a future filter or reload defect.
-        let records = (0..<list.debugRowCount).filter { list.debugItem($0)?.isRecord == true }
-        check(records.count == store.credentials.count,
-              "the list should render one record per stored credential, got \(records.count) for \(store.credentials.count)")
+        let table = controller.debugCredentialTable
+        // The brief's own ask: the table's record count matches what the
+        // vault reports. Kept even though it passed throughout the bug - it is
+        // the half that would catch a future filter or reload defect.
+        let rows = table.debugRows
+        let recordIndices = rows.indices.filter { rows[$0].isRecord }
+        check(recordIndices.count == store.credentials.count,
+              "the table should render one record per stored credential, got \(recordIndices.count) for \(store.credentials.count)")
         check(controller.drillHeaderSubtitle?.hasPrefix("1 credential") == true,
               "the drill subtitle should report the one credential, got \(String(describing: controller.drillHeaderSubtitle))")
 
         // The half that actually catches it.
-        guard let scroll = list.debugTable.enclosingScrollView else {
-            check(false, "the list's table should be inside a scroll view")
+        guard let scroll = table.debugTable.enclosingScrollView else {
+            check(false, "the credential table should be inside a scroll view")
             return
         }
-        check(list.card.frame.height > 200,
-              "the list card should have real height, got \(list.card.frame.height)")
-        check(scroll.frame.height > list.card.frame.height / 2,
-              "the list's scroll view should fill its card, got \(scroll.frame.height) inside a \(list.card.frame.height)pt card")
-        guard let row = records.first else {
+        check(table.card.frame.height > 200,
+              "the table card should have real height, got \(table.card.frame.height)")
+        check(scroll.frame.height > table.card.frame.height / 2,
+              "the table's scroll view should fill its card, got \(scroll.frame.height) inside a \(table.card.frame.height)pt card")
+        guard let row = recordIndices.first else {
             check(false, "there should be a record row to look at")
             return
         }
-        let rowRect = scroll.contentView.convert(list.debugTable.rect(ofRow: row), from: list.debugTable)
+        let rowRect = scroll.contentView.convert(table.debugTable.rect(ofRow: row), from: table.debugTable)
         check(scroll.contentView.bounds.intersects(rowRect),
               "the credential's row should be inside the visible rect, row \(rowRect) vs clip \(scroll.contentView.bounds)")
     }
@@ -1673,8 +1678,8 @@ enum CredentialVaultViewSelfTest {
             check(actual == expected,
                   "\(id): the page's effectiveAppearance should be \(expected.rawValue), was \(String(describing: actual?.rawValue))")
             // And it still renders a real row rather than collapsing.
-            check(firstRecordRow(controller.debugList) != nil,
-                  "\(id): the list should still render its record row after a theme change")
+            check(!records(controller).isEmpty,
+                  "\(id): the table should still render its record row after a theme change")
         }
     }
 
@@ -1682,14 +1687,18 @@ enum CredentialVaultViewSelfTest {
 
     /// The captain's report, and his own follow-up correction: the fingerprint
     /// glyph sat inline next to the title (vertically centered only against
-    /// that title *line*), which read as visibly higher than the Reveal/Copy/
-    /// Overflow cluster (centered against the row's whole height) - and,
+    /// that title *line*), which read as visibly higher than the Reveal and
+    /// Copy cluster (centered against the row's whole height) - and,
     /// separately, he wanted it moved into that same cluster as its FIRST
-    /// item, after the tag chip: "[AWS chip] [fingerprint] [eye] [copy] [...]".
+    /// item: "[fingerprint] [eye] [copy]".
     ///
-    /// Both are geometry claims, so both are measured directly rather than
-    /// read off the model - `CredentialVaultListSection.Item.requiresTouchIDIndicator`
-    /// being `true` proves nothing about where the glyph actually lands.
+    /// Both are geometry claims, so both are measured directly on the
+    /// table row's controls (`CredentialRowControls`) rather than read off
+    /// the model - `CredentialRowModel.requiresTouchID` being `true` proves
+    /// nothing about where the glyph actually lands. The floating bar's
+    /// accent row also put the tag chip before the cluster; the table draws
+    /// tags in their own column, so that half went with it (P-03 of the
+    /// 2026-11-25 review).
     ///
     /// Swept across three real themes (one Daylight-family, two legacy - one
     /// light, one dark), per the brief's own explicit ask that this be
@@ -1718,30 +1727,43 @@ enum CredentialVaultViewSelfTest {
                 _ = store.add(VaultCredential(title: "AWS Prod", category: .cloud, account: "root",
                                               secret: "v", tags: ["prod"], requiresTouchIDToReveal: true))
             }
-            let list = controller.debugList
-            guard let row = firstRecordRow(list) else {
-                check(false, "\(themeID): the seeded credential should render a record row")
+            guard let id = records(controller).first?.key, let rowControls = controls(record(controller, id: id)) else {
+                check(false, "\(themeID): the seeded credential should render a record row with its controls")
                 continue
             }
-            guard let touchID = list.debugTouchIDIndicator(row) else {
+            // The controls are laid out where the table hosts them, in the
+            // row's actions cell.
+            _ = controller.debugCredentialTable.debugActionsCell(key: id)
+            window.displayIfNeeded()
+            controller.view.layoutSubtreeIfNeeded()
+            check(rowControls.window != nil, "\(themeID): the row's controls should be in the window")
+            guard let touchID = rowControls.debugTouchIDView else {
                 check(false, "\(themeID): a credential requiring Touch ID should show the fingerprint glyph")
                 continue
             }
-            guard let reveal = list.debugRevealButton(row), let copy = list.debugCopyButton(row) else {
+            guard let reveal = rowControls.debugRevealButton, let copy = rowControls.debugCopyButton else {
                 check(false, "\(themeID): the row should still carry its Reveal/Copy buttons")
                 continue
             }
-            check(list.debugRowMenu(row) != nil, "\(themeID): the row should still carry its overflow menu")
+            check(!controller.debugCredentialTable.debugMenuTitles(key: id).isEmpty,
+                  "\(themeID): the row should still carry its menu")
+            check(touchID.frame.height > 0 && reveal.frame.height > 0,
+                  "\(themeID): the glyph and Reveal should be laid out, got \(touchID.frame) and \(reveal.frame)")
 
             // 1. Vertical alignment: the fingerprint and the buttons are
-            //    siblings in the same `NSStackView` (`actions`), so their raw
-            //    `.frame`s already share one coordinate space - no
-            //    conversion needed, and none would paper over a real
-            //    mismatch the way converting to a common but differently-
-            //    scaled ancestor might.
-            check(abs(touchID.frame.midY - reveal.frame.midY) < 0.5,
+            //    siblings in the same `NSStackView`, so their raw `.frame`s
+            //    already share one coordinate space - no conversion needed,
+            //    and none would paper over a real mismatch the way converting
+            //    to a common but differently-scaled ancestor might.
+            //    Auto Layout aligns each frame to the backing store, so two
+            //    centred views of different heights can sit one *device*
+            //    pixel apart: 0.5pt on a retina Mac, 1.0pt on CI's 1x runner
+            //    (AGENTS.md, "a GitHub runner's backing scale factor is 1x").
+            //    The tolerance is that one pixel, never a hard-coded 0.5pt.
+            let onePixel = 1.0 / (touchID.window?.backingScaleFactor ?? 2)
+            check(abs(touchID.frame.midY - reveal.frame.midY) <= onePixel,
                   "\(themeID): the fingerprint should share the Reveal button's centerY, got \(touchID.frame.midY) vs \(reveal.frame.midY)")
-            check(abs(touchID.frame.midY - copy.frame.midY) < 0.5,
+            check(abs(touchID.frame.midY - copy.frame.midY) <= onePixel,
                   "\(themeID): the fingerprint should share the Copy button's centerY too, got \(touchID.frame.midY) vs \(copy.frame.midY)")
 
             // 2. Ordering inside the cluster: fingerprint, then Reveal, then
@@ -1750,23 +1772,6 @@ enum CredentialVaultViewSelfTest {
                   "\(themeID): the fingerprint should render BEFORE Reveal, got fingerprint at \(touchID.frame.minX), reveal at \(reveal.frame.minX)")
             check(reveal.frame.minX < copy.frame.minX,
                   "\(themeID): Reveal should render before Copy, got \(reveal.frame.minX) vs \(copy.frame.minX)")
-
-            // 3. The tag chip still sits BEFORE the whole cluster, fingerprint
-            //    included - "tag chip FIRST, then ALL icons grouped together
-            //    after it."
-            guard let accentRow = list.debugAccentRow(row) else {
-                check(false, "\(themeID): the row should expose its HelmAccentRow")
-                continue
-            }
-            let geometry = accentRow.debugGeometry()
-            check(geometry.chipVisible, "\(themeID): the seeded credential's tag should render a chip")
-            if let trailingFrame = geometry.trailingAccessoryFrame {
-                check(geometry.chipFrame.maxX <= trailingFrame.minX + 0.5,
-                      "\(themeID): the chip should sit before the icon cluster (which now includes the fingerprint) - "
-                      + "chip ends at \(geometry.chipFrame.maxX), cluster starts at \(trailingFrame.minX)")
-            } else {
-                check(false, "\(themeID): the row should report a trailing accessory frame")
-            }
         }
 
         // Most rows have no Touch ID requirement at all, and must show no
@@ -1775,11 +1780,11 @@ enum CredentialVaultViewSelfTest {
         let (plainController, _) = mounted(scratch, name: "touchid-off", window: window) { store in
             _ = store.add(VaultCredential(title: "No Touch ID here", secret: "v"))
         }
-        guard let plainRow = firstRecordRow(plainController.debugList) else {
-            check(false, "the plain credential should render a row")
+        guard let plainControls = controls(records(plainController).first) else {
+            check(false, "the plain credential should render a row with its controls")
             return
         }
-        check(plainController.debugList.debugTouchIDIndicator(plainRow) == nil,
+        check(!plainControls.debugTouchIDShown,
               "a credential with no Touch ID requirement should show no fingerprint glyph")
     }
 
@@ -1788,14 +1793,14 @@ enum CredentialVaultViewSelfTest {
     /// The captain's second correction, driven end to end: "I need that
     /// freedom to rearrange... I should be able to sort anything irrespective
     /// of whether it's created first or last." Every real `NSTableViewDataSource`
-    /// drag method the list implements is called directly - the same
-    /// technique `ShiftBoardViewSelfTest`'s own `StubDraggingInfo` uses for
-    /// its Kanban board, since `NSDraggingInfo` is a protocol AppKit
+    /// drag method the credential table implements is called directly - the
+    /// same technique `ShiftBoardViewSelfTest`'s own `StubDraggingInfo` uses
+    /// for its Kanban board, since `NSDraggingInfo` is a protocol AppKit
     /// implements privately and there is no public way to simulate a real
     /// mouse-driven drag session headlessly. What is real: the pasteboard, the
-    /// list's own drag/drop code, the controller's `reorderCredential`, and
-    /// the store's `reorderCategory` persistence - only the mouse events
-    /// themselves are stood in for.
+    /// table's own drag/drop code (`HelmDataTable`), the controller's
+    /// `reorderCredential`, and the store's `reorderCategory` persistence -
+    /// only the mouse events themselves are stood in for.
     private static func checkDragReorderWithinCategory(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
         print("\n-- drag-and-drop reorder: real NSTableViewDataSource methods, end to end through the store --")
         let (controller, store) = mounted(scratch, name: "dragreorder", window: window) { store in
@@ -1807,12 +1812,17 @@ enum CredentialVaultViewSelfTest {
             _ = store.add(VaultCredential(title: "Apple AWS", category: .cloud, secret: "a"))
             _ = store.add(VaultCredential(title: "Mango AWS", category: .cloud, secret: "m"))
         }
-        let list = controller.debugList
+        let dataTable = controller.debugCredentialTable
+        let table = dataTable.debugTable
+        guard let source = table.dataSource else {
+            check(false, "the credential table should have a data source")
+            return
+        }
         func rowIndex(forTitle title: String) -> Int? {
-            (0..<list.debugRowCount).first { list.debugItem($0)?.content.title == title }
+            dataTable.debugRows.firstIndex { $0.isRecord && Self.title($0) == title }
         }
         func credentialID(forTitle title: String) -> String? {
-            rowIndex(forTitle: title).flatMap { list.debugItem($0)?.credentialID }
+            rowIndex(forTitle: title).flatMap { dataTable.debugRows[$0].key }
         }
         guard let mangoID = credentialID(forTitle: "Mango AWS"), let mangoRow = rowIndex(forTitle: "Mango AWS"),
               let zebraID = credentialID(forTitle: "Zebra AWS"), let zebraRow = rowIndex(forTitle: "Zebra AWS") else {
@@ -1822,48 +1832,47 @@ enum CredentialVaultViewSelfTest {
         check(store.credentials.sorted(by: VaultCredential.displayOrder).map(\.title) == ["Zebra AWS", "Apple AWS", "Mango AWS"],
               "precondition: the initial manual order should be add-order, not alphabetical")
 
-        let table = list.debugTable
-
         // 1. `pasteboardWriterForRow` offers the dragged credential's own id,
         //    and a group-header row is never draggable - it has no credential.
-        guard let writer = list.tableView(table, pasteboardWriterForRow: mangoRow) as? NSPasteboardItem,
+        guard let writer = source.tableView?(table, pasteboardWriterForRow: mangoRow) as? NSPasteboardItem,
               writer.string(forType: CredentialVaultDragPasteboard.credentialType) == mangoID else {
             check(false, "pasteboardWriterForRow should write the dragged credential's own id")
             return
         }
-        if let groupRow = (0..<list.debugRowCount).first(where: {
-            if case .group = list.debugItem($0)?.kind { return true }
+        if let groupRow = dataTable.debugRows.firstIndex(where: {
+            if case .group = $0.kind { return true }
             return false
         }) {
-            check(list.tableView(table, pasteboardWriterForRow: groupRow) == nil,
+            check(source.tableView?(table, pasteboardWriterForRow: groupRow) == nil,
                   "a group-header row should never be draggable")
+        } else {
+            check(false, "the table should have a category group header")
         }
 
         // 2. Drag Mango to the very top of the category - "before Zebra", the
         //    boundary at Zebra's own row index, `.above` (insert-between-rows).
         let mangoDrop = dropInfo(credentialID: mangoID, on: window)
-        let operation = list.tableView(table, validateDrop: mangoDrop, proposedRow: zebraRow, proposedDropOperation: .above)
-        check(operation == .move, "dropping within the same category should be accepted with .move, got \(operation)")
-        let accepted = list.tableView(table, acceptDrop: mangoDrop, row: zebraRow, dropOperation: .above)
-        check(accepted, "acceptDrop should report success for a valid same-category drop")
+        let operation = source.tableView?(table, validateDrop: mangoDrop, proposedRow: zebraRow,
+                                          proposedDropOperation: .above)
+        check(operation == .move, "dropping within the same category should be accepted with .move, got \(String(describing: operation))")
+        let accepted = source.tableView?(table, acceptDrop: mangoDrop, row: zebraRow, dropOperation: .above)
+        check(accepted == true, "acceptDrop should report success for a valid same-category drop")
 
         let afterDrag = store.credentials.sorted(by: VaultCredential.displayOrder).map(\.title)
         check(afterDrag == ["Mango AWS", "Zebra AWS", "Apple AWS"],
               "dragging Mango to the top should move it there and persist immediately, got \(afterDrag)")
 
         // The model reordering itself is necessary but not sufficient - the
-        // LIST also has to actually render that order (`renderList` sorting
+        // TABLE also has to actually render that order (`renderTable` sorting
         // by `VaultCredential.displayOrder` rather than falling back to
         // alphabetical), or a captain's drag would persist invisibly while
-        // the row he was looking at snapped straight back. the store's observer
-        // already re-rendered the page on the reorder above; read the rows
-        // back rather than assuming it.
-        let renderedOrder = (0..<list.debugRowCount).compactMap { row -> String? in
-            guard list.debugItem(row)?.category == .cloud else { return nil }
-            return list.debugItem(row)?.content.title
-        }
+        // the row he was looking at snapped straight back. The store's
+        // observer already re-rendered the page on the reorder above; read
+        // the rows back rather than assuming it.
+        let renderedOrder = dataTable.debugRows.filter { $0.reorderGroup == CredentialCategory.cloud.rawValue }
+            .compactMap { Self.title($0) }
         check(renderedOrder == afterDrag,
-              "the rendered list must show the manual order too, not just the store, got \(renderedOrder)")
+              "the rendered table must show the manual order too, not just the store, got \(renderedOrder)")
 
         // 3. The reorder actually PERSISTED - the acceptance bar this task
         //    specified - confirmed by reloading a genuinely fresh, SEPARATE
@@ -1887,26 +1896,34 @@ enum CredentialVaultViewSelfTest {
         //    re-categorises a credential.
         _ = store.add(VaultCredential(title: "Gmail personal", category: .email, secret: "g"))
         controller.debugRender()
-        guard let gmailRow = rowIndex(forTitle: "Gmail personal") else {
+        guard let gmailRow = rowIndex(forTitle: "Gmail personal"),
+              let zebraNow = rowIndex(forTitle: "Zebra AWS"),
+              let mangoNow = rowIndex(forTitle: "Mango AWS") else {
             check(false, "the email credential should render")
             return
         }
+        // The fixture's own discriminating power: Gmail's row must border
+        // the email group only, never the cloud one, or a refusal below
+        // proves nothing.
+        check(dataTable.debugRows[gmailRow].reorderGroup != dataTable.debugRows[zebraNow].reorderGroup,
+              "fixture: the email row should sit in a different group from the cloud rows")
         let crossCategoryDrop = dropInfo(credentialID: zebraID, on: window)
-        let crossOperation = list.tableView(table, validateDrop: crossCategoryDrop, proposedRow: gmailRow,
-                                            proposedDropOperation: .above)
-        check(crossOperation == [], "dropping into a different category's group must be refused, got \(crossOperation)")
+        let crossOperation = source.tableView?(table, validateDrop: crossCategoryDrop, proposedRow: gmailRow,
+                                               proposedDropOperation: .above)
+        check(crossOperation == [], "dropping into a different category's group must be refused, got \(String(describing: crossOperation))")
 
         // 5. Only `.above` is meaningful for a reorder - `.on` (dropping ONTO
         //    a row) has no defined behaviour here and must be refused too.
-        let onOperation = list.tableView(table, validateDrop: mangoDrop, proposedRow: zebraRow, proposedDropOperation: .on)
-        check(onOperation == [], "a `.on` drop operation should be refused, got \(onOperation)")
+        let onOperation = source.tableView?(table, validateDrop: mangoDrop, proposedRow: mangoNow + 1,
+                                            proposedDropOperation: .on)
+        check(onOperation == [], "a `.on` drop operation should be refused, got \(String(describing: onOperation))")
 
         // 6. A drag from anywhere else - a plain string, no credential id at
-        //    all - must never be mistaken for one of this list's own rows.
+        //    all - must never be mistaken for one of this table's own rows.
         let foreignDrop = dropInfo(credentialID: nil, on: window)
-        let foreignOperation = list.tableView(table, validateDrop: foreignDrop, proposedRow: zebraRow,
-                                              proposedDropOperation: .above)
-        check(foreignOperation == [], "a drag carrying no credential id should be refused, got \(foreignOperation)")
+        let foreignOperation = source.tableView?(table, validateDrop: foreignDrop, proposedRow: zebraNow,
+                                                 proposedDropOperation: .above)
+        check(foreignOperation == [], "a drag carrying no credential id should be refused, got \(String(describing: foreignOperation))")
     }
 
     /// A stand-in for the `NSDraggingInfo` AppKit hands a drop target - the

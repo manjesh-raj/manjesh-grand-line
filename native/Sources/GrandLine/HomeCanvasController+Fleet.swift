@@ -12,69 +12,6 @@ import AppKit
 
 extension HomeCanvasController {
 
-    func fillFleet(_ content: inout HelmModuleCard.Content, placement: CardPlacement) {
-        // The captain's full hero, wherever the card is a shelf card - the
-        // same split as the Claude card's.
-        if case let .shelf(width) = placement {
-            fillFleetHero(&content, width: width)
-            return
-        }
-        guard let snapshot = fleetSnapshot else {
-            // UI-12: the one loading idiom, the skeleton every card uses.
-            content.subtitle = "reading"
-            content.toolTip = "Reading the fleet's state\u{2026}"
-            content.body = .skeleton(rows: 2)
-            return
-        }
-        // UI-9 / GL-14: a snapshot from a missing firstmate home is not a
-        // fleet of zeroes. `homeOk` false means nothing was read, so the
-        // counts are dashes under a "Not read" pill - never 0/0/0 under
-        // "All clear", which is what this card used to draw.
-        guard snapshot.homeOk else {
-            content.subtitle = "not read"
-            content.chip = .warn(HelmReading<String>.unknownCaption)
-            content.body = .kpis(note: "Point Grand Line at your firstmate home in \(PlaceName.of(.bootstrap)).",
-                                 items: ["Working", "Done today", "Queued"].map {
-                                     HelmKPIStrip.Item(.unread, caption: $0)
-                                 })
-            return
-        }
-        let working = snapshot.tasks.filter { $0.status == "working" }
-        let needs = snapshot.tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
-        content.subtitle = "\(working.count) crew working"
-        content.chip = needs.isEmpty ? .ok("All clear") : .warn("\(needs.count) need you")
-
-        // The reference's Fleet widget: one sentence, then the three numbers
-        // under it as tiles.
-        //
-        // **The three counts are the snapshot's own**, not a second
-        // definition: `working` is the same predicate this card's subtitle is
-        // already built from, and `doneCount`/`queuedCount` are the very
-        // fields Overview's own stat row reads (`FleetController`'s
-        // `statsRow`). A second arithmetic for the same three numbers on the
-        // hub is exactly what the component index exists to stop - and the
-        // tile they are drawn in is that row's `HelmStatTile` too.
-        // UI-9: a KPI strip, not three boxed tiles. A fine zero is muted, so
-        // the numbers that mean something carry the weight.
-        let items: [HelmKPIStrip.Item] = [
-            .count(working.count, caption: "Working"),
-            .count(snapshot.doneCount, caption: "Done today"),
-            .count(snapshot.queuedCount, caption: "Queued"),
-        ]
-
-        if working.isEmpty && needs.isEmpty {
-            content.body = .kpis(note: "All hands idle. Nothing is running and nothing is waiting on you.",
-                                 items: items)
-            return
-        }
-        // With something actually in flight the sentence names it, because a
-        // parked crewmate's id is the one thing the three counts cannot say.
-        let lead = needs.isEmpty
-            ? "\(working.count) crew working."
-            : "\(needs.count) waiting on you: \(needs.prefix(2).map(\.id).joined(separator: ", "))."
-        content.body = .kpis(note: lead, items: items)
-    }
-
     /// The full hero's words for a fleet reading. `static` for the suite.
     struct FleetHero: Equatable {
         let subtitle: String

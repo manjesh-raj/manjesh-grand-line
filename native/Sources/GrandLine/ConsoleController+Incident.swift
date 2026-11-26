@@ -254,7 +254,13 @@ extension ConsoleController {
             // otherwise. Set on every open, not once at build time: an
             // incident card outlives several theme changes.
             incidentPopover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-            incidentPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+            // The button is the window toolbar's. A toolbar item in the
+            // overflow menu, or a page not yet in a window, has no window to
+            // anchor to, and `NSPopover` raises on that - so the card falls
+            // back to the console's own view, and is skipped with neither.
+            let anchor: NSView = button.window != nil ? button : view
+            guard anchor.window != nil else { return }
+            incidentPopover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
         }
     }
 

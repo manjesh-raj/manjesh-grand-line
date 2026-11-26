@@ -296,7 +296,6 @@ enum ReviewFourUXSelfTest {
               "R4-UX-08: a pass in flight shows no Stop", &ok)
         var actionChanges = 0
         fleet.onDrillActionsChanged = { actionChanges += 1 }
-        fleet.adoptSidebarLayout()
         fleet.debugBeginPassWithoutFetching()
         // Stop takes Refresh's place rather than joining it: one more item
         // pushed the breadcrumb into the overflow at Larger text and 1512pt.

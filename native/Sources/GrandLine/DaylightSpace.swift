@@ -1,8 +1,12 @@
 // Grand Line - native macOS app.
 //
-// `DaylightSpace` - the five space pills, and the module-to-space table
-// behind them (Daylight migration §5.3, §5.4). Every pill filters the home
-// canvas's module grid.
+// `DaylightSpace` - the five areas the floating bar's space pills offered,
+// and the module-to-space table behind them (Daylight migration §5.3, §5.4).
+//
+// P-03 of the 2026-11-25 full review removed the floating bar, and with it
+// the pills and Home's filter over its module grid. What still reads a space
+// is a destination's Recents kicker (`RecentDestinations`, through
+// `DaylightModule.space(forDestination:)` and `ModuleTable`).
 //
 // (A sixth pill, "Today", opened a page of its own for a while. It was
 // removed with that page in `fm/grandline-remove-today-calendar-1792553365`,
@@ -11,11 +15,9 @@
 //
 // **The one rule this file exists to keep true: a space is presentation
 // state and nothing else.** No store, poller, registry or notification
-// source knows spaces exist. `HomeCanvasController` owns the currently
-// selected space, `DaylightBarController` draws the pills, and the table
-// below is consulted only when deciding which module cards to lay out. That
-// is deliberate - it means a space can be renamed, reordered or dropped
-// without touching a single line of data code, and it means nothing in the
+// source knows spaces exist. That is deliberate - it means a space can be
+// renamed, reordered or dropped without touching a single line of data
+// code, and it means nothing in the
 // app can develop a second, drifting opinion about which area a page belongs
 // to.
 //
@@ -28,11 +30,10 @@
 
 import Foundation
 
-/// One of the five the bar's space pills offer.
+/// One of the five areas the floating bar's space pills offered.
 ///
-/// Declaration order **is** pill order, left to right, and is what `⌘1`…`⌘5`
-/// index into - `allCases` is the single source for both. Home also keeps its
-/// own ⌘0 in the Go menu.
+/// Declaration order was pill order, left to right, and what `⌘1`…`⌘5`
+/// indexed into - `allCases` was the single source for both.
 enum DaylightSpace: String, CaseIterable {
     case overview
     case command
@@ -40,9 +41,7 @@ enum DaylightSpace: String, CaseIterable {
     case stores
     case engineering
 
-    /// The pill's label, and the canvas hero title for every space except
-    /// the first one (which shows a time-of-day greeting instead - see
-    /// `HomeCanvasController.renderGreeting`).
+    /// The space's name, which a Recents row shows as its kicker.
     ///
     /// **`.overview`'s label is "Home", not "Overview"** (review #3 §7). The
     /// app had three user-facing names - "Home", "Overview" and "Fleet" - for
@@ -65,44 +64,6 @@ enum DaylightSpace: String, CaseIterable {
         case .engineering: return "Engineering"
         }
     }
-
-    /// §5.4's subtitle copy, verbatim. Overview's is generated from real
-    /// fleet state instead and this string is its only fallback - shown
-    /// before the first snapshot lands, never as a claim about the fleet.
-    var subtitle: String {
-        switch self {
-        case .overview: return "Your whole control room at a glance."
-        case .command: return "Console, tasks and the merge queue."
-        case .operations: return "Hosts, logs, health and schedules - the running systems."
-        case .stores: return "Vault, docs, tools and dictation - your reference shelf."
-        case .engineering: return "Toolchain setup and this machine's settings."
-        }
-    }
-
-    /// C1's hero badge for this space.
-    ///
-    /// Only Overview's hero reports a *verdict* (it renders
-    /// `FleetGreeting.Answer`, badge and all); every other space's hero says
-    /// what the space is, so this is an identity glyph rather than a state
-    /// one - see `HomeCanvasController.setHero`.
-    ///
-    /// Every symbol here is asserted to resolve by
-    /// `CanvasListsControlsSelfTest.checkC1HeroSymbolsResolve`, for the
-    /// reason `DaylightModule.symbol` already carries: `NSImage(
-    /// systemSymbolName:)` returns nil silently and this app has shipped an
-    /// invisible icon exactly that way before.
-    var heroSymbol: String {
-        switch self {
-        case .overview: return "sailboat.fill"
-        case .command: return "terminal.fill"
-        case .operations: return "gauge.with.dots.needle.33percent"
-        case .stores: return "archivebox.fill"
-        case .engineering: return "hammer.fill"
-        }
-    }
-
-    /// The 1-based index this space's `⌘N` shortcut carries.
-    var shortcutIndex: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
 }
 
 /// Every module the canvas can render.
@@ -181,8 +142,7 @@ enum DaylightModule: String, CaseIterable {
     // at the top of Overview", and `fm/straw-hat-voice-order-composer-polish-8dd2`
     // moved it to the very end of the enum so it rendered LAST on Overview
     // instead. The captain has now asked for it on the **Command** page
-    // rather than on Home, so its `space` is `.command` below and
-    // `appearsOnOverview` is false.
+    // rather than on Home, so its `space` is `.command` below.
     //
     // The declaration moves here with it, appended to the end of the
     // Command-space group, for exactly the reason `.commandLibrary` above and
@@ -239,9 +199,8 @@ enum DaylightModule: String, CaseIterable {
     /// Fleet cards appear ONLY on Overview", plus `.claudeStatus`, which has
     /// the same "no other home" property).
     ///
-    /// The other four spaces show exactly the modules whose space matches;
-    /// Overview's own subset is `appearsOnOverview` below rather than "every
-    /// module", and a `nil` here is no longer the only way onto it.
+    /// `ModuleTableSelfTest` checks that every card with a space sits on its
+    /// destination's space in `ModuleTable`.
     var space: DaylightSpace? {
         switch self {
         // `.claudeStatus` joins the same "no other home" set: Claude's quota
@@ -301,93 +260,6 @@ enum DaylightModule: String, CaseIterable {
         case .vault, .poneglyph, .docs, .notebook, .readingList, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
-    }
-
-    /// Whether this module's card renders on the Overview canvas
-    /// specifically (`fm/grandline-overview-canvas-trim`).
-    ///
-    /// True by default; false for the modules the captain asked removed from
-    /// Overview after reviewing a live screenshot - the canvas had grown to
-    /// eighteen cards, most of which duplicated a page already one click away
-    /// via its own space (Command/Operations/Stores/Engineering), the nav, or
-    /// `⌘K`.
-    ///
-    /// **What Overview keeps is five cards** (`fm/grandline-home-card-reorg`):
-    /// the three with no other home (`.briefing`, `.claudeStatus`, `.fleet` -
-    /// `space == nil`) plus what is left of the original trim's "operational
-    /// pulse" set, `.mergeQueue` and `.health`.
-    ///
-    /// The count has moved four times, and every move was a captain ask after
-    /// using the shipped page - which is why the history is worth keeping
-    /// rather than overwriting. `fm/grandline-overview-canvas-trim` locked
-    /// **six**. `fm/polish-straw-hat-overview-card-and-voice-c8d3` made it
-    /// **seven**, giving the crew chat its own card.
-    /// `fm/grandline-claude-status-card-implement` made it **eight** with the
-    /// quota strip. `fm/grandline-home-card-reorg` took it to **five**: the
-    /// crew card moved to the Command space, and `.console` and `.schedules`
-    /// came off Home because each already carries a card on its own space's
-    /// canvas one pill away. `DaylightModuleSelfTest.overviewVisibleModules`
-    /// is typed out as a literal precisely so changing that count has to be a
-    /// deliberate edit in two places.
-    ///
-    /// **This is presentation-only, exactly like `space`/`isVisible` above -
-    /// it removes a module's card from the Overview canvas, nothing else.**
-    /// A module with `appearsOnOverview == false` still has its own
-    /// `RailDestination`, is still fully functional, and still renders its
-    /// card on its own space's canvas via `isVisible(in:)` below (which only
-    /// special-cases `.overview`) - `.tasks`' card still shows on Command,
-    /// `.vault`'s still shows on Stores, and so on. Nothing was deleted.
-    var appearsOnOverview: Bool {
-        switch self {
-        case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .kubernetes, .vault, .docs, .notebook, .readingList, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview,
-             // `fm/implement-grand-line-secrets-vault-poneg-ad`: a *new* module
-             // has to be listed here explicitly, because the `default` below
-             // returns `true` - and `true` would put a seventh card on Overview,
-             // against the captain's own locked six-card decision. Caught by
-             // `DaylightModuleSelfTest`'s literal `overviewVisibleModules` list,
-             // which is exactly why that list is typed out rather than derived.
-             .poneglyph,
-             // `fm/grandline-tasks-kanban-devops-split`: same rule - a new
-             // module has to opt out explicitly, because `default` returns
-             // `true` and Overview's card count is a locked captain decision.
-             .commandLibrary,
-             // R5-UX-07: a Personal Home places these two itself; the
-             // floating bar's hub keeps its own set.
-             .calendar, .focusTimer,
-             // `fm/grandline-home-card-reorg`: the captain reviewed the live
-             // Home page and asked for these three off it. `.console` and
-             // `.schedules` were two of the four "operational pulse" cards the
-             // original trim deliberately kept - he has since found both
-             // redundant, because each already has its own card one pill away
-             // (Console on Command, Schedules on Operations) and a card that
-             // repeats a page the captain can reach in one click is exactly
-             // the duplication the trim existed to remove. Their `space` is
-             // deliberately unchanged: this is the presentation-only opt-out
-             // this property is for, so both still render on their own space's
-             // canvas via `isVisible(in:)` - nothing was deleted.
-             //
-             // `.strawHat` is here for the other reason a module lands on this
-             // list: it now has a real space (`.command`, above), so it stops
-             // being an Overview-only card for the same reason `.tasks` and
-             // `.hosts` already are - its space's canvas is where it lives.
-             .console, .schedules, .strawHat,
-             .settings:
-            return false
-        default:
-            return true
-        }
-    }
-
-    /// Is this module shown while `space` is selected?
-    ///
-    /// Overview is special-cased to `appearsOnOverview` rather than "every
-    /// module" (§5.3's own model, extended by the trim above); every other
-    /// space is unaffected and still shows exactly the modules whose own
-    /// `space` matches.
-    func isVisible(in space: DaylightSpace) -> Bool {
-        if space == .overview { return appearsOnOverview }
-        return self.space == space
     }
 
     /// How many grid columns this module's card consumes (§6.1's "wide
@@ -462,8 +334,8 @@ enum DaylightModule: String, CaseIterable {
         }
     }
 
-    /// The space a given destination belongs to - the floating bar's map, which
-    /// its Go menu, its ⌘⇧D overlay and its Recents kickers read.
+    /// The space a given destination belongs to, which a Recents row's
+    /// kicker reads.
     ///
     /// R2-ARCH-03: read from `ModuleTable.rows`, the one place a destination's
     /// identity is written down. It was derived from this enum's own card
@@ -472,8 +344,7 @@ enum DaylightModule: String, CaseIterable {
     /// now checks the other way round - that every card with a space sits on
     /// its destination's space.
     ///
-    /// `nil` for `.overview` and `.homeCanvas`, whose space is whichever one
-    /// the captain last picked, not a property of the destination.
+    /// `nil` for `.overview` and `.homeCanvas`, which belong to no space.
     static func space(forDestination dest: RailDestination) -> DaylightSpace? {
         ModuleTable.descriptor(for: dest)?.space
     }

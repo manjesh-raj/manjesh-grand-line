@@ -12,6 +12,14 @@
 // makes it against; the suite's name is unchanged because the thing it
 // guards is.
 //
+// The card is now the split hero (`.heroSplit`): the verdict on a panel, and
+// the report beside it as one aligned grid with no section headers. The P-03
+// sweep deleted the sectioned `.usageReport` body and its stacked reflow,
+// which no page drew any more, so every case mounts the body Home really
+// builds (`HomeCanvasController.claudeHeroBody`). The cases that measured
+// the section headers' verdict words and the stacked reflow's extra caption
+// lines went with them.
+//
 // **Window-backed on purpose**, and listed in `NEEDS_SESSION` in
 // `Scripts/run-all-tests.sh` accordingly: it builds a real `HelmModuleCard`
 // in a real `OffScreenProbe` window, runs a real layout pass, and reads the
@@ -117,47 +125,42 @@ enum ClaudeStatusCardSelfTest {
     }
 
     /// The body the card is really given for a snapshot at a given width -
-    /// one call rather than the three-line incantation at every site, so a
-    /// case can never accidentally assert the wide layout while claiming the
-    /// narrow one.
+    /// Home's own builder, so a case can never accidentally assert one
+    /// layout while claiming another.
     private static func usageBody(for snapshot: QuotaSnapshot,
                                   now: Date = Date(),
                                   width: CGFloat) -> HelmModuleCard.Body {
-        .usageReport(HomeCanvasController.claudeUsageSections(for: snapshot, now: now),
-                     compact: HomeCanvasController.claudeUsageIsCompact(forCardWidth: width))
+        let panel = HomeCanvasController.claudeHeroPanel(snapshot: snapshot, failure: nil, fetchedAt: now, now: now)
+        return HomeCanvasController.claudeHeroBody(snapshot: snapshot, failure: nil, panel: panel,
+                                                   width: width, now: now)
     }
+
+    /// A card wide enough for the split hero's wide layout, where the report
+    /// beside the panel has room for its long labels.
+    private static let wideCardWidth: CGFloat = 1000
 
     // MARK: Home fit - the dense form
 
-    /// `fm/grandline-home-fit-implement`: the hub's Claude card is the dense
-    /// one-grid form at every column width the three-column page produces
-    /// (293pt at the minimum window, 477pt at the captain's, 613pt at
-    /// 1920pt). It must draw every reading, paint no reset caption
-    /// truncated, never clip, and stay well under the stacked form's height -
-    /// which is the whole reason it exists.
+    /// `fm/grandline-home-fit-implement`: the Claude card's report is one
+    /// dense grid at every card width - the split hero's band layout (293pt),
+    /// its standard layout beside a 226pt panel (526pt, the narrowest span-2
+    /// card, and 613pt), and its wide layout (1000pt). It must draw every reading, with the short
+    /// labels wherever the report is narrow, paint no reset caption
+    /// truncated, and never clip.
     private static func checkTheHubsDenseFormFitsItsColumn(_ ok: inout Bool) {
-        print("\n-- claude usage: the hub's dense form fits a page column --")
+        print("\n-- claude usage: the split hero's report fits its card --")
         let snapshot = resettingSnapshot()
         let now = fixtureNow()
-        let stacked = mountCard(usageBody(for: snapshot, now: now, width: HomeCanvasController.minModuleWidth),
-                                width: 293, chip: .bad("Near spend cap"))
-        let stackedHeight = stacked.card.anatomyForTests.cardHeight
-        for width in [293.0, 477.0, 613.0] as [CGFloat] {
-            let short = HomeCanvasController.claudeUsesShortLabels(forCardWidth: width)
-            let sections = HomeCanvasController.claudeUsageSections(for: snapshot, now: now,
-                                                                     headerCarriesVerdict: true,
-                                                                     shortLabels: short)
-            let mounted = mountCard(.usageReportDense(sections), width: width, chip: .bad("Near spend cap"))
+        let shortTitles = ["Session", "Week", "Fable", "Extra usage"]
+        let longTitles = ["Session (5h)", "Week", "Fable week", "Extra usage"]
+        for (width, expected) in [(293.0, shortTitles), (spanTwoWidth, shortTitles), (613.0, shortTitles),
+                                  (wideCardWidth, longTitles)] as [(CGFloat, [String])] {
+            let mounted = mountCard(usageBody(for: snapshot, now: now, width: width), width: width,
+                                    chip: .bad("Near spend cap"))
             let anatomy = mounted.card.anatomyForTests
             let titles = anatomy.usageRows.map(\.title)
-            let expected = short ? ["Session", "Week", "Fable", "Extra usage"]
-                                 : ["Session (5h)", "Week", "Fable week", "Extra usage"]
             if titles != expected {
-                fail("\(Int(width))pt: the dense form drew rows \(titles), expected \(expected)", &ok)
-            }
-            if !anatomy.usageSections.isEmpty {
-                fail("\(Int(width))pt: the dense form drew section headers \(anatomy.usageSections) - the "
-                     + "header chip is where its verdict goes", &ok)
+                fail("\(Int(width))pt: the report drew rows \(titles), expected \(expected)", &ok)
             }
             if anatomy.usageTrackFills.count != 4 {
                 fail("\(Int(width))pt: \(anatomy.usageTrackFills.count) bars drawn, expected 4", &ok)
@@ -172,11 +175,7 @@ enum ClaudeStatusCardSelfTest {
                 fail("\(Int(width))pt: the dense report needs \(anatomy.bodyContentHeight)pt of "
                      + "\(anatomy.bodyAreaHeight)pt - clipped", &ok)
             }
-            print("   \(Int(width))pt: dense card \(anatomy.cardHeight)pt (stacked \(stackedHeight)pt)")
-            if anatomy.cardHeight > stackedHeight - 120 {
-                fail("\(Int(width))pt: the dense card is \(anatomy.cardHeight)pt against the stacked "
-                     + "\(stackedHeight)pt - it no longer saves the page its height", &ok)
-            }
+            print("   \(Int(width))pt: split hero card \(anatomy.cardHeight)pt")
         }
     }
 
@@ -372,41 +371,33 @@ enum ClaudeStatusCardSelfTest {
         for theme in [HelmTheme.daylight, HelmTheme.dusk] {
             ThemeManager.shared.setTheme(theme)
 
-            let mounted = mountCard(usageBody(for: liveSnapshot(), width: spanTwoWidth),
-                                    width: spanTwoWidth,
+            let mounted = mountCard(usageBody(for: liveSnapshot(), width: wideCardWidth),
+                                    width: wideCardWidth,
                                     chip: .bad("Near spend cap"),
                                     headerCaption: "Updated 2 min ago")
             let anatomy = mounted.card.anatomyForTests
 
-            // The card really built both sections with the agreed titles, and
-            // both verdicts beside them.
-            let drawnSections = anatomy.usageSections.map(\.title)
-            if drawnSections != ["Plan limits", "Extra usage"] {
-                fail("\(theme.id): the card drew sections \(drawnSections)", &ok)
-            }
-            if anatomy.usageSections.contains(where: { $0.status == nil }) {
-                fail("\(theme.id): a section painted no verdict at all", &ok)
-            }
-
+            // The report draws no section headers: the verdict is the
+            // header chip's. Every reading is a row of one grid.
             let drawnRows = anatomy.usageRows.map(\.title)
-            if drawnRows != ["Session (5h)", "Week", "Fable week"] {
+            if drawnRows != ["Session (5h)", "Week", "Fable week", "Extra usage"] {
                 fail("\(theme.id): the card drew rows \(drawnRows)", &ok)
             }
 
             // **The alignment claim, and the reason this body uses an
             // `NSGridView` at all** (AGENTS.md gotcha (2)): the three limit
-            // bars share one grid column, so their beds must be identical -
-            // and wide, because the whole arrangement exists so the bar
-            // column absorbs the card's slack. A grid whose fill column
-            // absorbed nothing leaves every bed sitting on its 40pt floor,
-            // which is exactly the defect gotcha (2) describes in the other
-            // direction.
-            let limitBeds = anatomy.usageTrackFills.prefix(3).map(\.bedWidth)
-            if limitBeds.count != 3 {
-                fail("\(theme.id): found \(limitBeds.count) limit bars, expected 3", &ok)
+            // bars and the spend bar share one grid column, so their beds
+            // must be identical - and wide, because the whole arrangement
+            // exists so the bar column absorbs the card's slack. A grid whose
+            // fill column absorbed nothing leaves every bed sitting on its
+            // 40pt floor, which is exactly the defect gotcha (2) describes in
+            // the other direction.
+            let limitBeds = anatomy.usageTrackFills.map(\.bedWidth)
+            if limitBeds.count != 4 {
+                fail("\(theme.id): found \(limitBeds.count) bars, expected 4", &ok)
             } else {
                 if let lo = limitBeds.min(), let hi = limitBeds.max(), hi - lo > 1.0 {
-                    fail("\(theme.id): the three bars are \(limitBeds)pt wide - they share one "
+                    fail("\(theme.id): the four bars are \(limitBeds)pt wide - they share one "
                          + "grid column and must line up (gotcha (2))", &ok)
                 }
                 if let width = limitBeds.first, width <= 45 {
@@ -438,25 +429,6 @@ enum ClaudeStatusCardSelfTest {
                      + "against the card surface, below the 4.5:1 body floor", &ok)
             }
 
-            // And every severity **word** clears it too, which is the thing
-            // the raw state hue would not. AGENTS.md: a `HelmTint` hue is
-            // safe as a fill and is not automatically safe as text - so the
-            // bars may take the hue raw and these labels may not.
-            for (index, painted) in anatomy.usageStatusColors.enumerated() {
-                guard let painted else {
-                    fail("\(theme.id): section \(index)'s verdict has no painted colour", &ok)
-                    continue
-                }
-                let wordRatio = HelmContrast.ratio(painted, surface)
-                if wordRatio < HelmContrast.textTarget {
-                    fail("\(theme.id): section \(index)'s verdict "
-                         + "(\"\(anatomy.usageSections[index].status ?? "")\") is painted "
-                         + "\(describe(painted)) at \(String(format: "%.2f", wordRatio)):1 on "
-                         + "the card surface, below the \(HelmContrast.textTarget):1 floor - it "
-                         + "is taking a fill hue as text", &ok)
-                }
-            }
-
             // And the card genuinely rasterises rather than rendering blank.
             // Both of AGENTS.md's probe rules apply: sample in the rep's own
             // colour space, and scale point coordinates into pixels.
@@ -470,7 +442,7 @@ enum ClaudeStatusCardSelfTest {
                          theme.id as NSString, limitBeds.first ?? 0, ratio))
         }
 
-        if ok { print("  OK - both sections painted, bars aligned, every verdict legible") }
+        if ok { print("  OK - every reading painted, bars aligned, ink legible") }
     }
 
     // MARK: 3b - the reset time: offered on the three resetting windows, on nothing else
@@ -676,15 +648,20 @@ enum ClaudeStatusCardSelfTest {
     private static func checkTheResetAffordanceIsReallyWiredToTheCell(_ ok: inout Bool) {
         print("\n-- claude usage: the reset time is painted on the row, not hidden behind a hover --")
 
+        // A wide card, so the report has room for its long labels and the
+        // "Resets" word: a narrower one paints the time alone, with the
+        // sentence still on the hover and VoiceOver help.
         ThemeManager.shared.setTheme(.dusk)
         let mounted = mountCard(usageBody(for: resettingSnapshot(), now: fixtureNow(),
-                                          width: spanTwoWidth),
-                                width: spanTwoWidth, chip: .bad("Near spend cap"))
+                                          width: wideCardWidth),
+                                width: wideCardWidth, chip: .bad("Near spend cap"))
         let anatomy = mounted.card.anatomyForTests
 
+        // Four rows: the three windows, then the spend, whose hover text is
+        // its footnote rather than a reset time.
         let affordances = anatomy.usageRowAffordances
-        guard affordances.count == 3 else {
-            fail("the card exposed \(affordances.count) row affordances, expected 3 - the probe "
+        guard affordances.count == 4 else {
+            fail("the card exposed \(affordances.count) row affordances, expected 4 - the probe "
                  + "is not seeing the real rows", &ok)
             return
         }
@@ -735,65 +712,15 @@ enum ClaudeStatusCardSelfTest {
             }
         }
 
-        // The height the painted lines cost, measured against the same card
-        // built from a snapshot whose windows carry no reset instant at all -
-        // so the only difference between the two is the lines.
-        //
-        // Asserted in both directions, because each catches a different
-        // defect. It must be **taller**, or the lines are not being painted
-        // (and every check above could still pass against labels added to no
-        // stack). And it must be taller by no more than one caption line per
-        // row, or a row has gained something other than the one line this
-        // feature is allowed - a wrapped sentence, say, which is exactly what
-        // the long form would do if a future caller passed it here.
-        //
-        // In the **wide** layout a caption sits beside the bar in its own
-        // grid column, so it costs no height at all - which is why this
-        // measurement is taken in the compact layout, where it genuinely is
-        // an extra line.
-        let narrow = HomeCanvasController.minModuleWidth
-        let withResets = mountCard(usageBody(for: resettingSnapshot(), now: fixtureNow(),
-                                             width: narrow), width: narrow)
-        let withoutResets = mountCard(usageBody(for: liveSnapshot(), width: narrow), width: narrow)
-        let withAnatomy = withResets.card.anatomyForTests
-        let withoutAnatomy = withoutResets.card.anatomyForTests
-
-        // The reference really is the no-caption case, or the comparison is
-        // measuring the same card twice.
-        let referenceResetCaptions = withoutAnatomy.usageCaptions
-            .filter { $0.text.hasPrefix("Resets") }
-        if !referenceResetCaptions.isEmpty {
-            fail("the reference card painted \(referenceResetCaptions.count) reset lines - its "
-                 + "snapshot is supposed to carry no reset instants at all, so this comparison "
-                 + "would be vacuous", &ok)
-        }
-        if withoutAnatomy.cardHeight <= 0 {
-            fail("the reference card resolved to \(withoutAnatomy.cardHeight)pt - the height "
-                 + "comparison below would be vacuous", &ok)
-        }
-        let oneLine = HelmType.captionSmall().boundingRectForFont.height + HelmMetrics.s1
-        let grew = withAnatomy.cardHeight - withoutAnatomy.cardHeight
-        if grew <= 0.5 {
-            fail("the compact card with reset times is \(withAnatomy.cardHeight)pt against "
-                 + "\(withoutAnatomy.cardHeight)pt without - it did not grow at all, so the "
-                 + "lines are not being laid out", &ok)
-        }
-        if grew > oneLine * 3 + 3 {
-            fail("the reset lines cost the card \(grew)pt, more than the three caption lines "
-                 + "(\(oneLine * 3)pt) they are allowed - a row is carrying more than a single "
-                 + "short line, or a line is wrapping", &ok)
-        }
-        if withAnatomy.bodyContentHeight > withAnatomy.bodyAreaHeight + 0.5 {
-            fail("the compact report with reset lines needs \(withAnatomy.bodyContentHeight)pt "
-                 + "of \(withAnatomy.bodyAreaHeight)pt - it would be clipped", &ok)
-        }
+        // The stacked reflow's measurement of the height these lines cost
+        // went with that layout in the P-03 sweep: the report keeps each
+        // caption in its own grid column at every width now, so a caption
+        // costs no height and the truncation check above is the one that
+        // matters.
 
         if ok {
-            print(String(format: "  OK - three reset lines painted (%@), full sentence still on "
-                         + "the tooltip and VoiceOver help; compact card %.0fpt against %.0fpt "
-                         + "without (+%.0f, three caption lines)",
-                         wantCaptions.joined(separator: " | ") as NSString,
-                         withAnatomy.cardHeight, withoutAnatomy.cardHeight, grew))
+            print("  OK - three reset lines painted (\(wantCaptions.joined(separator: " | "))), full "
+                  + "sentence still on the tooltip and VoiceOver help")
         }
     }
 
@@ -831,46 +758,12 @@ enum ClaudeStatusCardSelfTest {
                  + "about it", &ok)
         }
 
-        // The narrow reflow. `packRows` degrades a span-2 card to one column,
-        // and at that width the grid's three content columns would leave the
-        // bar a stub - so the row stacks instead, and still draws everything.
-        if !HomeCanvasController.claudeUsageIsCompact(
-            forCardWidth: HomeCanvasController.minModuleWidth) {
-            fail("a one-column card still asks for the wide grid - its bars would be stubs", &ok)
-        }
-        if HomeCanvasController.claudeUsageIsCompact(forCardWidth: spanTwoWidth) {
-            fail("a span-2 card asked for the compact reflow - it has the width for the grid", &ok)
-        }
-        // M3: the hub's dashboard decides from its own placement. At the
-        // 960pt minimum window its 7-of-12-track card is 525.33pt - a third
-        // of a point under the shelf's span-2 width - and the width rule
-        // built it as the 364pt degraded card. The fixture's own
-        // discriminating power first: the width rule really does say compact
-        // at that width, so a pass below is about the placement.
-        let dashboardSevenTrack = HelmResponsiveGrid.proportionalWidth(
-            containerWidth: 960 - HomeCanvasController.gutter * 2, span: 7,
-            spacing: HomeCanvasController.gridSpacing)
-        if !HomeCanvasController.claudeUsageIsCompact(forCardWidth: dashboardSevenTrack) {
-            fail("fixture drifted: the shelf's width rule no longer calls a \(dashboardSevenTrack)pt "
-                 + "card compact, so the dashboard case below would pass vacuously", &ok)
-        }
-        if HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 7, width: dashboardSevenTrack)) {
-            fail("a 7-track dashboard card (\(dashboardSevenTrack)pt at the minimum window) asked "
-                 + "for the degraded reflow - M3", &ok)
-        }
-        if !HomeCanvasController.claudeUsageIsCompact(for: .dashboard(span: 4, width: 293)) {
-            fail("a 4-track dashboard card is a third of the row and should be the narrow form", &ok)
-        }
-        // And the other direction: a 5-track briefing that is 600pt wide at
-        // the captain's 1512pt window keeps the wide cap it always had.
-        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 5, width: 600))
-            != HelmModuleCard.maxBriefingClauses {
-            fail("a 600pt-wide 5-track briefing took the one-column clause cap", &ok)
-        }
-        if HomeCanvasController.briefingClauseCap(for: .dashboard(span: 7, width: dashboardSevenTrack))
-            != HelmModuleCard.maxBriefingClauses {
-            fail("a 7-track dashboard briefing took the one-column clause cap - M3's twin", &ok)
-        }
+        // The narrow card: the split hero's band layout, the panel across the
+        // top and the report under it, still drawing everything.
+        // M3's placement cases (a 7-of-12-track dashboard card is not the
+        // degraded one) measured the floating bar's hub and went with it in
+        // P-03 of the 2026-11-25 full review: every card is placed by width
+        // now.
 
         let narrow = mountCard(usageBody(for: resettingSnapshot(), now: fixtureNow(),
                                          width: HomeCanvasController.minModuleWidth),
@@ -878,47 +771,34 @@ enum ClaudeStatusCardSelfTest {
                                chip: .bad("Near spend cap"))
         let narrowAnatomy = narrow.card.anatomyForTests
 
-        // Nothing is dropped: the compact layout costs height, never a
-        // reading. This is the property the strip's own wrap already had.
-        if narrowAnatomy.usageRows.map(\.title) != wideAnatomy.usageRows.map(\.title) {
-            fail("the compact layout drew rows \(narrowAnatomy.usageRows.map(\.title)) against "
-                 + "the wide layout's \(wideAnatomy.usageRows.map(\.title)) - reflowing must "
-                 + "cost height, never a reading", &ok)
+        // Nothing is dropped: the band layout costs height, never a reading.
+        // (The labels may be the short ones, so the rows are counted rather
+        // than compared by title.)
+        if narrowAnatomy.usageRows.count != wideAnatomy.usageRows.count {
+            fail("the narrow card drew \(narrowAnatomy.usageRows.count) rows against the span-2 "
+                 + "card's \(wideAnatomy.usageRows.count) - the band must cost height, never a "
+                 + "reading", &ok)
         }
         if narrowAnatomy.usageCaptions.count != wideAnatomy.usageCaptions.count {
-            fail("the compact layout painted \(narrowAnatomy.usageCaptions.count) captions "
-                 + "against the wide layout's \(wideAnatomy.usageCaptions.count)", &ok)
+            fail("the narrow card painted \(narrowAnatomy.usageCaptions.count) captions "
+                 + "against the span-2 card's \(wideAnatomy.usageCaptions.count)", &ok)
         }
         if narrowAnatomy.bodyContentHeight > narrowAnatomy.bodyAreaHeight + 0.5 {
-            fail("the compact report needs \(narrowAnatomy.bodyContentHeight)pt of "
+            fail("the narrow report needs \(narrowAnatomy.bodyContentHeight)pt of "
                  + "\(narrowAnatomy.bodyAreaHeight)pt and would be clipped", &ok)
         }
-        // The discriminating half: reflowing really did make it taller. If
-        // the two cards were the same height, nothing reflowed and the
-        // assertions above would be measuring the wide layout twice.
+        // The discriminating half: the band really did stack. If the two
+        // cards were the same height, nothing moved and the assertions above
+        // would be measuring the side-by-side layout twice.
         if narrowAnatomy.cardHeight <= wideAnatomy.cardHeight + 1.0 {
-            fail("the compact card (\(narrowAnatomy.cardHeight)pt) is no taller than the wide "
-                 + "one (\(wideAnatomy.cardHeight)pt) - it did not actually reflow", &ok)
-        }
-        // And the compact bars really do span the card, which is the whole
-        // point of moving the caption off their row.
-        //
-        // Measured against this card's **own** body width, not against the
-        // wide card's bar: the wide card is twice as wide, so its bar column
-        // is legitimately wider in absolute points. The claim here is that
-        // the compact bar takes every point its card has, which a bar still
-        // sharing its row with a caption could not.
-        let compactBody = HomeCanvasController.minModuleWidth
-            - HelmModuleCard.horizontalInset * 2
-        if let bed = narrowAnatomy.usageTrackFills.first?.bedWidth, bed < compactBody - 1 {
-            fail("the compact bar is \(bed)pt of the \(compactBody)pt its card's body has - "
-                 + "the caption is still taking a column beside it", &ok)
+            fail("the narrow card (\(narrowAnatomy.cardHeight)pt) is no taller than the span-2 "
+                 + "one (\(wideAnatomy.cardHeight)pt) - the panel did not move above the report", &ok)
         }
 
         if ok {
             print(String(format: "  OK - span-2 %.0fpt (floor %.0fpt) with %.0fpt bars, one "
-                         + "column reflows to %.0fpt with full-width bars and every reading "
-                         + "intact, neither clipped",
+                         + "column stacks to %.0fpt with every reading intact, neither "
+                         + "clipped",
                          wideAnatomy.cardHeight, HelmModuleCard.minimumHeight,
                          wideAnatomy.usageTrackFills.first?.bedWidth ?? 0,
                          narrowAnatomy.cardHeight))
@@ -1389,18 +1269,20 @@ enum ClaudeStatusCardSelfTest {
             return
         }
 
-        // 1. The card offers the action, and offers it *before* the
-        //    no-snapshot early return - the loading and failure states are
-        //    exactly when a captain reaches for Refresh.
+        // 1. The card offers the action, and offers it *before* it hands the
+        //    card to the hero, which draws every state including no reading
+        //    and a failed one - exactly when a captain reaches for Refresh.
+        //    (The anchor was the plain card's no-snapshot early return until
+        //    P-03 removed that card with the floating bar's hub.)
         guard let fill = canvas.range(of: "func fillClaudeStatus("),
-              let earlyReturn = canvas.range(of: "guard let snapshot = quotaSnapshot else {",
-                                             range: fill.upperBound..<canvas.endIndex) else {
-            fail("`fillClaudeStatus` no longer has its no-snapshot guard - anchor drift", &ok)
+              let hero = canvas.range(of: "fillClaudeHero(&content, width: width)",
+                                      range: fill.upperBound..<canvas.endIndex) else {
+            fail("`fillClaudeStatus` no longer hands the card to `fillClaudeHero` - anchor drift", &ok)
             return
         }
-        let beforeTheGuard = String(canvas[fill.upperBound..<earlyReturn.lowerBound])
-        if !beforeTheGuard.contains("content.headerAction") {
-            fail("the Claude card's header action is set after the no-snapshot early return, so "
+        let beforeTheHero = String(canvas[fill.upperBound..<hero.lowerBound])
+        if !beforeTheHero.contains("content.headerAction") {
+            fail("the Claude card's header action is not set before the hero fills the card, so "
                  + "the loading and failure states - the two a captain most wants to re-read - "
                  + "have no Refresh", &ok)
         }

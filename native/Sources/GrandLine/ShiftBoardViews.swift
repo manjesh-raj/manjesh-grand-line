@@ -619,6 +619,9 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
     /// the one thing a self-test cannot infer from the view's appearance.
     var debugIsDragging: Bool { isDraggingCard }
     var debugRow: HelmAccentRow { row }
+    /// The prototype's card, once the board has adopted it - the card the
+    /// page draws.
+    var debugWorkspaceCard: ShiftWorkspaceTaskCard? { usesWorkspaceStyle ? workspaceCard : nil }
     /// The due caption the card paints, in either style.
     var debugDue: String? { usesWorkspaceStyle ? workspaceCard.debugDue : row.debugMetaText }
     func debugLiftedSnapshotSize() -> NSSize? { liftedSnapshot()?.size }
@@ -856,49 +859,34 @@ final class ShiftLaneMenuItem: NSMenuItem {
     @objc private func fire() { run() }
 }
 
-/// The sidebar layout's Follow-ups, as a lane on the board.
+/// Tasks' Follow-ups, as a lane on the board.
 ///
 /// Full review #4 (R4-UX-09, R4-UI-09, review #3's UX-05): at 1512x950 the
 /// board stacked two full-width cards under itself, Follow-ups and Projects,
 /// so the page read as a board with a report under it. Follow-ups is a lane
-/// beside the three status lanes now - the same tint, the same header and the
-/// same card a task takes - and Projects is the project pop-up in the filter
-/// row, which it already was. A follow-up is not a task with a status, so the
-/// lane is neither a drag source nor a drop target: a click opens it, and its
-/// menu marks it done, snoozes it or deletes it, as the List tab's row does.
+/// beside the three status lanes now - the same wash, a band like theirs and
+/// the same card a task takes - and Projects is the hero band's project
+/// menu. A follow-up is not a task with a status, so the lane is neither a
+/// drag source nor a drop target: a click opens it, and its menu marks it
+/// done, snoozes it or deletes it, as the List tab's row does.
 final class ShiftFollowUpLaneView: NSView {
 
     /// The most cards the lane draws before its foot says how many more.
     static let maxCards = 50
 
     private let laneBackground = NSView()
-    private let header = HelmSectionHeader(size: .lane)
-    /// S20: the lane's "+" is a 28pt `HelmIconButton` target.
-    private let headerAdd = HelmIconButton(symbol: "plus", label: "New task")
     private let cardsStack = NSStackView()
     private let moreLabel = NSTextField(labelWithString: "")
     private let emptyState = HelmEmptyState(symbol: "bell", body: "No follow-ups waiting", size: .quiet)
     private var cards: [(host: HoverHighlightView, card: ShiftWorkspaceTaskCard, id: String)] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
-    /// The rule under the header, drawn only in the classic style.
-    private let headerRule = NSView()
-    /// S08: the lane's identity dot, kept in both styles, the way
-    /// `HelmSectionHeader(.lane)` draws a lane's mark.
-    private let headerMark: HelmSectionHeader.Leading = .dot(.warn)
-    private var usesClassicStyle = false
-    /// The constraints of whichever style is showing.
-    private var laneConstraints: [NSLayoutConstraint] = []
-    /// S08: the lane's foot, the same "Add" every status lane has. A dashed
-    /// box in the sidebar layout's lane, a quiet text button in the classic
-    /// one - each the shape `ShiftBoardColumnView` draws in that style.
+    /// S08: the lane's foot, the same "Add" every status lane has: a dashed
+    /// box with its button centred, the shape `ShiftBoardColumnView` draws.
     private let addHost = NSView()
     private let addOutline = CAShapeLayer()
     private let addButton = HelmButton(title: "Add follow-up", variant: .quiet, size: .small, symbol: "plus")
-    /// Centred in the dashed box; at the leading edge in the classic lane,
-    /// where the status lanes' "Add task" sits.
-    private var addButtonCentred: NSLayoutConstraint!
-    private var addButtonLeading: NSLayoutConstraint!
-    /// T-4: the lane's band, amber, in the sidebar layout's lane.
+    /// T-4: the lane's band, amber, across the top of its card - the lane's
+    /// header and its "+".
     private lazy var laneBand = ShiftLaneHeroBand(tone: .amber, title: "Follow-ups", addTooltip: "New follow-up",
                                                   target: self, action: #selector(addTapped))
 
@@ -914,16 +902,6 @@ final class ShiftFollowUpLaneView: NSView {
         laneBackground.layer?.cornerRadius = HelmMetrics.rPanel
         laneBackground.translatesAutoresizingMaskIntoConstraints = false
         addSubview(laneBackground)
-
-        header.configure(leading: headerMark, title: "Follow-ups", count: "0")
-        header.translatesAutoresizingMaskIntoConstraints = false
-        headerAdd.target = self
-        headerAdd.action = #selector(addTapped)
-        headerAdd.toolTip = "New follow-up"
-        headerAdd.setAccessibilityLabel("New follow-up")
-        headerAdd.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(header)
-        addSubview(headerAdd)
 
         cardsStack.orientation = .vertical
         cardsStack.alignment = .leading
@@ -944,50 +922,26 @@ final class ShiftFollowUpLaneView: NSView {
         addButton.action = #selector(addTapped)
         addButton.translatesAutoresizingMaskIntoConstraints = false
         addHost.addSubview(addButton)
-        addButtonCentred = addButton.centerXAnchor.constraint(equalTo: addHost.centerXAnchor)
-        addButtonLeading = addButton.leadingAnchor.constraint(equalTo: addHost.leadingAnchor)
         NSLayoutConstraint.activate([
-            addButtonCentred,
+            addButton.centerXAnchor.constraint(equalTo: addHost.centerXAnchor),
             addButton.centerYAnchor.constraint(equalTo: addHost.centerYAnchor),
             addHost.heightAnchor.constraint(equalToConstant: 32),
         ])
         // The whole dashed box is the button, as the status lanes draw it.
         addHost.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(addTapped)))
 
-        headerRule.wantsLayer = true
-        headerRule.isHidden = true
-        headerRule.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(headerRule)
-
-        NSLayoutConstraint.activate([
-            header.trailingAnchor.constraint(lessThanOrEqualTo: headerAdd.leadingAnchor, constant: -HelmMetrics.s2),
-            headerAdd.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-        ])
-        laneConstraints = laneStyleConstraints()
-        NSLayoutConstraint.activate(laneConstraints)
-        // The sidebar layout's lane draws its band in place of the header.
-        header.isHidden = true
-        headerAdd.isHidden = true
-        applyTheme(theme)
-    }
-
-    /// The sidebar layout's lane, which is `ShiftBoardColumnView`'s workspace
-    /// lane: a rounded wash ending under the lane's last control, the header
-    /// inside it, the cards and the dashed add row 8pt in from its edges.
-    private func laneStyleConstraints() -> [NSLayoutConstraint] {
+        // `ShiftBoardColumnView`'s workspace lane: a rounded wash ending under
+        // the lane's last control, the band across its top, the cards and the
+        // dashed add row 8pt in from its edges.
         let inset = HelmMetrics.s2
-        if laneBand.superview !== laneBackground { laneBackground.addSubview(laneBand) }
-        return [
+        laneBackground.addSubview(laneBand)
+        NSLayoutConstraint.activate([
             laneBackground.topAnchor.constraint(equalTo: topAnchor),
             laneBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
             laneBackground.trailingAnchor.constraint(equalTo: trailingAnchor),
             // The board's row may stretch this view to its tallest lane; the
             // card follows what the lane holds, as the status lanes' does.
             laneBackground.bottomAnchor.constraint(equalTo: cardsStack.bottomAnchor, constant: inset),
-            header.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s3),
-            header.heightAnchor.constraint(equalToConstant: 30),
-            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             // T-4: the amber band across the card's top, the cards 8pt under
             // it - the status lanes' own measure, so the four lanes' first
             // cards line up.
@@ -998,54 +952,8 @@ final class ShiftFollowUpLaneView: NSView {
             cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             cardsStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -inset),
-        ]
-    }
-
-    /// The floating bar's lane, which is `ShiftBoardColumnView`'s classic
-    /// one: no wash, the header on a rule, the cards at the lane's edges.
-    private func classicStyleConstraints() -> [NSLayoutConstraint] {
-        [
-            header.topAnchor.constraint(equalTo: topAnchor),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.s1),
-            header.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
-            headerAdd.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerRule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headerRule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            headerRule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s2),
-            headerRule.heightAnchor.constraint(equalToConstant: 1),
-            cardsStack.topAnchor.constraint(equalTo: headerRule.bottomAnchor, constant: HelmMetrics.s3),
-            cardsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            cardsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            cardsStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
-        ]
-    }
-
-    /// R4-UX-09: the floating bar's board draws its status lanes untinted,
-    /// each a dot, a title and a count on a rule
-    /// (`ShiftBoardColumnView`'s classic style), so the lane takes the same
-    /// shape there rather than the sidebar layout's tinted one.
-    ///
-    /// S08 of the 2026-11-17 UI/UX proposals: this is a setter both ways now,
-    /// not a one-way adoption. The page's first render runs from `loadView`,
-    /// before the sidebar shell's `adoptSidebarLayout` has said which layout
-    /// it is in, and a one-way adoption made there left the sidebar layout's
-    /// Follow-ups in the classic shape beside three washed lanes for good.
-    func setClassicStyle(_ classic: Bool) {
-        guard classic != usesClassicStyle else { return }
-        usesClassicStyle = classic
-        laneBackground.isHidden = classic
-        headerRule.isHidden = !classic
-        // T-4: the band is the sidebar layout's header; the classic lane
-        // keeps the dot, the title and the count on a rule.
-        header.isHidden = !classic
-        headerAdd.isHidden = !classic
-        NSLayoutConstraint.deactivate(laneConstraints)
-        laneConstraints = classic ? classicStyleConstraints() : laneStyleConstraints()
-        NSLayoutConstraint.activate(laneConstraints)
-        addButtonCentred.isActive = !classic
-        addButtonLeading.isActive = classic
+        ])
         applyTheme(theme)
-        needsLayout = true
     }
 
     override func layout() {
@@ -1067,7 +975,6 @@ final class ShiftFollowUpLaneView: NSView {
             view.removeFromSuperview()
         }
         cards.removeAll()
-        header.configure(leading: headerMark, title: "Follow-ups", count: "\(followUps.count)")
         laneBand.configure(count: followUps.count, detail: ShiftHeroWords.laneDetail(
             dues: followUps.map { ($0.followUpAt, $0.followUpTime) }, empty: "Nothing waiting"))
         guard !followUps.isEmpty else {
@@ -1123,17 +1030,12 @@ final class ShiftFollowUpLaneView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        headerAdd.applyTheme(theme)
         // The status lanes' own card (`ShiftBoardColumnView.applyTheme`).
         ShiftBoardColumnView.paintLaneCard(laneBackground, theme: theme)
         laneBand.applyTheme(theme)
-        header.applyTheme(theme)
-        headerRule.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(theme.isDaylight ? 1 : HelmCard.borderAlpha).cgColor
         emptyState.applyTheme(theme)
         moreLabel.textColor = HelmTheme.mutedInk(theme)
-        // The status lanes' dashed outline, drawn only inside the wash.
-        addOutline.isHidden = usesClassicStyle
+        // The status lanes' dashed outline.
         addOutline.strokeColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(theme.isDaylight ? 1 : 0.8).cgColor
         for entry in cards { entry.card.applyTheme(theme) }
@@ -1142,21 +1044,19 @@ final class ShiftFollowUpLaneView: NSView {
     #if FM_SELFTESTS
     var debugCardTitles: [String] { cards.map(\.card.debugTitle) }
     var debugCardDues: [String?] { cards.map(\.card.debugDue) }
-    var debugCount: String { header.countLabel.stringValue }
-    var debugUsesClassicStyle: Bool { usesClassicStyle }
+    /// The band's count, which is the lane's.
+    var debugCount: String { laneBand.debugCount }
     /// A real click's path: the card host's own recognizer and its action.
     func debugClickCard(at index: Int) -> Bool {
         guard cards.indices.contains(index) else { return false }
         return cards[index].host.performPrimaryAction()
     }
-    var debugAddButton: HelmIconButton { headerAdd }
     /// S08: the lane's foot and whether its dashed outline shows.
     var debugAddRow: (button: HelmButton, outlined: Bool, inLane: Bool) {
         (addButton, !addOutline.isHidden, addHost.superview === cardsStack)
     }
-    var debugHeaderMark: HelmSectionHeader.Leading { headerMark }
     var debugLaneWashShown: Bool { !laneBackground.isHidden }
-    var debugLaneBand: ShiftLaneHeroBand? { usesClassicStyle ? nil : laneBand }
+    var debugLaneBand: ShiftLaneHeroBand { laneBand }
     func debugMenuTitles(at index: Int) -> [String] {
         guard cards.indices.contains(index) else { return [] }
         return cards[index].host.menu?.items.map(\.title) ?? []

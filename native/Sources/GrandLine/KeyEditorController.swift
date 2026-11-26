@@ -925,8 +925,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
                              subtitle: pendingFingerprint ?? editing?.fingerprint ?? waiting,
                              badge: type?.displayName,
                              badgeTint: .info,
-                             facts: [HostsKeychainCard.biometryPhrase(CredentialVaultKeyStore.biometryAvailable,
-                                                                      capitalized: true), hosts]))
+                             facts: [HostsController.biometryPhrase(CredentialVaultKeyStore.biometryAvailable,
+                                                                    capitalized: true), hosts]))
     }
 
     /// The footer's line: what Save is waiting for, or what Return does.

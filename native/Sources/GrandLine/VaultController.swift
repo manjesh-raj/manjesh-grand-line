@@ -75,27 +75,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private var installStatus: DependencyStatus = .unknown
     private var isInstallBusy = false
 
-    // Quiet-until-it-matters attention banner - hidden unless a real tool has
-    // real issues (`av doctor --json`), never a manufactured warning.
-    /// S17: a `HelmNotice` in `.warn`, so it carries the attention edge, with
-    /// "View Fix…" when one launcher is the problem.
-    private lazy var attentionBanner = HelmNotice(actions: [attentionFixButton])
-    private lazy var attentionFixButton = HelmButton(title: "View Fix\u{2026}", variant: .secondary, size: .small,
-                                                     target: self, action: #selector(attentionFixTapped))
-    private var attentionTool: VaultTool?
-    private var attentionText = ""
-
-    private let secretsPanel = HelmCard()
-    let secretsStack = NSStackView()
-    /// UI4: a real pill, not a bare monospaced digit floating in the header.
-    /// Starts at `?` rather than `0` for GL-14's reason - the page has not
-    /// looked yet, and "no secrets" is a different claim from "not asked".
+    /// UI4: the Secrets card header's count is a real pill, not bare
+    /// monospaced digits floating in the header. It starts at `?` rather than
+    /// `0` for GL-14's reason - the page has not looked yet, and "no secrets"
+    /// is a different claim from "not asked". The launchers' count is S-1's
+    /// card's own header line (`VaultHeroSplitView`).
     private let secretsCountBadge = HelmCountBadge(text: "?")
-    private let addSecretButton = HelmButton(title: "", variant: .primary)
-
-    private let toolsPanel = HelmCard()
-    let toolsStack = NSStackView()
-    private let toolsCountBadge = HelmCountBadge(text: "?")
+    /// The page's primary action, at the toolbar's far right
+    /// (`workspacePrimaryAction`).
+    private let addSecretButton = HelmButton(title: "+ Add Secret", variant: .primary)
 
     // "Backup the recipe, not the values" (fm/grandline-vault-recipe-backup) -
     // see VaultRecipe.swift/VaultRecipeGit.swift for what's recorded and why.
@@ -163,24 +151,16 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// unlock rather than raising Automic Vault's approval dialog behind it.
     private(set) var readDeferredByLock = false
 
-    // MARK: The sidebar layout (`SidebarLayoutAdopting`, at the end of this file)
+    // MARK: The presentation (`buildSidebarPresentation`, at the end of this file)
 
-    /// Set once, by `adoptSidebarLayout()`: Secrets and Verified Launchers are
-    /// the shared table, under the same card headers. Never set in the
-    /// floating bar.
-    private(set) var drawsSidebarLayout = false
+    // Secrets are the shared table, under their card header.
     private lazy var secretsTable = HelmDataTable(columns: [
         .init(id: "secret", title: "Secret", width: 260, minWidth: 180, flexible: true),
         .init(id: "status", title: "Status", width: 140, hiddenBelow: 560),
     ], actionsWidth: 172)
-    private lazy var toolsTable = HelmDataTable(columns: [
-        .init(id: "launcher", title: "Launcher", width: 260, minWidth: 180, flexible: true),
-        .init(id: "status", title: "Status", width: 170),
-    ], actionsWidth: 172)
     /// S-1 on the page-redesign board, which the captain kept for this tab:
     /// the launchers' verdict on a gradient beside the launchers themselves
-    /// (`VaultHeroSplit.swift`). In the sidebar layout it stands in for the
-    /// attention banner and the Verified Launchers table.
+    /// (`VaultHeroSplit.swift`). It is what the page draws for the launchers.
     private lazy var heroSplit = VaultHeroSplitView()
     private var isLoadingSnapshot = false
     private var isRecheckingTool = false
@@ -241,23 +221,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
         view = root
 
         configureHeaderActions()
-        _ = buildSecretsSection()
-        _ = buildToolsSection()
         _ = buildRecipeSection()
 
         scaffold.install(in: root)
-        contentStack.addArrangedSubview(attentionBanner)
-        contentStack.addArrangedSubview(secretsPanel)
-        contentStack.addArrangedSubview(toolsPanel)
         contentStack.addArrangedSubview(recipePanel)
-        attentionBanner.isHidden = true
-
-        NSLayoutConstraint.activate([
-            attentionBanner.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            secretsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            toolsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            recipePanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-        ])
+        recipePanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme
@@ -272,6 +240,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
             guard !locked, let self, self.readDeferredByLock, !self.view.isHiddenOrHasHiddenAncestor else { return }
             self.startFirstRead()
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
 
@@ -359,62 +331,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
         refreshButton.action = #selector(refreshTapped)
         refreshButton.toolTip = "Refresh Vault status"
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
-    }
-
-    @objc private func attentionFixTapped() {
-        guard let attentionTool else { return }
-        presentIssueSheet(for: attentionTool)
-    }
-
-    private func buildSecretsSection() -> NSView {
-
-        addSecretButton.title = "+ Add Secret"
-        addSecretButton.controlSize = .small
         addSecretButton.target = self
         addSecretButton.action = #selector(addSecretTapped)
-
-
-        // The structured `HelmCard` header - icon tile, title, subtitle,
-        // trailing actions - replacing a hand-rolled title-only row so this
-        // card reads the same as every other icon-tile card on this page
-        // (Verified Launchers, Recipe Backup) and elsewhere in the app
-        // (`ShiftPanelView`'s own section headers use the identical shape).
-        secretsPanel.setHeader(
-            symbol: "lock.fill",
-            tint: .good,
-            title: "Secrets",
-            subtitle: "Keychain-backed, this device only",
-            actions: [secretsCountBadge, addSecretButton]
-        )
-        secretsStack.orientation = .vertical
-        secretsStack.alignment = .leading
-        secretsStack.spacing = 10
-        secretsStack.translatesAutoresizingMaskIntoConstraints = false
-
-        secretsPanel.setBody(secretsStack)
-        // UI4: the card is loading from the moment it exists, not from the
-        // moment `renderAll()` first runs.
-        addLoadingSkeleton(to: secretsStack)
-        return secretsPanel
-    }
-
-    private func buildToolsSection() -> NSView {
-
-        toolsPanel.setHeader(
-            symbol: "checkmark.shield.fill",
-            tint: .violet,
-            title: "Verified Launchers",
-            subtitle: "From av doctor --json",
-            actions: [toolsCountBadge]
-        )
-        toolsStack.orientation = .vertical
-        toolsStack.alignment = .leading
-        toolsStack.spacing = 10
-        toolsStack.translatesAutoresizingMaskIntoConstraints = false
-
-        toolsPanel.setBody(toolsStack)
-        addLoadingSkeleton(to: toolsStack)
-        return toolsPanel
     }
 
     private func buildRecipeSection() -> NSView {
@@ -529,37 +447,21 @@ final class VaultController: NSViewController, DaylightDrillActions {
         hasLoadedOnce = true
 
         let notInstalled = installStatus == .notInstalled
-        secretsPanel.isHidden = notInstalled
-        toolsPanel.isHidden = notInstalled
-        if drawsSidebarLayout {
-            secretsTable.card.isHidden = notInstalled
-            toolsTable.card.isHidden = notInstalled
-        }
-
-        // B1: a read that failed says nothing about whether anything needs
-        // attention, so the banner stays down rather than claiming all-clear.
-        let notice = notInstalled ? nil : tools.flatMap(VaultSource.attentionNotice(for:))
-        attentionBanner.isHidden = notice == nil
-        attentionText = notInstalled ? "" : tools.flatMap(VaultSource.attentionBannerText(for:)) ?? ""
-        attentionTool = notice?.tool
-        attentionFixButton.isHidden = notice?.tool == nil
-        if let notice {
-            attentionBanner.configure(.init(tint: .warn, symbol: "exclamationmark.triangle.fill",
-                                            title: notice.title, body: notice.body), theme: theme)
-        }
+        secretsTable.card.isHidden = notInstalled
 
         // B1: "?" rather than "0" for a count this page does not have.
         secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
-        rebuildSecretsStack()
-
-        toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
-        rebuildToolsStack()
-        if drawsSidebarLayout { renderTables() }
+        renderTables()
 
         applyTheme()
         onDrillSubtitleChanged?()
         publishVaultSignal()
-        view.layoutSubtreeIfNeeded()
+        // A read can land before the page is in a window (a page built and
+        // read off screen). Its layout then runs in a throwaway engine, which
+        // AppKit refuses for this page's hidden, detached views ("unable to
+        // find variable ... in engine 0x0"), and the page lays out anyway
+        // when it reaches a window.
+        if view.window != nil { view.layoutSubtreeIfNeeded() }
         scrollToTop()
     }
 
@@ -578,86 +480,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
         BackgroundSignalsPoller.shared.publishVaultRead(secrets: secrets, tools: tools)
     }
 
-    // MARK: The two lists, keyed (PERF-05)
-    //
-    // **The 2026-10 end-to-end review's PERF-05.** Both stacks used to be
-    // emptied and refilled on every snapshot - one `HelmAccentRow` and its
-    // buttons per secret and per launcher, rebuilt whether or not anything
-    // changed. They reconcile through `HelmKeyedRows` now, keyed by name: a
-    // secret or launcher still listed keeps its row and is reconfigured in
-    // place, and only a new name builds one. The three non-list states
-    // (loading, failed, empty) are unchanged - reconciling to no rows first
-    // takes the keyed rows out cleanly, and the state view is added after.
-
-    lazy var secretRows = HelmKeyedRows(stack: secretsStack)
-    lazy var toolRows = HelmKeyedRows(stack: toolsStack)
-
-    /// D3's placeholder for a card whose list has not arrived.
-    ///
-    /// UI4's other half. Both cards are built in `loadView` with empty stacks
-    /// and only filled by the first `renderAll()`, so between opening the page
-    /// and the `av` subprocess answering, Secrets and Verified Launchers
-    /// rendered as bare 57pt headers with nothing under them - a card that
-    /// looks finished and empty rather than one that is still loading, while
-    /// the drill subtitle overhead said "Checking Automic Vault\u{2026}".
-    /// Seeding the skeleton at build time is what closes that window; the
-    /// `addUnknownState` path above keeps it up for as long as the read is
-    /// genuinely outstanding.
-    func addLoadingSkeleton(to stack: NSStackView) {
-        let skeleton = HelmSkeletonList(rows: 2)
-        skeleton.applyTheme(theme)
-        stack.addArrangedSubview(skeleton)
-        skeleton.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    }
-
-    /// Everything a secret row shows - the keyed list's `update` and its
-    /// `make` configure from the same value, so a kept row and a new one
-    /// render the same.
-    func secretRowContent(_ secret: VaultSecret) -> HelmAccentRow.Content {
-        HelmAccentRow.Content(
-            tint: .good,
-            kicker: "Hardened",
-            title: secret.name,
-            // `av list` only ever returns bare secret names - there is no
-            // per-secret human-readable purpose (the prototype's "App lock"/
-            // "GitHub CLI" are illustrative examples, not real data this app
-            // has access to) - so this stays a plain, honest, generic line
-            // rather than a fabricated description.
-            meta: "Stored in Automic Vault's Keychain",
-            badgeSymbol: "key.fill",
-            titleIsCode: true
-        )
-    }
-
-    /// Everything a launcher row shows - see `secretRowContent`.
-    func toolRowContent(_ tool: VaultTool) -> HelmAccentRow.Content {
-        let isHardened: Bool
+    /// What a launcher's row says under its name: `av doctor`'s own detail
+    /// for a launcher that needs attention, and the all-clear otherwise.
+    static func launcherDetail(_ tool: VaultTool) -> String {
         switch tool.status {
-        case .hardened: isHardened = true
-        case .needsAttention: isHardened = false
+        case .hardened: return "Hardened, 0 issues"
+        case .needsAttention: return tool.issueSummary ?? tool.status.label + " found"
         }
-        // "Needs attention" (real `av doctor` issues) reads as amber, not
-        // red - a tool with issues to review isn't broken the same way. The
-        // kicker names the category ("Hardened"/"Needs Attention"); the meta
-        // line carries the real detail (`av doctor`'s own issue count).
-        let meta = isHardened
-            ? "Hardened, 0 issues"
-            : tool.issueSummary ?? tool.status.label + " found"
-        return HelmAccentRow.Content(
-            tint: isHardened ? .good : .warn,
-            kicker: isHardened ? "Hardened" : "Needs Attention",
-            title: tool.name,
-            meta: meta,
-            badgeSymbol: "checkmark.shield.fill",
-            // §7's "signal row for launcher issues", and the only row on this
-            // page that gets one: a launcher `av doctor --json` itself reports
-            // issues for is the one thing here the captain has to act on. A
-            // hardened launcher and a stored secret are records, not signals -
-            // washing them too would leave the page with nothing standing out,
-            // which is the state PRODUCT.md's "quiet until it matters" is
-            // about.
-            isSignal: !isHardened
-        )
     }
 
     // MARK: Actions
@@ -675,17 +504,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
             }
         }
         presentAsSheet(sheet)
-    }
-
-    @objc func runInjectedTapped(_ sender: NSButton) {
-        guard let raw = sender.identifier?.rawValue, raw.hasPrefix("secret-run:") else { return }
-        let name = String(raw.dropFirst("secret-run:".count))
-        presentInjectSheet(preselected: name)
-    }
-
-    @objc func copyNameTapped(_ sender: NSButton) {
-        guard let raw = sender.identifier?.rawValue, raw.hasPrefix("secret-copy:") else { return }
-        copySecretName(String(raw.dropFirst("secret-copy:".count)))
     }
 
     // MARK: Recipe backup (fm/grandline-vault-recipe-backup)
@@ -887,30 +705,14 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     private func applyTheme() {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        attentionBanner.applyTheme(theme)
 
         // Theme-derived, never the system `labelColor` default these two
         // fell back to before this pass - the same rule `HelmCard`'s own
         // header title/subtitle already follow.
         secretsCountBadge.applyTheme(theme)
-        toolsCountBadge.applyTheme(theme)
-        // UI4: the two cards' rows are rebuilt with the current theme baked
-        // in, but a build-time skeleton predates the first `renderAll()` and
-        // would otherwise keep a stale palette across a theme switch.
-        for stack in [secretsStack, toolsStack] {
-            for case let skeleton as HelmSkeletonList in stack.arrangedSubviews {
-                skeleton.applyTheme(theme)
-            }
-        }
-
-        secretsPanel.applyTheme(theme)
-        toolsPanel.applyTheme(theme)
-        if drawsSidebarLayout {
-            secretsTable.applyTheme(theme)
-            toolsTable.applyTheme(theme)
-            // The amber tone is the theme's own, so the card is re-filled.
-            renderHeroSplit()
-        }
+        secretsTable.applyTheme(theme)
+        // The amber tone is the theme's own, so the card is re-filled.
+        renderHeroSplit()
         recipePanel.applyTheme(theme)
         // Re-derive from the *current* theme, not whatever theme was active
         // when this label's color was last set - see `recipeLabelKind`'s own
@@ -950,51 +752,21 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// fixture `debugRender` drew before it landed.
     var debugIsReading: Bool { isInstallBusy || isLoadingSnapshot }
 
-    /// B1: what the two count badges are showing right now.
+    /// B1: what the Secrets count badge is showing right now.
     var debugSecretsBadge: String { secretsCountBadge.text }
-    var debugToolsBadge: String { toolsCountBadge.text }
-    /// UI4's probe surface: the badges themselves, so a suite can assert the
-    /// pill is painted rather than only that the digits are right.
-    var debugCountBadges: [HelmCountBadge] { [secretsCountBadge, toolsCountBadge] }
-    /// UI4: how many D3 skeleton lists the two cards are showing right now.
-    var debugSkeletonCount: Int {
-        [secretsStack, toolsStack].reduce(0) { $0 + $1.arrangedSubviews.filter { $0 is HelmSkeletonList }.count }
-    }
-
-    /// B1: the body copy of whatever empty/unknown state each card is
-    /// showing, so a test can tell the three states apart by what the captain
-    /// actually reads.
-    var debugSecretsPlaceholderText: String? { placeholderText(in: secretsStack) }
-    var debugToolsPlaceholderText: String? { placeholderText(in: toolsStack) }
-
-    private func placeholderText(in stack: NSStackView) -> String? {
-        for view in stack.arrangedSubviews where view is HelmEmptyState {
-            var found: String?
-            func walk(_ v: NSView) {
-                if let label = v as? NSTextField, !label.stringValue.isEmpty, found == nil {
-                    found = label.stringValue
-                }
-                for sub in v.subviews { walk(sub) }
-            }
-            walk(view)
-            return found
-        }
-        return nil
-    }
-
-    /// The real row views the Verified Launchers card is showing, in order.
-    var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
-    var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
-    var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
-    var debugAttentionBannerText: String { attentionText }
-    var debugAttentionNotice: HelmNotice { attentionBanner }
-    /// The sidebar layout's Verified Launchers rows, as the table will be given them.
-    var debugToolTableRows: [HelmDataTable.Row] { toolTableRows() }
+    /// UI4's probe surface: the badge itself, so a suite can assert the pill
+    /// is painted rather than only that the digits are right.
+    var debugSecretsCountBadge: HelmCountBadge { secretsCountBadge }
     /// The path a real finished re-check takes into the page, minus the subprocess.
     func debugFinishRecheck(_ name: String, _ fresh: VaultTool?) { isRecheckingTool = true; finishRecheck(name, fresh) }
     var debugSecretsTable: HelmDataTable { secretsTable }
-    var debugToolsTable: HelmDataTable { toolsTable }
-    var debugHeroSplit: VaultHeroSplitView? { drawsSidebarLayout ? heroSplit : nil }
+    /// The secrets table's own empty row, which is where the page says
+    /// "still reading", "could not read" or "none".
+    var debugSecretsTablePlaceholderText: String? {
+        for row in secretsTable.debugRows { if case .empty(_, _, let body) = row.kind { return body } }
+        return nil
+    }
+    var debugHeroSplit: VaultHeroSplitView? { heroSplit }
     #endif
 }
 
@@ -1402,73 +1174,54 @@ final class VaultInjectSheetController: NSViewController {
 
 }
 
-// MARK: - The sidebar layout
+// MARK: - The presentation
 
-// In the sidebar layout Secrets › Automic Vault draws its two lists as the
-// shared table, the same one Poneglyph and Connections use, under the same
-// card headers (the count badges and Add Secret stay where they are). The
-// recipe card and the attention banner do not change.
+// Secrets › Automic Vault opens on S-1's split card (the launchers' verdict
+// beside the launchers themselves), then the secrets as the shared table, the
+// same one Poneglyph and Connections use, under its card header with its
+// count, then the recipe card. Add Secret is the toolbar's primary action.
 //
-// Every row runs the floating bar's own action - Run Injected opens the same
-// sheet, Copy Name copies the name and never a value (this app never holds an
-// Automic Vault value) - and the three states the cards honour stay three:
+// Every row runs the page's own action - Run Injected opens the inject sheet,
+// Copy Name copies the name and never a value (this app never holds an
+// Automic Vault value) - and the three states a read can be in stay three:
 // still reading, could not read, and genuinely empty (B1).
 
-extension VaultController: SidebarLayoutAdopting {
+extension VaultController {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
-        for (panel, table, index) in [(secretsPanel, secretsTable, 1), (toolsPanel, toolsTable, 2)] {
-            panel.isHidden = true
-            contentStack.removeArrangedSubview(panel)
-            panel.removeFromSuperview()
-            table.sizesToFitRows = true
-            table.card.translatesAutoresizingMaskIntoConstraints = false
-            // S-1: the launchers are the split card's rows, so their table
-            // is built and kept current but not drawn.
-            guard table !== toolsTable else { continue }
-            contentStack.insertArrangedSubview(table.card, at: index)
-            table.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        }
-        // S-1's split card, first on the page, where the banner was.
+    func buildSidebarPresentation() {
+        // S-1's split card, first on the page, then the secrets table over
+        // the recipe card.
         contentStack.insertArrangedSubview(heroSplit, at: 0)
         heroSplit.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        secretsTable.sizesToFitRows = true
+        secretsTable.card.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.insertArrangedSubview(secretsTable.card, at: 1)
+        secretsTable.card.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
         secretsTable.accessibilityName = "Secrets"
-        toolsTable.accessibilityName = "Verified launchers"
-        // The same headers, holding the same badges and button.
-        // R2-UX-04: the same header with its count, and Add Secret moves to the
-        // toolbar's far right (`workspacePrimaryAction`) - nothing lives in a
-        // card header.
+        // R2-UX-04: the header carries the count, and Add Secret is the
+        // toolbar's far-right button (`workspacePrimaryAction`) - nothing
+        // lives in a card header. S-1's card shows the launchers.
         secretsTable.card.setHeader(symbol: "lock.fill", tint: .good, title: "Secrets",
                                     subtitle: "Keychain-backed, this device only",
                                     actions: [secretsCountBadge])
-        addSecretButton.controlSize = .regular
-        toolsTable.card.setHeader(symbol: "checkmark.shield.fill", tint: .violet, title: "Verified Launchers",
-                                  subtitle: "From av doctor --json", actions: [toolsCountBadge])
         applyTheme()
         renderTables()
     }
 
     private func renderTables() {
         secretsTable.setRows(secretTableRows())
-        toolsTable.setRows(toolTableRows())
         renderHeroSplit()
     }
 
-    /// S-1: the card for the read as it stands. The banner it replaces
-    /// stays down in this layout.
+    /// S-1: the card for the read as it stands.
     fileprivate func renderHeroSplit() {
-        guard drawsSidebarLayout else { return }
-        attentionBanner.isHidden = true
         let words = VaultHeroWords.make(secrets: secrets, tools: tools, hasLoadedOnce: hasLoadedOnce,
                                         notInstalled: installStatus == .notInstalled, refusedHere: readWasRefusedHere)
         heroSplit.configure(words, tools: tools, fix: { [weak self] tool in self?.presentIssueSheet(for: tool) },
                             theme: theme)
     }
 
-    /// The sentence both layouts show for a read of `noun` that did not
+    /// The sentence the page shows for a read of `noun` that did not
     /// happen. A denied approval dialog is its own wording, because its fix
     /// is to ask again rather than to restart Automic Vault's helper.
     func failedReadText(noun: String) -> String {
@@ -1513,36 +1266,8 @@ extension VaultController: SidebarLayoutAdopting {
         }
     }
 
-    private func toolTableRows() -> [HelmDataTable.Row] {
-        guard let tools else { return [unreadRow(noun: "verified launchers")] }
-        guard !tools.isEmpty else {
-            return [.empty(symbol: "checkmark.shield", title: "",
-                           body: "No verified launchers registered with Automic Vault yet.")]
-        }
-        return tools.map { tool in
-            var row = HelmDataTable.Row.record(tool.name)
-            let content = toolRowContent(tool)
-            let hardened: Bool
-            if case .hardened = tool.status { hardened = true } else { hardened = false }
-            row.cells = [
-                "launcher": .title(tool.name, subtitle: content.meta, subtitleIsCode: false,
-                                   symbol: "checkmark.shield.fill", tint: hardened ? .good : .warn, tintHex: nil),
-                "status": .status(hardened ? "Hardened" : tool.status.label, tint: hardened ? .good : .warn),
-            ]
-            if !hardened {
-                row.primary = .init(title: "View Fix\u{2026}", symbol: "wrench.and.screwdriver") { [weak self] in
-                    self?.presentIssueSheet(for: tool)
-                }
-                row.pinsPrimary = true
-                row.activate = { [weak self] in self?.presentIssueSheet(for: tool) }
-                row.menu = [.init(title: "Re-check", symbol: "arrow.clockwise") { [weak self] in self?.recheck(tool.name) }]
-            }
-            return row
-        }
-    }
-
-    /// Copy Name, from either layout's row: the name already on screen,
-    /// never a value.
+    /// Copy Name, from a secret's row: the name already on screen, never a
+    /// value.
     fileprivate func copySecretName(_ name: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -1552,8 +1277,7 @@ extension VaultController: SidebarLayoutAdopting {
 }
 
 // R2-UX-04: Add Secret is the page's primary verb, the far-right filled
-// button in the sidebar layout rather than a button in the Secrets card's
-// header. The floating bar keeps it in the card.
+// button in the toolbar rather than a button in the Secrets card's header.
 extension VaultController: WorkspacePrimaryActionProviding {
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? addSecretButton : nil }
+    var workspacePrimaryAction: NSView? { addSecretButton }
 }

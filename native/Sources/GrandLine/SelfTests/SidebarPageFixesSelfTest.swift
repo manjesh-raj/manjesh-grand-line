@@ -90,8 +90,7 @@ enum SidebarPageFixesSelfTest {
         shell.workspace.navigator.show(.hosts)
         settle(shell)
         clickTab("Hosts", shell)
-        check(hosts.drawsSidebarLayout, "Connections did not adopt its sidebar presentation", &ok)
-
+        
         // The tabs count what each holds, read from the page's own stores -
         // and the Hosts count agrees with the table under it.
         let counts = hosts.moduleTabCounts
@@ -128,19 +127,15 @@ enum SidebarPageFixesSelfTest {
         // No stat strip over the tabs and no shortcut footer under them: the
         // tab view starts at the content column's top, which is the page
         // frame's first-content line (S03).
-        check(hosts.debugWorkspacePanel.isHidden && hosts.debugQuickActions.isHidden,
-              "the stat strip or the shortcut footer still shows", &ok)
         let page = hosts.view
         let tab = hosts.debugTabView.convert(hosts.debugTabView.bounds, to: page)
         let top = page.isFlipped ? tab.minY : page.bounds.height - tab.maxY
         check(abs(top - HelmMetrics.pageContentInset) < 1,
               "the tab view starts \(top)pt down the page, want \(HelmMetrics.pageContentInset)", &ok)
 
-        // One filter row: the search first, then All / Online in place of
-        // the floating bar's toggle.
+        // One filter row: the search first, then All / Online.
         let row = hosts.debugFilterRow?.arrangedSubviews.filter { !$0.isHidden } ?? []
-        check(row.first === hosts.debugSearchField && row.contains { $0 === hosts.debugOnlineFilter }
-                && !row.contains { $0 === hosts.debugOnlineChip },
+        check(row.first === hosts.debugSearchField && row.contains { $0 === hosts.debugOnlineFilter },
               "the filter row is not the search then All / Online", &ok)
         let search = hosts.debugSearchField.convert(hosts.debugSearchField.bounds, to: page)
         let filter = hosts.debugOnlineFilter.convert(hosts.debugOnlineFilter.bounds, to: page)
@@ -158,7 +153,6 @@ enum SidebarPageFixesSelfTest {
         settle(shell)
         let online = hosts.debugHostsTable.debugRows.filter { $0.isRecord && $0.key != HostsController.firstmateRowKey }
         check(online.map(\.key) == [liveKey], "Online lists \(online.map(\.key)), want the one live host", &ok)
-        check(hosts.debugOnlineChip.state == .on, "the floating bar's Online toggle does not follow the segments", &ok)
         hosts.debugOnlineFilter.debugClickTab(id: HostsController.allFilterID)
         settle(shell)
         check(hosts.debugHostsTable.debugRows.filter { $0.isRecord }.count == records.count + 1,
@@ -182,12 +176,13 @@ enum SidebarPageFixesSelfTest {
         // to the Keys row, over both the cards and the table.
         check(pill.isDescendant(of: hosts.keysTopRow) && pill.window != nil,
               "Touch ID's reading is not in the Keys row", &ok)
-        check(pill.label.stringValue == HostsKeychainCard.biometryPhrase(available, capitalized: true),
+        check(pill.label.stringValue == HostsController.biometryPhrase(available, capitalized: true),
               "the Keys card says \"\(pill.label.stringValue)\" about Touch ID", &ok)
 
         clickTab("Snippets", shell)
         let strip = hosts.debugExpansionStrip
-        check(strip.style == .inline && !strip.debugUsesACard && strip.window != nil,
+        func cards(in view: NSView) -> Int { (view is HelmCard ? 1 : 0) + view.subviews.reduce(0) { $0 + cards(in: $1) } }
+        check(cards(in: strip) == 0 && strip.window != nil,
               "the snippet expansion switch is not the plain row over the table", &ok)
         let table = hosts.debugSnippetsTable.card
         let page = hosts.view
@@ -212,7 +207,6 @@ enum SidebarPageFixesSelfTest {
         let logs = shell.workspace.logAnalyzer
         shell.workspace.navigator.show(.logAnalyzer)
         settle(shell)
-        check(logs.drawsSidebarLayout, "Logs did not adopt its sidebar presentation", &ok)
         check(shell.toolbar.debugPrimaryAction === logs.debugAnalyzeButton
                 && shell.toolbar.debugItemIdentifiers.last == WorkspaceToolbar.ItemID.primaryAction,
               "Analyze is not the toolbar's far-right action", &ok)
@@ -285,7 +279,7 @@ enum SidebarPageFixesSelfTest {
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         settle(shell)
         let card = health.debugHealthCard
-        check(health.drawsSidebarLayout && card.drawsTable && card.card.isHidden,
+        check(card.drawsTable && card.card.isHidden,
               "Health did not swap its card for the summary and the table", &ok)
         check(shell.toolbar.debugPrimaryAction === card.diagnosticsButton, "Copy diagnostics is not the far-right action", &ok)
         check(shell.toolbar.debugPageActions.contains { $0 === health.debugRefreshButton }, "Refresh is not in the toolbar", &ok)

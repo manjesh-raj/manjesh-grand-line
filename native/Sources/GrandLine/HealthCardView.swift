@@ -8,8 +8,7 @@
 // step to reach.
 //
 // **A plain view class rather than an extension on a controller** - the same
-// convention `SchedulesCardView`/`HostsListSection`/`ShiftProjectDetailView`
-// already follow: a self-contained view that owns its own rendering, so
+// convention `SchedulesCardView`/`ShiftProjectDetailView` already follow: a self-contained view that owns its own rendering, so
 // `HealthController` only owns presenting the page chrome around it.
 //
 // **Rebuilt from scratch on every report or theme change, not mutated in

@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // Connections' Keys as cards (K1, K3, K4 and K6 of the captain's
-// Termius-style plan), in the sidebar layout only.
+// Termius-style plan).
 //
 // The Keys tab opens on one row - a search over the keys (K3), Touch ID's
 // reading as a chip (K6), and the same Grid / List switch as Hosts at the
@@ -71,16 +71,16 @@ extension HostsController {
         let grid = keysGrid
         grid.accessibilityName = "SSH keys"
         keysTabView.addSubview(grid)
-        let list = keysList.card
+        let tab = keysTabView
         NSLayoutConstraint.activate([
-            keysTopRow.leadingAnchor.constraint(equalTo: list.leadingAnchor),
-            keysTopRow.trailingAnchor.constraint(equalTo: list.trailingAnchor),
-            keysTopRow.topAnchor.constraint(equalTo: list.topAnchor),
+            keysTopRow.leadingAnchor.constraint(equalTo: tab.leadingAnchor),
+            keysTopRow.trailingAnchor.constraint(equalTo: tab.trailingAnchor),
+            keysTopRow.topAnchor.constraint(equalTo: tab.topAnchor),
             keysTable.card.topAnchor.constraint(equalTo: keysTopRow.bottomAnchor, constant: HelmMetrics.s3),
-            grid.leadingAnchor.constraint(equalTo: list.leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: list.trailingAnchor),
+            grid.leadingAnchor.constraint(equalTo: tab.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: tab.trailingAnchor),
             grid.topAnchor.constraint(equalTo: keysTopRow.bottomAnchor, constant: HelmMetrics.s3),
-            grid.bottomAnchor.constraint(equalTo: list.bottomAnchor),
+            grid.bottomAnchor.constraint(equalTo: tab.bottomAnchor),
         ])
         // H11's rule for keys: leaving unsaved changes asks first.
         grid.onSelect = { [weak self] key in
@@ -123,7 +123,6 @@ extension HostsController {
     /// is searched and the hero column is put away, then the keys - the
     /// Hosts grid's Recent and All hosts.
     func renderKeysGrid(_ keys: [SSHKey]) {
-        guard drawsSidebarLayout else { return }
         let searching = !keySearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // While the hero column shows, Recent keys is its job.
         let recent = searching || heroColumnShowing ? [] : Self.recentKeys(keyStore.keys)

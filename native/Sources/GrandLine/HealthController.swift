@@ -76,7 +76,7 @@ final class HealthController: NSViewController, DaylightDrillActions, HelmSplitP
     /// action, and it applies to the whole card rather than to any one row.
     /// Caller-owned: `HealthCardView` still owns the button and its handler.
     var drillHeaderActions: [NSView] {
-        drawsSidebarLayout ? [refreshButton, healthCard.diagnosticsButton] : [healthCard.diagnosticsButton]
+        [refreshButton, healthCard.diagnosticsButton]
     }
 
     /// The services Retry can run again, by service - see
@@ -86,9 +86,7 @@ final class HealthController: NSViewController, DaylightDrillActions, HelmSplitP
         set { healthCard.retryActions = newValue }
     }
 
-    /// Set once, by `adoptSidebarLayout()`.
-    private(set) var drawsSidebarLayout = false
-    /// H-4: the column beside the table. Sidebar layout only.
+    /// H-4: the column beside the table.
     private(set) var splitPage: HelmSplitPage?
     private var stack: NSStackView?
     /// S03: the page frame.
@@ -150,6 +148,10 @@ final class HealthController: NSViewController, DaylightDrillActions, HelmSplitP
         // rather than handled - this page knows no more about navigation than
         // Fleet's or Schedules' own `onNavigateToDestination` does.
         healthCard.onOpenDestination = { [weak self] dest in self?.onNavigateToDestination?(dest) }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     private let scrollMemory = HelmScrollMemory()
@@ -226,12 +228,9 @@ final class HealthController: NSViewController, DaylightDrillActions, HelmSplitP
 
 // MARK: - The sidebar layout
 
-extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProviding {
+extension HealthController: WorkspacePrimaryActionProviding {
 
-    func adoptSidebarLayout() {
-        guard !drawsSidebarLayout else { return }
-        _ = view
-        drawsSidebarLayout = true
+    func buildSidebarPresentation() {
         let table = healthCard.adoptTableLayout()
         stack?.addArrangedSubview(table)
         if let stack { table.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
@@ -314,5 +313,5 @@ extension HealthController: SidebarLayoutAdopting, WorkspacePrimaryActionProvidi
     }
 
     /// Copy diagnostics, at the toolbar's far right.
-    var workspacePrimaryAction: NSView? { drawsSidebarLayout ? healthCard.diagnosticsButton : nil }
+    var workspacePrimaryAction: NSView? { healthCard.diagnosticsButton }
 }

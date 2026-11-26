@@ -75,7 +75,6 @@ enum SettingsRedesignSelfTest {
                       checkTheThemeGridRendersFiltersAndSelects,
                       checkThePalettesAreTheirOwnGroup,
                       checkADependentRowIsDimmedAndInert,
-                      checkTheWidePageCollapsesAndComesBack,
                       checkTheClipboardHistorySwitchDrivesCapture,
                       checkTheLidClosedSwitchFollowsTheSystem,
                       checkTheMetalToolchainSwitchFollowsXcode] {
@@ -214,7 +213,8 @@ enum SettingsRedesignSelfTest {
                   + "forward=\(settings.debugCanGoForward)")
             ok = false
         }
-        if settings.drillHeaderSubtitle?.hasPrefix(settings.debugSelectedCategory.title) != true {
+        // R2-UX-05: the line is the category's description.
+        if settings.drillHeaderSubtitle != settings.debugSelectedCategory.heroDescription {
             print("  FAIL the drill subtitle reads \"\(settings.drillHeaderSubtitle ?? "nil")\" on "
                   + "\(settings.debugSelectedCategory.rawValue)")
             ok = false
@@ -241,7 +241,7 @@ enum SettingsRedesignSelfTest {
         // The drill subtitle is what says where you are once the pane has
         // scrolled (UXP-17 took the breadcrumb's copy of the name away), so
         // it has to follow a history move and not only a click.
-        if settings.drillHeaderSubtitle?.hasPrefix(SettingsController.Category.terminal.title) != true {
+        if settings.drillHeaderSubtitle != SettingsController.Category.terminal.heroDescription {
             print("  FAIL after back the drill subtitle reads \"\(settings.drillHeaderSubtitle ?? "nil")\"")
             ok = false
         }
@@ -607,79 +607,6 @@ enum SettingsRedesignSelfTest {
     }
 
     // MARK: 5. The wide page's collapse
-
-    private static func checkTheWidePageCollapsesAndComesBack(_ ok: inout Bool) {
-        print("\n-- the wide page collapses when narrowed and comes back when widened --")
-        let settings = makeSettings()
-        // Wide enough that App Intents & Shortcuts is really two columns.
-        let window = mount(settings, width: 1500)
-        defer { _ = window }
-        settings.select(.intents)
-        settings.view.layoutSubtreeIfNeeded()
-
-        /// How many distinct leading edges the page's cards sit at - which is
-        /// how many columns it is actually showing.
-        func columnCount() -> Int {
-            Set(settings.debugMountedGroupCards.compactMap { card in
-                card.superview.map {
-                    ((($0.convert(card.frame.origin, to: settings.view)).x) * 10).rounded() / 10
-                }
-            }).count
-        }
-
-        guard columnCount() == 2 else {
-            print("  FAIL at 1500pt the wide page shows \(columnCount()) columns, want 2 - "
-                  + "the rest of this case would be vacuous")
-            ok = false
-            return
-        }
-
-        // Back and forth several times. One collapse cannot see the defect
-        // this guards: the two arrangements' constraints were *added* rather
-        // than swapped, so the stale full-width ties only conflict once the
-        // page has been widened again.
-        for (index, width) in [820.0, 1500.0, 900.0, 1500.0, 780.0, 1500.0].enumerated() {
-            window.setFrame(NSRect(x: window.frame.origin.x, y: window.frame.origin.y,
-                                   width: width, height: window.frame.height),
-                            display: true)
-            settings.view.layoutSubtreeIfNeeded()
-            let want = width >= 1000 ? 2 : 1
-            let got = columnCount()
-            if got != want {
-                print("  FAIL resize \(index + 1) to \(Int(width))pt shows \(got) columns, want \(want)")
-                ok = false
-            }
-            // **Review #3's B9, at every width.** `Audit3BugFixesSelfTest`
-            // asserts "a card is as tall as its own content" at one width;
-            // this page's wide arrangement regressed it at a width only a
-            // GitHub runner produced (the right-hand card resolved to 271pt
-            // against 134pt of content), so the property is checked here
-            // across the whole resize sequence too - the place a two-column
-            // page can lose it.
-            for card in settings.debugMountedGroupCards {
-                let slack = card.frame.height - card.fittingSize.height
-                if slack > 1 {
-                    print("  FAIL at \(Int(width))pt a card is \(card.frame.height)pt tall "
-                          + "against \(card.fittingSize.height)pt of content - B9 is back")
-                    ok = false
-                    break
-                }
-            }
-            // A conflict resolves by breaking something, and a broken column
-            // reads as a zero-width or overflowing card rather than as a
-            // logged warning - so measure the cards themselves.
-            let pageWidth = settings.debugMountedGroupCards
-                .compactMap { $0.superview?.frame.width }.max() ?? 0
-            for card in settings.debugMountedGroupCards
-            where card.frame.width < 1 || card.frame.width > pageWidth + 1 {
-                print("  FAIL at \(Int(width))pt a card measures \(card.frame.width) "
-                      + "in a \(pageWidth)pt column")
-                ok = false
-                break
-            }
-        }
-        if ok { print("  ok   two columns, one, and back again across six resizes") }
-    }
 
     // MARK: 7. Security's lid-closed switch
 

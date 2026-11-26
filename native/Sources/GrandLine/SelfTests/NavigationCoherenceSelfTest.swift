@@ -766,59 +766,11 @@ enum NavigationCoherenceSelfTest {
 
     /// Review #3's UX13: "onboarding is a lock screen."
     ///
-    /// Two halves: the welcome sheet's own step machine, and the hub's
-    /// first-run hero copy. Both are asserted in **both** directions - a
-    /// first-run banner that outstayed its welcome would be a permanent
-    /// fixture on a working captain's hub, which is a worse bug than not
-    /// having one.
+    /// The welcome sheet's own step machine. UX13's other half, the hub's
+    /// first-run hero copy, was drawn only on the floating bar's hub and
+    /// went with it in P-03 of the 2026-11-25 full review.
     private static func checkFirstRunOnboarding() -> Bool {
         var ok = true
-
-        // The hero copy. Nothing at all saved -> an invitation.
-        guard let welcome = HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 0, notes: 0) else {
-            fail("UX13: an app with nothing in it showed no first-run copy at all", &ok)
-            return ok
-        }
-        check(!welcome.title.isEmpty && !welcome.detail.isEmpty,
-              "UX13: the first-run hero copy is blank", &ok)
-        // It has to say what to do, not merely be friendly - that is the
-        // "guided" in "a guided empty state".
-        check(welcome.detail.lowercased().contains("host") && welcome.detail.lowercased().contains("task"),
-              "UX13: the first-run copy does not name the first host or the first task: \"\(welcome.detail)\"", &ok)
-
-        // Anything saved at all -> it is gone. Each store on its own, because
-        // a captain with tasks but no hosts is not new, and being told to
-        // "add your first host" would be the app misreading its own user.
-        check(HomeCanvasController.firstRunHeroCopy(hosts: 1, tasks: 0, notes: 0) == nil,
-              "UX13: the first-run hero survived a saved host", &ok)
-        check(HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 1, notes: 0) == nil,
-              "UX13: the first-run hero survived a saved task", &ok)
-        check(HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 0, notes: 1) == nil,
-              "UX13: the first-run hero survived a saved note", &ok)
-
-        // **The invitation must never hide a verdict that needs the captain.**
-        // The three stores it counts are *local*; `FleetGreeting` reports on
-        // the crew. A crewmate can be parked on a decision while this machine
-        // has nothing saved on it at all - a new Mac, a second user, a fresh
-        // clone - and "Welcome aboard" over a blocked task would be strictly
-        // worse than the all-clear this whole finding objects to.
-        //
-        // This was a real flaw in the first cut of UX13, caught by
-        // `CanvasListsControlsSelfTest`'s C1 case rather than by reading the
-        // code. The rule lives here now, on the property the canvas actually
-        // branches on.
-        let needsYou = FleetGreeting.answer(
-            tasks: [FleetTask(id: "t1", repo: "grand-line", kind: "feature", pr: nil,
-                              status: "needs_decision")],
-            readyCount: 0, prFetchFailure: nil, homeOk: true)
-        check(!needsYou.metaRestatesCards,
-              "UX13: a needs-you answer must not be classed as a card restatement - "
-              + "that is the flag the hub reads to decide the first-run hero may show", &ok)
-        let allClear = FleetGreeting.answer(tasks: [], readyCount: 0,
-                                            prFetchFailure: nil, homeOk: true)
-        check(allClear.metaRestatesCards,
-              "UX13/UX5: an all-clear answer should be classed as a restatement, or the "
-              + "first-run hero can never appear at all", &ok)
 
         // The sheet's step machine. A window is not needed - the steps are
         // state, and `loadView` builds views with no window server.

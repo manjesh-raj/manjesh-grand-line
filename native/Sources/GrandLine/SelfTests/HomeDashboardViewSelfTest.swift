@@ -1,49 +1,40 @@
 // Grand Line - native macOS app.
 //
-// The render half of the Home page's dashboard layout
-// (`fm/grandline-home-page-visual-overhaul`). `HomeDashboardSelfTest` owns
-// the arithmetic; this file owns what a real `NSWindow` actually builds.
+// The render half of Home's card grid, as a real `NSWindow` builds it.
 //
 // Run with `FM_RUN_HOME_DASHBOARD_VIEW_TESTS=1 .build/debug/GrandLine`.
+//
+// **The name is older than the page it measures.** This suite was written
+// for Overview's hand-placed dashboard (`fm/grandline-home-page-visual-
+// overhaul`), which P-03 of the 2026-11-25 full review removed with the
+// floating bar. The dashboard's own cases went with it: the hero band and
+// attention card at the top, the three-column placement, the equal thirds,
+// the narrow degrade, the probe-height memo and the shelf's live resize.
+// What is left is what Home's arranged cards still draw, and the suite kept
+// its name so its variable, its shard weight and its history still match.
 //
 // **Why this suite is window-backed.** Every case below reads a resolved
 // `NSView.frame` or a real view tree after a real layout pass. That is the
 // AGENTS.md test - what the suite *asserts*, not what it imports - so it is
-// listed in `NEEDS_SESSION` and runs in CI's windowed lane, while the
-// arithmetic it rests on runs in the blocking one.
+// listed in `NEEDS_SESSION` and runs in CI's windowed lane.
 //
 // What it covers:
 //
-//   1. **The hub has one card at the top, not two.** The captain's reference
-//      draws a single attention card carrying the Refresh button and the
-//      fleet-freshness subline; the app drew a hero band over a separate
-//      card. The check is that the band is gone *on Overview and only
-//      there* - the four other spaces still head themselves with it, and a
-//      change that hid it everywhere would leave them nameless.
-//   2. **The five widgets are placed, not packed.** Since
-//      `fm/grandline-home-fit-implement` the hub is one row of three columns:
-//      the attention card, then Claude over Fleet over Health, then the
-//      Morning briefing over the Merge queue. Before that it was two 7:5
-//      rows, and before *that* the wrapping grid packed the same five cards
-//      2+2+1 / 1+1 at the captain's window size.
-//   3. **The columns really are equal thirds and really do fill the page.**
-//      Read off the resolved frames, so a 499 width constraint that AppKit
-//      declined to satisfy fails here rather than looking right in the
-//      arithmetic suite.
-//   4. **It degrades.** Narrow the window past the point a 5-track card
-//      fits and the hand-placed layout must hand back to the wrapping grid
-//      rather than drawing two unreadably narrow columns.
-//   5. **The two restyled bodies carry real numbers.** The Fleet card's
-//      three tiles and the Merge queue's "Showing 3 of 33" footer are the
-//      reference's own furniture, and both are the kind of thing that can
-//      be configured and never painted.
-//   6. **Both themes paint.** Daylight and Dusk, asserting the card surface
+//   1. **R5-UI-08: the briefing is left off while it has nothing to say.**
+//      Neither a card nor the hero, and the hero is back once it is on.
+//   2. **The Merge queue's footer carries real numbers.** "Showing 3 of 33"
+//      is the reference's own furniture, the kind of thing that can be
+//      configured and never painted.
+//   3. **Both themes paint.** Daylight and Dusk, asserting the card surface
 //      really changed between them - a theming check that cannot fail is
 //      worse than none.
-//   7. **The card shadow is really painted (UI-5).** Sampled in pixels from a
+//   4. **The card shadow is really painted (UI-5).** Sampled in pixels from a
 //      real render, below a module card against the bare page ground: the
 //      squared-alpha defect darkened that strip by 3/255 on Daylight, which
 //      is what made every card read as a flat bordered box.
+//   5. **The Merge queue's rows are links**, and an untitled PR is named.
+//   6. **Unknown is never zero** on the Fleet and Merge queue cards.
+//   7. **PERF-03: a live resize moves constants and rebuilds once.**
 
 // GL-27: compiled into debug builds only. Do not remove this guard -
 // `Phase3PolishSelfTest` asserts every file here carries it.
@@ -55,29 +46,22 @@ enum HomeDashboardViewSelfTest {
 
     @discardableResult
     static func run() -> Bool {
-        // R5-UI-08: Home leaves the Morning briefing card off while the
-        // briefing is off and has nothing on record. The checks here measure
-        // the five-card Home, so the briefing is on, in this process's own
+        // R5-UI-08: Home leaves the Morning briefing off while it is off and
+        // has nothing on record. The checks here measure Home with the
+        // briefing as its hero, so the briefing is on, in this process's own
         // suite domain, and put back after.
         let briefingWasOn = AppSettings.shared.morningBriefingEnabled
         AppSettings.shared.morningBriefingEnabled = true
         defer { AppSettings.shared.morningBriefingEnabled = briefingWasOn }
         var ok = true
         checkTheBriefingIsLeftOffWhileOff(&ok)
-        checkTheHubHasOneHeaderCard(&ok)
-        checkTheFiveWidgetsArePlaced(&ok)
-        checkTheColumnsAreEqualThirds(&ok)
-        checkItDegradesWhenNarrow(&ok)
-        checkTheFleetTilesAndMergeFooter(&ok)
+        checkTheMergeFooter(&ok)
         checkBothThemesPaint(&ok)
         checkTheCardShadowIsPainted(&ok)
         checkMergeQueueRowsAreClickable(&ok)
         checkAnUntitledPRIsNamed(&ok)
         checkUnknownStatesAreNeverZero(&ok)
         checkALiveResizeRebuildsOnceAtTheEnd(&ok)
-        checkASettledRenderReusesItsProbes(&ok)
-        checkLiveResizeFramesShareProbes(&ok)
-        checkAShelfLiveResizeRebuildsOnlyForNewColumns(&ok)
         checkAResizeRebuildDoesNotReapplyTheTheme(&ok)
 
         if ok {
@@ -94,9 +78,8 @@ enum HomeDashboardViewSelfTest {
     /// drawn against.
     private static let wide = NSSize(width: 1512, height: 945)
 
-    /// One `ShiftStore` per case, pointed at its own scratch directory - the
-    /// same arrangement `NeedsAttentionViewSelfTest` documents, and for its
-    /// reason: every bare store in the process otherwise shares one
+    /// One `ShiftStore` per case, pointed at its own scratch directory,
+    /// because every bare store in the process otherwise shares one
     /// directory, so one case's seeded rows become the next case's fixture.
     private static func withScratchShift(_ body: (ShiftStore) -> Void) {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -112,15 +95,12 @@ enum HomeDashboardViewSelfTest {
         body(ShiftStore())
     }
 
-    /// **Not a first-run app.** Review #3's UX13 gives the hub its own
-    /// invitation copy when nothing at all has been saved locally, and every
-    /// case here runs over empty scratch stores - which is exactly that
-    /// state. One seeded task is what puts these cases in the state they are
-    /// written for, and it is the same thing `CanvasListsControlsSelfTest`
-    /// does for its own reason.
+    /// One seeded task, so Home is not over entirely empty stores. A bare
+    /// canvas shows `HomeCardLayout.standard`: the briefing as the hero, then
+    /// Fleet, Health, Claude and the Merge queue.
     private static func makeCanvas(_ shiftStore: ShiftStore) -> HomeCanvasController {
         var seeded = ShiftTask.fresh()
-        seeded.title = "a task, so the hub is not in its first-run state"
+        seeded.title = "a task, so Home is not over empty stores"
         shiftStore.addTask(seeded)
         let canvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
@@ -154,8 +134,7 @@ enum HomeDashboardViewSelfTest {
         return window
     }
 
-    /// A fleet that is reading, so the hub is not in its first-run state and
-    /// the widgets have something to draw.
+    /// A fleet that is reading, so the cards have something to draw.
     private static func seedFleet(_ canvas: HomeCanvasController) {
         canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                                   queuedCount: 17, doneCount: 20, projectsCount: 4,
@@ -163,46 +142,15 @@ enum HomeDashboardViewSelfTest {
                           mergedPRs: [], prFetchFailure: nil)
     }
 
-    // MARK: 1 - one card at the top
-
-    private static func checkTheHubHasOneHeaderCard(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
-            canvas.debugRenderNow()
-            canvas.view.layoutSubtreeIfNeeded()
-
-            check(canvas.heroCardHiddenForTests,
-                  "the hub's hero band should be gone - the reference draws one card there", &ok)
-            check(!canvas.attentionCardHiddenForTests,
-                  "and the attention card should be the thing that replaced it", &ok)
-            check(canvas.attentionCardForTests.debugRefreshButtonVisible,
-                  "which means it carries the Refresh the band used to", &ok)
-            // The subline is the fleet's freshness, which is the one fact
-            // none of the cards below can state.
-            check(canvas.attentionCardForTests.debugSubline.lowercased().contains("fleet read"),
-                  "the subline should be the fleet's freshness, got "
-                      + "\"\(canvas.attentionCardForTests.debugSubline)\"", &ok)
-
-            // The other direction, which is what stops this being a check
-            // that a view is simply never shown: a space that is not the hub
-            // still heads itself with the band.
-            canvas.select(space: .command)
-            canvas.view.layoutSubtreeIfNeeded()
-            check(!canvas.heroCardHiddenForTests,
-                  "a non-hub space still needs the band to name itself", &ok)
-            check(canvas.attentionCardHiddenForTests,
-                  "and has no day of its own to report", &ok)
-        }
+    private static func card(_ title: String, on canvas: HomeCanvasController) -> HelmModuleCard? {
+        canvas.moduleCardsForTests.first { $0.anatomyForTests.title == title }
     }
 
-    // MARK: 2 - placement
+    // MARK: 1 - the briefing while it is off
 
-    /// R5-UI-08: with the briefing off and nothing on record, the hub's
-    /// third column is the Merge queue alone, rather than a card that only
-    /// says the briefing is off - and the hand-placed dashboard still applies.
+    /// R5-UI-08: with the briefing off and nothing on record, Home draws no
+    /// briefing at all - neither a card that only says it is off, nor the
+    /// hero - and the greeting heads the page on its own.
     private static func checkTheBriefingIsLeftOffWhileOff(_ ok: inout Bool) {
         let record = AppSettings.shared.morningBriefingRecord
         AppSettings.shared.morningBriefingEnabled = false
@@ -218,122 +166,25 @@ enum HomeDashboardViewSelfTest {
             seedFleet(canvas)
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
-            check(canvas.usesDashboardLayoutForTests,
-                  "R5-UI-08: with the briefing off the hub fell back from its hand-placed dashboard", &ok)
             let titles = canvas.moduleCardsForTests.compactMap { $0.anatomyForTests.title }
             check(!titles.contains("Morning briefing") && titles.count == 4,
-                  "R5-UI-08: with the briefing off the hub draws \(titles), want the four others and no briefing", &ok)
-        }
-    }
+                  "R5-UI-08: with the briefing off Home draws \(titles), want the four others and no briefing", &ok)
+            check(canvas.debugBriefingHero == nil && canvas.debugGreetingOnGround,
+                  "R5-UI-08: with the briefing off Home still draws the briefing hero", &ok)
 
-    private static func checkTheFiveWidgetsArePlaced(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
+            // The other direction, so the check above is not one a hero that
+            // never shows would pass.
+            AppSettings.shared.morningBriefingEnabled = true
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
-
-            check(canvas.usesDashboardLayoutForTests,
-                  "the hub at \(Int(wide.width))pt should use the hand-placed dashboard", &ok)
-
-            let rows = canvas.gridRowsForTests
-            guard rows.count == 1 else {
-                fail("the hub is one row of three columns, got \(rows.count) rows", &ok)
-                return
-            }
-            // Asserted by shape, because that structure is the layout.
-            let columns = rows[0].arrangedSubviews
-            check(columns.count == 3, "the row holds three columns, got \(columns.count)", &ok)
-            // UXP-04: column 1 is the attention card's own column - the card
-            // at its top at its rows' height, page below it - rather than the
-            // card stretched to the column.
-            check((columns.first as? NSStackView)?.arrangedSubviews.first === canvas.attentionCardForTests,
-                  "column 1 is the attention card's column with the card at its top, got "
-                  + "\(type(of: columns.first))", &ok)
-            func titles(_ view: NSView?) -> [String] {
-                ((view as? NSStackView)?.arrangedSubviews ?? []).compactMap {
-                    ($0 as? HelmModuleCard)?.anatomyForTests.title
-                }
-            }
-            if columns.count == 3 {
-                check(titles(columns[1]) == ["Claude", "Fleet", "Health"],
-                      "column 2 is Claude over Fleet over Health, got \(titles(columns[1]))", &ok)
-                check(titles(columns[2]) == ["Morning briefing", "Merge queue"],
-                      "column 3 is the briefing over the Merge queue, got \(titles(columns[2]))", &ok)
-            }
-
-            // Five cards, once - not four with one dropped, and not six.
-            check(canvas.moduleCardsForTests.count == 5,
-                  "the hub draws exactly five widgets, got \(canvas.moduleCardsForTests.count)", &ok)
+            check(canvas.debugBriefingHero != nil,
+                  "R5-UI-08: with the briefing on Home should draw it as the hero", &ok)
         }
     }
 
-    // MARK: 3 - equal thirds, as resolved
+    // MARK: 2 - the Merge queue's footer
 
-    private static func checkTheColumnsAreEqualThirds(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
-            canvas.debugRenderNow()
-            canvas.view.layoutSubtreeIfNeeded()
-
-            guard let row = canvas.gridRowsForTests.first, row.arrangedSubviews.count == 3 else {
-                fail("no three-column row to measure", &ok)
-                return
-            }
-            let widths = row.arrangedSubviews.map(\.frame.width)
-            // The fixture's own discriminating power: every column must have
-            // really laid out, or the comparison below is between zeroes.
-            guard widths.allSatisfy({ $0 > 1 }) else {
-                fail("the columns never laid out (\(widths)) - the check would be vacuous", &ok)
-                return
-            }
-            let total = widths.reduce(0, +) + HomeCanvasController.gridSpacing * 2
-            let expected = HelmResponsiveGrid.proportionalWidth(containerWidth: total, span: 4,
-                                                                spacing: HomeCanvasController.gridSpacing)
-            // One device pixel of tolerance: AGENTS.md records that a CI
-            // runner is 1x and a dev Mac 2x, so an ideal edge on a half point
-            // rounds by up to `1 / backingScaleFactor`.
-            let tolerance = 1.0 / (window.backingScaleFactor > 0 ? window.backingScaleFactor : 1)
-            for (index, width) in widths.enumerated() {
-                check(abs(width - expected) <= tolerance,
-                      "column \(index + 1) should be 4 of 12 tracks (\(expected)), got \(width)", &ok)
-            }
-            // And the three columns end on one line - the page's whole height.
-            let heights = row.arrangedSubviews.map(\.frame.height)
-            check((heights.max() ?? 0) - (heights.min() ?? 0) <= tolerance,
-                  "the three columns should be one height, got \(heights)", &ok)
-        }
-    }
-
-    // MARK: 4 - the narrow degrade
-
-    private static func checkItDegradesWhenNarrow(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas, size: NSSize(width: 560, height: 900))
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
-            canvas.debugRenderNow()
-            canvas.view.layoutSubtreeIfNeeded()
-
-            check(!canvas.usesDashboardLayoutForTests,
-                  "at 560pt a 4-track column is under the module floor, so the hub must "
-                      + "hand back to the wrapping grid", &ok)
-            // And nothing is lost by doing so - the cards are all still there.
-            check(canvas.moduleCardsForTests.count == 5,
-                  "the degrade draws the same five widgets, got "
-                      + "\(canvas.moduleCardsForTests.count)", &ok)
-        }
-    }
-
-    // MARK: 5 - the two restyled bodies
-
-    private static func checkTheFleetTilesAndMergeFooter(_ ok: inout Bool) {
+    private static func checkTheMergeFooter(_ ok: inout Bool) {
         withScratchShift { store in
             let canvas = makeCanvas(store)
             let window = mount(canvas)
@@ -355,30 +206,16 @@ enum HomeDashboardViewSelfTest {
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
 
-            // UI-9: one KPI strip, no boxed tiles.
-            let strips = canvas.moduleCardsForTests.compactMap { $0.debugKPIStrip }
-            guard strips.count == 1, let strip = strips.first else {
-                fail("the Fleet card draws exactly one KPI strip, got \(strips.count)", &ok)
-                return
-            }
-            // The numbers are the snapshot's own, so a card that drew three
-            // zeroes fails here rather than looking right.
-            check(strip.debugValues == ["0", "20", "17"],
-                  "the strip carries the snapshot's own counts, got \(strip.debugValues)", &ok)
-            check(strip.debugCaptions == ["Working", "Done today", "Queued"],
-                  "under the reference's own captions, got \(strip.debugCaptions)", &ok)
-            check(!strip.debugHasBorder, "the strip draws no box of its own", &ok)
-
             let footers = canvas.moduleCardsForTests.compactMap { $0.debugFooter }
             guard footers.count == 1 else {
                 fail("exactly one card carries a footer, got \(footers.count)", &ok)
                 return
             }
-            // The Merge queue shows as many rows as its column holds, and the
+            // R5-UI-03: the Merge queue shows `maxPeekRows` of them, and the
             // footer says exactly how many that is.
             let shown = canvas.moduleCardsForTests.first { $0.debugFooter != nil }?.debugPeekRows.count ?? 0
-            check(shown >= HomeCanvasController.mergeQueueMinimumRows && shown < 33,
-                  "the Merge queue should show between its minimum and all 33 rows, got \(shown)", &ok)
+            check(shown == HelmModuleCard.maxPeekRows,
+                  "the Merge queue should show \(HelmModuleCard.maxPeekRows) of 33 rows, got \(shown)", &ok)
             check(footers[0].caption == "Showing \(shown) of 33",
                   "the footer states the truncation, got \"\(footers[0].caption)\"", &ok)
             // UI-10: one link, which names the queue rather than repeating
@@ -388,7 +225,7 @@ enum HomeDashboardViewSelfTest {
         }
     }
 
-    // MARK: 6 - theming
+    // MARK: 3 - theming
 
     private static func checkBothThemesPaint(_ ok: inout Bool) {
         // AGENTS.md: a probe that changes the theme saves and restores it.
@@ -411,15 +248,14 @@ enum HomeDashboardViewSelfTest {
                 canvas.debugRenderNow()
                 canvas.view.layoutSubtreeIfNeeded()
 
-                guard let card = canvas.moduleCardsForTests.first,
+                // The Merge queue: a plain card, which paints the theme's own
+                // surface rather than a hero colour the captain chose.
+                guard let card = card("Merge queue", on: canvas),
                       let fill = card.debugCardSurfaceColor else {
-                    fail("\(id): a module card should report a painted surface", &ok)
+                    fail("\(id): the Merge queue card should report a painted surface", &ok)
                     return
                 }
                 surfaces[id] = fill
-                check(canvas.gridRowsForTests.count == 1
-                        && canvas.gridRowsForTests.first?.arrangedSubviews.count == 3,
-                      "\(id): the hub should still be one row of three columns", &ok)
             }
         }
         // The discriminating half: the two palettes must actually differ, or
@@ -435,7 +271,7 @@ enum HomeDashboardViewSelfTest {
             fail("both themes should have reported a card surface", &ok)
         }
     }
-    // MARK: 7 - the card shadow is painted, measured in pixels (UI-5)
+    // MARK: 4 - the card shadow is painted, measured in pixels (UI-5)
 
     /// The UI/UX revamp's H-01, as a pixel check rather than a reading of the
     /// code. `HelmModuleCard` used to hand `CALayer` a shadow colour that
@@ -443,9 +279,9 @@ enum HomeDashboardViewSelfTest {
     /// 0.10 again, so the compositor painted 0.01. Measured on the tour
     /// render: 3/255 of darkening under a Home card on Daylight and 0 on Dusk.
     ///
-    /// The sample is the darkest pixel in the 2-10pt strip under the card's
-    /// bottom edge, against the page ground at the same height in the
-    /// page's right gutter, where no card's blur reaches. Both are read from
+    /// The sample is the darkest pixel in the 2-10pt strip under the bottom
+    /// edge of the lowest plain card, against the page ground at the same
+    /// height in the page's right gutter, where no card's blur reaches. Both are read from
     /// the same rep in its own colour space (AGENTS.md's probe rule), and the
     /// rep is in pixels, so every coordinate is scaled by its backing factor.
     ///
@@ -469,7 +305,10 @@ enum HomeDashboardViewSelfTest {
             canvas.view.layoutSubtreeIfNeeded()
 
             let root = canvas.view
-            guard let card = canvas.moduleCardsForTests.first,
+            // The lowest plain card, so the strip under it is page ground and
+            // not the next row's card. A hero card paints its own colour.
+            let plain = canvas.moduleCardsForTests.filter { $0.debugHeroSurface == nil }
+            guard let card = plain.min(by: { $0.convert($0.bounds, to: root).minY < $1.convert($1.bounds, to: root).minY }),
                   let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
                 fail("the shadow probe needs a module card and a rep to render into", &ok)
                 return
@@ -514,7 +353,7 @@ enum HomeDashboardViewSelfTest {
         }
     }
 
-    // MARK: 8 - merge queue rows are clickable (UI-10)
+    // MARK: 5 - merge queue rows are clickable (UI-10)
 
     /// UI-10: the merge queue's peek rows were inert text, and the card's
     /// "View all" repeated the card's own click. Each row is now a real hover
@@ -541,11 +380,10 @@ enum HomeDashboardViewSelfTest {
                 fail("the merge queue card should draw clickable peek rows", &ok)
                 return
             }
-            // R5-UI-03: five PRs fit the captain's window, and the hub still
-            // shows three of them - the sidebar layout's cap - with a footer
-            // saying so. Uncapped, the floating Home listed 20 of 22.
+            // R5-UI-03: Home shows three of five PRs, with a footer saying
+            // so. Uncapped, the floating bar's Home listed 20 of 22.
             check(card.debugPeekRows.count == HelmModuleCard.maxPeekRows,
-                  "the hub's Merge queue should show \(HelmModuleCard.maxPeekRows) of 5 PRs, "
+                  "Home's Merge queue should show \(HelmModuleCard.maxPeekRows) of 5 PRs, "
                   + "got \(card.debugPeekRows.count)", &ok)
             check(card.debugFooter?.caption == "Showing \(HelmModuleCard.maxPeekRows) of 5",
                   "and say how many it is not showing, got \(card.debugFooter?.caption ?? "no footer")", &ok)
@@ -602,12 +440,12 @@ enum HomeDashboardViewSelfTest {
         }
     }
 
-    // MARK: 9 - unknown is never zero, and one loading idiom (UI-9, UI-11, UI-12)
+    // MARK: 6 - unknown is never zero, and one loading idiom (UI-9, UI-11, UI-12)
 
     /// The revamp's GL-14 pass over Home, read off the painted cards:
     ///
-    ///   - nothing read yet: the Fleet and Merge queue cards show the
-    ///     skeleton, the one loading idiom, not a sentence each;
+    ///   - nothing read yet: the Merge queue shows the skeleton, the one
+    ///     loading idiom, and the Fleet hero says it is reading;
     ///   - a missing firstmate home: Fleet draws dashes under a "Not read"
     ///     pill, never 0/0/0 under "All clear";
     ///   - a failed PR scan after a good one: the last list stays, the pill
@@ -618,11 +456,10 @@ enum HomeDashboardViewSelfTest {
             let canvas = makeCanvas(store)
             let window = mount(canvas)
             defer { window.orderOut(nil) }
-            func card(_ title: String) -> HelmModuleCard? {
-                canvas.moduleCardsForTests.first { $0.anatomyForTests.title == title }
-            }
+            func card(_ title: String) -> HelmModuleCard? { Self.card(title, on: canvas) }
 
-            check(card("Fleet")?.debugBodyIsSkeleton == true, "an unread fleet should show the skeleton", &ok)
+            check(card("Fleet")?.anatomyForTests.subtitle == "reading",
+                  "an unread fleet should say it is reading, got \(card("Fleet")?.anatomyForTests.subtitle ?? "no card")", &ok)
             check(card("Merge queue")?.debugBodyIsSkeleton == true,
                   "an unread merge queue should show the skeleton", &ok)
 
@@ -667,7 +504,7 @@ enum HomeDashboardViewSelfTest {
                 check(anatomy.chipText == "Can't reach", "and say it cannot reach GitHub", &ok)
                 check(anatomy.subtitle.contains("as of"), "and how old the list is, got \"\(anatomy.subtitle)\"", &ok)
             } else {
-                fail("the Merge queue card should be on the hub", &ok)
+                fail("the Merge queue card should be on Home", &ok)
             }
 
             let empty = HomeCanvasController.healthRingSummary(ServiceHealthSummary())
@@ -710,8 +547,8 @@ enum HomeDashboardViewSelfTest {
             seedFleet(canvas)
             canvas.debugRenderNow()
             canvas.view.layoutSubtreeIfNeeded()
-            guard canvas.usesDashboardLayoutForTests else {
-                fail("PERF-03: the fixture needs the hub's dashboard at \(Int(wide.width))pt", &ok)
+            guard !canvas.gridRowsForTests.isEmpty else {
+                fail("PERF-03: the fixture drew no grid rows at \(Int(wide.width))pt", &ok)
                 return
             }
             let cardsBefore = canvas.moduleCardsForTests.map(ObjectIdentifier.init)
@@ -719,15 +556,14 @@ enum HomeDashboardViewSelfTest {
             let widths: [CGFloat] = (1...10).map { wide.width - CGFloat($0) * 12 }
             var stale: [String] = []
             liveResize(window, widths: widths, end: false) { width in
-                // The columns follow the window during the drag - the hub's
-                // first column is the attention card, the last is the briefing
-                // column, and together they reach the page's trailing edge.
+                // The cards follow the window during the drag: the first
+                // row's last cell still reaches the row's trailing edge.
                 let rows = canvas.gridRowsForTests
                 guard let row = rows.first, let last = row.arrangedSubviews.last else { return }
                 let trailing = last.convert(last.bounds, to: canvas.view).maxX
                 let page = row.convert(row.bounds, to: canvas.view).maxX
                 if abs(trailing - page) > 1.0 / window.backingScaleFactor + 0.01 {
-                    stale.append("at \(Int(width))pt the last column ends at \(trailing), the row at \(page)")
+                    stale.append("at \(Int(width))pt the last cell ends at \(trailing), the row at \(page)")
                 }
             }
             check(canvas.debugGridRebuilds == rebuildsBefore,
@@ -735,7 +571,7 @@ enum HomeDashboardViewSelfTest {
                       + "expected none until the drag ends", &ok)
             check(canvas.moduleCardsForTests.map(ObjectIdentifier.init) == cardsBefore,
                   "PERF-03: the cards were replaced during the drag", &ok)
-            check(stale.isEmpty, "PERF-03: the columns did not follow the drag: \(stale.prefix(3))", &ok)
+            check(stale.isEmpty, "PERF-03: the cards did not follow the drag: \(stale.prefix(3))", &ok)
 
             NotificationCenter.default.post(name: NSWindow.didEndLiveResizeNotification, object: window)
             window.contentView?.layoutSubtreeIfNeeded()
@@ -745,101 +581,9 @@ enum HomeDashboardViewSelfTest {
         }
     }
 
-    /// A render whose content did not change re-reads every probe height
-    /// from the memo; a changed reading re-measures only what it changed.
-    ///
-    /// Injection: return the measured height without storing it and the
-    /// second render measures every probe again.
-    private static func checkASettledRenderReusesItsProbes(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
-            canvas.debugRenderNow()
-            canvas.view.layoutSubtreeIfNeeded()
-
-            let measuredBefore = canvas.debugProbeMeasurements
-            let hitsBefore = canvas.debugProbeMemoHits
-            canvas.debugRenderNow()
-            check(canvas.debugProbeMeasurements == measuredBefore,
-                  "PERF-03: an unchanged render measured \(canvas.debugProbeMeasurements - measuredBefore) "
-                      + "probe card(s), expected none", &ok)
-            check(canvas.debugProbeMemoHits > hitsBefore,
-                  "PERF-03: an unchanged render did not read the memo at all - the check would be vacuous", &ok)
-
-            // A different fleet reading changes the Fleet card and nothing
-            // in column 3, so some probes are re-measured and some are not.
-            let before = canvas.debugProbeMeasurements
-            let hitsBeforeChange = canvas.debugProbeMemoHits
-            canvas.applyFleet(snapshot: FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
-                                                      queuedCount: 3, doneCount: 41, projectsCount: 9,
-                                                      watcher: WatcherHealth(status: "healthy")),
-                              mergedPRs: [], prFetchFailure: nil)
-            canvas.debugRenderNow()
-            check(canvas.debugProbeMeasurements > before,
-                  "PERF-03: a changed fleet reading re-measured nothing - a stale height would be reused", &ok)
-            check(canvas.debugProbeMemoHits > hitsBeforeChange,
-                  "PERF-03: a changed fleet reading re-measured every probe, including unchanged cards", &ok)
-        }
-    }
-
-    /// Within one 8pt bucket, the frames of a drag share their measurements.
-    private static func checkLiveResizeFramesShareProbes(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            seedFleet(canvas)
-            canvas.debugRenderNow()
-            canvas.view.layoutSubtreeIfNeeded()
-            // Two frames 2pt apart, inside one bucket (1440 and 1442 both
-            // floor to 1440 once the page's own insets are taken off, which
-            // keeps them together whichever side of the bucket they land).
-            let bucket = HomeCanvasController.liveResizeProbeBucket
-            let base = (wide.width / bucket).rounded(.down) * bucket - 40
-            var measuredPerFrame: [Int] = []
-            var last = canvas.debugProbeMeasurements
-            liveResize(window, widths: [base, base + 1, base + 2]) { _ in
-                measuredPerFrame.append(canvas.debugProbeMeasurements - last)
-                last = canvas.debugProbeMeasurements
-            }
-            check(measuredPerFrame.count == 3 && measuredPerFrame.dropFirst().contains(0),
-                  "PERF-03: frames 1pt apart inside a drag should share probe heights, measured \(measuredPerFrame)", &ok)
-        }
-    }
-
-    /// A shelf (any space but the hub) moves its card widths during a drag,
-    /// and rebuilds only when the column count changes - that is a different
-    /// grid, not a resized one.
-    private static func checkAShelfLiveResizeRebuildsOnlyForNewColumns(_ ok: inout Bool) {
-        withScratchShift { store in
-            let canvas = makeCanvas(store)
-            let window = mount(canvas)
-            defer { window.orderOut(nil) }
-            canvas.select(space: .stores)
-            canvas.view.layoutSubtreeIfNeeded()
-            let columnsAt: (CGFloat) -> Int = { width in
-                (canvas.gridRowsForTests.first?.arrangedSubviews.count) ?? 0
-            }
-            let startColumns = columnsAt(wide.width)
-            let rebuildsBefore = canvas.debugGridRebuilds
-            // Small steps first: same column count, so no rebuild.
-            liveResize(window, widths: [wide.width - 4, wide.width - 8], end: false)
-            check(canvas.debugGridRebuilds == rebuildsBefore,
-                  "PERF-03: a shelf drag that kept its \(startColumns) columns rebuilt "
-                      + "\(canvas.debugGridRebuilds - rebuildsBefore) time(s)", &ok)
-            // Then far enough to lose a column, which must rebuild.
-            liveResize(window, widths: [1000], end: false)
-            check(canvas.debugGridRebuilds > rebuildsBefore,
-                  "PERF-03: a shelf drag that changed the column count did not rebuild", &ok)
-            NotificationCenter.default.post(name: NSWindow.didEndLiveResizeNotification, object: window)
-        }
-    }
-
     /// The resize path used to follow its rebuild with a whole-page
-    /// `applyTheme`, which rebuilt the attention card a second time. Every
-    /// card a rebuild builds themes itself, so a resize applies no theme.
+    /// `applyTheme`. Every card a rebuild builds themes itself, so a resize
+    /// applies no theme.
     private static func checkAResizeRebuildDoesNotReapplyTheTheme(_ ok: inout Bool) {
         withScratchShift { store in
             let canvas = makeCanvas(store)

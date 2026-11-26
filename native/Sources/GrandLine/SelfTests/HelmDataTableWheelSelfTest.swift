@@ -25,7 +25,7 @@
 // **Why this suite records routing rather than a scroll offset.** A
 // synthetic wheel event does not move an off-screen window's scroll view,
 // even over the margin where nothing is nested (measured while writing this
-// suite, and `NeedsAttentionViewSelfTest` measured the same). So an offset
+// suite, and the Needs Attention card's suite measured the same). So an offset
 // assertion could never fail. What the event's path does show is which
 // scroll view's `scrollWheel(with:)` it reaches, so each case swaps in a
 // recorder for `NSScrollView.scrollWheel(with:)` for its own duration. The
@@ -181,7 +181,6 @@ enum HelmDataTableWheelSelfTest {
         let controller = UpdatesController()
         let root = controller.view
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
-        controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
         guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first,
               let document = page.documentView else {
@@ -201,7 +200,6 @@ enum HelmDataTableWheelSelfTest {
         let controller = GitHubSyncController()
         let root = controller.view
         root.frame = NSRect(x: 0, y: 0, width: 1000, height: 520)
-        controller.adoptSidebarLayout()
         root.layoutSubtreeIfNeeded()
         guard let page = ScrollEdgeObserver.pageScrollViews(in: root).first else {
             return fail("GitHubSync: no page scroll view", &ok)

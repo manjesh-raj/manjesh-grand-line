@@ -1,7 +1,7 @@
 // Grand Line - native macOS app.
 //
 // Connections' Hosts as cards (H1, H2, H4, H5, H7 and X2 of the captain's
-// Termius-style plan), in the sidebar layout only.
+// Termius-style plan).
 //
 // The hosts the filters leave are drawn by `HelmCardGrid` as one flat run
 // of cards after the built-in Firstmate card, the way the Keys grid is - the
@@ -29,18 +29,18 @@ extension HostsController {
 
     // MARK: Building
 
-    /// Put the grid over the hosts table's place, and the Grid / List switch
-    /// at the end of the filter row.
+    /// Put the grid in the hosts table's place, under the filter row and down
+    /// to the tab view's foot, and the Grid / List switch at the end of the
+    /// filter row.
     func adoptHostsGrid() {
         let grid = hostsGrid
         grid.accessibilityName = "Hosts"
         hostsTabView.addSubview(grid)
-        let list = hostsList.card
         NSLayoutConstraint.activate([
-            grid.leadingAnchor.constraint(equalTo: list.leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: list.trailingAnchor),
-            grid.topAnchor.constraint(equalTo: list.topAnchor),
-            grid.bottomAnchor.constraint(equalTo: list.bottomAnchor),
+            grid.leadingAnchor.constraint(equalTo: hostsTabView.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: hostsTabView.trailingAnchor),
+            grid.topAnchor.constraint(equalTo: hostsFilterRow.bottomAnchor, constant: HelmMetrics.s3),
+            grid.bottomAnchor.constraint(equalTo: hostsTabView.bottomAnchor),
         ])
         // One selection across the two views.
         // H11: moving off a host with unsaved changes asks first, and stays
@@ -57,17 +57,15 @@ extension HostsController {
             self.hostsGrid.setSelected(key, notify: false)
             self.refreshDetailPanel()
         }
-        if let row = hostsFilterRow {
-            hostsViewModeControl.setContentHuggingPriority(.required, for: .horizontal)
-            hostsViewModeControl.setContentCompressionResistancePriority(.required, for: .horizontal)
-            row.addArrangedSubview(hostsViewModeControl)
-            // The two lines above are no-ops on a view with no intrinsic size
-            // (gotcha (12)); the filter row's spacer is what must stretch, so
-            // the switch hugs above its collapse - see `onlineFilter`'s hug.
-            let hug = hostsViewModeControl.widthAnchor.constraint(equalToConstant: 0)
-            hug.priority = NSLayoutConstraint.Priority(252)
-            hug.isActive = true
-        }
+        hostsViewModeControl.setContentHuggingPriority(.required, for: .horizontal)
+        hostsViewModeControl.setContentCompressionResistancePriority(.required, for: .horizontal)
+        hostsFilterRow.addArrangedSubview(hostsViewModeControl)
+        // The two lines above are no-ops on a view with no intrinsic size
+        // (gotcha (12)); the filter row's spacer is what must stretch, so
+        // the switch hugs above its collapse - see `onlineFilter`'s hug.
+        let hug = hostsViewModeControl.widthAnchor.constraint(equalToConstant: 0)
+        hug.priority = NSLayoutConstraint.Priority(252)
+        hug.isActive = true
         applyConnectionsViewMode()
     }
 
@@ -135,12 +133,12 @@ extension HostsController {
     /// A pop-up ticks its selected item itself, so this runs after every
     /// change of selection.
     ///
-    /// It also adds the item when the menu has none. The hosts load when the
-    /// page is built, before it adopts the sidebar layout, so the menu's
-    /// first build is the floating bar's - measured, a tour that seeded its
-    /// hosts first had no Grouped until a host changed.
+    /// It also adds the item when the menu has none. `rebuildGroupPicker`
+    /// empties and refills the menu on every host reload, so the item is put
+    /// back each time - measured, a tour that seeded its hosts first had no
+    /// Grouped until a host changed.
     func refreshGroupedChoice() {
-        guard drawsSidebarLayout, let menu = groupPicker.menu else { return }
+        guard let menu = groupPicker.menu else { return }
         if !menu.items.isEmpty, !menu.items.contains(where: { $0.representedObject as? String == Self.groupedChoiceMarker }) {
             addGroupedChoice(to: menu)
         }
@@ -164,7 +162,6 @@ extension HostsController {
     /// Show the grid or the table, per the stored choice. The selection
     /// carries over, because it is one selection.
     func applyConnectionsViewMode() {
-        guard drawsSidebarLayout else { return }
         let list = AppSettings.shared.connectionsShowList
         hostsViewModeControl.select(list ? Self.listModeID : Self.gridModeID)
         hostsGrid.isHidden = list
@@ -175,7 +172,7 @@ extension HostsController {
 
     /// The grid showing on `tab`, or `nil` where the table is.
     func visibleGrid(for tab: HostsTab) -> HelmCardGrid? {
-        guard drawsSidebarLayout, !AppSettings.shared.connectionsShowList else { return nil }
+        guard !AppSettings.shared.connectionsShowList else { return nil }
         switch tab {
         case .hosts: return hostsGrid
         case .keys: return keysGrid
@@ -232,7 +229,6 @@ extension HostsController {
     /// nothing is filtered, then Firstmate, then the hosts - one flat run,
     /// or one section per group when the captain chose Grouped.
     func renderHostsGrid(_ hosts: [Host], query: String) {
-        guard drawsSidebarLayout else { return }
         let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
         let grouped = AppSettings.shared.hostsGrouped
@@ -356,12 +352,8 @@ extension HostsController {
     }
 
     /// H5's pencil, ⌘E and a menu's Edit: the host's form in the side
-    /// panel with the keyboard in it. The floating bar keeps its window.
+    /// panel with the keyboard in it.
     func editHost(_ host: Host) {
-        guard drawsSidebarLayout else {
-            onAddOrEdit?(host)
-            return
-        }
         openHostPanel(forEditing: host)
     }
 }

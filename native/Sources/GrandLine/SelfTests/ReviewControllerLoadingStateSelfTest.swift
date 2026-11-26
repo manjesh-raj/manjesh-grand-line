@@ -58,7 +58,6 @@ enum ReviewControllerLoadingStateSelfTest {
         let cases: [(String, () -> String?)] = [
             ("startsOnTheLoadingSkeletonBeforeAnyRender", test_initialStateIsLoading),
             ("firstRenderWithDataFlipsToLoadedAndShowsRows", test_firstRenderReachesLoadedState),
-            ("firstRenderWithNoPRsStillFlipsToLoadedState", test_firstRenderWithEmptyDataStillLoads),
             ("aSecondRenderNeverRegressesBackToTheLoadingSkeleton", test_secondRenderStaysLoaded),
             ("realisticOpenPRCountRendersWithinBudget", test_realisticVolumeRendersQuickly),
         ]
@@ -157,25 +156,6 @@ enum ReviewControllerLoadingStateSelfTest {
         }
         guard controller.debugBitbucketRowCount == 1 else {
             return "expected 1 Bitbucket row, got \(controller.debugBitbucketRowCount)"
-        }
-        return nil
-    }
-
-    private static func test_firstRenderWithEmptyDataStillLoads() -> String? {
-        let (window, controller) = makeMountedController()
-        defer { _ = window }
-
-        controller.debugRender([])
-        controller.view.layoutSubtreeIfNeeded()
-
-        guard controller.debugHasLoadedOnce else {
-            return "hasLoadedOnce should flip to true even with zero open PRs - a genuinely empty page is not a stuck page"
-        }
-        guard !controller.debugIsLoadingSkeletonVisible else {
-            return "the loading skeleton should be hidden even when there are no open PRs"
-        }
-        guard controller.debugAreForgeSectionsVisible else {
-            return "the (empty-state) forge cards should still be visible with zero open PRs"
         }
         return nil
     }

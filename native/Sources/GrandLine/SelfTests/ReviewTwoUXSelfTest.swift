@@ -128,7 +128,7 @@ enum ReviewTwoUXSelfTest {
               "after choosing Personal the sidebar lists \(sidebarModules(shell).map(\.rawValue))", &ok)
         // Home's default cards follow the profile while nothing is arranged.
         check(shell.debugHomeCanvas.cardLayout == .standard(for: .personal),
-              "a Personal Home still shows \(shell.debugHomeCanvas.cardLayout?.shown.map(\.rawValue) ?? [])", &ok)
+              "a Personal Home still shows \(shell.debugHomeCanvas.cardLayout.shown.map(\.rawValue))", &ok)
         // A hidden module's page still opens from a link.
         shell.workspace.navigator.show(.kubernetes)
         settle(shell)
@@ -137,7 +137,7 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         check(sidebarModules(shell) == WorkspaceSidebarModel.listedModules(hidden: WorkspaceProfile.operator.hiddenModules),
               "after choosing Operator the sidebar lists \(sidebarModules(shell).map(\.rawValue))", &ok)
-        check(shell.debugHomeCanvas.cardLayout == .standard, "an Operator Home does not show the hub's own cards", &ok)
+        check(shell.debugHomeCanvas.cardLayout == .standard, "an Operator Home does not show the standard cards", &ok)
         shell.workspace.navigator.show(.homeCanvas)
         settle(shell)
     }
@@ -217,9 +217,10 @@ enum ReviewTwoUXSelfTest {
         settle(shell)
         let canvas = shell.debugHomeCanvas
         // The review's own first screen: no firstmate home, so the fleet's
-        // reading is the "point Grand Line at your firstmate home" row - plus
-        // the healthy services and comfortable Claude limits the seeded Home
-        // closes on.
+        // verdict is the "point Grand Line at your firstmate home" one. The
+        // floating bar's hub said so in its attention card; Home says it in
+        // its greeting, as the page-ground summary or as the briefing hero's
+        // pill, whichever it draws.
         ReviewTourLab.seedDemoHome(canvas)
         canvas.debugInputsPinned = false
         canvas.applyFleet(snapshot: FleetSnapshot(homeOk: false, captain: "", tasks: [], queuedCount: 0, doneCount: 0,
@@ -227,26 +228,28 @@ enum ReviewTwoUXSelfTest {
                           mergedPRs: [], prFetchFailure: nil)
         canvas.debugInputsPinned = true
         settle(shell)
-        let operatorRows = canvas.debugSignalAttentionIDs
+        func homeSays() -> String {
+            canvas.debugGreetingOnGround
+                ? canvas.debugGreetingSummary
+                : (canvas.debugBriefingHero?.debugContent.status?.text ?? "")
+        }
+        let verdict = (canvas.overviewAnswerForTests?.title ?? "").lowercased()
+        let fleetClause = String(verdict.hasSuffix(".") ? verdict.dropLast() : verdict[...])
         // The fixture's own discriminating power: the operator's Home has a
-        // fleet row or a fleet note to lose.
-        guard operatorRows.contains("signal.fleet"), canvas.debugClearNotes.contains("Fleet idle") else {
-            fail("the seeded Home reports nothing about the fleet, so the Personal check below is vacuous "
-                 + "(rows \(operatorRows), notes \(canvas.debugClearNotes))", &ok)
+        // fleet verdict to lose.
+        guard !fleetClause.isEmpty, homeSays().lowercased().contains(fleetClause) else {
+            fail("the seeded Home says nothing about the fleet, so the Personal check below is vacuous "
+                 + "(verdict \"\(fleetClause)\", Home says \"\(homeSays())\")", &ok)
             return
         }
         AppSettings.shared.setProfile(.personal)
         settle(shell)
-        let personalRows = canvas.debugSignalAttentionIDs
-        check(!personalRows.contains("signal.fleet") && !personalRows.contains("signal.claude")
-                && !personalRows.contains("signal.checks"),
-              "a Personal Home still reports \(personalRows)", &ok)
-        check(!canvas.debugClearNotes.contains("Fleet idle") && !canvas.debugClearNotes.contains { $0.contains("services healthy") },
-              "a Personal Home's closing notes still name the fleet or the services: \(canvas.debugClearNotes)", &ok)
+        check(!homeSays().lowercased().contains(fleetClause),
+              "a Personal Home still reports the fleet: \"\(homeSays())\"", &ok)
         AppSettings.shared.setProfile(.operator)
         settle(shell)
-        check(canvas.debugSignalAttentionIDs == operatorRows,
-              "back on Operator, Home reports \(canvas.debugSignalAttentionIDs), want \(operatorRows)", &ok)
+        check(homeSays().lowercased().contains(fleetClause),
+              "back on Operator, Home no longer reports the fleet: \"\(homeSays())\"", &ok)
     }
 
     // MARK: R2-UX-03 - chords
@@ -724,9 +727,9 @@ enum ReviewTwoUXSelfTest {
         autoreleasepool {
             let hostPage = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
             _ = hostPage.view
-            check(hostPage.tabs.isEmpty && !hostPage.tabBar.isHidden,
-                  "fixture: a host page with no tab, in the floating bar's layout, keeps its tab row (its actions live there)", &ok)
-            hostPage.adoptSidebarLayout()
+            // The fixture's own power: the page really has no tab, while the
+            // Firstmate console above (same class) keeps its row.
+            check(hostPage.tabs.isEmpty, "fixture: the host page already has a tab", &ok)
             hostPage.view.layoutSubtreeIfNeeded()
             check(hostPage.tabBar.isHidden && hostPage.tabBar.frame.height == 0,
                   "R5-UI-02: a host page with no tab still draws a \(hostPage.tabBar.frame.height)pt tab row in the sidebar layout", &ok)
@@ -753,7 +756,10 @@ enum ReviewTwoUXSelfTest {
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
-        check(!notebook.debugPageToolbarIsShown, "Notebook still draws its own toolbar row", &ok)
+        func pageToolbars(in view: NSView) -> Int {
+            (view is HelmPageToolbar ? 1 : 0) + view.subviews.reduce(0) { $0 + pageToolbars(in: $1) }
+        }
+        check(pageToolbars(in: notebook.view) == 0, "Notebook still draws its own toolbar row", &ok)
         let popUp = notebook.debugToolbarModePopUp
         check(!shell.toolbar.debugPageActions.contains { $0 === popUp },
               "Notebook's view mode is in the window toolbar again (R5-UI-01)", &ok)

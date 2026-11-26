@@ -251,20 +251,21 @@ enum ReadyToMergeCountSelfTest {
                 fail("Overview has no \"ready to merge\" tile - tiles: \(fleet.debugStatTiles)", &ok)
             }
 
-            // The canvas hero, fed the same array the page pushes it.
-            // **Not a first-run app.** Review #3's UX13 gave the hub its own
-            // hero for a captain with nothing saved, and this case runs over
-            // empty scratch stores - which is exactly that state, so without a
-            // seeded task the hero below is legitimately the welcome banner
-            // and carries no ready count to read. One task is the cheapest way
-            // to say "this app has been used"; `NavigationCoherenceSelfTest`
-            // asserts the first-run half.
-            let shiftStore = ShiftStore()
-            var seeded = ShiftTask.fresh()
-            seeded.title = "a task, so the hub is not in its first-run state"
-            shiftStore.addTask(seeded)
+            // Home, fed the same array the page pushes it. Its greeting is
+            // the one Home header that states a ready count ("2 PRs are
+            // ready to merge"), so it must state the same one. The briefing
+            // is off, so the greeting is drawn on the page ground rather
+            // than as the briefing hero's title.
+            let briefingWasOn = AppSettings.shared.morningBriefingEnabled
+            let briefingRecord = AppSettings.shared.morningBriefingRecord
+            AppSettings.shared.morningBriefingEnabled = false
+            AppSettings.shared.morningBriefingRecord = nil
+            defer {
+                AppSettings.shared.morningBriefingEnabled = briefingWasOn
+                AppSettings.shared.morningBriefingRecord = briefingRecord
+            }
             let canvas = HomeCanvasController(sources: .init(
-                shiftStore: shiftStore, hostStore: HostStore(), scheduleStore: ScheduleStore(),
+                shiftStore: ShiftStore(), hostStore: HostStore(), scheduleStore: ScheduleStore(),
                 logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
                 codePreviewStore: CodePreviewStore(),
                 notebookStore: NotebookStore(), readingListStore: ReadingListStore(),
@@ -273,41 +274,12 @@ enum ReadyToMergeCountSelfTest {
             let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             canvasWindow.contentViewController = canvas
             canvas.view.layoutSubtreeIfNeeded()
-            canvas.select(space: .overview)
             canvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: nil)
             canvas.view.layoutSubtreeIfNeeded()
 
-            // **Review #3's UX5 deliberately took the count off this hero**,
-            // and this assertion inverts rather than being deleted.
-            //
-            // The hub hero's all-clear detail used to enumerate the two cards
-            // drawn directly under it - "N crew working / N PRs ready" - which
-            // is exactly the "the same fact appears three times" the finding
-            // is about. On the hub it is a freshness line now; the *Overview
-            // page's* banner, which has no cards under it, still carries the
-            // count and is still asserted above.
-            //
-            // So what this case checks here is the thing that actually
-            // mattered: that the hub does not state a ready count of its own
-            // that could contradict the merge-queue card below it. A header
-            // re-deriving that number is the defect this whole suite exists
-            // to prevent, and a header that does not state it cannot.
-            //
-            // **`fm/grandline-home-page-visual-overhaul` moved the line, not
-            // the rule.** The hub has no hero band any more - the captain's
-            // reference draws one card at the top of Home, so the band was
-            // merged into the attention card - and the freshness line went
-            // with it. The assertion follows it rather than being deleted,
-            // for the reason the comment above already gives: one left
-            // pinning the old surface passes for the wrong reason, and this
-            // one would have passed against an empty string.
-            let hero = canvas.attentionCardForTests.debugSubline
-            check(canvas.heroCardHiddenForTests,
-                  "the hub should have no hero band - its verdict is on the attention card", &ok)
-            check(number(before: "PRs ready to merge", in: hero) == nil,
-                  "the hub is restating the merge-queue card's count again: \"\(hero)\"", &ok)
-            check(hero.hasPrefix("Fleet read "),
-                  "the hub should carry UX5's freshness line, got \"\(hero)\"", &ok)
+            let greeting = canvas.debugGreetingSummary
+            check(number(before: "ready to merge", in: greeting) == expectedReady,
+                  "Home's greeting says \(expectedReady) PRs are ready to merge, got \"\(greeting)\"", &ok)
 
             // The merge-queue card is the surface that was already right, and
             // it is the one the hero visibly contradicted on the same canvas.
@@ -361,13 +333,13 @@ enum ReadyToMergeCountSelfTest {
         }
     }
 
-    /// REL-04: the same interim push reaches the hub, which turned it into
+    /// REL-04: the same interim push reaches Home, which turned it into
     /// "0 PRs ready to merge" in the good tint for the length of every scan
     /// while the Merge queue card under it kept the last good list. After a
     /// good scan the verdict keeps that count; with no scan yet it says it is
     /// checking. Neither may ever state 0.
     private static func checkHomeNeverShowsZeroWhileScanning(_ ok: inout Bool) {
-        print("\n-- REL-04: the hub's verdict never says 0 PRs while a scan runs --")
+        print("\n-- REL-04: Home's verdict never says 0 PRs while a scan runs --")
         withScratchEnv {
             let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                          queuedCount: 0, doneCount: 0, projectsCount: 0,

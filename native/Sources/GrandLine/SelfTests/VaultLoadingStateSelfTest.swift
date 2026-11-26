@@ -33,6 +33,15 @@
 //
 // Window-backed (the page builds real cards), so this sits in
 // `Scripts/run-all-tests.sh`'s `NEEDS_SESSION` list.
+//
+// P-03 of the 2026-11-25 review removed the floating-bar layout, whose
+// Secrets and Launchers cards and attention banner these cases first read.
+// The same GL-14 properties are asserted on what the page draws now: the
+// secrets table's own empty row, its record rows, and S-1's split card (its
+// headline, its body and its launcher rows). The launchers' count is that
+// card's header line, and their actions are its rows' own View Fix buttons:
+// the undrawn launchers table these cases read for a while went in the
+// P-03 sweep.
 
 #if FM_SELFTESTS
 
@@ -110,12 +119,14 @@ enum VaultLoadingStateSelfTest {
             return "a failed read renders \"\(subtitle)\", which does not tell the captain the read failed"
         }
         // The counts must not read as zero either.
-        if controller.debugSecretsBadge == "0" || controller.debugToolsBadge == "0" {
-            return "count badges show 0/0 for a failed read (secrets=\(controller.debugSecretsBadge), tools=\(controller.debugToolsBadge))"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        if controller.debugSecretsBadge == "0" || launchers.contains("0") {
+            return "the counts show zero for a failed read (secrets=\(controller.debugSecretsBadge), "
+                + "launchers=\"\(launchers)\")"
         }
         // And the card bodies must say so, not show the "no saved secrets
         // yet" copy that invites the captain to add one.
-        guard let secretsText = controller.debugSecretsPlaceholderText else {
+        guard let secretsText = controller.debugSecretsTablePlaceholderText else {
             return "the Secrets card showed no placeholder at all for a failed read"
         }
         if secretsText.lowercased().contains("no saved secrets yet") {
@@ -139,10 +150,11 @@ enum VaultLoadingStateSelfTest {
         guard subtitle.contains("0 secrets") else {
             return "a genuinely empty vault renders \"\(subtitle)\" instead of a real zero"
         }
-        guard controller.debugSecretsBadge == "0", controller.debugToolsBadge == "0" else {
-            return "badges read \(controller.debugSecretsBadge)/\(controller.debugToolsBadge) for a real zero"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        guard controller.debugSecretsBadge == "0", launchers.hasSuffix("\u{00B7} 0") else {
+            return "the counts read \(controller.debugSecretsBadge) and \"\(launchers)\" for a real zero"
         }
-        guard let text = controller.debugSecretsPlaceholderText,
+        guard let text = controller.debugSecretsTablePlaceholderText,
               text.lowercased().contains("no saved secrets yet") else {
             return "a genuinely empty vault lost its \"no saved secrets yet\" copy"
         }
@@ -156,11 +168,13 @@ enum VaultLoadingStateSelfTest {
             secrets: [VaultSecret(name: "GRANDLINE_APP_PASSWORD"), VaultSecret(name: "GH_TOKEN")],
             tools: [VaultTool(name: "claude", commands: ["claude"], status: .hardened)]
         )
-        guard controller.debugSecretRows.count == 2 else {
-            return "2 secrets rendered \(controller.debugSecretRows.count) rows"
+        let records = controller.debugSecretsTable.debugRows.filter(\.isRecord)
+        guard records.count == 2 else {
+            return "2 secrets rendered \(records.count) rows"
         }
-        guard controller.debugSecretsBadge == "2", controller.debugToolsBadge == "1" else {
-            return "badges read \(controller.debugSecretsBadge)/\(controller.debugToolsBadge) for 2 secrets and 1 tool"
+        let launchers = controller.debugHeroSplit?.debugHeader ?? ""
+        guard controller.debugSecretsBadge == "2", launchers.hasSuffix("\u{00B7} 1") else {
+            return "the counts read \(controller.debugSecretsBadge) and \"\(launchers)\" for 2 secrets and 1 tool"
         }
         guard let subtitle = controller.drillHeaderSubtitle, subtitle.contains("2 secrets") else {
             return "the drill subtitle lost its real counts: \(controller.drillHeaderSubtitle ?? "nil")"
@@ -172,11 +186,17 @@ enum VaultLoadingStateSelfTest {
         let (window, controller) = mounted()
         defer { window.contentView = nil }
         controller.debugRender(secrets: nil, tools: nil)
-        // The banner is "N tools need attention". A failed read says nothing
-        // about that either way, so it must stay down - but the *subtitle*
-        // must not read as an all-clear.
-        if controller.debugAttentionBannerVisible {
-            return "a failed read raised the needs-attention banner it has no data for"
+        // A failed read says nothing about whether a launcher needs
+        // attention, so the card must neither raise a count to fix nor read
+        // as an all-clear. It must say the read failed.
+        guard let hero = controller.debugHeroSplit?.panel else {
+            return "the page has no S-1 card to say anything on"
+        }
+        if hero.debugKicker.contains("All clear") || hero.debugKicker.contains("to fix") {
+            return "a failed read renders the card's \"\(hero.debugKicker)\" kicker"
+        }
+        guard hero.debugHeadline.lowercased().contains("couldn") else {
+            return "a failed read's card reads \"\(hero.debugHeadline)\", which does not say the read failed"
         }
         if let subtitle = controller.drillHeaderSubtitle,
            subtitle.contains("names and metadata only, never a value"),
@@ -215,12 +235,16 @@ enum VaultLoadingStateSelfTest {
         let (window, controller) = mounted()
         defer { window.contentView = nil }
         controller.debugRender(secrets: [], tools: [nodeTool])
-        guard controller.debugAttentionBannerVisible,
-              controller.debugAttentionBannerText.contains("symbolic link") else {
-            return "the banner does not name the problem: \"\(controller.debugAttentionBannerText)\""
+        guard let card = controller.debugHeroSplit else { return "the page has no S-1 card" }
+        let said = [card.panel.debugHeadline, card.panel.debugBody ?? ""].joined(separator: " ")
+        guard card.panel.debugKicker.contains("1 to fix"), said.contains("node") else {
+            return "the card does not name the launcher to fix: \(card.panel.debugKicker) / \"\(said)\""
         }
-        guard controller.debugToolRows.count == 1,
-              (controller.toolRowContent(nodeTool).meta ?? "").contains("symbolic link") else {
+        guard card.debugRows.count == 1, card.debugRows[0].debugDetail.contains("symbolic link") else {
+            return "the card's launcher row does not carry the doctor's message: "
+                + "\(card.debugRows.map(\.debugDetail))"
+        }
+        guard VaultController.launcherDetail(nodeTool).contains("symbolic link") else {
             return "the launcher row does not carry the doctor's message"
         }
         return nil
@@ -230,20 +254,18 @@ enum VaultLoadingStateSelfTest {
         let (window, controller) = mounted()
         defer { window.contentView = nil }
         controller.debugRender(secrets: [], tools: [nodeTool, VaultTool(name: "claude", commands: ["claude"], status: .hardened)])
-        let rows = controller.debugToolTableRows
+        // S-1's rows are what the page draws for the launchers. Re-check
+        // lives on the fix sheet (`theFixSheetShowsCopyableCommandsAndRunsNothing`).
+        let rows = controller.debugHeroSplit?.debugRows ?? []
         guard rows.count == 2 else { return "expected 2 launcher rows, got \(rows.count)" }
-        guard case .title(_, let subtitle, _, _, _, _)? = rows[0].cells["launcher"],
-              subtitle?.contains("symbolic link") == true else {
-            return "the table row's subtitle is not the doctor's message"
+        guard rows[0].debugDetail.contains("symbolic link") else {
+            return "the issue row's detail is not the doctor's message: \(rows[0].debugDetail)"
         }
-        guard rows[0].primary?.title == "View Fix\u{2026}", rows[0].activate != nil else {
+        guard rows[0].fixButton?.title == "View Fix\u{2026}", rows[0].onFix != nil else {
             return "an issue row has no way to open its fix steps"
         }
-        guard rows[0].menu.map(\.title) == ["Re-check"] else {
-            return "an issue row's menu is \(rows[0].menu.map(\.title)), expected only Re-check"
-        }
-        guard rows[1].primary == nil, rows[1].activate == nil, rows[1].menu.isEmpty else {
-            return "a hardened launcher grew an action it has nothing to do with"
+        guard rows[1].fixButton == nil else {
+            return "a hardened launcher grew a View Fix button it has nothing to do with"
         }
         return nil
     }
@@ -253,17 +275,26 @@ enum VaultLoadingStateSelfTest {
         defer { window.contentView = nil }
         let other = VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 1))
         controller.debugRender(secrets: [], tools: [nodeTool, other])
+        // What S-1's card says about the launchers, and each launcher row's
+        // state, in order.
+        func said() -> String {
+            guard let card = controller.debugHeroSplit else { return "" }
+            return [card.panel.debugKicker, card.panel.debugHeadline, card.panel.debugBody ?? ""].joined(separator: " ")
+        }
+        func states() -> [String] { controller.debugHeroSplit?.debugRows.map(\.debugState) ?? [] }
         controller.debugFinishRecheck("node", nil)
-        guard controller.debugAttentionBannerText.contains("node, terraform") else {
-            return "a failed re-check cleared the reading it could not replace: \(controller.debugAttentionBannerText)"
+        guard said().contains("2 to fix"), states() == ["1 issue", "1 issue"] else {
+            return "a failed re-check cleared the reading it could not replace: \"\(said())\" \(states())"
         }
         controller.debugFinishRecheck("node", VaultTool(name: "node", commands: ["npm"], status: .hardened))
-        guard controller.debugToolRows.count == 2 else { return "a re-check changed the number of launchers" }
-        guard !controller.debugAttentionBannerText.contains("node") else {
-            return "node is still named in the banner after a clean re-check: \(controller.debugAttentionBannerText)"
+        guard controller.debugHeroSplit?.debugRows.count == 2 else {
+            return "a re-check changed the number of launchers"
         }
-        guard controller.debugAttentionBannerText.hasPrefix("terraform needs attention") else {
-            return "the other launcher's reading was disturbed: \(controller.debugAttentionBannerText)"
+        guard states() == ["Hardened", "1 issue"] else {
+            return "node's row did not take its clean re-check, or terraform's changed: \(states())"
+        }
+        guard said().contains("1 to fix"), said().contains("terraform needs attention"), !said().contains("node") else {
+            return "the card still names node after a clean re-check, or lost terraform: \"\(said())\""
         }
         return nil
     }

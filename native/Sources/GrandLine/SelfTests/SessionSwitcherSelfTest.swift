@@ -227,12 +227,12 @@ enum SessionSwitcherSelfTest {
             _ = panel.view
             panel.refreshLiveSessionState()
 
-            guard let row = panel.debugHostRowItem(labelled: host.label) else { return "no row for the host" }
-            guard let chip = row.content.chipText, chip.hasPrefix("Connected") else {
-                return "row chip does not read as connected: \(row.content.chipText ?? "nil")"
+            guard let row = hostRow(panel, host) else { return "no row for the host" }
+            guard case .status(let state, let tint)? = row.cells["session"], state.hasPrefix("Connected") else {
+                return "the row's Session cell does not read as connected: \(String(describing: row.cells["session"]))"
             }
-            guard row.content.chipTint == .good else { return "connected chip is not the shared good tint" }
-            guard row.primary?.title == "Switch to session" else {
+            guard tint == .good else { return "the connected state is not the shared good tint" }
+            guard row.primary?.title == "Switch" else {
                 return "row action reads \(row.primary?.title ?? "nil") - a live host must not look like a fresh connect"
             }
             row.primary?.run()
@@ -240,10 +240,10 @@ enum SessionSwitcherSelfTest {
             guard switched == [host.id, host.id], !connected else {
                 return "the live row's action reconnected instead of resuming (switched=\(switched.count), connected=\(connected))"
             }
-            guard row.overflow.first?.title == "End Session" else {
+            guard row.menu.first?.title == "End Session" else {
                 return "a live row offers no way to end the session"
             }
-            row.overflow.first?.run()
+            row.menu.first?.run()
             guard ended == [host.id] else { return "End Session did not reach the shell" }
             return nil
         }
@@ -259,18 +259,23 @@ enum SessionSwitcherSelfTest {
             // must render exactly the pre-switcher row.
             _ = panel.view
             panel.refreshLiveSessionState()
-            guard let row = panel.debugHostRowItem(labelled: host.label) else { return "no row for the host" }
+            guard let row = hostRow(panel, host) else { return "no row for the host" }
             guard row.primary?.title == "Connect" else {
                 return "an idle row's action is \(row.primary?.title ?? "nil"), expected Connect"
             }
-            guard row.content.chipText == nil || !(row.content.chipText!.hasPrefix("Connected")) else {
-                return "an idle row claims to be connected"
+            guard case .none? = row.cells["session"] else {
+                return "an idle row states a session: \(String(describing: row.cells["session"]))"
             }
-            guard row.overflow.first?.title == "Edit…" else {
+            guard row.menu.first?.title == "Edit\u{2026}" else {
                 return "an idle row gained an End Session item"
             }
             return nil
         }
+    }
+
+    /// The host table's real row for `host`, as the page rendered it.
+    private static func hostRow(_ panel: HostsController, _ host: Host) -> HelmDataTable.Row? {
+        panel.debugHostsTable.debugRows.first { $0.key == host.id.uuidString }
     }
 
     // MARK: ⌘K palette

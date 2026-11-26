@@ -45,7 +45,6 @@ enum Audit3UIFixesSelfTest {
                       checkUnselectedTabChipIsPainted,
                       checkVaultHeaderCountIsAPillAndCardsLoad,
                       checkBootstrapDropsTheDuplicateStepSummary,
-                      checkAnalyzeModePickerIsNotTheAnalyzeButton,
                       checkCommandLibraryUsesNoEmoji,
                       checkSecondaryButtonOutlineClearsTheFloor,
                       checkConsoleCardDistinguishesACleanExit,
@@ -241,37 +240,43 @@ enum Audit3UIFixesSelfTest {
         }
     }
 
-    // MARK: UI4 - the Vault header count is a pill, and its cards load
+    // MARK: UI4 - the Vault header count is a pill, and the page says it is loading
 
     private static func checkVaultHeaderCountIsAPillAndCardsLoad(_ ok: inout Bool) {
-        print("\n-- UI4: the Vault count is a pill, and its two cards show a loading state --")
+        print("\n-- UI4: the Vault count is a pill, and the page shows a loading state --")
         withScratchEnv {
             let vault = VaultController()
             laidOut(vault, width: 1100, height: 700)
 
-            check(vault.debugCountBadges.count == 2,
-                  "both header counts are `HelmCountBadge`s (found \(vault.debugCountBadges.count))",
+            // The Secrets card's header count. The launchers' count is S-1's
+            // card's own header line, which has no pill to paint.
+            let badge = vault.debugSecretsCountBadge
+            badge.layoutSubtreeIfNeeded()
+            check((badge.debugFill?.alphaComponent ?? 0) > 0.01,
+                  "the count badge paints a pill rather than sitting bare",
                   &ok)
-            for badge in vault.debugCountBadges {
-                badge.layoutSubtreeIfNeeded()
-                check((badge.debugFill?.alphaComponent ?? 0) > 0.01,
-                      "the count badge paints a pill rather than sitting bare",
-                      &ok)
-                check(badge.debugCornerRadius >= HelmCountBadge.height / 2 - 0.01,
-                      "the pill is a capsule (radius \(badge.debugCornerRadius))",
-                      &ok)
-            }
+            check(badge.debugCornerRadius >= HelmCountBadge.height / 2 - 0.01,
+                  "the pill is a capsule (radius \(badge.debugCornerRadius))",
+                  &ok)
             // GL-14, and the thing the render showed: a bare `0` beside a
             // subtitle reading "Checking Automic Vault…" is a confident count
             // the page has not earned.
-            check(vault.debugSecretsBadge == "?" && vault.debugToolsBadge == "?",
-                  "before the first read both counts read ? rather than 0 "
-                  + "(\(vault.debugSecretsBadge)/\(vault.debugToolsBadge))",
+            let launchers = vault.debugHeroSplit?.debugHeader ?? ""
+            check(vault.debugSecretsBadge == "?" && !launchers.contains(where: \.isNumber),
+                  "before the first read neither count claims a number "
+                  + "(secrets \(vault.debugSecretsBadge), launchers \"\(launchers)\")",
                   &ok)
-            // D3's skeleton, in both cards, from the moment the page exists.
-            check(vault.debugSkeletonCount == 2,
-                  "both cards show a D3 skeleton while the first read is in flight "
-                  + "(found \(vault.debugSkeletonCount))",
+            // The loading state, from the moment the page exists. The floating
+            // bar's cards drew a D3 skeleton here; P-03 of the 2026-11-25
+            // review removed them, and the secrets table's own still-reading
+            // row and S-1's card say it now.
+            let placeholder = vault.debugSecretsTablePlaceholderText ?? ""
+            check(placeholder.contains("once av answers"),
+                  "the secrets table says it is still reading before the first read (\"\(placeholder)\")",
+                  &ok)
+            let kicker = vault.debugHeroSplit?.panel.debugKicker ?? ""
+            check(kicker.hasSuffix("Checking"),
+                  "the launchers' card says it is still checking before the first read (\"\(kicker)\")",
                   &ok)
         }
     }
@@ -326,30 +331,6 @@ enum Audit3UIFixesSelfTest {
     }
 
     // MARK: UI6 - the mode picker and the action no longer share a name
-
-    private static func checkAnalyzeModePickerIsNotTheAnalyzeButton(_ ok: inout Bool) {
-        print("\n-- UI6: the Log Analyzer's mode picker is distinguishable from its Analyze button --")
-        withScratchEnv {
-            let analyzer = LogAnalyzerController(commandLibrary: CommandLibraryStore())
-            laidOut(analyzer, width: 1100, height: 800)
-            let views = everyView(in: analyzer.view)
-            let buttonTitles = Set(views.compactMap { ($0 as? HelmButton)?.title })
-            let popupTitles = views.compactMap { $0 as? NSPopUpButton }.flatMap { $0.itemTitles }
-
-            check(buttonTitles.contains("Analyze"),
-                  "the primary Analyze action is still titled \"Analyze\"",
-                  &ok)
-            let collisions = popupTitles.filter { buttonTitles.contains($0) }
-            check(collisions.isEmpty,
-                  "no popup item shares a button's title (collisions: \(collisions))",
-                  &ok)
-            // And the picker still offers every mode - a fix that solved the
-            // collision by deleting the modes would pass the check above.
-            check(popupTitles.filter { $0.hasPrefix("Mode: ") }.count == LogAnalysisMode.allCases.count,
-                  "every analysis mode is still offered, prefixed",
-                  &ok)
-        }
-    }
 
     // MARK: UI7 - one icon language on the DevOps Commands page
 

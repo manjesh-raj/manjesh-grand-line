@@ -70,7 +70,7 @@ enum DaylightDrillPageSlice3SelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkSetupPagesEachOwnTheirDrillHeader,
+        for check in [
                       checkSchedulesDrillHeader,
                       checkRowRecipeAndSignalWash,
                       checkUpdateButtonIsAmberPrimary,
@@ -274,126 +274,6 @@ enum DaylightDrillPageSlice3SelfTest {
     }
 
     // MARK: 1 + 2 - each setup page owns its own drill header (§6.4)
-
-    /// **Rewritten, not retired, by `fm/grandline-separate-setup-destinations`.**
-    /// This was `checkSetupDrillHeaderIsPerTab`: it drove
-    /// `SetupContainerController.select(tab:)` and asserted the shared
-    /// container's subtitle followed the active tab, prefixed with that tab's
-    /// own name. The four pages are four destinations now - each with its own
-    /// title in the drill header above the line - so that prefix would be the
-    /// duplicate-title defect §6.4 exists to remove, and the thing worth
-    /// pinning is that each page conforms *itself* and supplies its own
-    /// honest, distinct line.
-    private static func checkSetupPagesEachOwnTheirDrillHeader(_ ok: inout Bool) {
-        print("\n-- §6.4: each Engineering setup page carries its own live header line --")
-
-        var seen: [RailDestination: String] = [:]
-        for (dest, controller) in makeSetupPages() {
-            _ = mount(controller)
-
-            // The seam. A page that stopped conforming would silently fall
-            // back to the static per-area line, which reads like a choice.
-            guard let page = controller as? DaylightDrillActions else {
-                print("  FAIL \(dest.title) does not conform to DaylightDrillActions")
-                ok = false
-                continue
-            }
-            guard let line = page.drillHeaderSubtitle, !line.isEmpty else {
-                print("  FAIL \(dest.title): no subtitle at all")
-                ok = false
-                continue
-            }
-            // The page's own name belongs to the drill header's *title*, one
-            // line up. Repeating it here is the duplicate-title defect §6.4
-            // exists to remove - and it is exactly what the shared container
-            // used to do ("Updates - 13 tools - ..."), because it had no title
-            // of its own to say it in.
-            if line.hasPrefix(dest.title) {
-                print("  FAIL \(dest.title): subtitle repeats the page's own title (\"\(line)\")")
-                ok = false
-            }
-            seen[dest] = line
-            print("  \(dest.title.padding(toLength: 12, withPad: " ", startingAt: 0)) -> \(line)")
-
-            // §6.4's cluster is deliberately empty on three of the four - see
-            // each page's own `drillHeaderActions` doc comment. Automation is
-            // the exception: `fm/grand-line-automation-page-refresh-cleanup`
-            // gave it the app's shared page-level Refresh, which duplicates no
-            // control that lives elsewhere on that page (the original "empty"
-            // reasoning was only ever about hoisting "Run Automation").
-            // Reported either way so a later change that fills one does so on
-            // purpose rather than by accident.
-            if !page.drillHeaderActions.isEmpty {
-                print("  note \(dest.title) carries \(page.drillHeaderActions.count) header action(s) - keep the property's doc comment current")
-            }
-
-            // The tab strip that produced the captain's "everything is lumped
-            // up" is genuinely gone: a page that kept one would render a pill
-            // naming each of its three siblings.
-            //
-            // Deliberately *not* "does this page contain a `HelmSegmentedTabs`"
-            // - Updates owns a real one of its own (its All / Needs attention
-            // filter), so a structural check would fail on a control that has
-            // nothing to do with the merge. The leftover *label* is the honest
-            // symptom, and the shape `DestinationMountingSelfTest`'s own split
-            // cases already use.
-            let labels = Set(textFieldValues(in: controller.view))
-            for sibling in makeSetupPages().map(\.0) where sibling != dest {
-                if labels.contains(sibling.title) {
-                    print("  FAIL \(dest.title) still renders a \"\(sibling.title)\" tab pill")
-                    ok = false
-                }
-            }
-        }
-
-        guard seen.count == 4 else {
-            print("  FAIL only \(seen.count) of 4 pages produced a line")
-            ok = false
-            return
-        }
-
-        // The lines have to actually *differ*. Four identical ones would pass
-        // every "has a subtitle" check while telling the captain nothing.
-        //
-        // **One pair is now deliberately identical, and the captain decided
-        // it.** Bootstrap and Automation are two views of one setup
-        // checklist, and the 2026-09-27 review's U7/X4 is precisely that
-        // they used to disagree out loud about it - "3 of 4 steps done"
-        // against "0 of 5 steps ready" on the same machine. They read one
-        // `SetupPipelineProgress` now, so agreeing is the property worth
-        // pinning and it is asserted below rather than merely tolerated.
-        let sharedChecklist: Set<RailDestination> = [.bootstrap, .automation]
-        let independentLines = seen.filter { !sharedChecklist.contains($0.key) }.values
-        if Set(independentLines).count < independentLines.count {
-            print("  FAIL two pages render the identical subtitle: \(Array(independentLines))")
-            ok = false
-        }
-        let checklistLines = Set(seen.filter { sharedChecklist.contains($0.key) }.values)
-        if checklistLines.count != 1 {
-            print("  FAIL Bootstrap and Automation describe one checklist differently: \(checklistLines)")
-            ok = false
-        }
-        if let checklistLine = checklistLines.first,
-           Set(independentLines).contains(checklistLine) {
-            print("  FAIL a page outside the setup checklist renders its line: \"\(checklistLine)\"")
-            ok = false
-        }
-
-        // Phase 3's honesty rule: a page whose first sweep has not run reports
-        // that, not a zero. Neither Updates nor GitHub Sync has been visited
-        // here (no `viewWillAppear`), so both are genuinely un-swept.
-        for (dest, line) in seen where dest == .updates || dest == .githubSync {
-            if !line.contains("not checked yet") && !line.contains("checking") {
-                print("  FAIL \(dest.title) claims a real verdict before its first check: \"\(line)\"")
-                ok = false
-            }
-        }
-
-        if ok {
-            print("  OK - four pages, three distinct honest lines (Bootstrap and Automation share "
-                  + "one checklist, X4), no sibling tab pills")
-        }
-    }
 
     private static func textFieldValues(in view: NSView) -> [String] {
         var result: [String] = []
@@ -628,27 +508,9 @@ enum DaylightDrillPageSlice3SelfTest {
             print("  FAIL setting a hue is a no-op on \(o.id) - then nothing proves the row must not set it there")
             ok = false
         }
-        // The mechanism above is per-theme by construction, so the remaining
-        // failure is a *call site* that sets the hue unconditionally - which
-        // would restyle a `.primary` on all twelve other palettes while every
-        // assertion above still passed. A source guard is the only thing that
-        // can see that, since `applyThemeToRow` is private and the wrong
-        // behaviour renders as a plausible button either way.
-        if let dir = SelfTestSources.appSourceDirectory(),
-           let text = try? String(contentsOf: dir.appendingPathComponent("UpdatesController.swift"),
-                                  encoding: .utf8) {
-            let hueLines = text.split(separator: "\n", omittingEmptySubsequences: false)
-                .filter { $0.contains("updateButton.domainHue") }
-            if hueLines.isEmpty {
-                print("  FAIL UpdatesController no longer sets the update button's domain hue at all")
-                ok = false
-            } else if let bad = hueLines.first(where: { !$0.contains("theme.isDaylight") }) {
-                print("  FAIL the update button's hue is set unconditionally: \(bad.trimmingCharacters(in: .whitespaces))")
-                ok = false
-            }
-        } else {
-            print("  skip source guard - could not locate the app's source directory")
-        }
+        // A source guard on Updates' row Update button used to sit here. P-03
+        // of the 2026-11-25 review removed that button with the floating bar's
+        // category cards; the page's one Update is its table row's action.
         if ok { print("  OK - corrected amber under Daylight, accentHex elsewhere, and the hue genuinely matters") }
     }
 

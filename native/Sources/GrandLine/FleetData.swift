@@ -1081,27 +1081,6 @@ enum FleetGreeting {
         let isSetupPrompt: Bool
         /// The canvas's single-line form: the headline plus its detail.
         var canvasLine: String { "\(title). \(meta)" }
-
-        /// Whether `meta` is a restatement of cards the hub draws directly
-        /// under the hero - review #3's UX5.
-        ///
-        /// The finding: hero band "Nothing needs you right now / 1 crew
-        /// working / 0 PRs / nobody parked" over a Fleet card saying "1 crew
-        /// working / All clear" and a Merge queue card saying its PR count.
-        /// "The same fact appears three times."
-        ///
-        /// That is true of the **all-clear** branch's meta and only that
-        /// branch: its three clauses are the Fleet card, the Merge queue card
-        /// and the absence of the Fleet card's warn chip. The "needs you"
-        /// branch's meta is a breakdown (how many decisions, how many blocked)
-        /// that no card carries, and the not-configured branch is a setup
-        /// prompt - both stay exactly as they are, on the hub and on Overview.
-        ///
-        /// A flag rather than two `meta` strings, because the **Overview
-        /// page's own banner is not redundant**: it is the only summary on
-        /// that page. One `Answer`, and the surface that has cards under it is
-        /// the one that substitutes. `FleetGreeting` still owns the copy.
-        let metaRestatesCards: Bool
     }
 
     /// The three states Overview's banner has always had, unchanged in copy.
@@ -1132,8 +1111,7 @@ enum FleetGreeting {
                 // in Bootstrap's editable field, where it can be changed.
                 meta: "No firstmate home was found where Grand Line is looking. Open \(PlaceName.of(.bootstrap)) to choose the directory firstmate keeps its projects, backlog and crew state in.",
                 badgeSymbol: "wrench.and.screwdriver.fill",
-                isSetupPrompt: true,
-                metaRestatesCards: false)
+                isSetupPrompt: true)
         }
 
         let working = tasks.filter { $0.status == "working" }
@@ -1159,8 +1137,7 @@ enum FleetGreeting {
                 title: failed ? "Nothing known needs you right now" : "Nothing needs you right now",
                 meta: "\(working.count) crew working \u{00B7} \(prPhrase) \u{00B7} nobody is parked on a decision.",
                 badgeSymbol: failed ? "wifi.exclamationmark" : "checkmark",
-                isSetupPrompt: false,
-                metaRestatesCards: true)
+                isSetupPrompt: false)
         }
 
         let decisions = needs.filter { $0.status == "needs_decision" }.count
@@ -1176,7 +1153,6 @@ enum FleetGreeting {
             title: needs.count == 1 ? "1 task needs your call" : "\(needs.count) tasks need your call",
             meta: bits.joined(separator: " \u{00B7} ") + " - the crew is holding for you.",
             badgeSymbol: "exclamationmark.triangle.fill",
-            isSetupPrompt: false,
-            metaRestatesCards: false)
+            isSetupPrompt: false)
     }
 }

@@ -1,8 +1,8 @@
 // Grand Line - native macOS app.
 //
 // Keys are edited, and made, in the side panel (K6, K7 and K8 of the
-// captain's Termius-style plan), in the sidebar layout only - "same with
-// keys as well", the captain's words beside the host direction.
+// captain's Termius-style plan) - "same with keys as well", the captain's
+// words beside the host direction.
 //
 // The shape is the host panel's (`HostsController+Panel.swift`): selecting a
 // key shows `KeyEditorController` with `presentation: .panel` in the

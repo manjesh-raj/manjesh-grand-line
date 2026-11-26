@@ -85,7 +85,12 @@ enum SettingsSidebarNavigationSelfTest {
     /// Thirty-five since the Security page gained its Power card (the
     /// lid-closed switch). Thirty-six since it gained its Xcode card (the
     /// Metal Toolchain switch).
-    private static let expectedCardCount = 36
+    /// Twenty-one since P-03 of the 2026-11-25 review: with the floating bar
+    /// gone the page always builds its Set-2 split cards at load, and the
+    /// rows each split plan takes leave their section cards, so fifteen
+    /// section cards are not built. Those rows are the split cards' now
+    /// (`SettingsSplitCardsViewSelfTest`).
+    private static let expectedCardCount = 21
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
@@ -212,6 +217,9 @@ enum SettingsSidebarNavigationSelfTest {
             for section in settings.debugSections(in: category) {
                 strings += painted(section).map { (category.rawValue, $0) }
             }
+            if let split = settings.debugSplitCard(in: category) {
+                strings += painted(split).map { (category.rawValue, $0) }
+            }
         }
 
         // Discriminating power first: the walk really reads the pages, so an
@@ -256,7 +264,9 @@ enum SettingsSidebarNavigationSelfTest {
         var seen: [ObjectIdentifier: [String]] = [:]
         for category in SettingsController.Category.allCases {
             let cards = settings.debugGroupCards(in: category)
-            if cards.isEmpty {
+            // A page whose split card took every row has no section card
+            // left; the split card is its card then.
+            if cards.isEmpty && settings.debugSplitCard(in: category) == nil {
                 print("  FAIL category \(category.rawValue) shows no cards at all")
                 ok = false
             }
@@ -410,7 +420,9 @@ enum SettingsSidebarNavigationSelfTest {
             guard click(category, in: settings) else { continue }
             let subtitle = settings.drillHeaderSubtitle ?? ""
             subtitles.append(subtitle)
-            if !subtitle.hasPrefix(category.title) {
+            // R2-UX-05: the category is named by the page's own column, so the
+            // module line is its description.
+            if subtitle != category.heroDescription {
                 print("  FAIL on \(category.rawValue) the subtitle reads \"\(subtitle)\"")
                 ok = false
             }
@@ -596,7 +608,8 @@ enum SettingsSidebarNavigationSelfTest {
                 }
                 // And the detail column really is capped rather than tracking
                 // the window forever, which is the other half of the change.
-                let widest = settings.debugMountedGroupCards.map(\.frame.width).max() ?? 0
+                let widest = (settings.debugMountedGroupCards.map(\.frame.width)
+                    + [settings.debugSplitCard(in: category)?.frame.width ?? 0]).max() ?? 0
                 if widest > 940 {
                     print("  FAIL \(category.rawValue)'s cards render \(fmt(widest))pt wide at a "
                           + "\(fmt(width))pt window - the column cap is not holding")

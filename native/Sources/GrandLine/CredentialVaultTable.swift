@@ -3,9 +3,9 @@
 // The two cells Poneglyph's credential table needs beyond `HelmDataTable`'s
 // own: the live 2FA code, and a row's Reveal and Copy.
 //
-// The sidebar layout draws Secrets › Secrets as the prototype's table
-// (`CredentialVaultController`'s "The sidebar layout" extension). Both cells
-// keep the list row's rules exactly, because they are the captain's own:
+// Secrets › Secrets is the prototype's table (`CredentialVaultController`'s
+// "The presentation" extension), and its rows are `CredentialRowModel`s. Both
+// cells keep two rules exactly, because they are the captain's own:
 //
 //   - **Reveal and Copy are separate, with their own icons.** Reveal shows the
 //     value on the row and never touches the clipboard; Copy writes the
@@ -46,8 +46,9 @@ final class CredentialTOTPCell: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// The same reading `CredentialVaultListSection`'s row makes, from the
-    /// same clock.
+    /// The ring and the code from one instant of the app's one clock. Called
+    /// when the row is built and on every tick of `TOTPTicker`, so both paths
+    /// draw the same thing.
     func update(_ config: VaultTOTP, now: Date, theme: HelmTheme) {
         let remaining = TOTP.secondsRemaining(config, at: now)
         ring.fraction = TOTP.fractionRemaining(config, at: now)
@@ -71,6 +72,7 @@ final class CredentialTOTPCell: NSView {
 
     #if FM_SELFTESTS
     var debugCodeButton: HelmButton { codeButton }
+    var debugRing: TOTPRingView { ring }
     #endif
 }
 
@@ -136,5 +138,8 @@ final class CredentialRowControls: NSView {
     var debugRevealButton: HelmButton? { revealButton.isHidden ? nil : revealButton }
     var debugCopyButton: HelmButton? { copyButton.isHidden ? nil : copyButton }
     var debugTouchIDShown: Bool { !touchID.isHidden }
+    /// The Touch ID glyph itself, so a suite can measure it against Reveal
+    /// and Copy.
+    var debugTouchIDView: NSImageView? { touchID.isHidden ? nil : touchID }
     #endif
 }

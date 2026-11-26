@@ -87,11 +87,6 @@ enum PageRedesignsSelfTest {
                     allOK = allOK && ok
                 }
             }
-            do {
-                var ok = true
-                checkTheHostsFooterStaysDown(scratch, &ok)
-                allOK = allOK && ok
-            }
             return allOK
         }
         var storesOK = true
@@ -170,7 +165,6 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.hosts)
         clickTab("Hosts", shell)
         let hosts = shell.workspace.hostsPanel
-        check(hosts.drawsSidebarLayout, "Hosts did not switch to the sidebar layout's presentation", &ok)
         // C4 of the Termius-style plan made the cards the default view; this
         // check is the table's, which is the List side of the same switch.
         // The cards are `ConnectionsCardsSelfTest`'s.
@@ -179,7 +173,6 @@ enum PageRedesignsSelfTest {
         settle(shell)
         let table = hosts.debugHostsTable
         check(onScreen(table.card), "the host table is not on screen", &ok)
-        check(!onScreen(hosts.debugHostsList.card), "the floating bar's host list still shows in the sidebar layout", &ok)
         check(table.debugHeaderTitles.starts(with: ["Host", "Address"]),
               "the host table's header reads \(table.debugHeaderTitles)", &ok)
         let keys = table.debugRows.compactMap(\.key)
@@ -191,7 +184,7 @@ enum PageRedesignsSelfTest {
             return nil
         }
         check(groups == ["Observability", "Production", "Staging", "Ungrouped"],
-              "the host groups are \(groups), the floating bar's list groups the same hosts the same way", &ok)
+              "the host groups are \(groups), want one header per group", &ok)
         checkFits(table, "the host table at 1512", &ok)
 
         // A selection fills the shell's inspector with the host's details.
@@ -215,9 +208,8 @@ enum PageRedesignsSelfTest {
         check(panel?.debugFooterTitles == ["Connect", "Test", "More actions"], "the host form's footer is \(panel?.debugFooterTitles ?? [])", &ok)
         check(panel?.debugPanelMenuTitles == ["Duplicate\u{2026}", "Delete\u{2026}"],
               "the host form's menu is \(panel?.debugPanelMenuTitles ?? [])", &ok)
-        check(hosts.debugSideStackIsHidden, "the page's own detail column shows beside the inspector", &ok)
 
-        // The row's menu is the floating bar's overflow, and runs it.
+        // The row's menu carries the host's other actions, and runs them.
         let menu = table.debugMenuTitles(key: edge.id.uuidString)
         check(menu == ["Connect", "Edit\u{2026}", "Duplicate\u{2026}", "Delete\u{2026}"], "the host row's menu is \(menu)", &ok)
         let before = shell.workspace.hostStore.hosts.count
@@ -268,11 +260,10 @@ enum PageRedesignsSelfTest {
         }
         clickTab("Snippets", shell)
         check(onScreen(hosts.debugSnippetsTable.card), "the snippet table is not on screen on Snippets", &ok)
-        // Stage 6 made the strip a plain row (`.inline`), still over the
-        // table; `SidebarPageFixesSelfTest` checks its placement and wiring.
-        check(onScreen(hosts.debugExpansionStrip) && hosts.debugExpansionStrip.style == .inline,
+        // Stage 6 made the strip a plain row, still over the table;
+        // `SidebarPageFixesSelfTest` checks its placement and wiring.
+        check(onScreen(hosts.debugExpansionStrip),
               "the snippet expansion switch is not the row over the Snippets table", &ok)
-        check(hosts.debugSideStackIsHidden, "the floating bar's right column shows on Snippets in the sidebar layout", &ok)
         clickTab("Hosts", shell)
     }
 
@@ -343,11 +334,8 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.poneglyph)
         settle(shell)
         let page = shell.debugPoneglyph
-        check(page.drawsSidebarLayout, "Poneglyph did not switch to the sidebar layout's presentation", &ok)
         let table = page.debugCredentialTable
         check(onScreen(table.card), "the credential table is not on screen", &ok)
-        check(!onScreen(page.debugList.card), "the floating bar's credential list still shows", &ok)
-        check(page.debugInspector.isHostedInWorkspaceInspector, "the credential inspector is still the page's own column", &ok)
         check(!page.debugInspector.isDescendant(of: page.view), "the credential inspector is still inside the page", &ok)
         let titles = table.debugRows.compactMap { row -> String? in
             if case .title(let text, _, _, _, _, _)? = row.cells["name"] { return text }
@@ -402,7 +390,17 @@ enum PageRedesignsSelfTest {
         check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector,
               "the credential inspector is not in the shell's inspector", &ok)
         check(shell.inspector.debugTitle == aws.title, "the inspector is titled \"\(shell.inspector.debugTitle)\"", &ok)
-        check(page.debugInspector.debugCloseButton.isHidden, "the credential inspector draws a second close button", &ok)
+        // The shell's close button is the inspector's only one (the panel
+        // lost its own head in the P-03 sweep). It closes the pane and
+        // deletes nothing, and the toolbar's inspector button opens it again.
+        shell.inspector.debugCloseButton.performClick(nil)
+        settle(shell)
+        check(shell.debugInspectorIsCollapsed, "the shell's close button did not close the credential inspector", &ok)
+        check(store.credentials.count == 7, "closing the credential inspector changed the vault", &ok)
+        check(shell.toolbar.debugPerform(WorkspaceToolbar.ItemID.inspector), "the inspector button has no action", &ok)
+        settle(shell)
+        check(!shell.debugInspectorIsCollapsed && shell.inspector.hostedContentView === page.debugInspector,
+              "the inspector button did not bring the credential inspector back", &ok)
         check(table.selectedKey == aws.id, "the table let go of the selected credential", &ok)
         // A theme change keeps the table's selection (measured: a reload once
         // dropped it with no notification).
@@ -495,14 +493,10 @@ enum PageRedesignsSelfTest {
         // The visit starts the page's own read, which this process refuses.
         // It has to land before the fixture does, or it lands on top of it.
         check(waitUntil(timeout: 10) { !vault.debugIsReading }, "Automic Vault's own read never finished", &ok)
-        check(vault.drawsSidebarLayout, "Automic Vault did not switch to the sidebar layout's presentation", &ok)
         let secrets = vault.debugSecretsTable
-        // S-1: the launchers are the split card's rows; their table is kept
-        // current but not drawn.
+        // S-1: the launchers are the split card's rows.
         check(onScreen(secrets.card) && onScreen(vault.debugHeroSplit),
               "Automic Vault's secrets table or split card is not on screen", &ok)
-        check(!onScreen(vault.debugToolsTable.card), "the launchers' table still shows beside the split card", &ok)
-        check(vault.debugSecretRows.allSatisfy { !onScreen($0) }, "the floating bar's secret rows still show", &ok)
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "STAGING_DB_PASSWORD")],
                           tools: [VaultTool(name: "terraform", commands: ["terraform"], status: .needsAttention(issueCount: 2))])
         settle(shell)
@@ -510,11 +504,10 @@ enum PageRedesignsSelfTest {
               "the secrets table lists \(secrets.debugRows.compactMap(\.key))", &ok)
         check(secrets.debugMenuTitles(key: "GITHUB_TOKEN") == ["Run Injected\u{2026}", "Copy Name"],
               "a secret row's actions are \(secrets.debugMenuTitles(key: "GITHUB_TOKEN"))", &ok)
-        let status = vault.debugToolsTable.debugRows.first?.cells["status"]
-        if case .status(let text, let tint)? = status {
-            check(text == "2 issues" && tint == .warn, "the launcher's status reads \(text)", &ok)
+        if let launcher = vault.debugHeroSplit?.debugRows.first {
+            check(launcher.debugState == "2 issues", "the launcher's status reads \(launcher.debugState)", &ok)
         } else {
-            fail("the launcher row has no status", &ok)
+            fail("the split card has no launcher row", &ok)
         }
         // B1: a read that failed is not an empty list.
         vault.debugRender(secrets: nil, tools: nil)
@@ -557,7 +550,7 @@ enum PageRedesignsSelfTest {
         shell.workspace.navigator.show(.notebook)
         settle(shell)
         let notebook = shell.workspace.notebook
-        check(notebook.splitPage?.pageForcesCollapse == false && notebook.splitPage?.isSidebarCollapsed == false
+        check(notebook.splitPage?.isSidebarCollapsed == false
                 && onScreen(notebook.debugSidebar),
               "Notebook's page column is not showing in the sidebar layout", &ok)
         let pages = Set(notebook.debugPages.map(\.title))
@@ -1894,73 +1887,6 @@ enum PageRedesignsSelfTest {
             check(fleet.debugOpenReplyCard == nil && fleet.debugReplyButton(taskID: block.id)?.title == "Reply",
                   "\(tag): Esc did not cancel the reply", &ok)
         }
-    }
-
-    // MARK: 5 - the Hosts column
-
-    /// Found on the way, on the floating bar's Hosts page: after a tab round
-    /// trip the column's footer stack took the column's spare height, so its
-    /// keychain card rode up under the nav rows (measured 501pt above where it
-    /// belongs). See `HelmPageSidebar.setFooter`.
-    private static func checkTheHostsFooterStaysDown(_ scratchDirectory: URL, _ ok: inout Bool) {
-        let (window, shell) = ReviewTourLab.makeOffScreenShell()
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        ReviewTourLab.seedDemoHosts(shell.workspace)
-        settle(shell)
-        let hosts = shell.workspace.hostsPanel
-        // Driven through the tour lab's own steps - page tabs, selections and
-        // real waits - because the move needed the round trip's animations
-        // to run to the end; short settles never produced it.
-        HelmMotion.reducedOverrideForTests = false
-        defer { HelmMotion.reducedOverrideForTests = true }
-        let roundTrip = """
-        theme dusk
-        resize 1512x950
-        goto hosts
-        tab Hosts
-        wait 500
-        select edge-proxy-01
-        wait 300
-        goto hosts
-        tab Keys
-        wait 500
-        select ops-ed25519
-        wait 300
-        goto hosts
-        tab Snippets
-        wait 500
-        select Tail nginx errors
-        wait 300
-        goto hosts
-        tab Hosts
-        wait 300
-        """
-        let parsed = ReviewTourLab.parse(tour: roundTrip)
-        check(parsed.errors.isEmpty, "the round trip's steps do not parse: \(parsed.errors)", &ok)
-        let log = ReviewTourLab.run(steps: parsed.steps, shell: shell, window: window, outputDirectory: scratchDirectory)
-        check(!log.contains { $0.contains("FAILED") }, "a round-trip step failed: \(log.filter { $0.contains("FAILED") })", &ok)
-        shell.view.layoutSubtreeIfNeeded()
-        // The deterministic half. Before the footer kept its own height, the
-        // spare height had two equally cheap homes (the rows' stack and the
-        // footer stack), and which one took it depended on the solver's
-        // history. With the fix reverted, the frame check below passed three
-        // runs in a row on one build of this suite and failed four in a row
-        // on the next, whose only change was timing in an earlier case. The
-        // ambiguity does not depend on history: both views were flagged on
-        // every run without the fix, and neither with it.
-        // (`CredentialVaultViewSelfTest` records a `HelmCard` tie this API did
-        // not flag, so the frame check stays as well.)
-        let footer = hosts.debugKeychainCard.superview
-        check(footer?.hasAmbiguousLayout == false && !hosts.debugKeychainCard.hasAmbiguousLayout,
-              "the Hosts column's footer has an ambiguous height, so the solver is free to give it the column's "
-                + "spare height", &ok)
-        let column = hosts.debugSidebar.convert(hosts.debugSidebar.bounds, to: nil)
-        let user = hosts.debugUserRow.convert(hosts.debugUserRow.bounds, to: nil)
-        let card = hosts.debugKeychainCard.convert(hosts.debugKeychainCard.bounds, to: nil)
-        check(abs(user.minY - column.minY) <= 1 && abs(card.minY - (user.maxY + HelmMetrics.s2)) <= 1,
-              "after a Hosts tab round trip the column's footer is not at its bottom: the keychain card sits "
-                + "\(card.minY - column.minY)pt above the column's foot, its user row \(user.minY - column.minY)pt", &ok)
     }
 }
 

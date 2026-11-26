@@ -190,8 +190,8 @@ final class MainSplitShellController: WorkspaceShellController {
     private var lastTab: [WorkspaceModule: ModuleTab] = [:]
     /// The pages whose own tab control the toolbar has taken over.
     private var adoptedTabHosts: Set<ObjectIdentifier> = []
-    /// The pages that switched to their sidebar-layout presentation
-    /// (`SidebarLayoutAdopting`).
+    /// The pages the shell has wired up on their first show (the
+    /// inspector's callbacks, DevOps Hub's crumb).
     private var adoptedPages: Set<ObjectIdentifier> = []
     /// The showing page, when it fills the inspector with its selection.
     private weak var inspectorSource: WorkspaceInspectorSource?
@@ -351,8 +351,9 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     /// Home's header under its title: the day, as the prototype draws it.
-    /// Home has no live subtitle of its own - its attention card says what
-    /// needs the captain - so the date is the one line that adds something.
+    /// Home has no live subtitle of its own - its greeting and briefing hero
+    /// say what needs the captain - so the date is the one line that adds
+    /// something.
     static func homeSubtitle(_ date: Date = DayRollover.now()) -> String {
         date.formatted(.dateTime.weekday(.wide).day().month(.wide))
     }
@@ -1083,13 +1084,12 @@ final class MainSplitShellController: WorkspaceShellController {
 
     // MARK: Pages in the sidebar layout
 
-    /// The first time a page shows here, it switches to its sidebar-layout
-    /// presentation, and a page that fills the inspector starts reporting its
-    /// selection to it.
+    /// The first time a page shows here, a page that fills the inspector
+    /// starts reporting its selection to it. Each page builds its own sidebar
+    /// presentation when its view loads (P-03 of the 2026-11-25 review).
     private func adoptPage(_ controller: NSViewController?) {
         guard let controller else { return }
         if adoptedPages.insert(ObjectIdentifier(controller)).inserted {
-            (controller as? SidebarLayoutAdopting)?.adoptSidebarLayout()
             // DevOps Hub's crumb names the project its page shows.
             (controller as? DevOpsHubController)?.onModeChanged = { [weak self, weak controller] in
                 guard let self, let controller, self.pageController === controller else { return }
@@ -1434,18 +1434,8 @@ final class MainSplitShellController: WorkspaceShellController {
         contentPane.setHeaderAccessory(accessory)
     }
 
-    /// R2-UX-02: Home has one space in this layout, its own. A route that
-    /// still names another space (a ⌘K verb, a notification, an older saved
-    /// session) lands on Home's own cards rather than on a filter nothing on
-    /// screen can switch back from.
-    override func selectSpace(_ space: DaylightSpace) {
-        super.selectSpace(.overview)
-    }
-
-    /// Home's Customize mode, on Home's own space - the one whose cards are
-    /// the captain's to arrange.
+    /// Home's Customize mode, where its cards are the captain's to arrange.
     func setHomeCustomizing(_ customizing: Bool) {
-        if customizing, workspace.homeCanvas.selectedSpace != .overview { selectSpace(.overview) }
         workspace.homeCanvas.setCustomizing(customizing)
         refreshModuleChrome()
     }
@@ -1583,8 +1573,9 @@ final class MainSplitShellController: WorkspaceShellController {
     }
 
     override func workspaceDidRevealHostPage(_ controller: ConsoleController, label: String) {
-        // R2-UX-06: a host page's console draws its actions up here too.
-        controller.adoptSidebarLayout()
+        // R2-UX-06: a host page's console draws its actions up here too. It
+        // builds its sidebar presentation when its view loads.
+        _ = controller.view
         pageController = controller
         showingHostPage = true
         hostPageLabel = label

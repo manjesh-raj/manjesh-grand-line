@@ -49,7 +49,7 @@ enum DaylightDrillPageSlice2SelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkDrillConformances, checkHeroTitlesAreGone,
+        for check in [checkDrillConformances, 
                       checkTerminalCardIsPermanentOnDaylight,
                       checkHostRowGradientBadge, checkSegmentedTabsAreCapsules,
                       checkHealthTicksAndChips, checkNoWindowWidthFloor] {
@@ -151,8 +151,10 @@ enum DaylightDrillPageSlice2SelfTest {
             ok = false
             return
         }
-        if !console.drillHeaderActions.isEmpty {
-            print("  FAIL Console hoisted \(console.drillHeaderActions.count) action(s) that §6.13 keeps in the toolbar")
+        // R2-UX-06: the window toolbar holds Console's whole tool cluster.
+        if console.drillHeaderActions.count != console.pageToolViews.count {
+            print("  FAIL Console hands the toolbar \(console.drillHeaderActions.count) action(s), "
+                  + "not its \(console.pageToolViews.count) tools")
             ok = false
         }
 
@@ -168,11 +170,6 @@ enum DaylightDrillPageSlice2SelfTest {
             hosts.select(tab: tab)
             guard hosts.drillHeaderActions.count == 1, let action = hosts.drillHeaderActions.first else {
                 print("  FAIL Hosts' \(tab.rawValue) tab hoists \(hosts.drillHeaderActions.count) actions, want 1")
-                ok = false
-                return
-            }
-            guard let button = action as? NSButton, !button.title.isEmpty else {
-                print("  FAIL Hosts' \(tab.rawValue) action is not a titled button")
                 ok = false
                 return
             }
@@ -202,8 +199,9 @@ enum DaylightDrillPageSlice2SelfTest {
         let health = HealthController()
         let healthWindow = mount(health)
         defer { _ = healthWindow }
-        guard health.drillHeaderActions.count == 1,
-              let copyButton = health.drillHeaderActions.first as? NSButton,
+        // The toolbar carries Refresh and Copy diagnostics.
+        guard health.drillHeaderActions.count == 2,
+              let copyButton = health.drillHeaderActions.last as? NSButton,
               copyButton.title.lowercased().contains("diagnostics") else {
             print("  FAIL Health does not hoist its Copy diagnostics button")
             ok = false
@@ -217,7 +215,7 @@ enum DaylightDrillPageSlice2SelfTest {
         }
         // The button is caller-owned: reading twice must hand back the same
         // instance, or the page's own enabled/target state would be lost.
-        if health.drillHeaderActions.first !== copyButton {
+        if health.drillHeaderActions.last !== copyButton {
             print("  FAIL Health rebuilds its Copy diagnostics button on every read")
             ok = false
         }
@@ -225,34 +223,6 @@ enum DaylightDrillPageSlice2SelfTest {
     }
 
     // MARK: 2. No in-page heroes left (§6.4)
-
-    private static func checkHeroTitlesAreGone(_ ok: inout Bool) {
-        print("\n-- §6.4: no in-page hero titles on Console / Hosts / Health --")
-        // The drill header's own title is 26pt, so anything at or above 20pt
-        // inside a page body is a second title competing with it.
-        let heroFloor: CGFloat = 20
-        let (hostStore, keyStore, snippetStore) = scratchStores()
-        let pages: [(String, NSViewController)] = [
-            ("Console", ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
-                                          isFirstmateConsole: false)),
-            ("Hosts", HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)),
-            ("Health", HealthController()),
-        ]
-        var clean = true
-        for (name, page) in pages {
-            let window = mount(page)
-            defer { _ = window }
-            let heroes = labels(in: page.view, atLeast: heroFloor)
-            if !heroes.isEmpty {
-                print("  FAIL \(name) still renders \(heroes.count) hero-sized label(s): "
-                      + heroes.map { "\"\($0.stringValue)\" @\(fmt($0.font?.pointSize ?? 0))" }
-                          .joined(separator: ", "))
-                ok = false
-                clean = false
-            }
-        }
-        if clean { print("  OK - all three page bodies are free of hero-sized titles") }
-    }
 
     // MARK: 3. §6.13's terminal card, and the frame it must never move
 

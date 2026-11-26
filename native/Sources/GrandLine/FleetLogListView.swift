@@ -5,8 +5,7 @@
 //
 // A single-column, view-based `NSTableView`, not an `NSStackView` of permanent
 // rows - the same choice, for the same measured reason, as
-// `ReviewPRListView`/`DiffResultView`/`BlockContainerView`/`HostsListSection`
-// before it (see `ReviewPRListView.swift`'s header for the full history: an
+// `ReviewPRListView`/`DiffResultView`/`BlockContainerView` before it (see `ReviewPRListView.swift`'s header for the full history: an
 // `NSStackView` of a few hundred nested rows has blown this app's main thread
 // up by 13 and then 102 seconds, twice). A history feed is the one list here
 // that only ever grows, so it is exactly the shape that would hit it again.

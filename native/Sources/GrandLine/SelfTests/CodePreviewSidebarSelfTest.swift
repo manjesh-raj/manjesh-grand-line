@@ -5,8 +5,8 @@
 // icon table, the remembered visibility and width, and the ⌘B menu item.
 //
 // Nothing here mounts a window, so it runs in CI's blocking lane. The column
-// itself - rows, clicks, the keyboard, hiding and resizing in a real window -
-// is `CodePreviewSidebarViewSelfTest`.
+// itself in a real window (rows, clicks, the keyboard, hiding and resizing)
+// has had no suite of its own since P-03 part 2.
 //
 // `FM_RUN_CODE_PREVIEW_SIDEBAR_TESTS=1 .build/debug/GrandLine`.
 

@@ -312,18 +312,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.console.openFirstmateHost()
             self.appShell.workspace.navigator.show(.console)
         }
-        // The Hosts page's own quick-actions panel names ⌘K; this is what
-        // makes the button do what its label says. Forwarded rather than
-        // reached for - that page has never known what an `AppDelegate` is.
-        panel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
-        // The Hosts sidebar's TOOLS rows and its user row. Every one opens
-        // something that really exists - see `HostsController.onOpenActivity`
-        // for why a nav row with nothing behind it is absent here rather than
-        // drawn inert.
-        panel.onOpenActivity = { [weak self] in self?.appShell.workspace.navigator.openFleetLog() }
-        panel.onOpenCommands = { [weak self] in self?.appShell.workspace.navigator.show(.commandLibrary) }
-        panel.onOpenSettings = { [weak self] in self?.appShell.workspace.navigator.show(.settings) }
-        panel.onLogout = { [weak self] in self?.appShell.requestLogout() }
         panel.snippetExpansionState = { [weak self] in
             guard let self else { return (enabled: false, trusted: false, armed: false, triggerCount: 0) }
             return (enabled: AppSettings.shared.snippetExpansionEnabled,

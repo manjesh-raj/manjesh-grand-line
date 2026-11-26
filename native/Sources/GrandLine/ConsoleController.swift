@@ -312,9 +312,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// Every action the cluster was built with, before the profile is
     /// applied.
     var allPageToolViews: [NSView] = []
-    /// R2-UX-06: set once the sidebar layout shows this console (the shared
-    /// one, or a host page).
-    var drawsSidebarLayout = false
 
     // MARK: Con-1's session band
 
@@ -775,6 +772,10 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             refreshHerdrStatus()
             startHerdrStatusPolling()
         }
+
+        // P-03 of the 2026-11-25 review: the sidebar is the only layout, so
+        // the page builds its sidebar presentation as part of loading.
+        buildSidebarPresentation()
     }
 
     var themeObservation: ThemeObservation?
