@@ -19,6 +19,12 @@
 //     A self-test or tour process gets a throwaway one, so a suite never
 //     writes WebKit data anywhere.
 //
+// Full review 4 (S-02) added one more: **it carries the run's key.** The
+// server answers only a request with the run's key in its cookie, unless
+// the project allows the browser, so `load(origin:accessToken:)` sets that
+// cookie in this view's store (HttpOnly, so the page's own script cannot
+// read it) before the first request.
+//
 // Full review 2026-11-25 added two more (B-04, B-05):
 //
 //   - **A site's own dialogs work.** `alert`, `confirm` and `prompt` are the
@@ -128,11 +134,36 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
 
     // MARK: Loading
 
-    /// Load the site at `origin` from its start page.
-    func load(origin: URL) {
+    /// Load the site at `origin` from its start page, carrying the run's
+    /// key when there is one (S-02).
+    func load(origin: URL, accessToken: String? = nil) {
         self.origin = origin
         resetCrashCount()
-        open(origin)
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let start = { [weak self] in
+            guard let self, self.loadGeneration == generation, self.origin == origin else { return }
+            self.open(origin)
+        }
+        guard let accessToken, let cookie = Self.accessCookie(token: accessToken, origin: origin) else { return start() }
+        webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { start() }
+    }
+
+    /// A newer `load` or an `unload` supersedes a load still setting its cookie.
+    private var loadGeneration = 0
+
+    /// The run's key as the cookie the server reads: this host only, every
+    /// path, HttpOnly and same-site, and gone with the session.
+    static func accessCookie(token: String, origin: URL) -> HTTPCookie? {
+        guard let host = origin.host, let port = origin.port else { return nil }
+        return HTTPCookie(properties: [
+            .name: LocalStaticServer.cookieName(port: UInt16(clamping: port)),
+            .value: token,
+            .domain: host,
+            .path: "/",
+            HTTPCookiePropertyKey("HttpOnly"): "TRUE",
+            .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict,
+        ])
     }
 
     /// Reload by hand (the strip's Reload, ⌘R, the crash state's Reload),
@@ -171,6 +202,7 @@ final class DevOpsHubWebView: NSView, WKNavigationDelegate, WKUIDelegate {
 
     /// The server stopped: drop the page so nothing stale is left behind it.
     func unload() {
+        loadGeneration &+= 1
         origin = nil
         resetCrashCount()
         webView.stopLoading()

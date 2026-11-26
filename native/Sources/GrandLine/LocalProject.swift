@@ -40,6 +40,12 @@ struct LocalProject: Equatable {
     var startsAtLaunch: Bool
     /// How the last run ended, for the "Last run" line.
     var lastRun: LastRun?
+    /// S-02 (full review 4): serve the site to any client that asks, not only
+    /// to Grand Line's own view. Off by default: the server is loopback-only,
+    /// but every other process and user account on this Mac can reach a
+    /// loopback port, so without this it refuses a request that does not
+    /// carry the run's key (`LocalStaticServer.Policy`).
+    var allowsBrowser = false
     /// Keys a newer build wrote that this one does not know, kept as they were.
     var passthrough: [String: LocalProjectJSON] = [:]
 
@@ -73,6 +79,13 @@ struct LocalProject: Equatable {
     var displayFolder: String {
         Self.abbreviate(folder.path)
     }
+
+    /// S-02: what Start serves - a build folder inside the project when it
+    /// has one, or the project folder (`LocalProjectPreflight.servedFolder`).
+    var servedFolder: URL { LocalProjectPreflight.servedFolder(for: folder) }
+
+    /// The served folder as it reads on screen.
+    var displayServedFolder: String { Self.abbreviate(servedFolder.path) }
 
     static func abbreviate(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -123,7 +136,7 @@ extension LocalProject: Codable {
     /// Every key this build writes. A key not listed here is kept in
     /// `passthrough` and written back as it was.
     static let knownKeys: Set<String> = [
-        "id", "name", "kind", "folder", "port", "opensWhenReady", "startsAtLaunch", "lastRun",
+        "id", "name", "kind", "folder", "port", "opensWhenReady", "startsAtLaunch", "lastRun", "allowsBrowser",
     ]
 
     private struct Key: CodingKey {
@@ -147,6 +160,7 @@ extension LocalProject: Codable {
         opensWhenReady = try c.decodeIfPresent(Bool.self, forKey: Key("opensWhenReady")) ?? true
         startsAtLaunch = try c.decodeIfPresent(Bool.self, forKey: Key("startsAtLaunch")) ?? false
         lastRun = try? c.decodeIfPresent(LastRun.self, forKey: Key("lastRun"))
+        allowsBrowser = try c.decodeIfPresent(Bool.self, forKey: Key("allowsBrowser")) ?? false
         var extra: [String: LocalProjectJSON] = [:]
         for key in c.allKeys where !Self.knownKeys.contains(key.stringValue) {
             if let value = try? c.decode(LocalProjectJSON.self, forKey: key) { extra[key.stringValue] = value }
@@ -164,6 +178,7 @@ extension LocalProject: Codable {
         try c.encode(opensWhenReady, forKey: Key("opensWhenReady"))
         try c.encode(startsAtLaunch, forKey: Key("startsAtLaunch"))
         try c.encodeIfPresent(lastRun, forKey: Key("lastRun"))
+        try c.encode(allowsBrowser, forKey: Key("allowsBrowser"))
         for (key, value) in passthrough where !Self.knownKeys.contains(key) {
             try c.encode(value, forKey: Key(key))
         }
@@ -303,16 +318,40 @@ enum LocalProjectPreflight {
     /// The most files the count walks, so a huge folder never stalls Start.
     static let countLimit = 20_000
 
-    /// The gate and the count, for a caller already off the main thread.
+    /// S-02: the build folders served in place of the project folder, in
+    /// order. A cloned repository's own folder holds its source, its
+    /// `package.json` and anything else committed; its build folder holds
+    /// only what the site needs.
+    static let buildFolders = ["dist", "build", "public"]
+
+    /// The folder Start serves: the first build folder with an `index.html`
+    /// at its top, or `folder` itself. A few `stat`s.
+    static func servedFolder(for folder: URL) -> URL {
+        for name in buildFolders {
+            let candidate = folder.appendingPathComponent(name, isDirectory: true)
+            if hasIndex(candidate) { return candidate }
+        }
+        return folder
+    }
+
+    private static func hasIndex(_ folder: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("index.html").path,
+                                              isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+
+    /// The gate and the count of the served folder, for a caller already
+    /// off the main thread.
     static func check(folder: URL) -> Outcome {
         if let refused = gate(folder: folder) { return refused }
-        let (files, bytes) = count(folder: folder)
+        let (files, bytes) = count(folder: servedFolder(for: folder))
         return .ready(files: files, bytes: bytes)
     }
 
     /// The cheap half: nil when the folder is there, readable and has an
-    /// `index.html`, or the reason Start refuses. One directory listing and
-    /// a few `stat`s, so Start runs it on the main thread.
+    /// `index.html` (at its top or in a build folder), or the reason Start
+    /// refuses. One directory listing and a few `stat`s, so Start runs it on
+    /// the main thread.
     static func gate(folder: URL) -> Outcome? {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
@@ -324,9 +363,7 @@ enum LocalProjectPreflight {
         } catch {
             return .notReadable((error as NSError).localizedDescription)
         }
-        var indexIsDirectory: ObjCBool = false
-        guard fm.fileExists(atPath: folder.appendingPathComponent("index.html").path, isDirectory: &indexIsDirectory),
-              !indexIsDirectory.boolValue else { return .indexMissing }
+        guard hasIndex(servedFolder(for: folder)) else { return .indexMissing }
         return nil
     }
 

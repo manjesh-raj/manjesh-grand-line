@@ -38,6 +38,10 @@
 //      emptied store that stays empty.
 //   8. **The settings sheet's validation**, Add Project's too, and the web
 //      view's same-site rule and stable store identifier.
+//   10. **Only Grand Line reads the site** (full review 4, S-02): the run's
+//      key in a cookie or 403, a fresh key per run, none with "Allow my
+//      browser", the build folder served in place of the repository, and a
+//      real web view that loads the site with the key it was handed.
 //   9. **The site's own dialogs and a site that keeps crashing** (full
 //      review 2026-11-25, B-04 and B-05), on a real `DevOpsHubWebView` with
 //      no window: `confirm`, `prompt` and `alert` reach `HelmConfirm` from
@@ -57,7 +61,8 @@ enum DevOpsHubModelSelfTest {
         for check in [checkServerRules, checkServerOverLoopback, checkStore, checkPreflight,
                       checkStartNeverWalksTheFolderOnMain, checkRangesAndMedia, checkConnectionLimits, checkRunner,
                       checkWords, checkSidebar, checkCardsWords, checkAddAndRemove, checkProfileAndSettle,
-                      checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing] {
+                      checkSettingsAndWebRules, checkSiteDialogs, checkASiteThatKeepsCrashing,
+                      checkOnlyGrandLineReadsTheSite] {
             var caseOK = true
             check(&caseOK)
             ok = ok && caseOK
@@ -948,6 +953,117 @@ enum DevOpsHubModelSelfTest {
         let a = DevOpsHubWebView.storeIdentifier(for: "devops-atlas")
         check(a == DevOpsHubWebView.storeIdentifier(for: "devops-atlas") && a != DevOpsHubWebView.storeIdentifier(for: "other"),
               "the store identifier is not stable per project", &ok)
+    }
+
+    // MARK: 10 - only Grand Line reads the site (full review 4, S-02)
+
+    private static func checkOnlyGrandLineReadsTheSite(_ ok: inout Bool) {
+        print("\n-- S-02: only Grand Line reads the site, from its build folder --")
+        let (root, _) = makeSite()
+        let key = LocalStaticServer.makeAccessToken()
+        check(key.count == 64 && key != LocalStaticServer.makeAccessToken(), "a run key is \(key.count) characters, or repeats", &ok)
+        let cookie = LocalStaticServer.cookieName(port: 7420)
+        let policy = LocalStaticServer.Policy(accessToken: key)
+        let serve = { (data: Data) in LocalStaticServer.response(forRequest: data, root: root, port: 7420, policy: policy) }
+        let bare = serve(request("/"))
+        check(bare.status == 403 && String(data: bare.body, encoding: .utf8)?.contains("Allow my browser") == true,
+              "a request with no key is \(bare.status), want 403 that says how to allow the browser", &ok)
+        check(serve(request("/", extra: "Cookie: \(cookie)=\(String(key.dropLast()))0\r\n")).status == 403,
+              "a wrong key was answered", &ok)
+        check(serve(request("/", extra: "Cookie: \(LocalStaticServer.cookieName(port: 7421))=\(key)\r\n")).status == 403,
+              "another port's cookie was answered", &ok)
+        check(serve(request("/", extra: "Cookie: theme=dark; \(cookie)=\(key); lang=en\r\n")).status == 200,
+              "the run's key among other cookies was refused", &ok)
+        check(serve(request("/", host: "evil.example:7420", extra: "Cookie: \(cookie)=\(key)\r\n")).status == 421,
+              "the key let a foreign Host through", &ok)
+        check(LocalStaticServer.response(forRequest: request("/"), root: root, port: 7420, policy: .open).status == 200,
+              "with the browser allowed a request with no key is refused", &ok)
+
+        // The build folder is served in place of the repository.
+        let repo = root.deletingLastPathComponent().appendingPathComponent("repo", isDirectory: true)
+        let fm = FileManager.default
+        try? fm.createDirectory(at: repo.appendingPathComponent("public"), withIntermediateDirectories: true)
+        try? fm.createDirectory(at: repo.appendingPathComponent("dist"), withIntermediateDirectories: true)
+        try? Data("<title>source</title>".utf8).write(to: repo.appendingPathComponent("index.html"))
+        try? Data("{}".utf8).write(to: repo.appendingPathComponent("package.json"))
+        try? Data("<p>no index here</p>".utf8).write(to: repo.appendingPathComponent("public/about.html"))
+        check(LocalProjectPreflight.servedFolder(for: repo) == repo,
+              "with no build index the repository itself is not served", &ok)
+        try? Data("<title>built</title>".utf8).write(to: repo.appendingPathComponent("dist/index.html"))
+        check(LocalProjectPreflight.servedFolder(for: repo).lastPathComponent == "dist",
+              "a dist folder with an index.html is not the one served", &ok)
+        check(LocalProjectPreflight.servedFolder(for: root) == root, "a site with no build folder is not served as it is", &ok)
+        let noTopIndex = root.deletingLastPathComponent().appendingPathComponent("built-only", isDirectory: true)
+        try? fm.createDirectory(at: noTopIndex.appendingPathComponent("build"), withIntermediateDirectories: true)
+        try? Data("<title>b</title>".utf8).write(to: noTopIndex.appendingPathComponent("build/index.html"))
+        check(LocalProjectPreflight.gate(folder: noTopIndex) == nil,
+              "a project whose only index.html is in build/ is refused", &ok)
+
+        // The registry: the build folder, a new key every run, none required
+        // when the browser is allowed, and the key gone with the run.
+        var setups: [ServerSetup] = []
+        let url = AppPaths.dataRoot().appendingPathComponent("lp-\(UUID().uuidString).json")
+        defer { try? fm.removeItem(at: url) }
+        var project = LocalProject.devopsAtlas
+        project.folderOverride = repo.path
+        LocalProjectStore.save([project], at: url)
+        let registry = LocalProjectRegistry(storeURL: url, makeServer: { setups.append($0); return StubServer() },
+                                            lookUpPortHolder: { _, done in done(nil) })
+        let id = project.id
+        registry.start(id)
+        let firstKey = registry.accessToken(of: id)
+        check(setups.last?.root.lastPathComponent == "dist", "Start served \(setups.last?.root.path ?? "nothing")", &ok)
+        check(firstKey != nil && setups.last?.policy.accessToken == firstKey,
+              "the server was not given the run's key", &ok)
+        registry.stop(id)
+        check(registry.accessToken(of: id) == nil, "the run's key outlived the run", &ok)
+        registry.start(id)
+        check(registry.accessToken(of: id) != nil && registry.accessToken(of: id) != firstKey, "a second run reused the key", &ok)
+        registry.stop(id)
+        project.allowsBrowser = true
+        registry.update(project)
+        registry.start(id)
+        check(setups.last?.policy.accessToken == nil && registry.accessToken(of: id) != nil,
+              "with the browser allowed the server still asks for a key", &ok)
+        registry.stop(id)
+
+        // The setting is stored, an older file reads it as off, and the
+        // sheet carries it and says who else can read the site.
+        LocalProjectStore.save([project], at: url)
+        check(LocalProjectStore.load(at: url).first?.allowsBrowser == true, "Allow my browser did not round-trip", &ok)
+        try? Data(#"{"projects":[{"id":"old"}]}"#.utf8).write(to: url)
+        check(LocalProjectStore.load(at: url).first?.allowsBrowser == false, "an older file reads the browser as allowed", &ok)
+        check(DevOpsHubSettingsSheet.edited(LocalProject.devopsAtlas, folderText: "", portText: "7420", opensWhenReady: true,
+                                            startsAtLaunch: false, allowsBrowser: true).0?.allowsBrowser == true,
+              "the sheet dropped Allow my browser", &ok)
+        check(DevOpsHubSettingsSheet.addPortCaption.contains("other apps on this Mac"),
+              "Add Project's caption does not say other apps on this Mac can reach it", &ok)
+        check(DevOpsHubWords.readersLine(LocalProject.devopsAtlas).contains("only Grand Line"),
+              "the page does not say only Grand Line reads the site", &ok)
+
+        // End to end: a real server that asks for the key, and a real web
+        // view that loads the site with it - and without it, does not.
+        try? Data("<!doctype html><title>hub</title><p>ok</p>".utf8).write(to: root.appendingPathComponent("index.html"))
+        var port = freePort()
+        var server = LocalStaticServer(root: root, port: port, policy: .init(accessToken: key))
+        if case .failure(.portInUse)? = start(server) {
+            port = freePort()
+            server = LocalStaticServer(root: root, port: port, policy: .init(accessToken: key))
+            _ = start(server)
+        }
+        defer { server.stop() }
+        let origin = LocalStaticServer.origin(port: port)
+        check(fetch(origin)?.0 == 403, "over loopback a request with no key is answered", &ok)
+        func title(loading accessToken: String?) -> String? {
+            let web = DevOpsHubWebView(projectID: "atlas-key-\(UUID().uuidString)")
+            var loaded = false
+            web.onFinished = { loaded = true }
+            web.load(origin: origin, accessToken: accessToken)
+            guard waitUntil(timeout: 15, { loaded }) else { return nil }
+            return evaluate("document.title", in: web)
+        }
+        check(title(loading: key) == "hub", "the web view given the run's key did not load the site", &ok)
+        check(title(loading: nil) == "Open in Grand Line", "a web view with no key was served the site", &ok)
     }
 
     // MARK: 9 - the site's dialogs, and a site that keeps crashing

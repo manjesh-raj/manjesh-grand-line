@@ -90,12 +90,13 @@ struct DevOpsHubWords: Equatable {
     static func make(project: LocalProject, phase: Phase, preflight: LocalProjectPreflight.Outcome?,
                      now: Date = Date()) -> DevOpsHubWords {
         let name = project.name
-        let folder = project.displayFolder
+        // S-02: the folder named is the one served, a build folder when the
+        // project has one.
+        let folder = project.displayServedFolder
         let address = "http://\(LocalStaticServer.loopbackHost):\(project.port)"
         let kicker = kicker(project)
         let folderCheck = Self.folderCheck(preflight)
-        let addressCheck = Check(mark: .info, title: "Serves on \(address)",
-                                 detail: "This Mac only. Nothing on your network can reach it.")
+        let addressCheck = Check(mark: .info, title: "Serves on \(address)", detail: readersLine(project))
 
         switch phase {
         case .project(.notStarted), .project(.running):
@@ -203,13 +204,21 @@ struct DevOpsHubWords: Equatable {
                 actions.append(.copyCloneCommand)
                 checks.append(Check(mark: .info, title: "To clone it", detail: clone, detailIsCode: true))
             }
-            checks.append(Check(mark: .info, title: "Any folder works", detail: "It needs an index.html at its top."))
+            checks.append(Check(mark: .info, title: "Any folder works",
+                                detail: "It needs an index.html at its top, or in its dist, build or public folder."))
             return DevOpsHubWords(kicker: kicker, headline: headline, body: body, tone: .amber, progress: nil,
                                   actions: actions, checksTitle: "What Start checked", checks: checks)
         }
     }
 
     // MARK: Pieces
+
+    /// S-02: who can read the site while it runs.
+    static func readersLine(_ project: LocalProject) -> String {
+        project.allowsBrowser
+            ? "This Mac only. Your browser can open it, and so can any other app on this Mac while it runs."
+            : "This Mac only, and only Grand Line\u{2019}s own view can read it."
+    }
 
     static func folderCheck(_ preflight: LocalProjectPreflight.Outcome?) -> Check {
         switch preflight {

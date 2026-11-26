@@ -71,6 +71,9 @@ final class DevOpsHubProjectController: NSViewController {
 
     /// What the web view has done for each project's current run.
     private var loadedOrigin: [String: URL] = [:]
+    /// The run key each loaded site was given (S-02). A new run means a new
+    /// key, so the site loads again with it.
+    private var loadedToken: [String: String] = [:]
     private var finished: Set<String> = []
     private var progress: [String: Double] = [:]
     /// B-05: projects whose site crashed twice in a row, so their web view
@@ -330,7 +333,7 @@ final class DevOpsHubProjectController: NSViewController {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = LocalProjectPreflight.check(folder: folder)
             var preview: NSImage?
-            if case .ready = outcome { preview = Self.previewImage(in: folder) }
+            if case .ready = outcome { preview = Self.previewImage(in: LocalProjectPreflight.servedFolder(for: folder)) }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.preflightInFlight.remove(id)
@@ -405,14 +408,17 @@ final class DevOpsHubProjectController: NSViewController {
             // project that has only been looked at.
             let web = webView(for: project.id)
             web.siteName = project.name
-            guard loadedOrigin[project.id] != project.origin else { return }
+            let token = registry.accessToken(of: project.id)
+            guard loadedOrigin[project.id] != project.origin || loadedToken[project.id] != token else { return }
             loadedOrigin[project.id] = project.origin
+            loadedToken[project.id] = token
             finished.remove(project.id)
             crashing.remove(project.id)
             progress[project.id] = 0
-            web.load(origin: project.origin)
+            web.load(origin: project.origin, accessToken: token)
         } else if loadedOrigin[project.id] != nil {
             loadedOrigin[project.id] = nil
+            loadedToken[project.id] = nil
             finished.remove(project.id)
             crashing.remove(project.id)
             progress[project.id] = nil

@@ -47,6 +47,18 @@
 // response and reading a file happen on `fileQueue`, so one big file never
 // holds up another request.
 //
+// ## Who may read it (full review 4, S-02)
+//
+// Loopback keeps the LAN out and the `Host` check keeps DNS rebinding out,
+// but neither says *who* is asking: every process and every user account on
+// this Mac can reach a loopback port, and file permissions and the macOS
+// privacy prompts do not apply to it. So each run has a random key
+// (`Policy.accessToken`), Grand Line's own web view sends it as the
+// `cookieName(port:)` cookie, and a request without it gets 403. "Allow my
+// browser" in the project's settings runs without one. The registry also
+// serves a project's build folder (`dist`, `build`, `public`) when it has
+// one, rather than the whole cloned repository.
+//
 // ## Limits (full review 4, S-03)
 //
 // Any local process can open connections, and this process also runs the
@@ -61,6 +73,7 @@
 
 import Foundation
 import Network
+import Security
 
 final class LocalStaticServer {
 
@@ -82,6 +95,16 @@ final class LocalStaticServer {
         var refused = 0
         /// S-03: connections closed for not sending a head in time.
         var timedOut = 0
+    }
+
+    /// What a request must carry, and what every answer says, for one run.
+    struct Policy: Equatable {
+        /// S-02: the run's key. A request is answered only when its
+        /// `cookieName(port:)` cookie holds this. `nil` answers anyone on
+        /// this Mac ("Allow my browser").
+        var accessToken: String?
+
+        static let open = Policy()
     }
 
     /// S-03's two bounds. A suite passes smaller ones.
@@ -138,6 +161,7 @@ final class LocalStaticServer {
     /// check compares like with like.
     let root: URL
     let port: UInt16
+    let policy: Policy
     let limits: Limits
 
     /// Accepts connections and reads request heads. Nothing slower.
@@ -152,9 +176,10 @@ final class LocalStaticServer {
     private var counters = Counters()
     private var connections: [ObjectIdentifier: NWConnection] = [:]
 
-    init(root: URL, port: UInt16, limits: Limits = .standard) {
+    init(root: URL, port: UInt16, policy: Policy = .open, limits: Limits = .standard) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
         self.port = port
+        self.policy = policy
         self.limits = limits
         queue.setSpecific(key: Self.listenerQueueKey, value: true)
     }
@@ -177,6 +202,20 @@ final class LocalStaticServer {
     }
 
     static let loopbackHost = "127.0.0.1"
+
+    /// The cookie Grand Line's web view sends the run's key in. Cookies are
+    /// shared across a host's ports, so the name carries the port.
+    static func cookieName(port: UInt16) -> String { "grandline-hub-\(port)" }
+
+    /// A new run's key: 32 random bytes, as hex.
+    static func makeAccessToken() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) != errSecSuccess {
+            // Never a guessable key: fall back to the system's other source.
+            bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max) }
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
 
     // MARK: Start and stop
 
@@ -316,7 +355,7 @@ final class LocalStaticServer {
             // PF-03: the head is in. Everything after it - the file system,
             // the file itself - happens off the listener's queue.
             self.fileQueue.async {
-                let response = Self.response(forRequest: buffer, root: self.root, port: self.port)
+                let response = Self.response(forRequest: buffer, root: self.root, port: self.port, policy: self.policy)
                 self.count(response)
                 let isHead = buffer.starts(with: Data("HEAD ".utf8))
                 self.send(response, includeBody: !isHead, on: connection)
@@ -383,7 +422,7 @@ final class LocalStaticServer {
     // MARK: The rules (pure)
 
     /// The answer to one raw request head, against `root` served on `port`.
-    static func response(forRequest raw: Data, root: URL, port: UInt16) -> Response {
+    static func response(forRequest raw: Data, root: URL, port: UInt16, policy: Policy = .open) -> Response {
         #if FM_SELFTESTS
         if DispatchQueue.getSpecific(key: listenerQueueKey) == true { debugResponsesOnListenerQueue.increment() }
         #endif
@@ -409,11 +448,46 @@ final class LocalStaticServer {
         guard let host = fields["host"], allowedHosts(port: port).contains(host.lowercased()) else {
             return plain(421, "Misdirected Request")
         }
+        if let token = policy.accessToken,
+           !carriesKey(fields["cookie"], name: cookieName(port: port), token: token) {
+            return forbidden()
+        }
         guard let file = resolve(target: String(requestLine[1]), root: root) else {
             return plain(404, "Not Found")
         }
         return fileResponse(file, ifNoneMatch: fields["if-none-match"], range: fields["range"],
                             ifRange: fields["if-range"])
+    }
+
+    /// Whether a `Cookie` header holds `name=token`. Compared in constant
+    /// time, so the answer's timing says nothing about how close a guess was.
+    static func carriesKey(_ header: String?, name: String, token: String) -> Bool {
+        guard let header else { return false }
+        let expected = Array(token.utf8)
+        var found = false
+        for pair in header.split(separator: ";") {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == name else { continue }
+            let given = Array(parts[1].trimmingCharacters(in: .whitespaces).utf8)
+            guard given.count == expected.count else { continue }
+            var difference: UInt8 = 0
+            for (a, b) in zip(given, expected) { difference |= a ^ b }
+            if difference == 0 { found = true }
+        }
+        return found
+    }
+
+    /// 403, in words a person who opened the address in a browser can act on.
+    private static func forbidden() -> Response {
+        let body = Data(("<!doctype html><meta charset=utf-8><title>Open in Grand Line</title>"
+            + "<p>This site is served to Grand Line only while it runs. To open it in your browser, turn on "
+            + "<b>Allow my browser</b> in the project\u{2019}s settings in Grand Line, then restart it.</p>\n").utf8)
+        return Response(status: 403, reason: "Forbidden",
+                        headers: [("Content-Type", "text/html; charset=utf-8"),
+                                  ("Content-Length", "\(body.count)"),
+                                  ("Cache-Control", "no-store"),
+                                  ("Connection", "close")],
+                        body: body)
     }
 
     /// The `Host` values a request to this server may carry.
@@ -601,7 +675,7 @@ final class LocalStaticServer {
     /// Builds a response on the listener's queue, as the server did before
     /// PF-03, so a suite can show its recorder sees that.
     func debugBuildOnListenerQueue(_ raw: Data) {
-        queue.sync { _ = Self.response(forRequest: raw, root: root, port: port) }
+        queue.sync { _ = Self.response(forRequest: raw, root: root, port: port, policy: policy) }
     }
     #endif
 }
