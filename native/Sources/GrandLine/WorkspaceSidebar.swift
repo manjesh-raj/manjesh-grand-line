@@ -497,6 +497,11 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
     /// cell's trailing edge less the badge's inset. Home, the first row, is
     /// a module row. A section title lines its badge up with it.
     private func rowBadgeEnd() -> CGFloat {
+        // The drawn cell when there is one: `frameOfCell` does not narrow
+        // for a legacy scroller's track, and the drawn cell does.
+        if outlineView.numberOfRows > 0, let cell = outlineView.view(atColumn: 0, row: 0, makeIfNecessary: false) {
+            return cell.convert(cell.bounds, to: outlineView).maxX - HelmMetrics.s2
+        }
         let rowEnd = outlineView.numberOfRows > 0 ? outlineView.frameOfCell(atColumn: 0, row: 0).maxX
             : outlineView.bounds.width
         return rowEnd - HelmMetrics.s2
@@ -512,7 +517,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
                   let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? WorkspaceSidebarSectionCell
             else { continue }
             cell.configure(title: title, badge: sectionBadge(for: item), theme: theme)
-            cell.badgeEndInList = rowBadgeEnd()
+            cell.badgeEndInList = { [weak self] in self?.rowBadgeEnd() }
         }
     }
 
@@ -687,7 +692,7 @@ final class WorkspaceSidebarController: NSViewController, NSOutlineViewDataSourc
         case .section(let title):
             let cell = WorkspaceSidebarSectionCell()
             cell.configure(title: title, badge: sectionBadge(for: item), theme: theme)
-            cell.badgeEndInList = rowBadgeEnd()
+            cell.badgeEndInList = { [weak self] in self?.rowBadgeEnd() }
             return cell
         case .module(let module):
             let cell = WorkspaceSidebarPageCell()
@@ -1367,12 +1372,15 @@ final class WorkspaceSidebarSectionCell: NSTableCellView {
     /// module row's (16pt wider at the default width, measured), and the
     /// outline's own frame for it is the module rows' - read from it, the
     /// pill ended 14pt off - so the cell places itself once it is laid out.
-    var badgeEndInList: CGFloat? {
+    /// Asked at every layout rather than stored: a scroller that appears
+    /// ("Show scroll bars: Always", every CI runner) narrows the rows after
+    /// the cell was built, and a stored end left the pill 15pt short.
+    var badgeEndInList: (() -> CGFloat?)? {
         didSet { needsLayout = true }
     }
 
     override func layout() {
-        if let end = badgeEndInList, let list = superview?.superview {
+        if let end = badgeEndInList?(), let list = superview?.superview {
             let inset = max(0, bounds.maxX - convert(NSPoint(x: end, y: 0), from: list).x)
             if abs(badgeTrailing.constant + inset) > 0.25 { badgeTrailing.constant = -inset }
         }
