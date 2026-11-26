@@ -262,10 +262,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
                 return
             }
+            // F-05: Right ⌥ with ⇧ already down is a voice memo, not a
+            // dictation.
+            if VoiceMemoHotkey.isChordDown(flags: NSEvent.modifierFlags) { return }
             self?.dictationEngine.startRecording()
         },
         onUp: { [weak self] in self?.dictationEngine.stopRecording() }
     )
+    /// F-05: voice memos on Right ⌥ + ⇧, filed into the Notebook or a task.
+    lazy var voiceMemos: VoiceMemoController = {
+        let memos = VoiceMemoController()
+        memos.discardDictation = { [weak self] in self?.dictationEngine.discardRecording() }
+        memos.openNotebookPage = { [weak self] id in self?.appShell.workspace.navigator.openNotebookPage(id: id) }
+        // A registry entry rather than a property on the Notebook page, so
+        // launch does not mount the page (GL-37).
+        GrandLineServices.shared.voiceMemos = memos
+        return memos
+    }()
     // F12 (`fm/grandline-feature-f12-snippet-expander`): the system-wide
     // `;abbrev` expander. One instance for the app's whole lifetime, over the
     // same `snippetStore` the Hosts page edits - same shape as
@@ -801,6 +814,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
         }
         dictationHotkey.start()
+        voiceMemos.start()
 
         // F12. Three wirings, all of them "ask the one place that knows":
         // whether a terminal is on screen (the `.consoleOnly` scope's whole

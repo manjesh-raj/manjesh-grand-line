@@ -19,6 +19,8 @@
 //     ux devservers logtab            D-02: the shown dev server's Log tab
 //     ux devservers sheet <name>      D-02: the Add sheet on Dev server
 //     ux runmode <captured|failed|finished>   D-01: Runbooks in run mode (goto runbooks first)
+//     ux memohud <recording|saved|mic> <name>  F-05: the voice memo HUD
+//     ux memopage                     F-05: a memo page open in the Notebook (goto notebook first)
 //
 // GL-27: debug builds only.
 
@@ -28,7 +30,7 @@ import AppKit
 
 extension ReviewTourLab {
 
-    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode"]
+    static let featureVerbs: Set<String> = ["incident", "expiry", "spotlight", "grabtext", "sendto", "devservers", "runmode", "memohud", "memopage"]
 
     static func applyFeatureUX(_ parts: [String], shell: WorkspaceShellController, outputDirectory: URL) -> String? {
         guard let verb = parts.first, featureVerbs.contains(verb) else { return nil }
@@ -39,6 +41,39 @@ extension ReviewTourLab {
         }
         guard let name = rest.first else { return "ux \(verb) FAILED - want a name" }
         switch verb {
+        case "memohud":
+            guard let file = rest.dropFirst().first else { return "ux memohud FAILED - want a state and a name" }
+            let view = VoiceMemoHUDView()
+            let tasks: [(id: String, title: String)] = [("t1", "Rotate the CI deploy key")]
+            switch name {
+            case "recording": view.render(.recording(elapsed: 42, needsAccessibility: false), theme: ThemeManager.shared.theme)
+            case "saved": view.render(.saved(duration: 102, progress: 0.38, tasks: tasks), theme: ThemeManager.shared.theme)
+            default: view.render(.message(VoiceMemoError.microphoneDenied.message, settings: VoiceMemoController.microphoneSettingsURL),
+                                 theme: ThemeManager.shared.theme)
+            }
+            view.layoutSubtreeIfNeeded()
+            return done(renderFixed(view, size: view.fittingSize, to: url(file)), file)
+        case "memopage" where name == "seed" || true:
+            let notebook = shell.workspace.notebook
+            let store = shell.workspace.notebookStore
+            let id = "memo-20261125-081200-demo"
+            let audio = VoiceMemoFiles.url(for: id)
+            try? FileManager.default.createDirectory(at: audio.deletingLastPathComponent(), withIntermediateDirectories: true)
+            _ = VoiceMemoSelfTest.writeTone(to: audio.deletingPathExtension().appendingPathExtension("wav"), seconds: 2)
+            let segments = [
+                VoiceMemoSegment(start: 0, text: "Okay, three things for the 4.20 release. First, the notes need the breaking change about the config path, people will hit it on upgrade."),
+                VoiceMemoSegment(start: 21, text: "Second, we should cut the branch Friday, not Saturday, because Priya is out on Saturday and she owns the changelog."),
+                VoiceMemoSegment(start: 49, text: "Third, ask Nithin whether the SRE bot reviews can wait until after the release. Probably yes."),
+                VoiceMemoSegment(start: 80, text: "Oh, and renew the staging cert before any of this."),
+            ]
+            let page = store.createPage(title: "Memo \u{00B7} 25 Nov, 08:12", folder: "memos",
+                                        content: VoiceMemoPage.markdown(title: "Memo \u{00B7} 25 Nov, 08:12",
+                                                                        marker: .init(id: id, duration: 102), segments: segments,
+                                                                        source: "transcribed on this Mac with Whisper \u{00B7} audio 1.3 MB, kept on this Mac"))
+            notebook.debugReload()
+            notebook.debugOpen(pageID: page.id)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            return "ux memopage (\(page.id))"
         case "runmode":
             return seedRunMode(shell.workspace.runbooks, state: name)
         case "devservers" where name == "seed":

@@ -310,6 +310,9 @@ enum AppLockedSurface {
     /// F-10: the Services menu's "Send to Grand Line" items, which file the
     /// captain's data while another app is frontmost.
     case servicesMenu
+    /// F-05: the voice memo key (Right ⌥ + ⇧), which records from any app
+    /// and files into the Notebook or a task.
+    case voiceMemo
 }
 
 final class AppLockGate {

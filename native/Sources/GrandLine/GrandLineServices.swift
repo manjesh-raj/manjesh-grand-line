@@ -60,6 +60,9 @@ final class GrandLineServices {
     /// F-04: the Spotlight indexer, so Settings can show its counts and
     /// rebuild or empty the index. Set by the app delegate at launch.
     weak var spotlightIndexer: SpotlightIndexer?
+    /// F-05: the voice memo flow, so the Notebook can transcribe a dropped
+    /// audio file without building a second one.
+    weak var voiceMemos: VoiceMemoController?
 
     /// Registered once, from `AppShellController.init`, with the instances it
     /// has just built. `weak` throughout: this registry must never be the

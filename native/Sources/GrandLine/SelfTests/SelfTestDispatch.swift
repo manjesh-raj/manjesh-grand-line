@@ -2235,6 +2235,13 @@ enum SelfTestDispatch {
             exit(RunbookRunModeSelfTest.run() ? 0 : 1)
         }
 
+        // F-05 of full review 4: voice memos - the Right Option + Shift chord, the
+        // page format, the record/choose/file flow with a recorder double, a
+        // dropped file, and the strip. Headless; never opens the microphone.
+        if ProcessInfo.processInfo.environment["FM_RUN_VOICE_MEMO_TESTS"] == "1" {
+            exit(VoiceMemoSelfTest.run() ? 0 : 1)
+        }
+
         if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_EXPORT_TESTS"] == "1" {
             exit(IncidentExportSelfTest.run() ? 0 : 1)
         }

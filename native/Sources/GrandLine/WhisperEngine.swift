@@ -126,6 +126,17 @@ final class WhisperCppEngine {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    /// F-05: the segments of the last `transcribe`, for a memo's timestamps.
+    func segmentCount() -> Int { Int(whisper_full_n_segments(context)) }
+
+    /// F-05: one segment's start (whisper reports it in hundredths of a
+    /// second) and text.
+    func segment(_ index: Int) -> (start: TimeInterval, text: String) {
+        let t0 = whisper_full_get_segment_t0(context, Int32(index))
+        let text = whisper_full_get_segment_text(context, Int32(index)).map { String(cString: $0) } ?? ""
+        return (TimeInterval(t0) / 100, text)
+    }
 }
 
 /// Resamples live-captured audio buffers to the 16kHz mono Float32 PCM
