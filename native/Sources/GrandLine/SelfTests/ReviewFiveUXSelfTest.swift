@@ -427,9 +427,10 @@ enum ReviewFiveUXSelfTest {
                 && QuietHint.line("6 links", count: 6, hint: "h") == "6 links"
                 && QuietHint.line("Nothing saved yet", count: 0, hint: "h") == "Nothing saved yet",
               "R5-UX-10: the quiet hint shows for the wrong number of items", &ok)
-        // Each list page keeps one, from its own empty state's advice.
+        // Each list page keeps one, from its own empty state's advice. The
+        // reading list's is its paste well's placeholder since UX-13, on
+        // screen always rather than for the first few links.
         let pages: [(file: String, hint: String)] = [
-            ("ReadingListController.swift", "pastes a link, or drop one here"),
             ("StickyBoardController.swift", "adds a note, drag one to move it"),
             ("NotebookController.swift", "type [[ to link another page"),
             ("ShiftController.swift", "adds one from any app"),

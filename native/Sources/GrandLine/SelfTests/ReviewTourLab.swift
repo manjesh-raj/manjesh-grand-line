@@ -1087,6 +1087,14 @@ enum ReviewTourLab {
             shell.workspace.navigator.show(.homeCanvas)
             RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             return "ux tips (\(shell.debugHomeCanvas.debugTipTitle ?? "no tip showing"))"
+        // UX-13: two links saved through the page's own paste well.
+        case "readinglinks":
+            let page = shell.workspace.readingList
+            _ = page.view
+            page.debugDropHint.debugSave("https://developer.apple.com/documentation/appkit")
+            page.debugDropHint.debugSave("https://github.com/migueldeicaza/SwiftTerm/releases")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux readinglinks (\(page.debugCards.count) cards)"
         // UX-25: the window toolbar's display mode, "labels" or "icons".
         case "toolbar":
             guard parts.count == 2 else { return "ux toolbar FAILED - want toolbar labels|icons" }

@@ -336,12 +336,31 @@ enum ReadingListViewSelfTest {
         mounted { controller, _, _, _ in
             let copies = controller.debugInstructionCopies
             check(copies.emptyState, "UXP-12: an empty list shows its empty state")
-            check(!copies.dropCard, "UXP-12: an empty list repeats its instruction in the dashed drop card")
+            // UX-13: the paste well is where a link goes, always there, so
+            // the instruction is its placeholder and the empty state does not
+            // say it again.
+            check(copies.dropCard && !controller.debugEmptyStateRepeatsTheInstruction,
+                  "UX-13: an empty list hides its paste well, or its empty state repeats the instruction")
+            let well = controller.debugDropHint
+            check(well.debugLabel == ReadingListDropHintView.placeholder && well.window != nil,
+                  "UX-13: the paste well does not say Paste or drop a link here")
+            check(well.frame.minY < 1, "UX-13: the paste well is not at the top of the list (y \(well.frame.minY))")
+            // Save puts the link on the list at once, its title still to read.
+            well.debugSave("https://example.org/ux13-well")
+            check(controller.debugCards.count == 1 && well.field.stringValue.isEmpty,
+                  "UX-13: Save from the well did not put the link on the list, or kept the text")
+            well.debugSave("not a link")
+            check(controller.debugCards.count == 1 && well.field.stringValue == "not a link",
+                  "UX-13: the well saved text that is not a link, or dropped what was typed")
             check(!controller.debugRootHoldsAPageToolbar, "R4-UI-05: the empty page draws a toolbar band")
         }
         mounted(seed: seedThreeStates) { controller, _, _, _ in
             let copies = controller.debugInstructionCopies
-            check(!copies.emptyState && copies.dropCard, "UXP-12: a list with links keeps the drop card under it")
+            check(!copies.emptyState && copies.dropCard, "UX-13: a list with links lost its paste well")
+            if let first = controller.debugCards.first {
+                check(controller.debugDropHint.frame.maxY <= first.convert(first.bounds, to: controller.debugDropHint.superview).minY + 0.5,
+                      "UX-13: the paste well is not above the list")
+            }
             check(!controller.debugRootHoldsAPageToolbar, "R4-UI-05: the page draws a toolbar band over its list")
             let actions = controller.drillHeaderActions
             check(actions.count == 2 && actions.first === controller.debugRefreshButton
