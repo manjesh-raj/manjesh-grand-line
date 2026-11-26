@@ -298,12 +298,16 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private(set) lazy var sandboxChip: HelmButton = {
         let chip = HelmButton(title: "", variant: .secondary, size: .small, symbol: "checkmark.shield.fill",
                               target: self, action: #selector(sandboxChipTapped))
+        // Gotcha (13): below the window's stay-put priority, so the chip
+        // gives way on a narrowing page rather than holding the window open.
         chip.setContentHuggingPriority(.required, for: .horizontal)
-        chip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        chip.setContentCompressionResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
         return chip
     }()
     var onInspectorContentChanged: (() -> Void)?
     var onShowInspector: (() -> Void)?
+    /// UX-21: the chip asked for the facts.
+    private var factsRequested = false
     private lazy var undoButton = HelmPageToolbar.iconButton(
         symbol: "arrow.uturn.backward", tooltip: "Undo (\u{2318}Z)",
         target: self, action: #selector(undoTapped))
@@ -2506,9 +2510,19 @@ extension CodePreviewController: WorkspaceInspectorSource {
             : ("Runs refused", "sandbox-exec is missing, so runs are refused. Show the run configuration and checks")
     }
 
+    /// The facts once the chip asked for them, and nothing before: a page
+    /// with content is a page with details to show, which the shell makes
+    /// room for (measured: a 858pt window grew to 941pt on every visit).
     var inspectorContent: WorkspaceInspectorContent? {
-        guard workbench != nil else { return nil }
+        guard workbench != nil, factsRequested else { return nil }
         return WorkspaceInspectorContent(title: "Sandbox and checks", view: factsView)
+    }
+
+    /// The inspector closing puts the facts away until the chip is pressed
+    /// again.
+    func inspectorShouldClose() -> Bool {
+        factsRequested = false
+        return true
     }
 
     var inspectorEmptyText: (title: String, body: String) {
@@ -2516,6 +2530,7 @@ extension CodePreviewController: WorkspaceInspectorSource {
     }
 
     @objc func sandboxChipTapped() {
+        factsRequested = true
         refreshInspector()
         onInspectorContentChanged?()
         onShowInspector?()

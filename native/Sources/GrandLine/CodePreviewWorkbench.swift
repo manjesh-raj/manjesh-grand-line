@@ -491,7 +491,11 @@ final class CodePreviewWorkbenchView: NSView {
                 leadingTools.addArrangedSubview(view)
             }
         }
-        if let chip = parts.trailingChip { trailingTools.addArrangedSubview(chip) }
+        if let chip = parts.trailingChip {
+            trailingTools.addArrangedSubview(chip)
+            // The group may clip the chip rather than widen the window.
+            trailingTools.setClippingResistancePriority(HelmDaylightPriority.columnHug, for: .horizontal)
+        }
         trailingTools.addArrangedSubview(parts.runStatus)
         trailingTools.addArrangedSubview(parts.runButton)
         trailingTools.setCustomSpacing(HelmMetrics.s3, after: parts.runStatus)
