@@ -563,7 +563,7 @@ enum PageRedesignsSelfTest {
         // Runbooks and Postmortems list their own items.
         shell.workspace.navigator.show(.runbooks)
         settle(shell)
-        let runbooks = Set(shell.workspace.runbooks.debugRunbookPlates.map(\.debugTitle))
+        let runbooks = Set(shell.workspace.runbooks.debugRunbookRows.map(\.debugTitle))
         check(runbooks == ["Rotate a TLS certificate", "Fail over the database"], "Runbooks lists \(runbooks)", &ok)
         shell.workspace.navigator.show(.postmortems)
         settle(shell)
@@ -592,10 +592,11 @@ enum PageRedesignsSelfTest {
         if let runbook = index.flatItems(query: "Rotate").first(where: { $0.title == "Rotate a TLS certificate" }) {
             runbook.activate()
             settle(shell)
+            // UX-17: it opens chosen in the list, ready to run.
             check(shell.debugCurrentDestination == .runbooks && shell.debugCurrentTab?.name == "Runbooks"
-                    && shell.workspace.runbooks.debugRunbookEditorIsOpen,
+                    && shell.workspace.runbooks.debugDetail.debugTitle == "Rotate a TLS certificate"
+                    && !shell.workspace.runbooks.debugRunbookEditorIsOpen,
                   "a runbook found by Search did not open in Runbooks", &ok)
-            shell.workspace.runbooks.debugCancelRunbookEditor()
         } else {
             fail("Search has no result for the seeded runbook", &ok)
         }

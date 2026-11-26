@@ -1126,6 +1126,26 @@ enum ReviewTourLab {
             text.setSelectedRange(NSRange(location: (text.string as NSString).length, length: 0))
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             return "ux notebookopen \(notebook.debugCurrentPageID ?? "-")"
+        // UX-17: a last run on one runbook, then a run of the other with
+        // two steps ticked, 70 and 160 seconds apart.
+        case "runbookrun":
+            let page = shell.workspace.runbooks
+            let store = shell.workspace.docsRunbookStore
+            guard let failover = store.listRunbooks().first(where: { $0.title == "Fail over the database" }) else {
+                return "ux runbookrun FAILED - no failover runbook (run demo knowledge first)"
+            }
+            if let tls = store.listRunbooks().first(where: { $0.title == "Rotate a TLS certificate" }) {
+                page.openRunbook(id: tls.id)
+            }
+            RunbookRunLog.record(RunbookRunRecord(endedAt: Date().addingTimeInterval(-14 * 86_400), seconds: 14 * 60,
+                                                  done: 6, total: 6), for: failover.id)
+            page.debugReloadRunbooks()
+            page.openRunbook(id: failover.id)
+            page.debugDetail.runButton.performClick(nil)
+            page.debugTick(now: Date().addingTimeInterval(70))
+            page.debugTick(now: Date().addingTimeInterval(230))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            return "ux runbookrun \(page.debugDetail.debugCount)"
         // UX-05: Weekly review's Start review, then optionally Skip N times.
         case "reviewstart":
             let shift = shell.workspace.shift
@@ -1627,7 +1647,10 @@ enum ReviewTourLab {
                                    content: "# Rotate a TLS certificate\n\n1. Check what is expiring.\n"
                                        + "\n```bash\nopenssl x509 -enddate -noout -in /etc/ssl/edge/wildcard.pem\n```\n")
         _ = runbooks.createRunbook(title: "Fail over the database",
-                                   content: "# Fail over the database\n\n1. Confirm the replica is caught up.\n")
+                                   content: "# Fail over the database\n\n1. Confirm replica lag is under 5 seconds\n"
+                                       + "2. Put the app in read-only mode\n3. Promote the replica\n\n```bash\n"
+                                       + "pg_ctl promote -D /var/lib/postgresql/data\n```\n\n4. Point the app at the new primary\n"
+                                       + "5. Leave read-only mode\n6. Note the result in the postmortem\n")
         _ = runbooks.createPostmortem(title: "Cache outage, 9 October",
                                       content: "# Cache outage, 9 October\n\n## Summary\n\nThe edge cache dropped for 23 minutes.\n")
         _ = runbooks.createPostmortem(title: "Certificate expiry, 2 September",

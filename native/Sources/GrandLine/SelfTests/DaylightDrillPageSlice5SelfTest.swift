@@ -347,7 +347,7 @@ enum DaylightDrillPageSlice5SelfTest {
     // MARK: 3. A plate is a plate, not a navigating module (§7)
 
     private static func checkRunbookPlates(_ ok: inout Bool) {
-        print("\n-- §7 / S07: runbook grid renders module-style plates that are the control --")
+        print("\n-- §7 / S07, UX-17: a runbook row is the control; a plate is still a plate --")
         let store = scratchDocsStore()
         store.createRunbook(title: "Identifying Unhealthy / NotReady Nodes",
                             content: "# Identifying Unhealthy / NotReady Nodes\n\n```\nkubectl get nodes\n```\n")
@@ -357,69 +357,21 @@ enum DaylightDrillPageSlice5SelfTest {
         runbooksPage.debugReloadRunbooks()
         runbooksPage.view.layoutSubtreeIfNeeded()
 
-        guard let plate = runbooksPage.debugRunbookPlates.first else {
-            print("  FAIL Runbooks rendered no plates")
+        // UX-17 of full review 4: the page is a list now, and a row is the
+        // control - a press selects it, and its menu duplicates or deletes.
+        // The plate component itself is still checked below.
+        guard let row = runbooksPage.debugRunbookRows.first else {
+            print("  FAIL Runbooks rendered no rows")
             ok = false
             return
         }
-        runbooksPage.view.layoutSubtreeIfNeeded()
-        let anatomy = plate.anatomyForTests
-
-        // UI-6/UI-58: a plate's identity is its tile; it carries no ribbon.
-        if anatomy.hasRibbon {
-            print("  FAIL a plate still carries a gradient ribbon")
+        let menuTitles = row.menu?.items.map(\.title) ?? []
+        if !row.isActivatable || !menuTitles.contains("Duplicate") || !menuTitles.contains("Delete\u{2026}") {
+            print("  FAIL a runbook row is not the control (activatable \(row.isActivatable), menu \(menuTitles))")
             ok = false
         }
-        // S07 of the 2026-11-17 UI/UX proposals: a runbook plate is the
-        // control. No Open button and no resting trash; duplicate and delete
-        // sit in the top-trailing corner and show only on aim.
-        let aim = plate.debugAim
-        if !aim.openRowHidden {
-            print("  FAIL a runbook plate still draws its Open/trash action row")
-            ok = false
-        }
-        if !aim.delete || !aim.duplicate {
-            print("  FAIL a runbook plate's corner pair lacks delete (\(aim.delete)) or duplicate (\(aim.duplicate))")
-            ok = false
-        }
-        if aim.alpha > 0.01 {
-            print("  FAIL the corner pair shows at rest (alpha \(fmt(aim.alpha)))")
-            ok = false
-        }
-        if let entered = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
-                                                windowNumber: 0, context: nil, eventNumber: 0,
-                                                trackingNumber: 0, userData: nil) {
-            // The reveal fades; with Reduce Motion pinned it lands at once,
-            // so the alpha read is the end state, not the first frame.
-            let motion = HelmMotion.reducedOverrideForTests
-            HelmMotion.reducedOverrideForTests = true
-            defer { HelmMotion.reducedOverrideForTests = motion }
-            plate.debugCardHit.mouseEntered(with: entered)
-            if plate.debugAim.alpha < 0.99 {
-                print("  FAIL hovering the plate does not reveal its corner pair (alpha \(fmt(plate.debugAim.alpha)))")
-                ok = false
-            }
-            if let exited = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0,
-                                                   windowNumber: 0, context: nil, eventNumber: 0,
-                                                   trackingNumber: 0, userData: nil) {
-                plate.debugCardHit.mouseExited(with: exited)
-            }
-        }
-        // As tall as its header, not the action-row plate's fixed height.
-        if anatomy.resolvedHeight >= HelmPlateCard.height - 0.5 || anatomy.resolvedHeight < 40 {
-            print("  FAIL an on-aim plate resolved to \(fmt(anatomy.resolvedHeight)), want its header's height "
-                  + "(under \(fmt(HelmPlateCard.height)))")
-            ok = false
-        }
-        // The pair is pinned to the card's own corner (8pt in), so it cannot
-        // drift with the title.
-        let pairTrailing = plate.debugAimButtons.delete.convert(plate.debugAimButtons.delete.bounds, to: plate).maxX
-        if abs(plate.frame.width - pairTrailing - HelmMetrics.s2) > 1.5 {
-            print("  FAIL the corner pair ends \(fmt(plate.frame.width - pairTrailing))pt from the trailing edge, want 8")
-            ok = false
-        }
-        if anatomy.titleMaxLines != HelmPlateCard.maximumTitleLines {
-            print("  FAIL plate title allows \(anatomy.titleMaxLines) lines, want \(HelmPlateCard.maximumTitleLines)")
+        if !row.debugSubtitle.hasPrefix("1 step") {
+            print("  FAIL a runbook row reads \(row.debugSubtitle), want its step count first")
             ok = false
         }
 

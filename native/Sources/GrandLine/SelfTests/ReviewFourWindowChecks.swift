@@ -16,6 +16,44 @@ enum ReviewFourWindowChecks {
         checkTheTaskOpensInTheInspector(shell, window, &ok)
         checkTheWeeklyReviewWalks(shell, window, &ok)
         checkTheNotebookWrites(shell, window, &ok)
+        checkRunbooksRun(shell, window, &ok)
+    }
+
+    // MARK: UX-17 - a list you can run
+
+    /// Runbooks is a list beside the chosen runbook. Run ticks the steps
+    /// through each one's own check, as a click reaches it, and the run's end
+    /// lands on the list row.
+    private static func checkRunbooksRun(_ shell: MainSplitShellController, _ window: NSWindow, _ ok: inout Bool) {
+        print("\n-- UX-17: Runbooks is a list you can run --")
+        let store = shell.workspace.docsRunbookStore
+        let created = store.createRunbook(title: "Run check",
+                                          content: "# Run check\n\n1. First\n2. Second\n\n```\necho hi\n```\n")
+        let page = shell.workspace.runbooks
+        shell.workspace.navigator.show(.runbooks)
+        settle(shell, 0.3)
+        page.openRunbook(id: created.id)
+        settle(shell, 0.2)
+        let detail = page.debugDetail
+        let row = page.debugRunbookRows.first { $0.runbookID == created.id }
+        check(row?.isSelected == true && row?.debugSubtitle == "2 steps \u{00B7} never run" && detail.debugTitle == "Run check"
+                && detail.window != nil,
+              "UX-17: the list reads \(row?.debugSubtitle ?? "no row"), the detail \(detail.debugTitle)", &ok)
+        detail.runButton.performClick(nil)
+        settle(shell, 0.1)
+        check(detail.debugCount == "1 of 2" && detail.runButton.title == "Stop", "UX-17: Run shows \(detail.debugCount)", &ok)
+        detail.debugCurrentCheck?.performClick(nil)
+        settle(shell, 0.1)
+        check(detail.debugCount == "2 of 2", "UX-17: ticking the first step left the run on \(detail.debugCount)", &ok)
+        detail.debugCurrentCheck?.performClick(nil)
+        settle(shell, 0.2)
+        let after = page.debugRunbookRows.first { $0.runbookID == created.id }
+        check(detail.debugCount.isEmpty && detail.runButton.title == "Run"
+                && after?.debugSubtitle.hasPrefix("2 steps \u{00B7} last run today") == true
+                && after?.debugSubtitle.hasSuffix("clean") == true,
+              "UX-17: the finished run left the row reading \(after?.debugSubtitle ?? "no row")", &ok)
+        shell.workspace.navigator.show(.homeCanvas)
+        settle(shell, 0.2)
     }
 
     // MARK: UX-12 - write in one pane

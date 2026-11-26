@@ -505,6 +505,8 @@ final class Workspace {
         // action, so its cluster empties while the editor is open.
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.chromeSubtitleMayHaveChanged() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.chromeActionsMayHaveChanged() }
+        // UX-17: a run's step sends its command to the Console's active tab.
+        runbooks.onSendCommand = { [weak self] command in self?.console.sendCommandLibraryTextToActiveTab(command) }
         return built(.runbooks, runbooks)
     }()
 

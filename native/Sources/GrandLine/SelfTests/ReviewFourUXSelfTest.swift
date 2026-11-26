@@ -32,6 +32,7 @@ enum ReviewFourUXSelfTest {
         checkTheWeeklyReviewWords(&ok)
         checkTheCommandsPage(&ok)
         checkTheNotebookWritesInOnePane(&ok)
+        checkRunbooksRun(&ok)
         print(ok ? "ReviewFourUXSelfTest: all checks passed" : "ReviewFourUXSelfTest: FAILED")
         return ok
     }
@@ -582,6 +583,59 @@ enum ReviewFourUXSelfTest {
                   "UX-12: off the caret's line the heading's # still shows", &ok)
             // The typing half needs a key window: ReviewFourWindowChecks.
         }
+    }
+
+    // MARK: UX-17
+
+    /// The steps a runbook's Markdown makes, a session's clock, and what the
+    /// list row says about the last run.
+    private static func checkRunbooksRun(_ ok: inout Bool) {
+        let steps = RunbookSteps.parse("""
+            # Fail over
+
+            Some words.
+
+            1. Confirm lag
+            2. Promote the replica
+
+            ```bash
+            # a comment
+            pg_ctl promote
+            ```
+
+            - [ ] Note it
+            ```
+            echo one
+            echo two
+            ```
+            """)
+        // A block with no open step above it is a step of its own, per line.
+        let bare = RunbookSteps.parse("# Bare\n\n```\nkubectl get nodes\nkubectl top nodes\n```\n")
+        check(bare.map(\.title) == ["kubectl get nodes", "kubectl top nodes"] && bare.allSatisfy { $0.command == $0.title },
+              "UX-17: a bare block's steps are \(bare.map(\.title))", &ok)
+        check(steps.map(\.title) == ["Confirm lag", "Promote the replica", "Note it"]
+                && steps[1].command == "pg_ctl promote" && steps[2].command == "echo one\necho two" && steps[0].command == nil,
+              "UX-17: the steps are \(steps.map { "\($0.title)=\($0.command ?? "-")" })", &ok)
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var session = RunbookSession(runbookID: "r", total: 3, now: start)
+        session.tick(now: start.addingTimeInterval(70))
+        session.tick(now: start.addingTimeInterval(230))
+        check(session.durations == [70, 160] && !session.isFinished && session.index == 2,
+              "UX-17: the session timed \(session.durations), on step \(session.index)", &ok)
+        check(session.durations.map(RunbookWords.stepTime) == ["1m 10s", "2m 40s"],
+              "UX-17: the step times read \(session.durations.map(RunbookWords.stepTime))", &ok)
+        let stopped = session.record(now: start.addingTimeInterval(240))
+        check(!stopped.isClean && RunbookWords.lastRun(stopped, now: start.addingTimeInterval(240))
+                == "last run today, 4 min, stopped at step 3 of 3",
+              "UX-17: a stopped run reads \(RunbookWords.lastRun(stopped, now: start.addingTimeInterval(240)))", &ok)
+        session.tick(now: start.addingTimeInterval(300))
+        let clean = session.record(now: start.addingTimeInterval(300))
+        check(session.isFinished && clean.isClean
+                && RunbookWords.rowSubtitle(steps: 3, last: clean, now: start.addingTimeInterval(300)) == "3 steps \u{00B7} last run today, 5 min, clean"
+                && RunbookWords.rowSubtitle(steps: 1, last: nil, now: start) == "1 step \u{00B7} never run",
+              "UX-17: the row reads \(RunbookWords.rowSubtitle(steps: 3, last: clean, now: start.addingTimeInterval(300)))", &ok)
+        RunbookRunLog.record(clean, for: "review4-probe")
+        check(RunbookRunLog.all()["review4-probe"] == clean, "UX-17: the last run did not round-trip", &ok)
     }
 }
 
