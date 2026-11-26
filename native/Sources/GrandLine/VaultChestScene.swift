@@ -41,8 +41,8 @@ final class VaultChestScene {
     let frontView = ChestLayerView()
 
     /// The chest's tap target, and the padlock's on top of it.
-    let chestHotspot = ChestHotspotView()
-    let padlockHotspot = ChestHotspotView()
+    let chestHotspot = SceneGateHotspotView()
+    let padlockHotspot = SceneGateHotspotView()
 
     private let hold = CAGradientLayer()
     private let seamGlow = CAGradientLayer()
@@ -90,6 +90,8 @@ final class VaultChestScene {
         }
         frontView.addSubview(chestHotspot)
         frontView.addSubview(padlockHotspot)
+        chestHotspot.ringRadius = 18
+        padlockHotspot.ringRadius = 8
 
         for radial in [hold, seamGlow, glow, formGlow, shadow, raysMask] {
             radial.type = .radial
@@ -199,7 +201,7 @@ final class VaultChestScene {
 
     /// VoiceOver hears what a tap will do now.
     private func updateLabels() {
-        let chest = isOpen ? "Close the chest" : "Open the chest"
+        let chest = isOpen ? "Close the chest" : "Open the chest to unlock"
         chestHotspot.label = chest
         padlockHotspot.label = touchID ? "Unlock with Touch ID" : chest
     }
@@ -667,40 +669,7 @@ private final class SpriteReaper: NSObject, CAAnimationDelegate {
 final class ChestLayerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
-        return hit is ChestHotspotView ? hit : nil
+        return hit is SceneGateHotspotView ? hit : nil
     }
 }
 
-/// The chest's and the padlock's tap targets. They never take first
-/// responder, so a click leaves the password field focused.
-final class ChestHotspotView: NSView {
-    var onClick: (() -> Void)?
-    var onHover: ((Bool) -> Void)?
-    var label = "" { didSet { setAccessibilityLabel(label) } }
-    private var tracking: NSTrackingArea?
-
-    override var acceptsFirstResponder: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) {
-        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
-    }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
-    }
-    override func mouseEntered(with event: NSEvent) { onHover?(true) }
-    override func mouseExited(with event: NSEvent) { onHover?(false) }
-    override func isAccessibilityElement() -> Bool { !isHiddenOrHasHiddenAncestor }
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { label }
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
-    #if FM_SELFTESTS
-    func debugClick() { onClick?() }
-    #endif
-}

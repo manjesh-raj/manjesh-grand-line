@@ -960,6 +960,9 @@ final class CredentialVaultUnlockView: NSView {
     /// reads the lock state rather than claiming an `AppLockedSurface` case.
     private func handleKeyDown() {
         guard openStyle, !isHiddenOrHasHiddenAncestor, !AppLockGate.shared.isLocked else { return }
+        // A-02: with the keyboard on the chest or the padlock, Space and
+        // Return are theirs, so the first-key rule stands aside.
+        guard !SceneGateHotspotView.isFocused(in: window) else { return }
         if isLit { chest.glint() } else { openChest(.key) }
     }
 

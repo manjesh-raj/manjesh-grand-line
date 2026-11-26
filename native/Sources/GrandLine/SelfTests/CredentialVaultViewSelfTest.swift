@@ -103,6 +103,7 @@ enum CredentialVaultViewSelfTest {
         checkTouchIDIndicatorAlignmentAndOrdering(scratch: scratch, window: window, check)
         checkDragReorderWithinCategory(scratch: scratch, window: window, check)
         checkTheChestGate(window: window, check)
+        checkTheChestTakesTheKeyboard(window: window, &ok)
 
         window.contentView = nil
         if ok {
@@ -111,6 +112,55 @@ enum CredentialVaultViewSelfTest {
         }
         print("CredentialVaultViewSelfTest: FAILED")
         return false
+    }
+
+    // MARK: A-02 - the chest takes the keyboard (full review 4)
+
+    /// Tab reaches the chest, it draws a real focus ring, Space or Return
+    /// opens it, its label says so, and a click still leaves the field
+    /// focused. The padlock is a target too, with its own ring and label.
+    private static func checkTheChestTakesTheKeyboard(window: NSWindow, _ ok: inout Bool) {
+        print("\n-- A-02: the chest and the padlock take the keyboard --")
+        if NSWorkspace.shared.isVoiceOverEnabled {
+            print("  SKIP: VoiceOver is on, so the chest starts open by design")
+            return
+        }
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedReduced }
+        let gate = CredentialVaultUnlockView()
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 700))
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.addSubview(gate)
+        NSLayoutConstraint.activate([
+            gate.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            gate.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            gate.topAnchor.constraint(equalTo: host.topAnchor),
+            gate.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        gate.setMode(.unlock(touchIDAvailable: false))
+        for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+        let chest = gate.debugChest
+        SceneGateKeyboardChecks.run(.init(
+            name: "chest", window: window, hotspot: chest.chestHotspot, field: gate.debugPasswordField,
+            darkLabel: "Open the chest to unlock",
+            isOpen: { gate.debugIsLit },
+            monitorKeyDown: { gate.debugKeyDown() },
+            reset: {
+                gate.debugPasswordField.stringValue = ""
+                gate.setMode(.create)
+                gate.setMode(.unlock(touchIDAvailable: false))
+                for _ in 0..<2 { host.layoutSubtreeIfNeeded() }
+                gate.focusPasswordField()
+            }), &ok)
+        check(chest.padlockHotspot.focusRingType == .exterior && !chest.padlockHotspot.focusRingMaskBounds.isEmpty,
+              "A-02: the padlock draws no focus ring", &ok)
+        gate.setMode(.create)
+        gate.setMode(.unlock(touchIDAvailable: true))
+        check(chest.padlockHotspot.accessibilityLabel() == "Unlock with Touch ID",
+              "A-02: the padlock is labelled \(chest.padlockHotspot.accessibilityLabel() ?? "nothing")", &ok)
+        if ok { print("  OK   Tab, ring, Space, Return and the labels hold, and a click leaves the field focused") }
     }
 
     // MARK: S-1 / V-4 - the treasure chest gate

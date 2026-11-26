@@ -68,7 +68,8 @@ enum LockScreenSelfTest {
                       checkAuthFlowUntouched,
                       checkLoopingAnimationsStopOnUnlock,
                       checkLoopsHoldStillWhileNobodyLooks,
-                      checkTheLampGate] {
+                      checkTheLampGate,
+                      checkTheTowerTakesTheKeyboard] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -666,6 +667,45 @@ enum LockScreenSelfTest {
         if !moving() { fail(&ok, "another window's occlusion change stopped this scene") }
         DecorativeMotionGate.resetOverridesForTests()
         if ok { print("  inactive, occluded and Low Power each hold the lit scene still, and clearing each brings it back") }
+    }
+
+    // MARK: 6c - the tower takes the keyboard (full review 4, A-02)
+
+    /// Last in `run()`: it is the one case that creates `NSApplication.shared`,
+    /// to send a click the way a real one arrives.
+    private static func checkTheTowerTakesTheKeyboard(_ ok: inout Bool) {
+        print("LockScreenSelfTest: Tab reaches the lighthouse, it draws a focus ring, and Space or Return lights it (A-02)")
+        if NSWorkspace.shared.isVoiceOverEnabled {
+            print("  SKIP: VoiceOver is on, so the gate starts lit by design")
+            return
+        }
+        let savedReduced = HelmMotion.reducedOverrideForTests
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = savedReduced }
+        let controller = LockScreenController()
+        let window = mount(controller)
+        defer { window.contentView = nil; controller.stopAnimations() }
+        controller.apply(.locked(subtitle: "Grand Line is locked."))
+        controller.restartAnimationsIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        guard let hotspot = controller.debugHotspot as? SceneGateHotspotView else {
+            fail(&ok, "the lighthouse's target is not a SceneGateHotspotView")
+            return
+        }
+        SceneGateKeyboardChecks.run(.init(
+            name: "lighthouse", window: window, hotspot: hotspot, field: controller.debugPasswordField,
+            darkLabel: "Light the lamp to sign in",
+            isOpen: { controller.debugIsLit },
+            monitorKeyDown: { controller.debugKeyDown() },
+            reset: {
+                controller.debugPasswordField.stringValue = ""
+                controller.apply(.locked(subtitle: "Grand Line is locked."))
+                controller.focusPasswordField()
+            }), &ok)
+        controller.debugKeyDown()
+        check(hotspot.accessibilityLabel() == "Put out the lamp",
+              "the lit lighthouse is labelled \(hotspot.accessibilityLabel() ?? "nothing")", &ok)
+        if ok { print("  Tab, ring, Space, Return and the label all hold, and a click leaves the field focused") }
     }
 
     // MARK: 7 - the lamp gate (L-2)

@@ -244,9 +244,13 @@ final class LockScreenController: NSViewController {
     private let daySkyLayer = CAGradientLayer()
     private let daySunLayer = CALayer()
     /// The tower's tap target: light the lamp, or with the field empty, put it out.
-    private let lighthouseHotspot = SceneHotspotView()
+    private let lighthouseHotspot = SceneGateHotspotView()
     /// Whether the lamp is on, which is whether the gate's card is showing.
-    private(set) var isLit = true
+    private(set) var isLit = true {
+        // A-02: the tower is labelled by what pressing it does now.
+        didSet { lighthouseHotspot.label = Self.lampLabel(lit: isLit) }
+    }
+    private static func lampLabel(lit: Bool) -> String { lit ? "Put out the lamp" : "Light the lamp to sign in" }
     private var keyMonitor: Any?
     /// The colours the current scene resolved to, for the success flourish.
     private var currentScene: SceneColors?
@@ -419,6 +423,7 @@ final class LockScreenController: NSViewController {
         // scene in `layoutSceneLayers`.
         root.addSubview(lighthouseHotspot)
         lighthouseHotspot.onClick = { [weak self] in self?.toggleLamp() }
+        lighthouseHotspot.label = Self.lampLabel(lit: isLit)
 
         // Follow the app's active Helm theme, live - see `ThemeManager.swift`'s
         // header checklist. Registered last, after every view above exists, so
@@ -1728,7 +1733,9 @@ final class LockScreenController: NSViewController {
 
     /// What a key in this window does: lights the lamp, unless the overlay is down.
     private func noteKeyDown() {
-        guard !view.isHiddenOrHasHiddenAncestor else { return }
+        // A-02: with the keyboard on the tower, Space and Return are the
+        // tower's, so the first-key rule stands aside.
+        guard !view.isHiddenOrHasHiddenAncestor, !SceneGateHotspotView.isFocused(in: view.window) else { return }
         light(.key)
     }
 
@@ -1850,25 +1857,6 @@ private final class GateHostView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { isInert ? nil : super.hitTest(point) }
 }
 
-/// The lighthouse's tap target. It never takes first responder, so a click on
-/// the tower leaves the password field focused.
-private final class SceneHotspotView: NSView {
-    var onClick: (() -> Void)?
-    override var acceptsFirstResponder: Bool { false }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) {
-        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
-    }
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { "Lighthouse" }
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
-    #if FM_SELFTESTS
-    func debugClick() { onClick?() }
-    #endif
-}
 
 /// C-4 Open sea's avatar: the app's mark as a round, ringed tile.
 private final class OpenSeaAvatarView: NSView {
